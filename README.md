@@ -1,17 +1,22 @@
 # Transub
 
-Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 可视化字幕生成工具，提供批量转写/翻译、参数预设、任务历史，以及 SRT / VTT / LRC 字幕编辑与视频同步预览。
+Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
 
 ![Transub](Transub.png)
 
-## 功能
+## 功能概览
 
-- **批量字幕生成**：支持视频/音频文件队列，转写或翻译为 SRT、VTT、LRC字幕文件
-- **GPU 自动检测**：识别 CUDA / CPU 等运行环境并给出安装建议
-- **参数预设**：内置与自定义预设，快速切换常用配置
-- **字幕编辑器**：结构化编辑 cue（文本、时间轴），支持视频同步播放
-- **任务历史**：记录最近批处理结果
-- **右键菜单**（可选）：为视频文件注册「用 Transub 生成字幕」上下文菜单
+### 批量字幕生成
+- 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC
+- GPU 环境自动检测，内置与自定义参数预设
+- 任务历史记录，可选右键菜单「用 Transub 生成字幕」
+
+### 字幕编辑器
+- **三栏布局**：字幕列表 + 详情编辑 + 视频同步预览
+- **单条精修**：时间码微调、CPS 显示、重叠/时长警告
+- **分割字幕**：换行、空格、字符数、均分、光标、播放头 6 种模式
+- **查找替换**、**时长批量调整**、**智能调整**（修复重叠与读速问题）
+- 快捷键：`Ctrl+S` 保存、`Ctrl+F` / `Ctrl+H` 查找替换
 
 ## 环境要求
 
