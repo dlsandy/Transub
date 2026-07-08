@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getProjectRoot } = require('./app-paths');
+const { getWritableRoot } = require('./app-paths');
 
 const PRESETS_FILE_NAME = 'transub-presets.json';
 
@@ -44,7 +44,7 @@ const BUILTIN_PRESETS = [
 ];
 
 function getPresetsFilePath() {
-    return path.join(getProjectRoot(), PRESETS_FILE_NAME);
+    return path.join(getWritableRoot(), PRESETS_FILE_NAME);
 }
 
 function loadPresets() {

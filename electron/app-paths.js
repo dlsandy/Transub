@@ -7,6 +7,18 @@ function getProjectRoot() {
     return path.join(SHELL_DIR, '..');
 }
 
+function getWritableRoot() {
+    try {
+        const { app } = require('electron');
+        if (app?.isPackaged) {
+            return path.dirname(process.execPath);
+        }
+    } catch {
+        // electron unavailable outside the main process
+    }
+    return getProjectRoot();
+}
+
 function findRendererRoot(baseDir) {
     const candidates = [
         path.join(baseDir, 'src'),
@@ -45,6 +57,7 @@ function resolveHtmlPath(app, fileName) {
 module.exports = {
     SHELL_DIR,
     getProjectRoot,
+    getWritableRoot,
     findRendererRoot,
     getAppRoot,
     resolveHtmlPath,

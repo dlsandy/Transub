@@ -1,12 +1,12 @@
 const fs = require('fs');
 const path = require('path');
-const { getProjectRoot } = require('./app-paths');
+const { getWritableRoot } = require('./app-paths');
 
 const HISTORY_FILE_NAME = 'transub-task-history.json';
 const MAX_ENTRIES = 100;
 
 function getHistoryFilePath() {
-    return path.join(getProjectRoot(), HISTORY_FILE_NAME);
+    return path.join(getWritableRoot(), HISTORY_FILE_NAME);
 }
 
 function loadTaskHistory() {

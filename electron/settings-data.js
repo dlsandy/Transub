@@ -1,21 +1,21 @@
 const fs = require('fs');
 const path = require('path');
 const { getDataDir } = require('./data-dir');
-const { getProjectRoot } = require('./app-paths');
+const { getWritableRoot } = require('./app-paths');
 
 const SETTINGS_FILE_NAME = 'transub-settings.json';
 const LEGACY_SETTINGS_FILE_NAME = 'transwithai-settings.json';
 
 function getSettingsFilePath(_getAppRoot) {
-    return path.join(getProjectRoot(), SETTINGS_FILE_NAME);
+    return path.join(getWritableRoot(), SETTINGS_FILE_NAME);
 }
 
 function getLegacySettingsFilePath() {
-    return path.join(getDataDir(() => getProjectRoot()), LEGACY_SETTINGS_FILE_NAME);
+    return path.join(getDataDir(() => getWritableRoot()), LEGACY_SETTINGS_FILE_NAME);
 }
 
 function getLegacyDataSettingsFilePath() {
-    return path.join(getDataDir(() => getProjectRoot()), SETTINGS_FILE_NAME);
+    return path.join(getDataDir(() => getWritableRoot()), SETTINGS_FILE_NAME);
 }
 
 function readSettingsFile(filePath) {
