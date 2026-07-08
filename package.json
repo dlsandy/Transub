@@ -1,0 +1,97 @@
+{
+  "name": "transub",
+  "version": "1.0.0",
+  "description": "Transub — TransWithAI字幕生成工具",
+  "main": "electron/main.js",
+  "author": "Transub",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dlsandy/Transub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dlsandy/Transub/issues"
+  },
+  "homepage": "https://github.com/dlsandy/Transub#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "node tools/setup-electron.js && node tools/setup-vendor-assets.js && node tools/build-css.js",
+    "start": "electron .",
+    "build:css": "node tools/build-css.js",
+    "build:renderer": "node tools/build-renderer.js",
+    "pack": "npm run build:renderer && electron-builder --dir",
+    "dist": "npm run build:renderer && electron-builder",
+    "test": "node tests/transwithai-parsers.test.js && node tests/subtitle-format.test.js && node tests/media-protocol.test.js",
+    "icons": "node tools/generate-icons.js"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.5",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^3.4.17"
+  },
+  "build": {
+    "appId": "com.transub.app",
+    "productName": "Transub",
+    "copyright": "Copyright © 2026 Transub",
+    "directories": {
+      "output": "dist",
+      "buildResources": "electron"
+    },
+    "icon": "app.ico",
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "renderer-dist",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "icon": "app.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Transub"
+    },
+    "portable": {
+      "artifactName": "Transub-${version}-portable.exe"
+    }
+  }
+}

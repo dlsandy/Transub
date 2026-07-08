@@ -1,0 +1,296 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+    .drag-over {
+        @apply border-accent bg-blue-50;
+    }
+    .file-item {
+        @apply flex items-center justify-between p-3 mb-2 rounded-lg transition-all duration-200;
+    }
+    .file-item:hover {
+        @apply bg-blue-50;
+    }
+    .preview-card-icon-btn {
+        @apply inline-flex items-center justify-center shrink-0 leading-none p-0 border-0 bg-transparent;
+        width: 14px;
+        height: 14px;
+    }
+    .preview-card-icon-btn > i {
+        @apply text-xs leading-none;
+        font-size: 12px;
+        line-height: 1;
+        width: 12px;
+        height: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .preview-card-icon-btn > .fa-hdd-o {
+        font-size: 10px;
+    }
+    .local-exists-badge[hidden] {
+        display: none !important;
+    }
+    .preview-card-actions {
+        @apply z-30;
+    }
+    .preview-card-error-overlay {
+        @apply z-10;
+    }
+    #detailsActionButtons {
+        @apply relative z-30;
+    }
+    .preset-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+    .preset-scrollbar::-webkit-scrollbar-track {
+        @apply bg-gray-100 rounded-full;
+    }
+    .preset-scrollbar::-webkit-scrollbar-thumb {
+        @apply bg-gray-300 rounded-full hover:bg-gray-400 transition-colors duration-200;
+    }
+    .menu-item {
+        @apply block p-3 rounded-lg transition-all duration-200 cursor-pointer;
+    }
+    .menu-item:hover {
+        @apply bg-blue-50;
+    }
+    .menu-item.active {
+        @apply bg-primary text-white;
+    }
+    .menu-group-label {
+        @apply col-span-3 text-xs font-semibold text-gray-500 uppercase tracking-wide px-1 pt-2 pb-1;
+    }
+    .menu-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+    .menu-scrollbar::-webkit-scrollbar-track {
+        @apply bg-gray-100 rounded-full;
+    }
+    .menu-scrollbar::-webkit-scrollbar-thumb {
+        @apply bg-gray-300 rounded-full hover:bg-gray-400 transition-colors duration-200;
+    }
+    .post-task-power-btn {
+        @apply inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-violet-600 transition-colors;
+    }
+    .post-task-power-btn.active {
+        @apply border-violet-300 bg-violet-50 text-violet-600;
+    }
+    .post-task-menu {
+        @apply absolute right-0 top-full mt-1.5 z-50 w-44 rounded-lg border border-gray-200 bg-white shadow-lg py-1 text-sm;
+    }
+    .post-task-menu--left {
+        @apply left-0 right-auto;
+    }
+    .post-task-menu-hint {
+        @apply px-3 py-1.5 text-xs text-gray-400 border-b border-gray-100 mb-1;
+    }
+    .post-task-menu-item {
+        @apply flex items-center gap-2 w-full px-3 py-2 text-left text-gray-700 hover:bg-violet-50 transition-colors;
+    }
+    .post-task-menu-item.active {
+        @apply text-violet-700 font-medium bg-violet-50/60;
+    }
+    .post-task-check {
+        @apply w-3 text-center text-violet-600 opacity-0 text-xs;
+    }
+    .post-task-menu-item.active .post-task-check {
+        @apply opacity-100;
+    }
+    .post-task-menu-shutdown {
+        @apply px-3 py-2 border-t border-gray-100 mt-1;
+    }
+    .toolbar-icon-btn {
+        @apply inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors disabled:opacity-40 disabled:pointer-events-none;
+    }
+    .preview-scrollbar::-webkit-scrollbar {
+        width: 8px;
+    }
+    .preview-scrollbar::-webkit-scrollbar-track {
+        @apply bg-gray-100 rounded-full;
+    }
+    .preview-scrollbar::-webkit-scrollbar-thumb {
+        @apply bg-gray-300 rounded-full hover:bg-gray-400 transition-colors duration-200;
+    }
+    .video-grid {
+        @apply grid gap-4;
+    }
+    .video-item {
+        @apply relative overflow-hidden rounded-lg bg-white shadow-md transition-transform duration-200 cursor-pointer;
+        content-visibility: auto;
+        contain-intrinsic-size: auto 220px;
+    }
+    .video-item:hover {
+        @apply transform scale-105;
+    }
+    .video-item .thumb {
+        @apply relative w-full pb-[66.667%] overflow-hidden;
+    }
+    .video-item .thumb img {
+        @apply absolute top-0 left-0 w-full h-full object-cover;
+    }
+    .video-item .detail {
+        @apply p-3;
+    }
+    .video-item .detail .title {
+        @apply font-medium text-gray-800 overflow-hidden text-ellipsis whitespace-nowrap mb-1;
+    }
+    .pic-text {
+        @apply absolute bottom-0 right-0 bg-black bg-opacity-60 text-white text-xs p-1;
+    }
+    #playerModalPanel.live-player-modal-large {
+        width: 100%;
+        max-width: 80rem;
+        max-height: 95vh;
+        margin-left: 1rem;
+        margin-right: 1rem;
+    }
+    #playerModalPanel.live-player-modal-full {
+        width: 96vw !important;
+        max-width: 96vw !important;
+        max-height: 96vh !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+    }
+    #playerModalPanel.live-player-clean {
+        @apply bg-gray-900;
+    }
+    #playerModalPanel.live-player-clean #modalTitle {
+        @apply text-white text-base mb-2;
+    }
+    #playerModalPanel.live-player-clean .p-4 {
+        padding-bottom: 0.75rem;
+    }
+    #playerModalPanel.live-player-clean #playerModalFooter {
+        @apply text-gray-400 px-4 pb-4 pt-0;
+    }
+    #playerModalPanel.live-player-clean #playerModalResize,
+    #playerModalPanel.live-player-clean #closeModal {
+        @apply text-gray-300 hover:text-white;
+    }
+    #playerContainer.live-iframe-active {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        min-height: 360px;
+    }
+    #playerContainer.live-iframe-active #livePlayerIframe {
+        position: absolute;
+        inset: 0;
+        width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 15;
+        border: 0;
+    }
+    #playerContainer.live-iframe-active #player {
+        display: none !important;
+    }
+    #playerContainer.live-iframe-active #livePlayerLoading {
+        z-index: 20;
+    }
+    #previewGrid .preview-item {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 300px;
+    }
+    #previewGrid.preview-grid--virtual {
+        @apply block max-h-[min(72vh,820px)] overflow-hidden;
+    }
+    #previewGrid.preview-grid--virtual .preview-virtual-host {
+        @apply h-full min-h-[320px];
+    }
+    .live-status-badge {
+        @apply absolute top-1 left-1 z-10 text-[10px] font-medium px-1.5 py-0.5 rounded text-white;
+    }
+    .live-status-public { @apply bg-green-600 bg-opacity-90; }
+    .live-status-groupShow { @apply bg-amber-600 bg-opacity-90; }
+    .live-status-private, .live-status-p2p { @apply bg-red-600 bg-opacity-90; }
+    .live-status-away { @apply bg-gray-600 bg-opacity-90; }
+    .video-item.live-item-offline {
+        opacity: 0.72;
+    }
+    .video-item.live-item-offline .thumb img {
+        filter: grayscale(0.35);
+    }
+    .live-fav-btn {
+        @apply absolute top-1 right-1 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black bg-opacity-50 text-white text-sm transition-colors;
+    }
+    .live-fav-btn:hover { @apply bg-opacity-70; }
+    .live-fav-btn.is-favorite { @apply text-yellow-400; }
+    .live-multi-add-btn {
+        @apply absolute bottom-1 left-1 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black bg-opacity-50 text-white text-sm transition-colors;
+    }
+    .live-multi-add-btn:hover { @apply bg-primary bg-opacity-90; }
+    #liveMultiWatchPanel.live-multi-watch-panel--expanded {
+        max-height: none;
+    }
+    .live-multi-watch-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        background: #f9fafb;
+        min-height: 0;
+    }
+    .live-multi-watch-grid.live-multi-watch-grid--manage {
+        padding: 0;
+    }
+    .live-multi-watch-banner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: #374151;
+        background: #eff6ff;
+        border-bottom: 1px solid #dbeafe;
+    }
+    .live-multi-watch-banner--warn {
+        background: #fffbeb;
+        border-bottom-color: #fde68a;
+        color: #92400e;
+    }
+    .live-multi-watch-banner-text {
+        flex: 1;
+        min-width: 0;
+    }
+    .live-multi-watch-focus-btn {
+        @apply px-2 py-1 rounded border border-primary text-primary text-xs hover:bg-primary hover:text-white transition-colors shrink-0;
+    }
+    .live-multi-watch-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid #e5e7eb;
+        background: #fff;
+    }
+    .live-multi-watch-row-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: #111827;
+        min-width: 0;
+    }
+    .live-multi-watch-row-actions {
+        display: flex;
+        gap: 4px;
+        shrink: 0;
+    }
+    .live-multi-watch-row-actions button {
+        @apply px-2 py-0.5 rounded border border-gray-300 text-xs text-gray-600 hover:bg-gray-100;
+    }
+    .live-multi-watch-row-actions button:last-child {
+        @apply border-red-200 text-red-600 hover:bg-red-50;
+    }
+    .live-multi-watch-empty {
+        grid-column: 1 / -1;
+        @apply flex items-center justify-center text-gray-400 text-sm py-8 bg-gray-100;
+    }
+    .video-item.live-preview-active .thumb img { @apply opacity-90; }
+}

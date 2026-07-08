@@ -1,0 +1,25 @@
+node_modules/
+dist/
+renderer-dist/
+data/
+
+# User-specific runtime data (paths, task history)
+transub-settings.json
+transub-task-history.json
+transwithai-settings.json
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*

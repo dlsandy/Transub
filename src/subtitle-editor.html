@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' file: blob: transub-media:; connect-src 'self'; font-src 'self' data:;">
+    <title>Transub — 字幕编辑</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
+    <link rel="stylesheet" href="vendor/app.css">
+    <style>
+        .editor-main { display: flex; flex: 1; min-height: 0; flex-direction: row; }
+        .editor-cues-panel {
+            flex: 0 0 46%;
+            width: 46%;
+            max-width: 680px;
+            min-width: 360px;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            border-right: 1px solid rgb(229 231 235);
+        }
+        .editor-list-wrap { flex: 1; min-height: 0; overflow: auto; border-bottom: 1px solid rgb(229 231 235); }
+        .editor-detail-pane {
+            flex: 0 0 42%;
+            min-height: 11rem;
+            max-height: 46%;
+            display: flex;
+            flex-direction: column;
+            padding: 0.65rem 0.75rem;
+            gap: 0.5rem;
+            background: rgb(249 250 251);
+            overflow: hidden;
+        }
+        .editor-video-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #000; }
+        .editor-video-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #000; }
+        #editorVideo { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; pointer-events: auto; }
+        .editor-video-subtitle {
+            position: absolute; left: 0; right: 0; bottom: 10%; z-index: 2;
+            display: flex; justify-content: center; padding: 0 1.5rem; pointer-events: none;
+        }
+        .editor-video-subtitle.hidden { display: none; }
+        .editor-video-subtitle-inner {
+            max-width: 92%; padding: 0.4rem 0.85rem; background: rgba(0,0,0,0.78); color: #fff;
+            font-size: clamp(15px, 2.4vw, 24px); line-height: 1.45; text-align: center;
+            border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+        }
+        .editor-video-toolbar {
+            display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem;
+            background: rgb(17 24 39); flex-shrink: 0;
+        }
+        #editorInsertCueBtn {
+            font-size: 0.75rem; padding: 0.35rem 0.65rem; border-radius: 0.375rem;
+            border: 1px solid rgb(109 40 217); background: rgb(109 40 217); color: #fff;
+        }
+        #editorInsertCueBtn:hover { background: rgb(91 33 182); }
+        #editorPlayheadTime {
+            font-size: 0.65rem; color: rgb(156 163 175); font-family: ui-monospace, monospace;
+            margin-left: auto; font-variant-numeric: tabular-nums;
+        }
+        .editor-cue-table { table-layout: fixed; width: 100%; }
+        .editor-cue-table .col-idx { width: 2rem; }
+        .editor-cue-table .col-time { width: 6.25rem; }
+        .editor-cue-table .col-dur { width: 3rem; }
+        .editor-cue-table td, .editor-cue-table th { padding: 0.25rem 0.35rem; }
+        .editor-cue-table .cell-text {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font-size: 0.75rem; color: rgb(55 65 81);
+        }
+        tr.cue-row-selected { background: rgb(59 130 246) !important; color: #fff; }
+        tr.cue-row-selected td { color: #fff; }
+        tr.cue-row-selected .cell-text { color: rgb(219 234 254); }
+        tr.cue-row-playing:not(.cue-row-selected) {
+            box-shadow: inset 0 0 0 2px rgb(109 40 217);
+            background: rgb(245 243 255) !important;
+        }
+        .cell-warn { background: rgb(254 215 170) !important; color: rgb(124 45 18) !important; }
+        tr.cue-row-selected .cell-warn { background: rgb(251 146 60) !important; color: #fff !important; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+        .detail-field label { display: block; font-size: 0.65rem; color: rgb(107 114 128); margin-bottom: 0.15rem; }
+        .detail-field input, .detail-field textarea {
+            width: 100%; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
+            padding: 0.35rem 0.5rem; font-size: 0.75rem;
+        }
+        .detail-field input:focus, .detail-field textarea:focus {
+            outline: none; border-color: rgb(109 40 217); box-shadow: 0 0 0 1px rgb(196 181 253);
+        }
+        .detail-duration-row { display: flex; align-items: center; gap: 0.25rem; }
+        .detail-duration-row input { flex: 1; }
+        .detail-nudge-btn {
+            width: 1.65rem; height: 1.65rem; border: 1px solid rgb(209 213 219); border-radius: 0.25rem;
+            background: #fff; font-size: 0.65rem; line-height: 1; color: rgb(75 85 99);
+        }
+        .detail-nudge-btn:hover { background: rgb(243 244 246); }
+        .detail-text-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        .detail-text-wrap textarea { flex: 1; min-height: 3.5rem; resize: none; }
+        .detail-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.65rem; color: rgb(107 114 128); }
+        .detail-meta strong { color: rgb(55 65 81); font-weight: 600; }
+        .detail-nav { display: flex; gap: 0.35rem; margin-top: 0.25rem; }
+        .detail-nav button {
+            font-size: 0.7rem; padding: 0.25rem 0.5rem; border: 1px solid rgb(209 213 219);
+            border-radius: 0.25rem; background: #fff;
+        }
+        .detail-nav button:hover { background: rgb(243 244 246); }
+        .detail-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .editor-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+        .editor-modal.hidden { display: none; }
+        .editor-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+        .editor-modal-panel {
+            position: relative; z-index: 1; width: min(22rem, 92vw); background: #fff;
+            border-radius: 0.5rem; box-shadow: 0 20px 40px rgba(0,0,0,0.18); padding: 1rem 1.1rem;
+        }
+        .editor-modal-panel h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.35rem; }
+        .editor-modal-panel p { font-size: 0.72rem; color: rgb(107 114 128); margin-bottom: 0.75rem; }
+        .split-mode-list { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.75rem; }
+        .split-mode-item {
+            display: flex; align-items: center; gap: 0.45rem; font-size: 0.75rem;
+            padding: 0.35rem 0.45rem; border-radius: 0.375rem; cursor: pointer;
+        }
+        .split-mode-item:hover { background: rgb(243 244 246); }
+        .split-mode-item input { flex-shrink: 0; }
+        .split-mode-item span { flex: 1; }
+        .split-mode-extra {
+            margin-left: 1.35rem; margin-top: -0.25rem; margin-bottom: 0.15rem;
+        }
+        .split-mode-extra input {
+            width: 4.5rem; border: 1px solid rgb(209 213 219); border-radius: 0.25rem;
+            padding: 0.2rem 0.4rem; font-size: 0.72rem;
+        }
+        .split-mode-extra input:disabled { opacity: 0.45; background: rgb(243 244 246); }
+        .editor-modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+        .editor-modal-actions button {
+            font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem; border: 1px solid rgb(209 213 219);
+            background: #fff;
+        }
+        .editor-modal-actions button:hover { background: rgb(243 244 246); }
+        #editorSplitConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
+        #editorSplitConfirm:hover { background: rgb(91 33 182); }
+        #editorSplitCueBtn, #editorDetailInsertCueBtn { color: rgb(109 40 217); }
+        .split-remember-row {
+            display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem;
+            color: rgb(75 85 99); margin-bottom: 0.65rem; padding-top: 0.35rem;
+            border-top: 1px solid rgb(243 244 246);
+        }
+        .split-remember-row input { flex-shrink: 0; }
+        .editor-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+        .editor-header-title {
+            display: flex; align-items: center; gap: 0.5rem; min-width: 0; margin-left: auto;
+            justify-content: flex-end; flex: 1;
+        }
+        .editor-header-title h1 { text-align: right; }
+        .editor-modal-panel.find-replace-panel { width: min(26rem, 94vw); }
+        .find-field { margin-bottom: 0.55rem; }
+        .find-field label { display: block; font-size: 0.65rem; color: rgb(107 114 128); margin-bottom: 0.15rem; }
+        .find-field input {
+            width: 100%; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
+            padding: 0.4rem 0.55rem; font-size: 0.75rem;
+        }
+        .find-field input:focus { outline: none; border-color: rgb(109 40 217); box-shadow: 0 0 0 1px rgb(196 181 253); }
+        .find-options { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: rgb(75 85 99); margin-bottom: 0.55rem; }
+        .find-status { font-size: 0.72rem; color: rgb(107 114 128); min-height: 1rem; margin-bottom: 0.55rem; }
+        .find-status.err { color: rgb(220 38 38); }
+        .find-nav-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.65rem; }
+        .find-nav-row button {
+            font-size: 0.72rem; padding: 0.3rem 0.55rem; border: 1px solid rgb(209 213 219);
+            border-radius: 0.25rem; background: #fff;
+        }
+        .find-nav-row button:hover { background: rgb(243 244 246); }
+        .find-nav-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #editorFindReplaceConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
+        #editorFindReplaceConfirm:hover { background: rgb(91 33 182); }
+        tr.cue-row-find-hit:not(.cue-row-selected) { background: rgb(254 249 195) !important; }
+        tr.cue-row-find-current:not(.cue-row-selected) {
+            box-shadow: inset 0 0 0 2px rgb(234 179 8);
+            background: rgb(254 240 138) !important;
+        }
+        .editor-modal-panel.batch-dur-panel { width: min(24rem, 94vw); }
+        .batch-dur-target {
+            display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.65rem;
+            font-size: 0.75rem;
+        }
+        .batch-dur-target input {
+            width: 5rem; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
+            padding: 0.35rem 0.5rem; font-size: 0.75rem;
+        }
+        .batch-dur-preview { font-size: 0.72rem; color: rgb(107 114 128); margin-bottom: 0.55rem; min-height: 1rem; }
+        .batch-dur-preview.err { color: rgb(220 38 38); }
+        #editorBatchDurConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
+        #editorBatchDurConfirm:hover { background: rgb(91 33 182); }
+        #editorSmartAdjustConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
+        #editorSmartAdjustConfirm:hover { background: rgb(91 33 182); }
+        #editorRestoreBtn { color: rgb(180 83 9); }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen overflow-hidden text-gray-800 flex flex-col">
+    <header class="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-gray-200 shrink-0 bg-white relative z-10">
+        <div class="editor-header-actions">
+            <button type="button" id="editorOpenFileBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="打开其他字幕"><i class="fa fa-folder-open mr-1"></i>打开</button>
+            <button type="button" id="editorLinkVideoBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="选择关联视频"><i class="fa fa-film mr-1"></i>关联视频</button>
+            <button type="button" id="editorShiftBackBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="全体 -500ms">-0.5s</button>
+            <button type="button" id="editorShiftFwdBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="全体 +500ms">+0.5s</button>
+            <button type="button" id="editorAddCueBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50"><i class="fa fa-plus mr-1"></i>添加</button>
+            <button type="button" id="editorFindReplaceBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="查找与替换 (Ctrl+F)"><i class="fa fa-search mr-1"></i>查找替换</button>
+            <button type="button" id="editorBatchDurBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="按条件批量调整字幕时长"><i class="fa fa-clock-o mr-1"></i>时长调整</button>
+            <button type="button" id="editorSmartAdjustBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic mr-1"></i>智能调整</button>
+            <button type="button" id="editorRestoreBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-undo mr-1"></i>复原</button>
+            <button type="button" id="editorSaveBtn" class="text-xs px-3 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded"><i class="fa fa-save mr-1"></i>保存</button>
+        </div>
+        <div class="editor-header-title">
+            <span id="editorSaveStatus" class="text-xs text-emerald-600 min-w-[3rem] shrink-0"></span>
+            <span id="editorDirtyBadge" class="hidden text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">未保存</span>
+            <select id="editorSidecarSelect" class="hidden text-xs border rounded px-2 py-1 max-w-[12rem] shrink-0"></select>
+            <span id="editorCueCount" class="text-xs text-gray-500 tabular-nums shrink-0">0 条</span>
+            <span id="editorFormatBadge" class="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium shrink-0">SRT</span>
+            <h1 id="editorTitle" class="font-semibold text-sm truncate min-w-0 max-w-[40vw]">字幕编辑</h1>
+        </div>
+    </header>
+
+    <div class="editor-main">
+        <section class="editor-cues-panel">
+            <div class="editor-list-wrap">
+                <table class="editor-cue-table text-sm">
+                    <thead class="sticky top-0 bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wide z-10 border-b border-gray-100">
+                        <tr>
+                            <th class="text-left col-idx">#</th>
+                            <th class="text-left col-time">起始时间</th>
+                            <th class="text-left col-time">结束时间</th>
+                            <th class="text-left col-dur">时长</th>
+                            <th class="text-left">文本</th>
+                        </tr>
+                    </thead>
+                    <tbody id="editorCueBody"></tbody>
+                </table>
+            </div>
+
+            <div id="editorDetailPane" class="editor-detail-pane">
+                <div class="detail-grid">
+                    <div class="detail-field">
+                        <label for="editorDetailStart">起始时间</label>
+                        <div class="detail-duration-row">
+                            <button type="button" id="editorStartNudgeBack" class="detail-nudge-btn" title="-100ms">◀</button>
+                            <input type="text" id="editorDetailStart" class="font-mono tabular-nums" spellcheck="false">
+                            <button type="button" id="editorStartNudgeFwd" class="detail-nudge-btn" title="+100ms">▶</button>
+                        </div>
+                    </div>
+                    <div class="detail-field">
+                        <label for="editorDetailDuration">时长（秒）</label>
+                        <div class="detail-duration-row">
+                            <button type="button" id="editorDurNudgeDown" class="detail-nudge-btn" title="-0.1s">−</button>
+                            <input type="number" id="editorDetailDuration" min="0.1" max="600" step="0.01" class="tabular-nums">
+                            <button type="button" id="editorDurNudgeUp" class="detail-nudge-btn" title="+0.1s">+</button>
+                        </div>
+                    </div>
+                    <div class="detail-field">
+                        <label>结束时间</label>
+                        <input type="text" id="editorDetailEnd" class="font-mono tabular-nums bg-gray-100" readonly tabindex="-1">
+                    </div>
+                    <div class="detail-field">
+                        <label>&nbsp;</label>
+                        <button type="button" id="editorSetStartToPlayhead" class="text-xs px-2 py-1.5 border rounded bg-white hover:bg-gray-50 w-full">
+                            <i class="fa fa-crosshairs mr-1"></i>起始对齐播放头
+                        </button>
+                    </div>
+                </div>
+                <div class="detail-text-wrap">
+                    <div class="flex items-center justify-between mb-0.5">
+                        <label for="editorDetailText" class="text-[10px] text-gray-500">文本</label>
+                        <span id="editorDetailCps" class="text-[10px] text-violet-600 font-medium">CPS —</span>
+                    </div>
+                    <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
+                </div>
+                <div class="detail-meta">
+                    <span>单行长度 <strong id="editorLineLen">0</strong></span>
+                    <span>总长度 <strong id="editorTextLen">0</strong></span>
+                    <span id="editorDetailWarn" class="text-amber-700 hidden"></span>
+                </div>
+                <div class="detail-nav">
+                    <button type="button" id="editorPrevCueBtn"><i class="fa fa-chevron-left mr-1"></i>上一行</button>
+                    <button type="button" id="editorNextCueBtn">下一行<i class="fa fa-chevron-right ml-1"></i></button>
+                    <button type="button" id="editorSplitCueBtn" title="将当前字幕拆分为多条"><i class="fa fa-scissors mr-1"></i>分割</button>
+                    <button type="button" id="editorDetailInsertCueBtn" title="在当前播放位置插入一条新字幕"><i class="fa fa-plus-circle mr-1"></i>插入</button>
+                    <button type="button" id="editorDeleteCueBtn" class="text-red-600 ml-auto"><i class="fa fa-trash mr-1"></i>删除</button>
+                </div>
+            </div>
+            <p id="editorStatusLine" class="text-xs text-gray-500 px-3 py-1.5 border-t border-gray-100 shrink-0 truncate"></p>
+        </section>
+
+        <div id="editorSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSplitTitle">
+            <div class="editor-modal-backdrop" data-split-dismiss></div>
+            <div class="editor-modal-panel">
+                <h3 id="editorSplitTitle">分割字幕</h3>
+                <p>将当前条目拆分为多条，时间按文本长度或播放位置比例分配。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="lines">
+                        <span>按换行分割（每行一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="spaces">
+                        <span>按空格分割（每词/每段一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="chars">
+                        <span>按字符数分割</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <label>每段最多 <input type="number" id="editorSplitCharCount" min="2" max="120" value="20" disabled> 字</label>
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="count">
+                        <span>均分为 N 段</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <label>段数 <input type="number" id="editorSplitCount" min="2" max="30" value="2" disabled></label>
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="cursor">
+                        <span>在文本光标处分割（前后各一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="playhead">
+                        <span>在播放头处分割（前后各一条）</span>
+                    </label>
+                </div>
+                <label class="split-remember-row">
+                    <input type="checkbox" id="editorSplitRemember">
+                    <span>记住分割方式（下次打开默认选中）</span>
+                </label>
+                <p id="editorSplitHint" class="text-[11px] text-amber-700 mb-2 hidden"></p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSplitCancel" data-split-dismiss>取消</button>
+                    <button type="button" id="editorSplitConfirm">分割</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorFindReplaceModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFindReplaceTitle">
+            <div class="editor-modal-backdrop" data-find-dismiss></div>
+            <div class="editor-modal-panel find-replace-panel">
+                <h3 id="editorFindReplaceTitle">查找与替换</h3>
+                <p>在全部字幕文本中查找，可逐条或全部替换。</p>
+                <div class="find-field">
+                    <label for="editorFindInput">查找</label>
+                    <input type="text" id="editorFindInput" spellcheck="false" placeholder="输入要查找的内容…" autocomplete="off">
+                </div>
+                <div class="find-field">
+                    <label for="editorReplaceInput">替换为</label>
+                    <input type="text" id="editorReplaceInput" spellcheck="false" placeholder="留空则删除匹配内容" autocomplete="off">
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorFindCase">
+                    <span>区分大小写</span>
+                </label>
+                <p id="editorFindStatus" class="find-status">—</p>
+                <div class="find-nav-row">
+                    <button type="button" id="editorFindPrevBtn"><i class="fa fa-chevron-up mr-1"></i>上一处</button>
+                    <button type="button" id="editorFindNextBtn">下一处<i class="fa fa-chevron-down ml-1"></i></button>
+                    <button type="button" id="editorReplaceOneBtn">替换</button>
+                    <button type="button" id="editorReplaceAllBtn">全部替换</button>
+                </div>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorFindReplaceClose" data-find-dismiss>关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorBatchDurModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorBatchDurTitle">
+            <div class="editor-modal-backdrop" data-batch-dur-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorBatchDurTitle">时长批量调整</h3>
+                <p>按条件筛选字幕后，将结束时间统一调整为指定时长（保持起始时间不变）。</p>
+                <div class="batch-dur-target">
+                    <label for="editorBatchDurTarget">目标时长</label>
+                    <input type="number" id="editorBatchDurTarget" min="0.1" max="600" step="0.01" value="2.00" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="shorter">
+                        <span>时长小于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurShorter" min="0.01" max="600" step="0.01" value="1.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="longer">
+                        <span>时长大于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurLonger" min="0.01" max="600" step="0.01" value="5.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="between">
+                        <span>时长介于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurMin" min="0.01" max="600" step="0.01" value="0.50" disabled class="tabular-nums">
+                        ~
+                        <input type="number" id="editorBatchDurMax" min="0.01" max="600" step="0.01" value="10.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="cps_above">
+                        <span>CPS 高于（读速过快）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurCpsAbove" min="0.1" max="100" step="0.1" value="20" disabled class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="cps_below">
+                        <span>CPS 低于（读速过慢）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurCpsBelow" min="0.1" max="100" step="0.1" value="8" disabled class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="text_contains">
+                        <span>文本包含</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="text" id="editorBatchDurText" placeholder="关键词" disabled spellcheck="false">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="overlap">
+                        <span>存在时间重叠的字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="selected">
+                        <span>仅当前选中条目</span>
+                    </label>
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorBatchDurAvoidOverlap" checked>
+                    <span>避免与下一条重叠（限制结束时间）</span>
+                </label>
+                <p id="editorBatchDurPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorBatchDurCancel" data-batch-dur-dismiss>取消</button>
+                    <button type="button" id="editorBatchDurConfirm">应用</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorSmartAdjustModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSmartAdjustTitle">
+            <div class="editor-modal-backdrop" data-smart-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorSmartAdjustTitle">智能调整</h3>
+                <p>根据规则自动优化字幕时间轴，保持起始时间优先、尽量不与下一条重叠。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartFixOverlap" checked>
+                        <span>修复时间重叠（缩短结束或后移起始）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartFixCps" checked>
+                        <span>读速过快时延长时长（CPS 上限）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        CPS 上限 <input type="number" id="editorSmartMaxCps" min="1" max="100" step="0.5" value="18" class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartEnforceMin" checked>
+                        <span>应用最小时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最短 <input type="number" id="editorSmartMinSec" min="0.1" max="60" step="0.01" value="0.50" class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartEnforceMax" checked>
+                        <span>应用最大时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最长 <input type="number" id="editorSmartMaxSec" min="0.5" max="600" step="0.01" value="10.00" class="tabular-nums"> 秒
+                    </div>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorSmartGapMs">条目间隔</label>
+                    <input type="number" id="editorSmartGapMs" min="0" max="500" step="1" value="1" class="tabular-nums">
+                    <span>毫秒</span>
+                </div>
+                <p id="editorSmartPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSmartAdjustCancel" data-smart-dismiss>取消</button>
+                    <button type="button" id="editorSmartAdjustConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+        <aside id="editorVideoWrap" class="editor-video-panel">
+            <div class="editor-video-frame">
+                <video id="editorVideo" controls playsinline preload="metadata"></video>
+                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="polite">
+                    <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
+                </div>
+            </div>
+            <div class="editor-video-toolbar">
+                <button type="button" id="editorInsertCueBtn" title="在当前播放位置插入一条新字幕">
+                    <i class="fa fa-plus-circle mr-1"></i>在此处插入字幕
+                </button>
+                <span id="editorPlayheadTime">00:00:00,000</span>
+            </div>
+            <p id="editorVideoHint" class="text-[10px] text-gray-400 px-2 py-1.5 bg-gray-900 shrink-0">列表选中编辑 · Ctrl+F 查找 · Ctrl+S 保存</p>
+        </aside>
+    </div>
+
+    <script src="js/subtitle-editor.js"></script>
+</body>
+</html>
