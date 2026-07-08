@@ -104,7 +104,11 @@
         .detail-nav button:hover { background: rgb(243 244 246); }
         .detail-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
         .editor-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
-        .editor-modal.hidden { display: none; }
+        .editor-modal.hidden {
+            display: none !important;
+            pointer-events: none !important;
+            visibility: hidden !important;
+        }
         .editor-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
         .editor-modal-panel {
             position: relative; z-index: 1; width: min(22rem, 92vw); background: #fff;
@@ -233,7 +237,7 @@
                 </table>
             </div>
 
-            <div id="editorDetailPane" class="editor-detail-pane">
+            <div id="editorDetailPane" class="editor-detail-pane" tabindex="-1">
                 <div class="detail-grid">
                     <div class="detail-field">
                         <label for="editorDetailStart">起始时间</label>

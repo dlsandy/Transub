@@ -30,6 +30,74 @@
 
     let els = {};
 
+    function isElementFocusable(el) {
+        if (!el || typeof el.focus !== 'function') return false;
+        if (el.disabled) return false;
+        if (el.closest('.editor-modal:not(.hidden)')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return true;
+    }
+
+    function releaseFocusFromModal(modalEl) {
+        const active = document.activeElement;
+        if (active && modalEl?.contains(active) && typeof active.blur === 'function') {
+            active.blur();
+        }
+    }
+
+    function restoreEditorFocus() {
+        let target = null;
+        if (els.detailText && state.selectedIndex >= 0) {
+            target = els.detailText;
+        } else if (isElementFocusable(els.detailPane)) {
+            target = els.detailPane;
+        } else if (isElementFocusable(els.cueBody)) {
+            target = els.cueBody;
+        }
+
+        const run = () => {
+            if (target) {
+                try {
+                    target.focus({ preventScroll: true });
+                } catch (_) {
+                    target.focus();
+                }
+            }
+            if (typeof window.focus === 'function') window.focus();
+        };
+
+        // Electron：焦点可能留在已隐藏弹窗内，先 blur 再延迟 focus 可恢复输入
+        if (target && typeof target.blur === 'function') target.blur();
+        requestAnimationFrame(() => {
+            requestAnimationFrame(run);
+        });
+    }
+
+    function showEditorModal(modalEl, focusEl) {
+        if (!modalEl) return;
+        modalEl.classList.remove('hidden');
+        modalEl.removeAttribute('inert');
+        const focusTarget = focusEl || modalEl.querySelector('input:not([disabled]), button, textarea');
+        requestAnimationFrame(() => {
+            if (isElementFocusable(focusTarget)) {
+                try {
+                    focusTarget.focus({ preventScroll: true });
+                } catch (_) {
+                    focusTarget.focus();
+                }
+            }
+        });
+    }
+
+    function hideEditorModal(modalEl) {
+        if (!modalEl) return;
+        releaseFocusFromModal(modalEl);
+        modalEl.classList.add('hidden');
+        modalEl.setAttribute('inert', '');
+        restoreEditorFocus();
+    }
+
     function esc(s) {
         return String(s ?? '')
             .replace(/&/g, '&amp;')
@@ -945,13 +1013,13 @@
         }
         if (els.splitModal) {
             applySplitPrefsToModal();
-            els.splitModal.classList.remove('hidden');
+            showEditorModal(els.splitModal, els.splitConfirm);
             updateSplitModalState();
         }
     }
 
     function closeSplitModal() {
-        els.splitModal?.classList.add('hidden');
+        hideEditorModal(els.splitModal);
     }
 
     function confirmSplit() {
@@ -1173,23 +1241,28 @@
 
     function openFindReplaceModal(focusReplace = false) {
         if (els.findReplaceModal) {
-            els.findReplaceModal.classList.remove('hidden');
+            showEditorModal(
+                els.findReplaceModal,
+                focusReplace ? els.replaceInput : els.findInput
+            );
             const sel = els.detailText
                 && document.activeElement === els.detailText
                 && els.detailText.selectionStart !== els.detailText.selectionEnd
                 ? els.detailText.value.slice(els.detailText.selectionStart, els.detailText.selectionEnd)
                 : '';
             if (sel && els.findInput && !els.findInput.value) els.findInput.value = sel;
-            if (focusReplace && els.replaceInput) els.replaceInput.focus();
-            else els.findInput?.focus();
-            els.findInput?.select();
+            requestAnimationFrame(() => {
+                const input = focusReplace ? els.replaceInput : els.findInput;
+                input?.focus();
+                input?.select?.();
+            });
             if (String(els.findInput?.value ?? '').trim()) runFindSearch({ navigate: false });
             else updateFindStatus();
         }
     }
 
     function closeFindReplaceModal() {
-        els.findReplaceModal?.classList.add('hidden');
+        hideEditorModal(els.findReplaceModal);
         state.find.active = false;
         state.find.matches = [];
         state.find.currentIndex = -1;
@@ -1317,13 +1390,12 @@
     function openBatchDurModal() {
         if (!els.batchDurModal) return;
         syncDetailToCue();
-        els.batchDurModal.classList.remove('hidden');
+        showEditorModal(els.batchDurModal, els.batchDurTarget);
         updateBatchDurModalState();
-        els.batchDurTarget?.focus();
     }
 
     function closeBatchDurModal() {
-        els.batchDurModal?.classList.add('hidden');
+        hideEditorModal(els.batchDurModal);
     }
 
     function confirmBatchDurAdjust() {
@@ -1508,12 +1580,12 @@
     function openSmartAdjustModal() {
         if (!els.smartAdjustModal) return;
         syncDetailToCue();
-        els.smartAdjustModal.classList.remove('hidden');
+        showEditorModal(els.smartAdjustModal, els.smartAdjustConfirm);
         updateSmartAdjustModalState();
     }
 
     function closeSmartAdjustModal() {
-        els.smartAdjustModal?.classList.add('hidden');
+        hideEditorModal(els.smartAdjustModal);
     }
 
     function confirmSmartAdjust() {
@@ -1579,7 +1651,10 @@
         els.findReplaceBtn?.addEventListener('click', () => openFindReplaceModal(false));
         els.findReplaceClose?.addEventListener('click', closeFindReplaceModal);
         els.findReplaceModal?.querySelectorAll('[data-find-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeFindReplaceModal);
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeFindReplaceModal();
+            });
         });
         els.findInput?.addEventListener('input', () => runFindSearch({ navigate: false }));
         els.findCase?.addEventListener('change', () => runFindSearch({ navigate: false }));
@@ -1591,7 +1666,10 @@
         els.batchDurConfirm?.addEventListener('click', confirmBatchDurAdjust);
         els.batchDurCancel?.addEventListener('click', closeBatchDurModal);
         els.batchDurModal?.querySelectorAll('[data-batch-dur-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeBatchDurModal);
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeBatchDurModal();
+            });
         });
         document.querySelectorAll('input[name="editorBatchDurCond"]').forEach((el) => {
             el.addEventListener('change', updateBatchDurModalState);
@@ -1614,7 +1692,10 @@
         els.smartAdjustConfirm?.addEventListener('click', confirmSmartAdjust);
         els.smartAdjustCancel?.addEventListener('click', closeSmartAdjustModal);
         els.smartAdjustModal?.querySelectorAll('[data-smart-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeSmartAdjustModal);
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeSmartAdjustModal();
+            });
         });
         [
             els.smartFixOverlap,
@@ -1659,7 +1740,10 @@
         els.splitConfirm?.addEventListener('click', confirmSplit);
         els.splitCancel?.addEventListener('click', closeSplitModal);
         els.splitModal?.querySelectorAll('[data-split-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeSplitModal);
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeSplitModal();
+            });
         });
         document.querySelectorAll('input[name="editorSplitMode"]').forEach((el) => {
             el.addEventListener('change', updateSplitModalState);
@@ -1860,6 +1944,14 @@
     function init() {
         if (!electron?.isDesktop || !document.getElementById('editorCueBody')) return;
         cacheElements();
+        [
+            els.splitModal,
+            els.findReplaceModal,
+            els.batchDurModal,
+            els.smartAdjustModal,
+        ].forEach((modal) => {
+            if (modal?.classList.contains('hidden')) modal.setAttribute('inert', '');
+        });
         bindEvents();
 
         electron.onSubtitleEditorInit?.((payload) => {
