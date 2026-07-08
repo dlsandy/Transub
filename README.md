@@ -2,7 +2,7 @@
 
 Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
 
-![Transub](Transub.png)
+![Transub 字幕生成与字幕编辑界面](Transub.png)
 
 ## 功能概览
 
