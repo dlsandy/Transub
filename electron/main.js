@@ -4,7 +4,10 @@ const { createDeferredBridgeSetup } = require('./bridge-registry');
 const { setupTransWithAiBridge, setPendingFilesForWindow } = require('./transwithai-bridge');
 const { setupExtensionsBridge } = require('./extensions-bridge');
 const { createWindowManager } = require('./window-manager');
-const { registerSubtitleEditorWindowRoutes } = require('./subtitle-editor-window');
+const {
+    createSubtitleEditorWindow,
+    registerSubtitleEditorWindowRoutes,
+} = require('./subtitle-editor-window');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
 const { getAppIcon } = require('./icons');
 
@@ -13,6 +16,14 @@ registerMediaScheme();
 // Avoid "Unable to move the cache / Gpu Cache Creation failed" on Windows when
 // Chromium rotates shader cache directories under a locked userData folder.
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
+// Prefer OS / GPU hardware video decode (H.264, HEVC on Windows 10+).
+if (process.platform === 'win32') {
+    app.commandLine.appendSwitch(
+        'enable-features',
+        'PlatformHEVCDecoderSupport,D3D11VideoDecoder,UseMediaFoundationForMediaPlayback',
+    );
+}
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -29,9 +40,9 @@ function getUserDataPath() {
     return app.getPath('userData');
 }
 
-function parseCliFiles() {
+function parseCliFiles(argv = process.argv.slice(1)) {
     const files = [];
-    for (const arg of process.argv.slice(1)) {
+    for (const arg of argv) {
         if (arg.startsWith('--files=')) {
             const raw = arg.slice('--files='.length);
             raw.split('|').forEach((p) => {
@@ -41,6 +52,29 @@ function parseCliFiles() {
         }
     }
     return files;
+}
+
+function parseCliEditSubtitle(argv = process.argv.slice(1)) {
+    let subPath = '';
+    let videoPath = '';
+    for (const arg of argv) {
+        if (arg.startsWith('--edit-sub=')) {
+            subPath = String(arg.slice('--edit-sub='.length) || '').trim();
+        } else if (arg.startsWith('--edit-video=')) {
+            videoPath = String(arg.slice('--edit-video='.length) || '').trim();
+        }
+    }
+    return subPath ? { subPath, videoPath } : null;
+}
+
+function openCliSubtitleEditor(editRequest) {
+    if (!editRequest?.subPath) return;
+    try {
+        deferredBridges.ensure('editorWindow');
+    } catch (err) {
+        console.warn('[main] editorWindow bridge init failed:', err.message || err);
+    }
+    createSubtitleEditorWindow(app, editRequest);
 }
 
 const deferredBridges = createDeferredBridgeSetup(ipcMain);
@@ -106,16 +140,14 @@ deferredBridges.defer('transwithai', (api) => {
 });
 
 app.on('second-instance', (_event, commandLine) => {
-    const cliFiles = [];
-    for (const arg of commandLine.slice(1)) {
-        if (arg.startsWith('--files=')) {
-            const raw = arg.slice('--files='.length);
-            raw.split('|').forEach((p) => {
-                const trimmed = String(p || '').trim();
-                if (trimmed) cliFiles.push(trimmed);
-            });
-        }
+    const cliArgs = commandLine.slice(1);
+    const cliEdit = parseCliEditSubtitle(cliArgs);
+    if (cliEdit) {
+        openCliSubtitleEditor(cliEdit);
+        return;
     }
+
+    const cliFiles = parseCliFiles(cliArgs);
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
     windowManager.showMainWindow();
 });
@@ -133,10 +165,16 @@ app.whenReady().then(() => {
         app.dock.setIcon(appIcon);
     }
 
+    const cliEdit = parseCliEditSubtitle();
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
-    windowManager.createMainWindow();
+    if (cliEdit) {
+        openCliSubtitleEditor(cliEdit);
+        windowManager.createMainWindow({ startMinimizedToTray: true });
+    } else {
+        windowManager.createMainWindow();
+    }
     windowManager.setupTray();
 
     app.on('activate', () => {

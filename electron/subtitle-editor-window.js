@@ -4,6 +4,7 @@ const { resolveHtmlPath } = require('./app-paths');
 const { getAppIcon } = require('./icons');
 const { guessVideoPathForSubtitle } = require('./subtitle-utils');
 const { asString } = require('./ipc-validate');
+const { refocusWindow } = require('./window-focus');
 
 /** @type {Map<string, import('electron').BrowserWindow>} */
 const editorWindows = new Map();
@@ -45,12 +46,14 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         title: `字幕编辑 — ${path.basename(resolvedSub)}`,
         icon: icon.isEmpty() ? undefined : icon,
         autoHideMenuBar: true,
+        backgroundColor: '#000000',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: false,
             webSecurity: false,
+            backgroundThrottling: false,
         },
         show: false,
     });
@@ -59,7 +62,6 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     win.removeMenu();
 
     const initPayload = { subPath: resolvedSub, videoPath: linkedVideo };
-
     win.once('ready-to-show', () => {
         if (!win.isDestroyed()) {
             win.maximize();
@@ -108,7 +110,10 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             noLink: true,
         });
 
-        if (response === 2) return;
+        if (response === 2) {
+            refocusWindow(win);
+            return;
+        }
 
         if (response === 0) {
             let saved = false;
@@ -120,7 +125,10 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             } catch (_) {
                 return;
             }
-            if (!saved) return;
+            if (!saved) {
+                refocusWindow(win);
+                return;
+            }
         }
 
         closingConfirmed = true;
@@ -149,6 +157,7 @@ async function pickSubtitleFile(parentWindow) {
             { name: '所有文件', extensions: ['*'] },
         ],
     });
+    refocusWindow(parentWindow);
     if (result.canceled || !result.filePaths?.length) {
         return { ok: true, canceled: true };
     }

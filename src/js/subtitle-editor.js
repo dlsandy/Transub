@@ -5,6 +5,8 @@
     const electron = global.__ELECTRON__;
 
     const SPLIT_PREFS_KEY = 'transub-editor-split-prefs';
+    const TARGET_CPS_KEY = 'transub-editor-target-cps';
+    const DEFAULT_TARGET_CPS = 3;
     const SPLIT_MODES = new Set(['lines', 'spaces', 'chars', 'count', 'cursor', 'playhead']);
 
     const state = {
@@ -12,12 +14,21 @@
         dirty: false,
         path: '',
         videoPath: '',
+        videoCodec: '',
+        videoWidth: 0,
+        videoHeight: 0,
         format: 'srt',
         header: [],
         cues: [],
         selectedIndex: -1,
         playbackIndex: -1,
-        syncTimer: null,
+        previewTextTrack: null,
+        textTrackRefreshTimer: null,
+        overlayText: '',
+        overlayVisible: false,
+        cueBoundaryTimer: null,
+        playheadTimer: null,
+        lastPlayheadLabel: '',
         detailSyncing: false,
         find: {
             active: false,
@@ -29,6 +40,19 @@
     };
 
     let els = {};
+    let pendingEditorInit = null;
+    let editorBootstrapped = false;
+
+    function bootstrapEditorDocument(payload) {
+        if (!payload?.subPath) return;
+        if (!editorBootstrapped) {
+            pendingEditorInit = payload;
+            return;
+        }
+        openDocument(payload.subPath, payload.videoPath || '');
+    }
+
+    electron?.onSubtitleEditorInit?.(bootstrapEditorDocument);
 
     function isElementFocusable(el) {
         if (!el || typeof el.focus !== 'function') return false;
@@ -39,6 +63,45 @@
         return true;
     }
 
+    function clearStaleFocus() {
+        const active = document.activeElement;
+        if (!active || active === document.body) return;
+        if (active.closest?.('.editor-modal.hidden, .editor-modal:not(.hidden)')) {
+            if (typeof active.blur === 'function') active.blur();
+        }
+    }
+
+    function pickEditorFocusTarget() {
+        if (state.selectedIndex >= 0 && isElementFocusable(els.detailText)) {
+            return els.detailText;
+        }
+        if (isElementFocusable(els.detailStart)) return els.detailStart;
+        if (isElementFocusable(els.detailPane)) return els.detailPane;
+        if (isElementFocusable(els.listWrap)) return els.listWrap;
+        return null;
+    }
+
+    function restoreEditorFocus() {
+        clearStaleFocus();
+
+        const apply = () => {
+            if (typeof window.focus === 'function') window.focus();
+            const target = pickEditorFocusTarget();
+            if (!target) return;
+            try {
+                target.focus({ preventScroll: true });
+            } catch (_) {
+                target.focus();
+            }
+        };
+
+        // 延迟到 click / 原生对话框完全结束后再 focus（Electron on Windows 常见失焦）
+        setTimeout(() => {
+            clearStaleFocus();
+            requestAnimationFrame(apply);
+        }, 0);
+    }
+
     function releaseFocusFromModal(modalEl) {
         const active = document.activeElement;
         if (active && modalEl?.contains(active) && typeof active.blur === 'function') {
@@ -46,32 +109,10 @@
         }
     }
 
-    function restoreEditorFocus() {
-        let target = null;
-        if (els.detailText && state.selectedIndex >= 0) {
-            target = els.detailText;
-        } else if (isElementFocusable(els.detailPane)) {
-            target = els.detailPane;
-        } else if (isElementFocusable(els.cueBody)) {
-            target = els.cueBody;
-        }
-
-        const run = () => {
-            if (target) {
-                try {
-                    target.focus({ preventScroll: true });
-                } catch (_) {
-                    target.focus();
-                }
-            }
-            if (typeof window.focus === 'function') window.focus();
-        };
-
-        // Electron：焦点可能留在已隐藏弹窗内，先 blur 再延迟 focus 可恢复输入
-        if (target && typeof target.blur === 'function') target.blur();
-        requestAnimationFrame(() => {
-            requestAnimationFrame(run);
-        });
+    function editorConfirm(message) {
+        const ok = confirm(message);
+        restoreEditorFocus();
+        return ok;
     }
 
     function showEditorModal(modalEl, focusEl) {
@@ -192,7 +233,7 @@
             setStatus('没有可恢复的初始字幕', 'err');
             return;
         }
-        if (!confirm('确定恢复到打开文件时的初始字幕？当前未保存的修改将丢失。')) return;
+        if (!editorConfirm('确定恢复到打开文件时的初始字幕？当前未保存的修改将丢失。')) return;
         syncDetailToCue();
         state.header = [...state.initialSnapshot.header];
         state.cues = cloneCues(state.initialSnapshot.cues);
@@ -265,10 +306,37 @@
     }
 
     function findPlaybackIndex(tMs) {
-        for (let i = 0; i < state.cues.length; i += 1) {
-            const c = state.cues[i];
-            if (tMs >= c.startMs && tMs < cueEndMs(c)) return i;
+        const cues = state.cues;
+        const n = cues.length;
+        if (!n) return -1;
+
+        const hint = state.playbackIndex;
+        if (hint >= 0 && hint < n) {
+            const c = cues[hint];
+            if (tMs >= c.startMs && tMs < cueEndMs(c)) return hint;
+            if (hint + 1 < n) {
+                const next = cues[hint + 1];
+                if (tMs >= next.startMs && tMs < cueEndMs(next)) return hint + 1;
+            }
+            if (hint > 0) {
+                const prev = cues[hint - 1];
+                if (tMs >= prev.startMs && tMs < cueEndMs(prev)) return hint - 1;
+            }
         }
+
+        let lo = 0;
+        let hi = n - 1;
+        let best = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (cues[mid].startMs <= tMs) {
+                best = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if (best >= 0 && tMs < cueEndMs(cues[best])) return best;
         return -1;
     }
 
@@ -278,6 +346,36 @@
         document.title = state.path
             ? `${state.dirty ? '* ' : ''}${basename(state.path)} — Transub 字幕编辑`
             : 'Transub — 字幕编辑';
+    }
+
+    function clampTargetCps(value) {
+        return Math.max(0.1, Math.min(100, Number(value) || DEFAULT_TARGET_CPS));
+    }
+
+    function loadTargetCpsPrefs() {
+        try {
+            const raw = localStorage.getItem(TARGET_CPS_KEY);
+            if (raw == null) return DEFAULT_TARGET_CPS;
+            return clampTargetCps(JSON.parse(raw));
+        } catch (_) {
+            return DEFAULT_TARGET_CPS;
+        }
+    }
+
+    function saveTargetCpsPrefs() {
+        const value = clampTargetCps(els.targetCps?.value);
+        if (els.targetCps) els.targetCps.value = String(value);
+        try {
+            localStorage.setItem(TARGET_CPS_KEY, JSON.stringify(value));
+        } catch (_) { /* ignore quota errors */ }
+    }
+
+    function getTargetCps() {
+        return clampTargetCps(els.targetCps?.value ?? loadTargetCpsPrefs());
+    }
+
+    function applyTargetCpsPrefs() {
+        if (els.targetCps) els.targetCps.value = String(loadTargetCpsPrefs());
     }
 
     function syncDetailToCue() {
@@ -298,7 +396,21 @@
         const text = els.detailText?.value ?? cue.text ?? '';
         const durMs = cueDurationMs(cue);
         const cps = computeCps(text, durMs);
-        if (els.detailCps) els.detailCps.textContent = cps ? `CPS ${cps}` : 'CPS —';
+        const targetCps = getTargetCps();
+        if (els.detailCps) {
+            if (!cps) {
+                els.detailCps.textContent = 'CPS —';
+                els.detailCps.className = 'text-[10px] text-violet-600 font-medium';
+            } else {
+                const cpsNum = Number(cps);
+                els.detailCps.textContent = `当前 CPS ${cps}（目标 ${targetCps}）`;
+                if (cpsNum > targetCps * 1.05) {
+                    els.detailCps.className = 'text-[10px] text-amber-600 font-medium';
+                } else {
+                    els.detailCps.className = 'text-[10px] text-violet-600 font-medium';
+                }
+            }
+        }
         if (els.lineLen) els.lineLen.textContent = String(lineCharCount(text));
         if (els.textLen) els.textLen.textContent = String(textCharCount(text));
         if (els.detailEnd) els.detailEnd.value = formatDisplayTime(cueEndMs(cue), state.format);
@@ -398,6 +510,7 @@
         if (state.selectedIndex < 0 && state.cues.length) state.selectedIndex = 0;
         updateListRowClasses();
         renderDetailPane();
+        scheduleVideoTextTrackRefresh();
     }
 
     function refreshListRow(idx) {
@@ -453,7 +566,8 @@
             updateListRowClasses();
         }
         if (opts.seek && els.video) {
-            els.video.currentTime = Math.max(0, state.cues[idx].startMs / 1000);
+            const sec = Math.max(0, state.cues[idx].startMs / 1000);
+            els.video.currentTime = sec;
             if (opts.play) els.video.play().catch(() => {});
         }
         if (opts.scroll) {
@@ -468,7 +582,11 @@
         setDirty(true);
         refreshListRow(state.selectedIndex);
         updateDetailMeta();
-        if (state.selectedIndex === state.playbackIndex) updateVideoSubtitleOverlay();
+        if (state.selectedIndex === state.playbackIndex) {
+            state.overlayText = '';
+            updateVideoSubtitleOverlay();
+        }
+        scheduleVideoTextTrackRefresh();
     }
 
     function applyDurationDelta(deltaSec) {
@@ -494,22 +612,82 @@
         if (state.selectedIndex < 0 || !els.video) return;
         const cue = state.cues[state.selectedIndex];
         const dur = cueDurationMs(cue);
-        cue.startMs = Math.round((els.video.currentTime || 0) * 1000);
+        cue.startMs = getPlaybackTimeMs();
         cue.endMs = cue.startMs + dur;
         renderDetailPane();
         onDetailChanged();
     }
 
+    function isListFocused() {
+        const active = document.activeElement;
+        if (!active || !els.listWrap) return false;
+        return active === els.listWrap || els.listWrap.contains(active);
+    }
+
+    function focusCueList() {
+        if (!els.listWrap) return;
+        try {
+            els.listWrap.focus({ preventScroll: true });
+        } catch (_) {
+            els.listWrap.focus();
+        }
+    }
+
+    function toggleVideoPlayback() {
+        if (!els.video) return;
+        if (els.video.paused || els.video.ended) {
+            els.video.play().catch(() => {});
+        } else {
+            els.video.pause();
+        }
+    }
+
+    function getPlaybackTimeMs() {
+        return Math.round((els.video?.currentTime || 0) * 1000);
+    }
+
+    function syncFromExternalTime(timeSec, updatePlayhead = true) {
+        if (!state.ready) return;
+        const t = Math.round((Number(timeSec) || 0) * 1000);
+        const active = findPlaybackIndex(t);
+        if (active !== state.playbackIndex) {
+            const prev = state.playbackIndex;
+            state.playbackIndex = active;
+            updatePlayingRowHighlight(prev, active);
+        }
+        if (updatePlayhead) {
+            state.lastPlayheadLabel = '';
+            if (els.playheadTime) {
+                els.playheadTime.textContent = formatDisplayTime(t, state.format);
+                state.lastPlayheadLabel = els.playheadTime.textContent;
+            }
+        }
+        updateVideoSubtitleOverlay();
+    }
+
+    function hidePlaybackSubtitleOverlay() {
+        state.overlayText = '';
+        state.overlayVisible = false;
+        if (els.videoSubtitle) els.videoSubtitle.classList.add('hidden');
+        if (els.videoSubtitleText) els.videoSubtitleText.textContent = '';
+        if (state.previewTextTrack) {
+            try { state.previewTextTrack.mode = 'hidden'; } catch (_) { /* noop */ }
+        }
+    }
+
     function updateVideoSubtitleOverlay() {
         if (!els.videoSubtitle || !els.videoSubtitleText) return;
         const idx = state.playbackIndex;
-        if (idx < 0 || idx >= state.cues.length) {
-            els.videoSubtitle.classList.add('hidden');
-            els.videoSubtitleText.textContent = '';
-            return;
+        let text = '';
+        let visible = false;
+        if (idx >= 0 && idx < state.cues.length) {
+            text = String(state.cues[idx].text || '').trim();
+            visible = !!text;
         }
-        const text = String(state.cues[idx].text || '').trim();
-        if (!text) {
+        if (text === state.overlayText && visible === state.overlayVisible) return;
+        state.overlayText = text;
+        state.overlayVisible = visible;
+        if (!visible) {
             els.videoSubtitle.classList.add('hidden');
             els.videoSubtitleText.textContent = '';
             return;
@@ -518,41 +696,184 @@
         els.videoSubtitle.classList.remove('hidden');
     }
 
-    function stopPlaybackSync() {
-        if (state.syncTimer) {
-            clearInterval(state.syncTimer);
-            state.syncTimer = null;
+    function isRowVisibleInList(row) {
+        const wrap = els.listWrap;
+        if (!wrap || !row) return false;
+        const wrapRect = wrap.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        return rowRect.top >= wrapRect.top - 2 && rowRect.bottom <= wrapRect.bottom + 2;
+    }
+
+    function scheduleVideoTextTrackRefresh() {
+        if (state.textTrackRefreshTimer) clearTimeout(state.textTrackRefreshTimer);
+        state.textTrackRefreshTimer = setTimeout(() => {
+            state.textTrackRefreshTimer = null;
+            refreshVideoTextTrack();
+        }, 300);
+    }
+
+    function refreshVideoTextTrack() {
+        if (state.previewTextTrack) {
+            try { state.previewTextTrack.mode = 'hidden'; } catch (_) { /* noop */ }
         }
     }
 
-    function startPlaybackSync() {
-        stopPlaybackSync();
-        state.syncTimer = setInterval(syncPlaybackFromVideo, 100);
-    }
-
-    function syncPlaybackFromVideo() {
-        if (!els.video || !state.ready) return;
-        const t = (els.video.currentTime || 0) * 1000;
-        const active = findPlaybackIndex(t);
-        if (active !== state.playbackIndex) {
-            state.playbackIndex = active;
-            updateListRowClasses();
-            if (active >= 0) {
-                const row = els.cueBody?.querySelector(`tr[data-cue-idx="${active}"]`);
-                row?.scrollIntoView({ block: 'nearest' });
+    function findNextBoundaryMs(tMs, currentIdx) {
+        const candidates = [];
+        if (currentIdx >= 0 && currentIdx < state.cues.length) {
+            const end = cueEndMs(state.cues[currentIdx]);
+            if (end > tMs + 5) candidates.push(end);
+        }
+        if (currentIdx >= 0 && currentIdx + 1 < state.cues.length) {
+            const start = state.cues[currentIdx + 1].startMs;
+            if (start > tMs + 5) candidates.push(start);
+        }
+        if (currentIdx < 0 && state.cues.length) {
+            let lo = 0;
+            let hi = state.cues.length - 1;
+            let found = -1;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                if (state.cues[mid].startMs > tMs + 5) {
+                    found = mid;
+                    hi = mid - 1;
+                } else {
+                    lo = mid + 1;
+                }
             }
+            if (found >= 0) candidates.push(state.cues[found].startMs);
         }
-        updateVideoSubtitleOverlay();
-        updatePlayheadTimeLabel();
+        return candidates.length ? Math.min(...candidates) : null;
+    }
+
+    function stopPlaybackTimers() {
+        if (state.cueBoundaryTimer) {
+            clearTimeout(state.cueBoundaryTimer);
+            state.cueBoundaryTimer = null;
+        }
+        if (state.playheadTimer) {
+            clearInterval(state.playheadTimer);
+            state.playheadTimer = null;
+        }
+    }
+
+    function scheduleCueBoundarySync() {
+        if (state.cueBoundaryTimer) {
+            clearTimeout(state.cueBoundaryTimer);
+            state.cueBoundaryTimer = null;
+        }
+        if (!els.video || els.video.paused || els.video.ended) return;
+
+        const tMs = (els.video.currentTime || 0) * 1000;
+        const rate = els.video.playbackRate || 1;
+        let nextMs = findNextBoundaryMs(tMs, state.playbackIndex);
+        if (nextMs == null) {
+            const durMs = (els.video.duration || 0) * 1000;
+            if (durMs > tMs + 50) nextMs = durMs;
+            else return;
+        }
+
+        const delay = Math.max(20, (nextMs - tMs) / rate);
+        state.cueBoundaryTimer = setTimeout(() => {
+            state.cueBoundaryTimer = null;
+            if (!els.video || els.video.paused) return;
+            syncPlaybackFromVideo(false);
+            scheduleCueBoundarySync();
+        }, delay);
+    }
+
+    function startPlayheadTimer() {
+        if (state.playheadTimer) clearInterval(state.playheadTimer);
+        state.playheadTimer = setInterval(() => {
+            if (els.video && !els.video.paused) updatePlayheadTimeLabel(false);
+        }, 1000);
+    }
+
+    function onVideoPlay() {
+        document.body.classList.add('editor-video-playing');
+        syncPlaybackFromVideo(true);
+        scheduleCueBoundarySync();
+        startPlayheadTimer();
+    }
+
+    function onVideoPause() {
+        document.body.classList.remove('editor-video-playing');
+        stopPlaybackTimers();
+        syncPlaybackFromVideo(true);
+    }
+
+    function updatePlayingRowHighlight(prevIdx, nextIdx) {
+        if (prevIdx === nextIdx) return;
+        const run = () => {
+            if (prevIdx >= 0) {
+                els.cueBody?.querySelector(`tr[data-cue-idx="${prevIdx}"]`)
+                    ?.classList.remove('cue-row-playing');
+            }
+            if (nextIdx >= 0) {
+                const row = els.cueBody?.querySelector(`tr[data-cue-idx="${nextIdx}"]`);
+                if (row) {
+                    row.classList.add('cue-row-playing');
+                    if (!isRowVisibleInList(row)) {
+                        row.scrollIntoView({ block: 'nearest' });
+                    }
+                }
+            }
+        };
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(run, { timeout: 120 });
+        } else {
+            requestAnimationFrame(run);
+        }
+    }
+
+    function describeVideoCodec(codec, width, height) {
+        const name = String(codec || '').toLowerCase();
+        const res = width && height ? `${width}×${height}` : '';
+        const labels = {
+            h264: 'H.264',
+            hevc: 'HEVC',
+            h265: 'HEVC',
+            av1: 'AV1',
+            vp9: 'VP9',
+            vp8: 'VP8',
+            mpeg4: 'MPEG-4',
+        };
+        const label = labels[name] || (name ? name.toUpperCase() : '');
+        if (!label && !res) return '';
+        const softDecode = new Set(['hevc', 'h265', 'av1', 'vp9']).has(name);
+        const parts = [res, label].filter(Boolean).join(' · ');
+        return softDecode ? `${parts}（浏览器可能软解）` : parts;
+    }
+
+    function syncPlaybackFromVideo(updatePlayhead = true) {
+        if (!state.ready || !els.video) return;
+        syncFromExternalTime(els.video.currentTime || 0, updatePlayhead);
     }
 
     function updateVideoHint() {
         if (!els.videoHint) return;
         if (state.videoPath) {
-            els.videoHint.textContent = `${basename(state.videoPath)} · 列表选中编辑 · Ctrl+S 保存`;
+            const codecInfo = describeVideoCodec(state.videoCodec, state.videoWidth, state.videoHeight);
+            const suffix = codecInfo ? ` · ${codecInfo}` : '';
+            els.videoHint.textContent = `${basename(state.videoPath)}${suffix} · 列表选中编辑 · Ctrl+S 保存`;
         } else {
             els.videoHint.textContent = '未关联视频，可点击「关联视频」；亦可仅编辑文本与时间轴';
         }
+    }
+
+    async function probeVideoCodec(videoPath) {
+        state.videoCodec = '';
+        state.videoWidth = 0;
+        state.videoHeight = 0;
+        if (!videoPath) return;
+        try {
+            const probe = await electron?.ffmpegProbe?.({ path: videoPath });
+            if (probe?.ok) {
+                state.videoCodec = probe.codec || '';
+                state.videoWidth = probe.width || 0;
+                state.videoHeight = probe.height || 0;
+            }
+        } catch (_) { /* ffprobe optional */ }
     }
 
     async function loadVideo(videoPath) {
@@ -574,7 +895,7 @@
         }
 
         state.videoPath = res.path || videoPath;
-        const candidates = [res.url, res.fileUrl].filter(Boolean);
+        const candidates = [res.fileUrl, res.url].filter(Boolean);
         let loaded = false;
 
         for (const url of candidates) {
@@ -596,7 +917,17 @@
         if (!loaded) {
             setStatus(`视频无法播放：${basename(state.videoPath)}（格式或编码可能不受支持）`, 'err');
         } else {
+            els.video.classList.remove('hidden');
+            await probeVideoCodec(state.videoPath);
             updateVideoHint();
+            const softDecode = new Set(['hevc', 'h265', 'av1']).has(String(state.videoCodec || '').toLowerCase());
+            if (softDecode) {
+                setStatus(
+                    `已加载视频（${describeVideoCodec(state.videoCodec, state.videoWidth, state.videoHeight)}）。`
+                    + ' 若播放卡顿，可尝试用 H.264 编码版本，或在 Microsoft Store 安装「HEVC 视频扩展」。',
+                    'ok',
+                );
+            }
         }
     }
 
@@ -618,6 +949,12 @@
     }
 
     async function loadDocument(subPath, videoPath) {
+        stopPlaybackTimers();
+        document.body.classList.remove('editor-video-playing');
+        if (state.textTrackRefreshTimer) {
+            clearTimeout(state.textTrackRefreshTimer);
+            state.textTrackRefreshTimer = null;
+        }
         const res = await electron?.transubReadSubtitle?.({ path: subPath });
         if (!res?.ok) {
             setStatus(res?.error || '加载字幕失败', 'err');
@@ -631,6 +968,10 @@
         state.cues = res.cues || [];
         state.selectedIndex = state.cues.length ? 0 : -1;
         state.playbackIndex = -1;
+        state.previewTextTrack = null;
+        state.overlayText = '';
+        state.overlayVisible = false;
+        state.lastPlayheadLabel = '';
         setDirty(false);
 
         if (els.title) els.title.textContent = basename(res.path);
@@ -640,6 +981,8 @@
         saveInitialSnapshot();
         renderCueList();
         await loadVideo(state.videoPath);
+        refreshVideoTextTrack();
+        updateVideoSubtitleOverlay();
         await populateSidecarSelect(state.videoPath, res.path);
         setStatus(`已加载 ${state.cues.length} 条字幕`, 'ok');
         return true;
@@ -647,7 +990,7 @@
 
     async function openDocument(subPath, videoPath) {
         if (state.ready && state.dirty) {
-            const yes = confirm('当前字幕未保存，打开新文件将丢失修改，继续？');
+            const yes = editorConfirm('当前字幕未保存，打开新文件将丢失修改，继续？');
             if (!yes) return;
         }
         let linkedVideo = videoPath || '';
@@ -655,14 +998,18 @@
             const guess = await electron?.transubGuessVideoForSubtitle?.({ path: subPath });
             if (guess?.ok && guess.videoPath) linkedVideo = guess.videoPath;
         }
-        const ok = await loadDocument(subPath, linkedVideo);
-        if (!ok) return;
-        state.ready = true;
-        startPlaybackSync();
+        try {
+            const ok = await loadDocument(subPath, linkedVideo);
+            if (!ok) return;
+            state.ready = true;
+        } catch (err) {
+            setStatus(err?.message || '打开字幕失败', 'err');
+        }
     }
 
     async function pickAndOpenInWindow() {
         const res = await electron?.transubSelectSubtitle?.({ title: '选择要编辑的字幕文件' });
+        restoreEditorFocus();
         if (!res?.ok) {
             setStatus(res?.error || '打开字幕失败', 'err');
             return;
@@ -676,6 +1023,7 @@
             defaultPath: state.videoPath || state.path,
             title: '选择关联视频',
         });
+        restoreEditorFocus();
         if (!res?.ok) {
             setStatus(res?.error || '选择视频失败', 'err');
             return;
@@ -714,9 +1062,7 @@
 
     function insertCueAtPlayhead() {
         syncDetailToCue();
-        const startMs = els.video
-            ? Math.round((els.video.currentTime || 0) * 1000)
-            : 0;
+        const startMs = getPlaybackTimeMs();
         let endMs = startMs + 2000;
 
         for (const c of state.cues) {
@@ -743,13 +1089,149 @@
     function deleteSelectedCue() {
         if (state.selectedIndex < 0) return;
         const idx = state.selectedIndex;
-        if (!confirm(`删除第 ${idx + 1} 条字幕？`)) return;
+        if (!editorConfirm(`删除第 ${idx + 1} 条字幕？`)) return;
         syncDetailToCue();
         state.cues.splice(idx, 1);
         state.selectedIndex = Math.min(idx, state.cues.length - 1);
         setDirty(true);
         renderCueList();
         setStatus(`已删除第 ${idx + 1} 条`, 'ok');
+    }
+
+    function quickSplitSelectedCue(mode) {
+        if (state.selectedIndex < 0) return;
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        const result = computeSplitParts(mode, cue);
+        if (result.error) {
+            setStatus(result.error, 'err');
+            return;
+        }
+        applySplitResult(idx, result.cues);
+    }
+
+    function smartAdjustSelectedCueDuration() {
+        if (state.selectedIndex < 0) return;
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        const chars = textCharCount(cue.text);
+        if (!chars) {
+            setStatus('当前字幕无文本，无法调节时长', 'err');
+            return;
+        }
+
+        const targetCps = getTargetCps();
+        const minDurMs = 500;
+        const maxDurMs = 10000;
+        const gapMs = 1;
+        let needMs = Math.ceil((chars / targetCps) * 1000);
+        needMs = Math.max(minDurMs, Math.min(maxDurMs, needMs));
+
+        let newEnd = cue.startMs + needMs;
+        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
+        if (next) newEnd = Math.min(newEnd, next.startMs - gapMs);
+        newEnd = Math.max(cue.startMs + minDurMs, newEnd);
+
+        const oldEnd = cueEndMs(cue);
+        if (newEnd === oldEnd) {
+            setStatus(`第 ${idx + 1} 条时长已合适（CPS ${computeCps(cue.text, cueDurationMs(cue))}）`, 'ok');
+            return;
+        }
+
+        cue.endMs = newEnd;
+        setDirty(true);
+        refreshListRow(idx);
+        if (state.selectedIndex === idx) renderDetailPane();
+        const newCps = computeCps(cue.text, cueDurationMs(cue));
+        setStatus(
+            `已调节第 ${idx + 1} 条时长为 ${formatDurationSec(cueDurationMs(cue))} 秒`
+            + (newCps ? `（CPS ${newCps}）` : ''),
+            'ok',
+        );
+    }
+
+    function updateContextMenuState() {
+        if (!els.cueContextMenu) return;
+        const hasCue = state.selectedIndex >= 0 && state.selectedIndex < state.cues.length;
+        const text = hasCue ? String(state.cues[state.selectedIndex].text || '').trim() : '';
+        const canSplit = hasCue && !!text;
+        const canSplitLines = canSplit && String(state.cues[state.selectedIndex].text || '').includes('\n');
+        const canSplitSpaces = canSplit && /\s/.test(String(state.cues[state.selectedIndex].text || ''));
+
+        const canAlignStart = hasCue && !!els.video;
+        const canSmartDur = hasCue && textCharCount(state.cues[state.selectedIndex].text) > 0;
+
+        els.cueContextMenu.querySelectorAll('[data-ctx-action]').forEach((btn) => {
+            const action = btn.dataset.ctxAction;
+            if (action === 'split-modal' || action === 'split-lines' || action === 'split-spaces') {
+                if (action === 'split-lines') btn.disabled = !canSplitLines;
+                else if (action === 'split-spaces') btn.disabled = !canSplitSpaces;
+                else btn.disabled = !canSplit;
+            } else if (action === 'align-start') {
+                btn.disabled = !canAlignStart;
+            } else if (action === 'smart-dur') {
+                btn.disabled = !canSmartDur;
+            } else if (action === 'delete') {
+                btn.disabled = !hasCue;
+            } else if (action === 'insert') {
+                btn.disabled = false;
+            }
+        });
+    }
+
+    function hideCueContextMenu() {
+        if (!els.cueContextMenu) return;
+        els.cueContextMenu.classList.add('hidden');
+    }
+
+    function showCueContextMenu(clientX, clientY) {
+        if (!els.cueContextMenu) return;
+        updateContextMenuState();
+        const menu = els.cueContextMenu;
+        menu.classList.remove('hidden');
+        menu.style.visibility = 'hidden';
+        menu.style.left = '0';
+        menu.style.top = '0';
+        const rect = menu.getBoundingClientRect();
+        menu.style.visibility = '';
+        const pad = 8;
+        let x = clientX;
+        let y = clientY;
+        if (x + rect.width > window.innerWidth - pad) x = window.innerWidth - rect.width - pad;
+        if (y + rect.height > window.innerHeight - pad) y = window.innerHeight - rect.height - pad;
+        menu.style.left = `${Math.max(pad, x)}px`;
+        menu.style.top = `${Math.max(pad, y)}px`;
+    }
+
+    function handleContextMenuAction(action) {
+        hideCueContextMenu();
+        switch (action) {
+            case 'split-modal':
+                openSplitModal();
+                break;
+            case 'split-lines':
+                quickSplitSelectedCue('lines');
+                break;
+            case 'split-spaces':
+                quickSplitSelectedCue('spaces');
+                break;
+            case 'align-start':
+                setStartToPlayhead();
+                break;
+            case 'smart-dur':
+                smartAdjustSelectedCueDuration();
+                break;
+            case 'insert':
+                insertCueAtPlayhead();
+                break;
+            case 'delete':
+                deleteSelectedCue();
+                break;
+            default:
+                break;
+        }
     }
 
     function splitTextByLines(text) {
@@ -892,7 +1374,7 @@
 
         if (mode === 'playhead') {
             if (!els.video) return { error: '未加载视频，无法在播放头处分割' };
-            const splitMs = Math.round((els.video.currentTime || 0) * 1000);
+            const splitMs = getPlaybackTimeMs();
             if (splitMs <= cue.startMs || splitMs >= end) {
                 return { error: '播放头不在当前字幕时间范围内' };
             }
@@ -986,7 +1468,7 @@
             const text = cue.text || '';
             if (pos <= 0 || pos >= text.length) hint = '提示：在文本框中将光标置于要分割的位置';
         } else if (mode === 'playhead' && els.video) {
-            const t = Math.round((els.video.currentTime || 0) * 1000);
+            const t = getPlaybackTimeMs();
             if (t <= cue.startMs || t >= end) hint = '提示：播放头需位于当前字幕的起止时间之间';
         } else if (mode === 'lines' && !String(cue.text || '').includes('\n')) {
             hint = '提示：当前文本无换行，建议选择其他方式';
@@ -1607,10 +2089,14 @@
         setStatus(`智能调整完成，已更新 ${stats.affected} 条字幕`, 'ok');
     }
 
-    function updatePlayheadTimeLabel() {
+    function updatePlayheadTimeLabel(exact) {
         if (!els.playheadTime) return;
         const t = els.video ? (els.video.currentTime || 0) * 1000 : 0;
-        els.playheadTime.textContent = formatDisplayTime(t, state.format);
+        const displayMs = exact ? Math.round(t) : Math.floor(t / 1000) * 1000;
+        const label = formatDisplayTime(displayMs, state.format);
+        if (label === state.lastPlayheadLabel) return;
+        state.lastPlayheadLabel = label;
+        els.playheadTime.textContent = label;
     }
 
     function shiftAllCues(deltaMs) {
@@ -1627,7 +2113,7 @@
     global.__transubEditorConfirmClose = async () => {
         if (!state.dirty) return { allow: true };
         return new Promise((resolve) => {
-            const ok = confirm('字幕已修改但未保存，确定要关闭窗口吗？');
+            const ok = editorConfirm('字幕已修改但未保存，确定要关闭窗口吗？');
             resolve({ allow: ok });
         });
     };
@@ -1777,9 +2263,17 @@
             updateDetailMeta();
         });
         els.detailText?.addEventListener('input', onDetailChanged);
+        els.targetCps?.addEventListener('input', () => {
+            saveTargetCpsPrefs();
+            updateDetailMeta();
+        });
+        els.targetCps?.addEventListener('change', () => {
+            saveTargetCpsPrefs();
+            updateDetailMeta();
+        });
 
         els.sidecarSelect?.addEventListener('change', async (e) => {
-            if (!state.dirty || confirm('切换字幕后当前修改将丢失，继续？')) {
+            if (!state.dirty || editorConfirm('切换字幕后当前修改将丢失，继续？')) {
                 await loadDocument(e.target.value, state.videoPath);
             } else {
                 e.target.value = state.path;
@@ -1791,12 +2285,50 @@
             if (!row) return;
             const idx = Number(row.dataset.cueIdx);
             selectCue(idx, { seek: true, scroll: true });
+            focusCueList();
         });
 
         els.cueBody?.addEventListener('dblclick', (e) => {
             const row = e.target.closest('tr[data-cue-idx]');
             if (!row) return;
             els.detailText?.focus();
+        });
+
+        els.cueBody?.addEventListener('contextmenu', (e) => {
+            const row = e.target.closest('tr[data-cue-idx]');
+            if (!row) return;
+            e.preventDefault();
+            const idx = Number(row.dataset.cueIdx);
+            selectCue(idx, { scroll: false });
+            showCueContextMenu(e.clientX, e.clientY);
+        });
+
+        els.cueContextMenu?.querySelectorAll('[data-ctx-action]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (btn.disabled) return;
+                handleContextMenuAction(btn.dataset.ctxAction);
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!els.cueContextMenu?.classList.contains('hidden')
+                && !els.cueContextMenu?.contains(e.target)) {
+                hideCueContextMenu();
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && els.cueContextMenu && !els.cueContextMenu.classList.contains('hidden')) {
+                hideCueContextMenu();
+            }
+        });
+        els.cueBody?.closest('.editor-list-wrap')?.addEventListener('scroll', hideCueContextMenu);
+        window.addEventListener('resize', hideCueContextMenu);
+
+        els.listWrap?.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('tr[data-cue-idx]')) return;
+            focusCueList();
         });
 
         document.addEventListener('keydown', (e) => {
@@ -1837,6 +2369,32 @@
                 saveDocument();
                 return;
             }
+            if (e.key === 'Delete' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                if (e.target.matches('input, textarea')) return;
+                const modalOpen = [
+                    els.splitModal,
+                    els.findReplaceModal,
+                    els.batchDurModal,
+                    els.smartAdjustModal,
+                ].some((m) => m && !m.classList.contains('hidden'));
+                if (modalOpen) return;
+                if (state.selectedIndex < 0) return;
+                e.preventDefault();
+                deleteSelectedCue();
+                return;
+            }
+            if (isListFocused()) {
+                if (e.key === ' ' || e.code === 'Space') {
+                    e.preventDefault();
+                    toggleVideoPlayback();
+                    return;
+                }
+                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+                    e.preventDefault();
+                    insertCueAtPlayhead();
+                    return;
+                }
+            }
             if (e.target.matches('input, textarea') && !e.ctrlKey && !e.metaKey) return;
             if (e.key === 'ArrowUp' && state.selectedIndex > 0) {
                 e.preventDefault();
@@ -1847,7 +2405,31 @@
             }
         });
 
-        els.video?.addEventListener('timeupdate', syncPlaybackFromVideo);
+        els.video?.addEventListener('play', onVideoPlay);
+        els.video?.addEventListener('pause', onVideoPause);
+        els.video?.addEventListener('ended', onVideoPause);
+        els.video?.addEventListener('playing', () => {
+            requestAnimationFrame(() => {
+                const v = els.video;
+                if (!v || v.paused) return;
+                if (v.videoWidth > 0 && v.videoHeight > 0) return;
+                const codec = String(state.videoCodec || '').toLowerCase();
+                const soft = ['hevc', 'h265', 'av1', 'vp9'].includes(codec);
+                setStatus(
+                    soft
+                        ? '内置播放器无法解码该视频编码（黑屏仅有声音），可尝试 H.264 版本或安装 HEVC 视频扩展'
+                        : '视频正在播放但无画面，请检查视频文件',
+                    'err',
+                );
+            });
+        });
+        els.video?.addEventListener('seeked', () => {
+            syncPlaybackFromVideo(true);
+            if (els.video && !els.video.paused) scheduleCueBoundarySync();
+        });
+        els.video?.addEventListener('ratechange', () => {
+            if (els.video && !els.video.paused) scheduleCueBoundarySync();
+        });
     }
 
     function cacheElements() {
@@ -1907,12 +2489,15 @@
             restoreBtn: document.getElementById('editorRestoreBtn'),
             sidecarSelect: document.getElementById('editorSidecarSelect'),
             cueBody: document.getElementById('editorCueBody'),
+            listWrap: document.getElementById('editorListWrap'),
+            cueContextMenu: document.getElementById('editorCueContextMenu'),
             detailPane: document.getElementById('editorDetailPane'),
             detailStart: document.getElementById('editorDetailStart'),
             detailDuration: document.getElementById('editorDetailDuration'),
             detailEnd: document.getElementById('editorDetailEnd'),
             detailText: document.getElementById('editorDetailText'),
             detailCps: document.getElementById('editorDetailCps'),
+            targetCps: document.getElementById('editorTargetCps'),
             lineLen: document.getElementById('editorLineLen'),
             textLen: document.getElementById('editorTextLen'),
             detailWarn: document.getElementById('editorDetailWarn'),
@@ -1933,6 +2518,7 @@
             durNudgeUp: document.getElementById('editorDurNudgeUp'),
             setStartToPlayhead: document.getElementById('editorSetStartToPlayhead'),
             video: document.getElementById('editorVideo'),
+            videoFrame: document.getElementById('editorVideoFrame'),
             videoWrap: document.getElementById('editorVideoWrap'),
             videoHint: document.getElementById('editorVideoHint'),
             videoSubtitle: document.getElementById('editorVideoSubtitle'),
@@ -1944,6 +2530,7 @@
     function init() {
         if (!electron?.isDesktop || !document.getElementById('editorCueBody')) return;
         cacheElements();
+        applyTargetCpsPrefs();
         [
             els.splitModal,
             els.findReplaceModal,
@@ -1954,9 +2541,21 @@
         });
         bindEvents();
 
-        electron.onSubtitleEditorInit?.((payload) => {
-            if (payload?.subPath) openDocument(payload.subPath, payload.videoPath || '');
+        electron?.onSubtitleEditorRefocus?.(() => restoreEditorFocus());
+        window.addEventListener('focus', () => {
+            const active = document.activeElement;
+            const stale = !active
+                || active === document.body
+                || Boolean(active.closest?.('.editor-modal.hidden'));
+            if (stale) restoreEditorFocus();
         });
+
+        editorBootstrapped = true;
+        if (pendingEditorInit) {
+            const payload = pendingEditorInit;
+            pendingEditorInit = null;
+            bootstrapEditorDocument(payload);
+        }
     }
 
     if (document.readyState === 'loading') {

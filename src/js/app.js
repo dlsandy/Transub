@@ -125,10 +125,16 @@
         return Math.max(0, Math.floor((Date.now() - ts) / 1000));
     }
 
+    function itemElapsedSec(item) {
+        if (!item.startedAt) return 0;
+        const endTs = item.status === 'running' ? Date.now() : (item.completedAt || item.startedAt);
+        return Math.max(0, Math.floor((endTs - item.startedAt) / 1000));
+    }
+
     function formatElapsedCell(item) {
         if (item.status === 'pending' || item.status === 'ready') return '—';
         if (!item.startedAt) return '—';
-        return formatDuration(elapsedSecSince(item.startedAt));
+        return formatDuration(itemElapsedSec(item));
     }
 
     function bumpProgress(current, next) {
@@ -224,7 +230,7 @@
             'retryFailedBtn', 'pendingQueueBadge',
             'saveParamsBtn', 'saveParamsStatus',
             'jobStatusBadge', 'progressLabel', 'progressCount', 'progressBar',
-            'currentFile', 'summaryRow', 'statGenerated', 'statSkipped', 'statFailed', 'logHost',
+            'currentFile', 'logHost',
             'removeSelectedBtn', 'clearListBtn', 'startBtn', 'selectAllCheck',
             'fileListBody', 'emptyListRow', 'stopBtn', 'filePanel', 'dropZone', 'dropOverlay',
             'openSubtitleFileBtn',
@@ -1096,10 +1102,6 @@
             countText = `${label} · 已用 ${elapsed}`;
         }
         if (els.progressCount) els.progressCount.textContent = countText;
-
-        if (els.statGenerated) els.statGenerated.textContent = String(state.generated);
-        if (els.statSkipped) els.statSkipped.textContent = String(state.skipped);
-        if (els.statFailed) els.statFailed.textContent = String(state.failed);
     }
 
     function syncVideoProgressFromPayload(p) {
@@ -1150,7 +1152,6 @@
         resetVideoProgress();
 
         if (els.logHost) els.logHost.innerHTML = '';
-        els.summaryRow?.classList.remove('hidden');
         setBadge('运行中', 'running');
         els.progressLabel.textContent = '正在排队处理…';
         els.currentFile.textContent = '—';
@@ -1193,33 +1194,39 @@
                 }
                 updateItem(path, itemPatch);
             } else if (p.phase === 'skipped') {
-                updateItem(path, {
+                const skippedPatch = {
                     status: 'skipped',
                     progress: 100,
                     detail: p.itemDetail || '已有字幕',
                     subtitlePath: p.subtitlePath,
                     existingSubtitle: p.subtitlePath,
-                });
+                };
+                if (findItem(path)?.startedAt) skippedPatch.completedAt = Date.now();
+                updateItem(path, skippedPatch);
             } else if (p.phase === 'done') {
                 state.videoProgress = 100;
                 if (Number(p.videoTotalSec) > 0) {
                     state.videoTotalSec = Number(p.videoTotalSec);
                     state.videoCurrentSec = state.videoTotalSec;
                 }
-                updateItem(path, {
+                const donePatch = {
                     status: 'done',
                     progress: 100,
                     detail: p.itemDetail || '完成',
                     subtitlePath: p.subtitlePath || undefined,
                     existingSubtitle: p.subtitlePath || undefined,
-                });
+                };
+                if (findItem(path)?.startedAt) donePatch.completedAt = Date.now();
+                updateItem(path, donePatch);
                 if (!p.subtitlePath) refreshSubtitlePathsForItems();
             } else if (p.phase === 'failed') {
-                updateItem(path, {
+                const failedPatch = {
                     status: 'failed',
                     progress: state.videoProgress || 0,
                     detail: p.itemDetail || p.error || '失败',
-                });
+                };
+                if (findItem(path)?.startedAt) failedPatch.completedAt = Date.now();
+                updateItem(path, failedPatch);
             }
         }
 
@@ -1284,6 +1291,9 @@
 
         state.items.forEach((item) => {
             if (item.status === 'pending' || item.status === 'running') {
+                if (item.status === 'running' && item.startedAt && !item.completedAt) {
+                    item.completedAt = Date.now();
+                }
                 item.status = 'failed';
                 item.progress = item.progress || 0;
                 item.detail = item.detail || '未完成';

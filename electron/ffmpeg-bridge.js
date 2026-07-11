@@ -99,6 +99,26 @@ function parseDurationFromFfprobeOutput(text) {
     return match ? Number(match[1]) : 0;
 }
 
+function parseVideoStreamFromFfprobeOutput(text) {
+    try {
+        const data = JSON.parse(String(text || ''));
+        const stream = Array.isArray(data.streams) ? data.streams[0] : null;
+        return {
+            duration: Number(data.format?.duration) || 0,
+            codec: String(stream?.codec_name || '').toLowerCase(),
+            width: Number(stream?.width) || 0,
+            height: Number(stream?.height) || 0,
+        };
+    } catch {
+        return {
+            duration: parseDurationFromFfprobeOutput(text),
+            codec: '',
+            width: 0,
+            height: 0,
+        };
+    }
+}
+
 function probeVideo(filePath, ffprobePath) {
     const resolved = path.resolve(String(filePath || ''));
     if (!fs.existsSync(resolved)) {
@@ -107,6 +127,8 @@ function probeVideo(filePath, ffprobePath) {
     const exe = ffprobePath || findFfprobePath();
     const args = [
         '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=codec_name,width,height',
         '-show_entries', 'format=duration',
         '-of', 'json',
         resolved,
@@ -135,10 +157,13 @@ function probeVideo(filePath, ffprobePath) {
                 resolve({ ok: false, error: stderr.trim() || `ffprobe 退出码 ${code}` });
                 return;
             }
-            const duration = parseDurationFromFfprobeOutput(stdout);
+            const info = parseVideoStreamFromFfprobeOutput(stdout);
             resolve({
                 ok: true,
-                duration,
+                duration: info.duration,
+                codec: info.codec,
+                width: info.width,
+                height: info.height,
                 path: resolved,
             });
         });

@@ -83,6 +83,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         ipcRenderer.on('subtitle-editor-init', handler);
         return () => ipcRenderer.removeListener('subtitle-editor-init', handler);
     },
+    onSubtitleEditorRefocus: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = () => callback();
+        ipcRenderer.on('subtitle-editor-refocus', handler);
+        return () => ipcRenderer.removeListener('subtitle-editor-refocus', handler);
+    },
     onSubtitleTaskJobFinished: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const handler = (_event, payload) => callback(payload);

@@ -11,6 +11,7 @@ const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
 const { getProjectRoot } = require('./app-paths');
 const { asString } = require('./ipc-validate');
+const { refocusWindow } = require('./window-focus');
 
 const VIDEO_EXTENSIONS = new Set([
     'mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp',
@@ -350,6 +351,7 @@ function setupExtensionsBridge(api, deps) {
                 ],
                 defaultPath: defaultPath || undefined,
             });
+            refocusWindow(win);
             if (result.canceled || !result.filePaths?.length) {
                 return { ok: true, canceled: true };
             }
@@ -364,6 +366,11 @@ function setupExtensionsBridge(api, deps) {
     register('transub-select-editor-video', async (event, payload = {}) => {
         try {
             const win = browserWindowFromEvent(event);
+            if (win && !win.isDestroyed()) {
+                if (win.isMinimized()) win.restore();
+                win.show();
+                win.focus();
+            }
             const hintPath = asString(payload.defaultPath, 4096).trim();
             const defaultPath = hintPath ? path.dirname(path.resolve(hintPath)) : undefined;
             const result = await dialog.showOpenDialog(win, {
@@ -372,6 +379,7 @@ function setupExtensionsBridge(api, deps) {
                 filters: [{ name: '视频', extensions: SUBTITLE_VIDEO_EXTENSIONS }],
                 defaultPath,
             });
+            refocusWindow(win);
             if (result.canceled || !result.filePaths?.length) {
                 return { ok: true, canceled: true };
             }
@@ -468,6 +476,7 @@ function setupExtensionsBridge(api, deps) {
             return { ok: false, error: err.message || String(err) };
         }
     });
+
 }
 
 module.exports = {

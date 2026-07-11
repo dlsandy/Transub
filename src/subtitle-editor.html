@@ -19,8 +19,15 @@
             flex-direction: column;
             background: #fff;
             border-right: 1px solid rgb(229 231 235);
+            contain: layout paint style;
         }
         .editor-list-wrap { flex: 1; min-height: 0; overflow: auto; border-bottom: 1px solid rgb(229 231 235); }
+        .editor-list-wrap:focus { outline: none; }
+        .editor-list-wrap:focus-visible { box-shadow: inset 0 0 0 2px rgb(109 40 217); }
+        .editor-list-wrap tr[data-cue-idx] {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 1.6rem;
+        }
         .editor-detail-pane {
             flex: 0 0 42%;
             min-height: 11rem;
@@ -32,9 +39,18 @@
             background: rgb(249 250 251);
             overflow: hidden;
         }
-        .editor-video-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #000; }
-        .editor-video-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #000; }
-        #editorVideo { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; pointer-events: auto; }
+        .editor-video-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #000; contain: layout style; }
+        .editor-video-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #000; isolation: isolate; }
+        #editorVideo {
+            display: block; width: 100%; height: 100%; object-fit: contain; background: #000;
+            pointer-events: auto; transform: translateZ(0);
+        }
+        #editorVideo::cue {
+            background: rgba(0, 0, 0, 0.78);
+            color: #fff;
+            font-size: clamp(15px, 2.2vw, 22px);
+            line-height: 1.45;
+        }
         .editor-video-subtitle {
             position: absolute; left: 0; right: 0; bottom: 10%; z-index: 2;
             display: flex; justify-content: center; padding: 0 1.5rem; pointer-events: none;
@@ -71,8 +87,15 @@
         tr.cue-row-selected td { color: #fff; }
         tr.cue-row-selected .cell-text { color: rgb(219 234 254); }
         tr.cue-row-playing:not(.cue-row-selected) {
-            box-shadow: inset 0 0 0 2px rgb(109 40 217);
+            box-shadow: inset 3px 0 0 rgb(109 40 217);
             background: rgb(245 243 255) !important;
+        }
+        body.editor-video-playing .editor-detail-pane {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 11rem;
+        }
+        body.editor-video-playing .editor-list-wrap tr:not(.cue-row-playing):not(.cue-row-selected) {
+            content-visibility: auto;
         }
         .cell-warn { background: rgb(254 215 170) !important; color: rgb(124 45 18) !important; }
         tr.cue-row-selected .cell-warn { background: rgb(251 146 60) !important; color: #fff !important; }
@@ -194,6 +217,23 @@
         #editorSmartAdjustConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
         #editorSmartAdjustConfirm:hover { background: rgb(91 33 182); }
         #editorRestoreBtn { color: rgb(180 83 9); }
+        .editor-context-menu {
+            position: fixed; z-index: 60; min-width: 9.5rem;
+            background: #fff; border: 1px solid rgb(229 231 235); border-radius: 0.375rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 0.25rem 0;
+            font-size: 0.75rem;
+        }
+        .editor-context-menu.hidden { display: none !important; }
+        .editor-context-menu button {
+            display: block; width: 100%; text-align: left; padding: 0.4rem 0.75rem;
+            border: none; background: transparent; color: rgb(55 65 81); cursor: pointer;
+        }
+        .editor-context-menu button:hover:not(:disabled) { background: rgb(243 244 246); }
+        .editor-context-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .editor-context-menu button.danger { color: rgb(220 38 38); }
+        .editor-context-menu .ctx-sep {
+            height: 1px; margin: 0.2rem 0; background: rgb(243 244 246);
+        }
     </style>
 </head>
 <body class="bg-gray-50 h-screen overflow-hidden text-gray-800 flex flex-col">
@@ -222,7 +262,7 @@
 
     <div class="editor-main">
         <section class="editor-cues-panel">
-            <div class="editor-list-wrap">
+            <div id="editorListWrap" class="editor-list-wrap" tabindex="-1">
                 <table class="editor-cue-table text-sm">
                     <thead class="sticky top-0 bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wide z-10 border-b border-gray-100">
                         <tr>
@@ -276,6 +316,12 @@
                 <div class="detail-meta">
                     <span>单行长度 <strong id="editorLineLen">0</strong></span>
                     <span>总长度 <strong id="editorTextLen">0</strong></span>
+                    <span class="inline-flex items-center gap-1">
+                        每秒字数
+                        <input type="number" id="editorTargetCps" min="0.1" max="100" step="0.1" value="3"
+                            class="w-14 text-xs border border-gray-200 rounded px-1 py-0 tabular-nums bg-white"
+                            title="智能调节时长与 CPS 参考的目标读速">
+                    </span>
                     <span id="editorDetailWarn" class="text-amber-700 hidden"></span>
                 </div>
                 <div class="detail-nav">
@@ -495,9 +541,9 @@
         </div>
 
         <aside id="editorVideoWrap" class="editor-video-panel">
-            <div class="editor-video-frame">
-                <video id="editorVideo" controls playsinline preload="metadata"></video>
-                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="polite">
+            <div id="editorVideoFrame" class="editor-video-frame">
+                <video id="editorVideo" controls playsinline preload="auto"></video>
+                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="off">
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
             </div>
@@ -509,6 +555,17 @@
             </div>
             <p id="editorVideoHint" class="text-[10px] text-gray-400 px-2 py-1.5 bg-gray-900 shrink-0">列表选中编辑 · Ctrl+F 查找 · Ctrl+S 保存</p>
         </aside>
+    </div>
+
+    <div id="editorCueContextMenu" class="editor-context-menu hidden" role="menu">
+        <button type="button" data-ctx-action="split-modal" role="menuitem">分割</button>
+        <button type="button" data-ctx-action="split-lines" role="menuitem">按换行分割</button>
+        <button type="button" data-ctx-action="split-spaces" role="menuitem">按空格分割</button>
+        <div class="ctx-sep" role="separator"></div>
+        <button type="button" data-ctx-action="align-start" role="menuitem">起始对齐播放头</button>
+        <button type="button" data-ctx-action="smart-dur" role="menuitem">智能调节时长</button>
+        <button type="button" data-ctx-action="insert" role="menuitem">插入</button>
+        <button type="button" data-ctx-action="delete" class="danger" role="menuitem">删除</button>
     </div>
 
     <script src="js/subtitle-editor.js"></script>
