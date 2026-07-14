@@ -29,6 +29,19 @@
         done: '完成',
     };
 
+    const STAGE_RANK = {
+        starting: 0,
+        vad: 1,
+        model: 2,
+        transcribe: 3,
+        save: 4,
+        done: 5,
+    };
+
+    function stageRank(stage) {
+        return STAGE_RANK[stage] ?? 0;
+    }
+
     function stageLabel(stage) {
         return STAGE_LABELS[stage] || '处理中';
     }
@@ -105,18 +118,22 @@
         const mediaSec = Number(videoTotalSec) || 0;
         const currentSec = Number(videoCurrentSec) || 0;
         switch (stage) {
-            case 'starting': return 1;
-            case 'vad': return Math.round(2 + (local / 100) * 8);
-            case 'model': return local > 0 ? Math.round(10 + (local / 100) * 6) : 12;
+            case 'starting':
+            case 'vad':
+            case 'model':
+                return 0;
             case 'transcribe': {
                 const timelinePct = mediaSec >= 60
                     ? Math.min(100, Math.round((currentSec / mediaSec) * 100))
                     : local;
-                return Math.round(16 + (timelinePct / 100) * 82);
+                return Math.min(98, Math.round((timelinePct / 100) * 98));
             }
             case 'save': return 99;
             case 'done': return 100;
-            default: return Math.min(99, local);
+            default:
+                return stageRank(stage) >= stageRank('transcribe')
+                    ? Math.min(98, local)
+                    : 0;
         }
     }
 
@@ -137,10 +154,36 @@
         return formatDuration(itemElapsedSec(item));
     }
 
+    function formatProcessedCell(item) {
+        const total = Number(item.duration) || Number(item.processedTotalSec) || 0;
+        const processed = Number(item.processedSec) || 0;
+
+        if (item.status === 'done') {
+            const sec = total > 0 ? total : processed;
+            return sec > 0 ? formatDuration(sec) : '—';
+        }
+        if (item.status === 'skipped') return '—';
+        if (processed > 0) {
+            return total > 0
+                ? `${formatDuration(processed)} / ${formatDuration(total)}`
+                : formatDuration(processed);
+        }
+        return '—';
+    }
+
     function bumpProgress(current, next) {
         const cur = Math.max(0, Math.min(99, Number(current) || 0));
         const nxt = Math.max(0, Math.min(99, Number(next) || 0));
         return Math.max(cur, nxt);
+    }
+
+    function isPreTranscribeStage(stage) {
+        return stageRank(stage) < stageRank('transcribe');
+    }
+
+    function effectiveItemProgress(stage, progress) {
+        if (isPreTranscribeStage(stage)) return 0;
+        return Math.max(0, Math.min(99, Number(progress) || 0));
     }
 
     function startElapsedTicker() {
@@ -503,9 +546,6 @@
         if (els.ffmpegPathInput && options.ffmpegPath != null) {
             els.ffmpegPathInput.value = options.ffmpegPath;
         }
-        if (els.ffmpegStatus && !options.ffmpegPath) {
-            els.ffmpegStatus.textContent = '';
-        }
         els.outputDirWrap?.classList.toggle('hidden', (els.outputModeSelect?.value || 'same') !== 'custom');
         if (els.logLevelSelect && options.logLevel) {
             els.logLevelSelect.value = String(options.logLevel).toUpperCase();
@@ -651,6 +691,8 @@
             if (item.status === 'failed') {
                 item.status = 'ready';
                 item.progress = 0;
+                item.processedSec = 0;
+                item.processedTotalSec = 0;
                 item.detail = '';
                 item.error = '';
                 item.selected = true;
@@ -702,6 +744,12 @@
             const source = res.custom ? '自定义路径' : (res.bundled ? '内置' : '系统 PATH');
             els.ffmpegStatus.textContent = `FFmpeg 可用（${source}）${res.version ? ` · ${res.version}` : ''}`;
             els.ffmpegStatus.className = 'text-xs text-emerald-600';
+            const pathToSave = getFfmpegPathFromForm();
+            if (pathToSave) {
+                try {
+                    await electron?.transWithAiSaveOptions?.({ ffmpegPath: pathToSave });
+                } catch (_) { /* ignore persist errors */ }
+            }
         } else if (!getFfmpegPathFromForm()) {
             els.ffmpegStatus.textContent = res?.error || '系统 PATH 中未找到 ffprobe，请指定 FFmpeg 路径';
             els.ffmpegStatus.className = 'text-xs text-amber-600';
@@ -938,24 +986,6 @@
         }
     }
 
-    function statusLabel(item) {
-        switch (item.status) {
-            case 'probing': return '<span class="text-gray-500">探测中…</span>';
-            case 'ready': return '<span class="text-gray-600">就绪</span>';
-            case 'pending': return '<span class="text-gray-500">等待</span>';
-            case 'running': {
-                const pct = Math.min(99, item.progress || 0);
-                const stage = stageLabel(item.stage || 'transcribe');
-                return `<span class="text-violet-600">${stage} ${pct}%</span>`;
-            }
-            case 'done': return '<span class="text-emerald-600">完成</span>';
-            case 'skipped': return '<span class="text-amber-600">跳过</span>';
-            case 'failed': return '<span class="text-red-600">失败</span>';
-            case 'error': return '<span class="text-red-600">无效</span>';
-            default: return '—';
-        }
-    }
-
     function renderList() {
         if (!els.fileListBody) return;
         if (!state.items.length) {
@@ -984,7 +1014,7 @@
                 <td class="px-2 py-1.5 text-xs col-file"><div class="cell-ellipsis" title="${esc(item.path)}">${esc(basename(item.path))}${subBadge}</div></td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums">${item.duration ? formatDuration(item.duration) : '—'}</td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-600">${formatElapsedCell(item)}</td>
-                <td class="px-2 py-1.5 text-xs col-status"><div class="cell-ellipsis">${statusLabel(item)}</div></td>
+                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-600 col-processed">${formatProcessedCell(item)}</td>
                 <td class="px-2 py-1.5 text-xs col-detail text-gray-500"><div class="cell-ellipsis" title="${esc(detail)}">${esc(detail)}</div></td>
                 <td class="px-1 py-1.5 text-center col-actions">
                     <div class="row-actions">
@@ -1070,26 +1100,27 @@
 
     function computeDisplayProgress() {
         const cap = state.running ? 99 : 100;
-        const itemPct = Math.max(0, Math.min(cap, state.videoProgress || 0));
+        const itemPct = effectiveItemProgress(state.itemStage, state.videoProgress);
+        const displayPct = Math.max(0, Math.min(cap, itemPct));
         const stageText = state.running ? stageLabel(state.itemStage) : '';
         const hasMediaTimeline = state.videoTotalSec >= 60 && state.itemStage === 'transcribe';
-        if (hasMediaTimeline && state.videoProgress > 0) {
+        if (hasMediaTimeline && displayPct > 0) {
             const timeline = `${formatDuration(state.videoCurrentSec)} / ${formatDuration(state.videoTotalSec)}`;
             return {
-                pct: itemPct,
-                label: stageText ? `${stageText} · ${timeline} · ${itemPct}%` : `${timeline} · ${itemPct}%`,
+                pct: displayPct,
+                label: stageText ? `${stageText} · ${timeline} · ${displayPct}%` : `${timeline} · ${displayPct}%`,
             };
         }
         if (state.total > 0 && state.index > 0) {
-            const batchPct = Math.round(((state.index - 1) + itemPct / 100) / state.total * 100);
+            const batchPct = Math.round(((state.index - 1) + displayPct / 100) / state.total * 100);
             const pct = Math.min(cap, batchPct);
             const batch = `第 ${state.index} / ${state.total} 个 · ${pct}%`;
             return { pct, label: stageText ? `${stageText} · ${batch}` : batch };
         }
         if (stageText) {
-            return { pct: itemPct, label: itemPct > 0 ? `${stageText} · ${itemPct}%` : `${stageText}…` };
+            return { pct: displayPct, label: displayPct > 0 ? `${stageText} · ${displayPct}%` : `${stageText}…` };
         }
-        return { pct: itemPct, label: itemPct > 0 ? `${itemPct}%` : '处理中…' };
+        return { pct: displayPct, label: displayPct > 0 ? `${displayPct}%` : '处理中…' };
     }
 
     function updateProgressUi() {
@@ -1107,7 +1138,9 @@
     function syncVideoProgressFromPayload(p) {
         if (p.phase !== 'running') return;
         const stage = p.itemStage || 'transcribe';
-        state.itemStage = stage;
+        if (stageRank(stage) >= stageRank(state.itemStage)) {
+            state.itemStage = stage;
+        }
         const mapped = Number.isFinite(Number(p.itemProgress))
             ? Number(p.itemProgress)
             : mapStageProgress(
@@ -1116,7 +1149,11 @@
                 Number(p.videoCurrentSec) || 0,
                 Number(p.videoTotalSec) || 0,
             );
-        state.videoProgress = bumpProgress(state.videoProgress, mapped);
+        if (isPreTranscribeStage(state.itemStage)) {
+            state.videoProgress = 0;
+        } else {
+            state.videoProgress = bumpProgress(state.videoProgress, mapped);
+        }
         if (Number(p.videoTotalSec) > 0) {
             state.videoTotalSec = Number(p.videoTotalSec);
             state.videoCurrentSec = Number(p.videoCurrentSec) || 0;
@@ -1130,6 +1167,8 @@
             selected: true,
             status: 'pending',
             progress: 0,
+            processedSec: 0,
+            processedTotalSec: 0,
             detail: '等待中',
             duration: durMap.get(normPath(fullPath)) || 0,
         }));
@@ -1171,7 +1210,7 @@
         const path = p.fullPath || '';
         if (path) state.activePath = path;
 
-        if (p.itemStage === 'starting' && (state.videoProgress || 0) <= 2) {
+        if (p.itemStage === 'starting') {
             resetVideoProgress();
             state.itemStage = 'starting';
         }
@@ -1180,8 +1219,10 @@
             if (p.phase === 'running') {
                 syncVideoProgressFromPayload(p);
                 const existing = findItem(path);
-                const stage = p.itemStage || state.itemStage;
-                const progress = bumpProgress(existing?.progress, state.videoProgress);
+                const stage = state.itemStage;
+                const progress = isPreTranscribeStage(stage)
+                    ? 0
+                    : bumpProgress(existing?.progress, state.videoProgress);
                 state.videoProgress = progress;
                 const itemPatch = {
                     status: 'running',
@@ -1189,6 +1230,14 @@
                     detail: p.itemDetail || '处理中…',
                     stage,
                 };
+                if (Number(p.videoTotalSec) > 0) {
+                    itemPatch.processedTotalSec = Number(p.videoTotalSec);
+                }
+                if (Number(p.videoCurrentSec) > 0) {
+                    itemPatch.processedSec = Number(p.videoCurrentSec);
+                } else if (isPreTranscribeStage(stage)) {
+                    itemPatch.processedSec = 0;
+                }
                 if (!existing?.startedAt || p.itemStage === 'starting') {
                     itemPatch.startedAt = Date.now();
                 }
@@ -1216,6 +1265,11 @@
                     subtitlePath: p.subtitlePath || undefined,
                     existingSubtitle: p.subtitlePath || undefined,
                 };
+                const doneTotal = Number(p.videoTotalSec) || findItem(path)?.duration || 0;
+                if (doneTotal > 0) {
+                    donePatch.processedSec = doneTotal;
+                    donePatch.processedTotalSec = doneTotal;
+                }
                 if (findItem(path)?.startedAt) donePatch.completedAt = Date.now();
                 updateItem(path, donePatch);
                 if (!p.subtitlePath) refreshSubtitlePathsForItems();
@@ -1225,6 +1279,12 @@
                     progress: state.videoProgress || 0,
                     detail: p.itemDetail || p.error || '失败',
                 };
+                if (Number(state.videoCurrentSec) > 0) {
+                    failedPatch.processedSec = Number(state.videoCurrentSec);
+                }
+                if (Number(state.videoTotalSec) > 0) {
+                    failedPatch.processedTotalSec = Number(state.videoTotalSec);
+                }
                 if (findItem(path)?.startedAt) failedPatch.completedAt = Date.now();
                 updateItem(path, failedPatch);
             }
@@ -1234,7 +1294,7 @@
         els.currentFile.title = path || '';
 
         if (p.phase === 'running') {
-            const stage = stageLabel(p.itemStage || state.itemStage);
+            const stage = stageLabel(state.itemStage);
             const detail = String(p.itemDetail || '').trim();
             els.progressLabel.textContent = detail ? `${stage} · ${detail}` : `${stage}…`;
             if (p.itemStage === 'starting') {
@@ -1534,7 +1594,7 @@
             if (optsRes?.options) {
                 applyOptionsToForm(optsRes.options);
                 savedOptionsSnapshot = buildSavedOptionsFromForm();
-                if (optsRes.options.ffmpegPath) await refreshFfmpegStatus();
+                await refreshFfmpegStatus();
             }
             resetPostTaskSelect();
             await syncPostTaskToMain();

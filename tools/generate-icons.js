@@ -4,13 +4,22 @@ const pngToIco = require('png-to-ico');
 
 const root = path.join(__dirname, '..');
 const electronDir = path.join(root, 'electron');
-const source = path.join(electronDir, 'icon-source.png');
+
+function resolveIconSource() {
+    const candidates = [
+        path.join(root, 'Transub.png'),
+        path.join(electronDir, 'icon-source.png'),
+    ];
+    return candidates.find((p) => fs.existsSync(p)) || null;
+}
 
 async function main() {
-    if (!fs.existsSync(source)) {
-        console.error('[generate-icons] 缺少 electron/icon-source.png');
+    const source = resolveIconSource();
+    if (!source) {
+        console.error('[generate-icons] 缺少项目图标：请放置 Transub.png 或 electron/icon-source.png');
         process.exit(1);
     }
+    console.log('[generate-icons] 源图:', path.relative(root, source));
 
     let sharp;
     try {
@@ -44,6 +53,11 @@ async function main() {
     ]);
     fs.writeFileSync(path.join(electronDir, 'app.ico'), ico);
     fs.writeFileSync(path.join(root, 'app.ico'), ico);
+
+    await sharp(source)
+        .resize(512, 512, { fit: 'cover' })
+        .png()
+        .toFile(path.join(electronDir, 'icon-source.png'));
 
     await sharp(source)
         .resize(32, 32, { fit: 'cover' })

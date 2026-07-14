@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { dialog, shell, BrowserWindow, app } = require('electron');
-const { probeVideo, resolveFfmpegValidation, validateFfmpegSetup } = require('./ffmpeg-bridge');
+const { probeVideo, resolveFfmpegValidation, validateFfmpegSetup, detectSilenceInRange } = require('./ffmpeg-bridge');
 const { loadPresets, saveCustomPreset, deleteCustomPreset } = require('./presets-data');
 const { loadTaskHistory, appendTaskHistory } = require('./task-history');
 const { detectGpuEnvironment } = require('./gpu-detect');
@@ -201,6 +201,27 @@ function setupExtensionsBridge(api, deps) {
                 ? asString(payload.ffmpegPath, 4096).trim()
                 : settings.ffmpegPath;
             return validateFfmpegSetup(ffmpegPath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('ffmpeg-detect-silence', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path, 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少视频路径' };
+            const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
+            const endMs = Math.max(startMs + 100, Math.round(Number(payload.endMs) || 0));
+            const settings = loadSettings(getAppRoot).options || {};
+            const ffmpegPathSetting = payload.ffmpegPath != null
+                ? asString(payload.ffmpegPath, 4096).trim()
+                : settings.ffmpegPath;
+            return detectSilenceInRange(filePath, startMs, endMs, {
+                ffmpegPathSetting,
+                noiseDb: Number(payload.noiseDb),
+                minSilenceSec: Number(payload.minSilenceSec),
+                minSegmentMs: Number(payload.minSegmentMs),
+            });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

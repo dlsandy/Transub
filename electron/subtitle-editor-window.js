@@ -204,8 +204,21 @@ function closeAllSubtitleEditorWindows() {
     editorWindows.clear();
 }
 
+async function openSubtitleEditorOrPick(app) {
+    const picked = await pickSubtitleFile(null);
+    if (picked.canceled || !picked.path) {
+        app.quit();
+        return null;
+    }
+    return createSubtitleEditorWindow(app, {
+        subPath: picked.path,
+        videoPath: picked.videoPath,
+    });
+}
+
 module.exports = {
     createSubtitleEditorWindow,
     registerSubtitleEditorWindowRoutes,
     closeAllSubtitleEditorWindows,
+    openSubtitleEditorOrPick,
 };

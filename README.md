@@ -19,6 +19,7 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 - 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC
 - GPU 环境自动检测，内置与自定义参数预设
 - 任务历史记录，可选右键菜单「用 Transub 生成字幕」
+- 字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
 
 ### 字幕编辑器
 - **三栏布局**：字幕列表 + 详情编辑 + 视频同步预览
@@ -34,7 +35,7 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 | **Windows 10/11** | 当前主要支持平台 |
 | **Node.js 18+** | 开发与从源码运行 |
 | **TransWithAI** | 需单独安装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases) |
-| **FFmpeg**（推荐） | 用于部分媒体预处理，可在设置中指定路径 |
+| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；也可在设置中指定自定义路径 |
 
 ## 快速开始
 
@@ -45,6 +46,14 @@ git clone https://github.com/dlsandy/Transub.git
 cd Transub
 npm install
 npm start
+```
+
+仅启动字幕编辑器（不打开主窗口）：
+
+```bash
+npm run start:editor
+# 或直接打开指定字幕
+npm start -- --edit-sub="path\to\file.srt"
 ```
 
 首次启动会在应用内引导配置 TransWithAI 安装路径。也可参考 [`transub-settings.example.json`](transub-settings.example.json) 手动创建 `transub-settings.json`（该文件含本机路径，**不要提交到 Git**）。
@@ -65,6 +74,8 @@ npm run dist
 powershell -ExecutionPolicy Bypass -File tools/register-context-menu.ps1
 ```
 
+会为视频文件注册「用 Transub 生成字幕」，为 SRT / VTT / LRC 注册「用 Transub 字幕编辑器打开」（仅启动编辑器，不打开主窗口）。
+
 移除菜单：
 
 ```powershell
@@ -84,6 +95,7 @@ npm run icons          # 重新生成应用图标
 
 ```
 Transub/
+├── _internal/         # 内置 FFmpeg / ffprobe（打包时一并发布）
 ├── electron/          # Electron 主进程（IPC、TransWithAI 桥接、字幕格式）
 ├── src/               # 渲染进程 UI
 ├── tests/             # 单元测试
@@ -99,7 +111,7 @@ Transub/
 - `device` — 推理设备：`cuda` / `cpu` / `cuda_low_vram` 等
 - `task` — `transcribe`（转写）或 `translate`（翻译）
 - `subFormats` — 输出格式，如 `srt`、`vtt`、`lrc`
-- `ffmpegPath` — FFmpeg 可执行文件路径（可选）
+- `ffmpegPath` — FFmpeg 可执行文件路径（可选；留空则优先使用内置 `_internal/bin`）
 
 ## 致谢与许可
 

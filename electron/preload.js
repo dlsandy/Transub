@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     openPath: (filePath) => ipcRenderer.invoke('transwithai-open-path', filePath || ''),
     ffmpegProbe: (payload) => ipcRenderer.invoke('ffmpeg-probe', payload || {}),
     ffmpegValidate: (payload) => ipcRenderer.invoke('ffmpeg-validate', payload || {}),
+    ffmpegDetectSilence: (payload) => ipcRenderer.invoke('ffmpeg-detect-silence', payload || {}),
     selectFfmpeg: (options) => ipcRenderer.invoke('electron-select-ffmpeg', options || {}),
     transWithAiValidate: (payload) => ipcRenderer.invoke('transwithai-validate', payload || {}),
     transWithAiGenerateSubtitles: (payload) => ipcRenderer.invoke('transwithai-generate-subtitles', payload || {}),

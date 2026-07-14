@@ -7,9 +7,11 @@ const { createWindowManager } = require('./window-manager');
 const {
     createSubtitleEditorWindow,
     registerSubtitleEditorWindowRoutes,
+    openSubtitleEditorOrPick,
 } = require('./subtitle-editor-window');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
 const { getAppIcon } = require('./icons');
+const { isEditableSubtitleFile } = require('./subtitle-utils');
 
 registerMediaScheme();
 
@@ -64,8 +66,27 @@ function parseCliEditSubtitle(argv = process.argv.slice(1)) {
             videoPath = String(arg.slice('--edit-video='.length) || '').trim();
         }
     }
+    if (!subPath) {
+        for (const arg of argv) {
+            if (arg.startsWith('-')) continue;
+            const trimmed = String(arg || '').trim();
+            if (trimmed && isEditableSubtitleFile(trimmed)) {
+                subPath = trimmed;
+                break;
+            }
+        }
+    }
     return subPath ? { subPath, videoPath } : null;
 }
+
+function isEditorOnlyArgv(argv = process.argv.slice(1)) {
+    if (argv.some((arg) => arg === '--subtitle-editor-only' || arg === '--editor-only')) {
+        return true;
+    }
+    return Boolean(parseCliEditSubtitle(argv));
+}
+
+let editorOnlyMode = isEditorOnlyArgv(process.argv.slice(1));
 
 function openCliSubtitleEditor(editRequest) {
     if (!editRequest?.subPath) return;
@@ -97,6 +118,7 @@ deferredBridges.installLazyRoutes({
     'transwithai-open-external': 'transwithai',
     'ffmpeg-probe': 'extensions',
     'ffmpeg-validate': 'extensions',
+    'ffmpeg-detect-silence': 'extensions',
     'electron-select-ffmpeg': 'extensions',
     'transwithai-scan-folder': 'extensions',
     'transwithai-check-subtitles': 'extensions',
@@ -149,6 +171,14 @@ app.on('second-instance', (_event, commandLine) => {
 
     const cliFiles = parseCliFiles(cliArgs);
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
+
+    if (editorOnlyMode) {
+        editorOnlyMode = false;
+        windowManager.createMainWindow();
+        windowManager.setupTray();
+        return;
+    }
+
     windowManager.showMainWindow();
 });
 
@@ -169,13 +199,20 @@ app.whenReady().then(() => {
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
-    if (cliEdit) {
+    if (editorOnlyMode) {
+        if (cliEdit) {
+            openCliSubtitleEditor(cliEdit);
+        } else {
+            openSubtitleEditorOrPick(app);
+        }
+    } else if (cliEdit) {
         openCliSubtitleEditor(cliEdit);
         windowManager.createMainWindow({ startMinimizedToTray: true });
+        windowManager.setupTray();
     } else {
         windowManager.createMainWindow();
+        windowManager.setupTray();
     }
-    windowManager.setupTray();
 
     app.on('activate', () => {
         windowManager.showMainWindow();

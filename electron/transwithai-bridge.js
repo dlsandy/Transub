@@ -583,7 +583,7 @@ function parseLrcTimestampSeconds(minStr, secStr) {
     return min * 60 + sec + cs / 100;
 }
 
-/** 将 infer 各阶段局部进度映射为整条流水线 0–100%（避免 VAD 1/1 块即显示 100%） */
+/** 将 infer 各阶段局部进度映射为整条流水线 0–100%（转写前保持 0%，转写阶段 0–98%） */
 function mapInferStageProgress(stage, rawPct = 0, videoCurrentSec = 0, videoTotalSec = 0) {
     const local = Math.max(0, Math.min(100, Number(rawPct) || 0));
     const mediaSec = Number(videoTotalSec) || 0;
@@ -591,23 +591,23 @@ function mapInferStageProgress(stage, rawPct = 0, videoCurrentSec = 0, videoTota
 
     switch (stage) {
         case 'starting':
-            return 1;
         case 'vad':
-            return Math.round(2 + (local / 100) * 8);
         case 'model':
-            return local > 0 ? Math.round(10 + (local / 100) * 6) : 12;
+            return 0;
         case 'transcribe': {
             const timelinePct = mediaSec >= 60
                 ? Math.min(100, Math.round((currentSec / mediaSec) * 100))
                 : local;
-            return Math.round(16 + (timelinePct / 100) * 82);
+            return Math.min(98, Math.round((timelinePct / 100) * 98));
         }
         case 'save':
             return 99;
         case 'done':
             return 100;
         default:
-            return Math.min(99, local);
+            return inferStageRank(stage) >= INFER_STAGE_RANK.transcribe
+                ? Math.min(98, local)
+                : 0;
     }
 }
 
@@ -713,7 +713,6 @@ function parseInferProgressLine(line, parseState = {}) {
                 ? `视频 ${formatMediaTime(mediaTotalSec)} · 有效语音 ${formatMediaTime(speechTotalSec)}`
                 : `视频时长 ${formatMediaTime(mediaTotalSec)}`;
             return {
-                stage: 'transcribe',
                 videoProgress: 0,
                 videoCurrentSec: 0,
                 videoTotalSec: mediaTotalSec,
@@ -731,7 +730,6 @@ function parseInferProgressLine(line, parseState = {}) {
             parseState.mediaTotalSec = mediaTotalSec;
             parseState.speechTotalSec = mediaTotalSec;
             return {
-                stage: 'transcribe',
                 videoProgress: 0,
                 videoCurrentSec: 0,
                 videoTotalSec: mediaTotalSec,
@@ -758,7 +756,12 @@ function parseInferProgressLine(line, parseState = {}) {
         };
     }
 
-    if (/正在写入：/.test(text) || /写入|已保存|saved|完成处理/i.test(text)) {
+    if (
+        /正在写入：/.test(text)
+        || /(?:^|\s)已保存(?:\s|$|[：:])/.test(text)
+        || /\bsaved\b/i.test(text)
+        || /完成处理/.test(text)
+    ) {
         const total = parseState.mediaTotalSec || parseState.speechTotalSec || 0;
         return {
             stage: 'save',
@@ -825,20 +828,27 @@ function runInferOnce(installPath, videoPath, options = {}, onProgress, onInferL
 
         const markTranscribeStarted = () => {
             if (!transcribeStartedAt) transcribeStartedAt = Date.now();
-            currentStage = 'transcribe';
         };
 
         const pushProgress = (update, { force = false } = {}) => {
             if (!update || typeof onProgress !== 'function') return;
 
-            const stage = update.stage || currentStage;
-            if (update.stage) currentStage = update.stage;
-            if (stage === 'transcribe' || stage === 'model') markTranscribeStarted();
-            if (stage === 'model' && /模型已加载|模型运行精度/.test(update.detail || '')) {
-                markTranscribeStarted();
+            if (update.stage && inferStageRank(update.stage) >= inferStageRank(currentStage)) {
+                currentStage = update.stage;
             }
+            const stage = currentStage;
+
+            if (update.stage === 'transcribe') markTranscribeStarted();
 
             if (transcribeStartedAt && inferStageRank(stage) < INFER_STAGE_RANK.transcribe) {
+                return;
+            }
+
+            if (
+                currentStage === 'save'
+                && update.stage
+                && inferStageRank(update.stage) < INFER_STAGE_RANK.save
+            ) {
                 return;
             }
 
@@ -851,6 +861,8 @@ function runInferOnce(installPath, videoPath, options = {}, onProgress, onInferL
 
             if (stage === 'done') {
                 pipelinePct = 100;
+            } else if (inferStageRank(stage) < INFER_STAGE_RANK.transcribe) {
+                pipelinePct = 0;
             } else {
                 pipelinePct = Math.max(lastPipelinePct, pipelinePct);
             }
@@ -873,6 +885,7 @@ function runInferOnce(installPath, videoPath, options = {}, onProgress, onInferL
 
         const syntheticTimer = setInterval(() => {
             if (jobCancelled || !transcribeStartedAt) return;
+            if (inferStageRank(currentStage) >= INFER_STAGE_RANK.save) return;
             const dur = parseState.mediaTotalSec || mediaDurationSec;
             if (!dur) return;
             const synthetic = buildSyntheticTranscribeUpdate(dur, transcribeStartedAt, parseState);

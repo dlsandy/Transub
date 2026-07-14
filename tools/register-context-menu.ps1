@@ -1,4 +1,4 @@
-# 为视频文件添加「用 Transub 生成字幕」右键菜单（当前用户）
+# Register Transub context menu entries (current user)
 param(
     [string]$TransubExe = "",
     [switch]$Unregister
@@ -10,18 +10,28 @@ if (-not $TransubExe) {
     $TransubExe = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\win-unpacked\Transub.exe"
 }
 
-$progId = "Transub.SubtitleTask"
-$verb = "TransubGenerate"
-$label = "用 Transub 生成字幕"
+$videoProgId = "Transub.SubtitleTask"
+$videoVerb = "TransubGenerate"
+$videoLabel = "用 Transub 生成字幕"
+
+$editorProgId = "Transub.SubtitleEditor"
+$editorVerb = "TransubEditSubtitle"
+$editorLabel = "用 Transub 字幕编辑器打开"
 
 function Remove-TransubContextMenu {
-    Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\.mp4\shell\$verb" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\.mkv\shell\$verb" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\.avi\shell\$verb" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\.mov\shell\$verb" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\.webm\shell\$verb" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\$progId" -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "已移除 Transub 右键菜单"
+    $videoExtensions = @('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
+    foreach ($ext in $videoExtensions) {
+        Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\$videoVerb" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Path "HKCU:\Software\Classes\$videoProgId" -Recurse -Force -ErrorAction SilentlyContinue
+
+    $subtitleExtensions = @('.srt', '.vtt', '.lrc')
+    foreach ($ext in $subtitleExtensions) {
+        Remove-Item -Path "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\$editorVerb" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Path "HKCU:\Software\Classes\$editorProgId" -Recurse -Force -ErrorAction SilentlyContinue
+
+    Write-Host "Removed Transub context menu entries"
 }
 
 if ($Unregister) {
@@ -30,22 +40,39 @@ if ($Unregister) {
 }
 
 if (-not (Test-Path $TransubExe)) {
-    Write-Error "找不到 Transub 可执行文件：$TransubExe`n请先打包应用，或通过 -TransubExe 指定路径。"
+    throw "Transub executable not found: $TransubExe. Build the app first or pass -TransubExe."
 }
 
-$extensions = @('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
+$videoExtensions = @('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
 
-New-Item -Path "HKCU:\Software\Classes\$progId\shell\open\command" -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Classes\$progId\shell\open\command" -Name "(default)" -Value "`"$TransubExe`" `"%1`""
+New-Item -Path "HKCU:\Software\Classes\$videoProgId\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\Classes\$videoProgId\shell\open\command" -Name "(default)" -Value "`"$TransubExe`" `"%1`""
 
-foreach ($ext in $extensions) {
-    $shellKey = "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\$verb"
+foreach ($ext in $videoExtensions) {
+    $shellKey = "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\$videoVerb"
     New-Item -Path $shellKey -Force | Out-Null
-    Set-ItemProperty -Path $shellKey -Name "(default)" -Value $label
+    Set-ItemProperty -Path $shellKey -Name "(default)" -Value $videoLabel
     Set-ItemProperty -Path $shellKey -Name "Icon" -Value "`"$TransubExe`",0"
     New-Item -Path "$shellKey\command" -Force | Out-Null
     Set-ItemProperty -Path "$shellKey\command" -Name "(default)" -Value "`"$TransubExe`" `"%1`""
 }
 
-Write-Host "已注册右键菜单，目标：$TransubExe"
-Write-Host "使用 -Unregister 可移除"
+$subtitleExtensions = @('.srt', '.vtt', '.lrc')
+$editorCommand = "`"$TransubExe`" --subtitle-editor-only --edit-sub=`"%1`""
+
+New-Item -Path "HKCU:\Software\Classes\$editorProgId\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\Classes\$editorProgId\shell\open\command" -Name "(default)" -Value $editorCommand
+
+foreach ($ext in $subtitleExtensions) {
+    $shellKey = "HKCU:\Software\Classes\SystemFileAssociations\$ext\shell\$editorVerb"
+    New-Item -Path $shellKey -Force | Out-Null
+    Set-ItemProperty -Path $shellKey -Name "(default)" -Value $editorLabel
+    Set-ItemProperty -Path $shellKey -Name "Icon" -Value "`"$TransubExe`",0"
+    New-Item -Path "$shellKey\command" -Force | Out-Null
+    Set-ItemProperty -Path "$shellKey\command" -Name "(default)" -Value $editorCommand
+}
+
+Write-Host "Registered context menu -> $TransubExe"
+Write-Host "  Video: $videoLabel"
+Write-Host "  Subtitle: $editorLabel"
+Write-Host "Use -Unregister to remove"
