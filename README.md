@@ -1,6 +1,6 @@
 # Transub
 
-Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
+Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.2.0**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
 
 > **特别感谢 [TransWithAI / Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)**
 >
@@ -16,17 +16,20 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 ## 功能概览
 
 ### 批量字幕生成
-- 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC
-- GPU 环境自动检测，内置与自定义参数预设
-- 任务历史记录，可选右键菜单「用 Transub 生成字幕」
-- 字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
+- 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC；支持拖放与文件夹扫描
+- GPU 环境自动检测，内置与自定义参数预设；配置可导入 / 导出
+- 任务历史记录；全部成功后可选择睡眠、退出应用或定时关机
+- 可选右键菜单：「用 Transub 生成字幕」；字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
+- 完成后可从任务列表一键打开字幕编辑器并关联视频
 
 ### 字幕编辑器
-- **三栏布局**：字幕列表 + 详情编辑 + 视频同步预览
-- **单条精修**：时间码微调、CPS 显示、重叠/时长警告
-- **分割字幕**：换行、空格、字符数、均分、光标、播放头 6 种模式
-- **查找替换**、**时长批量调整**、**智能调整**（修复重叠与读速问题）
-- 快捷键：`Ctrl+S` 保存、`Ctrl+F` / `Ctrl+H` 查找替换
+- **三栏布局**：字幕列表 + 详情编辑 + 视频同步预览（Windows 优先硬件解码）
+- **单条精修**：时间码微调、目标 CPS、重叠/时长警告；可按 CPS 或静音智能调节时长
+- **分割字幕（8 种模式）**：智能断句、换行、空格、字符数、均分、光标、播放头、**静音切分**（FFmpeg 分析关联视频）
+- **批量处理**：智能分割、静音分割、时长批量调整、智能调整（修复重叠与读速问题）
+- **历史操作**：撤销 / 重做 / 复原到打开时状态；全体时间轴 ±0.5s
+- **查找替换**；列表右键菜单（分割、对齐、时长调节等）
+- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`F11` / `F12` 对齐播放头、空格播放暂停
 
 ## 环境要求
 
@@ -35,7 +38,7 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 | **Windows 10/11** | 当前主要支持平台 |
 | **Node.js 18+** | 开发与从源码运行 |
 | **TransWithAI** | 需单独安装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases) |
-| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；也可在设置中指定自定义路径 |
+| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；静音分割 / 智能调时依赖 FFmpeg；也可在设置中指定自定义路径 |
 
 ## 快速开始
 
@@ -52,8 +55,9 @@ npm start
 
 ```bash
 npm run start:editor
-# 或直接打开指定字幕
+# 或直接打开指定字幕（可附带视频）
 npm start -- --edit-sub="path\to\file.srt"
+npm start -- --edit-sub="path\to\file.srt" --edit-video="path\to\video.mp4"
 ```
 
 首次启动会在应用内引导配置 TransWithAI 安装路径。也可参考 [`transub-settings.example.json`](transub-settings.example.json) 手动创建 `transub-settings.json`（该文件含本机路径，**不要提交到 Git**）。
@@ -62,6 +66,10 @@ npm start -- --edit-sub="path\to\file.srt"
 
 ```bash
 npm run dist
+# 或使用 Windows 打包脚本（可选：只打安装包 / 便携版）
+npm run build
+npm run build:setup
+npm run build:portable
 ```
 
 安装包与便携版输出到 `dist/` 目录。
@@ -87,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File tools/register-context-menu.ps1 -Unregi
 ```bash
 npm run build:css      # 编译 Tailwind CSS
 npm run build:renderer # 打包前端资源（发布前）
-npm test               # 运行单元测试
+npm test               # 运行单元测试（含分割 / 静音探测）
 npm run icons          # 重新生成应用图标
 ```
 
@@ -97,7 +105,7 @@ npm run icons          # 重新生成应用图标
 Transub/
 ├── _internal/         # 内置 FFmpeg / ffprobe（打包时一并发布）
 ├── electron/          # Electron 主进程（IPC、TransWithAI 桥接、字幕格式）
-├── src/               # 渲染进程 UI
+├── src/               # 渲染进程 UI（含字幕编辑器与分割核心）
 ├── tests/             # 单元测试
 ├── tools/             # 构建与安装脚本
 └── package.json
