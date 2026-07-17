@@ -1,0 +1,225 @@
+<body class="editor-body editor-theme-light">
+    <header class="editor-header">
+        <div class="editor-header-actions">
+            <button type="button" id="editorOpenFileBtn" class="editor-btn editor-btn-icon" title="打开其他字幕" aria-label="打开"><i class="fa fa-folder-open"></i></button>
+            <button type="button" id="editorLinkVideoBtn" class="editor-btn editor-btn-icon" title="关联视频" aria-label="关联视频"><i class="fa fa-film"></i></button>
+            <button type="button" id="editorSaveBtn" class="editor-btn editor-btn-icon editor-btn-primary" title="保存 (Ctrl+S)" aria-label="保存"><i class="fa fa-save"></i></button>
+            <button type="button" id="editorUndoBtn" class="editor-btn editor-btn-icon" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled><i class="fa fa-undo"></i></button>
+            <button type="button" id="editorRedoBtn" class="editor-btn editor-btn-icon" title="重做 (Ctrl+Y)" aria-label="重做" disabled><i class="fa fa-repeat"></i></button>
+            <button type="button" id="editorFindReplaceBtn" class="editor-btn editor-btn-icon" title="查找替换 (Ctrl+F)" aria-label="查找替换"><i class="fa fa-search"></i></button>
+            <button type="button" id="editorQcBtn" class="editor-btn editor-btn-icon" title="质量检查" aria-label="质量检查"><i class="fa fa-heartbeat"></i><span id="editorQcBadge" class="editor-btn-badge">0</span></button>
+
+            <div class="editor-menu-wrap">
+                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon" title="更多工具" aria-label="工具" aria-haspopup="true" aria-expanded="false">
+                    <i class="fa fa-wrench"></i>
+                </button>
+                <div id="editorToolsMenu" class="editor-dropdown hidden" role="menu">
+                    <div class="dd-label">条目</div>
+                    <button type="button" id="editorAddCueBtn" role="menuitem" title="在末尾添加一条字幕"><i class="fa fa-plus"></i>添加字幕</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">时间轴</div>
+                    <button type="button" id="editorShiftBackBtn" role="menuitem" title="全体字幕 -500ms">全体 -0.5s</button>
+                    <button type="button" id="editorShiftFwdBtn" role="menuitem" title="全体字幕 +500ms">全体 +0.5s</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">文本</div>
+                    <button type="button" id="editorGlossaryBtn" role="menuitem" title="术语表与专名一致性"><i class="fa fa-book"></i>术语表<span id="editorGlossaryBadge">0</span></button>
+                    <button type="button" id="editorBreakWordsBtn" role="menuitem" title="管理智能断句使用的断句词"><i class="fa fa-ellipsis-h"></i>断句词</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">批量处理</div>
+                    <button type="button" id="editorBatchDurBtn" role="menuitem" title="按条件批量调整字幕时长"><i class="fa fa-clock-o"></i>时长调整</button>
+                    <button type="button" id="editorSmartSplitBtn" role="menuitem" title="按读速与断句规则批量分割字幕"><i class="fa fa-scissors"></i>智能分割</button>
+                    <button type="button" id="editorSilenceSplitBtn" class="needs-video" role="menuitem" title="按视频静音批量分割字幕（需关联视频）"><i class="fa fa-volume-off"></i>静音分割</button>
+                    <button type="button" id="editorSmartAdjustBtn" role="menuitem" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic"></i>智能调整</button>
+                    <button type="button" id="editorRetranscribeDurBtn" class="needs-video" role="menuitem" title="从起始点按指定时长重转写（需关联视频）"><i class="fa fa-refresh"></i>按时长重转</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">历史</div>
+                    <button type="button" id="editorRestoreBtn" class="editor-btn-danger-soft" role="menuitem" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history"></i>复原到初始</button>
+                    <div class="dd-sep"></div>
+                    <button type="button" id="editorShortcutsBtn" role="menuitem" title="查看快捷键说明"><i class="fa fa-keyboard-o"></i>快捷键</button>
+                </div>
+            </div>
+
+            <button type="button" id="editorAutoFocusBtn" class="editor-btn editor-btn-icon" title="自动焦点：关闭（开启后播放时跟随当前字幕）" aria-label="自动焦点" aria-pressed="false">
+                <i class="fa fa-crosshairs"></i>
+            </button>
+            <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
+            <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
+        </div>
+        <div class="editor-header-meta">
+            <span id="editorSaveStatus" class="text-xs" style="color:var(--ed-ok);min-width:2rem;flex-shrink:0"></span>
+            <span id="editorDirtyBadge" class="hidden editor-chip editor-chip-warn shrink-0">未保存</span>
+            <select id="editorSidecarSelect" class="hidden editor-btn" style="max-width:12rem;padding:0.2rem 0.4rem"></select>
+            <span id="editorFormatBadge" class="editor-chip shrink-0">SRT</span>
+        </div>
+    </header>
+
+    <div class="editor-main">
+        <section class="editor-cues-panel" id="editorCuesPanel">
+            <div class="editor-list-toolbar" role="toolbar" aria-label="列表筛选">
+                <button type="button" class="editor-filter-btn active" data-list-filter="all">全部</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="low" title="仅低置信条目">低置信</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="qc" title="质量检查问题">QC</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="find" title="查找命中">查找</button>
+                <button type="button" id="editorNextIssueBtn" class="editor-filter-btn" title="跳到下一条问题">下一条问题</button>
+                <span style="flex:1"></span>
+                <span id="editorFilterCount" style="font-size:0.65rem;color:var(--ed-faint);font-variant-numeric:tabular-nums"></span>
+            </div>
+            <div id="editorListWrap" class="editor-list-wrap" tabindex="-1">
+                <table class="editor-cue-table text-sm">
+                    <thead>
+                        <tr>
+                            <th class="text-left col-idx">#</th>
+                            <th class="text-left col-time">起始</th>
+                            <th class="text-left col-time">结束</th>
+                            <th class="text-left col-dur">时长</th>
+                            <th class="text-left col-cps">CPS</th>
+                            <th class="text-left">文本</th>
+                        </tr>
+                    </thead>
+                    <tbody id="editorCueBody"></tbody>
+                </table>
+            </div>
+
+            <div id="editorDetailPane" class="editor-detail-pane" tabindex="-1">
+                <div class="detail-times-row">
+                    <div class="detail-field">
+                        <label for="editorDetailStart">起始时间</label>
+                        <div class="detail-duration-row">
+                            <button type="button" id="editorStartNudgeBack" class="detail-nudge-btn" title="-100ms">◀</button>
+                            <input type="text" id="editorDetailStart" class="font-mono tabular-nums" spellcheck="false">
+                            <button type="button" id="editorStartNudgeFwd" class="detail-nudge-btn" title="+100ms">▶</button>
+                        </div>
+                    </div>
+                    <div class="detail-field">
+                        <label for="editorDetailEnd">结束时间</label>
+                        <input type="text" id="editorDetailEnd" class="font-mono tabular-nums" readonly tabindex="-1" style="background:var(--ed-surface-2)">
+                    </div>
+                    <div class="detail-field">
+                        <label for="editorDetailDuration">时长（秒）</label>
+                        <div class="detail-duration-row">
+                            <button type="button" id="editorDurNudgeDown" class="detail-nudge-btn" title="-0.1s">−</button>
+                            <input type="number" id="editorDetailDuration" min="0.1" max="600" step="0.01" class="tabular-nums">
+                            <button type="button" id="editorDurNudgeUp" class="detail-nudge-btn" title="+0.1s">+</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="detail-text-wrap">
+                    <div class="flex items-center justify-between mb-0.5" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.15rem">
+                        <label for="editorDetailText" style="font-size:10px;color:var(--ed-muted)">文本</label>
+                        <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
+                    </div>
+                    <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
+                </div>
+
+                <div class="detail-meta">
+                    <span>单行 <strong id="editorLineLen">0</strong></span>
+                    <span>总长 <strong id="editorTextLen">0</strong></span>
+                    <span class="inline-flex items-center gap-1" style="display:inline-flex;align-items:center;gap:0.25rem">
+                        目标 CPS
+                        <input type="number" id="editorTargetCps" min="0.1" max="100" step="0.1" value="3"
+                            style="width:3.5rem;font-size:0.7rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0 0.25rem;background:var(--ed-surface);color:var(--ed-text)"
+                            title="按字数调节时长与 CPS 参考的目标读速">
+                    </span>
+                    <span id="editorDetailWarn" style="color:var(--ed-warn-text)" class="hidden"></span>
+                    <div class="detail-meta-nav" role="group" aria-label="条目与导航">
+                        <button type="button" id="editorDetailInsertCueBtn" title="在当前播放位置插入一条新字幕"><i class="fa fa-plus-circle"></i> 插入</button>
+                        <button type="button" id="editorDeleteCueBtn" class="btn-danger" title="删除当前字幕 (Delete)"><i class="fa fa-trash"></i> 删除</button>
+                        <button type="button" id="editorPrevCueBtn"><i class="fa fa-chevron-left"></i> 上一条</button>
+                        <button type="button" id="editorNextCueBtn">下一条 <i class="fa fa-chevron-right"></i></button>
+                    </div>
+                </div>
+
+                <details class="detail-tools" id="editorDetailTools">
+                    <summary>时间 · 分割 · 导航</summary>
+                    <div class="detail-tools-body">
+                        <div class="detail-set-time-row">
+                            <button type="button" id="editorSetStartToPlayhead" title="设为起始时间 (F11)">
+                                <i class="fa fa-crosshairs"></i> 起始 <span class="kbd-hint">F11</span>
+                            </button>
+                            <button type="button" id="editorSetEndToPlayhead" title="设为结束时间 (F12)">
+                                <i class="fa fa-crosshairs"></i> 结束 <span class="kbd-hint">F12</span>
+                            </button>
+                            <button type="button" id="editorCharDurBtn" title="按目标读速（CPS）调节当前字幕时长">
+                                <i class="fa fa-text-width"></i> 按字数
+                            </button>
+                            <button type="button" id="editorSmartDurBtn" class="needs-video" title="按视频静音自动缩短过长时长（需关联视频）">
+                                <i class="fa fa-magic"></i> 智能时长
+                            </button>
+                            <button type="button" id="editorAudioSnapBtn" class="needs-video" title="按音频静音将起止贴到语音边界（需关联视频）">
+                                <i class="fa fa-crosshairs"></i> 贴边
+                            </button>
+                        </div>
+                        <div class="detail-nav">
+                            <div class="detail-nav-group" role="group" aria-label="分割">
+                                <button type="button" id="editorSplitCueBtn" title="将当前字幕拆分为多条"><i class="fa fa-scissors"></i> 分割…</button>
+                                <button type="button" id="editorSmartSplitCueBtn" title="智能断句分割当前字幕"><i class="fa fa-magic"></i> 智能断句</button>
+                                <button type="button" id="editorSplitLinesBtn" title="按换行分割当前字幕（每行一条）"><i class="fa fa-align-left"></i> 换行分割</button>
+                                <button type="button" id="editorSplitSpacesBtn" title="按空格分割当前字幕（每词/每段一条）"><i class="fa fa-font"></i> 空格分割</button>
+                                <button type="button" id="editorSilenceSplitCueBtn" class="needs-video" title="按视频静音分割当前字幕（需关联视频）"><i class="fa fa-volume-off"></i> 静音分割</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <div id="editorSplitter" class="editor-splitter" title="拖拽调整面板宽度" role="separator" aria-orientation="vertical"></div>
+
+        <aside id="editorVideoWrap" class="editor-video-panel" tabindex="-1">
+            <div id="editorVideoFrame" class="editor-video-frame">
+                <video id="editorVideo" playsinline preload="auto"></video>
+                <div id="editorVideoEmpty" class="editor-video-empty visible">
+                    <i class="fa fa-film" aria-hidden="true"></i>
+                    <div>未关联视频</div>
+                    <div style="font-size:0.7rem;opacity:0.8">点击顶栏「关联视频」，或仅编辑文本与时间</div>
+                </div>
+                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="off">
+                    <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
+                </div>
+            </div>
+            <div id="editorTimeline" class="editor-timeline" title="点击定位 · 拖拽字幕块调整时间">
+                <div class="editor-timeline-track" id="editorTimelineTrack">
+                    <div class="editor-timeline-cues" id="editorTimelineCues"></div>
+                    <div class="editor-timeline-playhead" id="editorTimelinePlayhead"></div>
+                </div>
+            </div>
+            <div class="editor-transport">
+                <button type="button" id="editorPlayPauseBtn" title="播放/暂停 (Space)"><i class="fa fa-play"></i></button>
+                <button type="button" id="editorSeekBackBtn" title="后退 1 秒">−1s</button>
+                <button type="button" id="editorSeekFwdBtn" title="前进 1 秒">+1s</button>
+                <select id="editorRateSelect" title="播放速率" aria-label="播放速率">
+                    <option value="0.5">0.5×</option>
+                    <option value="0.75">0.75×</option>
+                    <option value="1" selected>1×</option>
+                    <option value="1.25">1.25×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option>
+                </select>
+                <input type="range" id="editorVolumeSlider" min="0" max="1" step="0.05" value="1" title="音量">
+                <button type="button" id="editorInsertCueBtn" class="transport-primary" title="在当前播放位置插入字幕 (Enter)">
+                    <i class="fa fa-plus-circle"></i> 插入
+                </button>
+                <button type="button" id="editorRetranscribeCueBtn" class="needs-video" title="从起始点按指定时长重转写（需关联视频）">
+                    <i class="fa fa-refresh"></i> 重转写
+                </button>
+                <span id="editorPlayheadTime">00:00:00,000</span>
+            </div>
+            <p id="editorVideoHint" class="editor-video-hint">未关联视频，可点击「关联视频」；亦可仅编辑文本与时间轴</p>
+        </aside>
+    </div>
+
+    <footer class="editor-status-bar">
+        <span id="editorStatusLine" class="status-msg">正在启动…</span>
+        <span id="editorCueCount" style="font-variant-numeric:tabular-nums;flex-shrink:0">0 条</span>
+        <span id="editorLowConfBadge" class="hidden shrink-0" title="低置信条目数">0</span>
+    </footer>
+
+    <div id="editorBootProgress" class="editor-boot-progress" aria-live="polite" aria-busy="true" aria-label="正在启动字幕编辑器">
+        <div class="editor-boot-progress-panel" role="status">
+            <p class="editor-boot-progress-brand">Transub</p>
+            <div class="editor-boot-spinner" aria-hidden="true"></div>
+            <p id="editorBootProgressTitle" class="editor-boot-progress-title">正在启动字幕编辑器</p>
+            <p id="editorBootProgressDetail" class="editor-boot-progress-detail">请稍候，界面马上可用…</p>
+        </div>
+    </div>

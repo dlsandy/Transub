@@ -88,13 +88,23 @@ function isEditorOnlyArgv(argv = process.argv.slice(1)) {
 
 let editorOnlyMode = isEditorOnlyArgv(process.argv.slice(1));
 
-function openCliSubtitleEditor(editRequest) {
-    if (!editRequest?.subPath) return;
+function warmEditorBridges() {
     try {
         deferredBridges.ensure('editorWindow');
     } catch (err) {
         console.warn('[main] editorWindow bridge init failed:', err.message || err);
     }
+    // 预热字幕读/写与媒体探测桥，避免首开文档时冷加载造成长时间无反馈
+    try {
+        deferredBridges.ensure('extensions');
+    } catch (err) {
+        console.warn('[main] extensions bridge init failed:', err.message || err);
+    }
+}
+
+function openCliSubtitleEditor(editRequest) {
+    if (!editRequest?.subPath) return;
+    warmEditorBridges();
     createSubtitleEditorWindow(app, editRequest);
 }
 
@@ -109,7 +119,14 @@ deferredBridges.installLazyRoutes({
     'transwithai-validate': 'transwithai',
     'transwithai-generate-subtitles': 'transwithai',
     'transwithai-cancel': 'transwithai',
+    'transub-transcribe-range': 'transwithai',
     'transwithai-get-options': 'transwithai',
+    'transub-read-subtitle-meta': 'extensions',
+    'transub-write-subtitle-meta': 'extensions',
+    'transub-get-glossary': 'extensions',
+    'transub-save-glossary': 'extensions',
+    'transub-export-glossary': 'extensions',
+    'transub-import-glossary': 'extensions',
     'transwithai-save-options': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
     'transwithai-get-pending-files': 'transwithai',
@@ -136,6 +153,8 @@ deferredBridges.installLazyRoutes({
     'transub-guess-video-for-subtitle': 'extensions',
     'transub-resolve-media-url': 'extensions',
     'transub-open-subtitle-editor': 'editorWindow',
+    'transub-open-settings': 'editorWindow',
+    'transub-consume-pending-open-params': 'editorWindow',
     'transwithai-open-latest-log': 'extensions',
     'transwithai-export-config': 'extensions',
     'transwithai-import-config': 'extensions',
@@ -150,7 +169,10 @@ deferredBridges.defer('extensions', (api) => {
 });
 
 deferredBridges.defer('editorWindow', (api) => {
-    registerSubtitleEditorWindowRoutes(api.register, app);
+    registerSubtitleEditorWindowRoutes(api.register, app, {
+        warmBridges: warmEditorBridges,
+        windowManager,
+    });
 });
 
 deferredBridges.defer('transwithai', (api) => {
@@ -200,6 +222,7 @@ app.whenReady().then(() => {
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
     if (editorOnlyMode) {
+        warmEditorBridges();
         if (cliEdit) {
             openCliSubtitleEditor(cliEdit);
         } else {

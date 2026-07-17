@@ -1,6 +1,6 @@
 # Transub
 
-Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.2.0**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
+Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.3.0**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
 
 > **特别感谢 [TransWithAI / Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)**
 >
@@ -22,14 +22,30 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 - 可选右键菜单：「用 Transub 生成字幕」；字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
 - 完成后可从任务列表一键打开字幕编辑器并关联视频
 
-### 字幕编辑器
-- **三栏布局**：字幕列表 + 详情编辑 + 视频同步预览（Windows 优先硬件解码）
-- **单条精修**：时间码微调、目标 CPS、重叠/时长警告；可按 CPS 或静音智能调节时长
-- **分割字幕（8 种模式）**：智能断句、换行、空格、字符数、均分、光标、播放头、**静音切分**（FFmpeg 分析关联视频）
-- **批量处理**：智能分割、静音分割、时长批量调整、智能调整（修复重叠与读速问题）
-- **历史操作**：撤销 / 重做 / 复原到打开时状态；全体时间轴 ±0.5s
-- **查找替换**；列表右键菜单（分割、对齐、时长调节等）
-- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`F11` / `F12` 对齐播放头、空格播放暂停
+### 字幕编辑器（v1.3.0 重点升级）
+
+面向成片精修的结构化编辑工作台：列表、详情、视频预览与时间轴联动，支持从任务完成一键进入，也可右键单独打开编辑器。
+
+**质量与通顺度**
+- **质量检查（QC）**：扫描重叠、过快读速（CPS）、过短/过长时长、通顺度嫌疑；支持一键修复与问题筛选
+- **通顺度规则**：标注口吃重复、语气碎片、句末残缺、音效/杂音标签等，避免误修文案
+- **低置信提示**：本地启发式估可疑条目，列表可筛「低置信 / QC / 查找命中」，并跳到下一条问题
+- **删除杂音**：批量清理语气词碎片与音效标签类条目
+
+**术语与专名**
+- **术语表**：维护规范写法与别名，扫描全文不一致并一键统一专名
+
+**时间轴与音频对齐**
+- **可视化时间轴**：点击定位、拖拽字幕块调时
+- **音频贴边**：按静音将起止贴到语音边界；智能时长按静音缩短过长条目
+- **分割（8 种）**：智能断句、换行、空格、字符数、均分、光标、播放头、静音切分
+- **批量**：智能分割 / 静音分割 / 时长调整 / 智能调整（重叠与 CPS）
+
+**重转写与交互**
+- **按时长重转**：从起始点按指定秒数调用 TransWithAI 重转当前段（需关联视频）
+- **深色 / 浅色主题**、可调列表宽度、播放跟随焦点
+- **撤销 / 重做 / 复原到打开时**；查找替换；全体时间轴 ±0.5s
+- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`F11` / `F12` 对齐播放头、空格播放暂停、`Enter` 插入字幕
 
 ## 环境要求
 
@@ -38,7 +54,7 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 | **Windows 10/11** | 当前主要支持平台 |
 | **Node.js 18+** | 开发与从源码运行 |
 | **TransWithAI** | 需单独安装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases) |
-| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；静音分割 / 智能调时依赖 FFmpeg；也可在设置中指定自定义路径 |
+| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；静音分割 / 智能时长 / 音频贴边依赖 FFmpeg；也可在设置中指定自定义路径 |
 
 ## 快速开始
 

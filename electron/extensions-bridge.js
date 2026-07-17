@@ -12,6 +12,8 @@ const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-
 const { getProjectRoot } = require('./app-paths');
 const { asString } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
+const { readSubtitleMeta, writeSubtitleMeta } = require('./subtitle-meta');
+const { readGlossary, writeGlossary } = require('./glossary-data');
 
 const VIDEO_EXTENSIONS = new Set([
     'mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp',
@@ -211,7 +213,13 @@ function setupExtensionsBridge(api, deps) {
             const filePath = asString(payload.path, 4096).trim();
             if (!filePath) return { ok: false, error: '缺少视频路径' };
             const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
-            const endMs = Math.max(startMs + 100, Math.round(Number(payload.endMs) || 0));
+            const durationMs = Math.max(0, Math.round(Number(payload.durationMs) || 0));
+            let endMs = Math.round(Number(payload.endMs) || 0);
+            if (durationMs >= 200) {
+                endMs = startMs + durationMs;
+            } else if (!(endMs > startMs)) {
+                endMs = startMs + Math.max(100, durationMs);
+            }
             const settings = loadSettings(getAppRoot).options || {};
             const ffmpegPathSetting = payload.ffmpegPath != null
                 ? asString(payload.ffmpegPath, 4096).trim()
@@ -338,6 +346,90 @@ function setupExtensionsBridge(api, deps) {
             const filePath = asString(payload.path, 4096).trim();
             if (!filePath) return { ok: false, error: '缺少路径' };
             return writeSubtitleDocument(filePath, payload);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-read-subtitle-meta', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path, 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少路径' };
+            return readSubtitleMeta(filePath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-write-subtitle-meta', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path, 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少路径' };
+            return writeSubtitleMeta(filePath, payload.meta || payload);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-get-glossary', async () => {
+        try {
+            return readGlossary();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-save-glossary', async (_event, payload = {}) => {
+        try {
+            return writeGlossary(payload.glossary || payload);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-export-glossary', async (event) => {
+        try {
+            const win = browserWindowFromEvent(event);
+            const current = readGlossary();
+            if (!current.ok) return current;
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title: '导出术语表',
+                defaultPath: 'transub-glossary.json',
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            fs.writeFileSync(
+                result.filePath,
+                `${JSON.stringify(current.glossary || { version: 1, entries: [] }, null, 2)}\n`,
+                'utf8',
+            );
+            return { ok: true, path: result.filePath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-import-glossary', async (event) => {
+        try {
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win || undefined, {
+                title: '导入术语表',
+                properties: ['openFile'],
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePaths?.length) {
+                return { ok: true, canceled: true };
+            }
+            const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+            const glossary = {
+                version: 1,
+                entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+            };
+            const saved = writeGlossary(glossary);
+            if (!saved.ok) return saved;
+            return { ok: true, glossary: saved.glossary, path: saved.path };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

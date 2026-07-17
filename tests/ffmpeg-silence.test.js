@@ -14,6 +14,8 @@ const {
     inferSpeechEndFromSilence,
     inferSpeechStartFromSilence,
     refineSilenceSplitCueTimings,
+    buildSpeechRegionsFromSilence,
+    snapCueTimingFromSilenceIntervals,
 } = require('../src/js/subtitle-split-core');
 
 function testParseSilenceDetectLog() {
@@ -27,6 +29,26 @@ function testParseSilenceDetectLog() {
     assert.strictEqual(intervals.length, 2);
     assert.ok(Math.abs(intervals[0].startSec - 10.42) < 0.001);
     assert.ok(Math.abs(intervals[1].endSec - 12.55) < 0.001);
+}
+
+function testParseSilenceDetectLogTrailingEof() {
+    const stderr = `
+[silencedetect @ 000] silence_start: 1.20
+[silencedetect @ 000] silence_end: 1.80 | silence_duration: 0.60
+[silencedetect @ 000] silence_start: 3.40
+`;
+    const intervals = parseSilenceDetectLog(stderr, 5, 10);
+    assert.strictEqual(intervals.length, 2);
+    assert.ok(Math.abs(intervals[0].startSec - 6.2) < 0.001);
+    assert.ok(Math.abs(intervals[1].startSec - 8.4) < 0.001);
+    assert.ok(Math.abs(intervals[1].endSec - 10) < 0.001);
+}
+
+function testSilenceMidpointsNearEdgeShortCue() {
+    // 1.5s cue: pause near start used to be discarded by fixed 400ms edge margin
+    const intervals = [{ startSec: 10.25, endSec: 10.55 }];
+    const points = silenceMidpointsToMs(intervals, 10000, 11500, 400);
+    assert.ok(points.length >= 1, `expected split near early pause, got ${JSON.stringify(points)}`);
 }
 
 function testSilenceMidpointsToMs() {
@@ -196,9 +218,51 @@ function testResolveBundledFfmpegFromInternal() {
     assert.match(probe.replace(/\\/g, '/'), /_internal\/bin\/ffprobe(\.exe)?$/i);
 }
 
+function testSnapCueTimingFromSilenceIntervals() {
+    // 窗内：静音0-0.5s，语音0.5-4.0s，静音4.0-6.0s；字幕原始偏宽 0-5.5s
+    const result = snapCueTimingFromSilenceIntervals(0, 5500, [
+        { startMs: 0, endMs: 500 },
+        { startMs: 4000, endMs: 6000 },
+    ], {
+        windowStartMs: 0,
+        windowEndMs: 6000,
+        headPadMs: 80,
+        tailPadMs: 80,
+        minDurMs: 500,
+        minShiftMs: 80,
+        allowExtend: true,
+    });
+    assert.ok(result.changed, 'should snap to speech');
+    assert.ok(result.startMs >= 400 && result.startMs <= 500, `start near speech onset, got ${result.startMs}`);
+    assert.ok(result.endMs >= 4000 && result.endMs <= 4180, `end near speech offset, got ${result.endMs}`);
+
+    const regions = buildSpeechRegionsFromSilence(0, 6000, [
+        { startMs: 0, endMs: 500 },
+        { startMs: 4000, endMs: 6000 },
+    ], 200);
+    assert.strictEqual(regions.length, 1);
+    assert.strictEqual(regions[0].startMs, 500);
+    assert.strictEqual(regions[0].endMs, 4000);
+}
+
+function testSnapCueTimingNoSpeechKeepsOriginal() {
+    const result = snapCueTimingFromSilenceIntervals(1000, 2000, [
+        { startMs: 1000, endMs: 2000 },
+    ], {
+        windowStartMs: 1000,
+        windowEndMs: 2000,
+        minSpeechMs: 200,
+    });
+    assert.strictEqual(result.changed, false);
+    assert.strictEqual(result.startMs, 1000);
+    assert.strictEqual(result.endMs, 2000);
+}
+
 function main() {
     testParseSilenceDetectLog();
+    testParseSilenceDetectLogTrailingEof();
     testSilenceMidpointsToMs();
+    testSilenceMidpointsNearEdgeShortCue();
     testResolveFfmpegForExecutionMissingCustomPath();
     testResolveBundledFfmpegFromInternal();
     testBuildTextsFromTimeBoundaries();
@@ -209,6 +273,8 @@ function main() {
     testInferSpeechStartFromSilence();
     testRefineSilenceSplitCueTimings();
     testBuildCuesFromSilenceSplitsWithIntervals();
+    testSnapCueTimingFromSilenceIntervals();
+    testSnapCueTimingNoSpeechKeepsOriginal();
     console.log('ffmpeg-silence.test.js: all passed');
 }
 

@@ -9,423 +9,893 @@
     <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="vendor/app.css">
     <style>
-        .editor-main { display: flex; flex: 1; min-height: 0; flex-direction: row; }
-        .editor-cues-panel {
-            flex: 0 0 46%;
-            width: 46%;
-            max-width: 680px;
-            min-width: 360px;
-            display: flex;
-            flex-direction: column;
-            background: #fff;
-            border-right: 1px solid rgb(229 231 235);
-            contain: layout paint style;
-        }
-        .editor-list-wrap { flex: 1; min-height: 0; overflow: auto; border-bottom: 1px solid rgb(229 231 235); }
-        .editor-list-wrap:focus { outline: none; }
-        .editor-list-wrap:focus-visible { box-shadow: inset 0 0 0 2px rgb(109 40 217); }
-        .editor-list-wrap tr[data-cue-idx] {
-            content-visibility: auto;
-            contain-intrinsic-size: auto 1.6rem;
-        }
-        .editor-detail-pane {
-            flex: 0 0 42%;
-            min-height: 11rem;
-            max-height: 46%;
-            display: flex;
-            flex-direction: column;
-            padding: 0.65rem 0.75rem;
-            gap: 0.5rem;
-            background: rgb(249 250 251);
-            overflow: hidden;
-        }
-        .editor-video-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #000; contain: layout style; }
-        .editor-video-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #000; isolation: isolate; }
-        #editorVideo {
-            display: block; width: 100%; height: 100%; object-fit: contain; background: #000;
-            pointer-events: auto; transform: translateZ(0);
-        }
-        #editorVideo::cue {
-            background: rgba(0, 0, 0, 0.78);
-            color: #fff;
-            font-size: clamp(15px, 2.2vw, 22px);
-            line-height: 1.45;
-        }
-        .editor-video-subtitle {
-            position: absolute; left: 0; right: 0; bottom: 10%; z-index: 2;
-            display: flex; justify-content: center; padding: 0 1.5rem; pointer-events: none;
-        }
-        .editor-video-subtitle.hidden { display: none; }
-        .editor-video-subtitle-inner {
-            max-width: 92%; padding: 0.4rem 0.85rem; background: rgba(0,0,0,0.78); color: #fff;
-            font-size: clamp(15px, 2.4vw, 24px); line-height: 1.45; text-align: center;
-            border-radius: 6px; white-space: pre-wrap; word-break: break-word;
-        }
-        .editor-video-toolbar {
-            display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem;
-            background: rgb(17 24 39); flex-shrink: 0;
-        }
-        #editorInsertCueBtn {
-            font-size: 0.75rem; padding: 0.35rem 0.65rem; border-radius: 0.375rem;
-            border: 1px solid rgb(109 40 217); background: rgb(109 40 217); color: #fff;
-        }
-        #editorInsertCueBtn:hover { background: rgb(91 33 182); }
-        #editorPlayheadTime {
-            font-size: 0.65rem; color: rgb(156 163 175); font-family: ui-monospace, monospace;
-            margin-left: auto; font-variant-numeric: tabular-nums;
-        }
-        .editor-cue-table { table-layout: fixed; width: 100%; }
-        .editor-cue-table .col-idx { width: 2rem; }
-        .editor-cue-table .col-time { width: 6.25rem; }
-        .editor-cue-table .col-dur { width: 3rem; }
-        .editor-cue-table td, .editor-cue-table th { padding: 0.25rem 0.35rem; }
-        .editor-cue-table .cell-text {
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-            font-size: 0.75rem; color: rgb(55 65 81);
-        }
-        tr.cue-row-selected { background: rgb(59 130 246) !important; color: #fff; }
-        tr.cue-row-selected td { color: #fff; }
-        tr.cue-row-selected .cell-text { color: rgb(219 234 254); }
-        tr.cue-row-playing:not(.cue-row-selected) {
-            box-shadow: inset 3px 0 0 rgb(109 40 217);
-            background: rgb(245 243 255) !important;
-        }
-        body.editor-video-playing .editor-detail-pane {
-            content-visibility: auto;
-            contain-intrinsic-size: auto 11rem;
-        }
-        body.editor-video-playing .editor-list-wrap tr:not(.cue-row-playing):not(.cue-row-selected) {
-            content-visibility: auto;
-        }
-        .cell-warn { background: rgb(254 215 170) !important; color: rgb(124 45 18) !important; }
-        tr.cue-row-selected .cell-warn { background: rgb(251 146 60) !important; color: #fff !important; }
-        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
-        .detail-times-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr minmax(5.5rem, 7rem);
-            gap: 0.5rem;
-            align-items: end;
-        }
-        .detail-set-time-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-        .detail-set-time-row button {
-            flex: 1 1 auto;
-            min-width: 0;
-            font-size: 0.7rem;
-            padding: 0.3rem 0.5rem;
-            border: 1px solid rgb(209 213 219);
-            border-radius: 0.375rem;
-            background: #fff;
-        }
-        .detail-set-time-row button:hover:not(:disabled) { background: rgb(243 244 246); }
-        .detail-set-time-row button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .detail-text-split-row {
-            display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.35rem;
-        }
-        .detail-text-split-row button {
-            font-size: 0.7rem; padding: 0.25rem 0.5rem;
-            border: 1px solid rgb(209 213 219); border-radius: 0.375rem; background: #fff;
-            color: rgb(109 40 217);
-        }
-        .detail-text-split-row button:hover:not(:disabled) { background: rgb(243 244 246); }
-        .detail-text-split-row button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .shortcuts-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-        .shortcuts-table th, .shortcuts-table td {
-            padding: 0.35rem 0.5rem;
-            text-align: left;
-            border-bottom: 1px solid rgb(243 244 246);
-        }
-        .shortcuts-table th { color: rgb(107 114 128); font-weight: 500; font-size: 0.65rem; }
-        .shortcuts-table tbody th[colspan] {
-            padding-top: 0.55rem; padding-bottom: 0.2rem;
-            color: rgb(109 40 217); font-size: 0.62rem; font-weight: 600;
-            text-transform: uppercase; letter-spacing: 0.04em;
-            border-bottom: none; background: rgb(249 250 251);
-        }
-        .shortcuts-table tbody tr:first-child th[colspan] { padding-top: 0.15rem; }
-        .shortcuts-table kbd {
-            display: inline-block;
-            padding: 0.1rem 0.35rem;
-            border: 1px solid rgb(209 213 219);
-            border-radius: 0.25rem;
-            background: rgb(249 250 251);
-            font-family: ui-monospace, monospace;
-            font-size: 0.68rem;
-        }
-        .detail-field label { display: block; font-size: 0.65rem; color: rgb(107 114 128); margin-bottom: 0.15rem; }
-        .detail-field input, .detail-field textarea {
-            width: 100%; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
-            padding: 0.35rem 0.5rem; font-size: 0.75rem;
-        }
-        .detail-field input:focus, .detail-field textarea:focus {
-            outline: none; border-color: rgb(109 40 217); box-shadow: 0 0 0 1px rgb(196 181 253);
-        }
-        .detail-duration-row { display: flex; align-items: center; gap: 0.25rem; }
-        .detail-duration-row input { flex: 1; }
-        .detail-nudge-btn {
-            width: 1.65rem; height: 1.65rem; border: 1px solid rgb(209 213 219); border-radius: 0.25rem;
-            background: #fff; font-size: 0.65rem; line-height: 1; color: rgb(75 85 99);
-        }
-        .detail-nudge-btn:hover { background: rgb(243 244 246); }
-        .detail-text-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-        .detail-text-wrap textarea { flex: 1; min-height: 3.5rem; resize: none; }
-        .detail-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.65rem; color: rgb(107 114 128); }
-        .detail-meta strong { color: rgb(55 65 81); font-weight: 600; }
-        .detail-nav button {
-            font-size: 0.7rem; padding: 0.25rem 0.5rem; border: 1px solid rgb(209 213 219);
-            border-radius: 0.25rem; background: #fff;
-        }
-        .detail-nav button:hover { background: rgb(243 244 246); }
-        .detail-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .editor-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
-        .editor-modal.hidden {
-            display: none !important;
-            pointer-events: none !important;
-            visibility: hidden !important;
-        }
-        .editor-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
-        .editor-modal-panel {
-            position: relative; z-index: 1; width: min(22rem, 92vw); background: #fff;
-            border-radius: 0.5rem; box-shadow: 0 20px 40px rgba(0,0,0,0.18); padding: 1rem 1.1rem;
-        }
-        .editor-modal-panel h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.35rem; }
-        .editor-modal-panel p { font-size: 0.72rem; color: rgb(107 114 128); margin-bottom: 0.75rem; }
-        .split-mode-list { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.75rem; }
-        .split-mode-item {
-            display: flex; align-items: center; gap: 0.45rem; font-size: 0.75rem;
-            padding: 0.35rem 0.45rem; border-radius: 0.375rem; cursor: pointer;
-        }
-        .split-mode-item:hover { background: rgb(243 244 246); }
-        .split-mode-item input { flex-shrink: 0; }
-        .split-mode-item span { flex: 1; }
-        .split-mode-extra {
-            margin-left: 1.35rem; margin-top: -0.25rem; margin-bottom: 0.15rem;
-        }
-        .split-mode-extra input {
-            width: 4.5rem; border: 1px solid rgb(209 213 219); border-radius: 0.25rem;
-            padding: 0.2rem 0.4rem; font-size: 0.72rem;
-        }
-        .split-mode-extra input:disabled { opacity: 0.45; background: rgb(243 244 246); }
-        .editor-modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-        .editor-modal-actions button {
-            font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem; border: 1px solid rgb(209 213 219);
-            background: #fff;
-        }
-        .editor-modal-actions button:hover { background: rgb(243 244 246); }
-        #editorSplitConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorSplitConfirm:hover { background: rgb(91 33 182); }
-        #editorSplitCueBtn, #editorDetailInsertCueBtn { color: rgb(109 40 217); }
-        .split-remember-row {
-            display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem;
-            color: rgb(75 85 99); margin-bottom: 0.65rem; padding-top: 0.35rem;
-            border-top: 1px solid rgb(243 244 246);
-        }
-        .split-remember-row input { flex-shrink: 0; }
-        .editor-header-actions {
-            display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; flex-shrink: 0;
-        }
-        .editor-toolbar-group {
-            display: flex; align-items: center; gap: 0.35rem;
-            padding: 0 0.55rem;
-            border-right: 1px solid rgb(229 231 235);
-        }
-        .editor-toolbar-group:first-child { padding-left: 0; }
-        .editor-toolbar-group:last-child { border-right: none; padding-right: 0; }
-        .editor-toolbar-group-label {
-            font-size: 0.58rem; color: rgb(156 163 175); font-weight: 500;
-            letter-spacing: 0.04em; white-space: nowrap; user-select: none;
-            margin-right: 0.1rem;
-        }
-        .editor-toolbar-group-primary { padding-right: 0.65rem; }
-        .detail-nav {
-            display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.25rem;
-        }
-        .detail-nav-group {
-            display: flex; align-items: center; gap: 0.35rem;
-            padding-right: 0.45rem; margin-right: 0.1rem;
-            border-right: 1px solid rgb(229 231 235);
-        }
-        .detail-nav-group:last-of-type { border-right: none; padding-right: 0; margin-right: 0; }
-        .detail-nav-spacer { flex: 1; min-width: 0.5rem; }
-        .editor-header-title {
-            display: flex; align-items: center; gap: 0.5rem; min-width: 0; margin-left: auto;
-            justify-content: flex-end; flex: 1;
-        }
-        .editor-header-title h1 { text-align: right; }
-        .editor-modal-panel.find-replace-panel { width: min(26rem, 94vw); }
-        .find-field { margin-bottom: 0.55rem; }
-        .find-field label { display: block; font-size: 0.65rem; color: rgb(107 114 128); margin-bottom: 0.15rem; }
-        .find-field input {
-            width: 100%; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
-            padding: 0.4rem 0.55rem; font-size: 0.75rem;
-        }
-        .find-field input:focus { outline: none; border-color: rgb(109 40 217); box-shadow: 0 0 0 1px rgb(196 181 253); }
-        .find-options { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: rgb(75 85 99); margin-bottom: 0.55rem; }
-        .find-status { font-size: 0.72rem; color: rgb(107 114 128); min-height: 1rem; margin-bottom: 0.55rem; }
-        .find-status.err { color: rgb(220 38 38); }
-        .find-nav-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.65rem; }
-        .find-nav-row button {
-            font-size: 0.72rem; padding: 0.3rem 0.55rem; border: 1px solid rgb(209 213 219);
-            border-radius: 0.25rem; background: #fff;
-        }
-        .find-nav-row button:hover { background: rgb(243 244 246); }
-        .find-nav-row button:disabled { opacity: 0.4; cursor: not-allowed; }
-        #editorFindReplaceConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorFindReplaceConfirm:hover { background: rgb(91 33 182); }
-        tr.cue-row-find-hit:not(.cue-row-selected) { background: rgb(254 249 195) !important; }
-        tr.cue-row-find-current:not(.cue-row-selected) {
-            box-shadow: inset 0 0 0 2px rgb(234 179 8);
-            background: rgb(254 240 138) !important;
-        }
-        .editor-modal-panel.batch-dur-panel { width: min(24rem, 94vw); }
-        .batch-dur-target {
-            display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.65rem;
-            font-size: 0.75rem;
-        }
-        .batch-dur-target input {
-            width: 5rem; border: 1px solid rgb(209 213 219); border-radius: 0.375rem;
-            padding: 0.35rem 0.5rem; font-size: 0.75rem;
-        }
-        .batch-dur-preview { font-size: 0.72rem; color: rgb(107 114 128); margin-bottom: 0.55rem; min-height: 1rem; }
-        .batch-dur-preview.err { color: rgb(220 38 38); }
-        #editorBatchDurConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorBatchDurConfirm:hover { background: rgb(91 33 182); }
-        #editorSilenceSplitConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorSilenceSplitConfirm:hover { background: rgb(91 33 182); }
-        #editorSmartSplitConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorSmartSplitConfirm:hover { background: rgb(91 33 182); }
-        #editorSmartAdjustConfirm { background: rgb(109 40 217); border-color: rgb(109 40 217); color: #fff; }
-        #editorSmartAdjustConfirm:hover { background: rgb(91 33 182); }
-        #editorRestoreBtn { color: rgb(180 83 9); }
-        .editor-context-menu {
-            position: fixed; z-index: 60; min-width: 9.5rem;
-            background: #fff; border: 1px solid rgb(229 231 235); border-radius: 0.375rem;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 0.25rem 0;
-            font-size: 0.75rem;
-        }
-        .editor-context-menu.hidden { display: none !important; }
-        .editor-context-menu button {
-            display: block; width: 100%; text-align: left; padding: 0.4rem 0.75rem;
-            border: none; background: transparent; color: rgb(55 65 81); cursor: pointer;
-        }
-        .editor-context-menu button:hover:not(:disabled) { background: rgb(243 244 246); }
-        .editor-context-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .editor-context-menu button.danger { color: rgb(220 38 38); }
-        .editor-context-menu .ctx-sep {
-            height: 1px; margin: 0.2rem 0; background: rgb(243 244 246);
-        }
-        .editor-silence-progress {
-            position: fixed; inset: 0; z-index: 80;
-            display: flex; align-items: center; justify-content: center;
-            background: rgba(17, 24, 39, 0.42);
-            pointer-events: auto;
-        }
-        .editor-silence-progress.hidden {
-            display: none !important;
-            pointer-events: none !important;
-        }
-        .editor-silence-progress-panel {
-            width: min(22rem, 90vw); background: #fff; border-radius: 0.5rem;
-            padding: 1.2rem 1.35rem 1rem; text-align: center;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-        }
-        .editor-silence-progress-panel .fa-spinner {
-            font-size: 1.35rem; color: rgb(109 40 217); margin-bottom: 0.55rem;
-        }
-        .editor-silence-progress-title {
-            font-size: 0.9rem; font-weight: 600; color: rgb(31 41 55); margin-bottom: 0.25rem;
-        }
-        .editor-silence-progress-detail {
-            font-size: 0.75rem; color: rgb(75 85 99); min-height: 1.1rem; margin-bottom: 0.65rem;
-        }
-        .editor-silence-progress-track {
-            height: 0.4rem; background: rgb(243 244 246); border-radius: 999px;
-            overflow: hidden; margin-bottom: 0.45rem;
-        }
-        .editor-silence-progress-track.hidden { display: none; }
-        .editor-silence-progress-bar {
-            height: 100%; width: 0%; background: rgb(109 40 217); border-radius: 999px;
-            transition: width 0.18s ease;
-        }
-        .editor-silence-progress.indeterminate .editor-silence-progress-track {
-            display: block;
-        }
-        .editor-silence-progress.indeterminate .editor-silence-progress-bar {
-            width: 38%; transition: none;
-            animation: editor-silence-indeterminate 1.15s ease-in-out infinite;
-        }
-        @keyframes editor-silence-indeterminate {
-            0% { transform: translateX(-120%); }
-            100% { transform: translateX(320%); }
-        }
-        .editor-silence-progress-hint {
-            font-size: 0.68rem; color: rgb(107 114 128); line-height: 1.4;
-        }
-        .editor-silence-progress-count {
-            font-size: 0.72rem; color: rgb(109 40 217); font-weight: 600;
-            font-variant-numeric: tabular-nums; margin-bottom: 0.35rem;
-        }
-    </style>
+:root {
+    --ed-bg: #f3f4f6;
+    --ed-surface: #ffffff;
+    --ed-surface-2: #f9fafb;
+    --ed-border: #e5e7eb;
+    --ed-text: #1f2937;
+    --ed-muted: #6b7280;
+    --ed-faint: #9ca3af;
+    --ed-accent: #6d28d9;
+    --ed-accent-hover: #5b21b6;
+    --ed-accent-soft: #ede9fe;
+    --ed-warn-bg: #fffbeb;
+    --ed-warn-text: #b45309;
+    --ed-danger: #dc2626;
+    --ed-ok: #059669;
+    --ed-selected: #ede9fe;
+    --ed-selected-bar: #6d28d9;
+    --ed-playing: #f5f3ff;
+    --ed-video-bar: #111827;
+    --ed-timeline: #0f172a;
+    --ed-cue-block: #7c3aed;
+    --ed-cue-selected: #a78bfa;
+    --ed-focus: #c4b5fd;
+}
+
+body.editor-theme-dark {
+    --ed-bg: #0f1419;
+    --ed-surface: #1a2332;
+    --ed-surface-2: #15202b;
+    --ed-border: #2d3a4d;
+    --ed-text: #e5e7eb;
+    --ed-muted: #9ca3af;
+    --ed-faint: #6b7280;
+    --ed-accent: #8b5cf6;
+    --ed-accent-hover: #7c3aed;
+    --ed-accent-soft: #2e1065;
+    --ed-warn-bg: #422006;
+    --ed-warn-text: #fbbf24;
+    --ed-danger: #f87171;
+    --ed-ok: #34d399;
+    --ed-selected: #2e1065;
+    --ed-selected-bar: #a78bfa;
+    --ed-playing: #1e1b4b;
+    --ed-video-bar: #0b1220;
+    --ed-timeline: #020617;
+    --ed-cue-block: #8b5cf6;
+    --ed-cue-selected: #c4b5fd;
+    --ed-focus: #7c3aed;
+}
+
+html, body.editor-body {
+    height: 100%;
+    margin: 0;
+}
+
+body.editor-body {
+    background: var(--ed-bg);
+    color: var(--ed-text);
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.editor-main {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    flex-direction: row;
+    overflow: hidden;
+}
+
+.editor-cues-panel {
+    flex: 0 0 var(--ed-cues-width, 42%);
+    width: var(--ed-cues-width, 42%);
+    max-width: 720px;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    background: var(--ed-surface);
+    border-right: 1px solid var(--ed-border);
+    min-height: 0;
+    overflow: hidden;
+}
+
+.editor-splitter {
+    flex: 0 0 5px;
+    cursor: col-resize;
+    background: var(--ed-border);
+    position: relative;
+    z-index: 5;
+}
+.editor-splitter:hover,
+.editor-splitter.is-dragging {
+    background: var(--ed-accent);
+}
+
+.editor-list-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.55rem;
+    border-bottom: 1px solid var(--ed-border);
+    background: var(--ed-surface-2);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.editor-filter-btn {
+    font-size: 0.68rem;
+    padding: 0.2rem 0.45rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    background: var(--ed-surface);
+    color: var(--ed-muted);
+}
+.editor-filter-btn:hover { background: var(--ed-accent-soft); color: var(--ed-accent); }
+.editor-filter-btn.active {
+    border-color: var(--ed-accent);
+    background: var(--ed-accent-soft);
+    color: var(--ed-accent);
+    font-weight: 600;
+}
+
+.editor-list-wrap { flex: 1; min-height: 0; overflow: auto; border-bottom: 1px solid var(--ed-border); overflow-anchor: none; }
+.editor-list-wrap:focus { outline: none; }
+.editor-list-wrap:focus-visible { box-shadow: inset 0 0 0 2px var(--ed-accent); }
+.editor-list-wrap tr[data-cue-idx] {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 2.2rem;
+}
+
+.editor-detail-pane {
+    flex: 0 0 auto;
+    min-height: 10rem;
+    max-height: 48%;
+    display: flex;
+    flex-direction: column;
+    padding: 0.55rem 0.7rem;
+    gap: 0.4rem;
+    background: var(--ed-surface-2);
+    overflow: hidden;
+}
+
+.editor-video-panel {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    overflow: hidden;
+}
+.editor-video-panel:focus { outline: none; }
+.editor-video-panel:focus-visible { box-shadow: inset 0 0 0 2px var(--ed-accent); }
+
+.editor-video-frame {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+    isolation: isolate;
+}
+
+#editorVideo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+    pointer-events: auto;
+    transform: translateZ(0);
+}
+#editorVideo::-webkit-media-controls { display: none !important; }
+
+.editor-video-empty {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.5rem;
+    color: #9ca3af;
+    font-size: 0.8rem;
+    z-index: 1;
+    pointer-events: none;
+    text-align: center;
+    padding: 1rem;
+}
+.editor-video-empty.visible { display: flex; }
+.editor-video-empty .fa { font-size: 1.75rem; opacity: 0.55; }
+
+.editor-video-subtitle {
+    position: absolute; left: 0; right: 0; bottom: 10%; z-index: 2;
+    display: flex; justify-content: center; padding: 0 1.5rem; pointer-events: none;
+}
+.editor-video-subtitle.hidden { display: none; }
+.editor-video-subtitle-inner {
+    max-width: 92%; padding: 0.4rem 0.85rem; background: rgba(0,0,0,0.78); color: #fff;
+    font-size: clamp(15px, 2.4vw, 24px); line-height: 1.45; text-align: center;
+    border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+}
+
+.editor-timeline {
+    flex-shrink: 0;
+    height: 52px;
+    background: var(--ed-timeline);
+    border-top: 1px solid #1f2937;
+    position: relative;
+    user-select: none;
+}
+.editor-timeline-track {
+    position: absolute;
+    inset: 8px 8px 8px 8px;
+    overflow: hidden;
+}
+.editor-timeline-cues { position: absolute; inset: 0; }
+.editor-timeline-cue {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    background: var(--ed-cue-block);
+    border-radius: 3px;
+    opacity: 0.85;
+    cursor: grab;
+    min-width: 3px;
+    overflow: hidden;
+}
+.editor-timeline-cue.selected { background: var(--ed-cue-selected); opacity: 1; box-shadow: 0 0 0 1px #fff; }
+.editor-timeline-cue .tl-handle {
+    position: absolute; top: 0; bottom: 0; width: 5px; cursor: ew-resize; background: rgba(255,255,255,0.25);
+}
+.editor-timeline-cue .tl-handle-l { left: 0; }
+.editor-timeline-cue .tl-handle-r { right: 0; }
+.editor-timeline-cue .tl-label {
+    font-size: 9px; color: #fff; padding: 2px 6px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; pointer-events: none; line-height: 32px;
+}
+.editor-timeline-playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: #f43f5e; z-index: 3; pointer-events: none;
+    transform: translateX(-1px);
+}
+.editor-timeline-playhead::before {
+    content: ''; position: absolute; top: -1px; left: -4px;
+    border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #f43f5e;
+}
+
+.editor-transport {
+    display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.65rem;
+    background: var(--ed-video-bar); flex-shrink: 0; flex-wrap: wrap;
+}
+.editor-transport button,
+.editor-transport select {
+    font-size: 0.72rem; padding: 0.28rem 0.5rem; border-radius: 0.3rem;
+    border: 1px solid #374151; background: #1f2937; color: #e5e7eb;
+}
+.editor-transport button:hover:not(:disabled) { background: #374151; }
+.editor-transport button:disabled { opacity: 0.4; cursor: not-allowed; }
+.editor-transport .transport-primary {
+    border-color: var(--ed-accent); background: var(--ed-accent); color: #fff;
+}
+.editor-transport .transport-primary:hover:not(:disabled) { background: var(--ed-accent-hover); }
+#editorPlayheadTime {
+    font-size: 0.7rem; color: #9ca3af; font-family: ui-monospace, monospace;
+    font-variant-numeric: tabular-nums; margin-left: auto;
+}
+#editorVolumeSlider { width: 4.5rem; accent-color: var(--ed-accent); }
+.editor-video-hint {
+    font-size: 10px; color: #9ca3af; padding: 0.3rem 0.65rem;
+    background: #030712; flex-shrink: 0; truncate: true;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.editor-cue-table { table-layout: fixed; width: 100%; }
+.editor-cue-table .col-idx { width: 2.1rem; }
+.editor-cue-table .col-time { width: 5.8rem; }
+.editor-cue-table .col-dur { width: 2.8rem; }
+.editor-cue-table .col-cps { width: 2.6rem; }
+.editor-cue-table td, .editor-cue-table th { padding: 0.28rem 0.35rem; }
+.editor-cue-table thead {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--ed-surface-2); color: var(--ed-faint);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--ed-border);
+}
+.editor-cue-table .cell-text {
+    overflow: hidden; font-size: 0.74rem; color: var(--ed-text);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    white-space: normal; line-height: 1.25; max-height: 2.5em;
+}
+.editor-cue-table tbody tr { border-bottom: 1px solid var(--ed-border); cursor: pointer; }
+.editor-cue-table tbody tr:hover { background: var(--ed-surface-2); }
+
+tr.cue-row-selected { background: var(--ed-selected) !important; }
+tr.cue-row-selected td { color: var(--ed-text); }
+tr.cue-row-selected {
+    box-shadow: inset 3px 0 0 var(--ed-selected-bar);
+}
+/* 播放指示：与选中区隔开；关闭自动焦点时仅细条，避免看起来像焦点在跟着走 */
+tr.cue-row-playing:not(.cue-row-selected) {
+    box-shadow: inset 2px 0 0 var(--ed-accent);
+    background: transparent;
+}
+body.editor-auto-focus tr.cue-row-playing:not(.cue-row-selected) {
+    background: var(--ed-playing) !important;
+}
+body.editor-video-playing .editor-detail-pane {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 11rem;
+}
+.cell-warn { background: rgb(254 215 170) !important; color: rgb(124 45 18) !important; }
+body.editor-theme-dark .cell-warn { background: #78350f !important; color: #fde68a !important; }
+tr.cue-row-selected .cell-warn { background: rgb(251 146 60) !important; color: #fff !important; }
+tr.cue-row-low-conf:not(.cue-row-selected) { background: var(--ed-warn-bg); }
+tr.cue-row-low-conf .col-idx { position: relative; }
+.low-conf-dot {
+    display: inline-block; margin-left: 0.2rem; min-width: 0.85rem; height: 0.85rem;
+    line-height: 0.85rem; text-align: center; border-radius: 999px;
+    background: rgb(245 158 11); color: #fff; font-size: 0.55rem; font-weight: 700;
+    vertical-align: middle;
+}
+tr.cue-row-selected .low-conf-dot { background: #fff; color: rgb(180 83 9); }
+.cue-cps-cell { font-size: 0.65rem; color: var(--ed-muted); font-variant-numeric: tabular-nums; }
+.cue-cps-cell.hot { color: var(--ed-warn-text); font-weight: 600; }
+
+#editorLowConfBadge, #editorStatusLowConf {
+    font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 999px;
+    background: rgb(254 243 199); color: rgb(146 64 14); font-variant-numeric: tabular-nums;
+}
+body.editor-theme-dark #editorLowConfBadge,
+body.editor-theme-dark #editorStatusLowConf {
+    background: #422006; color: #fbbf24;
+}
+
+#editorGlossaryConfirm, #editorSplitConfirm, #editorFindReplaceConfirm,
+#editorBatchDurConfirm, #editorSilenceSplitConfirm, #editorSmartSplitConfirm,
+#editorSmartAdjustConfirm, #editorQcConfirm, #editorRetranscribeDurConfirm {
+    background: var(--ed-accent); border-color: var(--ed-accent); color: #fff;
+}
+#editorGlossaryConfirm:hover, #editorSplitConfirm:hover, #editorFindReplaceConfirm:hover,
+#editorBatchDurConfirm:hover, #editorSilenceSplitConfirm:hover, #editorSmartSplitConfirm:hover,
+#editorSmartAdjustConfirm:hover, #editorQcConfirm:hover, #editorRetranscribeDurConfirm:hover {
+    background: var(--ed-accent-hover);
+}
+
+#editorQcBadge.editor-btn-badge { display: none; }
+#editorQcBtn.has-issues #editorQcBadge { display: inline-block; }
+#editorGlossaryBadge {
+    display: none; min-width: 1.1rem; padding: 0 0.3rem; margin-left: 0.2rem;
+    font-size: 0.58rem; line-height: 1.1rem; border-radius: 999px;
+    background: rgb(245 158 11); color: #fff; font-variant-numeric: tabular-nums; text-align: center;
+}
+#editorGlossaryBtn.has-issues #editorGlossaryBadge { display: inline-block; }
+#editorGlossaryBtn.has-issues, #editorQcBtn.has-issues {
+    color: var(--ed-warn-text); border-color: #fbbf24; background: var(--ed-warn-bg);
+}
+
+.glossary-toolbar { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.55rem; }
+.glossary-toolbar button {
+    font-size: 0.7rem; padding: 0.25rem 0.5rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.glossary-toolbar button:hover { background: var(--ed-surface-2); }
+.glossary-entry-list, .glossary-issue-list {
+    max-height: 8.5rem; overflow: auto; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; margin-bottom: 0.55rem; background: var(--ed-surface-2);
+}
+.glossary-entry-item, .glossary-issue-item {
+    display: block; width: 100%; text-align: left; border: none; border-bottom: 1px solid var(--ed-border);
+    background: transparent; padding: 0.4rem 0.55rem; cursor: pointer; font-size: 0.7rem; color: var(--ed-text);
+}
+.glossary-entry-item:hover, .glossary-issue-item:hover { background: var(--ed-accent-soft); }
+.glossary-entry-item.active { background: var(--ed-accent-soft); }
+.glossary-entry-item .g-can { font-weight: 600; color: var(--ed-accent); }
+.glossary-entry-item .g-alias { color: var(--ed-muted); display: block; margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.glossary-form { display: grid; gap: 0.4rem; margin-bottom: 0.55rem; }
+.glossary-form label { font-size: 0.65rem; color: var(--ed-muted); }
+.glossary-form input[type="text"] {
+    width: 100%; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.glossary-form-row { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted); }
+
+.detail-times-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr minmax(5.2rem, 6.5rem);
+    gap: 0.4rem;
+    align-items: end;
+}
+.detail-set-time-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.detail-set-time-row button {
+    flex: 1 1 auto; min-width: 0; font-size: 0.68rem; padding: 0.28rem 0.4rem;
+    border: 1px solid var(--ed-border); border-radius: 0.3rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.detail-set-time-row button:hover:not(:disabled) { background: var(--ed-accent-soft); }
+.detail-set-time-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+.detail-field label { display: block; font-size: 0.65rem; color: var(--ed-muted); margin-bottom: 0.15rem; }
+.detail-field input, .detail-field textarea {
+    width: 100%; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.detail-field input:focus, .detail-field textarea:focus {
+    outline: none; border-color: var(--ed-accent); box-shadow: 0 0 0 1px var(--ed-focus);
+}
+.detail-duration-row { display: flex; align-items: center; gap: 0.25rem; }
+.detail-duration-row input { flex: 1; }
+.detail-nudge-btn {
+    width: 1.65rem; height: 1.65rem; border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    background: var(--ed-surface); font-size: 0.65rem; line-height: 1; color: var(--ed-muted);
+}
+.detail-nudge-btn:hover { background: var(--ed-accent-soft); }
+.detail-text-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.detail-text-wrap textarea { flex: 1; min-height: 4rem; resize: none; }
+.detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem; font-size: 0.65rem; color: var(--ed-muted); }
+.detail-meta strong { color: var(--ed-text); font-weight: 600; }
+.detail-meta-nav {
+    display: flex; align-items: center; gap: 0.3rem;
+    margin-left: auto;
+}
+.detail-meta-nav button {
+    font-size: 0.68rem; padding: 0.2rem 0.45rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.detail-meta-nav button:hover:not(:disabled) { background: var(--ed-surface-2); }
+.detail-meta-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+.detail-meta-nav button.btn-danger { color: var(--ed-danger); border-color: #fecaca; }
+#editorDetailInsertCueBtn { color: var(--ed-accent); }
+.detail-tools {
+    border: 1px solid var(--ed-border); border-radius: 0.375rem; background: var(--ed-surface);
+    padding: 0 0.45rem;
+}
+.detail-tools > summary {
+    cursor: pointer; font-size: 0.68rem; color: var(--ed-muted); padding: 0.35rem 0;
+    list-style: none; user-select: none;
+}
+.detail-tools > summary::-webkit-details-marker { display: none; }
+.detail-tools > summary::before { content: '▸ '; color: var(--ed-faint); }
+.detail-tools[open] > summary::before { content: '▾ '; }
+.detail-tools-body { padding: 0 0 0.45rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.detail-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; width: 100%; }
+.detail-nav button {
+    font-size: 0.68rem; padding: 0.25rem 0.45rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.detail-nav button:hover:not(:disabled) { background: var(--ed-surface-2); }
+.detail-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+.detail-nav button.btn-danger { color: var(--ed-danger); border-color: #fecaca; }
+.detail-nav-group {
+    display: flex; align-items: center; gap: 0.3rem;
+    padding-right: 0.4rem; border-right: 1px solid var(--ed-border);
+}
+.detail-nav-group:last-of-type { border-right: none; padding-right: 0; }
+#editorSplitCueBtn,
+#editorSmartSplitCueBtn, #editorSplitLinesBtn, #editorSplitSpacesBtn, #editorSilenceSplitCueBtn {
+    color: var(--ed-accent);
+}
+
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.shortcuts-table th, .shortcuts-table td {
+    padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--ed-border); color: var(--ed-text);
+}
+.shortcuts-table th { color: var(--ed-muted); font-weight: 500; font-size: 0.65rem; }
+.shortcuts-table tbody th[colspan] {
+    padding-top: 0.55rem; padding-bottom: 0.2rem;
+    color: var(--ed-accent); font-size: 0.62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border-bottom: none; background: var(--ed-surface-2);
+}
+.shortcuts-table tbody tr:first-child th[colspan] { padding-top: 0.15rem; }
+.shortcuts-table kbd {
+    display: inline-block; padding: 0.1rem 0.35rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface-2);
+    font-family: ui-monospace, monospace; font-size: 0.68rem;
+}
+
+.editor-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+.editor-modal.hidden {
+    display: none !important; pointer-events: none !important; visibility: hidden !important;
+}
+.editor-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+.editor-modal-panel {
+    position: relative; z-index: 1; width: min(22rem, 92vw); background: var(--ed-surface);
+    border-radius: 0.5rem; box-shadow: 0 20px 40px rgba(0,0,0,0.18); padding: 1rem 1.1rem;
+    color: var(--ed-text); max-height: 90vh; overflow: auto;
+}
+.editor-modal-panel h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.35rem; }
+.editor-modal-panel p { font-size: 0.72rem; color: var(--ed-muted); margin-bottom: 0.75rem; }
+.editor-modal.editor-drawer { justify-content: flex-end; align-items: stretch; }
+.editor-modal.editor-drawer .editor-modal-backdrop { background: rgba(0,0,0,0.28); }
+.editor-modal.editor-drawer .editor-modal-panel {
+    width: min(26rem, 96vw); max-height: none; height: 100%;
+    border-radius: 0; box-shadow: -8px 0 32px rgba(0,0,0,0.18);
+}
+.editor-modal-panel.glossary-panel { width: min(32rem, 96vw); }
+.editor-modal-panel.break-words-panel { width: min(28rem, 96vw); }
+.editor-modal-panel.find-replace-panel { width: min(26rem, 94vw); }
+.editor-modal-panel.batch-dur-panel { width: min(24rem, 94vw); }
+.editor-modal-panel.qc-panel { width: min(28rem, 94vw); }
+.break-words-chips {
+    display: flex; flex-wrap: wrap; gap: 0.35rem;
+    max-height: 14rem; overflow: auto; padding: 0.45rem;
+    border: 1px solid var(--ed-border); border-radius: 0.4rem;
+    background: var(--ed-surface-2); margin-bottom: 0.55rem;
+}
+.break-words-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.72rem; padding: 0.18rem 0.4rem;
+    border-radius: 999px; border: 1px solid var(--ed-border);
+    background: var(--ed-surface); color: var(--ed-text);
+}
+.break-words-chip button {
+    border: 0; background: transparent; color: var(--ed-muted);
+    cursor: pointer; padding: 0; line-height: 1; font-size: 0.8rem;
+}
+.break-words-chip button:hover { color: var(--ed-danger, #b91c1c); }
+.break-words-add-row {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    margin-bottom: 0.45rem;
+}
+.break-words-add-row input {
+    flex: 1; min-width: 8rem; font-size: 0.78rem;
+    border: 1px solid var(--ed-border); border-radius: 0.3rem;
+    padding: 0.35rem 0.5rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.break-words-add-row button, .break-words-actions button {
+    font-size: 0.72rem; padding: 0.3rem 0.55rem; border-radius: 0.3rem;
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text); cursor: pointer;
+}
+.break-words-add-row button:hover, .break-words-actions button:hover { background: var(--ed-surface-2); }
+.break-words-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.35rem; }
+.break-words-hint { font-size: 0.7rem; color: var(--ed-muted); margin: 0 0 0.35rem; line-height: 1.45; }
+.editor-modal.editor-drawer .editor-modal-panel.glossary-panel,
+.editor-modal.editor-drawer .editor-modal-panel.break-words-panel,
+.editor-modal.editor-drawer .editor-modal-panel.find-replace-panel,
+.editor-modal.editor-drawer .editor-modal-panel.qc-panel {
+    width: min(28rem, 96vw);
+}
+
+.split-mode-list { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.75rem; }
+.split-mode-item {
+    display: flex; align-items: center; gap: 0.45rem; font-size: 0.75rem;
+    padding: 0.35rem 0.45rem; border-radius: 0.375rem; cursor: pointer; color: var(--ed-text);
+}
+.split-mode-item:hover { background: var(--ed-surface-2); }
+.split-mode-item input { flex-shrink: 0; }
+.split-mode-item span { flex: 1; }
+.split-mode-extra {
+    margin-left: 1.35rem; margin-top: -0.25rem; margin-bottom: 0.15rem; color: var(--ed-muted); font-size: 0.72rem;
+}
+.split-mode-extra input {
+    width: 4.5rem; border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.2rem 0.4rem; font-size: 0.72rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.split-mode-extra input:disabled { opacity: 0.45; background: var(--ed-surface-2); }
+.editor-modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.editor-modal-actions button {
+    font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem;
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text);
+}
+.editor-modal-actions button:hover { background: var(--ed-surface-2); }
+.editor-modal-actions button:disabled {
+    opacity: 0.45; cursor: not-allowed;
+}
+.editor-modal-actions button:disabled:hover { background: var(--ed-surface); }
+.editor-modal-actions button.btn-danger-confirm {
+    background: var(--ed-danger); border-color: var(--ed-danger); color: #fff;
+}
+#editorRetranscribeDurAll { margin-right: auto; color: var(--ed-warn-text); border-color: #fbbf24; }
+#editorRetranscribeDurAll:hover:not(:disabled) { background: var(--ed-warn-bg); }
+.split-remember-row {
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem;
+    color: var(--ed-muted); margin-bottom: 0.65rem; padding-top: 0.35rem;
+    border-top: 1px solid var(--ed-border);
+}
+
+.editor-header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem;
+    padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--ed-border);
+    background: var(--ed-surface); flex-shrink: 0; position: relative; z-index: 20;
+}
+.editor-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; flex-shrink: 0; }
+.editor-btn {
+    font-size: 0.72rem; padding: 0.28rem 0.55rem; border: 1px solid var(--ed-border);
+    border-radius: 0.3rem; background: var(--ed-surface); color: var(--ed-text);
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; white-space: nowrap;
+}
+.editor-btn-icon {
+    width: 1.85rem; height: 1.85rem; padding: 0; font-size: 0.85rem; position: relative;
+}
+.editor-btn:hover:not(:disabled) { background: var(--ed-surface-2); }
+.editor-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.editor-btn-primary {
+    background: var(--ed-accent); border-color: var(--ed-accent); color: #fff;
+}
+.editor-btn-primary:hover:not(:disabled) { background: var(--ed-accent-hover); }
+.editor-btn-danger-soft { color: var(--ed-warn-text); border-color: #fbbf24; }
+.editor-btn-danger-soft:hover:not(:disabled) { background: var(--ed-warn-bg); }
+.editor-btn-icon.is-active {
+    border-color: var(--ed-accent); background: var(--ed-accent-soft); color: var(--ed-accent);
+}
+.editor-btn-icon .editor-btn-badge {
+    position: absolute; top: -0.3rem; right: -0.35rem;
+    min-width: 0.95rem; height: 0.95rem; padding: 0 0.2rem;
+    font-size: 0.55rem; line-height: 0.95rem; border-radius: 999px;
+    background: rgb(245 158 11); color: #fff; font-variant-numeric: tabular-nums; text-align: center;
+}
+
+.editor-menu-wrap { position: relative; }
+.editor-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+    min-width: 11rem; background: var(--ed-surface); border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; box-shadow: 0 10px 28px rgba(0,0,0,0.14); padding: 0.25rem 0;
+}
+.editor-dropdown.hidden { display: none !important; }
+.editor-dropdown button {
+    display: flex; width: 100%; align-items: center; gap: 0.35rem;
+    text-align: left; padding: 0.4rem 0.75rem; border: none; background: transparent;
+    color: var(--ed-text); font-size: 0.72rem; cursor: pointer;
+}
+.editor-dropdown button:hover:not(:disabled) { background: var(--ed-accent-soft); }
+.editor-dropdown button:disabled { opacity: 0.4; cursor: not-allowed; }
+.editor-dropdown .dd-sep { height: 1px; margin: 0.2rem 0; background: var(--ed-border); }
+.editor-dropdown .dd-label {
+    padding: 0.3rem 0.75rem 0.15rem; font-size: 0.58rem; color: var(--ed-faint);
+    text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+.editor-header-meta {
+    display: flex; align-items: center; gap: 0.4rem; min-width: 0; margin-left: auto;
+    justify-content: flex-end; flex: 1;
+}
+.editor-chip {
+    font-size: 10px; padding: 0.1rem 0.4rem; border-radius: 999px;
+    background: var(--ed-accent-soft); color: var(--ed-accent); font-weight: 600; flex-shrink: 0;
+}
+.editor-chip-warn { background: var(--ed-warn-bg); color: var(--ed-warn-text); }
+
+.editor-status-bar {
+    display: flex; align-items: center; gap: 0.55rem;
+    padding: 0.25rem 0.65rem; border-top: 1px solid var(--ed-border);
+    background: var(--ed-surface); flex-shrink: 0; font-size: 0.68rem; color: var(--ed-muted);
+    min-height: 1.6rem;
+}
+.editor-status-bar .status-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-status-bar .status-msg.err { color: var(--ed-danger); }
+.editor-status-bar .status-msg.ok { color: var(--ed-ok); }
+.editor-status-bar .status-msg.warn { color: var(--ed-warn-text); }
+
+.find-field { margin-bottom: 0.55rem; }
+.find-field label { display: block; font-size: 0.65rem; color: var(--ed-muted); margin-bottom: 0.15rem; }
+.find-field input {
+    width: 100%; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.4rem 0.55rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.find-field input:focus { outline: none; border-color: var(--ed-accent); box-shadow: 0 0 0 1px var(--ed-focus); }
+.find-options { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted); margin-bottom: 0.55rem; }
+.find-status { font-size: 0.72rem; color: var(--ed-muted); min-height: 1rem; margin-bottom: 0.55rem; }
+.find-status.err { color: var(--ed-danger); }
+.find-nav-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.65rem; }
+.find-nav-row button {
+    font-size: 0.72rem; padding: 0.3rem 0.55rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.find-nav-row button:hover { background: var(--ed-surface-2); }
+.find-nav-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+tr.cue-row-find-hit:not(.cue-row-selected) { background: #fef9c3 !important; }
+tr.cue-row-find-current:not(.cue-row-selected) {
+    box-shadow: inset 0 0 0 2px #eab308; background: #fef08a !important;
+}
+body.editor-theme-dark tr.cue-row-find-hit:not(.cue-row-selected) { background: #422006 !important; }
+body.editor-theme-dark tr.cue-row-find-current:not(.cue-row-selected) {
+    box-shadow: inset 0 0 0 2px #fbbf24; background: #78350f !important;
+}
+
+.batch-dur-target {
+    display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.65rem; font-size: 0.75rem; color: var(--ed-text);
+}
+.batch-dur-target input {
+    width: 5rem; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.batch-dur-preview { font-size: 0.72rem; color: var(--ed-muted); margin-bottom: 0.55rem; min-height: 1rem; }
+.batch-dur-preview.err { color: var(--ed-danger); }
+.retranscribe-dur-presets { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0 0.65rem; }
+.retranscribe-dur-presets button {
+    font-size: 0.7rem; padding: 0.25rem 0.5rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.retranscribe-dur-presets button:hover { background: var(--ed-surface-2); }
+.retranscribe-dur-presets button.active {
+    border-color: var(--ed-accent); background: var(--ed-accent-soft); color: var(--ed-accent);
+}
+
+.qc-summary-bar { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.65rem; }
+.qc-chip {
+    font-size: 0.65rem; padding: 0.15rem 0.45rem; border-radius: 999px;
+    background: var(--ed-surface-2); color: var(--ed-muted); font-variant-numeric: tabular-nums;
+    border: 1px solid transparent; font-family: inherit; line-height: 1.3;
+}
+button.qc-chip { cursor: pointer; }
+button.qc-chip:hover { border-color: var(--ed-border); color: var(--ed-text); }
+.qc-chip.warn { background: var(--ed-warn-bg); color: var(--ed-warn-text); }
+.qc-chip.ok { background: #d1fae5; color: #065f46; cursor: default; }
+body.editor-theme-dark .qc-chip.ok { background: #064e3b; color: #6ee7b7; }
+.qc-chip.active {
+    border-color: var(--ed-accent); background: var(--ed-accent-soft); color: var(--ed-accent);
+}
+.qc-chip.warn.active { border-color: var(--ed-warn-text); }
+.qc-issue-list {
+    max-height: 9.5rem; overflow: auto; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; margin-bottom: 0.65rem; background: var(--ed-surface-2);
+}
+.qc-issue-list:empty { display: none; }
+.qc-issue-item {
+    display: block; width: 100%; text-align: left; border: none; border-bottom: 1px solid var(--ed-border);
+    background: transparent; padding: 0.4rem 0.55rem; cursor: pointer; font-size: 0.7rem; color: var(--ed-text);
+}
+.qc-issue-item:last-child { border-bottom: none; }
+.qc-issue-item:hover { background: var(--ed-accent-soft); }
+.qc-issue-item .qc-issue-idx { font-weight: 600; color: var(--ed-accent); margin-right: 0.35rem; font-variant-numeric: tabular-nums; }
+.qc-issue-item .qc-issue-msg { color: var(--ed-muted); }
+.qc-issue-item .qc-issue-text { display: block; color: var(--ed-muted); margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#editorRestoreBtn { color: var(--ed-warn-text); }
+#editorQcConfirm { font-weight: 600; }
+
+.editor-context-menu {
+    position: fixed; z-index: 60; min-width: 9.5rem;
+    background: var(--ed-surface); border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 0.25rem 0; font-size: 0.75rem;
+}
+.editor-context-menu.hidden { display: none !important; }
+.editor-context-menu button {
+    display: block; width: 100%; text-align: left; padding: 0.4rem 0.75rem;
+    border: none; background: transparent; color: var(--ed-text); cursor: pointer;
+}
+.editor-context-menu button:hover:not(:disabled) { background: var(--ed-surface-2); }
+.editor-context-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
+.editor-context-menu button.danger { color: var(--ed-danger); }
+.editor-context-menu .ctx-sep { height: 1px; margin: 0.2rem 0; background: var(--ed-border); }
+
+.editor-silence-progress,
+.editor-boot-progress {
+    position: fixed; inset: 0; z-index: 80;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(17, 24, 39, 0.42); pointer-events: auto;
+}
+.editor-boot-progress {
+    z-index: 90;
+    background: var(--ed-bg);
+}
+.editor-silence-progress.hidden,
+.editor-boot-progress.hidden { display: none !important; pointer-events: none !important; }
+.editor-silence-progress-panel,
+.editor-boot-progress-panel {
+    width: min(22rem, 90vw); background: var(--ed-surface); border-radius: 0.5rem;
+    padding: 1.2rem 1.35rem 1rem; text-align: center;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); color: var(--ed-text);
+}
+.editor-silence-progress-panel .fa-spinner,
+.editor-boot-progress-panel .fa-spinner {
+    font-size: 1.35rem; color: var(--ed-accent); margin-bottom: 0.55rem;
+}
+.editor-silence-progress-title,
+.editor-boot-progress-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.25rem; }
+.editor-silence-progress-detail,
+.editor-boot-progress-detail { font-size: 0.75rem; color: var(--ed-muted); min-height: 1.1rem; margin-bottom: 0.65rem; }
+.editor-silence-progress-track {
+    height: 0.4rem; background: var(--ed-surface-2); border-radius: 999px;
+    overflow: hidden; margin-bottom: 0.45rem;
+}
+.editor-silence-progress-track.hidden { display: none; }
+.editor-silence-progress-bar {
+    height: 100%; width: 0%; background: var(--ed-accent); border-radius: 999px; transition: width 0.18s ease;
+}
+.editor-silence-progress.indeterminate .editor-silence-progress-track { display: block; }
+.editor-silence-progress.indeterminate .editor-silence-progress-bar {
+    width: 38%; transition: none; animation: editor-silence-indeterminate 1.15s ease-in-out infinite;
+}
+@keyframes editor-silence-indeterminate {
+    0% { transform: translateX(-120%); }
+    100% { transform: translateX(320%); }
+}
+.editor-silence-progress-hint { font-size: 0.68rem; color: var(--ed-muted); line-height: 1.4; }
+.editor-silence-progress-count {
+    font-size: 0.72rem; color: var(--ed-accent); font-weight: 600;
+    font-variant-numeric: tabular-nums; margin-bottom: 0.35rem;
+}
+.editor-boot-progress-brand {
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--ed-accent); margin-bottom: 0.65rem;
+}
+.editor-boot-spinner {
+    width: 1.25rem; height: 1.25rem; margin: 0 auto 0.55rem;
+    border: 2px solid var(--ed-accent-soft);
+    border-top-color: var(--ed-accent);
+    border-radius: 50%;
+    animation: editor-boot-spin 0.8s linear infinite;
+}
+@keyframes editor-boot-spin { to { transform: rotate(360deg); } }
+
+.needs-video[disabled],
+button.needs-video.is-no-video { opacity: 0.45; }
+.hidden { display: none !important; }
+
+</style>
 </head>
-<body class="bg-gray-50 h-screen overflow-hidden text-gray-800 flex flex-col">
-    <header class="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-gray-200 shrink-0 bg-white relative z-10">
+<body class="editor-body editor-theme-light">
+    <header class="editor-header">
         <div class="editor-header-actions">
-            <div class="editor-toolbar-group editor-toolbar-group-primary" role="group" aria-label="文件">
-                <span class="editor-toolbar-group-label">文件</span>
-                <button type="button" id="editorOpenFileBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="打开其他字幕"><i class="fa fa-folder-open mr-1"></i>打开</button>
-                <button type="button" id="editorLinkVideoBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="选择关联视频"><i class="fa fa-film mr-1"></i>关联视频</button>
-                <button type="button" id="editorSaveBtn" class="text-xs px-3 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded"><i class="fa fa-save mr-1"></i>保存</button>
+            <button type="button" id="editorOpenFileBtn" class="editor-btn editor-btn-icon" title="打开其他字幕" aria-label="打开"><i class="fa fa-folder-open"></i></button>
+            <button type="button" id="editorLinkVideoBtn" class="editor-btn editor-btn-icon" title="关联视频" aria-label="关联视频"><i class="fa fa-film"></i></button>
+            <button type="button" id="editorSaveBtn" class="editor-btn editor-btn-icon editor-btn-primary" title="保存 (Ctrl+S)" aria-label="保存"><i class="fa fa-save"></i></button>
+            <button type="button" id="editorUndoBtn" class="editor-btn editor-btn-icon" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled><i class="fa fa-undo"></i></button>
+            <button type="button" id="editorRedoBtn" class="editor-btn editor-btn-icon" title="重做 (Ctrl+Y)" aria-label="重做" disabled><i class="fa fa-repeat"></i></button>
+            <button type="button" id="editorFindReplaceBtn" class="editor-btn editor-btn-icon" title="查找替换 (Ctrl+F)" aria-label="查找替换"><i class="fa fa-search"></i></button>
+            <button type="button" id="editorQcBtn" class="editor-btn editor-btn-icon" title="质量检查" aria-label="质量检查"><i class="fa fa-heartbeat"></i><span id="editorQcBadge" class="editor-btn-badge">0</span></button>
+
+            <div class="editor-menu-wrap">
+                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon" title="更多工具" aria-label="工具" aria-haspopup="true" aria-expanded="false">
+                    <i class="fa fa-wrench"></i>
+                </button>
+                <div id="editorToolsMenu" class="editor-dropdown hidden" role="menu">
+                    <div class="dd-label">条目</div>
+                    <button type="button" id="editorAddCueBtn" role="menuitem" title="在末尾添加一条字幕"><i class="fa fa-plus"></i>添加字幕</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">时间轴</div>
+                    <button type="button" id="editorShiftBackBtn" role="menuitem" title="全体字幕 -500ms">全体 -0.5s</button>
+                    <button type="button" id="editorShiftFwdBtn" role="menuitem" title="全体字幕 +500ms">全体 +0.5s</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">文本</div>
+                    <button type="button" id="editorGlossaryBtn" role="menuitem" title="术语表与专名一致性"><i class="fa fa-book"></i>术语表<span id="editorGlossaryBadge">0</span></button>
+                    <button type="button" id="editorBreakWordsBtn" role="menuitem" title="管理智能断句使用的断句词"><i class="fa fa-ellipsis-h"></i>断句词</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">批量处理</div>
+                    <button type="button" id="editorBatchDurBtn" role="menuitem" title="按条件批量调整字幕时长"><i class="fa fa-clock-o"></i>时长调整</button>
+                    <button type="button" id="editorSmartSplitBtn" role="menuitem" title="按读速与断句规则批量分割字幕"><i class="fa fa-scissors"></i>智能分割</button>
+                    <button type="button" id="editorSilenceSplitBtn" class="needs-video" role="menuitem" title="按视频静音批量分割字幕（需关联视频）"><i class="fa fa-volume-off"></i>静音分割</button>
+                    <button type="button" id="editorSmartAdjustBtn" role="menuitem" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic"></i>智能调整</button>
+                    <button type="button" id="editorRemoveNoiseBtn" role="menuitem" title="批量删除语气碎片、音效标签等杂音字幕"><i class="fa fa-filter"></i>删除杂音</button>
+                    <button type="button" id="editorRetranscribeDurBtn" class="needs-video" role="menuitem" title="从起始点按指定时长重转写（需关联视频）"><i class="fa fa-refresh"></i>按时长重转</button>
+                    <div class="dd-sep"></div>
+                    <div class="dd-label">历史</div>
+                    <button type="button" id="editorRestoreBtn" class="editor-btn-danger-soft" role="menuitem" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history"></i>复原到初始</button>
+                    <div class="dd-sep"></div>
+                    <button type="button" id="editorShortcutsBtn" role="menuitem" title="查看快捷键说明"><i class="fa fa-keyboard-o"></i>快捷键</button>
+                </div>
             </div>
-            <div class="editor-toolbar-group" role="group" aria-label="历史">
-                <span class="editor-toolbar-group-label">历史</span>
-                <button type="button" id="editorUndoBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="返回 (Ctrl+Z)" disabled><i class="fa fa-undo mr-1"></i>返回</button>
-                <button type="button" id="editorRedoBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="重做 (Ctrl+Y)" disabled><i class="fa fa-repeat mr-1"></i>重做</button>
-                <button type="button" id="editorRestoreBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history mr-1"></i>复原</button>
-            </div>
-            <div class="editor-toolbar-group" role="group" aria-label="条目">
-                <span class="editor-toolbar-group-label">条目</span>
-                <button type="button" id="editorAddCueBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="在末尾添加一条字幕"><i class="fa fa-plus mr-1"></i>添加</button>
-            </div>
-            <div class="editor-toolbar-group" role="group" aria-label="时间轴">
-                <span class="editor-toolbar-group-label">时间轴</span>
-                <button type="button" id="editorShiftBackBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="全体字幕起始与结束时间 -500ms">-0.5s</button>
-                <button type="button" id="editorShiftFwdBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="全体字幕起始与结束时间 +500ms">+0.5s</button>
-            </div>
-            <div class="editor-toolbar-group" role="group" aria-label="文本">
-                <span class="editor-toolbar-group-label">文本</span>
-                <button type="button" id="editorFindReplaceBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="查找与替换 (Ctrl+F)"><i class="fa fa-search mr-1"></i>查找替换</button>
-            </div>
-            <div class="editor-toolbar-group" role="group" aria-label="批量处理">
-                <span class="editor-toolbar-group-label">批量</span>
-                <button type="button" id="editorBatchDurBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="按条件批量调整字幕时长"><i class="fa fa-clock-o mr-1"></i>时长调整</button>
-                <button type="button" id="editorSmartSplitBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="按读速与断句规则批量分割字幕"><i class="fa fa-scissors mr-1"></i>智能分割</button>
-                <button type="button" id="editorSilenceSplitBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="按视频静音批量分割字幕（需关联视频）"><i class="fa fa-volume-off mr-1"></i>静音分割</button>
-                <button type="button" id="editorSmartAdjustBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic mr-1"></i>智能调整</button>
-            </div>
-            <div class="editor-toolbar-group" role="group" aria-label="帮助">
-                <span class="editor-toolbar-group-label">帮助</span>
-                <button type="button" id="editorShortcutsBtn" class="text-xs px-2 py-1 border rounded hover:bg-gray-50" title="查看快捷键说明"><i class="fa fa-keyboard-o mr-1"></i>快捷键</button>
-            </div>
+
+            <button type="button" id="editorAutoFocusBtn" class="editor-btn editor-btn-icon" title="自动焦点：关闭（开启后播放时跟随当前字幕）" aria-label="自动焦点" aria-pressed="false">
+                <i class="fa fa-crosshairs"></i>
+            </button>
+            <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
+            <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
         </div>
-        <div class="editor-header-title">
-            <span id="editorSaveStatus" class="text-xs text-emerald-600 min-w-[3rem] shrink-0"></span>
-            <span id="editorDirtyBadge" class="hidden text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">未保存</span>
-            <select id="editorSidecarSelect" class="hidden text-xs border rounded px-2 py-1 max-w-[12rem] shrink-0"></select>
-            <span id="editorCueCount" class="text-xs text-gray-500 tabular-nums shrink-0">0 条</span>
-            <span id="editorFormatBadge" class="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium shrink-0">SRT</span>
-            <h1 id="editorTitle" class="font-semibold text-sm truncate min-w-0 max-w-[40vw]">字幕编辑</h1>
+        <div class="editor-header-meta">
+            <span id="editorSaveStatus" class="text-xs" style="color:var(--ed-ok);min-width:2rem;flex-shrink:0"></span>
+            <span id="editorDirtyBadge" class="hidden editor-chip editor-chip-warn shrink-0">未保存</span>
+            <select id="editorSidecarSelect" class="hidden editor-btn" style="max-width:12rem;padding:0.2rem 0.4rem"></select>
+            <span id="editorFormatBadge" class="editor-chip shrink-0">SRT</span>
         </div>
     </header>
 
     <div class="editor-main">
-        <section class="editor-cues-panel">
+        <section class="editor-cues-panel" id="editorCuesPanel">
+            <div class="editor-list-toolbar" role="toolbar" aria-label="列表筛选">
+                <button type="button" class="editor-filter-btn active" data-list-filter="all">全部</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="low" title="仅低置信条目">低置信</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="qc" title="质量检查问题">QC</button>
+                <button type="button" class="editor-filter-btn" data-list-filter="find" title="查找命中">查找</button>
+                <button type="button" id="editorNextIssueBtn" class="editor-filter-btn" title="跳到下一条问题">下一条问题</button>
+                <span style="flex:1"></span>
+                <span id="editorFilterCount" style="font-size:0.65rem;color:var(--ed-faint);font-variant-numeric:tabular-nums"></span>
+            </div>
             <div id="editorListWrap" class="editor-list-wrap" tabindex="-1">
                 <table class="editor-cue-table text-sm">
-                    <thead class="sticky top-0 bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wide z-10 border-b border-gray-100">
+                    <thead>
                         <tr>
                             <th class="text-left col-idx">#</th>
-                            <th class="text-left col-time">起始时间</th>
-                            <th class="text-left col-time">结束时间</th>
+                            <th class="text-left col-time">起始</th>
+                            <th class="text-left col-time">结束</th>
                             <th class="text-left col-dur">时长</th>
+                            <th class="text-left col-cps">CPS</th>
                             <th class="text-left">文本</th>
                         </tr>
                     </thead>
@@ -445,7 +915,7 @@
                     </div>
                     <div class="detail-field">
                         <label for="editorDetailEnd">结束时间</label>
-                        <input type="text" id="editorDetailEnd" class="font-mono tabular-nums bg-gray-100" readonly tabindex="-1">
+                        <input type="text" id="editorDetailEnd" class="font-mono tabular-nums" readonly tabindex="-1" style="background:var(--ed-surface-2)">
                     </div>
                     <div class="detail-field">
                         <label for="editorDetailDuration">时长（秒）</label>
@@ -456,82 +926,153 @@
                         </div>
                     </div>
                 </div>
-                <div class="detail-set-time-row">
-                    <button type="button" id="editorSetStartToPlayhead" title="设为起始时间 (F11)">
-                        <i class="fa fa-crosshairs mr-1"></i>设为起始时间
-                    </button>
-                    <button type="button" id="editorSetEndToPlayhead" title="设为结束时间 (F12)">
-                        <i class="fa fa-crosshairs mr-1"></i>设为结束时间
-                    </button>
-                    <button type="button" id="editorCharDurBtn" title="按目标读速（CPS）调节当前字幕时长">
-                        <i class="fa fa-text-width mr-1"></i>按字数调节
-                    </button>
-                    <button type="button" id="editorSmartDurBtn" title="按视频静音自动缩短过长时长（需关联视频）">
-                        <i class="fa fa-magic mr-1"></i>智能调节时长
-                    </button>
-                </div>
+
                 <div class="detail-text-wrap">
-                    <div class="detail-text-split-row" role="group" aria-label="文本分割">
-                        <button type="button" id="editorSmartSplitCueBtn" title="智能断句分割当前字幕">
-                            <i class="fa fa-scissors mr-1"></i>智能分割
-                        </button>
-                        <button type="button" id="editorSilenceSplitCueBtn" title="按视频静音分割当前字幕（需关联视频）">
-                            <i class="fa fa-volume-off mr-1"></i>静音分割
-                        </button>
-                        <button type="button" id="editorSplitLinesBtn" title="按换行分割当前字幕（每行一条）">
-                            <i class="fa fa-align-left mr-1"></i>按换行分割
-                        </button>
-                        <button type="button" id="editorSplitSpacesBtn" title="按空格分割当前字幕（每词/每段一条）">
-                            <i class="fa fa-font mr-1"></i>按空格分割
-                        </button>
-                    </div>
-                    <div class="flex items-center justify-between mb-0.5">
-                        <label for="editorDetailText" class="text-[10px] text-gray-500">文本</label>
-                        <span id="editorDetailCps" class="text-[10px] text-violet-600 font-medium">CPS —</span>
+                    <div class="flex items-center justify-between mb-0.5" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.15rem">
+                        <label for="editorDetailText" style="font-size:10px;color:var(--ed-muted)">文本</label>
+                        <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
                     </div>
                     <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
                 </div>
+
                 <div class="detail-meta">
-                    <span>单行长度 <strong id="editorLineLen">0</strong></span>
-                    <span>总长度 <strong id="editorTextLen">0</strong></span>
-                    <span class="inline-flex items-center gap-1">
-                        每秒字数
+                    <span>单行 <strong id="editorLineLen">0</strong></span>
+                    <span>总长 <strong id="editorTextLen">0</strong></span>
+                    <span class="inline-flex items-center gap-1" style="display:inline-flex;align-items:center;gap:0.25rem">
+                        目标 CPS
                         <input type="number" id="editorTargetCps" min="0.1" max="100" step="0.1" value="3"
-                            class="w-14 text-xs border border-gray-200 rounded px-1 py-0 tabular-nums bg-white"
+                            style="width:3.5rem;font-size:0.7rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0 0.25rem;background:var(--ed-surface);color:var(--ed-text)"
                             title="按字数调节时长与 CPS 参考的目标读速">
                     </span>
-                    <span id="editorDetailWarn" class="text-amber-700 hidden"></span>
-                </div>
-                <div class="detail-nav">
-                    <div class="detail-nav-group" role="group" aria-label="导航">
-                        <button type="button" id="editorPrevCueBtn"><i class="fa fa-chevron-left mr-1"></i>上一行</button>
-                        <button type="button" id="editorNextCueBtn">下一行<i class="fa fa-chevron-right ml-1"></i></button>
-                    </div>
-                    <div class="detail-nav-group" role="group" aria-label="分割">
-                        <button type="button" id="editorSplitCueBtn" title="将当前字幕拆分为多条"><i class="fa fa-scissors mr-1"></i>分割</button>
-                    </div>
-                    <div class="detail-nav-group" role="group" aria-label="条目操作">
-                        <button type="button" id="editorDetailInsertCueBtn" title="在当前播放位置插入一条新字幕"><i class="fa fa-plus-circle mr-1"></i>插入</button>
-                        <button type="button" id="editorDeleteCueBtn" class="text-red-600"><i class="fa fa-trash mr-1"></i>删除</button>
+                    <span id="editorDetailWarn" style="color:var(--ed-warn-text)" class="hidden"></span>
+                    <div class="detail-meta-nav" role="group" aria-label="条目与导航">
+                        <button type="button" id="editorDetailInsertCueBtn" title="在当前播放位置插入一条新字幕"><i class="fa fa-plus-circle"></i> 插入</button>
+                        <button type="button" id="editorDeleteCueBtn" class="btn-danger" title="删除当前字幕 (Delete)"><i class="fa fa-trash"></i> 删除</button>
+                        <button type="button" id="editorPrevCueBtn"><i class="fa fa-chevron-left"></i> 上一条</button>
+                        <button type="button" id="editorNextCueBtn">下一条 <i class="fa fa-chevron-right"></i></button>
                     </div>
                 </div>
+
+                <details class="detail-tools" id="editorDetailTools">
+                    <summary>时间 · 分割 · 导航</summary>
+                    <div class="detail-tools-body">
+                        <div class="detail-set-time-row">
+                            <button type="button" id="editorSetStartToPlayhead" title="设为起始时间 (F11)">
+                                <i class="fa fa-crosshairs"></i> 起始 <span class="kbd-hint">F11</span>
+                            </button>
+                            <button type="button" id="editorSetEndToPlayhead" title="设为结束时间 (F12)">
+                                <i class="fa fa-crosshairs"></i> 结束 <span class="kbd-hint">F12</span>
+                            </button>
+                            <button type="button" id="editorCharDurBtn" title="按目标读速（CPS）调节当前字幕时长">
+                                <i class="fa fa-text-width"></i> 按字数
+                            </button>
+                            <button type="button" id="editorSmartDurBtn" class="needs-video" title="按视频静音自动缩短过长时长（需关联视频）">
+                                <i class="fa fa-magic"></i> 智能时长
+                            </button>
+                            <button type="button" id="editorAudioSnapBtn" class="needs-video" title="按音频静音将起止贴到语音边界（需关联视频）">
+                                <i class="fa fa-crosshairs"></i> 贴边
+                            </button>
+                        </div>
+                        <div class="detail-nav">
+                            <div class="detail-nav-group" role="group" aria-label="分割">
+                                <button type="button" id="editorSplitCueBtn" title="将当前字幕拆分为多条"><i class="fa fa-scissors"></i> 分割…</button>
+                                <button type="button" id="editorSmartSplitCueBtn" title="智能断句分割当前字幕"><i class="fa fa-magic"></i> 智能断句</button>
+                                <button type="button" id="editorSplitLinesBtn" title="按换行分割当前字幕（每行一条）"><i class="fa fa-align-left"></i> 换行分割</button>
+                                <button type="button" id="editorSplitSpacesBtn" title="按空格分割当前字幕（每词/每段一条）"><i class="fa fa-font"></i> 空格分割</button>
+                                <button type="button" id="editorSilenceSplitCueBtn" class="needs-video" title="按视频静音分割当前字幕（需关联视频）"><i class="fa fa-volume-off"></i> 静音分割</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
             </div>
-            <p id="editorStatusLine" class="text-xs text-gray-500 px-3 py-1.5 border-t border-gray-100 shrink-0 truncate"></p>
         </section>
 
-        <div id="editorSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSplitTitle">
+        <div id="editorSplitter" class="editor-splitter" title="拖拽调整面板宽度" role="separator" aria-orientation="vertical"></div>
+
+        <aside id="editorVideoWrap" class="editor-video-panel" tabindex="-1">
+            <div id="editorVideoFrame" class="editor-video-frame">
+                <video id="editorVideo" playsinline preload="auto"></video>
+                <div id="editorVideoEmpty" class="editor-video-empty visible">
+                    <i class="fa fa-film" aria-hidden="true"></i>
+                    <div>未关联视频</div>
+                    <div style="font-size:0.7rem;opacity:0.8">点击顶栏「关联视频」，或仅编辑文本与时间</div>
+                </div>
+                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="off">
+                    <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
+                </div>
+            </div>
+            <div id="editorTimeline" class="editor-timeline" title="点击定位 · 拖拽字幕块调整时间">
+                <div class="editor-timeline-track" id="editorTimelineTrack">
+                    <div class="editor-timeline-cues" id="editorTimelineCues"></div>
+                    <div class="editor-timeline-playhead" id="editorTimelinePlayhead"></div>
+                </div>
+            </div>
+            <div class="editor-transport">
+                <button type="button" id="editorPlayPauseBtn" title="播放/暂停 (Space)"><i class="fa fa-play"></i></button>
+                <button type="button" id="editorSeekBackBtn" title="后退 1 秒">−1s</button>
+                <button type="button" id="editorSeekFwdBtn" title="前进 1 秒">+1s</button>
+                <select id="editorRateSelect" title="播放速率" aria-label="播放速率">
+                    <option value="0.5">0.5×</option>
+                    <option value="0.75">0.75×</option>
+                    <option value="1" selected>1×</option>
+                    <option value="1.25">1.25×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option>
+                </select>
+                <input type="range" id="editorVolumeSlider" min="0" max="1" step="0.05" value="1" title="音量">
+                <button type="button" id="editorInsertCueBtn" class="transport-primary" title="在当前播放位置插入字幕 (Enter)">
+                    <i class="fa fa-plus-circle"></i> 插入
+                </button>
+                <button type="button" id="editorRetranscribeCueBtn" class="needs-video" title="从起始点按指定时长重转写（需关联视频）">
+                    <i class="fa fa-refresh"></i> 重转写
+                </button>
+                <span id="editorPlayheadTime">00:00:00,000</span>
+            </div>
+            <p id="editorVideoHint" class="editor-video-hint">未关联视频，可点击「关联视频」；亦可仅编辑文本与时间轴</p>
+        </aside>
+    </div>
+
+    <footer class="editor-status-bar">
+        <span id="editorStatusLine" class="status-msg">正在启动…</span>
+        <span id="editorCueCount" style="font-variant-numeric:tabular-nums;flex-shrink:0">0 条</span>
+        <span id="editorLowConfBadge" class="hidden shrink-0" title="低置信条目数">0</span>
+    </footer>
+
+    <div id="editorBootProgress" class="editor-boot-progress" aria-live="polite" aria-busy="true" aria-label="正在启动字幕编辑器">
+        <div class="editor-boot-progress-panel" role="status">
+            <p class="editor-boot-progress-brand">Transub</p>
+            <div class="editor-boot-spinner" aria-hidden="true"></div>
+            <p id="editorBootProgressTitle" class="editor-boot-progress-title">正在启动字幕编辑器</p>
+            <p id="editorBootProgressDetail" class="editor-boot-progress-detail">请稍候，界面马上可用…</p>
+        </div>
+    </div>
+    <script>
+    (function () {
+        try {
+            var params = new URLSearchParams(location.search || '');
+            var sub = params.get('sub') || '';
+            var detail = document.getElementById('editorBootProgressDetail');
+            var status = document.getElementById('editorStatusLine');
+            if (sub && detail) detail.textContent = '正在打开 ' + sub + '…';
+            if (status) status.textContent = sub ? ('正在加载 ' + sub + '…') : '正在启动…';
+        } catch (_) {}
+    })();
+    </script>
+
+<div id="editorSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSplitTitle">
             <div class="editor-modal-backdrop" data-split-dismiss></div>
             <div class="editor-modal-panel">
                 <h3 id="editorSplitTitle">分割字幕</h3>
-                <p>将当前条目拆分为多条。智能断句会优先在标点与连接词处切分，并按目标读速分配时间。</p>
+                <p>将当前条目拆分为多条。智能断句会优先在标点与断句词处切分，并按目标读速分配时间。</p>
                 <div class="split-mode-list">
                     <label class="split-mode-item">
                         <input type="radio" name="editorSplitMode" value="smart" checked>
-                        <span>智能断句（标点 + 读速）</span>
+                        <span>智能断句（标点 + 断句词 + 读速）</span>
                     </label>
                     <div class="split-mode-extra split-smart-extra">
                         <label>每段最多 <input type="number" id="editorSplitSmartMaxChars" min="4" max="120" value="20" class="tabular-nums"> 字</label>
                         <label class="ml-2">单行 <input type="number" id="editorSplitSmartLineChars" min="4" max="80" value="18" class="tabular-nums"> 字</label>
+                        <button type="button" id="editorSplitOpenBreakWordsBtn" class="ml-2" title="管理智能断句使用的断句词">断句词…</button>
                     </div>
                     <label class="split-mode-item">
                         <input type="radio" name="editorSplitMode" value="lines">
@@ -593,7 +1134,7 @@
             </div>
         </div>
 
-        <div id="editorFindReplaceModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFindReplaceTitle">
+        <div id="editorFindReplaceModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorFindReplaceTitle">
             <div class="editor-modal-backdrop" data-find-dismiss></div>
             <div class="editor-modal-panel find-replace-panel">
                 <h3 id="editorFindReplaceTitle">查找与替换</h3>
@@ -623,11 +1164,69 @@
             </div>
         </div>
 
+        <div id="editorGlossaryModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorGlossaryTitle">
+            <div class="editor-modal-backdrop" data-glossary-dismiss></div>
+            <div class="editor-modal-panel glossary-panel">
+                <h3 id="editorGlossaryTitle">术语表 / 专名一致性</h3>
+                <p>维护标准写法与别名；扫描字幕中的不一致，并可一键统一为标准写法（不改时间轴）。</p>
+                <div class="glossary-toolbar">
+                    <button type="button" id="editorGlossaryAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
+                    <button type="button" id="editorGlossaryImportBtn">导入</button>
+                    <button type="button" id="editorGlossaryExportBtn">导出</button>
+                    <button type="button" id="editorGlossaryScanBtn"><i class="fa fa-search mr-1"></i>扫描</button>
+                </div>
+                <div id="editorGlossaryEntryList" class="glossary-entry-list" role="list"></div>
+                <div class="glossary-form">
+                    <div>
+                        <label for="editorGlossaryCanonical">标准写法</label>
+                        <input type="text" id="editorGlossaryCanonical" spellcheck="false" placeholder="例如：哈利波特">
+                    </div>
+                    <div>
+                        <label for="editorGlossaryAliases">别名（逗号 / 换行分隔）</label>
+                        <input type="text" id="editorGlossaryAliases" spellcheck="false" placeholder="Harry Potter, 哈利・波特">
+                    </div>
+                    <div class="glossary-form-row">
+                        <label><input type="checkbox" id="editorGlossaryCaseSensitive"> 区分大小写</label>
+                        <label><input type="checkbox" id="editorGlossaryEnabled" checked> 启用</label>
+                        <button type="button" id="editorGlossarySaveEntryBtn" class="text-xs px-2 py-1 border rounded">保存条目</button>
+                        <button type="button" id="editorGlossaryDeleteEntryBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除</button>
+                    </div>
+                </div>
+                <div id="editorGlossaryIssueList" class="glossary-issue-list" role="list"></div>
+                <p id="editorGlossaryPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorGlossaryCancel" data-glossary-dismiss>关闭</button>
+                    <button type="button" id="editorGlossaryConfirm">统一全部别名</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorBreakWordsModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorBreakWordsTitle">
+            <div class="editor-modal-backdrop" data-break-words-dismiss></div>
+            <div class="editor-modal-panel break-words-panel">
+                <h3 id="editorBreakWordsTitle">断句词</h3>
+                <p class="break-words-hint">智能断句会在标点之外，优先在这些词之后切开字幕。支持中英文；可用逗号或换行一次添加多个。</p>
+                <div id="editorBreakWordsChips" class="break-words-chips" aria-live="polite"></div>
+                <div class="break-words-add-row">
+                    <input type="text" id="editorBreakWordsInput" spellcheck="false" placeholder="例如：总之, 另外, meanwhile" aria-label="新增断句词">
+                    <button type="button" id="editorBreakWordsAddBtn"><i class="fa fa-plus"></i> 添加</button>
+                </div>
+                <div class="break-words-actions">
+                    <button type="button" id="editorBreakWordsResetBtn" title="恢复内置默认断句词">恢复默认</button>
+                    <button type="button" id="editorBreakWordsClearBtn" title="清空全部断句词">清空</button>
+                </div>
+                <p id="editorBreakWordsStatus" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorBreakWordsClose" data-break-words-dismiss>关闭</button>
+                </div>
+            </div>
+        </div>
+
         <div id="editorBatchDurModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorBatchDurTitle">
             <div class="editor-modal-backdrop" data-batch-dur-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorBatchDurTitle">时长批量调整</h3>
-                <p>按条件筛选字幕后批量调整结束时间（保持起始时间不变）。</p>
+                <p id="editorBatchDurHint">按条件筛选字幕后批量调整时间轴。</p>
                 <p class="text-[10px] text-gray-500 mb-1">调整方式</p>
                 <div class="split-mode-list mb-2">
                     <label class="split-mode-item">
@@ -636,7 +1235,11 @@
                     </label>
                     <label class="split-mode-item">
                         <input type="radio" name="editorBatchDurMode" value="silence">
-                        <span>按静音缩短（需关联视频）</span>
+                        <span>按静音缩短尾部（需关联视频）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurMode" value="audio_snap">
+                        <span>按音频贴边起止（需关联视频）</span>
                     </label>
                 </div>
                 <div id="editorBatchDurFixedWrap" class="batch-dur-target">
@@ -650,6 +1253,11 @@
                     <span>dB · 最短静音</span>
                     <input type="number" id="editorBatchDurSilenceDur" min="0.1" max="3" step="0.05" value="0.25" class="tabular-nums">
                     <span>秒</span>
+                </div>
+                <div id="editorBatchDurSnapPadWrap" class="batch-dur-target hidden">
+                    <label for="editorBatchDurSnapPadMs">分析填充</label>
+                    <input type="number" id="editorBatchDurSnapPadMs" min="0" max="2000" step="50" value="400" class="tabular-nums">
+                    <span>毫秒（向两侧扩展）</span>
                 </div>
                 <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
                 <div class="split-mode-list">
@@ -710,7 +1318,7 @@
                         <span>仅当前选中条目</span>
                     </label>
                 </div>
-                <label class="find-options">
+                <label class="find-options" id="editorBatchDurAvoidOverlapRow">
                     <input type="checkbox" id="editorBatchDurAvoidOverlap" checked>
                     <span>避免与下一条重叠（限制结束时间）</span>
                 </label>
@@ -726,13 +1334,14 @@
             <div class="editor-modal-backdrop" data-smart-split-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorSmartSplitTitle">智能分割</h3>
-                <p>按断句规则拆分符合条件的字幕，并按目标读速分配各段时间。</p>
+                <p>按标点与断句词拆分符合条件的字幕，并按目标读速分配各段时间。可在「工具 → 断句词」中管理词表。</p>
                 <div class="batch-dur-target">
                     <label for="editorSmartSplitMaxChars">每段最多</label>
                     <input type="number" id="editorSmartSplitMaxChars" min="4" max="120" value="20" class="tabular-nums">
                     <span>字 · 单行</span>
                     <input type="number" id="editorSmartSplitLineChars" min="4" max="80" value="18" class="tabular-nums">
                     <span>字</span>
+                    <button type="button" id="editorSmartSplitOpenBreakWordsBtn" title="管理智能断句使用的断句词">断句词…</button>
                 </div>
                 <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
                 <div class="split-mode-list">
@@ -886,22 +1495,137 @@
             </div>
         </div>
 
-        <aside id="editorVideoWrap" class="editor-video-panel">
-            <div id="editorVideoFrame" class="editor-video-frame">
-                <video id="editorVideo" controls playsinline preload="auto"></video>
-                <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="off">
-                    <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
+        <div id="editorRemoveNoiseModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorRemoveNoiseTitle">
+            <div class="editor-modal-backdrop" data-remove-noise-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorRemoveNoiseTitle">删除杂音</h3>
+                <p>批量删除 ASR 常见杂音条目：空文本、语气碎片、音效标签、纯符号，以及可选的连续重复句。不修改保留条目的文本内容。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveEmpty" checked>
+                        <span>删除空文本条目</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveFragments" checked>
+                        <span>删除语气碎片（呃 / 啊 / um / 的…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveSoundEffects" checked>
+                        <span>删除音效/杂音标签（[音乐] / 掌声…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveSymbolOnly" checked>
+                        <span>删除纯符号 / 乐符行</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveDuplicates">
+                        <span>删除与上一条完全相同的连续重复</span>
+                    </label>
+                </div>
+                <p id="editorRemoveNoisePreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorRemoveNoiseCancel" data-remove-noise-dismiss>取消</button>
+                    <button type="button" id="editorRemoveNoiseConfirm" class="btn-danger-confirm">删除</button>
                 </div>
             </div>
-            <div class="editor-video-toolbar">
-                <button type="button" id="editorInsertCueBtn" title="在当前播放位置插入一条新字幕">
-                    <i class="fa fa-plus-circle mr-1"></i>在此处插入字幕
-                </button>
-                <span id="editorPlayheadTime">00:00:00,000</span>
+        </div>
+
+        <div id="editorQcModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorQcTitle">
+            <div class="editor-modal-backdrop" data-qc-dismiss></div>
+            <div class="editor-modal-panel qc-panel">
+                <h3 id="editorQcTitle">质量检查</h3>
+                <p>扫描重叠、读速、时长与通顺度嫌疑；点击上方标签可按问题类型筛选。一键修复可调时间轴/分割，不通顺文本请重转写或手工改。</p>
+                <div id="editorQcSummaryBar" class="qc-summary-bar" aria-live="polite"></div>
+                <div id="editorQcIssueList" class="qc-issue-list" role="list"></div>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcFixOverlap" checked>
+                        <span>修复时间重叠</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcFixCpsSplit" checked>
+                        <span>读速过快时智能分割</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcFixCpsExtend" checked>
+                        <span>读速过快时延长时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        CPS 上限 <input type="number" id="editorQcMaxCps" min="1" max="100" step="0.5" value="18" class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcEnforceMin" checked>
+                        <span>应用最小时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最短 <input type="number" id="editorQcMinSec" min="0.1" max="60" step="0.01" value="0.50" class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcEnforceMax" checked>
+                        <span>应用最大时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最长 <input type="number" id="editorQcMaxSec" min="0.5" max="600" step="0.01" value="10.00" class="tabular-nums"> 秒
+                    </div>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorQcGapMs">条目间隔</label>
+                    <input type="number" id="editorQcGapMs" min="0" max="500" step="1" value="1" class="tabular-nums">
+                    <span>毫秒</span>
+                </div>
+                <p id="editorQcPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorQcCancel" data-qc-dismiss>取消</button>
+                    <button type="button" id="editorQcFixFiltered" title="仅修复当前筛选的问题类型">一键修复筛选</button>
+                    <button type="button" id="editorQcConfirm" class="btn-danger-confirm">一键修复</button>
+                </div>
             </div>
-            <p id="editorVideoHint" class="text-[10px] text-gray-400 px-2 py-1.5 bg-gray-900 shrink-0">单击选中 · 双击跳转 · Ctrl+Z/Y 返回重做 · Ctrl+S 保存</p>
-        </aside>
-    </div>
+        </div>
+
+        <div id="editorRetranscribeDurModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorRetranscribeDurTitle">
+            <div class="editor-modal-backdrop" data-retranscribe-dur-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorRetranscribeDurTitle">按时长重转写</h3>
+                <p>从起始点向后截取指定时长，调用 TransWithAI 重转写，并替换该时间窗内重叠的字幕。加速选项可在「设置 → 字幕编辑器」中开启「重转写加速」。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeDurStart" value="selected" checked>
+                        <span>从当前条目起始</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeDurStart" value="playhead">
+                        <span>从播放头位置</span>
+                    </label>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorRetranscribeDurSec">时长</label>
+                    <input type="number" id="editorRetranscribeDurSec" min="0.5" max="180" step="0.5" value="10" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <div class="retranscribe-dur-presets" role="group" aria-label="常用时长">
+                    <button type="button" data-retranscribe-dur-preset="5">5s</button>
+                    <button type="button" data-retranscribe-dur-preset="10">10s</button>
+                    <button type="button" data-retranscribe-dur-preset="15">15s</button>
+                    <button type="button" data-retranscribe-dur-preset="30">30s</button>
+                    <button type="button" data-retranscribe-dur-preset="60">60s</button>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorRetranscribeDurPadMs">前后填充</label>
+                    <input type="number" id="editorRetranscribeDurPadMs" min="0" max="2000" step="50" value="350" class="tabular-nums">
+                    <span>毫秒</span>
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorRetranscribeDurSnapAfter" checked>
+                    <span>重转写后按音频贴边（保留新文本，微调时间）</span>
+                </label>
+                <p id="editorRetranscribeDurPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorRetranscribeDurAll" title="从片头重转写整段视频时长，替换窗内全部重叠字幕">全部重转写</button>
+                    <button type="button" id="editorRetranscribeDurCancel" data-retranscribe-dur-dismiss>取消</button>
+                    <button type="button" id="editorRetranscribeDurConfirm">执行</button>
+                </div>
+            </div>
+        </div>
 
     <div id="editorSilenceProgress" class="editor-silence-progress hidden" aria-live="polite" aria-busy="false" aria-label="静音分析进度">
         <div class="editor-silence-progress-panel" role="status">
@@ -936,10 +1660,11 @@
                     <tr><td><kbd>Delete</kbd></td><td>删除当前字幕</td></tr>
                     <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上一条 / 下一条字幕</td></tr>
                     <tr><th colspan="2">视频预览</th></tr>
-                    <tr><td><kbd>Space</kbd></td><td>播放 / 暂停（列表聚焦时）</td></tr>
+                    <tr><td><kbd>Space</kbd></td><td>播放 / 暂停（列表或播放区聚焦时）</td></tr>
                     <tr><td><kbd>Enter</kbd></td><td>在播放头处插入字幕（列表聚焦时）</td></tr>
                     <tr><td>双击字幕行</td><td>视频跳转到该字幕起始时间</td></tr>
                     <tr><td>右键字幕行</td><td>分割、对齐、时长调节等上下文菜单</td></tr>
+                    <tr><td>时间轴拖拽</td><td>拖字幕块整段移动；拖左右边改起止</td></tr>
                 </tbody>
             </table>
             <div class="editor-modal-actions" style="margin-top: 0.75rem;">
@@ -961,12 +1686,23 @@
         <div class="ctx-sep" role="separator"></div>
         <button type="button" data-ctx-action="char-dur" role="menuitem">按字数调节时长</button>
         <button type="button" data-ctx-action="smart-dur" role="menuitem">智能调节时长</button>
+        <button type="button" data-ctx-action="audio-snap" role="menuitem">按音频贴边</button>
+        <button type="button" data-ctx-action="audio-snap-batch" role="menuitem">批量按音频贴边…</button>
+        <div class="ctx-sep" role="separator"></div>
+        <button type="button" data-ctx-action="retranscribe" role="menuitem">重转写本条</button>
+        <button type="button" data-ctx-action="retranscribe-dur" role="menuitem">按时长重转写…</button>
+        <button type="button" data-ctx-action="confirm-meta" role="menuitem">标记为可信</button>
         <div class="ctx-sep" role="separator"></div>
         <button type="button" data-ctx-action="insert" role="menuitem">插入</button>
         <button type="button" data-ctx-action="delete" class="danger" role="menuitem">删除</button>
     </div>
 
+    
     <script src="js/subtitle-split-core.js"></script>
+    <script src="js/subtitle-fluency-core.js"></script>
+    <script src="js/subtitle-qc-core.js"></script>
+    <script src="js/subtitle-meta-core.js"></script>
+    <script src="js/subtitle-glossary-core.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>
 </html>

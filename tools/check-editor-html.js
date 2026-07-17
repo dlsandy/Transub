@@ -1,0 +1,14 @@
+const fs = require('fs');
+const h = fs.readFileSync('F:/Transub/src/subtitle-editor.html', 'utf8');
+const ids = [...h.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+console.log('duplicate ids:', [...new Set(dup)]);
+console.log('editorVideoWrap count', (h.match(/id="editorVideoWrap"/g) || []).length);
+console.log('editor-main count', (h.match(/class="editor-main"/g) || []).length);
+console.log('editorCueBody count', (h.match(/id="editorCueBody"/g) || []).length);
+const mainStart = h.indexOf('class="editor-main"');
+const mainEnd = h.indexOf('</div>', h.indexOf('editor-status-bar'));
+console.log('status bar idx', h.indexOf('editor-status-bar'));
+console.log('first video idx', h.indexOf('id="editorVideoWrap"'));
+console.log('second video idx', h.indexOf('id="editorVideoWrap"', h.indexOf('id="editorVideoWrap"') + 1));
+console.log('footer area', h.slice(h.indexOf('editor-status-bar') - 80, h.indexOf('editor-status-bar') + 200));

@@ -490,7 +490,7 @@ function resolveFfmpegFromSetting(ffmpegPathSetting) {
     return path.join(resolved, 'ffmpeg.exe');
 }
 
-function parseSilenceDetectLog(stderr, offsetSec = 0) {
+function parseSilenceDetectLog(stderr, offsetSec = 0, clipEndSec = null) {
     const intervals = [];
     let pendingStart = null;
     const lines = String(stderr || '').split(/\r?\n/);
@@ -509,6 +509,10 @@ function parseSilenceDetectLog(stderr, offsetSec = 0) {
             pendingStart = null;
         }
     }
+    // FFmpeg often emits silence_start without silence_end when silence runs to EOF
+    if (pendingStart != null && clipEndSec != null && Number.isFinite(clipEndSec) && clipEndSec > pendingStart) {
+        intervals.push({ startSec: pendingStart, endSec: Number(clipEndSec) });
+    }
     return intervals;
 }
 
@@ -523,7 +527,10 @@ function clampSilenceIntervals(intervals, startSec, endSec, minSilenceSec) {
 }
 
 function silenceMidpointsToMs(intervals, startMs, endMs, minSegmentMs = 400) {
-    const minSeg = Math.max(100, Math.round(Number(minSegmentMs) || 400));
+    const span = Math.max(1, Math.round(Number(endMs) || 0) - Math.round(Number(startMs) || 0));
+    // Soften edge margin on short cues so mid-phrase pauses near edges still qualify
+    const requested = Math.max(100, Math.round(Number(minSegmentMs) || 400));
+    const minSeg = Math.min(requested, Math.max(120, Math.floor(span * 0.18)));
     const points = (intervals || [])
         .map(({ startSec, endSec }) => Math.round(((startSec + endSec) / 2) * 1000))
         .filter((ms) => ms > startMs + minSeg && ms < endMs - minSeg)
@@ -544,26 +551,33 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
         return Promise.resolve({ ok: false, error: '文件不存在' });
     }
 
-    const startSec = Math.max(0, Number(startMs) || 0) / 1000;
-    const endSec = Math.max(startSec + 0.1, Number(endMs) || 0) / 1000;
+    const startMsNum = Math.max(0, Math.round(Number(startMs) || 0));
+    const endMsNum = Math.max(startMsNum + 100, Math.round(Number(endMs) || 0));
+    const startSec = startMsNum / 1000;
+    const endSec = endMsNum / 1000;
     const durationSec = endSec - startSec;
     if (durationSec < 0.2) {
-        return Promise.resolve({ ok: false, error: '字幕时间范围过短，无法分析静音' });
+        return Promise.resolve({
+            ok: false,
+            error: `字幕时间范围过短（${durationSec.toFixed(3)}s），无法分析静音`,
+        });
     }
 
     const noiseDb = Number(options.noiseDb);
-    const minSilenceSec = Math.max(0.05, Number(options.minSilenceSec) || 0.25);
+    const minSilenceSec = Math.max(0.04, Number(options.minSilenceSec) || 0.25);
     const noise = Number.isFinite(noiseDb) ? noiseDb : -35;
     const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
     if (!ffmpegResolved.ok) {
         return Promise.resolve({ ok: false, error: ffmpegResolved.error });
     }
     const exe = ffmpegResolved.path;
+    // -ss/-t before -i: fast seek; -t is duration (avoids -to absolute-time confusion).
+    // silencedetect timestamps are relative to the seek start → add startSec when parsing.
     const args = [
         '-hide_banner',
         '-nostats',
         '-ss', String(startSec),
-        '-to', String(endSec),
+        '-t', String(durationSec),
         '-i', resolved,
         '-vn',
         '-sn',
@@ -598,12 +612,18 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
                     resolve({ ok: false, error: stderr.trim() || `ffmpeg 退出码 ${code}` });
                     return;
                 }
-                const rawIntervals = parseSilenceDetectLog(stderr, startSec);
-                const intervals = clampSilenceIntervals(rawIntervals, startSec, endSec, minSilenceSec);
+                const rawIntervals = parseSilenceDetectLog(stderr, startSec, endSec);
+                // Allow slightly shorter intervals after window clamping
+                const intervals = clampSilenceIntervals(
+                    rawIntervals,
+                    startSec,
+                    endSec,
+                    Math.max(0.04, minSilenceSec * 0.75),
+                );
                 const splitPointsMs = silenceMidpointsToMs(
                     intervals,
-                    Math.round(startMs),
-                    Math.round(endMs),
+                    startMsNum,
+                    endMsNum,
                     options.minSegmentMs,
                 );
                 resolve({
@@ -613,6 +633,98 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
                         endMs: Math.round(e * 1000),
                     })),
                     splitPointsMs,
+                    meta: {
+                        startMs: startMsNum,
+                        endMs: endMsNum,
+                        durationMs: endMsNum - startMsNum,
+                        noiseDb: noise,
+                        minSilenceSec,
+                    },
+                });
+            });
+        });
+    })();
+}
+
+/**
+ * 按时间范围导出音频片段（16k mono wav，供区间重转写）
+ */
+function extractMediaRange(filePath, startMs, endMs, outPath, options = {}) {
+    const resolved = path.resolve(String(filePath || ''));
+    const output = path.resolve(String(outPath || ''));
+    if (!fs.existsSync(resolved)) {
+        return Promise.resolve({ ok: false, error: '媒体文件不存在' });
+    }
+    if (!output) {
+        return Promise.resolve({ ok: false, error: '缺少输出路径' });
+    }
+
+    const startSec = Math.max(0, Number(startMs) || 0) / 1000;
+    const endSec = Math.max(startSec + 0.15, Number(endMs) || 0) / 1000;
+    const durationSec = endSec - startSec;
+    if (durationSec < 0.2) {
+        return Promise.resolve({ ok: false, error: '截取时间范围过短' });
+    }
+
+    const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
+    if (!ffmpegResolved.ok) {
+        return Promise.resolve({ ok: false, error: ffmpegResolved.error });
+    }
+    const exe = ffmpegResolved.path;
+
+    try {
+        fs.mkdirSync(path.dirname(output), { recursive: true });
+    } catch (err) {
+        return Promise.resolve({ ok: false, error: err.message || String(err) });
+    }
+
+    const args = [
+        '-hide_banner',
+        '-nostats',
+        '-y',
+        '-ss', String(startSec),
+        '-t', String(durationSec),
+        '-i', resolved,
+        '-vn',
+        '-sn',
+        '-dn',
+        '-ac', '1',
+        '-ar', '16000',
+        '-c:a', 'pcm_s16le',
+        output,
+    ];
+
+    return (async () => {
+        const ready = await ensureWindowsExecutableReady(exe, 'ffmpeg');
+        if (!ready.ok) return { ok: false, error: ready.error };
+
+        return new Promise((resolve) => {
+            let stderr = '';
+            let proc;
+            try {
+                proc = spawn(exe, args, { windowsHide: true });
+            } catch (err) {
+                resolve({ ok: false, error: err.message || String(err) });
+                return;
+            }
+            proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+            proc.on('error', (err) => {
+                resolve({
+                    ok: false,
+                    error: formatExecutableSpawnError(err, exe, 'ffmpeg'),
+                });
+            });
+            proc.on('close', (code) => {
+                if (code !== 0 || !fs.existsSync(output)) {
+                    resolve({ ok: false, error: stderr.trim().slice(-400) || `ffmpeg 退出码 ${code}` });
+                    return;
+                }
+                resolve({
+                    ok: true,
+                    path: output,
+                    startMs: Math.round(startSec * 1000),
+                    endMs: Math.round(endSec * 1000),
+                    durationMs: Math.round(durationSec * 1000),
                 });
             });
         });
@@ -636,4 +748,5 @@ module.exports = {
     clampSilenceIntervals,
     silenceMidpointsToMs,
     detectSilenceInRange,
+    extractMediaRange,
 };

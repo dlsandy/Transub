@@ -4,13 +4,36 @@
 (function (global) {
     const electron = global.__ELECTRON__;
     const splitCore = global.TransubSubtitleSplit;
+    const qcCore = global.TransubSubtitleQc;
+    const metaCore = global.TransubSubtitleMeta;
+    const glossaryCore = global.TransubSubtitleGlossary;
+    const fluencyCore = global.TransubSubtitleFluency;
     if (!splitCore) {
         throw new Error('subtitle-split-core.js must load before subtitle-editor.js');
     }
+    if (!qcCore) {
+        throw new Error('subtitle-qc-core.js must load before subtitle-editor.js');
+    }
+    if (!metaCore) {
+        throw new Error('subtitle-meta-core.js must load before subtitle-editor.js');
+    }
+    if (!glossaryCore) {
+        throw new Error('subtitle-glossary-core.js must load before subtitle-editor.js');
+    }
+    if (!fluencyCore) {
+        throw new Error('subtitle-fluency-core.js must load before subtitle-editor.js');
+    }
 
     const SPLIT_PREFS_KEY = 'transub-editor-split-prefs';
+    const BREAK_WORDS_KEY = 'transub-editor-break-words';
     const TARGET_CPS_KEY = 'transub-editor-target-cps';
+    const RETRANSCRIBE_DUR_KEY = 'transub-editor-retranscribe-dur';
+    const THEME_KEY = 'transub-editor-theme';
+    const PANEL_WIDTH_KEY = 'transub-editor-cues-width';
+    const DETAIL_TOOLS_KEY = 'transub-editor-detail-tools-open';
+    const AUTO_FOCUS_KEY = 'transub-editor-auto-focus';
     const DEFAULT_TARGET_CPS = 3;
+    const DEFAULT_RETRANSCRIBE_DUR_SEC = 10;
     const SPLIT_MODES = new Set(['smart', 'lines', 'spaces', 'chars', 'count', 'cursor', 'playhead', 'silence']);
     const CONNECTED_TEXT_SPLIT_MSG = '文本为连续书写（无空格与换行），无法自动分割。请使用光标或播放头手动分割。';
     const UNDO_MAX = 50;
@@ -50,11 +73,29 @@
         initialSnapshot: null,
         savedSnapshot: null,
         silenceSplitBusy: false,
+        retranscribeBusy: false,
+        sidecarMeta: null,
+        cueMeta: [],
+        glossary: { version: 1, entries: [] },
+        glossaryEditingId: '',
+        glossaryIssues: [],
+        breakWords: null,
+        listFilter: 'all',
+        qcIssueIndexSet: new Set(),
+        qcTypeFilter: null,
+        autoFocus: false,
+        timeline: {
+            dragging: null,
+            durationMs: 0,
+            viewStartMs: 0,
+            viewEndMs: 0,
+        },
     };
 
     let els = {};
     let pendingEditorInit = null;
     let editorBootstrapped = false;
+    let documentLoadInFlight = false;
     let detailUndoTimer = null;
     let cachedFfmpegPath = '';
 
@@ -186,8 +227,8 @@
     function setStatus(msg, type) {
         if (!els.statusLine) return;
         els.statusLine.textContent = msg || '';
-        els.statusLine.className = `text-xs px-3 py-1.5 border-t border-gray-100 shrink-0 truncate ${
-            type === 'err' ? 'text-red-600' : type === 'ok' ? 'text-emerald-600' : 'text-gray-500'
+        els.statusLine.className = `status-msg${
+            type === 'err' ? ' err' : type === 'ok' ? ' ok' : type === 'warn' ? ' warn' : ''
         }`;
     }
 
@@ -369,7 +410,7 @@
             setStatus('没有可恢复的初始字幕', 'err');
             return;
         }
-        if (!editorConfirm('确定恢复到打开文件时的初始字幕？当前未保存的修改将丢失。')) return;
+        if (!editorConfirm('将丢弃当前全部修改并恢复到打开文件时的初始字幕，确定继续？')) return;
         recordUndoBeforeChange();
         syncDetailToCue();
         state.header = [...state.initialSnapshot.header];
@@ -476,12 +517,16 @@
         return -1;
     }
 
+    function updateWindowTitle() {
+        document.title = state.path
+            ? `${state.dirty ? '* ' : ''}字幕编辑 — ${basename(state.path)}`
+            : 'Transub — 字幕编辑';
+    }
+
     function setDirty(v) {
         state.dirty = !!v;
         if (els.dirtyBadge) els.dirtyBadge.classList.toggle('hidden', !state.dirty);
-        document.title = state.path
-            ? `${state.dirty ? '* ' : ''}${basename(state.path)} — Transub 字幕编辑`
-            : 'Transub — 字幕编辑';
+        updateWindowTitle();
     }
 
     function clampTargetCps(value) {
@@ -546,9 +591,7 @@
 
         const prevPlayback = state.playbackIndex;
         syncFromExternalTime(els.video.currentTime || 0, true);
-        if (state.playbackIndex !== prevPlayback) {
-            updatePlayingRowHighlight(prevPlayback, state.playbackIndex);
-        } else {
+        if (state.playbackIndex === prevPlayback) {
             updateListRowClasses();
         }
 
@@ -565,14 +608,17 @@
         if (els.detailCps) {
             if (!cps) {
                 els.detailCps.textContent = 'CPS —';
-                els.detailCps.className = 'text-[10px] text-violet-600 font-medium';
+                els.detailCps.style.color = 'var(--ed-accent)';
+                els.detailCps.style.fontWeight = '500';
             } else {
                 const cpsNum = Number(cps);
                 els.detailCps.textContent = `当前 CPS ${cps}（目标 ${targetCps}）`;
                 if (cpsNum > targetCps * 1.05) {
-                    els.detailCps.className = 'text-[10px] text-amber-600 font-medium';
+                    els.detailCps.style.color = 'var(--ed-warn-text)';
+                    els.detailCps.style.fontWeight = '600';
                 } else {
-                    els.detailCps.className = 'text-[10px] text-violet-600 font-medium';
+                    els.detailCps.style.color = 'var(--ed-accent)';
+                    els.detailCps.style.fontWeight = '500';
                 }
             }
         }
@@ -584,8 +630,15 @@
         const next = state.selectedIndex < state.cues.length - 1 ? state.cues[state.selectedIndex + 1] : null;
         const w = getCueWarnings(cue, prev, next);
         if (els.detailWarn) {
+            const meta = state.cueMeta[state.selectedIndex];
+            const metaHint = meta?.low
+                ? `低置信 ${(meta.confidence * 100).toFixed(0)}%（${(meta.flags || []).map((f) => metaCore.flagLabel(f)).join(' · ') || '启发式'}）`
+                : '';
             if (w.msg.length) {
-                els.detailWarn.textContent = w.msg.join(' · ');
+                els.detailWarn.textContent = [w.msg.join(' · '), metaHint].filter(Boolean).join(' · ');
+                els.detailWarn.classList.remove('hidden');
+            } else if (metaHint) {
+                els.detailWarn.textContent = `${metaHint}，可右键重转写或标记为可信`;
                 els.detailWarn.classList.remove('hidden');
             } else {
                 const cpsNum = cps ? Number(cps) : null;
@@ -599,6 +652,73 @@
                 }
             }
         }
+    }
+
+    function getLiveSelectedCue() {
+        const idx = state.selectedIndex;
+        if (idx < 0 || idx >= state.cues.length) return null;
+        const cue = state.cues[idx];
+        const live = { startMs: cue.startMs, endMs: cue.endMs, text: cue.text };
+        if (els.detailText != null) live.text = els.detailText.value;
+        const startMs = parseInputTime(els.detailStart?.value, state.format);
+        if (startMs != null) live.startMs = startMs;
+        const durSec = Number(els.detailDuration?.value);
+        if (Number.isFinite(durSec) && durSec > 0) {
+            live.endMs = live.startMs + Math.round(durSec * 1000);
+        }
+        return live;
+    }
+
+    function updateDetailActionButtons() {
+        const idx = state.selectedIndex;
+        const hasCue = idx >= 0 && idx < state.cues.length;
+        if (!hasCue) {
+            if (els.prevCueBtn) els.prevCueBtn.disabled = true;
+            if (els.nextCueBtn) els.nextCueBtn.disabled = true;
+            if (els.deleteCueBtn) els.deleteCueBtn.disabled = true;
+            if (els.splitCueBtn) els.splitCueBtn.disabled = true;
+            if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = true;
+            if (els.silenceSplitCueBtn) els.silenceSplitCueBtn.disabled = true;
+            if (els.splitLinesBtn) els.splitLinesBtn.disabled = true;
+            if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = true;
+            if (els.charDurBtn) els.charDurBtn.disabled = true;
+            if (els.smartDurBtn) els.smartDurBtn.disabled = true;
+            if (els.audioSnapBtn) els.audioSnapBtn.disabled = true;
+            updateRetranscribeTransportBtn();
+            return;
+        }
+
+        const cue = getLiveSelectedCue() || state.cues[idx];
+        const rawText = String(cue.text || '');
+        const text = rawText.trim();
+        const canSplit = !!text;
+        const canSplitLines = canSplit && rawText.includes('\n');
+        const canSplitSpaces = canSplit && /\s/.test(rawText);
+
+        if (els.prevCueBtn) els.prevCueBtn.disabled = idx <= 0;
+        if (els.nextCueBtn) els.nextCueBtn.disabled = idx >= state.cues.length - 1;
+        if (els.deleteCueBtn) els.deleteCueBtn.disabled = false;
+        if (els.splitCueBtn) els.splitCueBtn.disabled = false;
+        if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = !canSplit;
+        if (els.silenceSplitCueBtn) {
+            els.silenceSplitCueBtn.disabled = state.silenceSplitBusy || !canSilenceSplitCue(cue)
+                || !state.videoPath || !electron?.ffmpegDetectSilence;
+        }
+        if (els.splitLinesBtn) els.splitLinesBtn.disabled = !canSplitLines;
+        if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = !canSplitSpaces;
+        if (els.charDurBtn) {
+            els.charDurBtn.disabled = !textCharCount(rawText);
+        }
+        if (els.smartDurBtn) {
+            els.smartDurBtn.disabled = state.silenceSplitBusy || !canSilenceAdjustDurationCue(cue)
+                || !state.videoPath || !electron?.ffmpegDetectSilence;
+        }
+        if (els.audioSnapBtn) {
+            els.audioSnapBtn.disabled = state.silenceSplitBusy || state.retranscribeBusy
+                || !canAudioSnapCue(cue)
+                || !state.videoPath || !electron?.ffmpegDetectSilence;
+        }
+        updateRetranscribeTransportBtn();
     }
 
     function renderDetailPane() {
@@ -616,16 +736,7 @@
             if (els.lineLen) els.lineLen.textContent = '0';
             if (els.textLen) els.textLen.textContent = '0';
             if (els.detailWarn) els.detailWarn.classList.add('hidden');
-            if (els.prevCueBtn) els.prevCueBtn.disabled = true;
-            if (els.nextCueBtn) els.nextCueBtn.disabled = true;
-            if (els.deleteCueBtn) els.deleteCueBtn.disabled = true;
-            if (els.splitCueBtn) els.splitCueBtn.disabled = true;
-            if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = true;
-            if (els.silenceSplitCueBtn) els.silenceSplitCueBtn.disabled = true;
-            if (els.splitLinesBtn) els.splitLinesBtn.disabled = true;
-            if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = true;
-            if (els.charDurBtn) els.charDurBtn.disabled = true;
-            if (els.smartDurBtn) els.smartDurBtn.disabled = true;
+            updateDetailActionButtons();
             state.detailRenderedDurSec = null;
             state.detailSyncing = false;
             return;
@@ -636,31 +747,16 @@
         if (els.detailDuration) els.detailDuration.value = formatDurationSec(cueDurationMs(cue));
         if (els.detailEnd) els.detailEnd.value = formatDisplayTime(cueEndMs(cue), state.format);
         if (els.detailText) els.detailText.value = cue.text || '';
-        if (els.prevCueBtn) els.prevCueBtn.disabled = idx <= 0;
-        if (els.nextCueBtn) els.nextCueBtn.disabled = idx >= state.cues.length - 1;
-        if (els.deleteCueBtn) els.deleteCueBtn.disabled = false;
-        if (els.splitCueBtn) els.splitCueBtn.disabled = false;
-        const text = String(cue.text || '').trim();
-        const canSplit = !!text;
-        const canSplitLines = canSplit && String(cue.text || '').includes('\n');
-        const canSplitSpaces = canSplit && /\s/.test(String(cue.text || ''));
-        if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = !canSplit;
-        if (els.silenceSplitCueBtn) {
-            els.silenceSplitCueBtn.disabled = state.silenceSplitBusy || !canSilenceSplitCue(cue)
-                || !state.videoPath || !electron?.ffmpegDetectSilence;
-        }
-        if (els.splitLinesBtn) els.splitLinesBtn.disabled = !canSplitLines;
-        if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = !canSplitSpaces;
-        if (els.charDurBtn) {
-            els.charDurBtn.disabled = !textCharCount(cue.text);
-        }
-        if (els.smartDurBtn) {
-            els.smartDurBtn.disabled = state.silenceSplitBusy || !canSilenceAdjustDurationCue(cue)
-                || !state.videoPath || !electron?.ffmpegDetectSilence;
-        }
+        updateDetailActionButtons();
         updateDetailMeta();
         state.detailRenderedDurSec = cueDurationMs(cue) / 1000;
         state.detailSyncing = false;
+    }
+
+    function updateRetranscribeTransportBtn() {
+        if (!els.retranscribeCueBtn) return;
+        els.retranscribeCueBtn.disabled = state.retranscribeBusy || state.silenceSplitBusy
+            || !state.videoPath || !electron?.transubTranscribeRange;
     }
 
     function updateListRowClasses() {
@@ -677,33 +773,115 @@
             row.classList.toggle('cue-row-playing', idx === state.playbackIndex);
             row.classList.toggle('cue-row-find-hit', hitCueSet.has(idx));
             row.classList.toggle('cue-row-find-current', idx === currentCueIdx);
+            row.classList.toggle('cue-row-low-conf', !!state.cueMeta[idx]?.low);
         });
+    }
+
+    function getMetaScanOptions() {
+        return {
+            maxCps: Number(els.qcMaxCps?.value) || Number(els.smartMaxCps?.value) || 18,
+            minSec: Number(els.qcMinSec?.value) || 0.5,
+            maxSec: Number(els.qcMaxSec?.value) || 10,
+            lowThreshold: metaCore.DEFAULT_LOW_THRESHOLD,
+        };
+    }
+
+    function refreshCueMeta() {
+        state.cueMeta = metaCore.mergeConfidenceAnnotations(
+            state.cues,
+            state.sidecarMeta,
+            getMetaScanOptions(),
+        );
+        const summary = metaCore.summarizeLowConfidence(state.cueMeta);
+        if (els.lowConfBadge) {
+            if (summary.low > 0) {
+                els.lowConfBadge.textContent = `低置信 ${summary.low > 99 ? '99+' : summary.low}`;
+                els.lowConfBadge.classList.remove('hidden');
+                els.lowConfBadge.title = summary.summary;
+            } else {
+                els.lowConfBadge.textContent = '0';
+                els.lowConfBadge.classList.add('hidden');
+                els.lowConfBadge.title = '无可疑条目';
+            }
+        }
+    }
+
+    async function loadSidecarMeta(subPath) {
+        state.sidecarMeta = null;
+        if (!subPath || !electron?.transubReadSubtitleMeta) {
+            refreshCueMeta();
+            return;
+        }
+        try {
+            const res = await electron.transubReadSubtitleMeta({ path: subPath });
+            if (res?.ok && res.meta) state.sidecarMeta = res.meta;
+        } catch (_) {
+            state.sidecarMeta = null;
+        }
+        refreshCueMeta();
+    }
+
+    async function persistCueMeta() {
+        if (!state.path || !electron?.transubWriteSubtitleMeta) return;
+        const doc = metaCore.buildSidecarDocument(state.cues, state.cueMeta, {
+            sourceSub: basename(state.path),
+        });
+        state.sidecarMeta = doc;
+        try {
+            await electron.transubWriteSubtitleMeta({ path: state.path, meta: doc });
+        } catch (_) { /* ignore meta write errors */ }
     }
 
     function renderCueList() {
         if (!els.cueBody) return;
         if (!state.cues.length) {
-            els.cueBody.innerHTML = '<tr><td colspan="5" class="px-3 py-6 text-center text-gray-400 text-xs">无字幕条目</td></tr>';
+            els.cueBody.innerHTML = '<tr><td colspan="6" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">无字幕条目</td></tr>';
+            if (els.filterCount) els.filterCount.textContent = '';
+            renderTimeline();
             state.selectedIndex = -1;
+            state.cueMeta = [];
             renderDetailPane();
             resyncPlaybackAfterCueTimingChange();
+            refreshQcBadge();
+            refreshGlossaryBadge();
+            refreshCueMeta();
             return;
         }
 
-        els.cueBody.innerHTML = state.cues.map((cue, idx) => {
-            const prev = idx > 0 ? state.cues[idx - 1] : null;
-            const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-            const w = getCueWarnings(cue, prev, next);
-            const preview = String(cue.text || '').replace(/\s+/g, ' ').trim();
-            return `
-            <tr class="cursor-pointer hover:bg-gray-50/80 border-b border-gray-50" data-cue-idx="${idx}">
-                <td class="text-xs text-gray-500 tabular-nums align-middle">${idx + 1}</td>
+        refreshCueMeta();
+        refreshQcIssueIndexSet();
+        const visibleIdxs = getVisibleCueIndexes();
+        if (els.filterCount) {
+            els.filterCount.textContent = state.listFilter === 'all'
+                ? ''
+                : `显示 ${visibleIdxs.length} / ${state.cues.length}`;
+        }
+        if (!visibleIdxs.length) {
+            const emptyMsg = state.listFilter === 'all' ? '无字幕条目' : '当前筛选无匹配条目';
+            els.cueBody.innerHTML = `<tr><td colspan="6" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">${emptyMsg}</td></tr>`;
+        } else {
+            els.cueBody.innerHTML = visibleIdxs.map((idx) => {
+                const cue = state.cues[idx];
+                const prev = idx > 0 ? state.cues[idx - 1] : null;
+                const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
+                const w = getCueWarnings(cue, prev, next);
+                const preview = String(cue.text || '').replace(/\s+/g, ' ').trim();
+                const low = !!state.cueMeta[idx]?.low;
+                const cps = computeCps(cue.text, cueDurationMs(cue));
+                const cpsNum = cps != null ? Number(cps) : null;
+                const cpsHot = cpsNum != null && cpsNum > 18;
+                const titleAttr = low ? '低置信：建议检查或重转写' : esc(preview || '');
+                return `
+            <tr class="${low ? 'cue-row-low-conf' : ''}" data-cue-idx="${idx}" title="${titleAttr}">
+                <td class="text-xs tabular-nums align-middle col-idx" style="color:var(--ed-muted)">${idx + 1}${low ? '<span class="low-conf-dot" aria-label="低置信">!</span>' : ''}</td>
                 <td class="font-mono text-[11px] tabular-nums align-middle ${w.start ? 'cell-warn' : ''}">${esc(formatDisplayTime(cue.startMs, state.format))}</td>
                 <td class="font-mono text-[11px] tabular-nums align-middle ${w.end ? 'cell-warn' : ''}">${esc(formatDisplayTime(cueEndMs(cue), state.format))}</td>
                 <td class="text-[11px] tabular-nums align-middle ${w.dur ? 'cell-warn' : ''}">${esc(formatDurationSec(cueDurationMs(cue)))}</td>
+                <td class="cue-cps-cell align-middle ${cpsHot ? 'hot' : ''}">${cps != null ? esc(cps) : '—'}</td>
                 <td class="cell-text align-middle">${esc(preview || '—')}</td>
             </tr>`;
-        }).join('');
+            }).join('');
+        }
 
         if (state.selectedIndex >= state.cues.length) state.selectedIndex = state.cues.length - 1;
         if (state.selectedIndex < 0 && state.cues.length) state.selectedIndex = 0;
@@ -711,6 +889,10 @@
         renderDetailPane();
         scheduleVideoTextTrackRefresh();
         resyncPlaybackAfterCueTimingChange();
+        refreshQcBadge();
+        refreshGlossaryBadge();
+        renderTimeline();
+        updateNeedsVideoUi();
     }
 
     function refreshListRow(idx) {
@@ -738,7 +920,13 @@
             cells[3].classList.toggle('cell-warn', w.dur);
         }
         if (cells[4]) {
-            cells[4].textContent = String(cue.text || '').replace(/\s+/g, ' ').trim() || '—';
+            const cps = computeCps(cue.text, cueDurationMs(cue));
+            const cpsNum = cps != null ? Number(cps) : null;
+            cells[4].textContent = cps != null ? cps : '—';
+            cells[4].className = `cue-cps-cell align-middle${cpsNum != null && cpsNum > 18 ? ' hot' : ''}`;
+        }
+        if (cells[5]) {
+            cells[5].textContent = String(cue.text || '').replace(/\s+/g, ' ').trim() || '—';
         }
         if (idx > 0) refreshListRowWarningsOnly(idx - 1);
         if (idx < state.cues.length - 1) refreshListRowWarningsOnly(idx + 1);
@@ -759,11 +947,18 @@
 
     function selectCue(idx, opts = {}) {
         if (idx < 0 || idx >= state.cues.length) return;
+        // 播放路径的选中必须经过自动焦点开关；避免误调仍改焦点
+        if (opts.fromPlayback && !isAutoFocusEnabled()) return;
         if (idx !== state.selectedIndex) {
             syncDetailToCue();
             state.selectedIndex = idx;
             renderDetailPane();
             updateListRowClasses();
+            if (els.timelineCues) {
+                els.timelineCues.querySelectorAll('.editor-timeline-cue').forEach((el) => {
+                    el.classList.toggle('selected', Number(el.getAttribute('data-tl-idx')) === idx);
+                });
+            }
         }
         if (opts.seek && els.video) {
             const sec = Math.max(0, state.cues[idx].startMs / 1000);
@@ -772,7 +967,10 @@
         }
         if (opts.scroll) {
             const row = els.cueBody?.querySelector(`tr[data-cue-idx="${idx}"]`);
-            row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            row?.scrollIntoView({
+                block: 'nearest',
+                behavior: opts.fromPlayback ? 'auto' : 'smooth',
+            });
         }
     }
 
@@ -783,6 +981,7 @@
         setDirty(true);
         refreshListRow(state.selectedIndex);
         updateDetailMeta();
+        updateDetailActionButtons();
         state.detailRenderedDurSec = cueDurationMs(state.cues[state.selectedIndex]) / 1000;
         if (state.selectedIndex === state.playbackIndex) {
             state.overlayText = '';
@@ -799,6 +998,7 @@
         const next = Math.max(0.1, Math.round((base + deltaSec) * 100) / 100);
         if (els.detailDuration) els.detailDuration.value = next.toFixed(3);
         onDetailChanged({ skipUndo: true });
+        renderTimeline();
     }
 
     function applyStartDelta(deltaMs) {
@@ -810,6 +1010,7 @@
         cue.endMs = cue.startMs + dur;
         renderDetailPane();
         onDetailChanged({ skipUndo: true });
+        renderTimeline();
     }
 
     function setStartToPlayhead() {
@@ -821,6 +1022,7 @@
         cue.endMs = cue.startMs + dur;
         renderDetailPane();
         onDetailChanged({ skipUndo: true });
+        renderTimeline();
     }
 
     function setEndToPlayhead() {
@@ -835,6 +1037,7 @@
         cue.endMs = endMs;
         renderDetailPane();
         onDetailChanged({ skipUndo: true });
+        renderTimeline();
     }
 
     function isListFocused() {
@@ -843,12 +1046,35 @@
         return active === els.listWrap || els.listWrap.contains(active);
     }
 
+    function isPlayerFocused() {
+        const active = document.activeElement;
+        if (!active || !els.videoWrap) return false;
+        return active === els.videoWrap || els.videoWrap.contains(active);
+    }
+
+    function isTypingTarget(el) {
+        if (!el || !el.matches) return false;
+        if (el.matches('textarea, [contenteditable="true"]')) return true;
+        if (!el.matches('input')) return false;
+        const type = String(el.type || 'text').toLowerCase();
+        return !['button', 'checkbox', 'radio', 'range', 'file', 'reset', 'submit', 'color', 'image'].includes(type);
+    }
+
     function focusCueList() {
         if (!els.listWrap) return;
         try {
             els.listWrap.focus({ preventScroll: true });
         } catch (_) {
             els.listWrap.focus();
+        }
+    }
+
+    function focusPlayerArea() {
+        if (!els.videoWrap) return;
+        try {
+            els.videoWrap.focus({ preventScroll: true });
+        } catch (_) {
+            els.videoWrap.focus();
         }
     }
 
@@ -865,6 +1091,10 @@
         return Math.round((els.video?.currentTime || 0) * 1000);
     }
 
+    function isAutoFocusEnabled() {
+        return state.autoFocus === true;
+    }
+
     function syncFromExternalTime(timeSec, updatePlayhead = true) {
         if (!state.ready) return;
         const t = Math.round((Number(timeSec) || 0) * 1000);
@@ -873,6 +1103,8 @@
             const prev = state.playbackIndex;
             state.playbackIndex = active;
             updatePlayingRowHighlight(prev, active);
+            // 仅自动焦点开启时才选中/滚动；关闭时绝不能改 selectedIndex
+            if (isAutoFocusEnabled()) followPlaybackFocus(active);
         }
         if (updatePlayhead) {
             state.lastPlayheadLabel = '';
@@ -880,6 +1112,7 @@
                 els.playheadTime.textContent = formatDisplayTime(t, state.format);
                 state.lastPlayheadLabel = els.playheadTime.textContent;
             }
+            updateTimelinePlayhead(t);
         }
         updateVideoSubtitleOverlay();
     }
@@ -1013,12 +1246,14 @@
         syncPlaybackFromVideo(true);
         scheduleCueBoundarySync();
         startPlayheadTimer();
+        updatePlayPauseButton();
     }
 
     function onVideoPause() {
         document.body.classList.remove('editor-video-playing');
         stopPlaybackTimers();
         syncPlaybackFromVideo(true);
+        updatePlayPauseButton();
     }
 
     function updatePlayingRowHighlight(prevIdx, nextIdx) {
@@ -1030,13 +1265,9 @@
             }
             if (nextIdx >= 0) {
                 const row = els.cueBody?.querySelector(`tr[data-cue-idx="${nextIdx}"]`);
-                if (row) {
-                    row.classList.add('cue-row-playing');
-                    if (!isRowVisibleInList(row)) {
-                        row.scrollIntoView({ block: 'nearest' });
-                    }
-                }
+                if (row) row.classList.add('cue-row-playing');
             }
+            // 播放指示绝不主动滚动列表；列表跟随只由 followPlaybackFocus / selectCue 负责
         };
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(run, { timeout: 120 });
@@ -1074,10 +1305,16 @@
         if (state.videoPath) {
             const codecInfo = describeVideoCodec(state.videoCodec, state.videoWidth, state.videoHeight);
             const suffix = codecInfo ? ` · ${codecInfo}` : '';
-            els.videoHint.textContent = `${basename(state.videoPath)}${suffix} · 列表选中编辑 · Ctrl+S 保存`;
+            els.videoHint.textContent = `${basename(state.videoPath)}${suffix} · Space 播放 · Ctrl+S 保存`;
         } else {
             els.videoHint.textContent = '未关联视频，可点击「关联视频」；亦可仅编辑文本与时间轴';
         }
+        if (els.videoEmpty) {
+            els.videoEmpty.classList.toggle('visible', !state.videoPath);
+        }
+        updateNeedsVideoUi();
+        updateTimelineDuration();
+        renderTimeline();
     }
 
     async function probeVideoCodec(videoPath) {
@@ -1168,46 +1405,114 @@
         ).join('');
     }
 
+    async function flushBootProgressPaint() {
+        await new Promise((resolve) => {
+            requestAnimationFrame(() => setTimeout(resolve, 0));
+        });
+    }
+
+    function showBootProgress(opts = {}) {
+        if (!els.bootProgress) return;
+        els.bootProgress.classList.remove('hidden');
+        els.bootProgress.setAttribute('aria-busy', 'true');
+        if (opts.title && els.bootProgressTitle) {
+            els.bootProgressTitle.textContent = opts.title;
+        }
+        if (opts.detail != null && els.bootProgressDetail) {
+            els.bootProgressDetail.textContent = opts.detail;
+        }
+        if (opts.statusMessage) setStatus(opts.statusMessage, '');
+    }
+
+    function updateBootProgress(opts = {}) {
+        if (!els.bootProgress) return;
+        if (opts.title && els.bootProgressTitle) {
+            els.bootProgressTitle.textContent = opts.title;
+        }
+        if (opts.detail != null && els.bootProgressDetail) {
+            els.bootProgressDetail.textContent = opts.detail;
+        }
+        if (opts.statusMessage) setStatus(opts.statusMessage, '');
+    }
+
+    function hideBootProgress() {
+        if (!els.bootProgress) return;
+        els.bootProgress.classList.add('hidden');
+        els.bootProgress.setAttribute('aria-busy', 'false');
+    }
+
     async function loadDocument(subPath, videoPath) {
-        stopPlaybackTimers();
-        document.body.classList.remove('editor-video-playing');
-        if (state.textTrackRefreshTimer) {
-            clearTimeout(state.textTrackRefreshTimer);
-            state.textTrackRefreshTimer = null;
-        }
-        const res = await electron?.transubReadSubtitle?.({ path: subPath });
-        if (!res?.ok) {
-            setStatus(res?.error || '加载字幕失败', 'err');
-            return false;
-        }
-        syncDetailToCue();
-        state.path = res.path;
-        state.videoPath = videoPath || '';
-        state.format = res.format;
-        state.header = res.header || [];
-        state.cues = res.cues || [];
-        state.selectedIndex = state.cues.length ? 0 : -1;
-        state.playbackIndex = -1;
-        state.previewTextTrack = null;
-        state.overlayText = '';
-        state.overlayVisible = false;
-        state.detailRenderedDurSec = null;
-        state.lastPlayheadLabel = '';
-        setDirty(false);
-        clearUndoHistory();
+        const fileLabel = basename(subPath);
+        documentLoadInFlight = true;
+        showBootProgress({
+            title: '正在加载字幕',
+            detail: fileLabel ? `正在读取 ${fileLabel}…` : '正在读取字幕…',
+            statusMessage: fileLabel ? `正在加载 ${fileLabel}…` : '正在加载字幕…',
+        });
+        try {
+            stopPlaybackTimers();
+            document.body.classList.remove('editor-video-playing');
+            if (state.textTrackRefreshTimer) {
+                clearTimeout(state.textTrackRefreshTimer);
+                state.textTrackRefreshTimer = null;
+            }
+            await flushBootProgressPaint();
+            const res = await electron?.transubReadSubtitle?.({ path: subPath });
+            if (!res?.ok) {
+                setStatus(res?.error || '加载字幕失败', 'err');
+                return false;
+            }
+            syncDetailToCue();
+            state.path = res.path;
+            state.videoPath = videoPath || '';
+            state.format = res.format;
+            state.header = res.header || [];
+            state.cues = res.cues || [];
+            state.selectedIndex = state.cues.length ? 0 : -1;
+            state.playbackIndex = -1;
+            state.previewTextTrack = null;
+            state.overlayText = '';
+            state.overlayVisible = false;
+            state.detailRenderedDurSec = null;
+            state.lastPlayheadLabel = '';
+            state.sidecarMeta = null;
+            state.cueMeta = [];
+            setDirty(false);
+            clearUndoHistory();
 
-        if (els.title) els.title.textContent = basename(res.path);
-        if (els.formatBadge) els.formatBadge.textContent = res.format.toUpperCase();
-        if (els.cueCount) els.cueCount.textContent = `${state.cues.length} 条`;
+            updateWindowTitle();
+            if (els.formatBadge) els.formatBadge.textContent = res.format.toUpperCase();
+            if (els.cueCount) els.cueCount.textContent = `${state.cues.length} 条`;
+            updateNeedsVideoUi();
 
-        saveInitialSnapshot();
-        renderCueList();
-        await loadVideo(state.videoPath);
-        refreshVideoTextTrack();
-        updateVideoSubtitleOverlay();
-        await populateSidecarSelect(state.videoPath, res.path);
-        setStatus(`已加载 ${state.cues.length} 条字幕`, 'ok');
-        return true;
+            saveInitialSnapshot();
+            updateBootProgress({
+                detail: `已读取 ${state.cues.length} 条，正在准备编辑区…`,
+                statusMessage: `正在渲染 ${state.cues.length} 条字幕…`,
+            });
+            await loadSidecarMeta(res.path);
+            await loadGlossary();
+            await flushBootProgressPaint();
+            renderCueList();
+            updateBootProgress({
+                detail: state.videoPath ? `正在关联视频 ${basename(state.videoPath)}…` : '字幕已就绪，正在完成收尾…',
+                statusMessage: state.videoPath ? '正在加载关联视频…' : '正在完成加载…',
+            });
+            await flushBootProgressPaint();
+            await loadVideo(state.videoPath);
+            refreshVideoTextTrack();
+            updateVideoSubtitleOverlay();
+            await populateSidecarSelect(state.videoPath, res.path);
+            const low = metaCore.summarizeLowConfidence(state.cueMeta).low;
+            setStatus(
+                low ? `已加载 ${state.cues.length} 条字幕，其中 ${low} 条低置信` : `已加载 ${state.cues.length} 条字幕`,
+                'ok',
+            );
+            return true;
+        } finally {
+            documentLoadInFlight = false;
+            hideBootProgress();
+        }
     }
 
     async function openDocument(subPath, videoPath) {
@@ -1216,15 +1521,21 @@
             if (!yes) return;
         }
         let linkedVideo = videoPath || '';
-        if (!linkedVideo && subPath) {
-            const guess = await electron?.transubGuessVideoForSubtitle?.({ path: subPath });
-            if (guess?.ok && guess.videoPath) linkedVideo = guess.videoPath;
-        }
         try {
+            if (!linkedVideo && subPath) {
+                showBootProgress({
+                    title: '正在打开字幕',
+                    detail: '正在查找关联视频…',
+                    statusMessage: `正在加载 ${basename(subPath)}…`,
+                });
+                const guess = await electron?.transubGuessVideoForSubtitle?.({ path: subPath });
+                if (guess?.ok && guess.videoPath) linkedVideo = guess.videoPath;
+            }
             const ok = await loadDocument(subPath, linkedVideo);
             if (!ok) return;
             state.ready = true;
         } catch (err) {
+            hideBootProgress();
             setStatus(err?.message || '打开字幕失败', 'err');
         }
     }
@@ -1281,6 +1592,8 @@
         }
         setDirty(false);
         state.savedSnapshot = cloneCues(state.cues);
+        refreshCueMeta();
+        await persistCueMeta();
         setStatus('已保存', 'ok');
         if (els.saveStatus) {
             els.saveStatus.textContent = '已保存';
@@ -1390,6 +1703,12 @@
         return true;
     }
 
+    function canAudioSnapCue(cue) {
+        if (!cue) return false;
+        if (cueDurationMs(cue) < 300) return false;
+        return true;
+    }
+
     async function computeSilenceAdjustedEndMs(cue, opts = {}) {
         if (!state.videoPath) {
             return { error: '请先关联视频后再使用智能调节时长' };
@@ -1425,6 +1744,147 @@
                 silenceCount: analysis.intervals?.length || 0,
             },
         };
+    }
+
+    async function computeAudioSnappedCueTiming(cue, idx, opts = {}) {
+        if (!state.videoPath) {
+            return { error: '请先关联视频后再使用按音频贴边' };
+        }
+        const end = cueEndMs(cue);
+        const padMs = Math.max(0, Math.min(2000, Math.round(Number(opts.padMs ?? 400))));
+        const gapMs = 1;
+        const prev = idx > 0 ? state.cues[idx - 1] : null;
+        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
+        const prevLimit = prev ? cueEndMs(prev) + gapMs : 0;
+        const nextLimit = next ? next.startMs - gapMs : Number.POSITIVE_INFINITY;
+        const windowStart = Math.max(0, Math.max(prevLimit, cue.startMs - padMs));
+        const windowEnd = Math.min(
+            Number.isFinite(nextLimit) ? nextLimit : Number.POSITIVE_INFINITY,
+            end + padMs,
+        );
+        const analysisEnd = Number.isFinite(windowEnd) ? windowEnd : end + padMs;
+        if (analysisEnd - windowStart < 250) {
+            return { error: '可分析时间窗过短（可能与相邻字幕过紧）' };
+        }
+
+        const analysis = await electron?.ffmpegDetectSilence?.(buildFfmpegRequest({
+            path: state.videoPath,
+            startMs: windowStart,
+            endMs: analysisEnd,
+            noiseDb: opts.silenceDb ?? -35,
+            minSilenceSec: opts.silenceDur ?? 0.25,
+            minSegmentMs: 400,
+        }));
+        if (!analysis?.ok) {
+            return { error: analysis?.error || '静音分析失败' };
+        }
+
+        const snapped = splitCore.snapCueTimingFromSilenceIntervals(
+            cue.startMs,
+            end,
+            analysis.intervals,
+            {
+                windowStartMs: windowStart,
+                windowEndMs: analysisEnd,
+                prevLimitMs: prevLimit,
+                nextLimitMs: Number.isFinite(nextLimit) ? nextLimit : analysisEnd,
+                minDurMs: 500,
+                headPadMs: Math.max(0, Math.round(Number(opts.headPadMs ?? 80))),
+                tailPadMs: Math.max(0, Math.round(Number(opts.tailPadMs ?? 80))),
+                minSpeechMs: 200,
+                minShiftMs: 80,
+                allowExtend: opts.allowExtend !== false,
+            },
+        );
+
+        if (!snapped.changed) {
+            const reasonMap = {
+                no_speech: '未检测到可用语音段',
+                no_region: '未匹配到语音段',
+                too_short: '贴边后时长过短，已保持原时间',
+                unchanged: '时间轴已贴近语音，无需调整',
+            };
+            return {
+                error: reasonMap[snapped.reason] || '无需调整',
+                unchanged: true,
+                snapped,
+            };
+        }
+
+        return {
+            startMs: snapped.startMs,
+            endMs: snapped.endMs,
+            startDelta: snapped.startDelta,
+            endDelta: snapped.endDelta,
+            silenceCount: analysis.intervals?.length || 0,
+            windowStartMs: windowStart,
+            windowEndMs: analysisEnd,
+        };
+    }
+
+    async function silenceSnapSelectedCueTiming(extraOpts = {}) {
+        if (state.silenceSplitBusy || state.retranscribeBusy) {
+            setStatus('已有分析任务进行中，请稍候', 'err');
+            return;
+        }
+        if (state.selectedIndex < 0) return;
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        if (!canAudioSnapCue(cue)) {
+            setStatus('当前字幕时长过短，无法贴边', 'err');
+            return;
+        }
+        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
+            setStatus('请先关联视频后再使用按音频贴边', 'err');
+            return;
+        }
+
+        const opts = {
+            ...getSilenceSplitOpts(extraOpts),
+            padMs: extraOpts.padMs ?? 400,
+            allowExtend: extraOpts.allowExtend !== false,
+        };
+        setSilenceSplitBusy(true);
+        showSilenceSplitProgress({
+            title: '正在按音频贴边',
+            detail: `正在分析第 ${idx + 1} 条字幕的语音边界…`,
+            indeterminate: true,
+            statusMessage: '正在分析视频静音…',
+        });
+        if (els.silenceProgressHint) {
+            els.silenceProgressHint.textContent = '根据静音检测将字幕起止贴到语音边界，文本保持不变';
+        }
+        await flushSilenceProgressPaint();
+
+        try {
+            const result = await computeAudioSnappedCueTiming(cue, idx, opts);
+            if (result.error) {
+                setStatus(result.error, result.unchanged ? 'ok' : 'err');
+                return;
+            }
+
+            recordUndoBeforeChange();
+            cue.startMs = result.startMs;
+            cue.endMs = result.endMs;
+            setDirty(true);
+            refreshListRow(idx);
+            if (state.selectedIndex === idx) renderDetailPane();
+            resyncPlaybackAfterCueTimingChange();
+            const startPart = result.startDelta
+                ? `起始 ${result.startDelta > 0 ? '+' : ''}${(result.startDelta / 1000).toFixed(2)}s`
+                : '起始不变';
+            const endPart = result.endDelta
+                ? `结束 ${result.endDelta > 0 ? '+' : ''}${(result.endDelta / 1000).toFixed(2)}s`
+                : '结束不变';
+            setStatus(`已按音频贴边第 ${idx + 1} 条：${startPart} · ${endPart}`, 'ok');
+        } finally {
+            setSilenceSplitBusy(false);
+            hideSilenceSplitProgress();
+            if (els.silenceProgressHint) {
+                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
+            }
+        }
     }
 
     async function silenceAdjustSelectedCueDuration(extraOpts = {}) {
@@ -1591,11 +2051,18 @@
         if (state.selectedIndex >= 0) renderDetailPane();
     }
 
-    function getSilenceSplitOpts(extra = {}) {
+    function getSilenceSplitOpts(extra = {}, mode = 'batch') {
         const prefs = loadSplitPrefs();
+        let silenceDb = extra.silenceDb ?? prefs.silenceDb;
+        let silenceDur = extra.silenceDur ?? prefs.silenceDur;
+        // Single-cue splits default to more sensitive floors than batch prefs
+        if (mode === 'cue') {
+            silenceDb = Math.max(Number(silenceDb) || -30, -30);
+            silenceDur = Math.min(Math.max(0.05, Number(silenceDur) || 0.12), 0.12);
+        }
         return {
-            silenceDb: extra.silenceDb ?? prefs.silenceDb,
-            silenceDur: extra.silenceDur ?? prefs.silenceDur,
+            silenceDb,
+            silenceDur,
             fixOverlap: extra.fixOverlap ?? prefs.fixOverlap,
         };
     }
@@ -1605,8 +2072,8 @@
         if (state.selectedIndex < 0) return { ok: false, error: '未选中字幕' };
         syncDetailToCue();
         const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const opts = getSilenceSplitOpts(extraOpts);
+        const cue = getLiveSelectedCue() || state.cues[idx];
+        const opts = getSilenceSplitOpts(extraOpts, 'cue');
 
         showSilenceSplitProgress({
             title: '正在分析静音',
@@ -1647,6 +2114,9 @@
         const canCharDur = hasCue && textCharCount(state.cues[state.selectedIndex].text) > 0;
         const canSmartDur = hasCue && canSilenceAdjustDurationCue(state.cues[state.selectedIndex])
             && !!state.videoPath && !!electron?.ffmpegDetectSilence && !state.silenceSplitBusy;
+        const canAudioSnap = hasCue && canAudioSnapCue(state.cues[state.selectedIndex])
+            && !!state.videoPath && !!electron?.ffmpegDetectSilence
+            && !state.silenceSplitBusy && !state.retranscribeBusy;
 
         els.cueContextMenu.querySelectorAll('[data-ctx-action]').forEach((btn) => {
             const action = btn.dataset.ctxAction;
@@ -1667,6 +2137,19 @@
                 btn.disabled = !canCharDur;
             } else if (action === 'smart-dur') {
                 btn.disabled = !canSmartDur;
+            } else if (action === 'audio-snap') {
+                btn.disabled = !canAudioSnap;
+            } else if (action === 'audio-snap-batch') {
+                btn.disabled = !state.videoPath || !electron?.ffmpegDetectSilence
+                    || state.silenceSplitBusy || state.retranscribeBusy || !state.cues.length;
+            } else if (action === 'retranscribe') {
+                btn.disabled = !hasCue || state.retranscribeBusy || state.silenceSplitBusy
+                    || !state.videoPath || !electron?.transubTranscribeRange;
+            } else if (action === 'retranscribe-dur') {
+                btn.disabled = state.retranscribeBusy || state.silenceSplitBusy
+                    || !state.videoPath || !electron?.transubTranscribeRange;
+            } else if (action === 'confirm-meta') {
+                btn.disabled = !hasCue;
             } else if (action === 'delete') {
                 btn.disabled = !hasCue;
             } else if (action === 'insert') {
@@ -1739,6 +2222,21 @@
             case 'smart-dur':
                 silenceAdjustSelectedCueDuration();
                 break;
+            case 'audio-snap':
+                silenceSnapSelectedCueTiming();
+                break;
+            case 'audio-snap-batch':
+                openBatchAudioSnapModal();
+                break;
+            case 'retranscribe':
+                retranscribeSelectedCue();
+                break;
+            case 'retranscribe-dur':
+                openRetranscribeDurModal();
+                break;
+            case 'confirm-meta':
+                markSelectedCueTrusted();
+                break;
             case 'insert':
                 insertCueAtPlayhead();
                 break;
@@ -1808,7 +2306,52 @@
     }
 
     function blocksConnectedTextSplit(mode) {
-        return mode === 'smart' || mode === 'chars' || mode === 'count' || mode === 'silence';
+        return mode === 'chars' || mode === 'count' || mode === 'silence';
+    }
+
+    function getDefaultBreakWords() {
+        return splitCore.normalizeBreakWords(splitCore.DEFAULT_BREAK_WORDS || []);
+    }
+
+    function loadBreakWords() {
+        if (Array.isArray(state.breakWords)) {
+            return splitCore.normalizeBreakWords(state.breakWords);
+        }
+        try {
+            const raw = localStorage.getItem(BREAK_WORDS_KEY);
+            if (raw == null) {
+                state.breakWords = getDefaultBreakWords();
+                return state.breakWords.slice();
+            }
+            const parsed = JSON.parse(raw);
+            state.breakWords = splitCore.normalizeBreakWords(
+                Array.isArray(parsed) ? parsed : parsed?.words,
+            );
+            return state.breakWords.slice();
+        } catch (_) {
+            state.breakWords = getDefaultBreakWords();
+            return state.breakWords.slice();
+        }
+    }
+
+    function saveBreakWords(words) {
+        state.breakWords = splitCore.normalizeBreakWords(words);
+        try {
+            localStorage.setItem(BREAK_WORDS_KEY, JSON.stringify(state.breakWords));
+        } catch (_) { /* ignore */ }
+        return state.breakWords.slice();
+    }
+
+    function parseBreakWordsInput(raw) {
+        return splitCore.normalizeBreakWords(
+            String(raw || '')
+                .split(/[,，;；|／/\n\r\t]+/)
+                .map((s) => s.trim()),
+        );
+    }
+
+    function getSmartSplitBreakWords() {
+        return loadBreakWords();
     }
 
     function connectedTextSplitError(mode, text) {
@@ -1832,8 +2375,9 @@
             const texts = splitCore.splitTextSmart(text, {
                 maxChars: opts.smartMaxChars ?? opts.charCount ?? 20,
                 maxLineChars: opts.smartLineChars ?? 18,
+                breakWords: opts.breakWords || getSmartSplitBreakWords(),
             });
-            if (texts.length < 2) return { error: '当前文本无需智能分割（已足够短）' };
+            if (texts.length < 2) return { error: '当前文本无需智能分割（已足够短或缺少标点/断句词）' };
             return { cues: buildCuesFromTexts(cue.startMs, end, texts, timeMode, timeOpts) };
         }
 
@@ -1895,40 +2439,181 @@
         if (!state.videoPath) {
             return { error: '请先关联视频后再使用静音切分' };
         }
-        const end = cueEndMs(cue);
+        const cueStart = Math.round(Number(cue.startMs) || 0);
+        let end = Math.round(Number(cueEndMs(cue)) || 0);
+        if (!(end > cueStart)) {
+            const durSec = Number(els.detailDuration?.value);
+            if (Number.isFinite(durSec) && durSec > 0) {
+                end = cueStart + Math.round(durSec * 1000);
+            }
+        }
         const text = String(cue.text || '').trim();
         if (!text) return { error: '当前字幕文本为空，无法分割' };
 
         const connectedErr = connectedTextSplitError('silence', text);
         if (connectedErr) return { error: connectedErr };
 
-        const analysis = await electron?.ffmpegDetectSilence?.(buildFfmpegRequest({
-            path: state.videoPath,
-            startMs: cue.startMs,
-            endMs: end,
-            noiseDb: opts.silenceDb ?? -35,
-            minSilenceSec: opts.silenceDur ?? 0.25,
-            minSegmentMs: 400,
-        }));
-
-        if (!analysis?.ok) {
-            return { error: analysis?.error || '静音分析失败' };
+        const cueDur = end - cueStart;
+        if (!Number.isFinite(cueDur) || cueDur < 250) {
+            return { error: `当前字幕时长过短（${Number.isFinite(cueDur) ? (cueDur / 1000).toFixed(3) : '?'}s），无法分析静音` };
         }
-        if (!analysis.splitPointsMs?.length) {
+
+        const padMs = Math.max(0, Math.min(1200, Math.round(Number(opts.padMs ?? 600))));
+        const analysisStart = Math.max(0, cueStart - padMs);
+        const analysisEnd = end + padMs;
+        if (!(analysisEnd > analysisStart + 200) || !Number.isFinite(analysisStart) || !Number.isFinite(analysisEnd)) {
+            return {
+                error: `静音分析时间窗无效（${cueStart}–${end} ms），请检查字幕起止时间`,
+            };
+        }
+        // Prefer slightly more sensitive defaults than batch prefs for single-cue splits
+        const noiseDb = opts.silenceDb != null ? opts.silenceDb : -30;
+        const silenceDur = opts.silenceDur != null ? opts.silenceDur : 0.12;
+        const minSegmentMs = Math.max(120, Math.min(280, Math.round(cueDur * 0.1)));
+
+        const wsBreaks = typeof splitCore.getWhitespaceBreakIndices === 'function'
+            ? splitCore.getWhitespaceBreakIndices(text)
+            : [];
+        const idealBreakMs = wsBreaks.map((idx) => {
+            const ratio = Math.max(0, Math.min(1, idx / Math.max(1, text.length)));
+            return Math.round(cueStart + ratio * cueDur);
+        });
+
+        const runDetect = (noise, minSilence, minSeg) => electron?.ffmpegDetectSilence?.({
+            path: state.videoPath,
+            startMs: analysisStart,
+            endMs: analysisEnd,
+            durationMs: analysisEnd - analysisStart,
+            noiseDb: noise,
+            minSilenceSec: minSilence,
+            minSegmentMs: minSeg,
+            ...(cachedFfmpegPath ? { ffmpegPath: cachedFfmpegPath } : {}),
+        });
+
+        const dedupePoints = (points, minGap) => {
+            const sorted = [...points].map((ms) => Math.round(Number(ms) || 0)).sort((a, b) => a - b);
+            const out = [];
+            for (const ms of sorted) {
+                if (!out.length || ms - out[out.length - 1] >= minGap) out.push(ms);
+            }
+            return out;
+        };
+
+        const pickSplitPoints = (analysis, minSeg, minSilenceMs) => {
+            if (!analysis?.ok) return [];
+            const edge = Math.max(100, Math.min(minSeg, Math.floor(cueDur * 0.12)));
+            const interiorLo = cueStart + edge;
+            const interiorHi = end - edge;
+            if (interiorHi <= interiorLo) return [];
+
+            const points = [];
+            const pushIfInterior = (ms) => {
+                const v = Math.round(Number(ms) || 0);
+                if (v > interiorLo && v < interiorHi) points.push(v);
+            };
+
+            for (const ms of analysis.splitPointsMs || []) pushIfInterior(ms);
+
+            for (const iv of analysis.intervals || []) {
+                const s = Math.max(cueStart, Math.round(Number(iv.startMs) || 0));
+                const e = Math.min(end, Math.round(Number(iv.endMs) || 0));
+                const dur = e - s;
+                if (dur < minSilenceMs) continue;
+                pushIfInterior(Math.round((s + e) / 2));
+                // Short pause near a text break (space / 换行) — still accept
+                if (idealBreakMs.length && dur >= Math.max(40, minSilenceMs * 0.5)) {
+                    const mid = Math.round((s + e) / 2);
+                    if (idealBreakMs.some((ideal) => Math.abs(mid - ideal) <= Math.max(700, cueDur * 0.22))) {
+                        pushIfInterior(mid);
+                    }
+                }
+            }
+
+            // Gaps between speech islands inside the cue
+            if (typeof splitCore.buildSpeechRegionsFromSilence === 'function') {
+                const regions = splitCore.buildSpeechRegionsFromSilence(
+                    cueStart,
+                    end,
+                    analysis.intervals,
+                    120,
+                );
+                for (let i = 0; i < regions.length - 1; i += 1) {
+                    const gapStart = regions[i].endMs;
+                    const gapEnd = regions[i + 1].startMs;
+                    if (gapEnd - gapStart < 40) continue;
+                    pushIfInterior(Math.round((gapStart + gapEnd) / 2));
+                }
+            }
+
+            let out = dedupePoints(points, edge);
+
+            // If text has whitespace breaks, keep the silence point nearest each break
+            if (idealBreakMs.length && out.length) {
+                const picked = [];
+                for (const ideal of idealBreakMs) {
+                    let best = null;
+                    let bestDist = Infinity;
+                    for (const ms of out) {
+                        const dist = Math.abs(ms - ideal);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            best = ms;
+                        }
+                    }
+                    // Allow fairly distant match — audible pause often lags the space slightly
+                    if (best != null && bestDist <= Math.max(1200, cueDur * 0.35)) {
+                        picked.push(best);
+                    }
+                }
+                if (picked.length) out = dedupePoints(picked, edge);
+            }
+
+            return out;
+        };
+
+        const passes = [
+            { noise: noiseDb, minSilence: silenceDur, minSeg: minSegmentMs },
+            { noise: Math.min(-24, noiseDb + 6), minSilence: Math.min(0.1, silenceDur), minSeg: Math.max(100, minSegmentMs - 40) },
+            { noise: -22, minSilence: 0.07, minSeg: Math.max(100, minSegmentMs - 80) },
+            { noise: -20, minSilence: 0.05, minSeg: 100 },
+        ];
+
+        let analysis = null;
+        let splitPoints = [];
+        let lastError = '';
+
+        for (const pass of passes) {
+            const result = await runDetect(pass.noise, pass.minSilence, pass.minSeg);
+            if (!result?.ok) {
+                lastError = result?.error || lastError;
+                // Don't abort on a flaky short-window error if cue itself is long enough —
+                // try next (more sensitive) pass after ensuring window is sane.
+                continue;
+            }
+            analysis = result;
+            const minSilenceMs = Math.max(40, Math.round(pass.minSilence * 700));
+            splitPoints = pickSplitPoints(result, pass.minSeg, minSilenceMs);
+            if (splitPoints.length) break;
+        }
+
+        if (!analysis?.ok && lastError) {
+            return { error: lastError };
+        }
+        if (!splitPoints.length) {
             return { error: '该时间段内未检测到足够长的静音，请调低阈值或改用智能断句' };
         }
 
         const cues = splitCore.buildCuesFromSilenceSplits(
             text,
-            cue.startMs,
+            cueStart,
             end,
-            analysis.splitPointsMs,
-            16,
+            splitPoints,
+            20,
             analysis.intervals,
             {
-                minDurMs: 500,
-                minTrailingSilenceMs: Math.max(250, Math.round((opts.silenceDur ?? 0.25) * 1000)),
-                minLeadingSilenceMs: Math.max(250, Math.round((opts.silenceDur ?? 0.25) * 1000)),
+                minDurMs: 400,
+                minTrailingSilenceMs: Math.max(120, Math.round((opts.silenceDur ?? silenceDur) * 800)),
+                minLeadingSilenceMs: Math.max(120, Math.round((opts.silenceDur ?? silenceDur) * 800)),
                 gapMs: 1,
             },
         );
@@ -1940,7 +2625,7 @@
             cues,
             meta: {
                 silenceCount: analysis.intervals?.length || 0,
-                splitCount: analysis.splitPointsMs.length,
+                splitCount: splitPoints.length,
             },
         };
     }
@@ -1952,6 +2637,441 @@
             enforceMinDur: false,
             enforceMaxDur: false,
             gapMs: 1,
+        });
+    }
+
+    async function markSelectedCueTrusted() {
+        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) return;
+        syncDetailToCue();
+        refreshCueMeta();
+        const idx = state.selectedIndex;
+        state.cueMeta[idx] = {
+            confidence: 1,
+            flags: ['confirmed'],
+            low: false,
+            source: 'confirmed',
+            fingerprint: metaCore.cueFingerprint(state.cues[idx]),
+            confirmed: true,
+        };
+        await persistCueMeta();
+        renderCueList();
+        setStatus(`已将第 ${idx + 1} 条标记为可信`, 'ok');
+    }
+
+    function canRetranscribeNow() {
+        if (state.retranscribeBusy || state.silenceSplitBusy) {
+            setStatus('已有分析任务进行中，请稍候', 'err');
+            return false;
+        }
+        if (!state.videoPath) {
+            setStatus('请先关联视频后再重转写', 'err');
+            return false;
+        }
+        if (!electron?.transubTranscribeRange) {
+            setStatus('当前环境不支持区间重转写', 'err');
+            return false;
+        }
+        return true;
+    }
+
+    function markRetranscribedMeta(startIndex, count) {
+        state.cueMeta = metaCore.annotateCuesConfidence(state.cues, getMetaScanOptions());
+        for (let i = 0; i < count; i += 1) {
+            const at = startIndex + i;
+            if (!state.cues[at]) continue;
+            state.cueMeta[at] = {
+                confidence: 0.88,
+                flags: ['retranscribe'],
+                low: false,
+                source: 'retranscribe',
+                fingerprint: metaCore.cueFingerprint(state.cues[at]),
+            };
+        }
+    }
+
+    /**
+     * @param {{ startMs: number, endMs: number, padMs?: number, mode?: 'cue'|'range', detail?: string, snapAfter?: boolean }} opts
+     */
+    async function runRetranscribeRange(opts) {
+        if (!canRetranscribeNow()) return { ok: false };
+        const startMs = Math.max(0, Math.round(Number(opts.startMs) || 0));
+        const endMs = Math.max(startMs + 200, Math.round(Number(opts.endMs) || 0));
+        const padMs = Math.max(0, Math.min(2000, Math.round(Number(opts.padMs ?? 350))));
+        const mode = opts.mode === 'cue' ? 'cue' : 'range';
+        const snapAfter = opts.snapAfter === true;
+
+        if (endMs - startMs < 200) {
+            setStatus('重转写时间范围过短', 'err');
+            return { ok: false };
+        }
+
+        state.retranscribeBusy = true;
+        updateRetranscribeTransportBtn();
+        showSilenceSplitProgress({
+            title: '正在重转写',
+            detail: opts.detail || `正在截取并转写 ${((endMs - startMs) / 1000).toFixed(1)}s…`,
+            indeterminate: true,
+            statusMessage: '区间重转写进行中…',
+        });
+        if (els.silenceProgressHint) {
+            els.silenceProgressHint.textContent = '将调用 TransWithAI 对选定时间段重新转写；加载模型时请耐心等待';
+        }
+        await flushSilenceProgressPaint();
+
+        let unsubProgress = null;
+        try {
+            unsubProgress = electron.onTransubRetranscribeProgress?.((progress) => {
+                const message = String(progress?.message || progress?.detail || '').trim();
+                if (!message) return;
+                const stage = String(progress?.stage || '');
+                const isModel = stage === 'model' || /模型/.test(message);
+                updateSilenceSplitProgress({
+                    detail: message,
+                    statusMessage: message,
+                });
+                if (els.silenceProgressTitle) {
+                    if (isModel) els.silenceProgressTitle.textContent = '正在加载模型';
+                    else if (stage === 'vad') els.silenceProgressTitle.textContent = '正在初始化语音检测';
+                    else if (stage === 'extract' || stage === 'warmup') els.silenceProgressTitle.textContent = '正在准备音频';
+                    else if (stage === 'transcribe') els.silenceProgressTitle.textContent = '正在识别语音';
+                    else if (stage === 'save' || stage === 'done') els.silenceProgressTitle.textContent = '正在整理结果';
+                    else els.silenceProgressTitle.textContent = progress?.warmLight ? '正在重转写（轻量）' : '正在重转写';
+                }
+                if (els.silenceProgressHint) {
+                    if (isModel) {
+                        els.silenceProgressHint.textContent = progress?.warmLight
+                            ? '轻量模式：正在加载 Whisper 模型到显存/内存，首次或切换模型时较慢'
+                            : '正在加载 Whisper 模型到显存/内存，首次或切换模型时可能需要数十秒';
+                    } else if (stage === 'vad') {
+                        els.silenceProgressHint.textContent = '正在初始化 VAD 语音活动检测…';
+                    } else if (stage === 'starting') {
+                        els.silenceProgressHint.textContent = '正在启动 TransWithAI 转写引擎…';
+                    } else if (progress?.warmLight) {
+                        els.silenceProgressHint.textContent = '轻量加速已开启（Beam=1）；如需更高精度请在设置中关闭「重转写加速」';
+                    }
+                }
+            }) || null;
+
+            const res = await electron.transubTranscribeRange({
+                mediaPath: state.videoPath,
+                startMs,
+                endMs,
+                padMs,
+                ffmpegPath: cachedFfmpegPath,
+                options: {
+                    task: 'transcribe',
+                    mergeSegments: false,
+                    subFormats: 'srt',
+                },
+            });
+            if (!res?.ok || !Array.isArray(res.cues) || !res.cues.length) {
+                setStatus(res?.error || '重转写失败', 'err');
+                return { ok: false };
+            }
+
+            const newCues = res.cues.map((c) => ({
+                startMs: c.startMs,
+                endMs: c.endMs,
+                text: String(c.text || '').trim(),
+            })).filter((c) => c.text);
+            if (!newCues.length) {
+                setStatus('重转写结果为空', 'err');
+                return { ok: false };
+            }
+
+            recordUndoBeforeChange();
+            let selectAt = 0;
+            let replacedCount = 0;
+            if (mode === 'cue' && state.selectedIndex >= 0) {
+                const idx = state.selectedIndex;
+                state.cues.splice(idx, 1, ...newCues);
+                selectAt = idx;
+                replacedCount = 1;
+            } else {
+                const result = metaCore.replaceCuesInTimeRange(state.cues, startMs, endMs, newCues);
+                state.cues.splice(0, state.cues.length, ...result.cues);
+                selectAt = result.insertAt;
+                replacedCount = result.replaced;
+            }
+            maybeFixOverlapAfterSplit();
+
+            let snappedCount = 0;
+            if (snapAfter && electron?.ffmpegDetectSilence) {
+                const indices = [];
+                for (let i = 0; i < newCues.length; i += 1) {
+                    const at = selectAt + i;
+                    if (at >= 0 && at < state.cues.length) indices.push(at);
+                }
+                const silencePrefs = getSilenceSplitOpts({});
+                showSilenceSplitProgress({
+                    title: '正在按音频贴边',
+                    detail: `重转写完成，正在贴边 ${indices.length} 条…`,
+                    current: 0,
+                    total: indices.length,
+                    statusMessage: `贴边 0/${indices.length}…`,
+                });
+                if (els.silenceProgressHint) {
+                    els.silenceProgressHint.textContent = '重转写后根据静音微调起止时间，文本保持不变';
+                }
+                await flushSilenceProgressPaint();
+                for (let i = 0; i < indices.length; i += 1) {
+                    updateSilenceSplitProgress({
+                        current: i,
+                        total: indices.length,
+                        detail: `正在贴边第 ${i + 1}/${indices.length} 条…`,
+                        statusMessage: `贴边 ${i + 1}/${indices.length}…`,
+                    });
+                    await flushSilenceProgressPaint();
+                    const snapResult = await audioSnapCueAtIndex(indices[i], {
+                        ...silencePrefs,
+                        padMs: 400,
+                        allowExtend: true,
+                    });
+                    if (snapResult.status === 'adjusted') snappedCount += 1;
+                }
+            }
+
+            markRetranscribedMeta(selectAt, newCues.length);
+            await persistCueMeta();
+
+            state.selectedIndex = Math.min(Math.max(selectAt, 0), state.cues.length - 1);
+            setDirty(true);
+            renderCueList();
+            const durSec = ((endMs - startMs) / 1000).toFixed(1);
+            const snapHint = snapAfter
+                ? `，贴边 ${snappedCount}/${newCues.length}`
+                : '';
+            setStatus(
+                `已重转写 ${durSec}s：替换 ${replacedCount} 条 → ${newCues.length} 条${snapHint}`,
+                'ok',
+            );
+            return { ok: true, newCount: newCues.length, replacedCount, snappedCount };
+        } catch (err) {
+            setStatus(err?.message || '重转写失败', 'err');
+            return { ok: false };
+        } finally {
+            if (typeof unsubProgress === 'function') {
+                try { unsubProgress(); } catch (_) { /* ignore */ }
+            }
+            state.retranscribeBusy = false;
+            hideSilenceSplitProgress();
+            if (els.silenceProgressHint) {
+                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
+            }
+            updateRetranscribeTransportBtn();
+        }
+    }
+
+    async function retranscribeSelectedCue() {
+        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
+            setStatus('请先选中一条字幕', 'err');
+            return;
+        }
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        const prefs = loadRetranscribeDurPrefs();
+        await runRetranscribeRange({
+            startMs: cue.startMs,
+            endMs: cueEndMs(cue),
+            padMs: prefs.padMs ?? 350,
+            mode: 'cue',
+            snapAfter: prefs.snapAfter !== false,
+            detail: `正在截取并转写第 ${idx + 1} 条字幕…`,
+        });
+    }
+
+    function clampRetranscribeDurSec(value) {
+        return Math.max(0.5, Math.min(180, Number(value) || DEFAULT_RETRANSCRIBE_DUR_SEC));
+    }
+
+    function loadRetranscribeDurPrefs() {
+        try {
+            const raw = localStorage.getItem(RETRANSCRIBE_DUR_KEY);
+            if (!raw) {
+                return {
+                    durationSec: DEFAULT_RETRANSCRIBE_DUR_SEC,
+                    padMs: 350,
+                    startMode: 'selected',
+                    snapAfter: true,
+                };
+            }
+            const prefs = JSON.parse(raw);
+            return {
+                durationSec: clampRetranscribeDurSec(prefs.durationSec),
+                padMs: Math.max(0, Math.min(2000, Math.round(Number(prefs.padMs) || 350))),
+                startMode: prefs.startMode === 'playhead' ? 'playhead' : 'selected',
+                snapAfter: prefs.snapAfter !== false,
+            };
+        } catch (_) {
+            return {
+                durationSec: DEFAULT_RETRANSCRIBE_DUR_SEC,
+                padMs: 350,
+                startMode: 'selected',
+                snapAfter: true,
+            };
+        }
+    }
+
+    function saveRetranscribeDurPrefs(prefs) {
+        try {
+            localStorage.setItem(RETRANSCRIBE_DUR_KEY, JSON.stringify(prefs));
+        } catch (_) { /* ignore */ }
+    }
+
+    function getSelectedRetranscribeDurStartMode() {
+        return document.querySelector('input[name="editorRetranscribeDurStart"]:checked')?.value || 'selected';
+    }
+
+    function resolveRetranscribeDurWindow() {
+        const durationSec = clampRetranscribeDurSec(els.retranscribeDurSec?.value);
+        const padMs = Math.max(0, Math.min(2000, Math.round(Number(els.retranscribeDurPadMs?.value) || 350)));
+        const startMode = getSelectedRetranscribeDurStartMode();
+        let startMs = 0;
+        if (startMode === 'playhead') {
+            startMs = getPlaybackTimeMs();
+        } else if (state.selectedIndex >= 0 && state.selectedIndex < state.cues.length) {
+            startMs = state.cues[state.selectedIndex].startMs;
+        } else {
+            startMs = getPlaybackTimeMs();
+        }
+        const endMs = startMs + Math.round(durationSec * 1000);
+        return { startMs, endMs, durationSec, padMs, startMode };
+    }
+
+    function updateRetranscribeDurModalState() {
+        if (!els.retranscribeDurPreview) return;
+        syncDetailToCue();
+        if (!state.videoPath) {
+            els.retranscribeDurPreview.textContent = '请先关联视频';
+            els.retranscribeDurPreview.classList.add('err');
+            return;
+        }
+        const startMode = getSelectedRetranscribeDurStartMode();
+        if (startMode === 'selected'
+            && (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length)) {
+            els.retranscribeDurPreview.textContent = '未选中字幕，将改用播放头作为起始';
+            els.retranscribeDurPreview.classList.remove('err');
+        }
+
+        const win = resolveRetranscribeDurWindow();
+        const overlap = metaCore.collectOverlappingCueIndices(state.cues, win.startMs, win.endMs);
+        const startLabel = formatDisplayTime(win.startMs, state.format);
+        const endLabel = formatDisplayTime(win.endMs, state.format);
+        els.retranscribeDurPreview.textContent = overlap.length
+            ? `${startLabel} → ${endLabel}（${win.durationSec}s），将替换重叠的 ${overlap.length} 条`
+            : `${startLabel} → ${endLabel}（${win.durationSec}s），该区间暂无字幕，将插入新结果`;
+        els.retranscribeDurPreview.classList.remove('err');
+
+        document.querySelectorAll('[data-retranscribe-dur-preset]').forEach((btn) => {
+            const v = Number(btn.getAttribute('data-retranscribe-dur-preset'));
+            btn.classList.toggle('active', Math.abs(v - win.durationSec) < 0.01);
+        });
+    }
+
+    function openRetranscribeDurModal() {
+        if (!els.retranscribeDurModal) return;
+        if (!state.videoPath) {
+            setStatus('请先关联视频后再重转写', 'err');
+            return;
+        }
+        syncDetailToCue();
+        const prefs = loadRetranscribeDurPrefs();
+        if (els.retranscribeDurSec) els.retranscribeDurSec.value = String(prefs.durationSec);
+        if (els.retranscribeDurPadMs) els.retranscribeDurPadMs.value = String(prefs.padMs);
+        if (els.retranscribeDurSnapAfter) els.retranscribeDurSnapAfter.checked = prefs.snapAfter !== false;
+        const radio = document.querySelector(
+            `input[name="editorRetranscribeDurStart"][value="${prefs.startMode}"]`,
+        );
+        if (radio) radio.checked = true;
+        else {
+            const fallback = document.querySelector('input[name="editorRetranscribeDurStart"][value="selected"]');
+            if (fallback) fallback.checked = true;
+        }
+        showEditorModal(els.retranscribeDurModal, els.retranscribeDurConfirm);
+        updateRetranscribeDurModalState();
+    }
+
+    function closeRetranscribeDurModal() {
+        hideEditorModal(els.retranscribeDurModal);
+    }
+
+    async function confirmRetranscribeDur() {
+        syncDetailToCue();
+        const win = resolveRetranscribeDurWindow();
+        if (!state.videoPath) {
+            updateRetranscribeDurModalState();
+            return;
+        }
+        const snapAfter = els.retranscribeDurSnapAfter?.checked !== false;
+        saveRetranscribeDurPrefs({
+            durationSec: win.durationSec,
+            padMs: win.padMs,
+            startMode: win.startMode,
+            snapAfter,
+        });
+        closeRetranscribeDurModal();
+        await runRetranscribeRange({
+            startMs: win.startMs,
+            endMs: win.endMs,
+            padMs: win.padMs,
+            mode: 'range',
+            snapAfter,
+            detail: `正在重转写 ${win.durationSec}s（${formatDisplayTime(win.startMs, state.format)} → ${formatDisplayTime(win.endMs, state.format)}）…`,
+        });
+    }
+
+    function resolveRetranscribeAllWindow() {
+        updateTimelineDuration();
+        const padMs = Math.max(0, Math.min(2000, Math.round(Number(els.retranscribeDurPadMs?.value) || 350)));
+        const startMs = 0;
+        let endMs = state.timeline.durationMs;
+        if (els.video && Number.isFinite(els.video.duration) && els.video.duration > 0) {
+            endMs = Math.round(els.video.duration * 1000);
+        } else if (state.cues.length) {
+            endMs = Math.max(...state.cues.map((c) => cueEndMs(c)), startMs + 1000);
+        }
+        endMs = Math.max(endMs, startMs + 200);
+        const durationSec = Math.round(((endMs - startMs) / 1000) * 10) / 10;
+        return { startMs, endMs, durationSec, padMs };
+    }
+
+    async function confirmRetranscribeAll() {
+        syncDetailToCue();
+        if (!state.videoPath) {
+            updateRetranscribeDurModalState();
+            return;
+        }
+        const win = resolveRetranscribeAllWindow();
+        if (win.endMs - win.startMs < 200) {
+            setStatus('无法确定整段时长，请先加载视频', 'err');
+            return;
+        }
+        const overlap = metaCore.collectOverlappingCueIndices(state.cues, win.startMs, win.endMs);
+        const durLabel = win.durationSec >= 60
+            ? `${Math.floor(win.durationSec / 60)}分${Math.round(win.durationSec % 60)}秒`
+            : `${win.durationSec}s`;
+        const ok = editorConfirm(
+            `确定全部重转写（约 ${durLabel}）？将替换时间窗内 ${overlap.length} 条重叠字幕，此操作可撤销。`,
+        );
+        if (!ok) return;
+
+        const snapAfter = els.retranscribeDurSnapAfter?.checked !== false;
+        const prefs = loadRetranscribeDurPrefs();
+        saveRetranscribeDurPrefs({
+            durationSec: prefs.durationSec,
+            padMs: win.padMs,
+            startMode: prefs.startMode,
+            snapAfter,
+        });
+        closeRetranscribeDurModal();
+        await runRetranscribeRange({
+            startMs: win.startMs,
+            endMs: win.endMs,
+            padMs: win.padMs,
+            mode: 'range',
+            snapAfter,
+            detail: `正在全部重转写 ${win.durationSec}s（${formatDisplayTime(win.startMs, state.format)} → ${formatDisplayTime(win.endMs, state.format)}）…`,
         });
     }
 
@@ -2311,7 +3431,8 @@
             state.find.active = false;
             state.find.matches = [];
             state.find.currentIndex = -1;
-            updateListRowClasses();
+            if (state.listFilter === 'find') renderCueList();
+            else updateListRowClasses();
             updateFindStatus('请输入要查找的内容');
             return false;
         }
@@ -2323,7 +3444,8 @@
         state.find._lastCase = caseSensitive;
 
         if (!state.find.matches.length) {
-            updateListRowClasses();
+            if (state.listFilter === 'find') renderCueList();
+            else updateListRowClasses();
             updateFindStatus('未找到匹配项');
             return false;
         }
@@ -2336,6 +3458,7 @@
             state.find.currentIndex = 0;
         }
 
+        if (state.listFilter === 'find') renderCueList();
         if (options.navigate !== false) goToFindMatch(state.find.currentIndex);
         else {
             updateListRowClasses();
@@ -2472,6 +3595,7 @@
             targetSec: Number(els.batchDurTarget?.value) || 2,
             silenceDb: Number(els.batchDurSilenceDb?.value) || -35,
             silenceDur: Number(els.batchDurSilenceDur?.value) || 0.25,
+            snapPadMs: Math.max(0, Math.min(2000, Math.round(Number(els.batchDurSnapPadMs?.value) || 400))),
             shorterSec: Number(els.batchDurShorter?.value) || 1,
             longerSec: Number(els.batchDurLonger?.value) || 5,
             minSec: Number(els.batchDurMin?.value) || 0.5,
@@ -2563,12 +3687,34 @@
         return { status: 'adjusted', savedMs: oldEnd - newEnd };
     }
 
+    async function audioSnapCueAtIndex(idx, opts = {}) {
+        const cue = state.cues[idx];
+        if (!cue || !canAudioSnapCue(cue)) {
+            return { status: 'skipped', reason: '时长过短' };
+        }
+        const result = await computeAudioSnappedCueTiming(cue, idx, opts);
+        if (result.error) {
+            return {
+                status: result.unchanged ? 'unchanged' : 'skipped',
+                reason: result.error,
+            };
+        }
+        cue.startMs = result.startMs;
+        cue.endMs = result.endMs;
+        return {
+            status: 'adjusted',
+            startDelta: result.startDelta || 0,
+            endDelta: result.endDelta || 0,
+        };
+    }
+
     function collectBatchDurMatches(opts) {
         syncDetailToCue();
         const indices = [];
         state.cues.forEach((cue, idx) => {
             if (!matchesBatchDurCondition(cue, idx, opts)) return;
             if (opts.mode === 'silence' && !canSilenceAdjustDurationCue(cue)) return;
+            if (opts.mode === 'audio_snap' && !canAudioSnapCue(cue)) return;
             indices.push(idx);
         });
         return indices;
@@ -2578,16 +3724,34 @@
         const cond = getSelectedBatchDurCondition();
         const mode = getSelectedBatchDurMode();
         const isSilence = mode === 'silence';
+        const isAudioSnap = mode === 'audio_snap';
+        const usesSilenceUi = isSilence || isAudioSnap;
 
+        if (els.batchDurHint) {
+            if (isAudioSnap) {
+                els.batchDurHint.textContent = '按条件筛选后，将起止时间贴到语音边界（保留原文）。';
+            } else if (isSilence) {
+                els.batchDurHint.textContent = '按条件筛选后，仅缩短结尾多余静音（保持起始不变）。';
+            } else {
+                els.batchDurHint.textContent = '按条件筛选字幕后批量调整结束时间（保持起始时间不变）。';
+            }
+        }
         if (els.batchDurFixedWrap) {
-            els.batchDurFixedWrap.classList.toggle('hidden', isSilence);
+            els.batchDurFixedWrap.classList.toggle('hidden', usesSilenceUi);
         }
         if (els.batchDurSilenceWrap) {
-            els.batchDurSilenceWrap.classList.toggle('hidden', !isSilence);
+            els.batchDurSilenceWrap.classList.toggle('hidden', !usesSilenceUi);
         }
-        if (els.batchDurTarget) els.batchDurTarget.disabled = isSilence;
-        if (els.batchDurSilenceDb) els.batchDurSilenceDb.disabled = !isSilence;
-        if (els.batchDurSilenceDur) els.batchDurSilenceDur.disabled = !isSilence;
+        if (els.batchDurSnapPadWrap) {
+            els.batchDurSnapPadWrap.classList.toggle('hidden', !isAudioSnap);
+        }
+        if (els.batchDurAvoidOverlapRow) {
+            els.batchDurAvoidOverlapRow.classList.toggle('hidden', isAudioSnap);
+        }
+        if (els.batchDurTarget) els.batchDurTarget.disabled = usesSilenceUi;
+        if (els.batchDurSilenceDb) els.batchDurSilenceDb.disabled = !usesSilenceUi;
+        if (els.batchDurSilenceDur) els.batchDurSilenceDur.disabled = !usesSilenceUi;
+        if (els.batchDurSnapPadMs) els.batchDurSnapPadMs.disabled = !isAudioSnap;
 
         if (els.batchDurShorter) els.batchDurShorter.disabled = cond !== 'shorter';
         if (els.batchDurLonger) els.batchDurLonger.disabled = cond !== 'longer';
@@ -2600,9 +3764,11 @@
         if (!els.batchDurPreview) return;
         const opts = readBatchDurOptions();
 
-        if (opts.mode === 'silence') {
+        if (opts.mode === 'silence' || opts.mode === 'audio_snap') {
             if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-                els.batchDurPreview.textContent = '请先关联视频后再使用按静音缩短';
+                els.batchDurPreview.textContent = opts.mode === 'audio_snap'
+                    ? '请先关联视频后再使用按音频贴边'
+                    : '请先关联视频后再使用按静音缩短';
                 els.batchDurPreview.classList.add('err');
                 return;
             }
@@ -2622,7 +3788,9 @@
                 els.batchDurPreview.classList.add('err');
                 return;
             }
-            els.batchDurPreview.textContent = `将对 ${matches.length} 条字幕逐条分析静音并缩短过长时长（执行时将显示进度）`;
+            els.batchDurPreview.textContent = opts.mode === 'audio_snap'
+                ? `将对 ${matches.length} 条字幕逐条分析静音并贴边起止（执行时将显示进度）`
+                : `将对 ${matches.length} 条字幕逐条分析静音并缩短过长时长（执行时将显示进度）`;
             els.batchDurPreview.classList.remove('err');
             return;
         }
@@ -2666,6 +3834,16 @@
         updateBatchDurModalState();
     }
 
+    function openBatchAudioSnapModal() {
+        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
+            setStatus('请先关联视频后再使用按音频贴边', 'err');
+            return;
+        }
+        const radio = document.querySelector('input[name="editorBatchDurMode"][value="audio_snap"]');
+        if (radio) radio.checked = true;
+        openBatchDurModal();
+    }
+
     function closeBatchDurModal() {
         hideEditorModal(els.batchDurModal);
     }
@@ -2674,6 +3852,10 @@
         const opts = readBatchDurOptions();
         if (opts.mode === 'silence') {
             confirmBatchSilenceDurAdjust(opts);
+            return;
+        }
+        if (opts.mode === 'audio_snap') {
+            void confirmBatchAudioSnapAdjust(opts);
             return;
         }
         if (opts.targetSec <= 0 || !Number.isFinite(opts.targetSec)) {
@@ -2737,6 +3919,7 @@
         let skipped = 0;
         let unchanged = 0;
 
+        setSilenceSplitBusy(true);
         showSilenceSplitProgress({
             title: '正在批量调节时长',
             detail: `准备分析 ${total} 条字幕的实际语音时长…`,
@@ -2777,6 +3960,7 @@
                 });
             }
         } finally {
+            setSilenceSplitBusy(false);
             hideSilenceSplitProgress();
         }
 
@@ -2796,6 +3980,105 @@
         const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
         const unchangedHint = unchanged ? `，${unchanged} 条无需调整` : '';
         setStatus(`已按静音批量调节 ${adjusted} 条字幕时长${unchangedHint}${skipHint}`, 'ok');
+    }
+
+    async function confirmBatchAudioSnapAdjust(opts) {
+        if (state.silenceSplitBusy || state.retranscribeBusy) return;
+        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
+            updateBatchDurModalState();
+            return;
+        }
+        if (opts.condition === 'text_contains' && !opts.textKeyword) {
+            updateBatchDurModalState();
+            return;
+        }
+        const indices = collectBatchDurMatches(opts);
+        if (!indices.length) {
+            updateBatchDurModalState();
+            return;
+        }
+
+        const snapOpts = {
+            silenceDb: opts.silenceDb,
+            silenceDur: opts.silenceDur,
+            padMs: opts.snapPadMs ?? 400,
+            allowExtend: true,
+        };
+        const total = indices.length;
+
+        recordUndoBeforeChange();
+        let adjusted = 0;
+        let skipped = 0;
+        let unchanged = 0;
+
+        setSilenceSplitBusy(true);
+        showSilenceSplitProgress({
+            title: '正在批量按音频贴边',
+            detail: `准备分析 ${total} 条字幕的语音边界…`,
+            current: 0,
+            total,
+            statusMessage: `正在批量贴边（0/${total}）…`,
+        });
+        if (els.silenceProgressHint) {
+            els.silenceProgressHint.textContent = '根据静音检测将字幕起止贴到语音边界，文本保持不变';
+        }
+        await flushSilenceProgressPaint();
+
+        try {
+            for (let i = 0; i < indices.length; i += 1) {
+                const idx = indices[i];
+                updateSilenceSplitProgress({
+                    current: i,
+                    total,
+                    detail: `正在贴边第 ${i + 1}/${total} 条（原序号 ${idx + 1}）…`,
+                    statusMessage: `正在贴边 ${i + 1}/${total}…`,
+                });
+                await flushSilenceProgressPaint();
+
+                const result = await audioSnapCueAtIndex(idx, snapOpts);
+                if (result.status === 'adjusted') {
+                    adjusted += 1;
+                    refreshListRow(idx);
+                } else if (result.status === 'unchanged') {
+                    unchanged += 1;
+                } else {
+                    skipped += 1;
+                }
+
+                updateSilenceSplitProgress({
+                    current: i + 1,
+                    total,
+                    detail: result.status === 'adjusted'
+                        ? `第 ${i + 1}/${total} 条已贴边`
+                        : `第 ${i + 1}/${total} 条${result.status === 'unchanged' ? '无需调整' : '已跳过'}`,
+                    statusMessage: `正在贴边 ${i + 1}/${total}…`,
+                });
+            }
+        } finally {
+            setSilenceSplitBusy(false);
+            hideSilenceSplitProgress();
+            if (els.silenceProgressHint) {
+                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
+            }
+        }
+
+        if (!adjusted) {
+            updateBatchDurModalState();
+            const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
+            const unchangedHint = unchanged ? `，${unchanged} 条已贴近语音` : '';
+            setStatus(`已分析 ${total} 条，均未调整时间轴${unchangedHint}${skipHint}`, 'err');
+            resyncPlaybackAfterCueTimingChange();
+            return;
+        }
+
+        setDirty(true);
+        renderCueList();
+        if (state.selectedIndex >= 0) renderDetailPane();
+        closeBatchDurModal();
+        const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
+        const unchangedHint = unchanged ? `，${unchanged} 条无需调整` : '';
+        setStatus(`已按音频贴边 ${adjusted} 条字幕${unchangedHint}${skipHint}`, 'ok');
+        resyncPlaybackAfterCueTimingChange();
     }
 
     function getSelectedSmartSplitCondition() {
@@ -3217,95 +4500,570 @@
     }
 
     function applySmartAdjustToCues(cues, options) {
-        const minDurMs = Math.max(100, Math.round((options.minSec || 0.5) * 1000));
-        const maxDurMs = Math.max(minDurMs, Math.round((options.maxSec || 10) * 1000));
-        const maxCps = Math.max(1, Number(options.maxCps) || 18);
-        const gapMs = Math.max(0, Math.round(Number(options.gapMs) || 0));
-        const stats = { affected: 0, overlapFixed: 0, cpsFixed: 0, minDurFixed: 0, maxDurFixed: 0 };
-        const touched = new Set();
+        return qcCore.applySmartAdjustToCues(cues, options);
+    }
 
-        function setEnd(cue, idx, newEnd) {
-            const end = Math.max(cue.startMs + 100, Math.round(newEnd));
-            if (end === cueEndMs(cue)) return;
-            cue.endMs = end;
-            touched.add(idx);
+    function getDefaultQcScanOptions() {
+        const prefs = loadSplitPrefs();
+        return {
+            maxCps: Number(els.qcMaxCps?.value) || Number(els.smartMaxCps?.value) || 18,
+            minSec: Number(els.qcMinSec?.value) || 0.5,
+            maxSec: Number(els.qcMaxSec?.value) || 10,
+            gapMs: Math.max(0, Math.round(Number(els.qcGapMs?.value) || 1)),
+            smartMaxChars: prefs.smartMaxChars,
+            smartLineChars: prefs.smartLineChars,
+            targetCps: getTargetCps(),
+        };
+    }
+
+    function refreshQcBadge() {
+        if (!els.qcBtn || !els.qcBadge) return;
+        if (!state.cues.length) {
+            els.qcBtn.classList.remove('has-issues');
+            els.qcBadge.textContent = '0';
+            return;
         }
+        const { summary } = qcCore.scanCueIssues(state.cues, getDefaultQcScanOptions());
+        const n = summary.total || 0;
+        els.qcBadge.textContent = String(n > 99 ? '99+' : n);
+        els.qcBtn.classList.toggle('has-issues', n > 0);
+        els.qcBtn.title = n > 0
+            ? `${qcCore.summarizeScan(summary)}（点击打开质量检查）`
+            : '扫描时间轴 / 通顺度问题并一键修复';
+    }
 
-        function fixOverlapsPass() {
-            if (!options.fixOverlap) return;
-            for (let i = 0; i < cues.length; i += 1) {
-                const cue = cues[i];
-                const prev = i > 0 ? cues[i - 1] : null;
-                if (prev) {
-                    const prevEnd = cueEndMs(prev);
-                    if (cue.startMs < prevEnd + gapMs) {
-                        const dur = cueDurationMs(cue);
-                        const newStart = prevEnd + gapMs;
-                        cue.startMs = newStart;
-                        cue.endMs = newStart + dur;
-                        touched.add(i);
-                        stats.overlapFixed += 1;
-                    }
-                }
-                const next = i < cues.length - 1 ? cues[i + 1] : null;
-                if (next) {
-                    const oldEnd = cueEndMs(cue);
-                    const limit = next.startMs - gapMs;
-                    if (oldEnd > limit) {
-                        setEnd(cue, i, Math.max(cue.startMs + minDurMs, limit));
-                        stats.overlapFixed += 1;
-                    }
-                }
+    async function loadGlossary() {
+        if (!electron?.transubGetGlossary) {
+            state.glossary = { version: 1, entries: [] };
+            refreshGlossaryBadge();
+            return;
+        }
+        try {
+            const res = await electron.transubGetGlossary();
+            if (res?.ok && res.glossary) {
+                state.glossary = glossaryCore.normalizeGlossary(res.glossary);
+            } else {
+                state.glossary = { version: 1, entries: [] };
+            }
+        } catch (_) {
+            state.glossary = { version: 1, entries: [] };
+        }
+        refreshGlossaryBadge();
+    }
+
+    async function persistGlossary() {
+        state.glossary = glossaryCore.normalizeGlossary(state.glossary);
+        if (!electron?.transubSaveGlossary) return false;
+        try {
+            const res = await electron.transubSaveGlossary({ glossary: state.glossary });
+            if (res?.ok && res.glossary) {
+                state.glossary = glossaryCore.normalizeGlossary(res.glossary);
+            }
+            return !!res?.ok;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function refreshGlossaryBadge() {
+        if (!els.glossaryBtn || !els.glossaryBadge) return;
+        if (!state.cues.length || !state.glossary?.entries?.length) {
+            els.glossaryBtn.classList.remove('has-issues');
+            els.glossaryBadge.textContent = '0';
+            state.glossaryIssues = [];
+            return;
+        }
+        const scan = glossaryCore.scanGlossaryIssues(state.cues, state.glossary);
+        state.glossaryIssues = scan.issues;
+        const n = scan.summary.total || 0;
+        els.glossaryBadge.textContent = String(n > 99 ? '99+' : n);
+        els.glossaryBtn.classList.toggle('has-issues', n > 0);
+        els.glossaryBtn.title = n > 0
+            ? `${glossaryCore.summarizeGlossaryScan(scan.summary)}（点击打开术语表）`
+            : '术语表与专名一致性';
+    }
+
+    function clearGlossaryForm() {
+        state.glossaryEditingId = '';
+        if (els.glossaryCanonical) els.glossaryCanonical.value = '';
+        if (els.glossaryAliases) els.glossaryAliases.value = '';
+        if (els.glossaryCaseSensitive) els.glossaryCaseSensitive.checked = false;
+        if (els.glossaryEnabled) els.glossaryEnabled.checked = true;
+        renderGlossaryEntryList();
+    }
+
+    function fillGlossaryForm(entry) {
+        if (!entry) {
+            clearGlossaryForm();
+            return;
+        }
+        state.glossaryEditingId = entry.id;
+        if (els.glossaryCanonical) els.glossaryCanonical.value = entry.canonical || '';
+        if (els.glossaryAliases) els.glossaryAliases.value = (entry.aliases || []).join(', ');
+        if (els.glossaryCaseSensitive) els.glossaryCaseSensitive.checked = !!entry.caseSensitive;
+        if (els.glossaryEnabled) els.glossaryEnabled.checked = entry.enabled !== false;
+        renderGlossaryEntryList();
+    }
+
+    function renderGlossaryEntryList() {
+        if (!els.glossaryEntryList) return;
+        const entries = state.glossary?.entries || [];
+        if (!entries.length) {
+            els.glossaryEntryList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:rgb(156 163 175);">暂无术语，请新建或导入</div>';
+            return;
+        }
+        els.glossaryEntryList.innerHTML = entries.map((entry) => {
+            const active = entry.id === state.glossaryEditingId ? ' active' : '';
+            const aliases = (entry.aliases || []).join(' · ') || '（无别名）';
+            const off = entry.enabled === false ? '（已停用）' : '';
+            return `<button type="button" class="glossary-entry-item${active}" data-glossary-id="${esc(entry.id)}" role="listitem">`
+                + `<span class="g-can">${esc(entry.canonical)}${esc(off)}</span>`
+                + `<span class="g-alias">${esc(aliases)}</span>`
+                + `</button>`;
+        }).join('');
+    }
+
+    function renderGlossaryIssueList(issues) {
+        if (!els.glossaryIssueList) return;
+        if (!issues?.length) {
+            els.glossaryIssueList.innerHTML = '<div class="glossary-issue-item" style="cursor:default;color:rgb(156 163 175);">暂无一致性问题</div>';
+            return;
+        }
+        els.glossaryIssueList.innerHTML = issues.slice(0, 40).map((issue) => {
+            const idxHint = issue.cueIndices?.length
+                ? ` · 字幕 #${issue.cueIndices.slice(0, 5).map((i) => i + 1).join(',')}${issue.cueIndices.length > 5 ? '…' : ''}`
+                : '';
+            const jumpIdx = issue.cueIndices?.[0];
+            return `<button type="button" class="glossary-issue-item" data-glossary-issue-idx="${jumpIdx != null ? jumpIdx : ''}" data-glossary-entry-id="${esc(issue.entryId)}" role="listitem" title="点击定位并选中术语">`
+                + `${esc(issue.message)}${esc(idxHint)}`
+                + `</button>`;
+        }).join('');
+    }
+
+    function selectGlossaryEntry(entryId) {
+        const entry = (state.glossary?.entries || []).find((e) => e.id === String(entryId));
+        fillGlossaryForm(entry || null);
+    }
+
+    function beginNewGlossaryEntry() {
+        clearGlossaryForm();
+        els.glossaryCanonical?.focus();
+    }
+
+    function renderBreakWordsChips() {
+        if (!els.breakWordsChips) return;
+        const words = loadBreakWords();
+        if (!words.length) {
+            els.breakWordsChips.innerHTML = '<span style="font-size:0.72rem;color:var(--ed-faint)">暂无断句词。添加后，智能断句会优先在这些词之后切开。</span>';
+        } else {
+            els.breakWordsChips.innerHTML = words.map((word) => (
+                `<span class="break-words-chip" data-break-word="${esc(word)}">`
+                + `<span>${esc(word)}</span>`
+                + `<button type="button" data-break-word-remove="${esc(word)}" title="移除「${esc(word)}」" aria-label="移除 ${esc(word)}">&times;</button>`
+                + '</span>'
+            )).join('');
+        }
+        if (els.breakWordsStatus) {
+            els.breakWordsStatus.textContent = words.length
+                ? `当前 ${words.length} 个断句词，已用于智能断句`
+                : '未设置断句词时，智能断句只按标点与空白切分';
+            els.breakWordsStatus.classList.remove('err');
+        }
+    }
+
+    function openBreakWordsModal() {
+        if (!els.breakWordsModal) return;
+        loadBreakWords();
+        renderBreakWordsChips();
+        showEditorModal(els.breakWordsModal, els.breakWordsInput);
+    }
+
+    function closeBreakWordsModal() {
+        hideEditorModal(els.breakWordsModal);
+    }
+
+    function addBreakWordsFromInput() {
+        const incoming = parseBreakWordsInput(els.breakWordsInput?.value);
+        if (!incoming.length) {
+            setStatus('请输入要添加的断句词', 'err');
+            els.breakWordsInput?.focus();
+            return;
+        }
+        const merged = splitCore.normalizeBreakWords([...(loadBreakWords()), ...incoming]);
+        saveBreakWords(merged);
+        if (els.breakWordsInput) els.breakWordsInput.value = '';
+        renderBreakWordsChips();
+        setStatus(`已更新断句词（共 ${merged.length} 个）`, 'ok');
+        els.breakWordsInput?.focus();
+    }
+
+    function removeBreakWord(word) {
+        const next = loadBreakWords().filter((w) => w.toLowerCase() !== String(word || '').toLowerCase());
+        saveBreakWords(next);
+        renderBreakWordsChips();
+        setStatus(`已移除断句词「${word}」`, 'ok');
+    }
+
+    function resetBreakWordsToDefault() {
+        const defaults = getDefaultBreakWords();
+        saveBreakWords(defaults);
+        renderBreakWordsChips();
+        setStatus(`已恢复默认断句词（${defaults.length} 个）`, 'ok');
+    }
+
+    function clearBreakWords() {
+        saveBreakWords([]);
+        renderBreakWordsChips();
+        setStatus('已清空断句词', 'ok');
+    }
+
+    async function importGlossaryFile() {
+        if (!electron?.transubImportGlossary) {
+            setStatus('当前环境不支持导入术语表', 'err');
+            return;
+        }
+        const res = await electron.transubImportGlossary();
+        restoreEditorFocus();
+        if (!res || res.canceled) return;
+        if (!res.ok) {
+            setStatus(res.error || '导入术语表失败', 'err');
+            return;
+        }
+        state.glossary = glossaryCore.normalizeGlossary(res.glossary);
+        clearGlossaryForm();
+        updateGlossaryModalState();
+        setStatus(`已导入 ${state.glossary.entries.length} 条术语`, 'ok');
+    }
+
+    async function exportGlossaryFile() {
+        if (!electron?.transubExportGlossary) {
+            setStatus('当前环境不支持导出术语表', 'err');
+            return;
+        }
+        await persistGlossary();
+        const res = await electron.transubExportGlossary();
+        restoreEditorFocus();
+        if (!res || res.canceled) return;
+        if (!res.ok) {
+            setStatus(res.error || '导出术语表失败', 'err');
+            return;
+        }
+        setStatus(`术语表已导出：${basename(res.path || '')}`, 'ok');
+    }
+
+    function updateGlossaryModalState() {
+        syncDetailToCue();
+        renderGlossaryEntryList();
+        const scan = glossaryCore.scanGlossaryIssues(state.cues, state.glossary);
+        state.glossaryIssues = scan.issues;
+        renderGlossaryIssueList(scan.issues);
+        if (els.glossaryPreview) {
+            if (!state.glossary.entries.length) {
+                els.glossaryPreview.textContent = '请先添加术语条目';
+                els.glossaryPreview.classList.add('err');
+            } else if (!state.cues.length) {
+                els.glossaryPreview.textContent = '没有字幕条目';
+                els.glossaryPreview.classList.add('err');
+            } else {
+                els.glossaryPreview.textContent = glossaryCore.summarizeGlossaryScan(scan.summary);
+                els.glossaryPreview.classList.toggle('err', scan.summary.total > 0);
             }
         }
+        refreshGlossaryBadge();
+    }
 
-        fixOverlapsPass();
+    async function openGlossaryModal() {
+        if (!els.glossaryModal) return;
+        await loadGlossary();
+        clearGlossaryForm();
+        showEditorModal(els.glossaryModal, els.glossaryCanonical);
+        updateGlossaryModalState();
+    }
 
-        if (options.fixCps) {
-            for (let i = 0; i < cues.length; i += 1) {
-                const cue = cues[i];
-                const chars = textCharCount(cue.text);
-                if (!chars) continue;
-                const cps = chars / (cueDurationMs(cue) / 1000);
-                if (cps <= maxCps) continue;
-                const needMs = Math.ceil((chars / maxCps) * 1000);
-                let newEnd = cue.startMs + Math.max(minDurMs, needMs);
-                const next = cues[i + 1];
-                if (next) newEnd = Math.min(newEnd, next.startMs - gapMs);
-                newEnd = Math.max(cue.startMs + minDurMs, newEnd);
-                if (newEnd > cueEndMs(cue)) {
-                    setEnd(cue, i, newEnd);
-                    stats.cpsFixed += 1;
-                }
-            }
+    function closeGlossaryModal() {
+        hideEditorModal(els.glossaryModal);
+    }
+
+    async function saveGlossaryEntryFromForm() {
+        const canonical = String(els.glossaryCanonical?.value || '').trim();
+        if (!canonical) {
+            setStatus('标准写法不能为空', 'err');
+            return;
+        }
+        const result = glossaryCore.upsertEntry(state.glossary, {
+            id: state.glossaryEditingId || undefined,
+            canonical,
+            aliases: els.glossaryAliases?.value || '',
+            caseSensitive: !!els.glossaryCaseSensitive?.checked,
+            enabled: els.glossaryEnabled?.checked !== false,
+        });
+        if (!result.ok) {
+            setStatus(result.error || '保存条目失败', 'err');
+            return;
+        }
+        state.glossary = result.glossary;
+        const ok = await persistGlossary();
+        if (!ok) {
+            setStatus('术语表保存失败', 'err');
+            return;
+        }
+        fillGlossaryForm(result.entry);
+        updateGlossaryModalState();
+        setStatus(`已保存术语「${canonical}」`, 'ok');
+    }
+
+    async function deleteGlossaryEntryFromForm() {
+        if (!state.glossaryEditingId) {
+            clearGlossaryForm();
+            return;
+        }
+        if (!editorConfirm('确定删除当前术语条目？')) return;
+        state.glossary = glossaryCore.removeEntry(state.glossary, state.glossaryEditingId);
+        await persistGlossary();
+        clearGlossaryForm();
+        updateGlossaryModalState();
+        setStatus('已删除术语条目', 'ok');
+    }
+
+    async function applyGlossaryUnification(entryIds = null) {
+        syncDetailToCue();
+        if (!state.cues.length) {
+            updateGlossaryModalState();
+            return;
+        }
+        const result = glossaryCore.applyGlossaryToCues(state.cues, state.glossary, {
+            entryIds: entryIds || undefined,
+        });
+        if (!result.stats.replaceCount) {
+            updateGlossaryModalState();
+            setStatus(result.summary, 'ok');
+            return;
+        }
+        recordUndoBeforeChange();
+        state.cues.splice(0, state.cues.length, ...result.cues);
+        setDirty(true);
+        renderCueList();
+        if (state.selectedIndex >= 0) renderDetailPane();
+        updateGlossaryModalState();
+        setStatus(result.summary, 'ok');
+    }
+
+    function readQcOptions() {
+        const prefs = loadSplitPrefs();
+        return {
+            fixOverlap: !!els.qcFixOverlap?.checked,
+            fixCpsBySplit: !!els.qcFixCpsSplit?.checked,
+            fixCpsByExtend: !!els.qcFixCpsExtend?.checked,
+            enforceMinDur: !!els.qcEnforceMin?.checked,
+            enforceMaxDur: !!els.qcEnforceMax?.checked,
+            maxCps: Number(els.qcMaxCps?.value) || 18,
+            minSec: Number(els.qcMinSec?.value) || 0.5,
+            maxSec: Number(els.qcMaxSec?.value) || 10,
+            gapMs: Math.max(0, Math.round(Number(els.qcGapMs?.value) || 1)),
+            smartMaxChars: prefs.smartMaxChars,
+            smartLineChars: prefs.smartLineChars,
+            targetCps: getTargetCps(),
+            useCpsTime: prefs.useCps !== false,
+        };
+    }
+
+    const QC_TYPE_CHIPS = [
+        { type: 'overlap', countKey: 'overlap', label: '重叠' },
+        { type: 'high_cps', countKey: 'highCps', label: '读速' },
+        { type: 'splittable', countKey: 'splittable', label: '可分割' },
+        { type: 'connected', countKey: 'connected', label: '连续文本' },
+        { type: 'fluency', countKey: 'fluency', label: '通顺度', warn: true },
+        { type: 'short', countKey: 'short', label: '过短' },
+        { type: 'long', countKey: 'long', label: '过长' },
+        { type: 'invalid', countKey: 'invalid', label: '无效' },
+    ];
+
+    function filterQcIssuesByType(issues, typeFilter) {
+        if (!typeFilter) return issues || [];
+        return (issues || []).filter((issue) => (issue.types || []).includes(typeFilter));
+    }
+
+    function setQcTypeFilter(type) {
+        const next = type || null;
+        if (next == null) {
+            state.qcTypeFilter = null;
+        } else {
+            state.qcTypeFilter = state.qcTypeFilter === next ? null : next;
+        }
+        updateQcModalState();
+    }
+
+    function renderQcIssueList(issues, { emptyHint } = {}) {
+        if (!els.qcIssueList) return;
+        if (!issues?.length) {
+            els.qcIssueList.innerHTML = emptyHint
+                ? `<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">${esc(emptyHint)}</div>`
+                : '';
+            return;
+        }
+        const maxShow = 40;
+        const rows = issues.slice(0, maxShow).map((issue) => {
+            const msg = esc(issue.messages.join(' · '));
+            const text = esc(issue.textPreview || '—');
+            return `<button type="button" class="qc-issue-item" data-qc-idx="${issue.index}" role="listitem">`
+                + `<span class="qc-issue-idx">#${issue.index + 1}</span>`
+                + `<span class="qc-issue-msg">${msg}</span>`
+                + `<span class="qc-issue-text">${text}</span>`
+                + `</button>`;
+        });
+        if (issues.length > maxShow) {
+            rows.push(`<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">还有 ${issues.length - maxShow} 条未列出</div>`);
+        }
+        els.qcIssueList.innerHTML = rows.join('');
+    }
+
+    function qcChipClass(base, active) {
+        return `qc-chip${base ? ` ${base}` : ''}${active ? ' active' : ''}`;
+    }
+
+    function renderQcSummaryBar(summary) {
+        if (!els.qcSummaryBar) return;
+        if (!summary?.total) {
+            state.qcTypeFilter = null;
+            els.qcSummaryBar.innerHTML = '<span class="qc-chip ok">未发现问题</span>';
+            return;
+        }
+        const activeType = state.qcTypeFilter;
+        if (activeType && !QC_TYPE_CHIPS.some((c) => c.type === activeType && summary[c.countKey] > 0)) {
+            state.qcTypeFilter = null;
+        }
+        const selected = state.qcTypeFilter;
+        const chips = [
+            `<button type="button" class="${qcChipClass('warn', selected == null)}" data-qc-type="" title="显示全部问题">问题 ${summary.total}</button>`,
+        ];
+        for (const chip of QC_TYPE_CHIPS) {
+            const count = summary[chip.countKey] || 0;
+            if (!count) continue;
+            const active = selected === chip.type;
+            chips.push(
+                `<button type="button" class="${qcChipClass(chip.warn ? 'warn' : '', active)}" data-qc-type="${chip.type}" title="只看${chip.label}">${chip.label} ${count}</button>`,
+            );
+        }
+        els.qcSummaryBar.innerHTML = chips.join('');
+    }
+
+    function resolveQcFixOptions({ filtered = false } = {}) {
+        const base = readQcOptions();
+        if (!filtered) return { ok: true, opts: base, label: null };
+        const type = state.qcTypeFilter;
+        if (!type) {
+            return { ok: false, opts: null, label: null, reason: '请先点击上方标签筛选问题类型' };
+        }
+        const chip = QC_TYPE_CHIPS.find((c) => c.type === type);
+        const label = chip?.label || type;
+        const opts = qcCore.buildQcOptionsForIssueType(base, type);
+        if (!opts) {
+            return {
+                ok: false,
+                opts: null,
+                label,
+                reason: `「${label}」无法自动修复，请手工修改或重转写`,
+            };
+        }
+        return { ok: true, opts: { ...opts, issueTypeFilter: type }, label };
+    }
+
+    function updateQcModalState() {
+        const opts = readQcOptions();
+        const needCps = opts.fixCpsBySplit || opts.fixCpsByExtend;
+        if (els.qcMaxCps) els.qcMaxCps.disabled = !needCps;
+        if (els.qcMinSec) els.qcMinSec.disabled = !opts.enforceMinDur;
+        if (els.qcMaxSec) els.qcMaxSec.disabled = !opts.enforceMaxDur;
+
+        syncDetailToCue();
+        if (!els.qcPreview) return;
+        if (!state.cues.length) {
+            state.qcTypeFilter = null;
+            renderQcSummaryBar({ total: 0 });
+            renderQcIssueList([]);
+            els.qcPreview.textContent = '没有字幕条目';
+            els.qcPreview.classList.add('err');
+            if (els.qcFixFiltered) els.qcFixFiltered.disabled = true;
+            return;
         }
 
-        if (options.enforceMinDur) {
-            for (let i = 0; i < cues.length; i += 1) {
-                const cue = cues[i];
-                if (cueDurationMs(cue) >= minDurMs) continue;
-                let newEnd = cue.startMs + minDurMs;
-                const next = cues[i + 1];
-                if (next) newEnd = Math.min(newEnd, next.startMs - gapMs);
-                if (newEnd > cueEndMs(cue)) {
-                    setEnd(cue, i, newEnd);
-                    stats.minDurFixed += 1;
-                }
-            }
+        const scan = qcCore.scanCueIssues(state.cues, opts);
+        renderQcSummaryBar(scan.summary);
+        const filtered = filterQcIssuesByType(scan.issues, state.qcTypeFilter);
+        const chip = QC_TYPE_CHIPS.find((c) => c.type === state.qcTypeFilter);
+        renderQcIssueList(filtered, {
+            emptyHint: state.qcTypeFilter && scan.issues.length
+                ? `当前类型「${chip?.label || state.qcTypeFilter}」无匹配问题`
+                : '',
+        });
+
+        const filteredResolve = resolveQcFixOptions({ filtered: true });
+        if (els.qcFixFiltered) {
+            els.qcFixFiltered.disabled = !filteredResolve.ok;
+            els.qcFixFiltered.title = filteredResolve.ok
+                ? `仅修复「${filteredResolve.label}」相关问题`
+                : (filteredResolve.reason || '请先筛选可自动修复的问题类型');
         }
 
-        if (options.enforceMaxDur) {
-            for (let i = 0; i < cues.length; i += 1) {
-                const cue = cues[i];
-                if (cueDurationMs(cue) <= maxDurMs) continue;
-                setEnd(cue, i, cue.startMs + maxDurMs);
-                stats.maxDurFixed += 1;
+        if (state.qcTypeFilter) {
+            if (!filteredResolve.ok) {
+                els.qcPreview.textContent = filteredResolve.reason;
+                els.qcPreview.classList.add('err');
+            } else {
+                const plan = qcCore.buildQcFixPlan(state.cues, filteredResolve.opts);
+                els.qcPreview.textContent = `筛选修复（${filteredResolve.label}）：${plan.summary}`;
+                els.qcPreview.classList.toggle('err', !plan.ok);
             }
+            return;
         }
 
-        fixOverlapsPass();
-        stats.affected = touched.size;
-        return stats;
+        const plan = qcCore.buildQcFixPlan(state.cues, opts);
+        els.qcPreview.textContent = plan.summary;
+        els.qcPreview.classList.toggle('err', !plan.ok);
+    }
+
+    function openQcModal() {
+        if (!els.qcModal) return;
+        state.qcTypeFilter = null;
+        syncDetailToCue();
+        if (els.qcMaxCps && els.smartMaxCps) els.qcMaxCps.value = els.smartMaxCps.value;
+        showEditorModal(els.qcModal, els.qcConfirm);
+        updateQcModalState();
+    }
+
+    function closeQcModal() {
+        hideEditorModal(els.qcModal);
+    }
+
+    function confirmQcFix({ filtered = false } = {}) {
+        const resolved = resolveQcFixOptions({ filtered });
+        if (!resolved.ok) {
+            if (els.qcPreview && resolved.reason) {
+                els.qcPreview.textContent = resolved.reason;
+                els.qcPreview.classList.add('err');
+            }
+            updateQcModalState();
+            return;
+        }
+        const opts = resolved.opts;
+        syncDetailToCue();
+        const plan = qcCore.buildQcFixPlan(state.cues, opts);
+        if (!plan.ok) {
+            updateQcModalState();
+            return;
+        }
+        recordUndoBeforeChange();
+        const result = qcCore.applyQcFixes(state.cues, opts);
+        state.cues.splice(0, state.cues.length, ...result.cues);
+        setDirty(true);
+        renderCueList();
+        if (state.selectedIndex >= 0) renderDetailPane();
+        closeQcModal();
+        const remain = result.remaining?.total
+            ? `，仍有 ${result.remaining.total} 条待处理`
+            : '';
+        const scope = filtered && resolved.label ? `（${resolved.label}）` : '';
+        setStatus(`质量修复完成${scope}${remain}`, 'ok');
     }
 
     function openSmartAdjustModal() {
@@ -3339,14 +5097,95 @@
         setStatus(`智能调整完成，已更新 ${stats.affected} 条字幕`, 'ok');
     }
 
+    function readRemoveNoiseOptions() {
+        return {
+            removeEmpty: !!els.noiseRemoveEmpty?.checked,
+            removeFragments: !!els.noiseRemoveFragments?.checked,
+            removeSoundEffects: !!els.noiseRemoveSoundEffects?.checked,
+            removeSymbolOnly: !!els.noiseRemoveSymbolOnly?.checked,
+            removeDuplicates: !!els.noiseRemoveDuplicates?.checked,
+        };
+    }
+
+    function updateRemoveNoiseModalState() {
+        if (!els.removeNoisePreview) return;
+        const opts = readRemoveNoiseOptions();
+        if (!opts.removeEmpty && !opts.removeFragments && !opts.removeSoundEffects
+            && !opts.removeSymbolOnly && !opts.removeDuplicates) {
+            els.removeNoisePreview.textContent = '请至少勾选一项清理规则';
+            els.removeNoisePreview.classList.add('err');
+            if (els.removeNoiseConfirm) els.removeNoiseConfirm.disabled = true;
+            return;
+        }
+        const { stats } = fluencyCore.removeNoiseFromCues(state.cues, opts);
+        els.removeNoisePreview.classList.remove('err');
+        els.removeNoisePreview.textContent = fluencyCore.summarizeNoiseRemoval(stats);
+        if (els.removeNoiseConfirm) els.removeNoiseConfirm.disabled = stats.removed <= 0;
+    }
+
+    function openRemoveNoiseModal() {
+        if (!els.removeNoiseModal) return;
+        syncDetailToCue();
+        showEditorModal(els.removeNoiseModal, els.removeNoiseConfirm);
+        updateRemoveNoiseModalState();
+    }
+
+    function closeRemoveNoiseModal() {
+        hideEditorModal(els.removeNoiseModal);
+    }
+
+    function confirmRemoveNoise() {
+        const opts = readRemoveNoiseOptions();
+        if (!opts.removeEmpty && !opts.removeFragments && !opts.removeSoundEffects
+            && !opts.removeSymbolOnly && !opts.removeDuplicates) {
+            updateRemoveNoiseModalState();
+            return;
+        }
+        syncDetailToCue();
+        const preview = fluencyCore.removeNoiseFromCues(state.cues, opts);
+        if (!preview.stats.removed) {
+            updateRemoveNoiseModalState();
+            setStatus('没有可删除的杂音条目', 'ok');
+            return;
+        }
+        if (!editorConfirm(`确定删除 ${preview.stats.removed} 条杂音字幕？此操作可撤销。`)) return;
+
+        recordUndoBeforeChange();
+        const removedSet = new Set(preview.removedIndexes || []);
+        let newSelected = -1;
+        if (state.selectedIndex >= 0 && !removedSet.has(state.selectedIndex)) {
+            let keptBefore = 0;
+            for (let i = 0; i < state.selectedIndex; i += 1) {
+                if (!removedSet.has(i)) keptBefore += 1;
+            }
+            newSelected = keptBefore;
+        } else if (preview.cues.length) {
+            newSelected = Math.min(Math.max(state.selectedIndex, 0), preview.cues.length - 1);
+        }
+
+        state.cues.splice(0, state.cues.length, ...preview.cues.map((c) => ({
+            startMs: c.startMs,
+            endMs: c.endMs,
+            text: c.text,
+        })));
+        state.selectedIndex = newSelected;
+
+        setDirty(true);
+        renderCueList();
+        closeRemoveNoiseModal();
+        setStatus(`已删除 ${preview.stats.removed} 条杂音字幕，剩余 ${preview.stats.kept} 条`, 'ok');
+    }
+
     function updatePlayheadTimeLabel(exact) {
         if (!els.playheadTime) return;
         const t = els.video ? (els.video.currentTime || 0) * 1000 : 0;
         const displayMs = exact ? Math.round(t) : Math.floor(t / 1000) * 1000;
         const label = formatDisplayTime(displayMs, state.format);
-        if (label === state.lastPlayheadLabel) return;
-        state.lastPlayheadLabel = label;
-        els.playheadTime.textContent = label;
+        if (label !== state.lastPlayheadLabel) {
+            state.lastPlayheadLabel = label;
+            els.playheadTime.textContent = label;
+        }
+        updateTimelinePlayhead(Math.round(t));
     }
 
     function shiftAllCues(deltaMs) {
@@ -3376,6 +5215,382 @@
         return !state.dirty;
     };
 
+
+    function isEditingDetailField() {
+        const ae = document.activeElement;
+        if (!ae) return false;
+        if (ae === els.detailText || ae === els.detailStart || ae === els.detailDuration) return true;
+        if (ae.closest?.('.editor-modal:not(.hidden)')) return true;
+        return false;
+    }
+
+    /**
+     * 自动焦点：播放时把「选中焦点」切到当前字幕并滚动列表。
+     * 关闭时不得改 selectedIndex，也不得 scrollIntoView。
+     */
+    function followPlaybackFocus(idx) {
+        if (!isAutoFocusEnabled()) return;
+        if (!Number.isFinite(idx) || idx < 0 || idx >= state.cues.length) return;
+        if (!els.video || els.video.paused || els.video.ended) return;
+        if (isEditingDetailField()) return;
+        if (idx === state.selectedIndex) {
+            const row = els.cueBody?.querySelector(`tr[data-cue-idx="${idx}"]`);
+            if (row && !isRowVisibleInList(row)) {
+                row.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+            }
+            return;
+        }
+        selectCue(idx, { scroll: true, fromPlayback: true });
+    }
+
+    function applyAutoFocusUi() {
+        if (!els.autoFocusBtn) return;
+        const on = isAutoFocusEnabled();
+        els.autoFocusBtn.classList.toggle('is-active', on);
+        els.autoFocusBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        els.autoFocusBtn.title = on
+            ? '自动焦点：开启（播放时字幕选中跟随进度）'
+            : '自动焦点：关闭（播放时不自动选中字幕）';
+        document.body.classList.toggle('editor-auto-focus', on);
+    }
+
+    function loadAutoFocusPref() {
+        let on = false;
+        try { on = localStorage.getItem(AUTO_FOCUS_KEY) === '1'; } catch (_) { /* ignore */ }
+        state.autoFocus = on === true;
+        applyAutoFocusUi();
+    }
+
+    function toggleAutoFocus() {
+        state.autoFocus = !isAutoFocusEnabled();
+        try { localStorage.setItem(AUTO_FOCUS_KEY, state.autoFocus ? '1' : '0'); } catch (_) { /* ignore */ }
+        applyAutoFocusUi();
+        setStatus(state.autoFocus ? '已开启自动焦点' : '已关闭自动焦点', 'ok');
+        if (state.autoFocus && state.playbackIndex >= 0) followPlaybackFocus(state.playbackIndex);
+    }
+
+    function refreshQcIssueIndexSet() {
+        try {
+            const { issues } = qcCore.scanCueIssues(state.cues, getDefaultQcScanOptions());
+            state.qcIssueIndexSet = new Set((issues || []).map((i) => i.index));
+        } catch (_) {
+            state.qcIssueIndexSet = new Set();
+        }
+    }
+
+    function getVisibleCueIndexes() {
+        const n = state.cues.length;
+        const all = Array.from({ length: n }, (_, i) => i);
+        if (state.listFilter === 'low') {
+            return all.filter((i) => !!state.cueMeta[i]?.low);
+        }
+        if (state.listFilter === 'qc') {
+            return all.filter((i) => state.qcIssueIndexSet.has(i));
+        }
+        if (state.listFilter === 'find') {
+            if (!state.find.active || !state.find.matches.length) return [];
+            return [...new Set(state.find.matches.map((m) => m.cueIdx))].sort((a, b) => a - b);
+        }
+        return all;
+    }
+
+    function setListFilter(filter) {
+        state.listFilter = filter || 'all';
+        document.querySelectorAll('[data-list-filter]').forEach((btn) => {
+            btn.classList.toggle('active', btn.getAttribute('data-list-filter') === state.listFilter);
+        });
+        renderCueList();
+    }
+
+    function jumpToNextIssue() {
+        refreshCueMeta();
+        refreshQcIssueIndexSet();
+        const issues = [];
+        for (let i = 0; i < state.cues.length; i += 1) {
+            if (state.cueMeta[i]?.low || state.qcIssueIndexSet.has(i)) issues.push(i);
+        }
+        if (!issues.length) {
+            setStatus('没有更多问题条目', 'ok');
+            return;
+        }
+        const cur = state.selectedIndex;
+        const next = issues.find((i) => i > cur) ?? issues[0];
+        selectCue(next, { scroll: true, seek: true });
+        setStatus(`问题条目 ${issues.indexOf(next) + 1}/${issues.length}`, 'warn');
+    }
+
+    function updateNeedsVideoUi() {
+        const hasVideo = !!state.videoPath;
+        document.querySelectorAll('.needs-video').forEach((btn) => {
+            btn.classList.toggle('is-no-video', !hasVideo);
+            if (!hasVideo) {
+                if (!btn.dataset.titleFull) btn.dataset.titleFull = btn.title || '';
+                btn.title = `${btn.dataset.titleFull || btn.title || ''}（需先关联视频）`;
+            } else if (btn.dataset.titleFull) {
+                btn.title = btn.dataset.titleFull;
+            }
+        });
+        [els.playPauseBtn, els.seekBackBtn, els.seekFwdBtn, els.rateSelect, els.volumeSlider].forEach((el) => {
+            if (!el) return;
+            el.disabled = !hasVideo;
+        });
+        updateRetranscribeTransportBtn();
+    }
+
+    function applyTheme(theme) {
+        const dark = theme === 'dark';
+        document.body.classList.toggle('editor-theme-dark', dark);
+        document.body.classList.toggle('editor-theme-light', !dark);
+        try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (_) { /* ignore */ }
+        if (els.themeToggle) {
+            els.themeToggle.innerHTML = dark ? '<i class="fa fa-sun-o" aria-hidden="true"></i>' : '<i class="fa fa-moon-o" aria-hidden="true"></i>';
+            els.themeToggle.title = dark ? '切换到浅色主题' : '切换到深色主题';
+            els.themeToggle.setAttribute('aria-label', els.themeToggle.title);
+        }
+    }
+
+    function loadTheme() {
+        let theme = 'light';
+        try { theme = localStorage.getItem(THEME_KEY) || 'light'; } catch (_) { /* ignore */ }
+        applyTheme(theme === 'dark' ? 'dark' : 'light');
+    }
+
+    function toggleTheme() {
+        const dark = document.body.classList.contains('editor-theme-dark');
+        applyTheme(dark ? 'light' : 'dark');
+    }
+
+    async function openEditorSettings() {
+        try {
+            const res = await electron?.transubOpenSettings?.({ tab: 'editor' });
+            if (res?.ok === false) {
+                setStatus(res?.error || '无法打开设置', 'err');
+            }
+        } catch (err) {
+            setStatus(err?.message || '无法打开设置', 'err');
+        }
+    }
+
+    function closeToolsMenu() {
+        if (!els.toolsMenu) return;
+        els.toolsMenu.classList.add('hidden');
+        if (els.toolsMenuBtn) els.toolsMenuBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleToolsMenu() {
+        if (!els.toolsMenu) return;
+        const open = els.toolsMenu.classList.toggle('hidden') === false;
+        // classList.toggle returns false if class was removed... actually returns boolean whether class is now present
+        const isHidden = els.toolsMenu.classList.contains('hidden');
+        if (els.toolsMenuBtn) els.toolsMenuBtn.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
+    }
+
+    function applyPanelWidth(pct) {
+        const clamped = Math.min(62, Math.max(28, Number(pct) || 42));
+        document.documentElement.style.setProperty('--ed-cues-width', `${clamped}%`);
+        try { localStorage.setItem(PANEL_WIDTH_KEY, String(clamped)); } catch (_) { /* ignore */ }
+    }
+
+    function loadPanelWidth() {
+        let pct = 42;
+        try {
+            const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+            if (Number.isFinite(saved)) pct = saved;
+        } catch (_) { /* ignore */ }
+        applyPanelWidth(pct);
+    }
+
+    function bindPanelSplitter() {
+        const splitter = els.splitter;
+        const panel = els.cuesPanel;
+        if (!splitter || !panel || !els.main) return;
+        let dragging = false;
+        splitter.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            dragging = true;
+            splitter.classList.add('is-dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const rect = els.main.getBoundingClientRect();
+            if (!rect.width) return;
+            const pct = ((e.clientX - rect.left) / rect.width) * 100;
+            applyPanelWidth(pct);
+        });
+        window.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            splitter.classList.remove('is-dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        });
+    }
+
+    function updatePlayPauseButton() {
+        if (!els.playPauseBtn || !els.video) return;
+        const playing = !els.video.paused && !els.video.ended;
+        els.playPauseBtn.innerHTML = playing ? '<i class="fa fa-pause"></i>' : '<i class="fa fa-play"></i>';
+        els.playPauseBtn.title = playing ? '暂停 (Space)' : '播放 (Space)';
+    }
+
+    function seekVideoBy(deltaSec) {
+        if (!els.video || !state.videoPath) return;
+        const dur = Number.isFinite(els.video.duration) ? els.video.duration : Infinity;
+        els.video.currentTime = Math.max(0, Math.min(dur, (els.video.currentTime || 0) + deltaSec));
+        syncPlaybackFromVideo(true);
+    }
+
+    function updateTimelineDuration() {
+        let durMs = 0;
+        if (els.video && Number.isFinite(els.video.duration) && els.video.duration > 0) {
+            durMs = Math.round(els.video.duration * 1000);
+        } else if (state.cues.length) {
+            durMs = Math.max(...state.cues.map((c) => cueEndMs(c)), 1000);
+        }
+        state.timeline.durationMs = Math.max(durMs, 1000);
+        state.timeline.viewStartMs = 0;
+        state.timeline.viewEndMs = state.timeline.durationMs;
+    }
+
+    function timelineMsToX(ms) {
+        const track = els.timelineTrack;
+        if (!track) return 0;
+        const w = track.clientWidth || 1;
+        const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+        return ((ms - state.timeline.viewStartMs) / span) * w;
+    }
+
+    function timelineXToMs(x) {
+        const track = els.timelineTrack;
+        if (!track) return 0;
+        const w = track.clientWidth || 1;
+        const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+        return state.timeline.viewStartMs + (x / w) * span;
+    }
+
+    function updateTimelinePlayhead(ms) {
+        if (!els.timelinePlayhead) return;
+        const x = timelineMsToX(ms);
+        els.timelinePlayhead.style.left = `${x}px`;
+    }
+
+    function renderTimeline() {
+        if (!els.timelineCues) return;
+        updateTimelineDuration();
+        const selected = state.selectedIndex;
+        els.timelineCues.innerHTML = state.cues.map((cue, idx) => {
+            const start = cue.startMs;
+            const end = cueEndMs(cue);
+            const left = timelineMsToX(start);
+            const right = timelineMsToX(end);
+            const width = Math.max(3, right - left);
+            const label = String(cue.text || '').replace(/\s+/g, ' ').trim();
+            return `<div class="editor-timeline-cue${idx === selected ? ' selected' : ''}" data-tl-idx="${idx}" style="left:${left}px;width:${width}px" title="${esc(label)}">
+                <div class="tl-handle tl-handle-l" data-tl-handle="l"></div>
+                <div class="tl-label">${esc(label.slice(0, 24))}</div>
+                <div class="tl-handle tl-handle-r" data-tl-handle="r"></div>
+            </div>`;
+        }).join('');
+        const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : 0;
+        updateTimelinePlayhead(t);
+    }
+
+    function bindTimelineInteractions() {
+        const track = els.timelineTrack;
+        if (!track || track.dataset.bound === '1') return;
+        track.dataset.bound = '1';
+
+        track.addEventListener('mousedown', (e) => {
+            const cueEl = e.target.closest?.('.editor-timeline-cue');
+            const handle = e.target.closest?.('[data-tl-handle]')?.getAttribute('data-tl-handle');
+            const rect = track.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+
+            if (!cueEl) {
+                if (!els.video || !state.videoPath) return;
+                const ms = Math.max(0, timelineXToMs(x));
+                els.video.currentTime = ms / 1000;
+                syncPlaybackFromVideo(true);
+                return;
+            }
+
+            const idx = Number(cueEl.getAttribute('data-tl-idx'));
+            if (!Number.isFinite(idx) || idx < 0) return;
+            selectCue(idx, { scroll: true, seek: false });
+            const cue = state.cues[idx];
+            if (!cue) return;
+
+            const mode = handle === 'l' ? 'start' : handle === 'r' ? 'end' : 'move';
+            const originX = e.clientX;
+            const originStart = cue.startMs;
+            const originEnd = cueEndMs(cue);
+            state.timeline.dragging = { idx, mode, originX, originStart, originEnd };
+            e.preventDefault();
+            recordUndoBeforeChange();
+
+            const onMove = (ev) => {
+                const drag = state.timeline.dragging;
+                if (!drag) return;
+                const dx = ev.clientX - drag.originX;
+                const trackW = track.clientWidth || 1;
+                const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+                const dMs = Math.round((dx / trackW) * span);
+                const c = state.cues[drag.idx];
+                if (!c) return;
+                if (drag.mode === 'move') {
+                    let start = Math.max(0, drag.originStart + dMs);
+                    let end = Math.max(start + 100, drag.originEnd + dMs);
+                    c.startMs = start;
+                    c.endMs = end;
+                } else if (drag.mode === 'start') {
+                    c.startMs = Math.max(0, Math.min(drag.originEnd - 100, drag.originStart + dMs));
+                    c.endMs = drag.originEnd;
+                } else {
+                    c.endMs = Math.max(c.startMs + 100, drag.originEnd + dMs);
+                }
+                setDirty(true);
+                refreshListRow(drag.idx);
+                renderDetailPane();
+                renderTimeline();
+                if (els.video && state.videoPath) {
+                    const seekMs = drag.mode === 'end' ? cueEndMs(c) - 1 : c.startMs;
+                    els.video.currentTime = Math.max(0, seekMs) / 1000;
+                }
+            };
+            const onUp = () => {
+                state.timeline.dragging = null;
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                scheduleVideoTextTrackRefresh();
+                resyncPlaybackAfterCueTimingChange();
+                renderTimeline();
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        });
+
+        window.addEventListener('resize', () => {
+            if (state.ready) renderTimeline();
+        });
+    }
+
+    function loadDetailToolsPref() {
+        if (!els.detailTools) return;
+        try {
+            const open = localStorage.getItem(DETAIL_TOOLS_KEY);
+            if (open === '1') els.detailTools.open = true;
+            else if (open === '0') els.detailTools.open = false;
+        } catch (_) { /* ignore */ }
+        els.detailTools.addEventListener('toggle', () => {
+            try {
+                localStorage.setItem(DETAIL_TOOLS_KEY, els.detailTools.open ? '1' : '0');
+            } catch (_) { /* ignore */ }
+        });
+    }
+
+
     function openShortcutsModal() {
         if (!els.shortcutsModal) return;
         showEditorModal(els.shortcutsModal, els.shortcutsClose);
@@ -3386,15 +5601,90 @@
     }
 
     function bindEvents() {
+        loadTheme();
+        loadPanelWidth();
+        loadDetailToolsPref();
+        loadAutoFocusPref();
+        bindPanelSplitter();
+        bindTimelineInteractions();
+
+        els.themeToggle?.addEventListener('click', toggleTheme);
+        els.settingsBtn?.addEventListener('click', () => {
+            void openEditorSettings();
+        });
+        els.autoFocusBtn?.addEventListener('click', toggleAutoFocus);
+        els.toolsMenuBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const wasHidden = els.toolsMenu?.classList.contains('hidden');
+            closeToolsMenu();
+            if (wasHidden) {
+                els.toolsMenu?.classList.remove('hidden');
+                els.toolsMenuBtn?.setAttribute('aria-expanded', 'true');
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (els.toolsMenu && !els.toolsMenu.classList.contains('hidden')
+                && !els.toolsMenu.contains(e.target)
+                && e.target !== els.toolsMenuBtn
+                && !els.toolsMenuBtn?.contains(e.target)) {
+                closeToolsMenu();
+            }
+        });
+        els.toolsMenu?.addEventListener('click', () => {
+            // keep menu open for non-modal actions? close after any click
+            setTimeout(closeToolsMenu, 0);
+        });
+
+        document.querySelectorAll('[data-list-filter]').forEach((btn) => {
+            btn.addEventListener('click', () => setListFilter(btn.getAttribute('data-list-filter')));
+        });
+        els.nextIssueBtn?.addEventListener('click', jumpToNextIssue);
+
+        els.playPauseBtn?.addEventListener('click', toggleVideoPlayback);
+        els.seekBackBtn?.addEventListener('click', () => seekVideoBy(-1));
+        els.seekFwdBtn?.addEventListener('click', () => seekVideoBy(1));
+        els.rateSelect?.addEventListener('change', () => {
+            if (els.video) els.video.playbackRate = Number(els.rateSelect.value) || 1;
+        });
+        els.volumeSlider?.addEventListener('input', () => {
+            if (els.video) els.video.volume = Number(els.volumeSlider.value) || 0;
+        });
+
         els.saveBtn?.addEventListener('click', saveDocument);
         els.addCueBtn?.addEventListener('click', insertCueAtPlayhead);
         els.insertCueBtn?.addEventListener('click', insertCueAtPlayhead);
         els.detailInsertCueBtn?.addEventListener('click', insertCueAtPlayhead);
+        els.retranscribeCueBtn?.addEventListener('click', openRetranscribeDurModal);
         els.openFileBtn?.addEventListener('click', pickAndOpenInWindow);
         els.shiftBackBtn?.addEventListener('click', () => shiftAllCues(-500));
         els.shiftFwdBtn?.addEventListener('click', () => shiftAllCues(500));
         els.linkVideoBtn?.addEventListener('click', linkVideo);
         els.findReplaceBtn?.addEventListener('click', () => openFindReplaceModal(false));
+        els.glossaryBtn?.addEventListener('click', () => { void openGlossaryModal(); });
+        els.breakWordsBtn?.addEventListener('click', openBreakWordsModal);
+        els.splitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
+        els.smartSplitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
+        els.breakWordsClose?.addEventListener('click', closeBreakWordsModal);
+        els.breakWordsModal?.querySelectorAll('[data-break-words-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeBreakWordsModal();
+            });
+        });
+        els.breakWordsAddBtn?.addEventListener('click', addBreakWordsFromInput);
+        els.breakWordsResetBtn?.addEventListener('click', resetBreakWordsToDefault);
+        els.breakWordsClearBtn?.addEventListener('click', clearBreakWords);
+        els.breakWordsInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addBreakWordsFromInput();
+            }
+        });
+        els.breakWordsChips?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-break-word-remove]');
+            if (!btn) return;
+            removeBreakWord(btn.getAttribute('data-break-word-remove') || '');
+        });
         els.findReplaceClose?.addEventListener('click', closeFindReplaceModal);
         els.findReplaceModal?.querySelectorAll('[data-find-dismiss]').forEach((el) => {
             el.addEventListener('click', (e) => {
@@ -3402,6 +5692,41 @@
                 closeFindReplaceModal();
             });
         });
+        els.glossaryCancel?.addEventListener('click', closeGlossaryModal);
+        els.glossaryModal?.querySelectorAll('[data-glossary-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeGlossaryModal();
+            });
+        });
+        els.glossaryEntryList?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-glossary-id]');
+            if (!btn) return;
+            selectGlossaryEntry(btn.getAttribute('data-glossary-id'));
+        });
+        els.glossaryIssueList?.addEventListener('click', (e) => {
+            const item = e.target.closest('[data-glossary-entry-id]');
+            if (!item) return;
+            const entryId = item.getAttribute('data-glossary-entry-id');
+            if (entryId) selectGlossaryEntry(entryId);
+            const idx = Number(item.getAttribute('data-glossary-issue-idx'));
+            if (Number.isFinite(idx) && idx >= 0) selectCue(idx);
+        });
+        els.glossaryAddBtn?.addEventListener('click', beginNewGlossaryEntry);
+        els.glossarySaveEntryBtn?.addEventListener('click', () => { void saveGlossaryEntryFromForm(); });
+        els.glossaryDeleteEntryBtn?.addEventListener('click', () => { void deleteGlossaryEntryFromForm(); });
+        els.glossaryImportBtn?.addEventListener('click', () => { void importGlossaryFile(); });
+        els.glossaryExportBtn?.addEventListener('click', () => { void exportGlossaryFile(); });
+        els.glossaryScanBtn?.addEventListener('click', () => {
+            updateGlossaryModalState();
+            setStatus(
+                state.glossaryIssues.length
+                    ? `发现 ${state.glossaryIssues.length} 处术语不一致`
+                    : '未发现术语不一致',
+                state.glossaryIssues.length ? 'warn' : 'ok',
+            );
+        });
+        els.glossaryConfirm?.addEventListener('click', () => { void applyGlossaryUnification(); });
         els.findInput?.addEventListener('input', () => runFindSearch({ navigate: false }));
         els.findCase?.addEventListener('change', () => runFindSearch({ navigate: false }));
         els.findNextBtn?.addEventListener('click', findNextMatch);
@@ -3427,6 +5752,7 @@
             els.batchDurTarget,
             els.batchDurSilenceDb,
             els.batchDurSilenceDur,
+            els.batchDurSnapPadMs,
             els.batchDurShorter,
             els.batchDurLonger,
             els.batchDurMin,
@@ -3440,6 +5766,9 @@
             el?.addEventListener('change', updateBatchDurModalState);
         });
         els.smartAdjustBtn?.addEventListener('click', openSmartAdjustModal);
+        els.removeNoiseBtn?.addEventListener('click', openRemoveNoiseModal);
+        els.qcBtn?.addEventListener('click', openQcModal);
+        els.retranscribeDurBtn?.addEventListener('click', openRetranscribeDurModal);
         els.smartSplitBtn?.addEventListener('click', openSmartSplitModal);
         els.silenceSplitBtn?.addEventListener('click', () => openSilenceSplitModal());
         els.smartSplitCueBtn?.addEventListener('click', () => {
@@ -3456,6 +5785,7 @@
         els.splitSpacesBtn?.addEventListener('click', () => quickSplitSelectedCue('spaces'));
         els.charDurBtn?.addEventListener('click', () => charCountAdjustSelectedCueDuration());
         els.smartDurBtn?.addEventListener('click', () => silenceAdjustSelectedCueDuration());
+        els.audioSnapBtn?.addEventListener('click', () => { void silenceSnapSelectedCueTiming(); });
         els.silenceSplitConfirm?.addEventListener('click', confirmBatchSilenceSplit);
         els.silenceSplitCancel?.addEventListener('click', closeSilenceSplitModal);
         els.silenceSplitModal?.querySelectorAll('[data-silence-split-dismiss]').forEach((el) => {
@@ -3508,6 +5838,84 @@
             el.addEventListener('click', (e) => {
                 e.preventDefault();
                 closeSmartAdjustModal();
+            });
+        });
+        els.removeNoiseConfirm?.addEventListener('click', confirmRemoveNoise);
+        els.removeNoiseCancel?.addEventListener('click', closeRemoveNoiseModal);
+        els.removeNoiseModal?.querySelectorAll('[data-remove-noise-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeRemoveNoiseModal();
+            });
+        });
+        [
+            els.noiseRemoveEmpty,
+            els.noiseRemoveFragments,
+            els.noiseRemoveSoundEffects,
+            els.noiseRemoveSymbolOnly,
+            els.noiseRemoveDuplicates,
+        ].forEach((el) => {
+            el?.addEventListener('change', updateRemoveNoiseModalState);
+        });
+        els.qcConfirm?.addEventListener('click', () => confirmQcFix());
+        els.qcFixFiltered?.addEventListener('click', () => confirmQcFix({ filtered: true }));
+        els.qcCancel?.addEventListener('click', closeQcModal);
+        els.qcModal?.querySelectorAll('[data-qc-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeQcModal();
+            });
+        });
+        els.qcSummaryBar?.addEventListener('click', (e) => {
+            const chip = e.target.closest?.('[data-qc-type]');
+            if (!chip || !els.qcSummaryBar.contains(chip)) return;
+            const raw = chip.getAttribute('data-qc-type');
+            setQcTypeFilter(raw || null);
+        });
+        els.qcIssueList?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-qc-idx]');
+            if (!btn) return;
+            const idx = Number(btn.getAttribute('data-qc-idx'));
+            if (!Number.isFinite(idx) || idx < 0) return;
+            selectCue(idx, { scroll: true, seek: true });
+        });
+        [
+            els.qcFixOverlap,
+            els.qcFixCpsSplit,
+            els.qcFixCpsExtend,
+            els.qcEnforceMin,
+            els.qcEnforceMax,
+            els.qcMaxCps,
+            els.qcMinSec,
+            els.qcMaxSec,
+            els.qcGapMs,
+        ].forEach((el) => {
+            el?.addEventListener('input', updateQcModalState);
+            el?.addEventListener('change', updateQcModalState);
+        });
+        els.retranscribeDurConfirm?.addEventListener('click', () => { void confirmRetranscribeDur(); });
+        els.retranscribeDurAll?.addEventListener('click', () => { void confirmRetranscribeAll(); });
+        els.retranscribeDurCancel?.addEventListener('click', closeRetranscribeDurModal);
+        els.retranscribeDurModal?.querySelectorAll('[data-retranscribe-dur-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeRetranscribeDurModal();
+            });
+        });
+        document.querySelectorAll('input[name="editorRetranscribeDurStart"]').forEach((el) => {
+            el.addEventListener('change', updateRetranscribeDurModalState);
+        });
+        [els.retranscribeDurSec, els.retranscribeDurPadMs].forEach((el) => {
+            el?.addEventListener('input', updateRetranscribeDurModalState);
+            el?.addEventListener('change', updateRetranscribeDurModalState);
+        });
+        document.querySelectorAll('[data-retranscribe-dur-preset]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const sec = Number(btn.getAttribute('data-retranscribe-dur-preset'));
+                if (!Number.isFinite(sec) || !els.retranscribeDurSec) return;
+                els.retranscribeDurSec.value = String(sec);
+                updateRetranscribeDurModalState();
             });
         });
         [
@@ -3599,8 +6007,14 @@
             });
         });
 
-        els.detailStart?.addEventListener('change', onDetailChanged);
-        els.detailDuration?.addEventListener('change', onDetailChanged);
+        els.detailStart?.addEventListener('change', () => {
+            onDetailChanged();
+            renderTimeline();
+        });
+        els.detailDuration?.addEventListener('change', () => {
+            onDetailChanged();
+            renderTimeline();
+        });
         els.detailDuration?.addEventListener('input', () => {
             if (els.detailEnd && state.selectedIndex >= 0) {
                 const cue = state.cues[state.selectedIndex];
@@ -3610,6 +6024,7 @@
                 }
             }
             updateDetailMeta();
+            updateDetailActionButtons();
         });
         els.detailText?.addEventListener('input', onDetailChanged);
         els.targetCps?.addEventListener('input', () => {
@@ -3686,9 +6101,15 @@
             focusCueList();
         });
 
+        els.videoWrap?.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('button, select, input, textarea, a, [contenteditable="true"]')) return;
+            focusPlayerArea();
+        });
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                if (state.silenceSplitBusy) {
+                if (state.silenceSplitBusy || state.retranscribeBusy) {
                     e.preventDefault();
                     return;
                 }
@@ -3712,6 +6133,21 @@
                     closeSmartAdjustModal();
                     return;
                 }
+                if (els.removeNoiseModal && !els.removeNoiseModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeRemoveNoiseModal();
+                    return;
+                }
+                if (els.qcModal && !els.qcModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeQcModal();
+                    return;
+                }
+                if (els.retranscribeDurModal && !els.retranscribeDurModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeRetranscribeDurModal();
+                    return;
+                }
                 if (els.batchDurModal && !els.batchDurModal.classList.contains('hidden')) {
                     e.preventDefault();
                     closeBatchDurModal();
@@ -3720,6 +6156,16 @@
                 if (els.findReplaceModal && !els.findReplaceModal.classList.contains('hidden')) {
                     e.preventDefault();
                     closeFindReplaceModal();
+                    return;
+                }
+                if (els.glossaryModal && !els.glossaryModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeGlossaryModal();
+                    return;
+                }
+                if (els.breakWordsModal && !els.breakWordsModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeBreakWordsModal();
                     return;
                 }
                 if (els.splitModal && !els.splitModal.classList.contains('hidden')) {
@@ -3768,10 +6214,15 @@
                 const modalOpen = [
                     els.splitModal,
                     els.findReplaceModal,
+                    els.glossaryModal,
+                    els.breakWordsModal,
                     els.batchDurModal,
                     els.smartSplitModal,
                     els.silenceSplitModal,
                     els.smartAdjustModal,
+                    els.removeNoiseModal,
+                    els.qcModal,
+                    els.retranscribeDurModal,
                     els.shortcutsModal,
                 ].some((m) => m && !m.classList.contains('hidden'));
                 if (modalOpen) return;
@@ -3780,12 +6231,15 @@
                 deleteSelectedCue();
                 return;
             }
-            if (isListFocused()) {
-                if (e.key === ' ' || e.code === 'Space') {
+            if (e.key === ' ' || e.code === 'Space') {
+                if (isTypingTarget(e.target)) return;
+                if (isListFocused() || isPlayerFocused()) {
                     e.preventDefault();
                     toggleVideoPlayback();
                     return;
                 }
+            }
+            if (isListFocused()) {
                 if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
                     e.preventDefault();
                     insertCueAtPlayhead();
@@ -3827,23 +6281,53 @@
         els.video?.addEventListener('ratechange', () => {
             if (els.video && !els.video.paused) scheduleCueBoundarySync();
         });
+        els.video?.addEventListener('loadedmetadata', () => {
+            updateTimelineDuration();
+            renderTimeline();
+            updatePlayPauseButton();
+        });
+        els.video?.addEventListener('timeupdate', () => {
+            if (els.video && !els.video.paused) updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000));
+        });
     }
 
     function cacheElements() {
         els = {
-            title: document.getElementById('editorTitle'),
             formatBadge: document.getElementById('editorFormatBadge'),
+            autoFocusBtn: document.getElementById('editorAutoFocusBtn'),
             cueCount: document.getElementById('editorCueCount'),
+            lowConfBadge: document.getElementById('editorLowConfBadge'),
             dirtyBadge: document.getElementById('editorDirtyBadge'),
             saveStatus: document.getElementById('editorSaveStatus'),
             saveBtn: document.getElementById('editorSaveBtn'),
             addCueBtn: document.getElementById('editorAddCueBtn'),
             insertCueBtn: document.getElementById('editorInsertCueBtn'),
             detailInsertCueBtn: document.getElementById('editorDetailInsertCueBtn'),
+            retranscribeCueBtn: document.getElementById('editorRetranscribeCueBtn'),
             playheadTime: document.getElementById('editorPlayheadTime'),
             openFileBtn: document.getElementById('editorOpenFileBtn'),
             undoBtn: document.getElementById('editorUndoBtn'),
             redoBtn: document.getElementById('editorRedoBtn'),
+            toolsMenuBtn: document.getElementById('editorToolsMenuBtn'),
+            toolsMenu: document.getElementById('editorToolsMenu'),
+            themeToggle: document.getElementById('editorThemeToggle'),
+            settingsBtn: document.getElementById('editorSettingsBtn'),
+            splitter: document.getElementById('editorSplitter'),
+            cuesPanel: document.getElementById('editorCuesPanel'),
+            main: document.querySelector('.editor-main'),
+            filterCount: document.getElementById('editorFilterCount'),
+            nextIssueBtn: document.getElementById('editorNextIssueBtn'),
+            detailTools: document.getElementById('editorDetailTools'),
+            playPauseBtn: document.getElementById('editorPlayPauseBtn'),
+            seekBackBtn: document.getElementById('editorSeekBackBtn'),
+            seekFwdBtn: document.getElementById('editorSeekFwdBtn'),
+            rateSelect: document.getElementById('editorRateSelect'),
+            volumeSlider: document.getElementById('editorVolumeSlider'),
+            videoEmpty: document.getElementById('editorVideoEmpty'),
+            timeline: document.getElementById('editorTimeline'),
+            timelineTrack: document.getElementById('editorTimelineTrack'),
+            timelineCues: document.getElementById('editorTimelineCues'),
+            timelinePlayhead: document.getElementById('editorTimelinePlayhead'),
             shortcutsBtn: document.getElementById('editorShortcutsBtn'),
             shortcutsModal: document.getElementById('editorShortcutsModal'),
             shortcutsClose: document.getElementById('editorShortcutsClose'),
@@ -3853,6 +6337,35 @@
             findReplaceBtn: document.getElementById('editorFindReplaceBtn'),
             findReplaceModal: document.getElementById('editorFindReplaceModal'),
             findReplaceClose: document.getElementById('editorFindReplaceClose'),
+            glossaryBtn: document.getElementById('editorGlossaryBtn'),
+            glossaryBadge: document.getElementById('editorGlossaryBadge'),
+            glossaryModal: document.getElementById('editorGlossaryModal'),
+            glossaryEntryList: document.getElementById('editorGlossaryEntryList'),
+            glossaryIssueList: document.getElementById('editorGlossaryIssueList'),
+            glossaryCanonical: document.getElementById('editorGlossaryCanonical'),
+            glossaryAliases: document.getElementById('editorGlossaryAliases'),
+            glossaryCaseSensitive: document.getElementById('editorGlossaryCaseSensitive'),
+            glossaryEnabled: document.getElementById('editorGlossaryEnabled'),
+            glossaryAddBtn: document.getElementById('editorGlossaryAddBtn'),
+            glossarySaveEntryBtn: document.getElementById('editorGlossarySaveEntryBtn'),
+            glossaryDeleteEntryBtn: document.getElementById('editorGlossaryDeleteEntryBtn'),
+            glossaryImportBtn: document.getElementById('editorGlossaryImportBtn'),
+            glossaryExportBtn: document.getElementById('editorGlossaryExportBtn'),
+            glossaryScanBtn: document.getElementById('editorGlossaryScanBtn'),
+            breakWordsBtn: document.getElementById('editorBreakWordsBtn'),
+            splitOpenBreakWordsBtn: document.getElementById('editorSplitOpenBreakWordsBtn'),
+            smartSplitOpenBreakWordsBtn: document.getElementById('editorSmartSplitOpenBreakWordsBtn'),
+            breakWordsModal: document.getElementById('editorBreakWordsModal'),
+            breakWordsChips: document.getElementById('editorBreakWordsChips'),
+            breakWordsInput: document.getElementById('editorBreakWordsInput'),
+            breakWordsAddBtn: document.getElementById('editorBreakWordsAddBtn'),
+            breakWordsResetBtn: document.getElementById('editorBreakWordsResetBtn'),
+            breakWordsClearBtn: document.getElementById('editorBreakWordsClearBtn'),
+            breakWordsClose: document.getElementById('editorBreakWordsClose'),
+            breakWordsStatus: document.getElementById('editorBreakWordsStatus'),
+            glossaryPreview: document.getElementById('editorGlossaryPreview'),
+            glossaryConfirm: document.getElementById('editorGlossaryConfirm'),
+            glossaryCancel: document.getElementById('editorGlossaryCancel'),
             findInput: document.getElementById('editorFindInput'),
             replaceInput: document.getElementById('editorReplaceInput'),
             findCase: document.getElementById('editorFindCase'),
@@ -3866,8 +6379,12 @@
             batchDurFixedWrap: document.getElementById('editorBatchDurFixedWrap'),
             batchDurSilenceWrap: document.getElementById('editorBatchDurSilenceWrap'),
             batchDurTarget: document.getElementById('editorBatchDurTarget'),
+            batchDurHint: document.getElementById('editorBatchDurHint'),
             batchDurSilenceDb: document.getElementById('editorBatchDurSilenceDb'),
             batchDurSilenceDur: document.getElementById('editorBatchDurSilenceDur'),
+            batchDurSnapPadWrap: document.getElementById('editorBatchDurSnapPadWrap'),
+            batchDurSnapPadMs: document.getElementById('editorBatchDurSnapPadMs'),
+            batchDurAvoidOverlapRow: document.getElementById('editorBatchDurAvoidOverlapRow'),
             batchDurShorter: document.getElementById('editorBatchDurShorter'),
             batchDurLonger: document.getElementById('editorBatchDurLonger'),
             batchDurMin: document.getElementById('editorBatchDurMin'),
@@ -3880,6 +6397,33 @@
             batchDurConfirm: document.getElementById('editorBatchDurConfirm'),
             batchDurCancel: document.getElementById('editorBatchDurCancel'),
             smartAdjustBtn: document.getElementById('editorSmartAdjustBtn'),
+            qcBtn: document.getElementById('editorQcBtn'),
+            qcBadge: document.getElementById('editorQcBadge'),
+            retranscribeDurBtn: document.getElementById('editorRetranscribeDurBtn'),
+            retranscribeDurModal: document.getElementById('editorRetranscribeDurModal'),
+            retranscribeDurSec: document.getElementById('editorRetranscribeDurSec'),
+            retranscribeDurPadMs: document.getElementById('editorRetranscribeDurPadMs'),
+            retranscribeDurSnapAfter: document.getElementById('editorRetranscribeDurSnapAfter'),
+            retranscribeDurPreview: document.getElementById('editorRetranscribeDurPreview'),
+            retranscribeDurConfirm: document.getElementById('editorRetranscribeDurConfirm'),
+            retranscribeDurAll: document.getElementById('editorRetranscribeDurAll'),
+            retranscribeDurCancel: document.getElementById('editorRetranscribeDurCancel'),
+            qcModal: document.getElementById('editorQcModal'),
+            qcSummaryBar: document.getElementById('editorQcSummaryBar'),
+            qcIssueList: document.getElementById('editorQcIssueList'),
+            qcFixOverlap: document.getElementById('editorQcFixOverlap'),
+            qcFixCpsSplit: document.getElementById('editorQcFixCpsSplit'),
+            qcFixCpsExtend: document.getElementById('editorQcFixCpsExtend'),
+            qcEnforceMin: document.getElementById('editorQcEnforceMin'),
+            qcEnforceMax: document.getElementById('editorQcEnforceMax'),
+            qcMaxCps: document.getElementById('editorQcMaxCps'),
+            qcMinSec: document.getElementById('editorQcMinSec'),
+            qcMaxSec: document.getElementById('editorQcMaxSec'),
+            qcGapMs: document.getElementById('editorQcGapMs'),
+            qcPreview: document.getElementById('editorQcPreview'),
+            qcConfirm: document.getElementById('editorQcConfirm'),
+            qcFixFiltered: document.getElementById('editorQcFixFiltered'),
+            qcCancel: document.getElementById('editorQcCancel'),
             smartSplitBtn: document.getElementById('editorSmartSplitBtn'),
             silenceSplitBtn: document.getElementById('editorSilenceSplitBtn'),
             smartSplitCueBtn: document.getElementById('editorSmartSplitCueBtn'),
@@ -3888,6 +6432,7 @@
             splitSpacesBtn: document.getElementById('editorSplitSpacesBtn'),
             charDurBtn: document.getElementById('editorCharDurBtn'),
             smartDurBtn: document.getElementById('editorSmartDurBtn'),
+            audioSnapBtn: document.getElementById('editorAudioSnapBtn'),
             silenceSplitModal: document.getElementById('editorSilenceSplitModal'),
             silenceSplitDb: document.getElementById('editorSilenceSplitDb'),
             silenceSplitDur: document.getElementById('editorSilenceSplitDur'),
@@ -3922,6 +6467,16 @@
             smartPreview: document.getElementById('editorSmartPreview'),
             smartAdjustConfirm: document.getElementById('editorSmartAdjustConfirm'),
             smartAdjustCancel: document.getElementById('editorSmartAdjustCancel'),
+            removeNoiseBtn: document.getElementById('editorRemoveNoiseBtn'),
+            removeNoiseModal: document.getElementById('editorRemoveNoiseModal'),
+            removeNoisePreview: document.getElementById('editorRemoveNoisePreview'),
+            removeNoiseConfirm: document.getElementById('editorRemoveNoiseConfirm'),
+            removeNoiseCancel: document.getElementById('editorRemoveNoiseCancel'),
+            noiseRemoveEmpty: document.getElementById('editorNoiseRemoveEmpty'),
+            noiseRemoveFragments: document.getElementById('editorNoiseRemoveFragments'),
+            noiseRemoveSoundEffects: document.getElementById('editorNoiseRemoveSoundEffects'),
+            noiseRemoveSymbolOnly: document.getElementById('editorNoiseRemoveSymbolOnly'),
+            noiseRemoveDuplicates: document.getElementById('editorNoiseRemoveDuplicates'),
             restoreBtn: document.getElementById('editorRestoreBtn'),
             sidecarSelect: document.getElementById('editorSidecarSelect'),
             cueBody: document.getElementById('editorCueBody'),
@@ -3968,6 +6523,9 @@
             videoSubtitle: document.getElementById('editorVideoSubtitle'),
             videoSubtitleText: document.getElementById('editorVideoSubtitleText'),
             statusLine: document.getElementById('editorStatusLine'),
+            bootProgress: document.getElementById('editorBootProgress'),
+            bootProgressTitle: document.getElementById('editorBootProgressTitle'),
+            bootProgressDetail: document.getElementById('editorBootProgressDetail'),
             silenceProgress: document.getElementById('editorSilenceProgress'),
             silenceProgressTitle: document.getElementById('editorSilenceProgressTitle'),
             silenceProgressCount: document.getElementById('editorSilenceProgressCount'),
@@ -3989,11 +6547,20 @@
             els.smartSplitModal,
             els.silenceSplitModal,
             els.smartAdjustModal,
+            els.removeNoiseModal,
+            els.qcModal,
+            els.glossaryModal,
+            els.breakWordsModal,
+            els.retranscribeDurModal,
             els.shortcutsModal,
         ].forEach((modal) => {
             if (modal?.classList.contains('hidden')) modal.setAttribute('inert', '');
         });
         bindEvents();
+        loadBreakWords();
+        void loadGlossary();
+        // ffmpeg 路径仅供静音/探测等工具使用，不阻塞字幕文档打开
+        void loadAppFfmpegPath();
 
         electron?.onSubtitleEditorRefocus?.(() => restoreEditorFocus());
         window.addEventListener('focus', () => {
@@ -4004,14 +6571,28 @@
             if (stale) restoreEditorFocus();
         });
 
-        void loadAppFfmpegPath().finally(() => {
-            editorBootstrapped = true;
-            if (pendingEditorInit) {
-                const payload = pendingEditorInit;
-                pendingEditorInit = null;
-                bootstrapEditorDocument(payload);
-            }
-        });
+        editorBootstrapped = true;
+        if (pendingEditorInit) {
+            const payload = pendingEditorInit;
+            pendingEditorInit = null;
+            bootstrapEditorDocument(payload);
+        } else {
+            updateBootProgress({
+                title: '字幕编辑器已就绪',
+                detail: '等待打开字幕文件…',
+                statusMessage: '正在等待字幕文件…',
+            });
+            // 若短时间内仍无文档可开，收起启动遮罩，避免空窗一直挡操作
+            setTimeout(() => {
+                if (!state.ready && !pendingEditorInit && !documentLoadInFlight) {
+                    hideBootProgress();
+                    if (els.statusLine?.textContent === '正在等待字幕文件…'
+                        || els.statusLine?.textContent === '正在启动…') {
+                        setStatus('就绪', '');
+                    }
+                }
+            }, 1200);
+        }
     }
 
     if (document.readyState === 'loading') {

@@ -22,6 +22,7 @@
     "repetitionPenalty": 1.1,
     "smartSplitWithVad": true,
     "targetChunkDurationS": 30,
+    "retranscribeWarmLight": false,
     "outputDir": "",
     "outputMode": "same",
     "audioSuffixes": "mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv",

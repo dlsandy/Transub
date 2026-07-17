@@ -12,16 +12,41 @@
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleSplitCoreFactory() {
     const STRONG_PUNCT_RE = /[。！？!?…]/;
     const WEAK_PUNCT_RE = /[，、；：,;:]/;
-    const CONNECTOR_WORDS = [
+    const DEFAULT_BREAK_WORDS = [
         '而且', '但是', '因为', '所以', '然后', '不过', '然而', '并且', '同时', '另外',
         '因此', '于是', '可是', '虽然', '如果', '那么', '或者', '以及',
         'but', 'and then', 'however', 'therefore', 'because', 'so', 'then', 'although',
     ];
+    /** @deprecated use DEFAULT_BREAK_WORDS */
+    const CONNECTOR_WORDS = DEFAULT_BREAK_WORDS;
 
     function isConnectedText(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
         return !/\s/.test(raw);
+    }
+
+    function normalizeBreakWords(list) {
+        const source = Array.isArray(list) ? list : [];
+        const seen = new Set();
+        const out = [];
+        for (const raw of source) {
+            const word = String(raw || '').trim();
+            if (!word) continue;
+            const key = word.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(word);
+        }
+        out.sort((a, b) => b.length - a.length || a.localeCompare(b, 'zh'));
+        return out;
+    }
+
+    function resolveBreakWords(opts = {}) {
+        if (opts && Object.prototype.hasOwnProperty.call(opts, 'breakWords')) {
+            return normalizeBreakWords(opts.breakWords);
+        }
+        return DEFAULT_BREAK_WORDS.slice();
     }
 
     function textCharCount(text) {
@@ -58,15 +83,24 @@
         return bestScore >= 2 ? best + 1 : -1;
     }
 
-    function findConnectorBreak(text, maxIndex) {
+    function findConnectorBreak(text, maxIndex, breakWords = DEFAULT_BREAK_WORDS) {
         let best = -1;
-        const lower = String(text || '').toLowerCase();
-        for (const word of CONNECTOR_WORDS) {
-            const idx = lower.indexOf(word);
-            if (idx < 0) continue;
-            const breakAt = idx + word.length;
-            if (breakAt <= 0 || breakAt > maxIndex || breakAt >= text.length) continue;
-            if (breakAt > best) best = breakAt;
+        const raw = String(text || '');
+        const lower = raw.toLowerCase();
+        const words = normalizeBreakWords(breakWords);
+        for (const word of words) {
+            const needle = word.toLowerCase();
+            if (!needle) continue;
+            let from = 0;
+            while (from < lower.length) {
+                const idx = lower.indexOf(needle, from);
+                if (idx < 0) break;
+                const breakAt = idx + needle.length;
+                if (breakAt > 0 && breakAt <= maxIndex && breakAt < raw.length && breakAt > best) {
+                    best = breakAt;
+                }
+                from = idx + Math.max(1, needle.length);
+            }
         }
         return best;
     }
@@ -94,9 +128,10 @@
         const maxChars = Math.max(4, Math.floor(Number(opts.maxChars) || 20));
         const maxLineChars = Math.max(4, Math.floor(Number(opts.maxLineChars) || maxChars));
         const minChars = Math.max(2, Math.floor(Number(opts.minChars) || 4));
+        const breakWords = resolveBreakWords(opts);
         let remaining = String(text || '').trim();
         if (!remaining) return [];
-        if (isConnectedText(remaining)) return [remaining];
+        const connected = isConnectedText(remaining);
 
         const parts = [];
         while (remaining.length > 0) {
@@ -117,19 +152,50 @@
             if (punctBreak > 0) breakAt = punctBreak;
 
             if (breakAt < 0) {
-                const connectorBreak = findConnectorBreak(remaining, limit);
+                const connectorBreak = findConnectorBreak(remaining, limit, breakWords);
                 if (connectorBreak > minChars) breakAt = connectorBreak;
             }
 
             if (breakAt < 0 && remaining.length > maxChars) {
-                breakAt = findBestBreakInSlice(remaining.slice(0, maxChars), Math.floor(maxChars * 0.35));
-                if (breakAt < 0) breakAt = maxChars;
+                if (connected) {
+                    // 连续文本可向后扩大寻找标点/断句词，避免硬切汉字
+                    const extended = Math.min(
+                        remaining.length,
+                        Math.max(maxChars * 3, maxChars + 24),
+                    );
+                    const extPunct = findBestBreakInSlice(
+                        remaining.slice(0, extended),
+                        Math.floor(maxChars * 0.35),
+                    );
+                    if (extPunct > minChars) breakAt = extPunct;
+                    if (breakAt < 0) {
+                        const extConn = findConnectorBreak(remaining, extended, breakWords);
+                        if (extConn > minChars) breakAt = extConn;
+                    }
+                    if (breakAt < 0) {
+                        parts.push(remaining);
+                        break;
+                    }
+                } else {
+                    breakAt = findBestBreakInSlice(remaining.slice(0, maxChars), Math.floor(maxChars * 0.35));
+                    if (breakAt < 0) breakAt = maxChars;
+                }
             }
 
-            if (breakAt < 0) breakAt = limit;
+            if (breakAt < 0) {
+                if (connected) {
+                    parts.push(remaining);
+                    break;
+                }
+                breakAt = limit;
+            }
 
             let chunk = remaining.slice(0, breakAt).trim();
             if (!chunk && remaining.length) {
+                if (connected) {
+                    parts.push(remaining);
+                    break;
+                }
                 chunk = remaining.slice(0, Math.min(maxChars, remaining.length)).trim();
                 breakAt = chunk.length;
             }
@@ -543,6 +609,135 @@
         return newEnd;
     }
 
+    /**
+     * 由静音区间求分析窗内的语音段（绝对毫秒）
+     */
+    function buildSpeechRegionsFromSilence(windowStartMs, windowEndMs, intervals, minSpeechMs = 200) {
+        const windowStart = Math.round(Number(windowStartMs) || 0);
+        const windowEnd = Math.max(windowStart + 1, Math.round(Number(windowEndMs) || 0));
+        const silences = normalizeSilenceIntervals(intervals, windowStart, windowEnd);
+        const regions = [];
+        let cursor = windowStart;
+        for (const s of silences) {
+            if (s.start > cursor + 1) {
+                regions.push({ startMs: cursor, endMs: s.start });
+            }
+            cursor = Math.max(cursor, s.end);
+        }
+        if (windowEnd > cursor + 1) {
+            regions.push({ startMs: cursor, endMs: windowEnd });
+        }
+        const minMs = Math.max(50, Math.round(Number(minSpeechMs) || 200));
+        return regions.filter((r) => r.endMs - r.startMs >= minMs);
+    }
+
+    function pickPrimarySpeechRegion(regions, cueStartMs, cueEndMs) {
+        const list = Array.isArray(regions) ? regions : [];
+        if (!list.length) return null;
+        const cueStart = Math.round(Number(cueStartMs) || 0);
+        const cueEnd = Math.max(cueStart + 1, Math.round(Number(cueEndMs) || 0));
+        let best = null;
+        let bestOverlap = -1;
+        for (const r of list) {
+            const overlap = Math.max(0, Math.min(r.endMs, cueEnd) - Math.max(r.startMs, cueStart));
+            if (overlap > bestOverlap) {
+                bestOverlap = overlap;
+                best = r;
+            }
+        }
+        if (best && bestOverlap > 0) return best;
+
+        const mid = (cueStart + cueEnd) / 2;
+        let nearest = list[0];
+        let nearestDist = Infinity;
+        for (const r of list) {
+            const rMid = (r.startMs + r.endMs) / 2;
+            const dist = Math.abs(rMid - mid);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = r;
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * 按静音检测将字幕起止贴到语音边界（保留文本）
+     * @returns {{ startMs: number, endMs: number, changed: boolean, reason?: string, region?: object }}
+     */
+    function snapCueTimingFromSilenceIntervals(cueStartMs, cueEndMs, intervals, options = {}) {
+        const cueStart = Math.round(Number(cueStartMs) || 0);
+        const cueEnd = Math.max(cueStart + 1, Math.round(Number(cueEndMs) || 0));
+        const minDurMs = Math.max(100, Math.round(Number(options.minDurMs) || 500));
+        const headPadMs = Math.max(0, Math.round(Number(options.headPadMs) || 80));
+        const tailPadMs = Math.max(0, Math.round(Number(options.tailPadMs) || 80));
+        const minSpeechMs = Math.max(80, Math.round(Number(options.minSpeechMs) || 200));
+        const minShiftMs = Math.max(20, Math.round(Number(options.minShiftMs) || 80));
+        const allowExtend = options.allowExtend !== false;
+
+        const windowStart = Math.round(Number(options.windowStartMs != null ? options.windowStartMs : cueStart) || 0);
+        const windowEnd = Math.max(
+            windowStart + 1,
+            Math.round(Number(options.windowEndMs != null ? options.windowEndMs : cueEnd) || 0),
+        );
+        const prevLimit = options.prevLimitMs != null
+            ? Math.round(Number(options.prevLimitMs))
+            : windowStart;
+        const nextLimit = options.nextLimitMs != null
+            ? Math.round(Number(options.nextLimitMs))
+            : windowEnd;
+
+        const regions = buildSpeechRegionsFromSilence(windowStart, windowEnd, intervals, minSpeechMs);
+        if (!regions.length) {
+            return { startMs: cueStart, endMs: cueEnd, changed: false, reason: 'no_speech' };
+        }
+
+        const region = pickPrimarySpeechRegion(regions, cueStart, cueEnd);
+        if (!region) {
+            return { startMs: cueStart, endMs: cueEnd, changed: false, reason: 'no_region' };
+        }
+
+        let newStart = region.startMs - headPadMs;
+        let newEnd = region.endMs + tailPadMs;
+
+        newStart = Math.max(windowStart, prevLimit, newStart);
+        newEnd = Math.min(windowEnd, nextLimit, newEnd);
+
+        if (!allowExtend) {
+            newStart = Math.max(newStart, cueStart);
+            newEnd = Math.min(newEnd, cueEnd);
+        }
+
+        if (newEnd - newStart < minDurMs) {
+            const grow = minDurMs - (newEnd - newStart);
+            const roomBefore = newStart - Math.max(windowStart, prevLimit);
+            const roomAfter = Math.min(windowEnd, nextLimit) - newEnd;
+            const takeBefore = Math.min(roomBefore, Math.ceil(grow / 2));
+            newStart -= takeBefore;
+            newEnd = Math.min(Math.min(windowEnd, nextLimit), newEnd + (grow - takeBefore));
+            if (newEnd - newStart < minDurMs) {
+                return { startMs: cueStart, endMs: cueEnd, changed: false, reason: 'too_short', region };
+            }
+        }
+
+        newStart = Math.round(newStart);
+        newEnd = Math.round(newEnd);
+        const startDelta = Math.abs(newStart - cueStart);
+        const endDelta = Math.abs(newEnd - cueEnd);
+        if (startDelta < minShiftMs && endDelta < minShiftMs) {
+            return { startMs: cueStart, endMs: cueEnd, changed: false, reason: 'unchanged', region };
+        }
+
+        return {
+            startMs: newStart,
+            endMs: newEnd,
+            changed: true,
+            region,
+            startDelta: newStart - cueStart,
+            endDelta: newEnd - cueEnd,
+        };
+    }
+
     function refineSilenceSplitCueTimings(cues, intervals, parentStart, parentEnd, options = {}) {
         if (!cues?.length) return cues;
 
@@ -669,9 +864,14 @@
     }
 
     return {
+        DEFAULT_BREAK_WORDS,
+        CONNECTOR_WORDS,
         isConnectedText,
         textCharCount,
         lineCharCount,
+        normalizeBreakWords,
+        resolveBreakWords,
+        findConnectorBreak,
         splitTextByLines,
         splitTextBySpaces,
         splitTextByCharCount,
@@ -682,6 +882,9 @@
         normalizeSilenceIntervals,
         inferSpeechStartFromSilence,
         inferSpeechEndFromSilence,
+        buildSpeechRegionsFromSilence,
+        pickPrimarySpeechRegion,
+        snapCueTimingFromSilenceIntervals,
         refineSilenceSplitCueTimings,
         getWhitespaceBreakIndices,
         snapSplitIndexNearPunctuation,

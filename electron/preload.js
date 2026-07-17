@@ -23,7 +23,16 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     openPath: (filePath) => ipcRenderer.invoke('transwithai-open-path', filePath || ''),
     ffmpegProbe: (payload) => ipcRenderer.invoke('ffmpeg-probe', payload || {}),
     ffmpegValidate: (payload) => ipcRenderer.invoke('ffmpeg-validate', payload || {}),
-    ffmpegDetectSilence: (payload) => ipcRenderer.invoke('ffmpeg-detect-silence', payload || {}),
+    ffmpegDetectSilence: (payload = {}) => ipcRenderer.invoke('ffmpeg-detect-silence', {
+        path: payload.path || '',
+        startMs: Number(payload.startMs) || 0,
+        endMs: Number(payload.endMs) || 0,
+        durationMs: Number(payload.durationMs) || 0,
+        noiseDb: payload.noiseDb,
+        minSilenceSec: payload.minSilenceSec,
+        minSegmentMs: payload.minSegmentMs,
+        ffmpegPath: payload.ffmpegPath || '',
+    }),
     selectFfmpeg: (options) => ipcRenderer.invoke('electron-select-ffmpeg', options || {}),
     transWithAiValidate: (payload) => ipcRenderer.invoke('transwithai-validate', payload || {}),
     transWithAiGenerateSubtitles: (payload) => ipcRenderer.invoke('transwithai-generate-subtitles', payload || {}),
@@ -42,11 +51,32 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiSubtitlePreview: (payload) => ipcRenderer.invoke('transwithai-subtitle-preview', payload || {}),
     transubReadSubtitle: (payload) => ipcRenderer.invoke('transub-read-subtitle', payload || {}),
     transubWriteSubtitle: (payload) => ipcRenderer.invoke('transub-write-subtitle', payload || {}),
+    transubReadSubtitleMeta: (payload) => ipcRenderer.invoke('transub-read-subtitle-meta', payload || {}),
+    transubWriteSubtitleMeta: (payload) => ipcRenderer.invoke('transub-write-subtitle-meta', payload || {}),
+    transubGetGlossary: () => ipcRenderer.invoke('transub-get-glossary'),
+    transubSaveGlossary: (payload) => ipcRenderer.invoke('transub-save-glossary', payload || {}),
+    transubExportGlossary: () => ipcRenderer.invoke('transub-export-glossary'),
+    transubImportGlossary: () => ipcRenderer.invoke('transub-import-glossary'),
+    transubTranscribeRange: (payload) => ipcRenderer.invoke('transub-transcribe-range', payload || {}),
+    onTransubRetranscribeProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-retranscribe-progress', handler);
+        return () => ipcRenderer.removeListener('transub-retranscribe-progress', handler);
+    },
     transubListSubtitleSidecars: (payload) => ipcRenderer.invoke('transub-list-subtitle-sidecars', payload || {}),
     transubSelectSubtitle: (options) => ipcRenderer.invoke('transub-select-subtitle', options || {}),
     transubSelectEditorVideo: (payload) => ipcRenderer.invoke('transub-select-editor-video', payload || {}),
     transubGuessVideoForSubtitle: (payload) => ipcRenderer.invoke('transub-guess-video-for-subtitle', payload || {}),
     transubOpenSubtitleEditor: (payload) => ipcRenderer.invoke('transub-open-subtitle-editor', payload || {}),
+    transubOpenSettings: (payload) => ipcRenderer.invoke('transub-open-settings', payload || {}),
+    transubConsumePendingOpenParams: () => ipcRenderer.invoke('transub-consume-pending-open-params'),
+    onOpenParams: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-open-params', handler);
+        return () => ipcRenderer.removeListener('transub-open-params', handler);
+    },
     getMediaUrl: (filePath) => {
         try {
             return buildMediaUrl(filePath);

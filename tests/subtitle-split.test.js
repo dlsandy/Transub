@@ -9,6 +9,8 @@ const {
     summarizeSplitCues,
     textCharCount,
     isConnectedText,
+    normalizeBreakWords,
+    DEFAULT_BREAK_WORDS,
 } = require('../src/js/subtitle-split-core');
 
 function testConnectedTextNotSplit() {
@@ -16,8 +18,11 @@ function testConnectedTextNotSplit() {
     assert.strictEqual(isConnectedText('hello world'), false);
     assert.strictEqual(isConnectedText('第一行\n第二行'), false);
 
-    const smartParts = splitTextSmart('今天天气很好我们去公园玩然后回家吃饭', { maxChars: 8 });
-    assert.strictEqual(smartParts.length, 1);
+    const smartParts = splitTextSmart('今天天气很好我们去公园玩稍后回家吃饭', {
+        maxChars: 8,
+        breakWords: [],
+    });
+    assert.strictEqual(smartParts.length, 1, 'continuous text without punct/break words should not hard-split');
 
     const charParts = splitTextByCharCount('abcdefghijklmnopqrstuvwxyz', 10);
     assert.strictEqual(charParts.length, 1);
@@ -30,7 +35,7 @@ function testSplitTextSmartOnPunctuation() {
         maxChars: 12,
         maxLineChars: 12,
     });
-    assert.strictEqual(connected.length, 1, 'continuous text without whitespace should not split');
+    assert.ok(connected.length >= 2, 'continuous text with punctuation should smart-split');
 
     const spaced = splitTextSmart('今天天气很好， 我们去公园玩。 然后回家吃饭。', {
         maxChars: 12,
@@ -38,6 +43,28 @@ function testSplitTextSmartOnPunctuation() {
     });
     assert.ok(spaced.length >= 2, 'text with spaces should split');
     assert.ok(spaced.every((p) => p.length > 0));
+}
+
+function testSplitTextSmartOnBreakWords() {
+    const parts = splitTextSmart('今天天气很好然后我们去公园玩', {
+        maxChars: 8,
+        maxLineChars: 8,
+        breakWords: ['然后'],
+    });
+    assert.ok(parts.length >= 2, 'custom break words should split continuous Chinese');
+    assert.ok(parts.some((p) => p.includes('然后')), 'chunk should retain break word');
+
+    const normalized = normalizeBreakWords(['然后', '然后', ' 因此 ', '', 'however']);
+    assert.deepStrictEqual(normalized[0], 'however');
+    assert.ok(normalized.includes('因此') && normalized.includes('然后'));
+    assert.strictEqual(normalized.length, 3);
+    assert.ok(DEFAULT_BREAK_WORDS.includes('但是'));
+
+    const emptyBreak = splitTextSmart('hello world then goodbye friends', {
+        maxChars: 12,
+        breakWords: [],
+    });
+    assert.ok(emptyBreak.length >= 1);
 }
 
 function testSplitTextSmartShortText() {
@@ -82,6 +109,7 @@ function testTextCharCountIgnoresSpaces() {
 function main() {
     testConnectedTextNotSplit();
     testSplitTextSmartOnPunctuation();
+    testSplitTextSmartOnBreakWords();
     testSplitTextSmartShortText();
     testBuildCuesFromTextsCpsMode();
     testSnapSplitIndexNearPunctuation();

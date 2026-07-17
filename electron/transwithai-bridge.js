@@ -1,10 +1,12 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { dialog, BrowserWindow, shell } = require('electron');
 const { resolveSafePath, asString } = require('./ipc-validate');
 const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch } = require('./subtitle-utils');
 const { loadSettings, saveSettings } = require('./settings-data');
+const { parseSubtitle } = require('./subtitle-format');
 
 const DEFAULT_INSTALL_PATH = 'F:\\UltraTools\\TransWithAI';
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
@@ -249,6 +251,7 @@ function mergeTransWithAiOptions(input = {}) {
         repetitionPenalty: 1.1,
         smartSplitWithVad: true,
         targetChunkDurationS: 30,
+        retranscribeWarmLight: false,
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
@@ -298,6 +301,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         repetitionPenalty: Math.max(1, Math.min(2, Number(merged.repetitionPenalty) || 1.1)),
         smartSplitWithVad: merged.smartSplitWithVad !== false,
         targetChunkDurationS: Math.max(5, Math.min(30, Number(merged.targetChunkDurationS) || 30)),
+        retranscribeWarmLight: !!merged.retranscribeWarmLight,
         outputDir: String(merged.outputDir || '').trim(),
         outputMode: merged.outputMode === 'custom' ? 'custom' : 'same',
         audioSuffixes: normalizeAudioSuffixes(merged.audioSuffixes),
@@ -1287,6 +1291,196 @@ function setPendingFilesForWindow(files) {
         : [];
 }
 
+function safeRmDir(dirPath) {
+    try {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+    } catch {
+        /* ignore cleanup errors */
+    }
+}
+
+/**
+ * 重转写轻量/暖启动：缩小 beam、降低日志开销，并限制初始时间戳搜索范围以加快短窗推理。
+ */
+function applyRetranscribeWarmLightOptions(options = {}) {
+    if (!options.retranscribeWarmLight) return options;
+    return {
+        ...options,
+        beamSize: 1,
+        logLevel: options.logLevel === 'ERROR' ? 'ERROR' : 'WARNING',
+        maxInitialTimestamp: Math.min(Number(options.maxInitialTimestamp) || 30, 10),
+    };
+}
+
+function mapRetranscribeProgressMessage(update = {}, { warmLight = false } = {}) {
+    const prefix = warmLight ? '[轻量] ' : '';
+    const stage = String(update.stage || '');
+    const detail = String(update.detail || '').trim();
+    switch (stage) {
+        case 'warmup':
+            return `${prefix}正在预热转写配置…`;
+        case 'extract':
+            return `${prefix}正在截取音频片段…`;
+        case 'starting':
+            return `${prefix}正在启动转写引擎…`;
+        case 'vad':
+            return detail
+                ? `${prefix}${detail}`
+                : `${prefix}正在初始化语音检测 (VAD)…`;
+        case 'model':
+            return detail
+                ? `${prefix}${detail}`
+                : `${prefix}正在加载 Whisper 模型，请稍候…`;
+        case 'transcribe':
+            return detail
+                ? `${prefix}${detail}`
+                : `${prefix}正在识别语音…`;
+        case 'save':
+            return `${prefix}正在写入字幕结果…`;
+        case 'done':
+            return `${prefix}重转写完成`;
+        default:
+            return detail || `${prefix}区间重转写进行中…`;
+    }
+}
+
+/**
+ * 对媒体区间裁剪后调用 infer，返回相对整片时间轴的 cues
+ */
+async function transcribeMediaRange(payload = {}, deps = {}) {
+    const mediaPath = resolveSafePath(asString(payload.mediaPath || payload.videoPath, 4096).trim());
+    const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
+    const endMs = Math.max(startMs + 200, Math.round(Number(payload.endMs) || 0));
+    const padMs = Math.max(0, Math.min(2000, Math.round(Number(payload.padMs) ?? 350)));
+    const getUserDataPath = deps.getUserDataPath;
+    const getAppRoot = deps.getAppRoot;
+    const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
+
+    if (!mediaPath || !fs.existsSync(mediaPath)) {
+        return { ok: false, error: '媒体文件不存在' };
+    }
+    if (endMs - startMs < 200) {
+        return { ok: false, error: '字幕时间范围过短，无法重转写' };
+    }
+    if (jobRunning) {
+        return { ok: false, error: '已有字幕任务正在运行，请稍后再试' };
+    }
+
+    const baseOptions = normalizeTransWithAiRuntimeOptions({
+        ...(getAppRoot ? stripPostTaskFields(loadSettings(getAppRoot).options || {}) : {}),
+        ...(payload.options || {}),
+        overwrite: true,
+        mergeSegments: false,
+        subFormats: 'srt',
+        outputMode: 'custom',
+        postTaskAction: 'none',
+        closeWindowOnComplete: false,
+        playSoundOnComplete: false,
+    });
+    const warmLight = !!baseOptions.retranscribeWarmLight;
+    const emitProgress = (update) => {
+        if (!onProgress) return;
+        const payloadOut = {
+            ...update,
+            warmLight,
+            message: mapRetranscribeProgressMessage(update, { warmLight }),
+        };
+        try { onProgress(payloadOut); } catch (_) { /* ignore */ }
+    };
+
+    const check = validateInstall(baseOptions.installPath, baseOptions.device);
+    if (!check.ok) {
+        return { ok: false, error: check.error || 'TransWithAI 未正确安装' };
+    }
+
+    const clipStartMs = Math.max(0, startMs - padMs);
+    const clipEndMs = endMs + padMs;
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-re-'));
+    const clipPath = path.join(tempRoot, 'clip.wav');
+    const outputDir = path.join(tempRoot, 'out');
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    jobRunning = true;
+    jobCancelled = false;
+
+    try {
+        emitProgress({ stage: 'warmup', detail: warmLight ? '轻量模式：预热转写配置' : '预热转写配置' });
+        const generationConfigPath = getUserDataPath
+            ? resolveGenerationConfigPath(
+                check.path,
+                applyRetranscribeWarmLightOptions(baseOptions),
+                getUserDataPath,
+            )
+            : path.join(check.path, 'generation_config.json5');
+
+        emitProgress({ stage: 'extract', detail: '截取音频片段' });
+        const { extractMediaRange } = require('./ffmpeg-bridge');
+        const clip = await extractMediaRange(mediaPath, clipStartMs, clipEndMs, clipPath, {
+            ffmpegPath: baseOptions.ffmpegPath || payload.ffmpegPath,
+        });
+        if (!clip.ok) {
+            return { ok: false, error: clip.error || '截取音频失败' };
+        }
+
+        const runtimeOptions = applyRetranscribeWarmLightOptions({
+            ...baseOptions,
+            outputDir,
+            outputMode: 'custom',
+            generationConfigPath,
+            durationHint: (clipEndMs - clipStartMs) / 1000,
+        });
+
+        emitProgress({
+            stage: 'starting',
+            detail: warmLight ? '轻量模式：启动转写引擎' : '启动转写引擎',
+        });
+        const result = await runInferOnce(
+            check.path,
+            clipPath,
+            runtimeOptions,
+            (update) => emitProgress(update || {}),
+        );
+        if (!result?.subtitlePath || !fs.existsSync(result.subtitlePath)) {
+            return { ok: false, error: '重转写未生成字幕文件' };
+        }
+
+        emitProgress({ stage: 'save', detail: '解析字幕结果' });
+        const raw = fs.readFileSync(result.subtitlePath, 'utf8');
+        const parsed = parseSubtitle(raw, 'srt');
+        const cues = (parsed.cues || []).map((cue) => ({
+            startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
+            endMs: Math.max(0, Math.round((cue.endMs != null ? cue.endMs : (cue.startMs + 1000)) + clipStartMs)),
+            text: String(cue.text || '').trim(),
+        })).filter((cue) => cue.text);
+
+        if (!cues.length) {
+            return { ok: false, error: '重转写结果为空' };
+        }
+
+        emitProgress({ stage: 'done', detail: '重转写完成' });
+        return {
+            ok: true,
+            cues,
+            clipStartMs,
+            clipEndMs,
+            padMs,
+            sourceStartMs: startMs,
+            sourceEndMs: endMs,
+            subtitlePath: result.subtitlePath,
+            task: runtimeOptions.task,
+            language: runtimeOptions.language,
+            warmLight,
+        };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    } finally {
+        jobRunning = false;
+        jobCancelled = false;
+        activeProc = null;
+        safeRmDir(tempRoot);
+    }
+}
+
 function setupTransWithAiBridge(api, deps) {
     const { register } = api;
     const { getUserDataPath, getAppRoot, windowManager } = deps;
@@ -1328,6 +1522,24 @@ function setupTransWithAiBridge(api, deps) {
         return { ok: true, cancelled: true };
     });
 
+    register('transub-transcribe-range', async (event, payload = {}) => {
+        try {
+            return await transcribeMediaRange(payload || {}, {
+                getUserDataPath,
+                getAppRoot,
+                onProgress: (progress) => {
+                    try {
+                        if (!event?.sender?.isDestroyed?.()) {
+                            event.sender.send('transub-retranscribe-progress', progress);
+                        }
+                    } catch (_) { /* ignore */ }
+                },
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transwithai-get-options', async (_event, payload = {}) => {
         try {
             const options = await readOptions(payload);
@@ -1367,6 +1579,7 @@ function setupTransWithAiBridge(api, deps) {
                 'beamSize', 'language', 'vadThreshold',
                 'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
                 'maxInitialTimestamp', 'repetitionPenalty', 'smartSplitWithVad', 'targetChunkDurationS',
+                'retranscribeWarmLight',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath',
             ]
                 .forEach((key) => {
@@ -1443,6 +1656,9 @@ module.exports = {
     buildTransWithAiOptionsFromPayload,
     buildInferArgs,
     runInferOnce,
+    transcribeMediaRange,
+    applyRetranscribeWarmLightOptions,
+    mapRetranscribeProgressMessage,
     runSubtitleBatch,
     formatMediaTime,
     parseInferProgressLine,

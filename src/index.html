@@ -228,6 +228,7 @@
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="runtime" role="tab">运行</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="output" role="tab">输出</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="transcribe" role="tab">转录</button>
+                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="editor" role="tab">字幕编辑器</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="advanced" role="tab">高级</button>
                 </nav>
                 <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
@@ -422,6 +423,22 @@
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                 </label>
                             </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel space-y-4" data-tab-panel="editor">
+                        <p class="text-xs text-gray-500">字幕编辑器相关选项。主题、自动焦点等界面偏好仍保存在编辑器本地。</p>
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                            <legend class="text-xs font-semibold text-gray-500 px-1">重转写</legend>
+                            <label class="flex items-start gap-2 text-sm">
+                                <input type="checkbox" id="retranscribeWarmLightCheck" class="rounded mt-0.5">
+                                <span>
+                                    <span class="font-medium text-gray-700">重转写加速（暖启动 / 轻量参数）</span>
+                                    <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                                        默认关闭。开启后：重转写使用 Beam=1 等轻量参数，并预热转写配置以加快短区间推理；可能略降识别精度。
+                                    </span>
+                                </span>
+                            </label>
                         </fieldset>
                     </div>
 

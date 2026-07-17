@@ -265,6 +265,7 @@
             'repetitionPenaltyInput', 'maxInitialTimestampInput',
             'smartSplitWithVadCheck', 'targetChunkDurationWrap', 'targetChunkDurationInput',
             'mergeSegmentsCheck', 'mergeSettingsWrap', 'mergeMaxGapInput', 'mergeMaxDurationInput',
+            'retranscribeWarmLightCheck',
             'postTaskMenuBtn', 'postTaskMenu', 'postTaskMenuWrap', 'postTaskMenuItems',
             'shutdownDelayInput', 'shutdownDelayWrap',
             'presetSelect', 'savePresetBtn', 'outputModeSelect', 'outputDirInput', 'outputDirWrap', 'outputDirBrowseBtn', 'audioSuffixesInput',
@@ -581,6 +582,9 @@
         if (els.smartSplitWithVadCheck) {
             els.smartSplitWithVadCheck.checked = options.smartSplitWithVad !== false;
         }
+        if (els.retranscribeWarmLightCheck) {
+            els.retranscribeWarmLightCheck.checked = !!options.retranscribeWarmLight;
+        }
         if (els.targetChunkDurationInput && options.targetChunkDurationS != null) {
             els.targetChunkDurationInput.value = String(options.targetChunkDurationS);
         }
@@ -620,6 +624,7 @@
             maxInitialTimestamp: Number(els.maxInitialTimestampInput?.value) || 30,
             smartSplitWithVad: !!els.smartSplitWithVadCheck?.checked,
             targetChunkDurationS: Number(els.targetChunkDurationInput?.value) || 30,
+            retranscribeWarmLight: !!els.retranscribeWarmLightCheck?.checked,
             mergeSegments: !!els.mergeSegmentsCheck?.checked,
             mergeMaxGapMs: Number(els.mergeMaxGapInput?.value) || 2000,
             mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 20000,
@@ -1525,6 +1530,11 @@
         els.paramsTabBtns?.forEach((btn) => {
             btn.addEventListener('click', () => switchParamsTab(btn.dataset.tab));
         });
+        electron?.onOpenParams?.((payload) => {
+            const tab = String(payload?.tab || 'editor').trim() || 'editor';
+            openParamsModal(tab);
+            void electron?.transubConsumePendingOpenParams?.();
+        });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && !els.paramsModal?.classList.contains('hidden')) {
                 closeParamsModal(true);
@@ -1606,6 +1616,11 @@
                 updateLoadingMessage('正在探测视频信息…');
                 await addFiles(pending.files, { withLoading: false });
                 appendLog(`已带入 ${pending.files.length} 个待处理文件`, 'info');
+            }
+
+            const pendingParams = await electron?.transubConsumePendingOpenParams?.();
+            if (pendingParams?.tab) {
+                openParamsModal(pendingParams.tab);
             }
         } finally {
             setLoading(false);

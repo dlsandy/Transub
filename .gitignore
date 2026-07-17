@@ -2,6 +2,7 @@ node_modules/
 dist/
 renderer-dist/
 data/
+temp/
 
 # User-specific runtime data (paths, task history)
 transub-settings.json
