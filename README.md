@@ -11,14 +11,14 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 >
 > 感谢 TransWithAI 作者与社区的开源贡献。使用前请遵循 TransWithAI 项目的许可条款。
 
-![Transub 字幕生成与字幕编辑界面](Transub.png)
+![Transub 字幕生成与字幕编辑界面](intro.jpg)
 
 ## 功能概览
 
 ### 批量字幕生成
 - 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC；支持拖放与文件夹扫描
 - GPU 环境自动检测，内置与自定义参数预设；配置可导入 / 导出
-- 任务历史记录；**全部成功后可选择睡眠、退出应用或定时关机**
+- 任务历史记录；全部成功后可选择睡眠、退出应用或定时关机
 - 可选右键菜单：「用 Transub 生成字幕」；字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
 - 完成后可从任务列表一键打开字幕编辑器并关联视频
 
