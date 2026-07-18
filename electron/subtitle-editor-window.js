@@ -1,7 +1,7 @@
 const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const { resolveHtmlPath } = require('./app-paths');
-const { getAppIcon } = require('./icons');
+const { getWindowIconOption, applyWindowIcon } = require('./icons');
 const { guessVideoPathForSubtitle } = require('./subtitle-utils');
 const { asString } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
@@ -21,7 +21,6 @@ function sendEditorInit(win, payload) {
 }
 
 function createEditorPickSplashWindow(app) {
-    const icon = getAppIcon();
     const win = new BrowserWindow({
         width: 420,
         height: 210,
@@ -30,7 +29,7 @@ function createEditorPickSplashWindow(app) {
         minimizable: true,
         fullscreenable: false,
         title: 'Transub 字幕编辑器',
-        icon: icon.isEmpty() ? undefined : icon,
+        icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f3f4f6',
         center: true,
@@ -59,9 +58,13 @@ p{margin:0;font-size:0.8rem;color:#6b7280;line-height:1.45}
 <p>请在弹出的对话框中选择要编辑的字幕文件…</p>
 <div class="spin" aria-hidden="true"></div>
 </div></div></body></html>`;
+    applyWindowIcon(win);
     win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     win.once('ready-to-show', () => {
-        if (!win.isDestroyed()) win.show();
+        if (!win.isDestroyed()) {
+            applyWindowIcon(win);
+            win.show();
+        }
     });
     // 即使页面未及时 ready，也不要长时间完全无窗口
     setTimeout(() => {
@@ -87,14 +90,13 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     const linkedVideo = String(videoPath || '').trim()
         || guessVideoPathForSubtitle(resolvedSub)
         || '';
-    const icon = getAppIcon();
     const win = new BrowserWindow({
         width: 1100,
         height: 720,
         minWidth: 800,
         minHeight: 520,
         title: `Transub字幕编辑器 — ${path.basename(resolvedSub)}`,
-        icon: icon.isEmpty() ? undefined : icon,
+        icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f3f4f6',
         webPreferences: {
@@ -102,7 +104,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: false,
-            webSecurity: false,
+            webSecurity: true,
             backgroundThrottling: false,
         },
         show: false,
@@ -110,12 +112,14 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
 
     win.setMenuBarVisibility(false);
     win.removeMenu();
+    applyWindowIcon(win);
 
     const initPayload = { subPath: resolvedSub, videoPath: linkedVideo };
     let shown = false;
     const reveal = () => {
         if (shown || win.isDestroyed()) return;
         shown = true;
+        applyWindowIcon(win);
         if (!win.isMaximized()) win.maximize();
         win.show();
     };
@@ -292,6 +296,38 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         const tab = pendingOpenParamsTab;
         pendingOpenParamsTab = null;
         return { ok: true, tab: tab || null };
+    });
+
+    register('transub-editor-refocus', async (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        refocusWindow(win);
+        return { ok: true };
+    });
+
+    register('transub-editor-confirm', async (event, payload = {}) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const message = asString(payload.message, 4000).trim() || '确定？';
+        const detail = asString(payload.detail, 4000).trim();
+        const title = asString(payload.title, 200).trim() || '确认';
+        const okLabel = asString(payload.okLabel, 40).trim() || '确定';
+        const cancelLabel = asString(payload.cancelLabel, 40).trim() || '取消';
+        try {
+            const { response } = await dialog.showMessageBox(win || undefined, {
+                type: payload.type || 'question',
+                buttons: [okLabel, cancelLabel],
+                defaultId: 0,
+                cancelId: 1,
+                noLink: true,
+                title,
+                message,
+                detail: detail || undefined,
+            });
+            refocusWindow(win);
+            return { ok: true, confirmed: response === 0 };
+        } catch (err) {
+            refocusWindow(win);
+            return { ok: false, confirmed: false, error: err.message || String(err) };
+        }
     });
 }
 

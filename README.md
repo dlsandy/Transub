@@ -1,6 +1,6 @@
 # Transub
 
-Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.3.0**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
+Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.3.1**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
 
 > **特别感谢 [TransWithAI / Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)**
 >
@@ -19,6 +19,8 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 - 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC；支持拖放与文件夹扫描
 - GPU 环境自动检测，内置与自定义参数预设；配置可导入 / 导出
 - 任务历史记录；全部成功后可选择睡眠、退出应用或定时关机
+- 托盘进度与预计剩余时间（ETA）；可选开始时最小化到托盘
+- 可选「完成后 QC 检测」：仅扫描并在任务列表标出问题数（不自动修、不自动开编辑器）
 - 可选右键菜单：「用 Transub 生成字幕」；字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
 - 完成后可从任务列表一键打开字幕编辑器并关联视频
 
@@ -33,28 +35,31 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 - **删除杂音**：批量清理语气词碎片与音效标签类条目
 
 **术语与专名**
-- **术语表**：维护规范写法与别名，扫描全文不一致并一键统一专名
+- **术语表**：全局与项目级（字幕旁 sidecar）合并维护；扫描全文不一致并一键统一专名
+- **简繁转换**：短语优先 + 字符映射；可保护术语表词条
 
 **时间轴与音频对齐**
-- **可视化时间轴**：点击定位、拖拽字幕块调时
+- **可视化时间轴**：点击定位、拖拽字幕块调时；可选波形层（默认关）
 - **音频贴边**：按静音将起止贴到语音边界；智能时长按静音缩短过长条目
 - **分割（8 种）**：智能断句、换行、空格、字符数、均分、光标、播放头、静音切分
-- **批量**：智能分割 / 静音分割 / 时长调整 / 智能调整（重叠与 CPS）
+- **批量**：智能分割 / 静音分割 / 时长调整 / 智能调整（重叠与 CPS）；长任务可取消
 
 **重转写与交互**
 - **按时长重转**：从起始点按指定秒数调用 TransWithAI 重转当前段（需关联视频）
+- **多选批量**：Ctrl/Shift 多选后删除、合并、简繁、偏移等
+- **自动备份**：保存写 `.bak`；定时草稿与打开时恢复
 - **深色 / 浅色主题**、可调列表宽度、播放跟随焦点
-- **撤销 / 重做 / 复原到打开时**；查找替换；全体时间轴 ±0.5s
-- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`F11` / `F12` 对齐播放头、空格播放暂停、`Enter` 插入字幕
+- **撤销 / 重做 / 复原到打开时**；查找替换；全体或选中时间轴 ±0.5s
+- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`Ctrl+A` 全选、`F11` / `F12` 对齐播放头、空格播放暂停、`Enter` 插入字幕
 
 ## 环境要求
 
 | 依赖 | 说明 |
 |------|------|
-| **Windows 10/11** | 当前主要支持平台 |
-| **Node.js 18+** | 开发与从源码运行 |
+| **Windows 10/11** | **唯一支持平台**（不提供 macOS / Linux 发行版） |
+| **Node.js 22.12+** | 开发与从源码运行（Electron 43 要求） |
 | **TransWithAI** | 需单独安装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases) |
-| **FFmpeg**（推荐） | 项目内 `_internal/bin/` 已内置；静音分割 / 智能时长 / 音频贴边依赖 FFmpeg；也可在设置中指定自定义路径 |
+| **FFmpeg**（推荐） | 运行 `npm run setup:ffmpeg` 下载到 `_internal/bin/`（或自行放入）；静音分割 / 智能时长 / 音频贴边依赖 FFmpeg；也可在设置中指定自定义路径 |
 
 ## 快速开始
 
@@ -64,6 +69,7 @@ Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-Tr
 git clone https://github.com/dlsandy/Transub.git
 cd Transub
 npm install
+npm run setup:ffmpeg   # 若 _internal/bin 尚无 ffmpeg/ffprobe，则自动下载
 npm start
 ```
 
@@ -88,7 +94,20 @@ npm run build:setup
 npm run build:portable
 ```
 
-安装包与便携版输出到 `dist/` 目录。
+安装包与便携版输出到 `dist/`（或经 `.packaging` 中转）。发版时请一并上传 `latest.yml`（及 `.blockmap`），以便 NSIS 安装版使用应用内更新。
+
+### 应用更新（GitHub）
+
+设置中的「检查更新」会查询 [GitHub Releases](https://github.com/dlsandy/Transub/releases)：
+
+| 安装方式 | 行为 |
+|---------|------|
+| **NSIS 安装版** + Release 含 `latest.yml` | 可应用内下载并重启安装 |
+| **便携版** / 无 `latest.yml` / 开发模式 | 比对版本后打开下载页，需手动安装 |
+
+当前**不进行代码签名**（付费 Authenticode）。首次运行可能被 SmartScreen 拦截，选择「仍要运行」即可。
+
+变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ### 注册右键菜单
 
@@ -111,7 +130,10 @@ powershell -ExecutionPolicy Bypass -File tools/register-context-menu.ps1 -Unregi
 ```bash
 npm run build:css      # 编译 Tailwind CSS
 npm run build:renderer # 打包前端资源（发布前）
-npm test               # 运行单元测试（含分割 / 静音探测）
+npm test               # Vitest 单元测试
+npm run test:coverage  # 测试覆盖率
+npm run lint           # ESLint
+npm run setup:ffmpeg   # 下载内置 FFmpeg / ffprobe 到 _internal/bin
 npm run icons          # 重新生成应用图标
 ```
 
@@ -119,11 +141,12 @@ npm run icons          # 重新生成应用图标
 
 ```
 Transub/
-├── _internal/         # 内置 FFmpeg / ffprobe（打包时一并发布）
-├── electron/          # Electron 主进程（IPC、TransWithAI 桥接、字幕格式）
-├── src/               # 渲染进程 UI（含字幕编辑器与分割核心）
-├── tests/             # 单元测试
-├── tools/             # 构建与安装脚本
+├── _internal/              # 内置 FFmpeg / ffprobe（npm run setup:ffmpeg）
+├── electron/               # Electron 主进程（IPC、TransWithAI 桥接、字幕格式）
+├── src/                    # 渲染进程 UI
+│   └── js/subtitle-editor/ # 字幕编辑器模块（utils / undo / prefs / …）
+├── tests/                  # Vitest 单元测试
+├── tools/                  # 构建与安装脚本
 └── package.json
 ```
 

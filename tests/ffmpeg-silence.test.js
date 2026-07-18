@@ -258,24 +258,53 @@ function testSnapCueTimingNoSpeechKeepsOriginal() {
     assert.strictEqual(result.endMs, 2000);
 }
 
-function main() {
-    testParseSilenceDetectLog();
-    testParseSilenceDetectLogTrailingEof();
-    testSilenceMidpointsToMs();
-    testSilenceMidpointsNearEdgeShortCue();
-    testResolveFfmpegForExecutionMissingCustomPath();
-    testResolveBundledFfmpegFromInternal();
-    testBuildTextsFromTimeBoundaries();
-    testBuildCuesFromSilenceSplits();
-    testBuildCuesFromSilenceSplitsWhitespace();
-    testInferSpeechEndFromSilence();
-    testInferSpeechEndFromSilenceNoTrailing();
-    testInferSpeechStartFromSilence();
-    testRefineSilenceSplitCueTimings();
-    testBuildCuesFromSilenceSplitsWithIntervals();
-    testSnapCueTimingFromSilenceIntervals();
-    testSnapCueTimingNoSpeechKeepsOriginal();
-    console.log('ffmpeg-silence.test.js: all passed');
-}
-
-main();
+describe("ffmpeg-silence", () => {
+    it("parse silence detect log", () => {
+        testParseSilenceDetectLog();
+    });
+    it("parse silence detect log trailing eof", () => {
+        testParseSilenceDetectLogTrailingEof();
+    });
+    it("silence midpoints near edge short cue", () => {
+        testSilenceMidpointsNearEdgeShortCue();
+    });
+    it("silence midpoints to ms", () => {
+        testSilenceMidpointsToMs();
+    });
+    it("build texts from time boundaries", () => {
+        testBuildTextsFromTimeBoundaries();
+    });
+    it("build cues from silence splits", () => {
+        testBuildCuesFromSilenceSplits();
+    });
+    it("build cues from silence splits whitespace", () => {
+        testBuildCuesFromSilenceSplitsWhitespace();
+    });
+    it("infer speech end from silence", () => {
+        testInferSpeechEndFromSilence();
+    });
+    it("infer speech end from silence no trailing", () => {
+        testInferSpeechEndFromSilenceNoTrailing();
+    });
+    it("infer speech start from silence", () => {
+        testInferSpeechStartFromSilence();
+    });
+    it("refine silence split cue timings", () => {
+        testRefineSilenceSplitCueTimings();
+    });
+    it("build cues from silence splits with intervals", () => {
+        testBuildCuesFromSilenceSplitsWithIntervals();
+    });
+    it("resolve ffmpeg for execution missing custom path", () => {
+        testResolveFfmpegForExecutionMissingCustomPath();
+    });
+    it("resolve bundled ffmpeg from internal", () => {
+        testResolveBundledFfmpegFromInternal();
+    });
+    it("snap cue timing from silence intervals", () => {
+        testSnapCueTimingFromSilenceIntervals();
+    });
+    it("snap cue timing no speech keeps original", () => {
+        testSnapCueTimingNoSpeechKeepsOriginal();
+    });
+});

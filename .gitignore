@@ -1,8 +1,15 @@
 node_modules/
 dist/
+.packaging/
 renderer-dist/
 data/
 temp/
+coverage/
+tools/tmp-opencc/
+
+# Bundled FFmpeg binaries (use npm run setup:ffmpeg)
+_internal/bin/*.exe
+_internal/bin/*.dll
 
 # User-specific runtime data (paths, task history)
 transub-settings.json

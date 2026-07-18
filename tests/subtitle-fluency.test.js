@@ -78,13 +78,20 @@ function testRemoveNoise() {
     assert.strictEqual(withDup.cues[0].text, '你好世界');
 }
 
-function main() {
-    testRepetitionAndStutter();
-    testDanglingAndFragment();
-    testNoPunctLong();
-    testScanSummary();
-    testRemoveNoise();
-    console.log('subtitle-fluency.test.js: all passed');
-}
-
-main();
+describe("subtitle-fluency", () => {
+    it("repetition and stutter", () => {
+        testRepetitionAndStutter();
+    });
+    it("dangling and fragment", () => {
+        testDanglingAndFragment();
+    });
+    it("no punct long", () => {
+        testNoPunctLong();
+    });
+    it("scan summary", () => {
+        testScanSummary();
+    });
+    it("remove noise", () => {
+        testRemoveNoise();
+    });
+});

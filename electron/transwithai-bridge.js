@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { dialog, BrowserWindow, shell } = require('electron');
-const { resolveSafePath, asString } = require('./ipc-validate');
+const { resolveSafePath, asString, assertSafeExternalUrl } = require('./ipc-validate');
 const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch } = require('./subtitle-utils');
 const { loadSettings, saveSettings } = require('./settings-data');
 const { parseSubtitle } = require('./subtitle-format');
@@ -22,11 +22,7 @@ let pendingFilesForWindow = [];
 let json5Parser = null;
 function getJson5Parser() {
     if (json5Parser !== null) return json5Parser;
-    try {
-        json5Parser = require('json5');
-    } catch {
-        json5Parser = false;
-    }
+    json5Parser = require('json5');
     return json5Parser;
 }
 
@@ -35,12 +31,31 @@ let jobCancelled = false;
 /** @type {import('child_process').ChildProcess | null} */
 let activeProc = null;
 
+/** @type {null | {
+ *   items: Array<{path:string,duration:number,status:string}>,
+ *   rate: number|null,
+ *   device: string,
+ *   task: string,
+ *   trayProgressEnabled: boolean,
+ * }} */
+let activeBatchTrayCtx = null;
+
 function killActiveProc() {
     if (!activeProc) return;
-    try {
-        activeProc.kill();
-    } catch (_) { /* ignore */ }
+    const proc = activeProc;
     activeProc = null;
+    const pid = proc.pid;
+    try {
+        if (process.platform === 'win32' && pid) {
+            const { execFile } = require('child_process');
+            execFile('taskkill', ['/pid', String(pid), '/T', '/F'], {
+                windowsHide: true,
+                timeout: 8000,
+            }, () => { /* ignore */ });
+            return;
+        }
+        proc.kill();
+    } catch (_) { /* ignore */ }
 }
 
 function stopSubtitleJobs() {
@@ -120,9 +135,12 @@ function probeTransWithAiVersionFromInfer(installPath, timeoutMs = 8000) {
     });
 }
 
-async function detectTransWithAiVersion(installPath) {
-    return readTransWithAiVersionFromLog(installPath)
-        || await probeTransWithAiVersionFromInfer(installPath);
+async function detectTransWithAiVersion(installPath, options = {}) {
+    const fromLog = readTransWithAiVersionFromLog(installPath);
+    if (fromLog) return fromLog;
+    // Spawning infer.exe can take several seconds — skip on cold-start / quick checks
+    if (options.allowInferProbe === false) return null;
+    return probeTransWithAiVersionFromInfer(installPath);
 }
 
 function validateInstall(installPath, device) {
@@ -139,11 +157,13 @@ function validateInstall(installPath, device) {
     return { ok: true, path: resolved, inferExe };
 }
 
-async function validateInstallWithVersion(installPath) {
+async function validateInstallWithVersion(installPath, options = {}) {
     const base = validateInstall(installPath);
     if (!base.ok) return base;
-    const version = await detectTransWithAiVersion(base.path);
-    return { ...base, version: version || null };
+    const version = await detectTransWithAiVersion(base.path, {
+        allowInferProbe: options.allowInferProbe !== false && !options.quick,
+    });
+    return { ...base, version: version || null, quick: !!options.quick };
 }
 
 const POST_TASK_OPTION_KEYS = new Set([
@@ -252,6 +272,9 @@ function mergeTransWithAiOptions(input = {}) {
         smartSplitWithVad: true,
         targetChunkDurationS: 30,
         retranscribeWarmLight: false,
+        trayProgressEnabled: true,
+        minimizeToTrayOnStart: false,
+        postBatchQc: false,
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
@@ -302,6 +325,9 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         smartSplitWithVad: merged.smartSplitWithVad !== false,
         targetChunkDurationS: Math.max(5, Math.min(30, Number(merged.targetChunkDurationS) || 30)),
         retranscribeWarmLight: !!merged.retranscribeWarmLight,
+        trayProgressEnabled: merged.trayProgressEnabled !== false,
+        minimizeToTrayOnStart: !!merged.minimizeToTrayOnStart,
+        postBatchQc: !!merged.postBatchQc,
         outputDir: String(merged.outputDir || '').trim(),
         outputMode: merged.outputMode === 'custom' ? 'custom' : 'same',
         audioSuffixes: normalizeAudioSuffixes(merged.audioSuffixes),
@@ -670,11 +696,10 @@ function parseInferProgressLine(line, parseState = {}) {
         const total = Number(vadProgressMatch[2]) || 0;
         const pct = Math.max(0, Math.min(100, Math.round(Number(vadProgressMatch[3]) || 0)));
         const detail = total > 0 ? `VAD 分析 ${current}/${total} 块 · ${pct}%` : `VAD 分析 · ${pct}%`;
+        // VAD 块进度仅用于详情文案，不写入 videoProgress / 时间轴，避免计入任务百分比
         return {
             stage: 'vad',
-            videoProgress: pct,
-            videoCurrentSec: current,
-            videoTotalSec: total,
+            videoProgress: 0,
             detail,
         };
     }
@@ -837,35 +862,36 @@ function runInferOnce(installPath, videoPath, options = {}, onProgress, onInferL
         const pushProgress = (update, { force = false } = {}) => {
             if (!update || typeof onProgress !== 'function') return;
 
-            if (update.stage && inferStageRank(update.stage) >= inferStageRank(currentStage)) {
-                currentStage = update.stage;
-            }
-            const stage = currentStage;
-
-            if (update.stage === 'transcribe') markTranscribeStarted();
-
-            if (transcribeStartedAt && inferStageRank(stage) < INFER_STAGE_RANK.transcribe) {
-                return;
-            }
-
+            // 丢弃过期阶段（例如转写已开始后迟到的 VAD 行），避免把 VAD 块进度算进百分比
             if (
-                currentStage === 'save'
-                && update.stage
-                && inferStageRank(update.stage) < INFER_STAGE_RANK.save
+                update.stage
+                && inferStageRank(update.stage) < inferStageRank(currentStage)
             ) {
                 return;
             }
 
-            let pipelinePct = mapPipelinePercent(
-                stage,
-                update.videoProgress ?? 0,
-                update.videoCurrentSec ?? 0,
-                update.videoTotalSec ?? 0,
-            );
+            if (update.stage && inferStageRank(update.stage) >= inferStageRank(currentStage)) {
+                currentStage = update.stage;
+            }
+            const stage = currentStage;
+            const preTranscribe = inferStageRank(stage) < INFER_STAGE_RANK.transcribe;
+
+            if (update.stage === 'transcribe') markTranscribeStarted();
+
+            if (transcribeStartedAt && preTranscribe) {
+                return;
+            }
+
+            // 转写前阶段不使用时间轴字段参与百分比；详情仍可展示 VAD/模型文案
+            const rawPct = preTranscribe ? 0 : (update.videoProgress ?? 0);
+            const currentSec = preTranscribe ? 0 : (update.videoCurrentSec ?? 0);
+            const totalSec = preTranscribe ? 0 : (update.videoTotalSec ?? 0);
+
+            let pipelinePct = mapPipelinePercent(stage, rawPct, currentSec, totalSec);
 
             if (stage === 'done') {
                 pipelinePct = 100;
-            } else if (inferStageRank(stage) < INFER_STAGE_RANK.transcribe) {
+            } else if (preTranscribe) {
                 pipelinePct = 0;
             } else {
                 pipelinePct = Math.max(lastPipelinePct, pipelinePct);
@@ -877,7 +903,14 @@ function runInferOnce(installPath, videoPath, options = {}, onProgress, onInferL
 
             lastEmit = { ...update, stage };
             lastPipelinePct = pipelinePct;
-            onProgress({ ...update, stage, pipelineProgress: pipelinePct });
+            onProgress({
+                ...update,
+                stage,
+                videoProgress: rawPct,
+                videoCurrentSec: currentSec,
+                videoTotalSec: totalSec,
+                pipelineProgress: pipelinePct,
+            });
         };
 
         const emitParsedLine = (rawLine) => {
@@ -1020,8 +1053,48 @@ function isSubtitleTaskWebContents(webContents) {
     }
 }
 
+function updateTrayFromProgress(windowManager, progress = {}) {
+    if (!windowManager?.updateTrayProgress || !activeBatchTrayCtx?.trayProgressEnabled) return;
+    try {
+        const eta = require('../src/js/eta-core');
+        const index = Number(progress.index) || 0;
+        const total = Number(progress.total) || activeBatchTrayCtx.items.length || 0;
+        const itemProgress = Number(progress.itemProgress) || 0;
+        const batchPct = eta.batchProgressPct({ index, total, itemProgress });
+        const phase = String(progress.phase || '');
+        const fullPath = String(progress.fullPath || progress.sourcePath || '').trim();
+        if (fullPath && activeBatchTrayCtx.items.length) {
+            const key = fullPath.replace(/\//g, '\\').toLowerCase();
+            for (const item of activeBatchTrayCtx.items) {
+                const ik = String(item.path || '').replace(/\//g, '\\').toLowerCase();
+                if (ik !== key) continue;
+                if (phase === 'done' || phase === 'skipped') item.status = phase === 'skipped' ? 'skipped' : 'done';
+                else if (phase === 'failed') item.status = 'failed';
+                else if (phase === 'running') item.status = 'running';
+                break;
+            }
+        }
+        const etaSec = eta.estimateEtaSec({
+            items: activeBatchTrayCtx.items,
+            activePath: phase === 'running' ? fullPath : '',
+            videoCurrentSec: progress.videoCurrentSec,
+            videoTotalSec: progress.videoTotalSec,
+            itemStage: progress.itemStage,
+            rate: activeBatchTrayCtx.rate,
+        });
+        windowManager.setTrayProgressEnabled?.(true);
+        windowManager.updateTrayProgress({
+            batchPct,
+            index,
+            total,
+            etaText: eta.formatEtaCompact(etaSec),
+        });
+    } catch (_) { /* ignore */ }
+}
+
 function broadcastProgress(windowManager, progress, invokeSender) {
     broadcastToSubtitleTaskUi(windowManager, invokeSender, 'transwithai-progress', progress);
+    updateTrayFromProgress(windowManager, progress);
 }
 
 async function notifySubtitleTaskJobStart(windowManager, payload, { minimizeToTray = true } = {}) {
@@ -1222,13 +1295,39 @@ async function runSubtitleBatch({
 
         const shouldMinimizeToTray = minimizeToTray !== undefined
             ? !!minimizeToTray
-            : !isSubtitleTaskWebContents(invokeSender);
+            : (runtimeOptions.minimizeToTrayOnStart || !isSubtitleTaskWebContents(invokeSender));
 
         const jobStartedAt = new Date().toISOString();
+        const jobStartedMs = Date.now();
         const defaultOutputDir = String(merged.outputDir || '').trim();
         if (defaultOutputDir) {
             setSessionPostTaskOptions({ lastOutputDir: defaultOutputDir });
         }
+
+        let historyRate = null;
+        try {
+            const { loadTaskHistory } = require('./task-history');
+            const { rateFromHistory, DEFAULT_WALL_FACTOR } = require('../src/js/eta-core');
+            historyRate = rateFromHistory(loadTaskHistory().entries, {
+                device: runtimeOptions.device,
+                task: runtimeOptions.task,
+            }) ?? DEFAULT_WALL_FACTOR;
+        } catch {
+            historyRate = 0.35;
+        }
+
+        activeBatchTrayCtx = {
+            items: list.map((item) => ({
+                path: String(item?.fullPath || item?.path || item || '').trim(),
+                duration: Math.max(0, Number(item?.durationSec || item?.duration) || 0),
+                status: 'pending',
+            })).filter((i) => i.path),
+            rate: historyRate,
+            device: runtimeOptions.device,
+            task: runtimeOptions.task,
+            trayProgressEnabled: runtimeOptions.trayProgressEnabled !== false,
+        };
+        windowManager?.setTrayProgressEnabled?.(activeBatchTrayCtx.trayProgressEnabled);
 
         await notifySubtitleTaskJobStart(windowManager, {
             total: list.length,
@@ -1243,9 +1342,17 @@ async function runSubtitleBatch({
 
         try {
             const { appendTaskHistory } = require('./task-history');
+            const totalDurationSec = list.reduce(
+                (sum, item) => sum + Math.max(0, Number(item?.durationSec || item?.duration) || 0),
+                0,
+            );
             appendTaskHistory({
                 startedAt: jobStartedAt,
                 finishedAt: new Date().toISOString(),
+                wallSec: Math.max(0, Math.round((Date.now() - jobStartedMs) / 1000)),
+                totalDurationSec,
+                device: runtimeOptions.device,
+                task: runtimeOptions.task,
                 total: result.total,
                 generated: result.generated,
                 skipped: result.skipped,
@@ -1255,6 +1362,9 @@ async function runSubtitleBatch({
                 errors: result.errors,
             });
         } catch { /* ignore */ }
+
+        try { windowManager?.clearTrayProgress?.(); } catch (_) { /* ignore */ }
+        activeBatchTrayCtx = null;
 
         notifySubtitleTask(windowManager, 'subtitle-task-job-finished', result);
         if (!result.cancelled && manageJobState) {
@@ -1274,6 +1384,8 @@ async function runSubtitleBatch({
             failed: list.length,
             total: list.length,
         };
+        try { windowManager?.clearTrayProgress?.(); } catch (_) { /* ignore */ }
+        activeBatchTrayCtx = null;
         notifySubtitleTask(windowManager, 'subtitle-task-job-finished', fail);
         return fail;
     } finally {
@@ -1281,6 +1393,10 @@ async function runSubtitleBatch({
             jobRunning = false;
             jobCancelled = false;
             activeProc = null;
+        }
+        if (!jobRunning) {
+            try { windowManager?.clearTrayProgress?.(); } catch (_) { /* ignore */ }
+            activeBatchTrayCtx = null;
         }
     }
 }
@@ -1351,7 +1467,8 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
     const mediaPath = resolveSafePath(asString(payload.mediaPath || payload.videoPath, 4096).trim());
     const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
     const endMs = Math.max(startMs + 200, Math.round(Number(payload.endMs) || 0));
-    const padMs = Math.max(0, Math.min(2000, Math.round(Number(payload.padMs) ?? 350)));
+    const padRaw = Number(payload.padMs);
+    const padMs = Math.max(0, Math.min(2000, Math.round(Number.isFinite(padRaw) ? padRaw : 350)));
     const getUserDataPath = deps.getUserDataPath;
     const getAppRoot = deps.getAppRoot;
     const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
@@ -1494,7 +1611,10 @@ function setupTransWithAiBridge(api, deps) {
     register('transwithai-validate', async (_event, payload = {}) => {
         try {
             const options = await readOptions(payload);
-            return validateInstallWithVersion(payload.installPath || options.installPath);
+            return validateInstallWithVersion(payload.installPath || options.installPath, {
+                quick: !!payload.quick,
+                allowInferProbe: payload.probeVersion !== false && !payload.quick,
+            });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1617,10 +1737,13 @@ function setupTransWithAiBridge(api, deps) {
     });
 
     register('transwithai-open-external', async (_event, url) => {
-        const u = asString(url, 4096).trim();
-        if (!u) return { ok: false, error: '缺少 URL' };
-        await shell.openExternal(u);
-        return { ok: true };
+        try {
+            const u = assertSafeExternalUrl(url);
+            await shell.openExternal(u);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
     });
 
     register('transwithai-get-pending-files', async () => {

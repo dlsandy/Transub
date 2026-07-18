@@ -170,16 +170,29 @@ function testBuildOptionsForIssueType() {
     assert.ok(plan.ok, plan.summary);
 }
 
-function main() {
-    testScanDetectsOverlapAndCps();
-    testScanMarksConnectedHighCps();
-    testSmartAdjustFixesOverlap();
-    testQcFixSplitsHighCpsThenAdjusts();
-    testBuildPlanRequiresSelection();
-    testGetCueCps();
-    testScanDetectsFluency();
-    testBuildOptionsForIssueType();
-    console.log('subtitle-qc.test.js: all passed');
-}
-
-main();
+describe("subtitle-qc", () => {
+    it("scan detects overlap and cps", () => {
+        testScanDetectsOverlapAndCps();
+    });
+    it("scan marks connected high cps", () => {
+        testScanMarksConnectedHighCps();
+    });
+    it("smart adjust fixes overlap", () => {
+        testSmartAdjustFixesOverlap();
+    });
+    it("qc fix splits high cps then adjusts", () => {
+        testQcFixSplitsHighCpsThenAdjusts();
+    });
+    it("build plan requires selection", () => {
+        testBuildPlanRequiresSelection();
+    });
+    it("get cue cps", () => {
+        testGetCueCps();
+    });
+    it("scan detects fluency", () => {
+        testScanDetectsFluency();
+    });
+    it("build options for issue type", () => {
+        testBuildOptionsForIssueType();
+    });
+});

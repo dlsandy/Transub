@@ -295,6 +295,47 @@
         return doc;
     }
 
+    /**
+     * 合并全局 + 项目术语表；同 canonical（不区分大小写）时项目条目覆盖全局。
+     */
+    function mergeGlossaries(globalDoc = {}, projectDoc = {}) {
+        const global = normalizeGlossary(globalDoc);
+        const project = normalizeGlossary(projectDoc);
+        const byCanonical = new Map();
+        for (const entry of global.entries) {
+            byCanonical.set(entry.canonical.toLowerCase(), entry);
+        }
+        for (const entry of project.entries) {
+            byCanonical.set(entry.canonical.toLowerCase(), entry);
+        }
+        return {
+            version: GLOSSARY_VERSION,
+            updatedAt: project.updatedAt || global.updatedAt || null,
+            entries: [...byCanonical.values()],
+        };
+    }
+
+    /** 简繁转换保护用：启用条目的 canonical + aliases，长词优先 */
+    function collectProtectTerms(glossary, options = {}) {
+        const includeDisabled = options.includeDisabled === true;
+        const doc = normalizeGlossary(glossary);
+        const seen = new Set();
+        const terms = [];
+        for (const entry of doc.entries) {
+            if (!includeDisabled && entry.enabled === false) continue;
+            const forms = [entry.canonical, ...(entry.aliases || [])]
+                .map((t) => String(t || '').trim())
+                .filter(Boolean);
+            for (const form of forms) {
+                const key = form.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                terms.push(form);
+            }
+        }
+        return terms.sort((a, b) => b.length - a.length || a.localeCompare(b, 'zh-CN'));
+    }
+
     return {
         GLOSSARY_VERSION,
         escapeRegExp,
@@ -311,6 +352,8 @@
         parseAliasesInput,
         upsertEntry,
         removeEntry,
+        mergeGlossaries,
+        collectProtectTerms,
         makeEntryId,
     };
 }));
