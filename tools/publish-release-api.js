@@ -176,7 +176,8 @@ function ensureExtraRemoteFiles(remoteMap) {
 
 function buildChangelogNotes() {
     const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const m = changelog.match(/## 1\.3\.1\n([\s\S]*?)(?=\n## |$)/);
+    const verEsc = VERSION.replace(/\./g, '\\.');
+    const m = changelog.match(new RegExp(`## ${verEsc}\\n([\\s\\S]*?)(?=\\n## |$)`));
     if (!m) return `Transub ${TAG}`;
     return `## Transub ${TAG}\n\n${m[1].trim()}\n`;
 }

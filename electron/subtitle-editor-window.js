@@ -1,7 +1,7 @@
 const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const { resolveHtmlPath } = require('./app-paths');
-const { getWindowIconOption, applyWindowIcon } = require('./icons');
+const { getEditorWindowIconOption, applyEditorWindowIcon } = require('./icons');
 const { guessVideoPathForSubtitle } = require('./subtitle-utils');
 const { asString } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
@@ -29,7 +29,7 @@ function createEditorPickSplashWindow(app) {
         minimizable: true,
         fullscreenable: false,
         title: 'Transub 字幕编辑器',
-        icon: getWindowIconOption(),
+        icon: getEditorWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f3f4f6',
         center: true,
@@ -58,11 +58,11 @@ p{margin:0;font-size:0.8rem;color:#6b7280;line-height:1.45}
 <p>请在弹出的对话框中选择要编辑的字幕文件…</p>
 <div class="spin" aria-hidden="true"></div>
 </div></div></body></html>`;
-    applyWindowIcon(win);
+    applyEditorWindowIcon(win);
     win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     win.once('ready-to-show', () => {
         if (!win.isDestroyed()) {
-            applyWindowIcon(win);
+            applyEditorWindowIcon(win);
             win.show();
         }
     });
@@ -96,7 +96,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         minWidth: 800,
         minHeight: 520,
         title: `Transub字幕编辑器 — ${path.basename(resolvedSub)}`,
-        icon: getWindowIconOption(),
+        icon: getEditorWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f3f4f6',
         webPreferences: {
@@ -112,14 +112,14 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
 
     win.setMenuBarVisibility(false);
     win.removeMenu();
-    applyWindowIcon(win);
+    applyEditorWindowIcon(win);
 
     const initPayload = { subPath: resolvedSub, videoPath: linkedVideo };
     let shown = false;
     const reveal = () => {
         if (shown || win.isDestroyed()) return;
         shown = true;
-        applyWindowIcon(win);
+        applyEditorWindowIcon(win);
         if (!win.isMaximized()) win.maximize();
         win.show();
     };

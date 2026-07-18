@@ -254,12 +254,12 @@ function mergeTransWithAiOptions(input = {}) {
         quitAppOnComplete: false,
         shutdownOnComplete: false,
         shutdownDelaySec: 60,
-        subFormats: 'srt,vtt,lrc',
+        subFormats: 'srt',
         modelPath: '',
         logLevel: 'DEBUG',
         mergeSegments: true,
-        mergeMaxGapMs: 2000,
-        mergeMaxDurationMs: 20000,
+        mergeMaxGapMs: 500,
+        mergeMaxDurationMs: 10000,
         maxBatchSize: 8,
         beamSize: 5,
         language: 'auto',
@@ -272,9 +272,11 @@ function mergeTransWithAiOptions(input = {}) {
         smartSplitWithVad: true,
         targetChunkDurationS: 30,
         retranscribeWarmLight: false,
-        trayProgressEnabled: true,
+        subtitleBakMode: 'off',
+        trayProgressEnabled: false,
         minimizeToTrayOnStart: false,
-        postBatchQc: false,
+        trayNotifyEnabled: false,
+        postBatchQc: true,
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
@@ -293,7 +295,7 @@ function normalizeSubFormats(value) {
         .map((part) => part.trim().toLowerCase())
         .filter((part) => ['srt', 'vtt', 'lrc'].includes(part));
     const unique = [...new Set(parts)];
-    return unique.length ? unique.join(',') : 'srt,vtt,lrc';
+    return unique.length ? unique.join(',') : 'srt';
 }
 
 function normalizeTransWithAiRuntimeOptions(options = {}) {
@@ -311,8 +313,8 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             ? String(merged.logLevel).toUpperCase()
             : 'DEBUG',
         mergeSegments: merged.mergeSegments !== false,
-        mergeMaxGapMs: Math.max(0, Math.min(60000, Number(merged.mergeMaxGapMs) || 2000)),
-        mergeMaxDurationMs: Math.max(1000, Math.min(600000, Number(merged.mergeMaxDurationMs) || 20000)),
+        mergeMaxGapMs: Math.max(0, Math.min(60000, Number(merged.mergeMaxGapMs) || 500)),
+        mergeMaxDurationMs: Math.max(1000, Math.min(600000, Number(merged.mergeMaxDurationMs) || 10000)),
         maxBatchSize: Math.max(1, Math.min(32, Number(merged.maxBatchSize) || 8)),
         beamSize: Math.max(1, Math.min(20, Number(merged.beamSize) || 5)),
         language: VALID_LANGUAGES.has(language) ? language : 'auto',
@@ -325,9 +327,13 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         smartSplitWithVad: merged.smartSplitWithVad !== false,
         targetChunkDurationS: Math.max(5, Math.min(30, Number(merged.targetChunkDurationS) || 30)),
         retranscribeWarmLight: !!merged.retranscribeWarmLight,
-        trayProgressEnabled: merged.trayProgressEnabled !== false,
+        subtitleBakMode: ['off', 'beside', 'appBackup'].includes(String(merged.subtitleBakMode || '').trim())
+            ? String(merged.subtitleBakMode).trim()
+            : 'off',
+        trayProgressEnabled: !!merged.trayProgressEnabled,
         minimizeToTrayOnStart: !!merged.minimizeToTrayOnStart,
-        postBatchQc: !!merged.postBatchQc,
+        trayNotifyEnabled: !!merged.trayNotifyEnabled,
+        postBatchQc: merged.postBatchQc !== false,
         outputDir: String(merged.outputDir || '').trim(),
         outputMode: merged.outputMode === 'custom' ? 'custom' : 'same',
         audioSuffixes: normalizeAudioSuffixes(merged.audioSuffixes),
@@ -422,7 +428,16 @@ function buildDeviceArgs(options = {}) {
 
 async function saveTransWithAiOptions(getAppRoot, patch) {
     const current = loadSettings(getAppRoot).options || {};
-    saveSettings(getAppRoot, stripPostTaskFields({ ...current, ...patch }));
+    const next = stripPostTaskFields({ ...current, ...patch });
+    saveSettings(getAppRoot, next);
+    syncTrayNotifyFromOptions(next);
+}
+
+function syncTrayNotifyFromOptions(options = {}) {
+    try {
+        const { setTrayNotifyEnabled } = require('./notifications');
+        setTrayNotifyEnabled(!!options.trayNotifyEnabled);
+    } catch { /* ignore */ }
 }
 
 function runPostSubtitleTaskActions(_options, result, windowManager) {
@@ -521,7 +536,7 @@ function resolveInferOutputDir(resolvedVideo, options = {}) {
 
 async function resolveSubtitlePathAfterWrite(resolvedVideo, outputDir, subFormats) {
     const dir = path.resolve(String(outputDir || path.dirname(resolvedVideo)));
-    const formats = String(subFormats || 'srt,vtt,lrc').split(/[,;\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const formats = String(subFormats || 'srt').split(/[,;\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
     const stem = path.basename(resolvedVideo, path.extname(resolvedVideo));
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -1325,9 +1340,13 @@ async function runSubtitleBatch({
             rate: historyRate,
             device: runtimeOptions.device,
             task: runtimeOptions.task,
-            trayProgressEnabled: runtimeOptions.trayProgressEnabled !== false,
+            trayProgressEnabled: !!runtimeOptions.trayProgressEnabled,
         };
         windowManager?.setTrayProgressEnabled?.(activeBatchTrayCtx.trayProgressEnabled);
+        try {
+            const { setTrayNotifyEnabled } = require('./notifications');
+            setTrayNotifyEnabled(!!runtimeOptions.trayNotifyEnabled);
+        } catch { /* ignore */ }
 
         await notifySubtitleTaskJobStart(windowManager, {
             total: list.length,
@@ -1369,7 +1388,8 @@ async function runSubtitleBatch({
         notifySubtitleTask(windowManager, 'subtitle-task-job-finished', result);
         if (!result.cancelled && manageJobState) {
             try {
-                const { notifySubtitleComplete } = require('./notifications');
+                const { notifySubtitleComplete, setTrayNotifyEnabled } = require('./notifications');
+                setTrayNotifyEnabled(!!runtimeOptions.trayNotifyEnabled);
                 notifySubtitleComplete(`成功 ${result.generated}，跳过 ${result.skipped}，失败 ${result.failed}`);
             } catch { /* ignore */ }
             runPostSubtitleTaskActions(runtimeOptions, result, windowManager);
@@ -1608,6 +1628,10 @@ function setupTransWithAiBridge(api, deps) {
         });
     }
 
+    try {
+        syncTrayNotifyFromOptions(loadSettings(getAppRoot).options || {});
+    } catch { /* ignore */ }
+
     register('transwithai-validate', async (_event, payload = {}) => {
         try {
             const options = await readOptions(payload);
@@ -1699,7 +1723,7 @@ function setupTransWithAiBridge(api, deps) {
                 'beamSize', 'language', 'vadThreshold',
                 'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
                 'maxInitialTimestamp', 'repetitionPenalty', 'smartSplitWithVad', 'targetChunkDurationS',
-                'retranscribeWarmLight',
+                'retranscribeWarmLight', 'subtitleBakMode',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath',
             ]
                 .forEach((key) => {
