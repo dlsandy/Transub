@@ -1,6 +1,6 @@
 # Transub Windows build script
 param(
-    [ValidateSet('all', 'dir', 'portable', 'nsis')]
+    [ValidateSet('all', 'dir', 'portable', 'zip', 'nsis')]
     [string]$Target = 'all',
     [switch]$SkipTests,
     [switch]$SkipIcons
@@ -125,6 +125,7 @@ $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 switch ($Target) {
     'dir' { npx --yes electron-builder --win dir $configArg --publish never }
     'portable' { npx --yes electron-builder --win portable $configArg --publish never }
+    'zip' { npx --yes electron-builder --win zip $configArg --publish never }
     'nsis' { npx --yes electron-builder --win nsis $configArg --publish never }
     default { npx --yes electron-builder $configArg --publish never }
 }
@@ -136,11 +137,18 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Step 'Copy artifacts to dist'
 $copied = 0
+$pkgVersion = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
+$wantedZip = "Transub-$pkgVersion-win.zip"
+
 Get-ChildItem $packDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap' } |
+    Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap', '.zip' } |
     ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $distDir $_.Name) -Force
-        Write-Host "  copied $($_.Name)" -ForegroundColor Green
+        $destName = $_.Name
+        if ($_.Extension -eq '.zip' -and $destName -ne $wantedZip) {
+            $destName = $wantedZip
+        }
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $distDir $destName) -Force
+        Write-Host "  copied $destName" -ForegroundColor Green
         $copied++
     }
 
@@ -171,7 +179,7 @@ if ($copied -eq 0 -and $Target -ne 'dir') {
 
 Write-Step 'Done'
 Get-ChildItem $distDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in '.exe', '.yml' } |
+    Where-Object { $_.Extension -in '.exe', '.yml', '.zip' } |
     ForEach-Object { Write-Host "  $($_.Name)" -ForegroundColor Green }
 
 $unpackedExe = Join-Path $distUnpacked 'Transub.exe'

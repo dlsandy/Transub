@@ -28,6 +28,7 @@
     "build": "powershell -ExecutionPolicy Bypass -File tools/build.ps1",
     "build:dir": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target dir",
     "build:portable": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target portable",
+    "build:zip": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip",
     "build:setup": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target nsis",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -123,7 +124,7 @@
       "signAndEditExecutable": true,
       "target": [
         {
-          "target": "nsis",
+          "target": "zip",
           "arch": [
             "x64"
           ]
@@ -144,6 +145,8 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "packElevateHelper": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Transub",
