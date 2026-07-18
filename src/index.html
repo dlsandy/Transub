@@ -59,8 +59,8 @@
     <div id="loadingOverlay" class="fixed inset-0 z-[110] flex items-center justify-center bg-gray-50/85 backdrop-blur-[2px]">
         <div class="bg-white rounded-xl shadow-lg border border-gray-200 px-8 py-6 text-center max-w-sm mx-4">
             <i class="fa fa-spinner fa-spin text-3xl text-primary mb-3"></i>
-            <p id="loadingMessage" class="text-sm font-medium text-gray-700">正在初始化…</p>
-            <p class="text-xs text-gray-400 mt-2">首次检测 TransWithAI 可能需要数秒，请稍候</p>
+            <p id="loadingMessage" class="text-sm font-medium text-gray-700">正在加载配置…</p>
+            <p class="text-xs text-gray-400 mt-2">即将就绪</p>
         </div>
     </div>
     <header class="bg-white border-b border-gray-200 px-4 py-3 shrink-0 flex items-center justify-between gap-3">
@@ -150,11 +150,19 @@
                                 <i class="fa fa-check post-task-check" aria-hidden="true"></i>
                                 <span>关机</span>
                             </button>
+                            <button type="button" class="post-task-menu-item" data-post-task="open_folder" role="menuitem">
+                                <i class="fa fa-check post-task-check" aria-hidden="true"></i>
+                                <span>打开输出目录</span>
+                            </button>
                             <div id="shutdownDelayWrap" class="post-task-menu-shutdown hidden">
                                 <label class="block text-xs text-gray-500 mb-1" for="shutdownDelayInput">关机倒计时（秒）</label>
                                 <input type="number" id="shutdownDelayInput" min="0" max="600" step="1" value="60"
                                     class="w-full border rounded px-2 py-1 text-sm">
                             </div>
+                            <label class="post-task-menu-shutdown flex items-center gap-2 cursor-pointer" for="playSoundOnCompleteCheck">
+                                <input type="checkbox" id="playSoundOnCompleteCheck" class="rounded border-gray-300">
+                                <span class="text-xs text-gray-600">完成后播放提示音</span>
+                            </label>
                         </div>
                     </div>
                     <button type="button" id="stopBtn" class="px-4 py-1.5 border border-red-300 text-red-700 hover:bg-red-50 rounded-lg text-sm disabled:opacity-40 disabled:pointer-events-none" disabled>
@@ -177,12 +185,13 @@
                             <th class="px-2 py-2 text-right col-time">已用时</th>
                             <th class="px-2 py-2 text-right col-processed">已处理</th>
                             <th class="px-2 py-2 text-left col-detail">详情</th>
+                            <th class="px-2 py-2 text-center w-14" title="质量检查">QC</th>
                             <th class="px-2 py-2 col-actions text-center" title="操作"></th>
                         </tr>
                     </thead>
                     <tbody id="fileListBody" class="divide-y divide-gray-100">
                         <tr id="emptyListRow">
-                            <td colspan="7" class="px-4 py-8 text-center text-gray-400 text-sm">点击「添加视频」选择文件，或将多个视频拖入此区域</td>
+                            <td colspan="8" class="px-4 py-8 text-center text-gray-400 text-sm">点击「添加视频」选择文件，或将多个视频拖入此区域</td>
                         </tr>
                     </tbody>
                 </table>
@@ -210,7 +219,7 @@
                 <div id="logHost" class="text-xs text-gray-500 font-mono space-y-0.5">日志将显示在此处…</div>
             </div>
             <div id="logPanelInfer" class="log-panel max-h-32 overflow-auto">
-                <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">TransWithAI日志将显示在此处…</div>
+                <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">infer 日志将显示在此处…</div>
             </div>
         </section>
     </main>
@@ -229,7 +238,8 @@
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="output" role="tab">输出</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="transcribe" role="tab">转录</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="editor" role="tab">字幕编辑器</button>
-                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="advanced" role="tab">高级</button>
+                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="ffmpeg" role="tab">FFmpeg</button>
+                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="more" role="tab">更多</button>
                 </nav>
                 <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
                     <div class="params-tab-panel active space-y-3" data-tab-panel="install">
@@ -251,6 +261,10 @@
                         <div id="installWizardBox" class="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs text-gray-600 space-y-1 hidden">
                             <p class="font-medium text-violet-800">环境检测建议</p>
                             <p id="installWizardText" class="whitespace-pre-line leading-relaxed">—</p>
+                            <button type="button" id="applySuggestedDeviceBtn"
+                                class="mt-1 px-2.5 py-1 border border-violet-200 rounded-md text-xs text-violet-700 hover:bg-violet-50 hidden">
+                                一键应用推荐设备
+                            </button>
                         </div>
                         <button type="button" id="openLatestLogBtn" class="text-xs text-violet-700 hover:underline">打开 latest.log</button>
                     </div>
@@ -303,6 +317,20 @@
                         <label class="flex items-center gap-2 text-sm">
                             <input type="checkbox" id="overwriteCheck" class="rounded">
                             <span>覆盖已有字幕（--overwrite）</span>
+                        </label>
+                        <label class="flex items-start gap-2 text-sm">
+                            <input type="checkbox" id="trayProgressCheck" class="rounded mt-0.5" checked>
+                            <span>
+                                <span class="font-medium text-gray-700">任务时更新托盘进度</span>
+                                <span class="block text-xs text-gray-500 mt-0.5">在系统托盘图标提示中显示批次进度与预计剩余时间。</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start gap-2 text-sm">
+                            <input type="checkbox" id="minimizeToTrayOnStartCheck" class="rounded mt-0.5">
+                            <span>
+                                <span class="font-medium text-gray-700">开始时最小化到托盘</span>
+                                <span class="block text-xs text-gray-500 mt-0.5">从本窗口开始任务时隐藏到托盘；双击托盘图标可恢复。</span>
+                            </span>
                         </label>
                         <p class="text-xs text-gray-500">AMD 版请下载对应 gfx 后缀的 ROCm 包；批处理仅适用于 cuda_batch 模式。</p>
                     </div>
@@ -440,12 +468,25 @@
                                 </span>
                             </label>
                         </fieldset>
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                            <legend class="text-xs font-semibold text-gray-500 px-1">批量完成后</legend>
+                            <label class="flex items-start gap-2 text-sm">
+                                <input type="checkbox" id="postBatchQcCheck" class="rounded mt-0.5">
+                                <span>
+                                    <span class="font-medium text-gray-700">完成后 QC 检测</span>
+                                    <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                                        默认关闭。任务结束后扫描新生成字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量；不会自动修复或打开编辑器。
+                                    </span>
+                                </span>
+                            </label>
+                        </fieldset>
                     </div>
 
-                    <div class="params-tab-panel space-y-3" data-tab-panel="advanced">
+                    <div class="params-tab-panel space-y-3" data-tab-panel="ffmpeg">
+                        <p class="text-xs text-gray-500">用于视频探测、静音分割与编辑器相关媒体处理。留空则优先使用软件内置 FFmpeg，其次系统 PATH。</p>
                         <label class="block text-sm">
                             <span class="text-gray-600">FFmpeg 路径</span>
-                            <p class="text-xs text-gray-400 mt-0.5">填写 ffmpeg.exe 或其所在文件夹，留空则使用系统 PATH 中的 ffprobe</p>
+                            <p class="text-xs text-gray-400 mt-0.5">可填写 ffmpeg.exe，或包含 ffmpeg.exe / ffprobe.exe 的文件夹</p>
                             <div class="flex flex-wrap gap-2 mt-1">
                                 <input type="text" id="ffmpegPathInput" class="flex-1 min-w-[12rem] border rounded-lg px-3 py-2 text-sm font-mono"
                                     placeholder="例如 F:\ffmpeg\bin\ffmpeg.exe" maxlength="4096">
@@ -455,13 +496,28 @@
                             </div>
                         </label>
                         <p id="ffmpegStatus" class="text-xs text-gray-500 min-h-[1.25rem]"></p>
-                        <div class="flex flex-wrap gap-2">
-                            <button type="button" id="exportConfigBtn" class="px-3 py-1.5 border rounded-lg text-sm">导出配置</button>
-                            <button type="button" id="importConfigBtn" class="px-3 py-1.5 border rounded-lg text-sm">导入配置</button>
-                            <button type="button" id="checkUpdateBtn" class="px-3 py-1.5 border rounded-lg text-sm">检查更新</button>
-                            <button type="button" id="openHistoryBtn" class="px-3 py-1.5 border rounded-lg text-sm">任务历史</button>
+                    </div>
+
+                    <div class="params-tab-panel space-y-3" data-tab-panel="more">
+                        <p class="text-xs text-gray-500">配置备份、更新与其它实用入口。</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button type="button" id="exportConfigBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-gray-50">
+                                <i class="fa fa-upload w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>导出配置
+                            </button>
+                            <button type="button" id="importConfigBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-gray-50">
+                                <i class="fa fa-download w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>导入配置
+                            </button>
+                            <button type="button" id="checkUpdateBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-gray-50">
+                                <i class="fa fa-refresh w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>检查新版本
+                            </button>
+                            <button type="button" id="openHistoryBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-gray-50">
+                                <i class="fa fa-history w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>任务历史
+                            </button>
+                            <button type="button" id="openWebsiteBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-gray-50 sm:col-span-2">
+                                <i class="fa fa-github w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>访问官网（GitHub）
+                            </button>
                         </div>
-                        <p id="advancedStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
@@ -497,6 +553,7 @@
         </div>
     </div>
 
+    <script src="js/eta-core.js"></script>
     <script src="js/app.js"></script>
     <script src="js/features.js"></script>
     <script src="js/subtitle-editor-launcher.js"></script>

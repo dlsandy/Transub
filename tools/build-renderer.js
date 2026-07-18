@@ -36,7 +36,7 @@ function minifyJsDir(dir) {
         }
         if (!name.endsWith('.js') || name.endsWith('.min.js')) continue;
         const code = fs.readFileSync(full, 'utf8');
-        const result = esbuild.transformSync(code, { minify: true, target: 'chrome120' });
+        const result = esbuild.transformSync(code, { minify: true, target: 'chrome140' });
         fs.writeFileSync(full, result.code);
     }
 }

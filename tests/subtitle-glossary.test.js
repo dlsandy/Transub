@@ -7,6 +7,7 @@ const {
     parseAliasesInput,
     upsertEntry,
     replaceTerm,
+    mergeGlossaries,
 } = require('../src/js/subtitle-glossary-core');
 
 function testParseAliasesInput() {
@@ -82,14 +83,36 @@ function testAliasOnlyIssue() {
     assert.strictEqual(issues[0].type, 'alias_only');
 }
 
-function main() {
-    testParseAliasesInput();
-    testScanDetectsVariants();
-    testApplyUnifiesAliases();
-    testAsciiWordBoundary();
-    testUpsertEntry();
-    testAliasOnlyIssue();
-    console.log('subtitle-glossary.test.js: all passed');
+function testMergeGlossariesProjectOverridesGlobal() {
+    const merged = mergeGlossaries(
+        { entries: [{ id: 'g1', canonical: 'Transub', aliases: ['TransSub'] }] },
+        { entries: [{ id: 'p1', canonical: 'transub', aliases: ['TS'], note: 'project' }] },
+    );
+    assert.strictEqual(merged.entries.length, 1);
+    assert.strictEqual(merged.entries[0].id, 'p1');
+    assert.ok(merged.entries[0].aliases.includes('TS'));
 }
 
-main();
+describe("subtitle-glossary", () => {
+    it("parse aliases input", () => {
+        testParseAliasesInput();
+    });
+    it("scan detects variants", () => {
+        testScanDetectsVariants();
+    });
+    it("apply unifies aliases", () => {
+        testApplyUnifiesAliases();
+    });
+    it("ascii word boundary", () => {
+        testAsciiWordBoundary();
+    });
+    it("upsert entry", () => {
+        testUpsertEntry();
+    });
+    it("alias only issue", () => {
+        testAliasOnlyIssue();
+    });
+    it("merge glossaries with project override", () => {
+        testMergeGlossariesProjectOverridesGlobal();
+    });
+});

@@ -23,16 +23,31 @@ function loadTaskHistory() {
 function appendTaskHistory(entry) {
     const filePath = getHistoryFilePath();
     const { entries } = loadTaskHistory();
+    const startedAt = entry.startedAt || new Date().toISOString();
+    const finishedAt = entry.finishedAt || new Date().toISOString();
+    let wallSec = Number(entry.wallSec);
+    if (!Number.isFinite(wallSec) || wallSec < 0) {
+        const start = Date.parse(startedAt);
+        const end = Date.parse(finishedAt);
+        wallSec = Number.isFinite(start) && Number.isFinite(end) && end >= start
+            ? Math.round((end - start) / 1000)
+            : 0;
+    }
+    const opts = entry.options && typeof entry.options === 'object' ? entry.options : {};
     const record = {
         id: entry.id || `job-${Date.now()}`,
-        startedAt: entry.startedAt || new Date().toISOString(),
-        finishedAt: entry.finishedAt || new Date().toISOString(),
+        startedAt,
+        finishedAt,
+        wallSec,
+        totalDurationSec: Math.max(0, Number(entry.totalDurationSec) || 0),
+        device: String(entry.device || opts.device || '').trim(),
+        task: String(entry.task || opts.task || '').trim(),
         total: Number(entry.total) || 0,
         generated: Number(entry.generated) || 0,
         skipped: Number(entry.skipped) || 0,
         failed: Number(entry.failed) || 0,
         cancelled: !!entry.cancelled,
-        options: entry.options || {},
+        options: opts,
         errors: Array.isArray(entry.errors) ? entry.errors.slice(0, 8) : [],
     };
     const next = [record, ...entries].slice(0, MAX_ENTRIES);

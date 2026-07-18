@@ -14,7 +14,8 @@
         row.textContent = line;
         host.appendChild(row);
         while (host.childElementCount > 400) host.firstChild?.remove();
-        host.scrollTop = host.scrollHeight;
+        const panel = host.closest('.log-panel') || host;
+        panel.scrollTop = panel.scrollHeight;
     }
 
     function bindLogTabs() {
@@ -23,7 +24,9 @@
                 const tab = btn.dataset.logTab;
                 document.querySelectorAll('.log-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.logTab === tab));
                 document.querySelectorAll('.log-panel').forEach((p) => {
-                    p.classList.toggle('active', p.id === (tab === 'infer' ? 'logPanelInfer' : 'logPanelApp'));
+                    const active = p.id === (tab === 'infer' ? 'logPanelInfer' : 'logPanelApp');
+                    p.classList.toggle('active', active);
+                    if (active) p.scrollTop = p.scrollHeight;
                 });
             });
         });
@@ -71,14 +74,44 @@
         core()?.appendLog(`从文件夹添加 ${scan.files?.length || 0} 个视频`, 'info');
     }
 
+    let installWizardPromise = null;
+
     async function showInstallWizard() {
-        const res = await electron?.transWithAiDetectGpu?.();
         const box = document.getElementById('installWizardBox');
         const text = document.getElementById('installWizardText');
-        if (!box || !text || !res?.ok) return;
-        const info = res.info || {};
-        text.textContent = info.friendlyRecommendation || info.recommendation || '—';
-        box.classList.remove('hidden');
+        const applyBtn = document.getElementById('applySuggestedDeviceBtn');
+        if (!box || !text) return;
+        if (box.dataset.loaded === '1') return;
+        if (installWizardPromise) return installWizardPromise;
+
+        installWizardPromise = (async () => {
+            const res = await electron?.transWithAiDetectGpu?.();
+            if (!res?.ok) return;
+            const info = res.info || {};
+            text.textContent = info.friendlyRecommendation || info.recommendation || '—';
+            box.classList.remove('hidden');
+            box.dataset.loaded = '1';
+            if (applyBtn) {
+                const device = String(info.suggestedDevice || '').trim();
+                const sel = document.getElementById('deviceSelect');
+                const hasOption = !!device && !!sel?.querySelector(`option[value="${device}"]`);
+                applyBtn.classList.toggle('hidden', !hasOption);
+                applyBtn.dataset.device = hasOption ? device : '';
+            }
+        })().finally(() => {
+            installWizardPromise = null;
+        });
+        return installWizardPromise;
+    }
+
+    function applySuggestedDevice() {
+        const applyBtn = document.getElementById('applySuggestedDeviceBtn');
+        const device = String(applyBtn?.dataset.device || '').trim();
+        const sel = document.getElementById('deviceSelect');
+        if (!device || !sel?.querySelector(`option[value="${device}"]`)) return;
+        sel.value = device;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        core()?.appendLog(`已应用推荐设备：${sel.options[sel.selectedIndex]?.text || device}`, 'ok');
     }
 
     async function openHistoryModal() {
@@ -129,10 +162,16 @@
         });
     }
 
-    function bindAdvanced() {
+    const PROJECT_HOME_URL = 'https://github.com/dlsandy/Transub';
+
+    function moreStatusEl() {
+        return document.getElementById('moreStatus');
+    }
+
+    function bindMoreTab() {
         document.getElementById('exportConfigBtn')?.addEventListener('click', async () => {
             const res = await electron?.transWithAiExportConfig?.();
-            const el = document.getElementById('advancedStatus');
+            const el = moreStatusEl();
             if (res?.ok && !res.canceled && el) el.textContent = `已导出：${res.path}`;
             else if (res?.error && el) el.textContent = res.error;
         });
@@ -140,19 +179,78 @@
             const res = await electron?.transWithAiImportConfig?.();
             if (res?.ok && res.options) {
                 core()?.applyOptionsToForm(res.options);
-                if (document.getElementById('advancedStatus')) {
-                    document.getElementById('advancedStatus').textContent = '配置已导入';
-                }
+                const el = moreStatusEl();
+                if (el) el.textContent = '配置已导入';
             }
         });
         document.getElementById('checkUpdateBtn')?.addEventListener('click', async () => {
-            const res = await electron?.transWithAiCheckAppUpdate?.();
-            const el = document.getElementById('advancedStatus');
-            if (res?.ok && el) {
-                el.textContent = `当前版本 v${res.currentVersion}，请访问 GitHub Releases 查看 TransWithAI 更新`;
+            const el = moreStatusEl();
+            const btn = document.getElementById('checkUpdateBtn');
+            if (btn) btn.disabled = true;
+            if (el) el.textContent = '正在检查更新…';
+            try {
+                const res = await electron?.transWithAiCheckAppUpdate?.();
+                if (!res?.ok) {
+                    if (el) el.textContent = res?.error || '检查更新失败';
+                    return;
+                }
+                if (el) el.textContent = res.message || `当前版本 v${res.currentVersion}`;
+
+                if (res.updateAvailable) {
+                    if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
+                        const yes = window.confirm(
+                            `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？\n（仅 NSIS 安装版支持应用内更新）`,
+                        );
+                        if (yes) {
+                            if (el) el.textContent = `正在下载 v${res.latestVersion}…`;
+                            const dl = await electron.transubDownloadAppUpdate();
+                            if (!dl?.ok) {
+                                if (el) el.textContent = dl?.error || '下载失败';
+                                const open = window.confirm('应用内下载失败，是否打开 GitHub Releases 手动下载？');
+                                if (open) {
+                                    await electron.transubOpenUpdatePage?.({
+                                        url: res.downloadUrl || res.releasesUrl,
+                                    });
+                                }
+                                return;
+                            }
+                            if (el) el.textContent = dl.message || '更新已下载';
+                            const install = window.confirm('更新已下载完成，是否立即重启安装？');
+                            if (install) {
+                                await electron.transubQuitAndInstallUpdate?.();
+                            }
+                        }
+                    } else {
+                        const open = window.confirm(
+                            `发现新版本 v${res.latestVersion}。\n\n是否打开下载页面？`,
+                        );
+                        if (open) {
+                            await electron?.transubOpenUpdatePage?.({
+                                url: res.downloadUrl || res.releasesUrl,
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                if (el) el.textContent = err?.message || '检查更新失败';
+            } finally {
+                if (btn) btn.disabled = false;
             }
         });
         document.getElementById('openHistoryBtn')?.addEventListener('click', openHistoryModal);
+        document.getElementById('openWebsiteBtn')?.addEventListener('click', async () => {
+            const el = moreStatusEl();
+            try {
+                const res = await electron?.openExternal?.(PROJECT_HOME_URL);
+                if (res?.ok === false) {
+                    if (el) el.textContent = res?.error || '打开官网失败';
+                    return;
+                }
+                if (el) el.textContent = '已在浏览器中打开项目主页';
+            } catch (err) {
+                if (el) el.textContent = err?.message || '打开官网失败';
+            }
+        });
         document.getElementById('openLatestLogBtn')?.addEventListener('click', async () => {
             const path = document.getElementById('installPathInput')?.value?.trim();
             const res = await electron?.transWithAiOpenLatestLog?.({ installPath: path });
@@ -182,7 +280,7 @@
         if (!electron?.isDesktop) return;
         bindLogTabs();
         bindModals();
-        bindAdvanced();
+        bindMoreTab();
         bindPresets();
         syncOutputModeUi();
         document.getElementById('outputModeSelect')?.addEventListener('change', syncOutputModeUi);
@@ -194,7 +292,8 @@
             }
         });
         loadPresets();
-        showInstallWizard();
+        // GPU detect (nvidia-smi / PowerShell) is deferred until the install tab opens
+        document.getElementById('applySuggestedDeviceBtn')?.addEventListener('click', applySuggestedDevice);
         electron.onTransWithAiInferLog?.((payload) => {
             if (payload?.line) appendInferLog(payload.line);
         });
