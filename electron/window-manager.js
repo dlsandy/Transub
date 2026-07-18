@@ -114,8 +114,10 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             return mainWindow;
         }
         mainWindow.setSkipTaskbar(false);
+        applyWindowIcon(mainWindow);
         if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.show();
+        applyWindowIcon(mainWindow);
         mainWindow.focus();
         return mainWindow;
     }
@@ -255,9 +257,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         mainWindow.removeMenu();
         applyWindowIcon(mainWindow);
 
-        if (saved?.isMaximized) {
-            mainWindow.maximize();
-        }
+        const shouldMaximize = !!saved?.isMaximized;
 
         mainWindow.loadFile(resolveHtmlPath(app, 'index.html'));
         attachTrayBehavior(mainWindow);
@@ -282,6 +282,9 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
                 return;
             }
             if (!mainWindow.isVisible()) mainWindow.show();
+            // Maximize after show so Windows taskbar keeps the window icon, not the host exe icon
+            if (shouldMaximize && !mainWindow.isMaximized()) mainWindow.maximize();
+            applyWindowIcon(mainWindow);
         };
 
         mainWindow.once('ready-to-show', reveal);

@@ -120,8 +120,9 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         if (shown || win.isDestroyed()) return;
         shown = true;
         applyEditorWindowIcon(win);
-        if (!win.isMaximized()) win.maximize();
         win.show();
+        if (!win.isMaximized()) win.maximize();
+        applyEditorWindowIcon(win);
     };
     win.once('ready-to-show', reveal);
     // 大页面首次绘制偏慢时，避免长时间完全无窗口

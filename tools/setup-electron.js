@@ -31,25 +31,33 @@ if (!fs.existsSync(installJs)) {
     process.exit(1);
 }
 
-if (isInstalled()) {
+if (!isInstalled()) {
+    console.log('Downloading Electron', version, '...');
+    const result = spawnSync(process.execPath, [installJs], {
+        cwd: electronDir,
+        env: process.env,
+        stdio: 'inherit',
+    });
+
+    if (result.status !== 0) {
+        process.exit(result.status || 1);
+    }
+
+    if (!fs.existsSync(exePath)) {
+        console.error('[setup-electron] electron binary not found after install:', exePath);
+        process.exit(1);
+    }
+
+    console.log('OK:', exePath);
+} else {
     console.log('Electron already installed:', exePath);
-    process.exit(0);
 }
 
-console.log('Downloading Electron', version, '...');
-const result = spawnSync(process.execPath, [installJs], {
-    cwd: electronDir,
-    env: process.env,
-    stdio: 'inherit',
-});
-
-if (result.status !== 0) {
-    process.exit(result.status || 1);
+// Windows taskbar uses the host exe icon; keep electron.exe branded for `npm start`.
+if (process.platform === 'win32') {
+    try {
+        require('./patch-electron-icon').patchElectronIcon({ quiet: false });
+    } catch (err) {
+        console.warn('[setup-electron] patch icon skipped:', err.message);
+    }
 }
-
-if (!fs.existsSync(exePath)) {
-    console.error('[setup-electron] electron binary not found after install:', exePath);
-    process.exit(1);
-}
-
-console.log('OK:', exePath);

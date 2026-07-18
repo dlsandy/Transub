@@ -149,22 +149,24 @@ function getEditorWindowIconOption() {
     return getWindowIconOption();
 }
 
-function applyWindowIcon(win) {
-    if (!win || win.isDestroyed()) return;
-    const iconPath = getAppIconPath();
-    if (!iconPath) return;
+function setWindowIconFromPath(win, iconPath) {
+    if (!win || win.isDestroyed() || !iconPath) return;
     try {
         win.setIcon(iconPath);
+        return;
+    } catch (_) { /* try NativeImage fallback */ }
+    try {
+        const image = nativeImage.createFromPath(iconPath);
+        if (!image.isEmpty()) win.setIcon(image);
     } catch (_) { /* ignore */ }
 }
 
+function applyWindowIcon(win) {
+    setWindowIconFromPath(win, getAppIconPath());
+}
+
 function applyEditorWindowIcon(win) {
-    if (!win || win.isDestroyed()) return;
-    const iconPath = getEditorIconPath();
-    if (!iconPath) return;
-    try {
-        win.setIcon(iconPath);
-    } catch (_) { /* ignore */ }
+    setWindowIconFromPath(win, getEditorIconPath());
 }
 
 module.exports = {
