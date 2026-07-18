@@ -26,12 +26,16 @@ const {
     clearSubtitleDraft,
     shouldOfferDraftRestore,
 } = require('./subtitle-draft');
-const { readGlossary, writeGlossary, readGlossaryByScope, writeGlossaryByScope } = require('./glossary-data');
+function glossaryData() {
+    // Lazy: avoid loading src/js shared cores when only opening updater / ffmpeg routes
+    return require('./glossary-data');
+}
 const {
     checkForAppUpdate,
     downloadAppUpdate,
     quitAndInstallUpdate,
     openUpdateDownload,
+    setUpdateProgressListener,
 } = require('./app-updater');
 
 const VIDEO_EXTENSIONS = new Set([
@@ -493,6 +497,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-get-glossary', async (_event, payload = {}) => {
         try {
+            const { readGlossary, readGlossaryByScope } = glossaryData();
             if (payload && (payload.scope || payload.subtitlePath || payload.path)) {
                 const filePath = payload.subtitlePath || payload.path;
                 if (filePath && String(payload.scope || '').toLowerCase() !== 'global') {
@@ -508,6 +513,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-save-glossary', async (_event, payload = {}) => {
         try {
+            const { writeGlossaryByScope } = glossaryData();
             const scope = String(payload.scope || 'global').toLowerCase();
             if (scope === 'project') {
                 const filePath = payload.subtitlePath || payload.path;
@@ -521,6 +527,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-export-glossary', async (event) => {
         try {
+            const { readGlossary } = glossaryData();
             const win = browserWindowFromEvent(event);
             const current = readGlossary();
             if (!current.ok) return current;
@@ -544,6 +551,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-import-glossary', async (event) => {
         try {
+            const { writeGlossary } = glossaryData();
             const win = browserWindowFromEvent(event);
             const result = await dialog.showOpenDialog(win || undefined, {
                 title: '导入术语表',
@@ -706,11 +714,22 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
-    register('transub-download-app-update', async () => {
+    register('transub-download-app-update', async (event) => {
+        setUpdateProgressListener((progress) => {
+            try {
+                if (event?.sender && !event.sender.isDestroyed()) {
+                    event.sender.send('transub-app-update-progress', progress);
+                }
+            } catch {
+                /* ignore destroyed sender */
+            }
+        });
         try {
             return await downloadAppUpdate();
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
+        } finally {
+            setUpdateProgressListener(null);
         }
     });
 
