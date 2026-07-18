@@ -27,27 +27,17 @@
 - **快捷键**：工具栏独立按钮（设置后方）
 
 ### 修复
-- **设置不持久**：打包后用户设置改为写入稳定目录（NSIS → Electron `userData`；便携版 → `PORTABLE_EXECUTABLE_DIR`），不再写到每次解压的临时 exe 旁；并自动迁移旧位置的 `transub-settings.json`
+- **设置不持久**：打包后用户设置改为写入稳定目录（NSIS → Electron `userData`；便携版 → `PORTABLE_EXECUTABLE_DIR`），不再写到每次解压的临时 exe 旁；并自动迁移旧位置的 `transub-settings.json`（感谢QQ804218提供的bug信息）
 - **FFmpeg 目录“消失”**：自定义路径若落在软件安装/`_internal` 内，更新或重装会覆盖该树；现会提示改用安装目录外的路径，且检测保存失败时不再静默忽略
 - **查找替换**：全部替换成功后显示「已成功替换 N 处」，不再误报「未找到匹配项」
 - **确认框失焦**：确认/取消后恢复编辑器输入焦点（避免需切窗才能继续编辑）
 - **任务栏图标**：开发与打包路径正确使用 Transub `app.ico`
+- **日志滚动**：转录过程中，日志自动滚动至最新条目（感谢QQ804218的建议）
 
 ### 平台与分发
-- **仅 Windows**：移除 macOS dock / activate 残留逻辑，明确产品定位为 Windows 桌面应用
-- **不签名**：Windows 代码签名需付费证书，当前不启用；SmartScreen 可能提示「未知发布者」属预期
 - **GitHub 应用更新**：设置页「检查更新」对接 GitHub Releases
   - NSIS 安装版：若 Release 含 `latest.yml`，可应用内下载并重启安装（electron-updater）
   - 便携版 / 开发模式 / 无 `latest.yml`：通过 GitHub API 比对版本并打开下载页
-
-### 发布说明（维护者）
-发版请用 electron-builder 生成并上传 `latest.yml`（及 Setup / portable 安装包），否则应用内自动安装不可用，但仍可检查版本并跳转 Releases。
-
-```bash
-# 需配置 GH_TOKEN
-npm run build:setup
-# 将 dist 中的 Transub-Setup-*.exe、Transub-*-portable.exe、latest.yml、*.blockmap 上传到 GitHub Release
-```
 
 ## 1.3.0
 
