@@ -518,6 +518,16 @@
                             </button>
                         </div>
                         <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        <div id="updateDownloadProgress" class="hidden space-y-1.5 mt-1" aria-live="polite">
+                            <div class="flex items-center justify-between gap-2 text-xs text-gray-600">
+                                <span id="updateDownloadLabel">正在下载更新…</span>
+                                <span id="updateDownloadPercent" class="font-mono tabular-nums shrink-0">0%</span>
+                            </div>
+                            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div id="updateDownloadBar" class="h-full bg-violet-500 transition-all duration-200 ease-out" style="width:0%"></div>
+                            </div>
+                            <p id="updateDownloadDetail" class="text-xs text-gray-400 min-h-[1rem]"></p>
+                        </div>
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">

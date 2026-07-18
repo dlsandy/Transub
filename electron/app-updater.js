@@ -18,6 +18,35 @@ let updater = null;
 let updateReady = false;
 /** @type {{ version: string, releaseNotes?: string } | null} */
 let pendingUpdate = null;
+/** @type {((progress: {
+ *   percent: number,
+ *   transferred: number,
+ *   total: number,
+ *   bytesPerSecond: number,
+ * }) => void) | null} */
+let progressListener = null;
+
+function setUpdateProgressListener(fn) {
+    progressListener = typeof fn === 'function' ? fn : null;
+}
+
+function emitDownloadProgress(progressObj) {
+    if (!progressListener) return;
+    const percent = Number(progressObj?.percent);
+    const transferred = Number(progressObj?.transferred);
+    const total = Number(progressObj?.total);
+    const bytesPerSecond = Number(progressObj?.bytesPerSecond);
+    try {
+        progressListener({
+            percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0,
+            transferred: Number.isFinite(transferred) ? Math.max(0, transferred) : 0,
+            total: Number.isFinite(total) ? Math.max(0, total) : 0,
+            bytesPerSecond: Number.isFinite(bytesPerSecond) ? Math.max(0, bytesPerSecond) : 0,
+        });
+    } catch (err) {
+        console.warn('[app-updater] progress listener error', err?.message || err);
+    }
+}
 
 function getElectronApp() {
     try {
@@ -128,6 +157,9 @@ function getUpdater() {
             version: info.version,
             releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '',
         };
+    });
+    autoUpdater.on('download-progress', (progress) => {
+        emitDownloadProgress(progress);
     });
     autoUpdater.on('update-downloaded', () => {
         updateReady = true;
@@ -306,4 +338,5 @@ module.exports = {
     downloadAppUpdate,
     quitAndInstallUpdate,
     openUpdateDownload,
+    setUpdateProgressListener,
 };

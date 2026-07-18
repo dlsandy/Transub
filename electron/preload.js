@@ -106,6 +106,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubDownloadAppUpdate: () => ipcRenderer.invoke('transub-download-app-update'),
     transubQuitAndInstallUpdate: () => ipcRenderer.invoke('transub-quit-and-install-update'),
     transubOpenUpdatePage: (payload) => ipcRenderer.invoke('transub-open-update-page', payload || {}),
+    onAppUpdateDownloadProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-app-update-progress', handler);
+        return () => ipcRenderer.removeListener('transub-app-update-progress', handler);
+    },
     transWithAiCancel: () => ipcRenderer.invoke('transwithai-cancel'),
     onTransWithAiProgress: (callback) => {
         if (typeof callback !== 'function') return () => {};
