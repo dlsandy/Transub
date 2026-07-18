@@ -19,8 +19,8 @@
   "scripts": {
     "postinstall": "node tools/setup-electron.js && node tools/setup-vendor-assets.js && node tools/build-css.js",
     "setup:ffmpeg": "node tools/setup-ffmpeg.js",
-    "start": "electron .",
-    "start:editor": "electron . --subtitle-editor-only",
+    "start": "node tools/patch-electron-icon.js && electron .",
+    "start:editor": "node tools/patch-electron-icon.js && electron . --subtitle-editor-only",
     "build:css": "node tools/build-css.js",
     "build:renderer": "node tools/build-renderer.js",
     "pack": "npm run build:renderer && electron-builder --dir",
