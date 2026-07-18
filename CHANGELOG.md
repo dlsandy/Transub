@@ -6,6 +6,7 @@
 
 ### 平台与分发
 - **打包资源封入 asar**：HTML / JS / CSS 不再解压到 exe 旁明文目录，改为打入 `app.asar`，降低被随意篡改的风险（`_internal` 等原生依赖仍保持旁路）
+- **默认分发改为 zip + 便携版**：未签名时 NSIS `Setup.exe` 易被 SmartScreen / 杀软拦截；Release 主推 `Transub-*-win.zip`（解压即用）与 `Transub-*-portable.exe`。NSIS 安装包仅作可选本地构建（`npm run build:setup`），不再作为默认发布产物
 
 ### 主窗口
 - **记住窗口尺寸**：关闭后再次打开恢复上次宽高、位置与最大化状态
@@ -29,7 +30,7 @@
 - **任务栏图标**：开发模式 (`npm start`) 会把 Transub 图标写入 `electron.exe`，避免重装 Electron 后又变回默认图标；从托盘恢复时也会重新应用窗口图标；最大化改在 show 之后，避免任务栏显示宿主 exe 图标
 
 ### 其它
-- **推荐安装**：建议安装 setup 版本（`Transub-Setup-1.3.2.exe`），获取更好的使用性能和操作体验
+- **推荐安装**：下载 `Transub-1.3.2-win.zip` 解压后运行 `Transub.exe`，或使用便携版 `Transub-1.3.2-portable.exe`（均未签名，一般不会像 NSIS Setup 那样被系统拦截）
 
 ## 1.3.1
 

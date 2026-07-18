@@ -88,13 +88,14 @@ npm start -- --edit-sub="path\to\file.srt" --edit-video="path\to\video.mp4"
 
 ```bash
 npm run dist
-# 或使用 Windows 打包脚本（可选：只打安装包 / 便携版）
-npm run build
-npm run build:setup
+# 或使用 Windows 打包脚本
+npm run build              # 默认：zip + 便携版 + dir
+npm run build:zip
 npm run build:portable
+npm run build:setup        # 可选 NSIS（未签名时易被系统拦截，默认不发布）
 ```
 
-安装包与便携版输出到 `dist/`（或经 `.packaging` 中转）。发版时请一并上传 `latest.yml`（及 `.blockmap`），以便 NSIS 安装版使用应用内更新。
+产物输出到 `dist/`（或经 LocalAppData 暂存目录中转）。**默认发版上传** `Transub-*-win.zip` 与 `Transub-*-portable.exe`。若本地额外打了 NSIS，也可附带 `Transub-Setup-*.exe`、`latest.yml` 与 `.blockmap`。
 
 ### 应用更新（GitHub）
 
@@ -102,10 +103,15 @@ npm run build:portable
 
 | 安装方式 | 行为 |
 |---------|------|
-| **NSIS 安装版** + Release 含 `latest.yml` | 可应用内下载并重启安装 |
-| **便携版** / 无 `latest.yml` / 开发模式 | 比对版本后打开下载页，需手动安装 |
+| **zip / 便携版** / 开发模式 | 比对版本后打开下载页（优先 zip，其次便携版），需手动安装 |
+| **NSIS 安装版** + Release 含 `latest.yml` | 可应用内下载并重启安装（可选产物，默认不发布） |
 
-当前**不进行代码签名**（付费 Authenticode）。首次运行可能被 SmartScreen 拦截，选择「仍要运行」即可。
+当前**不进行代码签名**（付费 Authenticode）。请优先使用：
+
+1. **`Transub-*-win.zip`**：解压后运行 `Transub.exe`
+2. **`Transub-*-portable.exe`**：单文件便携版
+
+NSIS `Transub-Setup-*.exe` 未签名时容易被 SmartScreen / 杀软拦截，因此默认不再作为发布产物。
 
 变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
