@@ -132,9 +132,14 @@ async function fetchGithubLatestRelease() {
 
 function pickSetupAsset(release) {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
-    const prefer = assets.find((a) => /setup/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
-    if (prefer) return prefer;
-    return assets.find((a) => /\.exe$/i.test(a.name || '') && !/portable/i.test(a.name || '')) || null;
+    // Prefer zip / portable — unsigned NSIS Setup.exe is frequently blocked by SmartScreen.
+    const zip = assets.find((a) => /\.zip$/i.test(a.name || '') && /transub/i.test(a.name || ''));
+    if (zip) return zip;
+    const portable = assets.find((a) => /portable/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
+    if (portable) return portable;
+    const setup = assets.find((a) => /setup/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
+    if (setup) return setup;
+    return assets.find((a) => /\.exe$/i.test(a.name || '')) || null;
 }
 
 function getUpdater() {

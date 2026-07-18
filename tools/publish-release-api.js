@@ -182,17 +182,37 @@ function buildChangelogNotes() {
     return `## Transub ${TAG}\n\n${m[1].trim()}\n`;
 }
 
-function createRelease(commitSha) {
-    const notes = buildChangelogNotes();
-    const assets = [
+function findDistZip() {
+    const preferred = path.join(ROOT, 'dist', `Transub-${VERSION}-win.zip`);
+    if (fs.existsSync(preferred)) return preferred;
+    const distDir = path.join(ROOT, 'dist');
+    if (!fs.existsSync(distDir)) return null;
+    const match = fs.readdirSync(distDir).find((name) => (
+        name.endsWith('.zip')
+        && name.includes(VERSION)
+        && /transub/i.test(name)
+    ));
+    return match ? path.join(distDir, match) : null;
+}
+
+function resolveReleaseAssets() {
+    // Prefer zip + portable (unsigned NSIS Setup is often blocked by SmartScreen/AV).
+    // Keep NSIS + latest.yml optional for local/optional setup builds.
+    const zip = findDistZip();
+    const portable = path.join(ROOT, 'dist', `Transub-${VERSION}-portable.exe`);
+    if (!zip) throw new Error(`Missing release asset: Transub-${VERSION}-win.zip`);
+    if (!fs.existsSync(portable)) throw new Error(`Missing release asset: ${portable}`);
+    const optional = [
         path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe`),
         path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe.blockmap`),
-        path.join(ROOT, 'dist', `Transub-${VERSION}-portable.exe`),
         path.join(ROOT, 'dist', 'latest.yml'),
-    ];
-    for (const a of assets) {
-        if (!fs.existsSync(a)) throw new Error(`Missing release asset: ${a}`);
-    }
+    ].filter((a) => fs.existsSync(a));
+    return [zip, portable, ...optional];
+}
+
+function createRelease(commitSha) {
+    const notes = buildChangelogNotes();
+    const assets = resolveReleaseAssets();
 
     // Create / recreate tag + release
     try {
