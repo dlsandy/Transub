@@ -11,8 +11,10 @@
     const DETAIL_TOOLS_KEY = 'transub-editor-detail-tools-open';
     const AUTO_FOCUS_KEY = 'transub-editor-auto-focus';
     const WAVEFORM_KEY = 'transub-editor-waveform';
+    const TIMELINE_ZOOM_KEY = 'transub-editor-timeline-zoom';
     const DEFAULT_TARGET_CPS = 3;
     const DEFAULT_RETRANSCRIBE_DUR_SEC = 10;
+    const DEFAULT_TIMELINE_ZOOM = 5;
     const SPLIT_MODES = new Set(['smart', 'lines', 'spaces', 'chars', 'count', 'cursor', 'playhead', 'silence']);
 
     function installPrefs(ctx) {
@@ -318,7 +320,9 @@
             if (els.waveformToggle) {
                 els.waveformToggle.classList.toggle('is-active', on);
                 els.waveformToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-                els.waveformToggle.title = on ? '波形时间轴：开启' : '波形时间轴：关闭（默认）';
+                if (!els.waveformToggle.classList.contains('is-loading')) {
+                    els.waveformToggle.title = on ? '波形时间轴：开启' : '波形时间轴：关闭（默认）';
+                }
             }
             if (els.waveformRow) {
                 els.waveformRow.classList.toggle('hidden', !on);
@@ -341,12 +345,36 @@
             state.waveformEnabled = !state.waveformEnabled;
             try { localStorage.setItem(WAVEFORM_KEY, state.waveformEnabled ? '1' : '0'); } catch (_) { /* ignore */ }
             applyWaveformUi();
-            if (typeof setStatus === 'function') {
-                setStatus(state.waveformEnabled ? '已开启波形时间轴' : '已关闭波形时间轴', 'ok');
+            if (!state.waveformEnabled && typeof setStatus === 'function') {
+                setStatus('已关闭波形时间轴', 'ok');
             }
             if (typeof ctx.onWaveformPrefChanged === 'function') {
                 ctx.onWaveformPrefChanged(state.waveformEnabled);
             }
+        }
+
+        function clampTimelineZoomPref(value, fallback = DEFAULT_TIMELINE_ZOOM) {
+            const z = Number(value);
+            if (!Number.isFinite(z) || z < 1) return fallback;
+            return Math.min(1000, z);
+        }
+
+        function loadTimelineZoomPref() {
+            try {
+                const raw = localStorage.getItem(TIMELINE_ZOOM_KEY);
+                if (raw == null) return DEFAULT_TIMELINE_ZOOM;
+                return clampTimelineZoomPref(JSON.parse(raw), DEFAULT_TIMELINE_ZOOM);
+            } catch (_) {
+                return DEFAULT_TIMELINE_ZOOM;
+            }
+        }
+
+        function saveTimelineZoomPref(zoom) {
+            const value = clampTimelineZoomPref(zoom, DEFAULT_TIMELINE_ZOOM);
+            try {
+                localStorage.setItem(TIMELINE_ZOOM_KEY, JSON.stringify(value));
+            } catch (_) { /* ignore quota errors */ }
+            return value;
         }
 
         ctx.loadTargetCpsPrefs = loadTargetCpsPrefs;
@@ -374,6 +402,9 @@
         ctx.applyWaveformUi = applyWaveformUi;
         ctx.loadWaveformPref = loadWaveformPref;
         ctx.toggleWaveform = toggleWaveform;
+        ctx.loadTimelineZoomPref = loadTimelineZoomPref;
+        ctx.saveTimelineZoomPref = saveTimelineZoomPref;
+        ctx.clampTimelineZoomPref = clampTimelineZoomPref;
 
         return ctx;
     }
@@ -390,8 +421,10 @@
         DETAIL_TOOLS_KEY,
         AUTO_FOCUS_KEY,
         WAVEFORM_KEY,
+        TIMELINE_ZOOM_KEY,
     };
     global.TransubEditorParts.DEFAULT_TARGET_CPS = DEFAULT_TARGET_CPS;
     global.TransubEditorParts.DEFAULT_RETRANSCRIBE_DUR_SEC = DEFAULT_RETRANSCRIBE_DUR_SEC;
+    global.TransubEditorParts.DEFAULT_TIMELINE_ZOOM = DEFAULT_TIMELINE_ZOOM;
     global.TransubEditorParts.SPLIT_MODES = SPLIT_MODES;
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this));

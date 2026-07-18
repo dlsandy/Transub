@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Tray, Menu, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, screen } = require('electron');
+const fs = require('fs');
 const path = require('path');
-const { resolveHtmlPath } = require('./app-paths');
+const { resolveHtmlPath, getWritableRoot } = require('./app-paths');
 const { getTrayIcon, getWindowIconOption, applyWindowIcon } = require('./icons');
 const { sendNotification } = require('./notifications');
 
@@ -9,13 +10,97 @@ function jobHelpers() {
 }
 
 const DEFAULT_TRAY_TOOLTIP = 'Transub 字幕生成';
+const WINDOW_STATE_FILE = 'window-state.json';
+const DEFAULT_WINDOW = Object.freeze({
+    width: 1080,
+    height: 720,
+    minWidth: 760,
+    minHeight: 520,
+});
+const SAVE_STATE_DEBOUNCE_MS = 400;
+
+function getWindowStatePath() {
+    return path.join(getWritableRoot(), WINDOW_STATE_FILE);
+}
+
+function clampInt(value, fallback, min, max) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+}
+
+function boundsOverlapWorkArea(bounds, workArea) {
+    return bounds.x < workArea.x + workArea.width
+        && bounds.x + bounds.width > workArea.x
+        && bounds.y < workArea.y + workArea.height
+        && bounds.y + bounds.height > workArea.y;
+}
+
+function sanitizeWindowState(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const width = clampInt(raw.width, DEFAULT_WINDOW.width, DEFAULT_WINDOW.minWidth, 10000);
+    const height = clampInt(raw.height, DEFAULT_WINDOW.height, DEFAULT_WINDOW.minHeight, 10000);
+    const hasPos = Number.isFinite(Number(raw.x)) && Number.isFinite(Number(raw.y));
+    const state = {
+        width,
+        height,
+        isMaximized: !!raw.isMaximized,
+    };
+    if (hasPos) {
+        state.x = Math.round(Number(raw.x));
+        state.y = Math.round(Number(raw.y));
+        const visible = screen.getAllDisplays().some((d) => boundsOverlapWorkArea(state, d.workArea));
+        if (!visible) {
+            delete state.x;
+            delete state.y;
+        }
+    }
+    return state;
+}
+
+function loadWindowState() {
+    try {
+        const filePath = getWindowStatePath();
+        if (!fs.existsSync(filePath)) return null;
+        return sanitizeWindowState(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+    } catch (err) {
+        console.warn('[window-manager] 读取窗口状态失败:', err.message);
+        return null;
+    }
+}
+
+function writeWindowState(state) {
+    try {
+        const filePath = getWindowStatePath();
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    } catch (err) {
+        console.warn('[window-manager] 保存窗口状态失败:', err.message);
+    }
+}
+
+function captureWindowState(win) {
+    if (!win || win.isDestroyed()) return null;
+    const isMaximized = win.isMaximized();
+    const bounds = (isMaximized && typeof win.getNormalBounds === 'function')
+        ? win.getNormalBounds()
+        : win.getBounds();
+    return sanitizeWindowState({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        isMaximized,
+    });
+}
 
 function createWindowManager({ getAppRoot, getUserDataPath }) {
     let mainWindow = null;
     let tray = null;
     let trayHintShown = false;
     let isQuitting = false;
-    let trayProgressEnabled = true;
+    let trayProgressEnabled = false;
+    let saveStateTimer = null;
 
     function hideToTray() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -106,6 +191,34 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         });
     }
 
+    function saveMainWindowState() {
+        if (saveStateTimer) {
+            clearTimeout(saveStateTimer);
+            saveStateTimer = null;
+        }
+        const state = captureWindowState(mainWindow);
+        if (state) writeWindowState(state);
+    }
+
+    function scheduleSaveMainWindowState() {
+        if (saveStateTimer) clearTimeout(saveStateTimer);
+        saveStateTimer = setTimeout(() => {
+            saveStateTimer = null;
+            saveMainWindowState();
+        }, SAVE_STATE_DEBOUNCE_MS);
+    }
+
+    function attachWindowStatePersistence(win) {
+        const persistSoon = () => scheduleSaveMainWindowState();
+        win.on('resize', persistSoon);
+        win.on('move', persistSoon);
+        win.on('maximize', persistSoon);
+        win.on('unmaximize', persistSoon);
+        win.on('close', () => {
+            saveMainWindowState();
+        });
+    }
+
     function createMainWindow(options = {}) {
         if (mainWindow && !mainWindow.isDestroyed()) {
             if (options.startMinimizedToTray) hideToTray();
@@ -113,11 +226,12 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             return mainWindow;
         }
 
-        mainWindow = new BrowserWindow({
-            width: 1080,
-            height: 720,
-            minWidth: 760,
-            minHeight: 520,
+        const saved = loadWindowState();
+        const winOpts = {
+            width: saved?.width || DEFAULT_WINDOW.width,
+            height: saved?.height || DEFAULT_WINDOW.height,
+            minWidth: DEFAULT_WINDOW.minWidth,
+            minHeight: DEFAULT_WINDOW.minHeight,
             title: 'Transub',
             icon: getWindowIconOption(),
             autoHideMenuBar: true,
@@ -129,16 +243,31 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
                 sandbox: true,
             },
             show: false,
-        });
+        };
+        if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) {
+            winOpts.x = saved.x;
+            winOpts.y = saved.y;
+        }
+
+        mainWindow = new BrowserWindow(winOpts);
 
         mainWindow.setMenuBarVisibility(false);
         mainWindow.removeMenu();
         applyWindowIcon(mainWindow);
 
+        if (saved?.isMaximized) {
+            mainWindow.maximize();
+        }
+
         mainWindow.loadFile(resolveHtmlPath(app, 'index.html'));
         attachTrayBehavior(mainWindow);
+        attachWindowStatePersistence(mainWindow);
 
         mainWindow.on('closed', () => {
+            if (saveStateTimer) {
+                clearTimeout(saveStateTimer);
+                saveStateTimer = null;
+            }
             mainWindow = null;
         });
 
@@ -174,7 +303,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     }
 
     function setTrayProgressEnabled(enabled) {
-        trayProgressEnabled = enabled !== false;
+        trayProgressEnabled = !!enabled;
         if (!trayProgressEnabled) clearTrayProgress();
     }
 

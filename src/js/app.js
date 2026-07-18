@@ -276,8 +276,8 @@
             'repetitionPenaltyInput', 'maxInitialTimestampInput',
             'smartSplitWithVadCheck', 'targetChunkDurationWrap', 'targetChunkDurationInput',
             'mergeSegmentsCheck', 'mergeSettingsWrap', 'mergeMaxGapInput', 'mergeMaxDurationInput',
-            'retranscribeWarmLightCheck',
-            'trayProgressCheck', 'minimizeToTrayOnStartCheck', 'postBatchQcCheck',
+            'retranscribeWarmLightCheck', 'subtitleBakModeSelect',
+            'trayProgressCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck', 'postBatchQcCheck',
             'postTaskMenuBtn', 'postTaskMenu', 'postTaskMenuWrap', 'postTaskMenuItems',
             'shutdownDelayInput', 'shutdownDelayWrap', 'playSoundOnCompleteCheck',
             'presetSelect', 'savePresetBtn', 'outputModeSelect', 'outputDirInput', 'outputDirWrap', 'outputDirBrowseBtn', 'audioSuffixesInput',
@@ -479,7 +479,7 @@
     }
 
     function applySubFormatsToForm(value) {
-        const set = new Set(String(value || 'srt,vtt,lrc').split(/[,;\s]+/).map((p) => p.trim().toLowerCase()));
+        const set = new Set(String(value || 'srt').split(/[,;\s]+/).map((p) => p.trim().toLowerCase()));
         if (els.subFormatSrt) els.subFormatSrt.checked = set.has('srt');
         if (els.subFormatVtt) els.subFormatVtt.checked = set.has('vtt');
         if (els.subFormatLrc) els.subFormatLrc.checked = set.has('lrc');
@@ -620,14 +620,23 @@
         if (els.retranscribeWarmLightCheck) {
             els.retranscribeWarmLightCheck.checked = !!options.retranscribeWarmLight;
         }
+        if (els.subtitleBakModeSelect) {
+            const bakMode = String(options.subtitleBakMode || 'off').trim();
+            els.subtitleBakModeSelect.value = ['off', 'beside', 'appBackup'].includes(bakMode)
+                ? bakMode
+                : 'off';
+        }
         if (els.trayProgressCheck) {
-            els.trayProgressCheck.checked = options.trayProgressEnabled !== false;
+            els.trayProgressCheck.checked = !!options.trayProgressEnabled;
         }
         if (els.minimizeToTrayOnStartCheck) {
             els.minimizeToTrayOnStartCheck.checked = !!options.minimizeToTrayOnStart;
         }
+        if (els.trayNotifyCheck) {
+            els.trayNotifyCheck.checked = !!options.trayNotifyEnabled;
+        }
         if (els.postBatchQcCheck) {
-            els.postBatchQcCheck.checked = !!options.postBatchQc;
+            els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
         if (els.targetChunkDurationInput && options.targetChunkDurationS != null) {
             els.targetChunkDurationInput.value = String(options.targetChunkDurationS);
@@ -669,12 +678,16 @@
             smartSplitWithVad: !!els.smartSplitWithVadCheck?.checked,
             targetChunkDurationS: Number(els.targetChunkDurationInput?.value) || 30,
             retranscribeWarmLight: !!els.retranscribeWarmLightCheck?.checked,
-            trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : true,
+            subtitleBakMode: ['off', 'beside', 'appBackup'].includes(els.subtitleBakModeSelect?.value)
+                ? els.subtitleBakModeSelect.value
+                : 'off',
+            trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : false,
             minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
-            postBatchQc: !!els.postBatchQcCheck?.checked,
+            trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
+            postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
             mergeSegments: !!els.mergeSegmentsCheck?.checked,
-            mergeMaxGapMs: Number(els.mergeMaxGapInput?.value) || 2000,
-            mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 20000,
+            mergeMaxGapMs: Number(els.mergeMaxGapInput?.value) || 500,
+            mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 10000,
             outputMode: els.outputModeSelect?.value === 'custom' ? 'custom' : 'same',
             outputDir: resolveOutputDirFromForm(),
             audioSuffixes: els.audioSuffixesInput?.value.trim() || 'mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv',
@@ -1877,6 +1890,7 @@
         appendLog,
         applyOptionsToForm,
         buildSavedOptionsFromForm,
+        openParamsModal,
         addFiles,
         renderList,
         updateStartButton,

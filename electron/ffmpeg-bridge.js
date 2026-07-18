@@ -640,6 +640,24 @@ function silenceMidpointsToMs(intervals, startMs, endMs, minSegmentMs = 400) {
     return deduped;
 }
 
+function buildSilenceDetectFilter(noiseDb, minSilenceSec, options = {}) {
+    const noise = Number.isFinite(Number(noiseDb)) ? Number(noiseDb) : -35;
+    const minSilence = Math.max(0.04, Number(minSilenceSec) || 0.25);
+    const highpassHz = Math.max(0, Math.round(Number(options.highpassHz) || 80));
+    const atrimStart = Math.max(0, Number(options.atrimStartSec) || 0);
+    const atrimDuration = Math.max(0.2, Number(options.atrimDurationSec) || 0);
+    const parts = [
+        // Exact window after coarse keyframe seek; reset PTS so silence times are relative to 0
+        `atrim=start=${atrimStart}:duration=${atrimDuration}`,
+        'asetpts=PTS-STARTPTS',
+        'aformat=channel_layouts=mono',
+    ];
+    // Drop low-frequency rumble so room noise / AC hum is less likely to mask short pauses
+    if (highpassHz > 0) parts.push(`highpass=f=${highpassHz}`);
+    parts.push(`silencedetect=noise=${noise}dB:duration=${minSilence}`);
+    return parts.join(',');
+}
+
 function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
     const resolved = path.resolve(String(filePath || ''));
     if (!fs.existsSync(resolved)) {
@@ -666,18 +684,26 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
         return Promise.resolve({ ok: false, error: ffmpegResolved.error });
     }
     const exe = ffmpegResolved.path;
-    // -ss/-t before -i: fast seek; -t is duration (avoids -to absolute-time confusion).
-    // silencedetect timestamps are relative to the seek start → add startSec when parsing.
+    // Coarse input seek (fast) + atrim to the exact window (accurate). Avoids keyframe skew
+    // without decoding from the start of long videos.
+    const seekPadSec = Math.min(2, startSec);
+    const coarseSeekSec = Math.max(0, startSec - seekPadSec);
+    const atrimStartSec = startSec - coarseSeekSec;
+    const af = buildSilenceDetectFilter(noise, minSilenceSec, {
+        ...options,
+        atrimStartSec,
+        atrimDurationSec: durationSec,
+    });
     const args = [
         '-hide_banner',
         '-nostats',
-        '-ss', String(startSec),
-        '-t', String(durationSec),
+        '-ss', String(coarseSeekSec),
         '-i', resolved,
+        '-t', String(atrimStartSec + durationSec + 0.05),
         '-vn',
         '-sn',
         '-dn',
-        '-af', `silencedetect=noise=${noise}dB:duration=${minSilenceSec}`,
+        '-af', af,
         '-f', 'null',
         '-',
     ];
@@ -858,8 +884,8 @@ function extractWaveformPeaks(filePath, options = {}) {
         return Promise.resolve({ ok: false, error: '文件不存在' });
     }
 
-    const peaksPerSec = Math.max(5, Math.min(80, Number(options.peaksPerSec) || 20));
-    const maxPeaks = Math.max(200, Math.min(12000, Number(options.maxPeaks) || 6000));
+    const peaksPerSec = Math.max(5, Math.min(120, Number(options.peaksPerSec) || 20));
+    const maxPeaks = Math.max(200, Math.min(48000, Number(options.maxPeaks) || 6000));
     const sampleRate = 8000;
     const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
     if (!ffmpegResolved.ok) {
@@ -989,6 +1015,7 @@ module.exports = {
     parseSilenceDetectLog,
     clampSilenceIntervals,
     silenceMidpointsToMs,
+    buildSilenceDetectFilter,
     detectSilenceInRange,
     extractMediaRange,
     extractWaveformPeaks,

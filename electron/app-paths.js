@@ -68,11 +68,15 @@ function getAppRoot(app) {
     if (!app.isPackaged) {
         return path.join(getProjectRoot(), 'src');
     }
+    // Packaged UI lives inside app.asar (renderer-dist), not next to the exe,
+    // so HTML/JS/CSS cannot be casually edited as loose files.
+    const fromAsar = findRendererRoot(app.getAppPath());
+    if (fromAsar) return fromAsar;
+    const fromResources = findRendererRoot(path.join(process.resourcesPath, 'app'));
+    if (fromResources) return fromResources;
     const exeDir = path.dirname(process.execPath);
     const fromExe = findRendererRoot(exeDir);
     if (fromExe) return fromExe;
-    const fromResources = findRendererRoot(path.join(process.resourcesPath, 'app'));
-    if (fromResources) return fromResources;
     return exeDir;
 }
 
