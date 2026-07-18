@@ -1,10 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const { getWritableRoot } = require('./app-paths');
-const { mergeGlossaries, normalizeGlossary } = require('../src/js/subtitle-glossary-core');
 
 const GLOSSARY_FILE_NAME = 'transub-glossary.json';
 const PROJECT_GLOSSARY_SUFFIX = '.glossary.json';
+
+function glossaryCore() {
+    // Packaged under app.asar/src/js (see package.json build.files)
+    return require('../src/js/subtitle-glossary-core');
+}
 
 function getGlossaryFilePath() {
     return path.join(getWritableRoot(), GLOSSARY_FILE_NAME);
@@ -39,6 +43,7 @@ function readGlossary() {
 function writeGlossary(glossary) {
     const filePath = getGlossaryFilePath();
     try {
+        const { normalizeGlossary } = glossaryCore();
         const payload = normalizeGlossary({
             version: 1,
             updatedAt: new Date().toISOString(),
@@ -67,6 +72,7 @@ function readProjectGlossary(subPath) {
     }
     try {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const { normalizeGlossary } = glossaryCore();
         const glossary = normalizeGlossary({
             version: Number(parsed.version) || 1,
             updatedAt: parsed.updatedAt || null,
@@ -82,6 +88,7 @@ function writeProjectGlossary(subPath, glossary) {
     const filePath = projectGlossaryPathForSubtitle(subPath);
     if (!filePath) return { ok: false, error: '缺少字幕路径' };
     try {
+        const { normalizeGlossary } = glossaryCore();
         const payload = normalizeGlossary({
             version: 1,
             updatedAt: new Date().toISOString(),
@@ -100,6 +107,7 @@ function readMergedGlossary(subPath) {
     if (!globalResult.ok) return globalResult;
     const projectResult = readProjectGlossary(subPath);
     if (!projectResult.ok) return projectResult;
+    const { mergeGlossaries } = glossaryCore();
     return {
         ok: true,
         path: projectResult.path || globalResult.path,
@@ -157,5 +165,4 @@ module.exports = {
     readMergedGlossary,
     readGlossaryByScope,
     writeGlossaryByScope,
-    mergeGlossaries,
 };

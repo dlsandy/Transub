@@ -168,6 +168,60 @@
         return document.getElementById('moreStatus');
     }
 
+    function formatDownloadBytes(bytes) {
+        const n = Number(bytes);
+        if (!Number.isFinite(n) || n < 0) return '';
+        if (n < 1024) return `${Math.round(n)} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+
+    function setUpdateDownloadProgressVisible(visible) {
+        const host = document.getElementById('updateDownloadProgress');
+        if (!host) return;
+        host.classList.toggle('hidden', !visible);
+        if (!visible) {
+            const bar = document.getElementById('updateDownloadBar');
+            const pctEl = document.getElementById('updateDownloadPercent');
+            const detail = document.getElementById('updateDownloadDetail');
+            if (bar) bar.style.width = '0%';
+            if (pctEl) pctEl.textContent = '0%';
+            if (detail) detail.textContent = '';
+        }
+    }
+
+    function renderUpdateDownloadProgress(progress = {}, version = '') {
+        const host = document.getElementById('updateDownloadProgress');
+        if (!host) return;
+        host.classList.remove('hidden');
+        const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+        const transferred = Number(progress.transferred) || 0;
+        const total = Number(progress.total) || 0;
+        const speed = Number(progress.bytesPerSecond) || 0;
+        const label = document.getElementById('updateDownloadLabel');
+        const pctEl = document.getElementById('updateDownloadPercent');
+        const bar = document.getElementById('updateDownloadBar');
+        const detail = document.getElementById('updateDownloadDetail');
+        if (label) {
+            label.textContent = version
+                ? `正在下载 v${version}…`
+                : '正在下载更新…';
+        }
+        if (pctEl) pctEl.textContent = `${Math.round(percent)}%`;
+        if (bar) bar.style.width = `${percent}%`;
+        if (detail) {
+            const parts = [];
+            const done = formatDownloadBytes(transferred);
+            const all = formatDownloadBytes(total);
+            if (done && all) parts.push(`${done} / ${all}`);
+            else if (done) parts.push(done);
+            const rate = formatDownloadBytes(speed);
+            if (rate) parts.push(`${rate}/s`);
+            detail.textContent = parts.join(' · ');
+        }
+    }
+
     function bindMoreTab() {
         document.getElementById('exportConfigBtn')?.addEventListener('click', async () => {
             const res = await electron?.transWithAiExportConfig?.();
@@ -187,7 +241,9 @@
             const el = moreStatusEl();
             const btn = document.getElementById('checkUpdateBtn');
             if (btn) btn.disabled = true;
+            setUpdateDownloadProgressVisible(false);
             if (el) el.textContent = '正在检查更新…';
+            let unsubProgress = null;
             try {
                 const res = await electron?.transWithAiCheckAppUpdate?.();
                 if (!res?.ok) {
@@ -203,8 +259,13 @@
                         );
                         if (yes) {
                             if (el) el.textContent = `正在下载 v${res.latestVersion}…`;
+                            renderUpdateDownloadProgress({ percent: 0 }, res.latestVersion);
+                            unsubProgress = electron.onAppUpdateDownloadProgress?.((progress) => {
+                                renderUpdateDownloadProgress(progress, res.latestVersion);
+                            });
                             const dl = await electron.transubDownloadAppUpdate();
                             if (!dl?.ok) {
+                                setUpdateDownloadProgressVisible(false);
                                 if (el) el.textContent = dl?.error || '下载失败';
                                 const open = window.confirm('应用内下载失败，是否打开 GitHub Releases 手动下载？');
                                 if (open) {
@@ -214,6 +275,11 @@
                                 }
                                 return;
                             }
+                            renderUpdateDownloadProgress({ percent: 100 }, res.latestVersion);
+                            const detail = document.getElementById('updateDownloadDetail');
+                            const label = document.getElementById('updateDownloadLabel');
+                            if (label) label.textContent = `v${res.latestVersion} 已下载完成`;
+                            if (detail) detail.textContent = '可立即重启安装';
                             if (el) el.textContent = dl.message || '更新已下载';
                             const install = window.confirm('更新已下载完成，是否立即重启安装？');
                             if (install) {
@@ -232,8 +298,10 @@
                     }
                 }
             } catch (err) {
+                setUpdateDownloadProgressVisible(false);
                 if (el) el.textContent = err?.message || '检查更新失败';
             } finally {
+                try { unsubProgress?.(); } catch { /* ignore */ }
                 if (btn) btn.disabled = false;
             }
         });

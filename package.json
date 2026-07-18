@@ -71,7 +71,12 @@
     },
     "files": [
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "src/js/eta-core.js",
+      "src/js/subtitle-glossary-core.js",
+      "src/js/subtitle-qc-core.js",
+      "src/js/subtitle-split-core.js",
+      "src/js/subtitle-fluency-core.js"
     ],
     "asarUnpack": [
       "electron/app.ico",
