@@ -1,19 +1,25 @@
 const { app, ipcMain } = require('electron');
-const { getAppRoot } = require('./app-paths');
+const { getAppRoot, migrateLegacyUserDataFiles } = require('./app-paths');
 const { createDeferredBridgeSetup } = require('./bridge-registry');
-const { setupTransWithAiBridge, setPendingFilesForWindow } = require('./transwithai-bridge');
-const { setupExtensionsBridge } = require('./extensions-bridge');
 const { createWindowManager } = require('./window-manager');
-const {
-    createSubtitleEditorWindow,
-    registerSubtitleEditorWindowRoutes,
-    openSubtitleEditorOrPick,
-} = require('./subtitle-editor-window');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
-const { getAppIcon } = require('./icons');
 const { isEditableSubtitleFile } = require('./subtitle-utils');
-
+const { loadSettings } = require('./settings-data');
 registerMediaScheme();
+
+/** @type {string[]} */
+let earlyPendingFiles = [];
+let transwithaiBridgeLoaded = false;
+
+function setPendingFilesForWindow(files) {
+    const list = Array.isArray(files) ? files.filter(Boolean) : [];
+    earlyPendingFiles = list;
+    // Avoid eager-loading the heavy bridge just to stash CLI paths
+    if (transwithaiBridgeLoaded) {
+        require('./transwithai-bridge').setPendingFilesForWindow(list);
+        earlyPendingFiles = [];
+    }
+}
 
 // Avoid "Unable to move the cache / Gpu Cache Creation failed" on Windows when
 // Chromium rotates shader cache directories under a locked userData folder.
@@ -35,7 +41,8 @@ if (!gotTheLock) {
 
 app.setName('Transub');
 if (process.platform === 'win32') {
-    app.setAppUserModelId('Transub');
+    // Must match package.json build.appId so Windows taskbar/shortcuts use Transub icon
+    app.setAppUserModelId('com.transub.app');
 }
 
 function getUserDataPath() {
@@ -105,6 +112,7 @@ function warmEditorBridges() {
 function openCliSubtitleEditor(editRequest) {
     if (!editRequest?.subPath) return;
     warmEditorBridges();
+    const { createSubtitleEditorWindow } = require('./subtitle-editor-window');
     createSubtitleEditorWindow(app, editRequest);
 }
 
@@ -136,6 +144,8 @@ deferredBridges.installLazyRoutes({
     'ffmpeg-probe': 'extensions',
     'ffmpeg-validate': 'extensions',
     'ffmpeg-detect-silence': 'extensions',
+    'ffmpeg-cancel': 'extensions',
+    'ffmpeg-extract-waveform': 'extensions',
     'electron-select-ffmpeg': 'extensions',
     'transwithai-scan-folder': 'extensions',
     'transwithai-check-subtitles': 'extensions',
@@ -147,6 +157,11 @@ deferredBridges.installLazyRoutes({
     'transwithai-subtitle-preview': 'extensions',
     'transub-read-subtitle': 'extensions',
     'transub-write-subtitle': 'extensions',
+    'transub-scan-subtitle-qc': 'extensions',
+    'transub-read-subtitle-draft': 'extensions',
+    'transub-write-subtitle-draft': 'extensions',
+    'transub-clear-subtitle-draft': 'extensions',
+    'transub-check-subtitle-draft': 'extensions',
     'transub-list-subtitle-sidecars': 'extensions',
     'transub-select-subtitle': 'extensions',
     'transub-select-editor-video': 'extensions',
@@ -155,20 +170,27 @@ deferredBridges.installLazyRoutes({
     'transub-open-subtitle-editor': 'editorWindow',
     'transub-open-settings': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
+    'transub-editor-refocus': 'editorWindow',
+    'transub-editor-confirm': 'editorWindow',
     'transwithai-open-latest-log': 'extensions',
     'transwithai-export-config': 'extensions',
     'transwithai-import-config': 'extensions',
     'transwithai-check-app-update': 'extensions',
+    'transub-download-app-update': 'extensions',
+    'transub-quit-and-install-update': 'extensions',
+    'transub-open-update-page': 'extensions',
     'transwithai-open-path': 'extensions',
 });
 
 deferredBridges.defer('extensions', (api) => {
+    const { setupExtensionsBridge } = require('./extensions-bridge');
     setupExtensionsBridge(api, {
         getAppRoot: () => getAppRoot(app),
     });
 });
 
 deferredBridges.defer('editorWindow', (api) => {
+    const { registerSubtitleEditorWindowRoutes } = require('./subtitle-editor-window');
     registerSubtitleEditorWindowRoutes(api.register, app, {
         warmBridges: warmEditorBridges,
         windowManager,
@@ -176,6 +198,15 @@ deferredBridges.defer('editorWindow', (api) => {
 });
 
 deferredBridges.defer('transwithai', (api) => {
+    const {
+        setupTransWithAiBridge,
+        setPendingFilesForWindow: applyPendingFiles,
+    } = require('./transwithai-bridge');
+    if (earlyPendingFiles.length) {
+        applyPendingFiles(earlyPendingFiles);
+        earlyPendingFiles = [];
+    }
+    transwithaiBridgeLoaded = true;
     setupTransWithAiBridge(api, {
         getUserDataPath,
         getAppRoot: () => getAppRoot(app),
@@ -207,16 +238,12 @@ app.on('second-instance', (_event, commandLine) => {
 app.whenReady().then(() => {
     registerMediaProtocolHandler();
     try {
-        deferredBridges.ensure('editorWindow');
+        migrateLegacyUserDataFiles();
+        // Touch settings early so install-dir → userData migration runs before bridges.
+        loadSettings(() => getAppRoot(app));
     } catch (err) {
-        console.warn('[main] editorWindow bridge init failed:', err.message || err);
+        console.warn('[main] user data migration failed:', err.message || err);
     }
-
-    const appIcon = getAppIcon();
-    if (!appIcon.isEmpty() && process.platform === 'darwin' && app.dock) {
-        app.dock.setIcon(appIcon);
-    }
-
     const cliEdit = parseCliEditSubtitle();
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
@@ -226,27 +253,22 @@ app.whenReady().then(() => {
         if (cliEdit) {
             openCliSubtitleEditor(cliEdit);
         } else {
+            const { openSubtitleEditorOrPick } = require('./subtitle-editor-window');
             openSubtitleEditorOrPick(app);
         }
     } else if (cliEdit) {
         openCliSubtitleEditor(cliEdit);
         windowManager.createMainWindow({ startMinimizedToTray: true });
-        windowManager.setupTray();
     } else {
+        // Main window path: bridges load on first IPC (getOptions / validates)
         windowManager.createMainWindow();
-        windowManager.setupTray();
     }
-
-    app.on('activate', () => {
-        windowManager.showMainWindow();
-    });
 });
 
 app.on('window-all-closed', () => {
     if (windowManager.isQuitting()) return;
-    if (process.platform !== 'darwin') {
-        windowManager.quitApp();
-    }
+    // Windows-only app: always quit when all windows close
+    windowManager.quitApp();
 });
 
 app.on('before-quit', () => {

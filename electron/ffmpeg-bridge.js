@@ -1,7 +1,40 @@
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { getProjectRoot, getWritableRoot } = require('./app-paths');
+const { getProjectRoot, getInstallRoot } = require('./app-paths');
+
+/** @type {Set<import('child_process').ChildProcess>} */
+const activeFfmpegProcs = new Set();
+
+function trackFfmpegProc(proc) {
+    if (!proc) return;
+    activeFfmpegProcs.add(proc);
+    const clear = () => { activeFfmpegProcs.delete(proc); };
+    proc.once('close', clear);
+    proc.once('error', clear);
+}
+
+function killFfmpegProc(proc) {
+    if (!proc) return;
+    const pid = proc.pid;
+    try {
+        if (process.platform === 'win32' && pid) {
+            execFile('taskkill', ['/pid', String(pid), '/T', '/F'], {
+                windowsHide: true,
+                timeout: 8000,
+            }, () => { /* ignore */ });
+            return;
+        }
+        proc.kill();
+    } catch (_) { /* ignore */ }
+}
+
+function cancelActiveFfmpegJobs() {
+    const procs = [...activeFfmpegProcs];
+    for (const proc of procs) killFfmpegProc(proc);
+    activeFfmpegProcs.clear();
+    return { ok: true, cancelled: procs.length };
+}
 
 function getBundledBinaryRoots() {
     const roots = [];
@@ -9,8 +42,10 @@ function getBundledBinaryRoots() {
         const resolved = path.resolve(String(dir || ''));
         if (resolved && !roots.includes(resolved)) roots.push(resolved);
     };
+    // Bundled `_internal/bin` ships next to the exe (or project root in dev),
+    // not under userData — never look in getWritableRoot() for binaries.
     try {
-        add(getWritableRoot());
+        add(getInstallRoot());
     } catch {
         /* ignore */
     }
@@ -21,6 +56,23 @@ function getBundledBinaryRoots() {
     }
     add(process.cwd());
     return roots;
+}
+
+/** True when a custom FFmpeg path sits under the app install / extract tree (wiped on update). */
+function isPathInsideInstallTree(targetPath) {
+    const raw = String(targetPath || '').trim();
+    if (!raw) return false;
+    let installRoot;
+    try {
+        installRoot = getInstallRoot();
+    } catch {
+        return false;
+    }
+    if (!installRoot) return false;
+    const resolvedTarget = path.resolve(raw);
+    const resolvedRoot = path.resolve(installRoot);
+    const rel = path.relative(resolvedRoot, resolvedTarget);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 function buildBundledBinaryCandidates(exeName) {
@@ -150,7 +202,7 @@ function formatExecutableSpawnError(err, exe, toolLabel) {
     if (target && !isPathExecutableName(target) && hasMarkOfTheWeb(target)) {
         return `Windows 拦截了 ${toolLabel}（${target} 带有「来自互联网」标记）。请右键该文件 → 属性 → 勾选「解除锁定」后重试。`;
     }
-    return `无法运行 ${toolLabel}。请在参数 → 高级 中重新设置 FFmpeg 路径，或将其加入系统 PATH`;
+    return `无法运行 ${toolLabel}。请在设置 → FFmpeg 中重新设置路径，或将其加入系统 PATH`;
 }
 
 function resolveFfprobeFromSetting(ffmpegPathSetting) {
@@ -364,7 +416,7 @@ function resolveFfmpegForExecution(ffmpegPathSetting) {
         return {
             ok: false,
             path: exe,
-            error: `未在指定路径找到 ffmpeg：${exe}。请在参数 → 高级 中设置 FFmpeg 路径（需包含 ffmpeg.exe），或将其加入系统 PATH`,
+            error: `未在指定路径找到 ffmpeg：${exe}。请在设置 → FFmpeg 中设置路径（需包含 ffmpeg.exe），或将其加入系统 PATH`,
         };
     }
     return {
@@ -421,7 +473,55 @@ function validateFfmpegExecutable(ffmpegPath) {
     })();
 }
 
-async function validateFfmpegSetup(ffmpegPathSetting) {
+function buildFfmpegSetupResult(validation, ffmpegResolved, extras = {}) {
+    const customPath = String(validation.ffmpegPath || extras.ffmpegPath || '').trim();
+    const insideInstall = !!(validation.custom && customPath && isPathInsideInstallTree(customPath));
+    return {
+        ok: true,
+        ffprobePath: validation.path,
+        ffmpegPath: customPath,
+        version: extras.version || null,
+        ffmpegVersion: extras.ffmpegVersion || null,
+        custom: !!validation.custom,
+        bundled: !!validation.bundled || !!ffmpegResolved.bundled,
+        usePath: !!validation.usePath || !!ffmpegResolved.usePath,
+        insideInstall,
+        quick: !!extras.quick,
+        warning: insideInstall
+            ? '自定义 FFmpeg 位于软件安装/解压目录内，更新或重装时可能被覆盖。请改用安装目录外的路径。'
+            : undefined,
+    };
+}
+
+/** Path/existence check only — no process spawn (fast cold-start path). */
+function validateFfmpegSetupQuick(ffmpegPathSetting) {
+    const validation = resolveFfmpegValidation(ffmpegPathSetting);
+    if (!validation.ok) return validation;
+    const ffmpegResolved = resolveFfmpegForExecution(ffmpegPathSetting);
+    if (!ffmpegResolved.ok) return ffmpegResolved;
+    if (ffmpegResolved.path !== 'ffmpeg' && !fs.existsSync(ffmpegResolved.path)) {
+        return {
+            ok: false,
+            error: `未在指定路径找到 ffmpeg：${ffmpegResolved.path}`,
+        };
+    }
+    if (validation.path !== 'ffprobe' && !fs.existsSync(validation.path)) {
+        return {
+            ok: false,
+            error: `未在指定路径找到 ffprobe：${validation.path}`,
+        };
+    }
+    return buildFfmpegSetupResult(validation, ffmpegResolved, {
+        ffmpegPath: ffmpegPathSetting,
+        quick: true,
+    });
+}
+
+async function validateFfmpegSetup(ffmpegPathSetting, options = {}) {
+    if (options.quick) {
+        return validateFfmpegSetupQuick(ffmpegPathSetting);
+    }
+
     const validation = resolveFfmpegValidation(ffmpegPathSetting);
     if (!validation.ok) return validation;
     const versionCheck = await validateFfprobeExecutable(validation.path);
@@ -432,16 +532,11 @@ async function validateFfmpegSetup(ffmpegPathSetting) {
     const ffmpegCheck = await validateFfmpegExecutable(ffmpegResolved.path);
     if (!ffmpegCheck.ok) return ffmpegCheck;
 
-    return {
-        ok: true,
-        ffprobePath: validation.path,
-        ffmpegPath: validation.ffmpegPath || ffmpegPathSetting || '',
+    return buildFfmpegSetupResult(validation, ffmpegResolved, {
+        ffmpegPath: ffmpegPathSetting,
         version: versionCheck.version,
         ffmpegVersion: ffmpegCheck.version,
-        custom: !!validation.custom,
-        bundled: !!validation.bundled,
-        usePath: !!validation.usePath,
-    };
+    });
 }
 
 function normalizeFfmpegPath(value) {
@@ -594,22 +689,33 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
         return new Promise((resolve) => {
             let stderr = '';
             let proc;
+            let settled = false;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
             try {
                 proc = spawn(exe, args, { windowsHide: true });
+                trackFfmpegProc(proc);
             } catch (err) {
-                resolve({ ok: false, error: err.message || String(err) });
+                finish({ ok: false, error: err.message || String(err) });
                 return;
             }
             proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
             proc.on('error', (err) => {
-                resolve({
+                finish({
                     ok: false,
                     error: formatExecutableSpawnError(err, exe, 'ffmpeg'),
                 });
             });
-            proc.on('close', (code) => {
+            proc.on('close', (code, signal) => {
+                if (signal || code === null) {
+                    finish({ ok: false, cancelled: true, error: '已取消' });
+                    return;
+                }
                 if (code !== 0 && !/silence_/.test(stderr)) {
-                    resolve({ ok: false, error: stderr.trim() || `ffmpeg 退出码 ${code}` });
+                    finish({ ok: false, error: stderr.trim() || `ffmpeg 退出码 ${code}` });
                     return;
                 }
                 const rawIntervals = parseSilenceDetectLog(stderr, startSec, endSec);
@@ -626,7 +732,7 @@ function detectSilenceInRange(filePath, startMs, endMs, options = {}) {
                     endMsNum,
                     options.minSegmentMs,
                 );
-                resolve({
+                finish({
                     ok: true,
                     intervals: intervals.map(({ startSec: s, endSec: e }) => ({
                         startMs: Math.round(s * 1000),
@@ -701,25 +807,36 @@ function extractMediaRange(filePath, startMs, endMs, outPath, options = {}) {
         return new Promise((resolve) => {
             let stderr = '';
             let proc;
+            let settled = false;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
             try {
                 proc = spawn(exe, args, { windowsHide: true });
+                trackFfmpegProc(proc);
             } catch (err) {
-                resolve({ ok: false, error: err.message || String(err) });
+                finish({ ok: false, error: err.message || String(err) });
                 return;
             }
             proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
             proc.on('error', (err) => {
-                resolve({
+                finish({
                     ok: false,
                     error: formatExecutableSpawnError(err, exe, 'ffmpeg'),
                 });
             });
-            proc.on('close', (code) => {
-                if (code !== 0 || !fs.existsSync(output)) {
-                    resolve({ ok: false, error: stderr.trim().slice(-400) || `ffmpeg 退出码 ${code}` });
+            proc.on('close', (code, signal) => {
+                if (signal || code === null) {
+                    finish({ ok: false, cancelled: true, error: '已取消' });
                     return;
                 }
-                resolve({
+                if (code !== 0 || !fs.existsSync(output)) {
+                    finish({ ok: false, error: stderr.trim().slice(-400) || `ffmpeg 退出码 ${code}` });
+                    return;
+                }
+                finish({
                     ok: true,
                     path: output,
                     startMs: Math.round(startSec * 1000),
@@ -731,10 +848,134 @@ function extractMediaRange(filePath, startMs, endMs, outPath, options = {}) {
     })();
 }
 
+/**
+ * Extract normalized peak envelope for timeline waveform preview.
+ * Returns peaks in 0..1. Uses low sample rate mono PCM via ffmpeg stdout.
+ */
+function extractWaveformPeaks(filePath, options = {}) {
+    const resolved = path.resolve(String(filePath || ''));
+    if (!fs.existsSync(resolved)) {
+        return Promise.resolve({ ok: false, error: '文件不存在' });
+    }
+
+    const peaksPerSec = Math.max(5, Math.min(80, Number(options.peaksPerSec) || 20));
+    const maxPeaks = Math.max(200, Math.min(12000, Number(options.maxPeaks) || 6000));
+    const sampleRate = 8000;
+    const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
+    if (!ffmpegResolved.ok) {
+        return Promise.resolve({ ok: false, error: ffmpegResolved.error });
+    }
+    const exe = ffmpegResolved.path;
+    const args = [
+        '-hide_banner',
+        '-nostats',
+        '-i', resolved,
+        '-vn',
+        '-sn',
+        '-dn',
+        '-ac', '1',
+        '-ar', String(sampleRate),
+        '-f', 's16le',
+        '-',
+    ];
+
+    return (async () => {
+        const ready = await ensureWindowsExecutableReady(exe, 'ffmpeg');
+        if (!ready.ok) return { ok: false, error: ready.error };
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+            let proc;
+            try {
+                proc = spawn(exe, args, { windowsHide: true });
+                trackFfmpegProc(proc);
+            } catch (err) {
+                finish({ ok: false, error: err.message || String(err) });
+                return;
+            }
+
+            const chunks = [];
+            let totalBytes = 0;
+            const maxBytes = sampleRate * 2 * 60 * 180; // ~3h safety cap
+            let stderr = '';
+
+            proc.stdout.on('data', (chunk) => {
+                if (totalBytes >= maxBytes) return;
+                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                const room = maxBytes - totalBytes;
+                if (buf.length <= room) {
+                    chunks.push(buf);
+                    totalBytes += buf.length;
+                } else if (room > 0) {
+                    chunks.push(buf.subarray(0, room));
+                    totalBytes += room;
+                }
+            });
+            proc.stderr.on('data', (chunk) => {
+                stderr += chunk.toString();
+                if (stderr.length > 4000) stderr = stderr.slice(-2000);
+            });
+            proc.on('error', (err) => {
+                finish({
+                    ok: false,
+                    error: formatExecutableSpawnError(err, exe, 'ffmpeg'),
+                });
+            });
+            proc.on('close', (code, signal) => {
+                if (signal || code === null) {
+                    finish({ ok: false, cancelled: true, error: '已取消' });
+                    return;
+                }
+                if (code !== 0 && totalBytes < 4) {
+                    finish({ ok: false, error: stderr.trim().slice(-300) || `ffmpeg 退出码 ${code}` });
+                    return;
+                }
+                const pcm = Buffer.concat(chunks, totalBytes);
+                const sampleCount = Math.floor(pcm.length / 2);
+                if (sampleCount < 8) {
+                    finish({ ok: false, error: '未能提取到音频波形' });
+                    return;
+                }
+                const durationSec = sampleCount / sampleRate;
+                let peakCount = Math.max(1, Math.round(durationSec * peaksPerSec));
+                if (peakCount > maxPeaks) peakCount = maxPeaks;
+                const samplesPerPeak = Math.max(1, Math.floor(sampleCount / peakCount));
+                const peaks = new Array(peakCount);
+                let maxAbs = 1;
+                for (let i = 0; i < peakCount; i += 1) {
+                    const start = i * samplesPerPeak;
+                    const end = Math.min(sampleCount, start + samplesPerPeak);
+                    let peak = 0;
+                    for (let s = start; s < end; s += 1) {
+                        const v = Math.abs(pcm.readInt16LE(s * 2));
+                        if (v > peak) peak = v;
+                    }
+                    peaks[i] = peak;
+                    if (peak > maxAbs) maxAbs = peak;
+                }
+                const normalized = peaks.map((p) => Math.min(1, p / maxAbs));
+                finish({
+                    ok: true,
+                    peaks: normalized,
+                    durationSec,
+                    peaksPerSec: peakCount / Math.max(0.001, durationSec),
+                    sampleRate,
+                });
+            });
+        });
+    })();
+}
+
 module.exports = {
     findFfprobePath,
     findBundledFfprobePath,
     findBundledFfmpegPath,
+    isPathInsideInstallTree,
     resolveFfprobeFromSetting,
     resolveFfmpegFromSetting,
     resolveFfmpegForExecution,
@@ -742,6 +983,7 @@ module.exports = {
     validateFfprobeExecutable,
     validateFfmpegExecutable,
     validateFfmpegSetup,
+    validateFfmpegSetupQuick,
     probeVideo,
     normalizeFfmpegPath,
     parseSilenceDetectLog,
@@ -749,4 +991,6 @@ module.exports = {
     silenceMidpointsToMs,
     detectSilenceInRange,
     extractMediaRange,
+    extractWaveformPeaks,
+    cancelActiveFfmpegJobs,
 };

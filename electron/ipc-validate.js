@@ -1,5 +1,11 @@
 const path = require('path');
 
+const EDITABLE_SUBTITLE_EXTS = new Set(['.srt', '.vtt', '.lrc']);
+const VIDEO_FILE_EXTS = new Set([
+    '.mp4', '.m4v', '.webm', '.mkv', '.avi', '.mov', '.wmv', '.flv',
+    '.ts', '.mpeg', '.mpg', '.3gp',
+]);
+
 function asString(value, maxLen = 8192) {
     if (value == null) return '';
     const s = String(value);
@@ -39,6 +45,67 @@ function resolveSafePath(inputPath, allowedRoots = []) {
     throw new Error('路径不在允许范围内');
 }
 
+/**
+ * Normalize and reject obviously unsafe path strings before filesystem use.
+ * Does not restrict to a root — desktop apps open user-chosen files anywhere —
+ * but blocks null bytes and empty paths, and optionally enforces extensions.
+ */
+function assertUserFilePath(inputPath, { allowedExts = null, label = '文件' } = {}) {
+    const raw = asString(inputPath, 4096).trim();
+    if (!raw) throw new Error(`缺少${label}路径`);
+    if (raw.includes('\0')) throw new Error(`${label}路径非法`);
+    const resolved = path.resolve(raw);
+    if (!resolved || resolved.includes('\0')) throw new Error(`${label}路径非法`);
+    if (allowedExts && allowedExts.size) {
+        const ext = path.extname(resolved).toLowerCase();
+        if (!allowedExts.has(ext)) {
+            throw new Error(`${label}扩展名不受支持: ${ext || '(无)'}`);
+        }
+    }
+    return resolved;
+}
+
+function assertEditableSubtitlePath(inputPath) {
+    return assertUserFilePath(inputPath, {
+        allowedExts: EDITABLE_SUBTITLE_EXTS,
+        label: '字幕',
+    });
+}
+
+function assertSubtitleMetaPath(inputPath) {
+    return assertUserFilePath(inputPath, {
+        allowedExts: EDITABLE_SUBTITLE_EXTS,
+        label: '字幕元数据',
+    });
+}
+
+function assertVideoFilePath(inputPath) {
+    return assertUserFilePath(inputPath, {
+        allowedExts: VIDEO_FILE_EXTS,
+        label: '视频',
+    });
+}
+
+/** Only allow http(s) for shell.openExternal — blocks file:, javascript:, etc. */
+function isSafeExternalUrl(url) {
+    const raw = asString(url, 4096).trim();
+    if (!raw) return false;
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        return false;
+    }
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+}
+
+function assertSafeExternalUrl(url) {
+    const raw = asString(url, 4096).trim();
+    if (!raw) throw new Error('缺少 URL');
+    if (!isSafeExternalUrl(raw)) throw new Error('仅允许打开 http/https 链接');
+    return raw;
+}
+
 function validateFetchOptions(options = {}) {
     const opts = asPlainObject(options);
     const out = {
@@ -61,11 +128,19 @@ function validateFetchOptions(options = {}) {
 }
 
 module.exports = {
+    EDITABLE_SUBTITLE_EXTS,
+    VIDEO_FILE_EXTS,
     asString,
     asOptionalString,
     asNumber,
     asPlainObject,
     asStringArray,
     resolveSafePath,
+    assertUserFilePath,
+    assertEditableSubtitlePath,
+    assertSubtitleMetaPath,
+    assertVideoFilePath,
+    isSafeExternalUrl,
+    assertSafeExternalUrl,
     validateFetchOptions,
 };

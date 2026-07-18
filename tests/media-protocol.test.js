@@ -7,6 +7,8 @@ const { Readable } = require('node:stream');
 const {
     buildMediaUrl,
     resolveMediaUrl,
+    isAllowedMediaPath,
+    clearAllowedMediaPaths,
 } = require('../electron/media-protocol');
 
 function testBuildMediaUrl() {
@@ -16,15 +18,23 @@ function testBuildMediaUrl() {
 }
 
 function testResolveMediaUrl() {
+    clearAllowedMediaPaths();
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-media-'));
     const file = path.join(tmp, 'sample.mp4');
     fs.writeFileSync(file, Buffer.alloc(128, 0));
+    assert.strictEqual(isAllowedMediaPath(file), false);
     const resolved = resolveMediaUrl(file);
     assert.strictEqual(resolved.ok, true);
     assert.strictEqual(resolved.path, file);
     assert.ok(resolved.url.includes(encodeURIComponent(file)));
+    assert.strictEqual(isAllowedMediaPath(file), true);
     const missing = resolveMediaUrl(path.join(tmp, 'missing.mp4'));
     assert.strictEqual(missing.ok, false);
+    const badExt = path.join(tmp, 'notes.txt');
+    fs.writeFileSync(badExt, 'x');
+    const rejected = resolveMediaUrl(badExt);
+    assert.strictEqual(rejected.ok, false);
+    assert.strictEqual(isAllowedMediaPath(badExt), false);
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -45,14 +55,14 @@ async function testReadableWebStream() {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 
-async function run() {
-    testBuildMediaUrl();
-    testResolveMediaUrl();
-    await testReadableWebStream();
-    console.log('media-protocol tests: OK');
-}
-
-run().catch((err) => {
-    console.error(err);
-    process.exit(1);
+describe("media-protocol", () => {
+    it("build media url", () => {
+        testBuildMediaUrl();
+    });
+    it("resolve media url", () => {
+        testResolveMediaUrl();
+    });
+    it("readable web stream", async () => {
+        await testReadableWebStream();
+    });
 });

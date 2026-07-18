@@ -116,15 +116,26 @@ function testGuessVideoPath() {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 
-function run() {
-    testDetectFormat();
-    testSrtRoundTrip();
-    testVttRoundTrip();
-    testLrcRoundTrip();
-    testTimeHelpers();
-    testReadWriteBridge();
-    testGuessVideoPath();
-    console.log('subtitle-format tests: OK');
-}
-
-run();
+describe("subtitle-format", () => {
+    it("detect format", () => {
+        testDetectFormat();
+    });
+    it("srt round trip", () => {
+        testSrtRoundTrip();
+    });
+    it("vtt round trip", () => {
+        testVttRoundTrip();
+    });
+    it("lrc round trip", () => {
+        testLrcRoundTrip();
+    });
+    it("time helpers", () => {
+        testTimeHelpers();
+    });
+    it("read write bridge", () => {
+        testReadWriteBridge();
+    });
+    it("guess video path", () => {
+        testGuessVideoPath();
+    });
+});

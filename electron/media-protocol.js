@@ -21,6 +21,33 @@ const VIDEO_MIME = {
     '.3gp': 'video/3gpp',
 };
 
+/** Paths explicitly allowed via resolveMediaUrl (renderer cannot invent arbitrary URLs). */
+const allowedMediaPaths = new Set();
+
+function mediaPathKey(filePath) {
+    const resolved = path.resolve(String(filePath || ''));
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function allowMediaPath(filePath) {
+    const resolved = path.resolve(String(filePath || '').trim());
+    if (!resolved) return '';
+    allowedMediaPaths.add(mediaPathKey(resolved));
+    return resolved;
+}
+
+function isAllowedMediaPath(filePath) {
+    const resolved = path.resolve(String(filePath || ''));
+    if (!resolved) return false;
+    const ext = path.extname(resolved).toLowerCase();
+    if (!VIDEO_MIME[ext]) return false;
+    return allowedMediaPaths.has(mediaPathKey(resolved));
+}
+
+function clearAllowedMediaPaths() {
+    allowedMediaPaths.clear();
+}
+
 function getVideoMime(filePath) {
     const ext = path.extname(String(filePath || '')).toLowerCase();
     return VIDEO_MIME[ext] || 'application/octet-stream';
@@ -102,7 +129,7 @@ function registerMediaProtocolHandler() {
     protocol.handle(SCHEME, async (request) => {
         try {
             const filePath = parseMediaRequestPath(request.url);
-            if (!filePath || !fs.existsSync(filePath)) {
+            if (!filePath || !isAllowedMediaPath(filePath) || !fs.existsSync(filePath)) {
                 return new Response(null, { status: 404, statusText: 'Not Found' });
             }
             return createRangedFileResponse(filePath, request);
@@ -115,7 +142,10 @@ function registerMediaProtocolHandler() {
 function resolveMediaUrl(filePath) {
     const resolved = path.resolve(String(filePath || '').trim());
     if (!resolved) return { ok: false, error: '缺少视频路径' };
+    const ext = path.extname(resolved).toLowerCase();
+    if (!VIDEO_MIME[ext]) return { ok: false, error: `不支持的视频格式: ${ext || '(无)'}` };
     if (!fs.existsSync(resolved)) return { ok: false, error: '视频文件不存在' };
+    allowMediaPath(resolved);
     return {
         ok: true,
         path: resolved,
@@ -126,8 +156,12 @@ function resolveMediaUrl(filePath) {
 
 module.exports = {
     SCHEME,
+    VIDEO_MIME,
     registerMediaScheme,
     registerMediaProtocolHandler,
     buildMediaUrl,
     resolveMediaUrl,
+    allowMediaPath,
+    isAllowedMediaPath,
+    clearAllowedMediaPaths,
 };

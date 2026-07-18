@@ -1,7 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const { dialog, shell, BrowserWindow, app } = require('electron');
-const { probeVideo, resolveFfmpegValidation, validateFfmpegSetup, detectSilenceInRange } = require('./ffmpeg-bridge');
+const {
+    probeVideo,
+    resolveFfmpegValidation,
+    validateFfmpegSetup,
+    detectSilenceInRange,
+    cancelActiveFfmpegJobs,
+    extractWaveformPeaks,
+} = require('./ffmpeg-bridge');
 const { loadPresets, saveCustomPreset, deleteCustomPreset } = require('./presets-data');
 const { loadTaskHistory, appendTaskHistory } = require('./task-history');
 const { detectGpuEnvironment } = require('./gpu-detect');
@@ -10,10 +17,22 @@ const { parseSubtitle, serializeSubtitle, detectFormat, isEditableFormat } = req
 const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
 const { getProjectRoot } = require('./app-paths');
-const { asString } = require('./ipc-validate');
+const { asString, assertEditableSubtitlePath, assertSubtitleMetaPath, assertVideoFilePath } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
 const { readSubtitleMeta, writeSubtitleMeta } = require('./subtitle-meta');
-const { readGlossary, writeGlossary } = require('./glossary-data');
+const {
+    readSubtitleDraft,
+    writeSubtitleDraft,
+    clearSubtitleDraft,
+    shouldOfferDraftRestore,
+} = require('./subtitle-draft');
+const { readGlossary, writeGlossary, readGlossaryByScope, writeGlossaryByScope } = require('./glossary-data');
+const {
+    checkForAppUpdate,
+    downloadAppUpdate,
+    quitAndInstallUpdate,
+    openUpdateDownload,
+} = require('./app-updater');
 
 const VIDEO_EXTENSIONS = new Set([
     'mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp',
@@ -76,6 +95,40 @@ function readSubtitleDocument(filePath) {
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
+}
+
+function scanSubtitleQc(filePath, options = {}) {
+    const doc = readSubtitleDocument(filePath);
+    if (!doc.ok) return doc;
+    let qc;
+    try {
+        qc = require('../src/js/subtitle-qc-core');
+    } catch (err) {
+        return { ok: false, error: err.message || '无法加载 QC 模块' };
+    }
+    const { issues, summary } = qc.scanCueIssues(doc.cues, {
+        checkFluency: true,
+        ...options,
+    });
+    const summaryText = typeof qc.summarizeScan === 'function'
+        ? qc.summarizeScan(summary)
+        : (summary?.total ? `${summary.total} 条有问题` : '未发现问题');
+    const shortParts = [];
+    if (summary?.overlap) shortParts.push(`重叠 ${summary.overlap}`);
+    if (summary?.highCps) shortParts.push(`CPS ${summary.highCps}`);
+    if (summary?.short) shortParts.push(`过短 ${summary.short}`);
+    if (summary?.long) shortParts.push(`过长 ${summary.long}`);
+    if (summary?.fluency) shortParts.push(`通顺度 ${summary.fluency}`);
+    if (summary?.invalid) shortParts.push(`无效 ${summary.invalid}`);
+    return {
+        ok: true,
+        path: doc.path,
+        issueCount: Number(summary?.total) || 0,
+        summary,
+        summaryText,
+        shortSummary: shortParts.length ? shortParts.join(' · ') : (summary?.total ? `${summary.total} 项` : '通过'),
+        issues: Array.isArray(issues) ? issues.slice(0, 50) : [],
+    };
 }
 
 function writeSubtitleDocument(filePath, payload = {}) {
@@ -202,7 +255,7 @@ function setupExtensionsBridge(api, deps) {
             const ffmpegPath = payload.ffmpegPath != null
                 ? asString(payload.ffmpegPath, 4096).trim()
                 : settings.ffmpegPath;
-            return validateFfmpegSetup(ffmpegPath);
+            return validateFfmpegSetup(ffmpegPath, { quick: !!payload.quick });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -229,6 +282,32 @@ function setupExtensionsBridge(api, deps) {
                 noiseDb: Number(payload.noiseDb),
                 minSilenceSec: Number(payload.minSilenceSec),
                 minSegmentMs: Number(payload.minSegmentMs),
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('ffmpeg-cancel', async () => {
+        try {
+            return cancelActiveFfmpegJobs();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('ffmpeg-extract-waveform', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path, 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少视频路径' };
+            const settings = loadSettings(getAppRoot).options || {};
+            const ffmpegPathSetting = payload.ffmpegPath != null
+                ? asString(payload.ffmpegPath, 4096).trim()
+                : settings.ffmpegPath;
+            return extractWaveformPeaks(filePath, {
+                ffmpegPathSetting,
+                peaksPerSec: Number(payload.peaksPerSec),
+                maxPeaks: Number(payload.maxPeaks),
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -324,7 +403,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transwithai-subtitle-preview', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
+            const filePath = assertEditableSubtitlePath(payload.path);
             return readSubtitlePreview(filePath, Number(payload.maxLines) || 24);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -333,9 +412,53 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-read-subtitle', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
-            if (!filePath) return { ok: false, error: '缺少路径' };
+            const filePath = assertEditableSubtitlePath(payload.path);
             return readSubtitleDocument(filePath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-scan-subtitle-qc', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return scanSubtitleQc(filePath, payload.options || {});
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-read-subtitle-draft', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return readSubtitleDraft(filePath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-write-subtitle-draft', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return writeSubtitleDraft(filePath, payload);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-clear-subtitle-draft', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return clearSubtitleDraft(filePath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-check-subtitle-draft', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return shouldOfferDraftRestore(filePath);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -343,8 +466,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-write-subtitle', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
-            if (!filePath) return { ok: false, error: '缺少路径' };
+            const filePath = assertEditableSubtitlePath(payload.path);
             return writeSubtitleDocument(filePath, payload);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -353,8 +475,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-read-subtitle-meta', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
-            if (!filePath) return { ok: false, error: '缺少路径' };
+            const filePath = assertSubtitleMetaPath(payload.path);
             return readSubtitleMeta(filePath);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -363,16 +484,22 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-write-subtitle-meta', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
-            if (!filePath) return { ok: false, error: '缺少路径' };
+            const filePath = assertSubtitleMetaPath(payload.path);
             return writeSubtitleMeta(filePath, payload.meta || payload);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
     });
 
-    register('transub-get-glossary', async () => {
+    register('transub-get-glossary', async (_event, payload = {}) => {
         try {
+            if (payload && (payload.scope || payload.subtitlePath || payload.path)) {
+                const filePath = payload.subtitlePath || payload.path;
+                if (filePath && String(payload.scope || '').toLowerCase() !== 'global') {
+                    assertEditableSubtitlePath(filePath);
+                }
+                return readGlossaryByScope(payload);
+            }
             return readGlossary();
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -381,7 +508,12 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-save-glossary', async (_event, payload = {}) => {
         try {
-            return writeGlossary(payload.glossary || payload);
+            const scope = String(payload.scope || 'global').toLowerCase();
+            if (scope === 'project') {
+                const filePath = payload.subtitlePath || payload.path;
+                assertEditableSubtitlePath(filePath);
+            }
+            return writeGlossaryByScope(payload);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -515,7 +647,7 @@ function setupExtensionsBridge(api, deps) {
 
     register('transub-resolve-media-url', async (_event, payload = {}) => {
         try {
-            const filePath = asString(payload.path, 4096).trim();
+            const filePath = assertVideoFilePath(payload.path);
             return resolveMediaUrl(filePath);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -568,12 +700,31 @@ function setupExtensionsBridge(api, deps) {
 
     register('transwithai-check-app-update', async () => {
         try {
-            const pkg = require(path.join(getProjectRoot(), 'package.json'));
-            return {
-                ok: true,
-                currentVersion: pkg.version || '1.0.0',
-                transWithAiReleasesUrl: 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases',
-            };
+            return await checkForAppUpdate();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-download-app-update', async () => {
+        try {
+            return await downloadAppUpdate();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-quit-and-install-update', async () => {
+        try {
+            return quitAndInstallUpdate();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-open-update-page', async (_event, payload = {}) => {
+        try {
+            return await openUpdateDownload(payload.url || payload.downloadUrl || '');
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -598,5 +749,6 @@ module.exports = {
     appendTaskHistory,
     readSubtitleDocument,
     writeSubtitleDocument,
+    scanSubtitleQc,
     listSubtitleSidecars,
 };

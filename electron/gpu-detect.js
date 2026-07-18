@@ -66,6 +66,19 @@ function buildFriendlyRecommendation(info) {
     return lines.join('\n');
 }
 
+function suggestedDeviceForInfo(info) {
+    if (info?.vendor === 'nvidia' && info.detected) return 'cuda';
+    if (info?.vendor === 'amd' && info.detected) return 'amd';
+    return 'cpu';
+}
+
+function withRecommendation(info) {
+    info.suggestedDevice = suggestedDeviceForInfo(info);
+    info.friendlyRecommendation = buildFriendlyRecommendation(info);
+    info.recommendation = info.friendlyRecommendation;
+    return info;
+}
+
 async function detectNvidiaCuda() {
     try {
         const { stdout } = await execFileAsync('nvidia-smi', [], {
@@ -75,41 +88,50 @@ async function detectNvidiaCuda() {
         const cudaMatch = stdout.match(/CUDA Version:\s*(\d+\.\d+)/i);
         const driverMatch = stdout.match(/Driver Version:\s*(\S+)/i);
         const gpuNames = parseNvidiaGpuNames(stdout);
-        const info = {
+        return withRecommendation({
             vendor: 'nvidia',
             detected: true,
             cudaVersion: cudaMatch ? cudaMatch[1] : null,
             driverVersion: driverMatch ? driverMatch[1] : null,
             gpuName: gpuNames[0] || 'NVIDIA 显卡',
             gpuNames,
-        };
-        info.friendlyRecommendation = buildFriendlyRecommendation(info);
-        info.recommendation = info.friendlyRecommendation;
-        return info;
+        });
     } catch {
         return { vendor: 'nvidia', detected: false };
     }
 }
 
-async function detectAmdGpu() {
+async function listWindowsVideoControllers() {
     try {
-        const { stdout } = await execFileAsync('wmic', ['path', 'win32_VideoController', 'get', 'name'], {
+        const { stdout } = await execFileAsync('powershell.exe', [
+            '-NoProfile',
+            '-Command',
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ], {
             windowsHide: true,
             timeout: 8000,
         });
-        const lines = stdout.split('\n').map((l) => l.trim()).filter(Boolean).slice(1);
+        return String(stdout || '')
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+async function detectAmdGpu() {
+    try {
+        const lines = await listWindowsVideoControllers();
         const amdRaw = lines.find((l) => /radeon|amd/i.test(l));
         if (!amdRaw) return { vendor: 'amd', detected: false };
         const rocmSuffix = resolveAmdRocmSuffix(amdRaw);
-        const info = {
+        return withRecommendation({
             vendor: 'amd',
             detected: true,
             gpuName: cleanAmdGpuName(amdRaw),
             rocmSuffix,
-        };
-        info.friendlyRecommendation = buildFriendlyRecommendation(info);
-        info.recommendation = info.friendlyRecommendation;
-        return info;
+        });
     } catch {
         return { vendor: 'amd', detected: false };
     }
@@ -119,13 +141,10 @@ async function detectGpuEnvironment() {
     const [nvidia, amd] = await Promise.all([detectNvidiaCuda(), detectAmdGpu()]);
     if (nvidia.detected) return nvidia;
     if (amd.detected) return amd;
-    const info = {
+    return withRecommendation({
         vendor: 'cpu',
         detected: false,
-    };
-    info.friendlyRecommendation = buildFriendlyRecommendation(info);
-    info.recommendation = info.friendlyRecommendation;
-    return info;
+    });
 }
 
 module.exports = {
@@ -133,5 +152,6 @@ module.exports = {
     detectNvidiaCuda,
     detectAmdGpu,
     buildFriendlyRecommendation,
+    suggestedDeviceForInfo,
     parseNvidiaGpuNames,
 };

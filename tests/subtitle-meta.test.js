@@ -147,15 +147,26 @@ function testReplaceCuesInTimeRange() {
     assert.strictEqual(replaced.cues[3].text, 'd');
 }
 
-function main() {
-    testScoresEmptyAndHighCps();
-    testConfirmedSidecarOverrides();
-    testRepetitionFlag();
-    testSidecarRoundtrip();
-    testLegacyMetaFallback();
-    testSummarize();
-    testReplaceCuesInTimeRange();
-    console.log('subtitle-meta.test.js: all passed');
-}
-
-main();
+describe("subtitle-meta", () => {
+    it("scores empty and high cps", () => {
+        testScoresEmptyAndHighCps();
+    });
+    it("confirmed sidecar overrides", () => {
+        testConfirmedSidecarOverrides();
+    });
+    it("repetition flag", () => {
+        testRepetitionFlag();
+    });
+    it("sidecar roundtrip", () => {
+        testSidecarRoundtrip();
+    });
+    it("legacy meta fallback", () => {
+        testLegacyMetaFallback();
+    });
+    it("summarize", () => {
+        testSummarize();
+    });
+    it("replace cues in time range", () => {
+        testReplaceCuesInTimeRange();
+    });
+});

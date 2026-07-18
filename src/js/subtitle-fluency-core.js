@@ -71,7 +71,7 @@
     }
 
     function endsWithDangling(text) {
-        const raw = String(text || '').trim().replace(/["""''「」『』【】\[\]()（）…·.•-]+$/g, '').trim();
+        const raw = String(text || '').trim().replace(/["""''「」『』【】[\]()（）…·.•-]+$/g, '').trim();
         if (!raw) return false;
         const lastChar = raw.slice(-1);
         if (CJK_PARTICLES.has(lastChar) && /[\u4e00-\u9fff]/.test(raw) && raw.length >= 2) {
@@ -86,7 +86,7 @@
     function isFragmentCue(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
-        const normalized = raw.replace(/["""''「」『』【】\[\]()（）。！？!?…,.，、；;:：·.•-]+/g, '').trim();
+        const normalized = raw.replace(/["""''「」『』【】[\]()（）。！？!?…,.，、；;:：·.•-]+/g, '').trim();
         if (!normalized) return false;
         const lower = normalized.toLowerCase();
         if (FRAGMENT_ONLY.has(lower)) return true;
@@ -107,7 +107,7 @@
     function isSymbolOnlyCue(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
-        const stripped = raw.replace(/[\s♪♫♩♬·.•…\-—_.,。！？!?，、；;:：【】\[\]()（）「」『』"""'']+/g, '');
+        const stripped = raw.replace(/[\s♪♫♩♬·.•…\-—_.,。！？!?，、；;:：【】[\]()（）「」『』"""'']+/g, '');
         return !stripped;
     }
 

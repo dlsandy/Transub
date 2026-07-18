@@ -10,8 +10,9 @@
             <button type="button" id="editorQcBtn" class="editor-btn editor-btn-icon" title="质量检查" aria-label="质量检查"><i class="fa fa-heartbeat"></i><span id="editorQcBadge" class="editor-btn-badge">0</span></button>
 
             <div class="editor-menu-wrap">
-                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon" title="更多工具" aria-label="工具" aria-haspopup="true" aria-expanded="false">
-                    <i class="fa fa-wrench"></i>
+                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon editor-btn-icon-menu" title="更多工具" aria-label="更多工具" aria-haspopup="true" aria-expanded="false">
+                    <i class="fa fa-wrench" aria-hidden="true"></i>
+                    <i class="fa fa-caret-down editor-btn-caret" aria-hidden="true"></i>
                 </button>
                 <div id="editorToolsMenu" class="editor-dropdown hidden" role="menu">
                     <div class="dd-label">条目</div>
@@ -34,8 +35,6 @@
                     <div class="dd-sep"></div>
                     <div class="dd-label">历史</div>
                     <button type="button" id="editorRestoreBtn" class="editor-btn-danger-soft" role="menuitem" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history"></i>复原到初始</button>
-                    <div class="dd-sep"></div>
-                    <button type="button" id="editorShortcutsBtn" role="menuitem" title="查看快捷键说明"><i class="fa fa-keyboard-o"></i>快捷键</button>
                 </div>
             </div>
 
@@ -44,6 +43,7 @@
             </button>
             <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
             <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
+            <button type="button" id="editorShortcutsBtn" class="editor-btn editor-btn-icon" title="快捷键说明" aria-label="快捷键"><i class="fa fa-keyboard-o"></i></button>
         </div>
         <div class="editor-header-meta">
             <span id="editorSaveStatus" class="text-xs" style="color:var(--ed-ok);min-width:2rem;flex-shrink:0"></span>

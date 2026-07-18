@@ -1,0 +1,9 @@
+node_modules
+dist
+renderer-dist
+src/vendor
+_internal
+temp
+coverage
+package-lock.json
+*.min.js

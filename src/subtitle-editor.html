@@ -216,20 +216,48 @@ body.editor-body {
     border-radius: 6px; white-space: pre-wrap; word-break: break-word;
 }
 
+.editor-timeline-stack {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--ed-timeline);
+    border-top: 1px solid #1f2937;
+    user-select: none;
+}
+.editor-waveform-row {
+    flex-shrink: 0;
+    height: 48px;
+    position: relative;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+body:not(.editor-waveform-on) .editor-waveform-row { display: none !important; }
+.editor-waveform-track {
+    position: absolute;
+    inset: 6px 8px 6px 8px;
+    overflow: hidden;
+}
+.editor-timeline-waveform {
+    display: block;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+.editor-waveform-track { cursor: pointer; }
+.editor-waveform-playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: #f43f5e; z-index: 3; pointer-events: none;
+    transform: translateX(-1px);
+}
 .editor-timeline {
     flex-shrink: 0;
     height: 52px;
-    background: var(--ed-timeline);
-    border-top: 1px solid #1f2937;
     position: relative;
-    user-select: none;
 }
 .editor-timeline-track {
     position: absolute;
     inset: 8px 8px 8px 8px;
     overflow: hidden;
 }
-.editor-timeline-cues { position: absolute; inset: 0; }
+.editor-timeline-cues { position: absolute; inset: 0; z-index: 2; }
 .editor-timeline-cue {
     position: absolute;
     top: 4px;
@@ -252,7 +280,7 @@ body.editor-body {
     text-overflow: ellipsis; pointer-events: none; line-height: 32px;
 }
 .editor-timeline-playhead {
-    position: absolute; top: 0; bottom: 0; width: 2px; background: #f43f5e; z-index: 3; pointer-events: none;
+    position: absolute; top: 0; bottom: 0; width: 2px; background: #f43f5e; z-index: 5; pointer-events: none;
     transform: translateX(-1px);
 }
 .editor-timeline-playhead::before {
@@ -349,12 +377,14 @@ body.editor-theme-dark #editorStatusLowConf {
 
 #editorGlossaryConfirm, #editorSplitConfirm, #editorFindReplaceConfirm,
 #editorBatchDurConfirm, #editorSilenceSplitConfirm, #editorSmartSplitConfirm,
-#editorSmartAdjustConfirm, #editorQcConfirm, #editorRetranscribeDurConfirm {
+#editorSmartAdjustConfirm, #editorQcConfirm, #editorRetranscribeDurConfirm,
+#editorChineseConvertConfirm {
     background: var(--ed-accent); border-color: var(--ed-accent); color: #fff;
 }
 #editorGlossaryConfirm:hover, #editorSplitConfirm:hover, #editorFindReplaceConfirm:hover,
 #editorBatchDurConfirm:hover, #editorSilenceSplitConfirm:hover, #editorSmartSplitConfirm:hover,
-#editorSmartAdjustConfirm:hover, #editorQcConfirm:hover, #editorRetranscribeDurConfirm:hover {
+#editorSmartAdjustConfirm:hover, #editorQcConfirm:hover, #editorRetranscribeDurConfirm:hover,
+#editorChineseConvertConfirm:hover {
     background: var(--ed-accent-hover);
 }
 
@@ -395,12 +425,24 @@ body.editor-theme-dark #editorStatusLowConf {
     padding: 0.35rem 0.5rem; font-size: 0.75rem; background: var(--ed-surface); color: var(--ed-text);
 }
 .glossary-form-row { display: flex; align-items: center; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted); }
+.glossary-scope-list { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-bottom: 0.55rem; font-size: 0.72rem; color: var(--ed-muted); }
+.glossary-scope-list label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.glossary-scope-list label.opacity-50 { opacity: 0.55; cursor: not-allowed; }
 
 .detail-times-row {
     display: grid;
-    grid-template-columns: 1fr 1fr minmax(5.2rem, 6.5rem);
-    gap: 0.4rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(6.75rem, 8rem);
+    gap: 0.35rem;
     align-items: end;
+}
+.detail-times-row .detail-field:nth-child(1) input,
+.detail-times-row .detail-field:nth-child(2) input {
+    padding-left: 0.3rem;
+    padding-right: 0.3rem;
+    font-size: 0.7rem;
+}
+.detail-times-row .detail-field:nth-child(3) input {
+    min-width: 3.25rem;
 }
 .detail-set-time-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .detail-set-time-row button {
@@ -601,6 +643,12 @@ body.editor-theme-dark #editorStatusLowConf {
 }
 .editor-btn-icon {
     width: 1.85rem; height: 1.85rem; padding: 0; font-size: 0.85rem; position: relative;
+}
+.editor-btn-icon-menu {
+    width: auto; min-width: 1.85rem; padding: 0 0.32rem; gap: 0.12rem;
+}
+.editor-btn-icon-menu .editor-btn-caret {
+    font-size: 0.55rem; opacity: 0.72; line-height: 1; margin-top: 0.08rem;
 }
 .editor-btn:hover:not(:disabled) { background: var(--ed-surface-2); }
 .editor-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -832,8 +880,9 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <button type="button" id="editorQcBtn" class="editor-btn editor-btn-icon" title="质量检查" aria-label="质量检查"><i class="fa fa-heartbeat"></i><span id="editorQcBadge" class="editor-btn-badge">0</span></button>
 
             <div class="editor-menu-wrap">
-                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon" title="更多工具" aria-label="工具" aria-haspopup="true" aria-expanded="false">
-                    <i class="fa fa-wrench"></i>
+                <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon editor-btn-icon-menu" title="更多工具" aria-label="更多工具" aria-haspopup="true" aria-expanded="false">
+                    <i class="fa fa-wrench" aria-hidden="true"></i>
+                    <i class="fa fa-caret-down editor-btn-caret" aria-hidden="true"></i>
                 </button>
                 <div id="editorToolsMenu" class="editor-dropdown hidden" role="menu">
                     <div class="dd-label">条目</div>
@@ -846,6 +895,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div class="dd-label">文本</div>
                     <button type="button" id="editorGlossaryBtn" role="menuitem" title="术语表与专名一致性"><i class="fa fa-book"></i>术语表<span id="editorGlossaryBadge">0</span></button>
                     <button type="button" id="editorBreakWordsBtn" role="menuitem" title="管理智能断句使用的断句词"><i class="fa fa-ellipsis-h"></i>断句词</button>
+                    <button type="button" id="editorChineseConvertBtn" role="menuitem" title="批量简繁体转换"><i class="fa fa-language"></i>简繁转换</button>
                     <div class="dd-sep"></div>
                     <div class="dd-label">批量处理</div>
                     <button type="button" id="editorBatchDurBtn" role="menuitem" title="按条件批量调整字幕时长"><i class="fa fa-clock-o"></i>时长调整</button>
@@ -857,16 +907,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div class="dd-sep"></div>
                     <div class="dd-label">历史</div>
                     <button type="button" id="editorRestoreBtn" class="editor-btn-danger-soft" role="menuitem" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history"></i>复原到初始</button>
-                    <div class="dd-sep"></div>
-                    <button type="button" id="editorShortcutsBtn" role="menuitem" title="查看快捷键说明"><i class="fa fa-keyboard-o"></i>快捷键</button>
                 </div>
             </div>
 
             <button type="button" id="editorAutoFocusBtn" class="editor-btn editor-btn-icon" title="自动焦点：关闭（开启后播放时跟随当前字幕）" aria-label="自动焦点" aria-pressed="false">
                 <i class="fa fa-crosshairs"></i>
             </button>
+            <button type="button" id="editorWaveformToggle" class="editor-btn editor-btn-icon" title="波形时间轴：关闭（默认）" aria-label="波形时间轴" aria-pressed="false">
+                <i class="fa fa-area-chart"></i>
+            </button>
             <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
             <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
+            <button type="button" id="editorShortcutsBtn" class="editor-btn editor-btn-icon" title="快捷键说明" aria-label="快捷键"><i class="fa fa-keyboard-o"></i></button>
         </div>
         <div class="editor-header-meta">
             <span id="editorSaveStatus" class="text-xs" style="color:var(--ed-ok);min-width:2rem;flex-shrink:0"></span>
@@ -966,7 +1018,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                             <button type="button" id="editorCharDurBtn" title="按目标读速（CPS）调节当前字幕时长">
                                 <i class="fa fa-text-width"></i> 按字数
                             </button>
-                            <button type="button" id="editorSmartDurBtn" class="needs-video" title="按视频静音自动缩短过长时长（需关联视频）">
+                            <button type="button" id="editorSmartDurBtn" class="needs-video" title="按视频静音自动缩短或延长时长至实际语音边界（需关联视频）">
                                 <i class="fa fa-magic"></i> 智能时长
                             </button>
                             <button type="button" id="editorAudioSnapBtn" class="needs-video" title="按音频静音将起止贴到语音边界（需关联视频）">
@@ -1001,10 +1053,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
             </div>
-            <div id="editorTimeline" class="editor-timeline" title="点击定位 · 拖拽字幕块调整时间">
-                <div class="editor-timeline-track" id="editorTimelineTrack">
-                    <div class="editor-timeline-cues" id="editorTimelineCues"></div>
-                    <div class="editor-timeline-playhead" id="editorTimelinePlayhead"></div>
+            <div class="editor-timeline-stack" title="点击定位 · 拖拽字幕块调整时间">
+                <div id="editorWaveformRow" class="editor-waveform-row" aria-label="波形时间轴">
+                    <div class="editor-waveform-track" id="editorWaveformTrack">
+                        <canvas id="editorTimelineWaveform" class="editor-timeline-waveform" aria-hidden="true"></canvas>
+                        <div class="editor-waveform-playhead" id="editorWaveformPlayhead"></div>
+                    </div>
+                </div>
+                <div id="editorTimeline" class="editor-timeline">
+                    <div class="editor-timeline-track" id="editorTimelineTrack">
+                        <div class="editor-timeline-cues" id="editorTimelineCues"></div>
+                        <div class="editor-timeline-playhead" id="editorTimelinePlayhead"></div>
+                    </div>
                 </div>
             </div>
             <div class="editor-transport">
@@ -1169,6 +1229,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-panel glossary-panel">
                 <h3 id="editorGlossaryTitle">术语表 / 专名一致性</h3>
                 <p>维护标准写法与别名；扫描字幕中的不一致，并可一键统一为标准写法（不改时间轴）。</p>
+                <div class="glossary-scope-list" role="radiogroup" aria-label="术语表范围">
+                    <label><input type="radio" name="editorGlossaryScope" id="editorGlossaryScopeGlobal" value="global" checked> 全局术语表</label>
+                    <label id="editorGlossaryScopeProjectLabel"><input type="radio" name="editorGlossaryScope" id="editorGlossaryScopeProject" value="project"> 项目术语表</label>
+                </div>
                 <div class="glossary-toolbar">
                     <button type="button" id="editorGlossaryAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
                     <button type="button" id="editorGlossaryImportBtn">导入</button>
@@ -1235,7 +1299,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     </label>
                     <label class="split-mode-item">
                         <input type="radio" name="editorBatchDurMode" value="silence">
-                        <span>按静音缩短尾部（需关联视频）</span>
+                        <span>按静音智能时长（缩短/延长，需关联视频）</span>
                     </label>
                     <label class="split-mode-item">
                         <input type="radio" name="editorBatchDurMode" value="audio_snap">
@@ -1315,7 +1379,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     </label>
                     <label class="split-mode-item">
                         <input type="radio" name="editorBatchDurCond" value="selected">
-                        <span>仅当前选中条目</span>
+                        <span>仅选中条目（支持多选）</span>
                     </label>
                 </div>
                 <label class="find-options" id="editorBatchDurAvoidOverlapRow">
@@ -1530,6 +1594,41 @@ button.needs-video.is-no-video { opacity: 0.45; }
             </div>
         </div>
 
+        <div id="editorChineseConvertModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorChineseConvertTitle">
+            <div class="editor-modal-backdrop" data-chinese-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorChineseConvertTitle">简繁转换</h3>
+                <p>按 OpenCC 字符/短语表批量转换字幕文本（不改时间轴）。专名、两岸用语差异请再人工校对。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseDirection" id="editorChineseDirS2T" value="s2t" checked>
+                        <span>简体 → 繁体</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseDirection" id="editorChineseDirT2S" value="t2s">
+                        <span>繁体 → 简体</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseScope" id="editorChineseScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseScope" id="editorChineseScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorChineseProtectGlossary" checked>
+                        <span>保护术语表词条</span>
+                    </label>
+                </div>
+                <p id="editorChineseConvertPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorChineseConvertCancel" data-chinese-dismiss>取消</button>
+                    <button type="button" id="editorChineseConvertConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
         <div id="editorQcModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorQcTitle">
             <div class="editor-modal-backdrop" data-qc-dismiss></div>
             <div class="editor-modal-panel qc-panel">
@@ -1637,6 +1736,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <div id="editorSilenceProgressBar" class="editor-silence-progress-bar"></div>
             </div>
             <p id="editorSilenceProgressHint" class="editor-silence-progress-hint">FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口</p>
+            <button type="button" id="editorSilenceProgressCancel" class="mt-3 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">取消</button>
         </div>
     </div>
 
@@ -1657,8 +1757,13 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <tr><th colspan="2">条目与时间</th></tr>
                     <tr><td><kbd>F11</kbd></td><td>设为起始时间（当前条）</td></tr>
                     <tr><td><kbd>F12</kbd></td><td>设为结束时间（当前条）</td></tr>
-                    <tr><td><kbd>Delete</kbd></td><td>删除当前字幕</td></tr>
+                    <tr><td><kbd>Delete</kbd></td><td>删除当前/选中字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>A</kbd></td><td>全选可见字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>点击</kbd></td><td>多选切换</td></tr>
+                    <tr><td><kbd>Shift</kbd> + <kbd>点击</kbd></td><td>范围多选</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>M</kbd></td><td>合并选中相邻字幕</td></tr>
                     <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上一条 / 下一条字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd></td><td>上一条 / 下一条字幕（文字编辑框内）</td></tr>
                     <tr><th colspan="2">视频预览</th></tr>
                     <tr><td><kbd>Space</kbd></td><td>播放 / 暂停（列表或播放区聚焦时）</td></tr>
                     <tr><td><kbd>Enter</kbd></td><td>在播放头处插入字幕（列表聚焦时）</td></tr>
@@ -1703,6 +1808,13 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-qc-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
+    <script src="js/subtitle-chinese-dict.js"></script>
+    <script src="js/subtitle-chinese-core.js"></script>
+    <script src="js/subtitle-editor/utils.js"></script>
+    <script src="js/subtitle-editor/undo.js"></script>
+    <script src="js/subtitle-editor/modals.js"></script>
+    <script src="js/subtitle-editor/boot.js"></script>
+    <script src="js/subtitle-editor/prefs.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>
 </html>

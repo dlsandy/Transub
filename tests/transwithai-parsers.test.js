@@ -22,7 +22,10 @@ function testMapInferStageProgress() {
 function testParseInferProgressLine() {
     const vad = parseInferProgressLine('VAD进度： 3 / 10 块（30.0%）');
     assert.strictEqual(vad.stage, 'vad');
-    assert.strictEqual(vad.videoProgress, 30);
+    assert.strictEqual(vad.videoProgress, 0);
+    assert.ok(String(vad.detail || '').includes('3/10'));
+    assert.strictEqual(vad.videoCurrentSec, undefined);
+    assert.strictEqual(vad.videoTotalSec, undefined);
 
     const model = parseInferProgressLine('正在加载Whisper模型…');
     assert.strictEqual(model.stage, 'model');
@@ -53,32 +56,31 @@ function testNormalizeOutputOptions() {
     assert.strictEqual(opts.device, 'modal');
 }
 
-async function testDetectVersionFromLog(tmpDir) {
-    const fs = require('fs');
-    const logPath = path.join(tmpDir, 'latest.log');
-    fs.writeFileSync(logPath, '启动 infer\n程序版本：v2.1.0\n', 'utf8');
-    const version = await detectTransWithAiVersion(tmpDir);
-    assert.strictEqual(version, 'v2.1.0');
-}
-
-async function main() {
-    testMapInferStageProgress();
-    testParseInferProgressLine();
-    testNormalizeOutputOptions();
-
+async function testDetectVersionFromLog() {
     const fs = require('fs');
     const os = require('os');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-test-'));
     try {
-        await testDetectVersionFromLog(tmpDir);
+        const logPath = path.join(tmpDir, 'latest.log');
+        fs.writeFileSync(logPath, '启动 infer\n程序版本：v2.1.0\n', 'utf8');
+        const version = await detectTransWithAiVersion(tmpDir);
+        assert.strictEqual(version, 'v2.1.0');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-
-    console.log('transwithai-parsers.test.js: all passed');
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
+describe('transwithai-parsers', () => {
+    it('map infer stage progress', () => {
+        testMapInferStageProgress();
+    });
+    it('parse infer progress line', () => {
+        testParseInferProgressLine();
+    });
+    it('normalize output options', () => {
+        testNormalizeOutputOptions();
+    });
+    it('detect version from log', async () => {
+        await testDetectVersionFromLog();
+    });
 });

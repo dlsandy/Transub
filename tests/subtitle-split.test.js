@@ -106,16 +106,29 @@ function testTextCharCountIgnoresSpaces() {
     assert.strictEqual(textCharCount('a b c'), 3);
 }
 
-function main() {
-    testConnectedTextNotSplit();
-    testSplitTextSmartOnPunctuation();
-    testSplitTextSmartOnBreakWords();
-    testSplitTextSmartShortText();
-    testBuildCuesFromTextsCpsMode();
-    testSnapSplitIndexNearPunctuation();
-    testSplitTextByCharCount();
-    testTextCharCountIgnoresSpaces();
-    console.log('subtitle-split.test.js: all passed');
-}
-
-main();
+describe("subtitle-split", () => {
+    it("connected text not split", () => {
+        testConnectedTextNotSplit();
+    });
+    it("split text smart on punctuation", () => {
+        testSplitTextSmartOnPunctuation();
+    });
+    it("split text smart on break words", () => {
+        testSplitTextSmartOnBreakWords();
+    });
+    it("split text smart short text", () => {
+        testSplitTextSmartShortText();
+    });
+    it("build cues from texts cps mode", () => {
+        testBuildCuesFromTextsCpsMode();
+    });
+    it("snap split index near punctuation", () => {
+        testSnapSplitIndexNearPunctuation();
+    });
+    it("split text by char count", () => {
+        testSplitTextByCharCount();
+    });
+    it("text char count ignores spaces", () => {
+        testTextCharCountIgnoresSpaces();
+    });
+});

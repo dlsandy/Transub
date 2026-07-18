@@ -46,6 +46,11 @@ const out = `${headStart}<style>\n${css}\n</style>\n</head>\n${shell}\n${modals}
     <script src="js/subtitle-qc-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
+    <script src="js/subtitle-editor/utils.js"></script>
+    <script src="js/subtitle-editor/undo.js"></script>
+    <script src="js/subtitle-editor/modals.js"></script>
+    <script src="js/subtitle-editor/boot.js"></script>
+    <script src="js/subtitle-editor/prefs.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>
 </html>
