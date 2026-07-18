@@ -13,6 +13,23 @@ function resolveIconSource() {
     return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
+function resolveEditorIconSource() {
+    const candidates = [
+        path.join(root, 'tseditor.png'),
+        path.join(electronDir, 'editor-icon-source.png'),
+    ];
+    return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+async function writePngSizes(sharp, source, sizes) {
+    for (const { file, size } of sizes) {
+        await sharp(source)
+            .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+            .png()
+            .toFile(path.join(electronDir, file));
+    }
+}
+
 async function main() {
     const source = resolveIconSource();
     if (!source) {
@@ -38,12 +55,7 @@ async function main() {
         { file: 'tray-icon-subtitle.png', size: 32 },
     ];
 
-    for (const { file, size } of sizes) {
-        await sharp(source)
-            .resize(size, size, { fit: 'cover' })
-            .png()
-            .toFile(path.join(electronDir, file));
-    }
+    await writePngSizes(sharp, source, sizes);
 
     const ico = await pngToIco([
         path.join(electronDir, 'icon-16.png'),
@@ -63,6 +75,26 @@ async function main() {
         .resize(32, 32, { fit: 'cover' })
         .png()
         .toFile(path.join(root, 'src', 'icon.png'));
+
+    const editorSource = resolveEditorIconSource();
+    if (editorSource) {
+        console.log('[generate-icons] 编辑器源图:', path.relative(root, editorSource));
+        const editorSizes = [
+            { file: 'editor-icon-16.png', size: 16 },
+            { file: 'editor-icon-32.png', size: 32 },
+            { file: 'editor-icon-48.png', size: 48 },
+            { file: 'editor-icon-256.png', size: 256 },
+        ];
+        await writePngSizes(sharp, editorSource, editorSizes);
+        const editorIco = await pngToIco(editorSizes.map((s) => path.join(electronDir, s.file)));
+        fs.writeFileSync(path.join(electronDir, 'editor-app.ico'), editorIco);
+        await sharp(editorSource)
+            .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+            .png()
+            .toFile(path.join(electronDir, 'editor-icon-source.png'));
+    } else {
+        console.warn('[generate-icons] 未找到 tseditor.png，跳过字幕编辑器图标');
+    }
 
     console.log('[generate-icons] 完成');
 }

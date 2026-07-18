@@ -126,9 +126,16 @@
         },
         timeline: {
             dragging: null,
+            panning: null,
             durationMs: 0,
             viewStartMs: 0,
             viewEndMs: 0,
+            /** Minimum visible window when zoomed in (ms). */
+            minViewMs: 2000,
+            /** Zoom ratio: duration / visibleSpan. Default 5×. */
+            zoom: 5,
+            /** True when the view currently covers the full duration (zoom ≈ 1). */
+            fitted: false,
         },
     };
 
@@ -723,6 +730,15 @@
                 block: 'nearest',
                 behavior: opts.fromPlayback ? 'auto' : 'smooth',
             });
+            if (!opts.fromPlayback) {
+                const cue = state.cues[idx];
+                if (cue && isTimelineZoomed()) {
+                    const mid = Math.round((cue.startMs + cueEndMs(cue)) / 2);
+                    if (ensurePlayheadInView(mid, { marginRatio: 0.08 })) {
+                        refreshTimelineView();
+                    }
+                }
+            }
         }
     }
 
@@ -1337,7 +1353,6 @@
             format: state.format,
             cues: state.cues,
             header: state.header,
-            createBackup: true,
         });
         if (!res?.ok) {
             setStatus(res?.error || '保存失败', 'err');
@@ -1788,9 +1803,14 @@
     function canSilenceSplitCue(cue) {
         const text = String(cue?.text || '').trim();
         if (!text) return false;
-        if (splitCore.isConnectedText(text)) return false;
         if (cueDurationMs(cue) < 600) return false;
-        return true;
+        if (!splitCore.isConnectedText(text)) return true;
+        if (typeof splitCore.getSilenceTextBreakIndices !== 'function') return false;
+        const breaks = splitCore.getSilenceTextBreakIndices(text, {
+            breakWords: getSmartSplitBreakWords(),
+            includePunctuation: true,
+        });
+        return breaks.length > 0;
     }
 
     function setSilenceSplitBusy(busy) {
@@ -2195,6 +2215,14 @@
 
     function connectedTextSplitError(mode, text) {
         if (!blocksConnectedTextSplit(mode) || !splitCore.isConnectedText(text)) return null;
+        if (mode === 'silence' && typeof splitCore.getSilenceTextBreakIndices === 'function') {
+            const breaks = splitCore.getSilenceTextBreakIndices(text, {
+                breakWords: getSmartSplitBreakWords(),
+                includePunctuation: true,
+            });
+            if (breaks.length) return null;
+            return '文本为连续书写且未匹配断句词/标点，无法静音分割。请在「断句词」中添加，或使用光标/播放头手动分割。';
+        }
         return CONNECTED_TEXT_SPLIT_MSG;
     }
 
@@ -2309,11 +2337,17 @@
         const noiseDb = opts.silenceDb != null ? opts.silenceDb : -30;
         const silenceDur = opts.silenceDur != null ? opts.silenceDur : 0.12;
         const minSegmentMs = Math.max(120, Math.min(280, Math.round(cueDur * 0.1)));
+        const breakWords = opts.breakWords || getSmartSplitBreakWords();
 
-        const wsBreaks = typeof splitCore.getWhitespaceBreakIndices === 'function'
-            ? splitCore.getWhitespaceBreakIndices(text)
-            : [];
-        const idealBreakMs = wsBreaks.map((idx) => {
+        const textBreaks = typeof splitCore.getSilenceTextBreakIndices === 'function'
+            ? splitCore.getSilenceTextBreakIndices(text, {
+                breakWords,
+                includePunctuation: true,
+            })
+            : (typeof splitCore.getWhitespaceBreakIndices === 'function'
+                ? splitCore.getWhitespaceBreakIndices(text)
+                : []);
+        const idealBreakMs = textBreaks.map((idx) => {
             const ratio = Math.max(0, Math.min(1, idx / Math.max(1, text.length)));
             return Math.round(cueStart + ratio * cueDur);
         });
@@ -2329,92 +2363,54 @@
             ...(cachedFfmpegPath ? { ffmpegPath: cachedFfmpegPath } : {}),
         });
 
-        const dedupePoints = (points, minGap) => {
-            const sorted = [...points].map((ms) => Math.round(Number(ms) || 0)).sort((a, b) => a - b);
-            const out = [];
-            for (const ms of sorted) {
-                if (!out.length || ms - out[out.length - 1] >= minGap) out.push(ms);
-            }
-            return out;
-        };
-
         const pickSplitPoints = (analysis, minSeg, minSilenceMs) => {
             if (!analysis?.ok) return [];
             const edge = Math.max(100, Math.min(minSeg, Math.floor(cueDur * 0.12)));
+            if (typeof splitCore.pickScoredSilenceSplitPoints === 'function') {
+                return splitCore.pickScoredSilenceSplitPoints(
+                    analysis.intervals,
+                    cueStart,
+                    end,
+                    {
+                        edgeMs: edge,
+                        minSilenceMs,
+                        minSpeechMs: 120,
+                        idealBreakMs,
+                        minGapMs: edge,
+                    },
+                );
+            }
+
+            // Fallback for older split-core builds
             const interiorLo = cueStart + edge;
             const interiorHi = end - edge;
             if (interiorHi <= interiorLo) return [];
-
             const points = [];
             const pushIfInterior = (ms) => {
                 const v = Math.round(Number(ms) || 0);
                 if (v > interiorLo && v < interiorHi) points.push(v);
             };
-
             for (const ms of analysis.splitPointsMs || []) pushIfInterior(ms);
-
             for (const iv of analysis.intervals || []) {
                 const s = Math.max(cueStart, Math.round(Number(iv.startMs) || 0));
                 const e = Math.min(end, Math.round(Number(iv.endMs) || 0));
-                const dur = e - s;
-                if (dur < minSilenceMs) continue;
-                pushIfInterior(Math.round((s + e) / 2));
-                // Short pause near a text break (space / 换行) — still accept
-                if (idealBreakMs.length && dur >= Math.max(40, minSilenceMs * 0.5)) {
-                    const mid = Math.round((s + e) / 2);
-                    if (idealBreakMs.some((ideal) => Math.abs(mid - ideal) <= Math.max(700, cueDur * 0.22))) {
-                        pushIfInterior(mid);
-                    }
-                }
+                if (e - s >= minSilenceMs) pushIfInterior(Math.round((s + e) / 2));
             }
-
-            // Gaps between speech islands inside the cue
-            if (typeof splitCore.buildSpeechRegionsFromSilence === 'function') {
-                const regions = splitCore.buildSpeechRegionsFromSilence(
-                    cueStart,
-                    end,
-                    analysis.intervals,
-                    120,
-                );
-                for (let i = 0; i < regions.length - 1; i += 1) {
-                    const gapStart = regions[i].endMs;
-                    const gapEnd = regions[i + 1].startMs;
-                    if (gapEnd - gapStart < 40) continue;
-                    pushIfInterior(Math.round((gapStart + gapEnd) / 2));
-                }
+            const sorted = [...points].sort((a, b) => a - b);
+            const out = [];
+            for (const ms of sorted) {
+                if (!out.length || ms - out[out.length - 1] >= edge) out.push(ms);
             }
-
-            let out = dedupePoints(points, edge);
-
-            // If text has whitespace breaks, keep the silence point nearest each break
-            if (idealBreakMs.length && out.length) {
-                const picked = [];
-                for (const ideal of idealBreakMs) {
-                    let best = null;
-                    let bestDist = Infinity;
-                    for (const ms of out) {
-                        const dist = Math.abs(ms - ideal);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = ms;
-                        }
-                    }
-                    // Allow fairly distant match — audible pause often lags the space slightly
-                    if (best != null && bestDist <= Math.max(1200, cueDur * 0.35)) {
-                        picked.push(best);
-                    }
-                }
-                if (picked.length) out = dedupePoints(picked, edge);
-            }
-
             return out;
         };
 
+        // Escalate sensitivity only when the previous pass finds no usable split;
+        // keep the first successful pass to avoid treating breath noise as pauses.
         const passes = [
             { noise: noiseDb, minSilence: silenceDur, minSeg: minSegmentMs },
-            { noise: Math.min(-24, noiseDb + 6), minSilence: Math.min(0.1, silenceDur), minSeg: Math.max(100, minSegmentMs - 40) },
-            { noise: -22, minSilence: 0.07, minSeg: Math.max(100, minSegmentMs - 80) },
-            { noise: -20, minSilence: 0.05, minSeg: 100 },
+            { noise: Math.min(-26, noiseDb + 5), minSilence: Math.min(0.1, silenceDur), minSeg: Math.max(100, minSegmentMs - 40) },
+            { noise: -24, minSilence: 0.08, minSeg: Math.max(100, minSegmentMs - 60) },
+            { noise: -22, minSilence: 0.06, minSeg: 100 },
         ];
 
         let analysis = null;
@@ -2431,12 +2427,10 @@
             }
             if (!result?.ok) {
                 lastError = result?.error || lastError;
-                // Don't abort on a flaky short-window error if cue itself is long enough —
-                // try next (more sensitive) pass after ensuring window is sane.
                 continue;
             }
             analysis = result;
-            const minSilenceMs = Math.max(40, Math.round(pass.minSilence * 700));
+            const minSilenceMs = Math.max(50, Math.round(pass.minSilence * 850));
             splitPoints = pickSplitPoints(result, pass.minSeg, minSilenceMs);
             if (splitPoints.length) break;
         }
@@ -2457,9 +2451,13 @@
             analysis.intervals,
             {
                 minDurMs: 400,
-                minTrailingSilenceMs: Math.max(120, Math.round((opts.silenceDur ?? silenceDur) * 800)),
-                minLeadingSilenceMs: Math.max(120, Math.round((opts.silenceDur ?? silenceDur) * 800)),
+                minTrailingSilenceMs: Math.max(100, Math.round((opts.silenceDur ?? silenceDur) * 700)),
+                minLeadingSilenceMs: Math.max(100, Math.round((opts.silenceDur ?? silenceDur) * 700)),
+                headPadMs: 60,
+                tailPadMs: 60,
                 gapMs: 1,
+                breakWords,
+                includePunctuation: true,
             },
         );
         if (!cues || cues.length < 2) {
@@ -2976,8 +2974,9 @@
                     hint = '提示：请先点击顶栏「关联视频」';
                 } else if (!electron?.ffmpegDetectSilence) {
                     hint = '提示：当前环境不支持静音分析';
-                } else if (splitCore.isConnectedText(cue.text || '')) {
-                    hint = CONNECTED_TEXT_SPLIT_MSG;
+                } else {
+                    const silenceConnectedErr = connectedTextSplitError('silence', cue.text || '');
+                    if (silenceConnectedErr) hint = silenceConnectedErr;
                 }
             }
 
@@ -2995,12 +2994,15 @@
                 if (!state.videoPath) {
                     els.splitPreview.textContent = '需关联视频后才能按静音切分';
                     els.splitPreview.classList.add('err');
-                } else if (splitCore.isConnectedText(cue.text || '')) {
-                    els.splitPreview.textContent = CONNECTED_TEXT_SPLIT_MSG;
-                    els.splitPreview.classList.add('err');
                 } else {
-                    els.splitPreview.textContent = '执行时将分析该时间段内的静音点并分配文本';
-                    els.splitPreview.classList.remove('err');
+                    const silenceConnectedErr = connectedTextSplitError('silence', cue.text || '');
+                    if (silenceConnectedErr) {
+                        els.splitPreview.textContent = silenceConnectedErr;
+                        els.splitPreview.classList.add('err');
+                    } else {
+                        els.splitPreview.textContent = '执行时将分析该时间段内的静音点，并结合空格/断句词/标点分配文本';
+                        els.splitPreview.classList.remove('err');
+                    }
                 }
             } else {
                 const preview = computeSplitParts(mode, cue, readSingleSplitOptions());
@@ -4555,7 +4557,7 @@
         if (!els.breakWordsChips) return;
         const words = loadBreakWords();
         if (!words.length) {
-            els.breakWordsChips.innerHTML = '<span style="font-size:0.72rem;color:var(--ed-faint)">暂无断句词。添加后，智能断句会优先在这些词之后切开。</span>';
+            els.breakWordsChips.innerHTML = '<span style="font-size:0.72rem;color:var(--ed-faint)">暂无断句词。添加后，智能断句与静音分割会优先在这些词之后切开。</span>';
         } else {
             els.breakWordsChips.innerHTML = words.map((word) => (
                 `<span class="break-words-chip" data-break-word="${esc(word)}">`
@@ -4566,8 +4568,8 @@
         }
         if (els.breakWordsStatus) {
             els.breakWordsStatus.textContent = words.length
-                ? `当前 ${words.length} 个断句词，已用于智能断句`
-                : '未设置断句词时，智能断句只按标点与空白切分';
+                ? `当前 ${words.length} 个断句词，已用于智能断句与静音分割`
+                : '未设置断句词时，智能断句/静音分割只按标点与空白对齐';
             els.breakWordsStatus.classList.remove('err');
         }
     }
@@ -5381,6 +5383,142 @@
         syncPlaybackFromVideo(true);
     }
 
+    function getTimelineMinViewMs() {
+        return Math.max(500, Number(state.timeline.minViewMs) || 2000);
+    }
+
+    function getTimelineViewSpan() {
+        return Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+    }
+
+    function isTimelineZoomed() {
+        const dur = Math.max(1, state.timeline.durationMs);
+        return getTimelineViewSpan() < dur - 1;
+    }
+
+    function getTimelineMaxZoom(durMs) {
+        const dur = Math.max(1, durMs || state.timeline.durationMs || 1);
+        const minView = Math.min(getTimelineMinViewMs(), dur);
+        return Math.max(1, dur / minView);
+    }
+
+    function clampTimelineZoom(zoom, durMs) {
+        const z = Number(zoom);
+        const fallback = Number(state.timeline.zoom) || 5;
+        const maxZoom = getTimelineMaxZoom(durMs);
+        if (!Number.isFinite(z) || z < 1) return Math.min(fallback, maxZoom);
+        return Math.max(1, Math.min(maxZoom, z));
+    }
+
+    function syncTimelineZoomFromView() {
+        const dur = Math.max(1, state.timeline.durationMs);
+        const span = getTimelineViewSpan();
+        state.timeline.zoom = clampTimelineZoom(dur / span, dur);
+        state.timeline.fitted = span >= dur - 1;
+    }
+
+    function clampTimelineView() {
+        const dur = Math.max(1, state.timeline.durationMs);
+        const minView = Math.min(getTimelineMinViewMs(), dur);
+        let span = Math.max(minView, state.timeline.viewEndMs - state.timeline.viewStartMs);
+        span = Math.min(span, dur);
+        let start = Number(state.timeline.viewStartMs) || 0;
+        if (!Number.isFinite(start)) start = 0;
+        start = Math.max(0, Math.min(start, dur - span));
+        state.timeline.viewStartMs = start;
+        state.timeline.viewEndMs = start + span;
+        syncTimelineZoomFromView();
+        updateTimelineZoomUi();
+    }
+
+    function applyTimelineZoom(zoom, anchorMs, { save = true, preserveStart = false } = {}) {
+        const dur = Math.max(1, state.timeline.durationMs);
+        const z = clampTimelineZoom(zoom, dur);
+        const span = dur / z;
+        const oldStart = state.timeline.viewStartMs;
+        const oldSpan = getTimelineViewSpan();
+        let start;
+        if (preserveStart && oldSpan > 0 && state.timeline.viewEndMs > state.timeline.viewStartMs) {
+            start = oldStart;
+        } else {
+            const anchor = Number.isFinite(anchorMs)
+                ? Math.max(0, Math.min(dur, anchorMs))
+                : (oldSpan > 0 ? oldStart + oldSpan / 2 : 0);
+            const ratio = oldSpan > 0
+                ? Math.max(0, Math.min(1, (anchor - oldStart) / oldSpan))
+                : 0.35;
+            start = anchor - ratio * span;
+        }
+        state.timeline.viewStartMs = start;
+        state.timeline.viewEndMs = start + span;
+        clampTimelineView();
+        if (save) {
+            state.timeline.zoom = saveTimelineZoomPref(state.timeline.zoom);
+        }
+    }
+
+    function fitTimelineView() {
+        applyTimelineZoom(1, 0, { save: true, preserveStart: false });
+    }
+
+    function setTimelineView(startMs, endMs) {
+        state.timeline.viewStartMs = startMs;
+        state.timeline.viewEndMs = endMs;
+        clampTimelineView();
+    }
+
+    function zoomTimelineAt(factor, anchorMs) {
+        const nextZoom = (Number(state.timeline.zoom) || 1) / Math.max(0.01, factor);
+        applyTimelineZoom(nextZoom, anchorMs, { save: true });
+    }
+
+    function panTimelineByMs(deltaMs) {
+        if (!deltaMs || !isTimelineZoomed()) return false;
+        setTimelineView(state.timeline.viewStartMs + deltaMs, state.timeline.viewEndMs + deltaMs);
+        return true;
+    }
+
+    function ensurePlayheadInView(ms, { marginRatio = 0.12, forceCenter = false } = {}) {
+        if (!isTimelineZoomed()) return false;
+        const span = getTimelineViewSpan();
+        const margin = span * Math.max(0, Math.min(0.4, marginRatio));
+        const start = state.timeline.viewStartMs;
+        const end = state.timeline.viewEndMs;
+        if (!forceCenter && ms >= start + margin && ms <= end - margin) return false;
+        const targetStart = ms - span * 0.35;
+        setTimelineView(targetStart, targetStart + span);
+        return true;
+    }
+
+    function updateTimelineZoomUi() {
+        const zoomed = isTimelineZoomed();
+        const dur = Math.max(1, state.timeline.durationMs);
+        const span = getTimelineViewSpan();
+        const zoom = Number(state.timeline.zoom) || (dur / span);
+        if (els.timelineZoomFit) {
+            els.timelineZoomFit.disabled = !zoomed;
+        }
+        if (els.timelineHScrollWrap) {
+            els.timelineHScrollWrap.classList.toggle('hidden', !zoomed);
+            els.timelineHScrollWrap.setAttribute('aria-hidden', zoomed ? 'false' : 'true');
+        }
+        if (els.timelineHScroll && zoomed) {
+            const maxScroll = Math.max(1, dur - span);
+            const pos = Math.max(0, Math.min(1, state.timeline.viewStartMs / maxScroll));
+            const sliderMax = Number(els.timelineHScroll.max) || 1000;
+            const nextVal = Math.round(pos * sliderMax);
+            if (Number(els.timelineHScroll.value) !== nextVal) {
+                els.timelineHScroll.value = String(nextVal);
+            }
+        }
+        if (els.timelineStack) {
+            const zoomLabel = zoomed
+                ? ` · 已放大 ${zoom.toFixed(1)}×`
+                : '';
+            els.timelineStack.title = `点击定位 · 拖拽字幕块调整时间 · 滚轮平移 · Ctrl+滚轮缩放${zoomLabel}`;
+        }
+    }
+
     function updateTimelineDuration() {
         let durMs = 0;
         if (els.video && Number.isFinite(els.video.duration) && els.video.duration > 0) {
@@ -5388,32 +5526,78 @@
         } else if (state.cues.length) {
             durMs = Math.max(...state.cues.map((c) => cueEndMs(c)), 1000);
         }
-        state.timeline.durationMs = Math.max(durMs, 1000);
-        state.timeline.viewStartMs = 0;
-        state.timeline.viewEndMs = state.timeline.durationMs;
+        const nextDur = Math.max(durMs, 1000);
+        const prevDur = state.timeline.durationMs;
+        const hadView = prevDur > 0
+            && state.timeline.viewEndMs > state.timeline.viewStartMs;
+        state.timeline.durationMs = nextDur;
+
+        const zoom = clampTimelineZoom(
+            state.timeline.zoom || loadTimelineZoomPref(),
+            nextDur,
+        );
+        state.timeline.zoom = zoom;
+
+        if (!hadView) {
+            const anchor = els.video
+                ? Math.round((els.video.currentTime || 0) * 1000)
+                : 0;
+            applyTimelineZoom(zoom, anchor, { save: false, preserveStart: false });
+        } else {
+            applyTimelineZoom(zoom, null, { save: false, preserveStart: true });
+        }
     }
 
     function timelineMsToX(ms) {
         const track = els.timelineTrack;
         if (!track) return 0;
         const w = track.clientWidth || 1;
-        const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+        const span = getTimelineViewSpan();
         return ((ms - state.timeline.viewStartMs) / span) * w;
     }
 
-    function timelineXToMs(x) {
-        const track = els.timelineTrack;
+    function timelineXToMs(x, trackEl) {
+        const track = trackEl || els.timelineTrack;
         if (!track) return 0;
         const w = track.clientWidth || 1;
-        const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+        const span = getTimelineViewSpan();
         return state.timeline.viewStartMs + (x / w) * span;
     }
 
-    function updateTimelinePlayhead(ms) {
+    function updateTimelinePlayhead(ms, { follow = false } = {}) {
+        if (follow && els.video && !els.video.paused) {
+            if (ensurePlayheadInView(ms)) {
+                renderTimeline({ skipDuration: true });
+                return;
+            }
+        }
         const x = timelineMsToX(ms);
         if (els.timelinePlayhead) els.timelinePlayhead.style.left = `${x}px`;
         if (els.waveformPlayhead && state.waveformEnabled) {
             els.waveformPlayhead.style.left = `${x}px`;
+        }
+    }
+
+    function setWaveformLoadingUi(loading, message) {
+        const on = !!loading && state.waveformEnabled;
+        const text = message || '正在加载波形…';
+        if (els.waveformLoading) {
+            els.waveformLoading.classList.toggle('hidden', !on);
+            els.waveformLoading.setAttribute('aria-hidden', on ? 'false' : 'true');
+        }
+        if (els.waveformLoadingText) {
+            els.waveformLoadingText.textContent = text;
+        }
+        if (els.waveformToggle) {
+            els.waveformToggle.classList.toggle('is-loading', on);
+            if (on) {
+                els.waveformToggle.title = text;
+            } else if (state.waveformEnabled) {
+                els.waveformToggle.title = '波形时间轴：开启';
+            }
+        }
+        if (els.waveformRow) {
+            els.waveformRow.classList.toggle('is-loading', on);
         }
     }
 
@@ -5443,9 +5627,22 @@
         ctx.clearRect(0, 0, cssW, cssH);
         const mid = cssH / 2;
         ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
-        const step = Math.max(1, Math.floor(peaks.length / cssW));
+
+        const peakDurMs = Math.max(
+            1,
+            (Number(state.waveform.durationSec) > 0
+                ? state.waveform.durationSec * 1000
+                : state.timeline.durationMs) || 1,
+        );
+        const i0 = Math.max(0, Math.floor((state.timeline.viewStartMs / peakDurMs) * peaks.length));
+        const i1 = Math.min(
+            peaks.length,
+            Math.ceil((state.timeline.viewEndMs / peakDurMs) * peaks.length),
+        );
+        const viewPeaks = Math.max(1, i1 - i0);
+        const step = Math.max(1, Math.floor(viewPeaks / cssW));
         for (let x = 0; x < cssW; x += 1) {
-            const i = Math.min(peaks.length - 1, Math.floor((x / cssW) * peaks.length));
+            const i = Math.min(peaks.length - 1, i0 + Math.floor((x / cssW) * viewPeaks));
             let peak = peaks[i] || 0;
             for (let j = 1; j < step && i + j < peaks.length; j += 1) {
                 peak = Math.max(peak, peaks[i + j] || 0);
@@ -5455,26 +5652,55 @@
         }
     }
 
-    async function ensureWaveformLoaded() {
-        if (!state.waveformEnabled) return;
-        if (!state.videoPath || !electron?.ffmpegExtractWaveform) return;
-        const key = `${state.videoPath}|${state.timeline.durationMs || 0}`;
-        if (state.waveform.cacheKey === key && Array.isArray(state.waveform.peaks)) {
-            drawTimelineWaveform();
+    async function ensureWaveformLoaded(opts = {}) {
+        const announce = opts.announce === true;
+        if (!state.waveformEnabled) {
+            setWaveformLoadingUi(false);
             return;
         }
-        if (state.waveform.loading) return;
+        if (!state.videoPath) {
+            setWaveformLoadingUi(false);
+            if (announce) setStatus('请先关联视频后再显示波形', 'warn');
+            return;
+        }
+        if (!electron?.ffmpegExtractWaveform) {
+            setWaveformLoadingUi(false);
+            if (announce) setStatus('当前环境不支持波形提取', 'err');
+            return;
+        }
+        const key = `${state.videoPath}|${state.timeline.durationMs || 0}`;
+        if (state.waveform.cacheKey === key && Array.isArray(state.waveform.peaks)) {
+            setWaveformLoadingUi(false);
+            drawTimelineWaveform();
+            if (announce) setStatus('波形已就绪', 'ok');
+            return;
+        }
+        if (state.waveform.loading) {
+            setWaveformLoadingUi(true, '正在加载波形…');
+            return;
+        }
         state.waveform.loading = true;
+        setWaveformLoadingUi(true, '正在加载波形…');
+        setStatus('正在从视频提取波形，请稍候…', '');
         try {
             const res = await electron.ffmpegExtractWaveform(buildFfmpegRequest({
                 path: state.videoPath,
-                peaksPerSec: 20,
-                maxPeaks: 6000,
+                peaksPerSec: 40,
+                maxPeaks: 24000,
             }));
-            if (!state.waveformEnabled) return;
-            if (res?.cancelled || isJobAbortRequested()) return;
+            if (!state.waveformEnabled) {
+                setWaveformLoadingUi(false);
+                return;
+            }
+            if (res?.cancelled || isJobAbortRequested()) {
+                setWaveformLoadingUi(false);
+                setStatus('波形加载已取消', 'warn');
+                return;
+            }
             if (!res?.ok || !Array.isArray(res.peaks)) {
+                setWaveformLoadingUi(false);
                 if (res?.error) setStatus(res.error, 'err');
+                else setStatus('波形加载失败', 'err');
                 return;
             }
             state.waveform.peaks = res.peaks;
@@ -5482,33 +5708,43 @@
             state.waveform.videoPath = state.videoPath;
             state.waveform.cacheKey = key;
             drawTimelineWaveform();
+            setWaveformLoadingUi(false);
+            setStatus('波形已就绪', 'ok');
         } catch (err) {
+            setWaveformLoadingUi(false);
             setStatus(err?.message || '波形加载失败', 'err');
         } finally {
             state.waveform.loading = false;
+            if (!state.waveformEnabled || Array.isArray(state.waveform.peaks)) {
+                setWaveformLoadingUi(false);
+            }
         }
     }
 
     function onWaveformPrefChanged(enabled) {
         if (!enabled) {
+            setWaveformLoadingUi(false);
             drawTimelineWaveform();
             return;
         }
-        ensureWaveformLoaded();
+        ensureWaveformLoaded({ announce: true });
         drawTimelineWaveform();
     }
 
-    function renderTimeline() {
+    function renderTimeline(opts = {}) {
         if (!els.timelineCues) return;
-        updateTimelineDuration();
+        if (!opts.skipDuration) updateTimelineDuration();
+        else updateTimelineZoomUi();
         const selectedSet = state.selectedIndices instanceof Set
             ? state.selectedIndices
             : new Set(state.selectedIndex >= 0 ? [state.selectedIndex] : []);
+        const trackW = els.timelineTrack?.clientWidth || 0;
         els.timelineCues.innerHTML = state.cues.map((cue, idx) => {
             const start = cue.startMs;
             const end = cueEndMs(cue);
             const left = timelineMsToX(start);
             const right = timelineMsToX(end);
+            if (trackW > 0 && (right < -4 || left > trackW + 4)) return '';
             const width = Math.max(3, right - left);
             const label = String(cue.text || '').replace(/\s+/g, ' ').trim();
             const selected = selectedSet.has(idx) || idx === state.selectedIndex;
@@ -5526,10 +5762,50 @@
         }
     }
 
+    function refreshTimelineView() {
+        renderTimeline({ skipDuration: true });
+    }
+
     function bindTimelineInteractions() {
         const track = els.timelineTrack;
         if (!track || track.dataset.bound === '1') return;
         track.dataset.bound = '1';
+
+        const startPan = (e, trackEl) => {
+            const originX = e.clientX;
+            const originStart = state.timeline.viewStartMs;
+            const originEnd = state.timeline.viewEndMs;
+            const span = Math.max(1, originEnd - originStart);
+            const trackW = trackEl.clientWidth || 1;
+            state.timeline.panning = true;
+            e.preventDefault();
+            const onMove = (ev) => {
+                if (!state.timeline.panning) return;
+                const dx = ev.clientX - originX;
+                const dMs = -Math.round((dx / trackW) * span);
+                setTimelineView(originStart + dMs, originEnd + dMs);
+                refreshTimelineView();
+            };
+            const onUp = () => {
+                state.timeline.panning = null;
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                refreshTimelineView();
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        };
+
+        const suppressMiddleClick = (el) => {
+            el?.addEventListener('auxclick', (e) => {
+                if (e.button === 1) e.preventDefault();
+            });
+            el?.addEventListener('mousedown', (e) => {
+                if (e.button === 1) e.preventDefault();
+            });
+        };
+        suppressMiddleClick(track);
+        suppressMiddleClick(els.waveformTrack);
 
         track.addEventListener('mousedown', (e) => {
             const cueEl = e.target.closest?.('.editor-timeline-cue');
@@ -5537,14 +5813,22 @@
             const rect = track.getBoundingClientRect();
             const x = e.clientX - rect.left;
 
+            if (e.button === 1 || (e.button === 0 && (e.altKey || e.shiftKey) && !cueEl)) {
+                if (!isTimelineZoomed()) return;
+                startPan(e, track);
+                return;
+            }
+
             if (!cueEl) {
                 if (!els.video || !state.videoPath) return;
+                if (e.button !== 0) return;
                 const ms = Math.max(0, timelineXToMs(x));
                 els.video.currentTime = ms / 1000;
                 syncPlaybackFromVideo(true);
                 return;
             }
 
+            if (e.button !== 0) return;
             const idx = Number(cueEl.getAttribute('data-tl-idx'));
             if (!Number.isFinite(idx) || idx < 0) return;
             selectCue(idx, { scroll: true, seek: false });
@@ -5564,7 +5848,7 @@
                 if (!drag) return;
                 const dx = ev.clientX - drag.originX;
                 const trackW = track.clientWidth || 1;
-                const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
+                const span = getTimelineViewSpan();
                 const dMs = Math.round((dx / trackW) * span);
                 const c = state.cues[drag.idx];
                 if (!c) return;
@@ -5582,7 +5866,7 @@
                 setDirty(true);
                 refreshListRow(drag.idx);
                 renderDetailPane();
-                renderTimeline();
+                refreshTimelineView();
                 if (els.video && state.videoPath) {
                     const seekMs = drag.mode === 'end' ? cueEndMs(c) - 1 : c.startMs;
                     els.video.currentTime = Math.max(0, seekMs) / 1000;
@@ -5594,7 +5878,7 @@
                 window.removeEventListener('mouseup', onUp);
                 scheduleVideoTextTrackRefresh();
                 resyncPlaybackAfterCueTimingChange();
-                renderTimeline();
+                refreshTimelineView();
             };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
@@ -5604,19 +5888,74 @@
         if (waveTrack && waveTrack.dataset.bound !== '1') {
             waveTrack.dataset.bound = '1';
             waveTrack.addEventListener('mousedown', (e) => {
-                if (!els.video || !state.videoPath || !state.waveformEnabled) return;
+                if (!state.waveformEnabled) return;
+                if (e.button === 1 || (e.button === 0 && (e.altKey || e.shiftKey))) {
+                    if (!isTimelineZoomed()) return;
+                    startPan(e, waveTrack);
+                    return;
+                }
+                if (e.button !== 0) return;
+                if (!els.video || !state.videoPath) return;
                 const rect = waveTrack.getBoundingClientRect();
                 const x = e.clientX - rect.left;
-                const w = waveTrack.clientWidth || 1;
-                const span = Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
-                const ms = state.timeline.viewStartMs + (x / w) * span;
-                els.video.currentTime = Math.max(0, ms) / 1000;
+                const ms = Math.max(0, timelineXToMs(x, waveTrack));
+                els.video.currentTime = ms / 1000;
                 syncPlaybackFromVideo(true);
             });
         }
 
+        const stack = els.timelineStack;
+        if (stack && stack.dataset.zoomBound !== '1') {
+            stack.dataset.zoomBound = '1';
+            stack.addEventListener('wheel', (e) => {
+                if (!state.timeline.durationMs) return;
+                const rect = (els.timelineTrack || stack).getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const anchorMs = timelineXToMs(x);
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+                    zoomTimelineAt(factor, anchorMs);
+                    refreshTimelineView();
+                    return;
+                }
+                if (!isTimelineZoomed()) return;
+                e.preventDefault();
+                const span = getTimelineViewSpan();
+                const trackW = Math.max(1, rect.width || 1);
+                const deltaPx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+                const dMs = Math.round((deltaPx / trackW) * span);
+                if (panTimelineByMs(dMs)) refreshTimelineView();
+            }, { passive: false });
+        }
+
+        els.timelineZoomIn?.addEventListener('click', () => {
+            const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : null;
+            zoomTimelineAt(1 / 1.5, t);
+            refreshTimelineView();
+        });
+        els.timelineZoomOut?.addEventListener('click', () => {
+            const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : null;
+            zoomTimelineAt(1.5, t);
+            refreshTimelineView();
+        });
+        els.timelineZoomFit?.addEventListener('click', () => {
+            fitTimelineView();
+            refreshTimelineView();
+        });
+        els.timelineHScroll?.addEventListener('input', () => {
+            if (!isTimelineZoomed()) return;
+            const sliderMax = Number(els.timelineHScroll.max) || 1000;
+            const pos = Math.max(0, Math.min(1, Number(els.timelineHScroll.value) / sliderMax));
+            const span = getTimelineViewSpan();
+            const maxStart = Math.max(0, state.timeline.durationMs - span);
+            const start = pos * maxStart;
+            setTimelineView(start, start + span);
+            refreshTimelineView();
+        });
+
         window.addEventListener('resize', () => {
-            if (state.ready) renderTimeline();
+            if (state.ready) refreshTimelineView();
         });
     }
 
@@ -5689,6 +6028,8 @@
         loadDetailToolsPref,
         loadWaveformPref,
         toggleWaveform,
+        loadTimelineZoomPref,
+        saveTimelineZoomPref,
     } = prefsCtx;
 
     const undoCtx = {
@@ -5719,6 +6060,7 @@
         loadDetailToolsPref();
         loadAutoFocusPref();
         loadWaveformPref();
+        state.timeline.zoom = loadTimelineZoomPref();
         bindPanelSplitter();
         bindTimelineInteractions();
 
@@ -6473,7 +6815,9 @@
             updatePlayPauseButton();
         });
         els.video?.addEventListener('timeupdate', () => {
-            if (els.video && !els.video.paused) updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000));
+            if (els.video && !els.video.paused) {
+                updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000), { follow: true });
+            }
         });
     }
 
@@ -6511,14 +6855,22 @@
             rateSelect: document.getElementById('editorRateSelect'),
             volumeSlider: document.getElementById('editorVolumeSlider'),
             videoEmpty: document.getElementById('editorVideoEmpty'),
+            timelineStack: document.getElementById('editorTimelineStack'),
             timeline: document.getElementById('editorTimeline'),
             timelineTrack: document.getElementById('editorTimelineTrack'),
             waveformRow: document.getElementById('editorWaveformRow'),
             waveformTrack: document.getElementById('editorWaveformTrack'),
             timelineWaveform: document.getElementById('editorTimelineWaveform'),
             waveformPlayhead: document.getElementById('editorWaveformPlayhead'),
+            waveformLoading: document.getElementById('editorWaveformLoading'),
+            waveformLoadingText: document.getElementById('editorWaveformLoadingText'),
             timelineCues: document.getElementById('editorTimelineCues'),
             timelinePlayhead: document.getElementById('editorTimelinePlayhead'),
+            timelineHScrollWrap: document.getElementById('editorTimelineHScrollWrap'),
+            timelineHScroll: document.getElementById('editorTimelineHScroll'),
+            timelineZoomIn: document.getElementById('editorTimelineZoomIn'),
+            timelineZoomOut: document.getElementById('editorTimelineZoomOut'),
+            timelineZoomFit: document.getElementById('editorTimelineZoomFit'),
             shortcutsBtn: document.getElementById('editorShortcutsBtn'),
             shortcutsModal: document.getElementById('editorShortcutsModal'),
             shortcutsClose: document.getElementById('editorShortcutsClose'),

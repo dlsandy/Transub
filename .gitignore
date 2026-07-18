@@ -6,6 +6,7 @@ data/
 temp/
 coverage/
 tools/tmp-opencc/
+tools/tmp-release/
 
 # Bundled FFmpeg binaries (use npm run setup:ffmpeg)
 _internal/bin/*.exe
@@ -15,6 +16,7 @@ _internal/bin/*.dll
 transub-settings.json
 transub-task-history.json
 transwithai-settings.json
+window-state.json
 
 # Logs & OS
 *.log

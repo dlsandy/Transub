@@ -248,6 +248,59 @@
         return breaks;
     }
 
+    /**
+     * Indices after each断句词 (same rule as smart split: cut after the word/phrase).
+     */
+    function getBreakWordBreakIndices(text, breakWords = DEFAULT_BREAK_WORDS) {
+        const raw = String(text || '');
+        if (!raw) return [];
+        const lower = raw.toLowerCase();
+        const words = normalizeBreakWords(breakWords);
+        const breaks = new Set();
+        for (const word of words) {
+            const needle = word.toLowerCase();
+            if (!needle) continue;
+            let from = 0;
+            while (from < lower.length) {
+                const idx = lower.indexOf(needle, from);
+                if (idx < 0) break;
+                let breakAt = idx + needle.length;
+                while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
+                if (breakAt > 0 && breakAt < raw.length) breaks.add(breakAt);
+                from = idx + Math.max(1, needle.length);
+            }
+        }
+        return [...breaks].sort((a, b) => a - b);
+    }
+
+    /**
+     * Text breakpoints for silence split: whitespace + 断句词 (+ optional punctuation).
+     */
+    function getSilenceTextBreakIndices(text, opts = {}) {
+        const raw = String(text || '');
+        if (!raw) return [];
+        const breakWords = resolveBreakWords(opts);
+        const merged = new Set(getWhitespaceBreakIndices(raw));
+        for (const idx of getBreakWordBreakIndices(raw, breakWords)) merged.add(idx);
+
+        if (opts.includePunctuation !== false) {
+            for (let i = 0; i < raw.length - 1; i += 1) {
+                const ch = raw[i];
+                if (!STRONG_PUNCT_RE.test(ch) && !WEAK_PUNCT_RE.test(ch)) continue;
+                let end = i + 1;
+                while (end < raw.length && /\s/.test(raw[end])) end += 1;
+                if (end > 0 && end < raw.length) merged.add(end);
+            }
+        }
+
+        const sorted = [...merged].sort((a, b) => a - b);
+        const out = [];
+        for (const idx of sorted) {
+            if (!out.length || idx - out[out.length - 1] >= 2) out.push(idx);
+        }
+        return out;
+    }
+
     function idealTimesForTextBreaks(startMs, endMs, text, breakIndices) {
         const raw = String(text || '').trim();
         const len = Math.max(1, raw.length);
@@ -281,24 +334,262 @@
         return picked.sort((a, b) => a - b);
     }
 
-    function alignSilenceSplitPointsToText(text, startMs, endMs, splitPointsMs) {
+    function alignSilenceSplitPointsToText(text, startMs, endMs, splitPointsMs, intervals = null, options = {}) {
         const start = Math.round(Number(startMs) || 0);
         const end = Math.round(Number(endMs) || 0);
         const sorted = (splitPointsMs || [])
             .map((ms) => Math.round(Number(ms) || 0))
             .filter((ms) => ms > start && ms < end)
             .sort((a, b) => a - b);
-        const wsBreaks = getWhitespaceBreakIndices(text);
-        if (!wsBreaks.length || !sorted.length) return sorted;
+        const textBreaks = getSilenceTextBreakIndices(text, options);
+        if (!textBreaks.length || !sorted.length) return sorted;
 
-        const idealTimes = idealTimesForTextBreaks(start, end, text, wsBreaks);
-        const targetSplitCount = wsBreaks.length;
+        const idealTimes = idealTimesForTextBreaks(start, end, text, textBreaks);
+        const targetSplitCount = textBreaks.length;
+        const silences = normalizeSilenceIntervals(intervals, start, end);
 
-        if (sorted.length > targetSplitCount) {
-            return pickClosestValues(sorted, idealTimes, targetSplitCount);
+        if (sorted.length > targetSplitCount || silences.length) {
+            return pickScoredSplitPointsNearIdeals(sorted, idealTimes, silences, {
+                cueStartMs: start,
+                cueEndMs: end,
+                maxCount: targetSplitCount,
+            });
         }
 
         return sorted;
+    }
+
+    function silenceDurationNearPoint(ms, silences) {
+        const t = Math.round(Number(ms) || 0);
+        let best = 0;
+        for (const s of silences || []) {
+            if (t >= s.start && t <= s.end) return s.end - s.start;
+            const dist = t < s.start ? s.start - t : t - s.end;
+            if (dist <= 120) best = Math.max(best, s.end - s.start);
+        }
+        return best;
+    }
+
+    /**
+     * Prefer longer pauses that sit near ideal text-break times (not merely nearest).
+     */
+    function pickScoredSplitPointsNearIdeals(candidates, idealTimes, silences, options = {}) {
+        const source = (candidates || []).map((ms) => Math.round(Number(ms) || 0)).filter(Number.isFinite);
+        const ideals = (idealTimes || []).map((ms) => Math.round(Number(ms) || 0)).filter(Number.isFinite);
+        if (!source.length || !ideals.length) return source.slice().sort((a, b) => a - b);
+
+        const cueStart = Math.round(Number(options.cueStartMs) || 0);
+        const cueEnd = Math.max(cueStart + 1, Math.round(Number(options.cueEndMs) || 0));
+        const cueDur = Math.max(1, cueEnd - cueStart);
+        const maxDist = Math.max(700, Math.min(1100, Math.round(cueDur * 0.28)));
+        const maxCount = Math.max(1, Math.min(
+            ideals.length,
+            Math.round(Number(options.maxCount) || ideals.length),
+        ));
+        const used = new Set();
+        const picked = [];
+
+        for (let n = 0; n < maxCount; n += 1) {
+            const ideal = ideals[Math.min(n, ideals.length - 1)];
+            let bestIdx = -1;
+            let bestScore = -Infinity;
+            for (let i = 0; i < source.length; i += 1) {
+                if (used.has(i)) continue;
+                const ms = source[i];
+                const dist = Math.abs(ms - ideal);
+                if (dist > maxDist) continue;
+                const proximity = 1 - (dist / maxDist);
+                const dur = silenceDurationNearPoint(ms, silences);
+                const durNorm = Math.min(1, dur / Math.max(280, cueDur * 0.08));
+                const score = (proximity * 0.58) + (durNorm * 0.42);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx < 0 || bestScore < 0.22) break;
+            used.add(bestIdx);
+            picked.push(source[bestIdx]);
+        }
+
+        if (!picked.length && source.length) {
+            return pickClosestValues(source, ideals, maxCount);
+        }
+        return picked.sort((a, b) => a - b);
+    }
+
+    /**
+     * Score silence / speech-gap candidates and pick split midpoints for a cue.
+     */
+    function pickScoredSilenceSplitPoints(intervals, cueStartMs, cueEndMs, options = {}) {
+        const cueStart = Math.round(Number(cueStartMs) || 0);
+        const cueEnd = Math.max(cueStart + 1, Math.round(Number(cueEndMs) || 0));
+        const cueDur = Math.max(1, cueEnd - cueStart);
+        const edgeMs = Math.max(
+            80,
+            Math.min(
+                Math.round(Number(options.edgeMs) || Math.floor(cueDur * 0.12)),
+                Math.floor(cueDur * 0.2),
+            ),
+        );
+        const minSilenceMs = Math.max(40, Math.round(Number(options.minSilenceMs) || 120));
+        const minSpeechMs = Math.max(80, Math.round(Number(options.minSpeechMs) || 120));
+        const idealBreakMs = (options.idealBreakMs || [])
+            .map((ms) => Math.round(Number(ms) || 0))
+            .filter((ms) => ms > cueStart && ms < cueEnd);
+        const interiorLo = cueStart + edgeMs;
+        const interiorHi = cueEnd - edgeMs;
+        if (interiorHi <= interiorLo) return [];
+
+        const silences = normalizeSilenceIntervals(intervals, cueStart, cueEnd);
+        const candidates = [];
+        const pushCandidate = (mid, dur, start, end) => {
+            const ms = Math.round(Number(mid) || 0);
+            if (!(ms > interiorLo && ms < interiorHi)) return;
+            const d = Math.max(0, Math.round(Number(dur) || 0));
+            candidates.push({
+                ms,
+                dur: d,
+                start: Math.round(Number(start) || ms),
+                end: Math.round(Number(end) || ms),
+            });
+        };
+
+        for (const s of silences) {
+            const dur = s.end - s.start;
+            if (dur < Math.max(40, minSilenceMs * 0.45)) continue;
+            pushCandidate((s.start + s.end) / 2, dur, s.start, s.end);
+        }
+
+        const regions = buildSpeechRegionsFromSilence(cueStart, cueEnd, silences, minSpeechMs);
+        for (let i = 0; i < regions.length - 1; i += 1) {
+            const gapStart = regions[i].endMs;
+            const gapEnd = regions[i + 1].startMs;
+            const gapDur = gapEnd - gapStart;
+            if (gapDur < 40) continue;
+            pushCandidate((gapStart + gapEnd) / 2, gapDur, gapStart, gapEnd);
+        }
+
+        if (!candidates.length) return [];
+
+        const dedupeMinGap = Math.max(edgeMs, Math.round(Number(options.minGapMs) || edgeMs));
+        const dedupeByTime = (points) => {
+            const sorted = [...points].sort((a, b) => a - b);
+            const out = [];
+            for (const ms of sorted) {
+                if (!out.length || ms - out[out.length - 1] >= dedupeMinGap) out.push(ms);
+            }
+            return out;
+        };
+
+        if (idealBreakMs.length) {
+            const picked = pickScoredSplitPointsNearIdeals(
+                candidates.map((c) => c.ms),
+                idealBreakMs,
+                silences,
+                {
+                    cueStartMs: cueStart,
+                    cueEndMs: cueEnd,
+                    maxCount: idealBreakMs.length,
+                },
+            );
+            // Keep short-but-near-break pauses that scoring may have dropped when farther long pauses exist
+            if (picked.length < idealBreakMs.length) {
+                const used = new Set(picked);
+                for (const ideal of idealBreakMs) {
+                    if (picked.length >= idealBreakMs.length) break;
+                    let best = null;
+                    let bestDist = Infinity;
+                    for (const c of candidates) {
+                        if (used.has(c.ms)) continue;
+                        const dist = Math.abs(c.ms - ideal);
+                        const nearBreakMax = Math.max(550, Math.round(cueDur * 0.18));
+                        if (dist > nearBreakMax) continue;
+                        if (c.dur < Math.max(40, minSilenceMs * 0.5)) continue;
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            best = c.ms;
+                        }
+                    }
+                    if (best != null) {
+                        used.add(best);
+                        picked.push(best);
+                    }
+                }
+            }
+            return dedupeByTime(picked);
+        }
+
+        // No whitespace ideals: keep the clearest interior pauses (longest first)
+        const maxSplits = Math.max(
+            1,
+            Math.min(
+                Math.round(Number(options.maxSplits) || Math.floor(cueDur / 1600)),
+                candidates.length,
+            ),
+        );
+        const ranked = [...candidates].sort((a, b) => b.dur - a.dur || a.ms - b.ms);
+        const out = [];
+        for (const c of ranked) {
+            if (out.length >= maxSplits) break;
+            if (c.dur < minSilenceMs) continue;
+            if (out.some((ms) => Math.abs(ms - c.ms) < dedupeMinGap)) continue;
+            out.push(c.ms);
+        }
+        return out.sort((a, b) => a - b);
+    }
+
+    /**
+     * When a shared split boundary sits inside a silence gap, expand to silence edges
+     * so adjacent cues do not share the pause midpoint.
+     */
+    function applySilenceEdgeBoundaries(cues, intervals, parentStart, parentEnd, options = {}) {
+        if (!cues?.length || cues.length < 2) return cues;
+        const silences = normalizeSilenceIntervals(intervals, parentStart, parentEnd);
+        if (!silences.length) return cues;
+
+        const headPadMs = Math.max(0, Math.round(Number(options.headPadMs) || 60));
+        const tailPadMs = Math.max(0, Math.round(Number(options.tailPadMs) || 60));
+        const minDurMs = Math.max(100, Math.round(Number(options.minDurMs) || 400));
+        const maxSnapMs = Math.max(120, Math.round(Number(options.maxSnapMs) || 350));
+
+        const refined = cues.map((c) => ({
+            startMs: Math.round(Number(c.startMs) || 0),
+            endMs: Math.round(Number(c.endMs) || 0),
+            text: c.text,
+        }));
+
+        for (let i = 0; i < refined.length - 1; i += 1) {
+            const boundary = refined[i].endMs;
+            let best = null;
+            let bestDist = Infinity;
+            for (const s of silences) {
+                const mid = (s.start + s.end) / 2;
+                const contains = boundary >= s.start && boundary <= s.end;
+                const dist = contains ? 0 : Math.abs(mid - boundary);
+                if (dist > maxSnapMs && !contains) continue;
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = s;
+                }
+            }
+            if (!best) continue;
+
+            const leftEnd = Math.max(
+                refined[i].startMs + minDurMs,
+                Math.min(boundary, best.start + tailPadMs),
+            );
+            const rightStart = Math.min(
+                refined[i + 1].endMs - minDurMs,
+                Math.max(boundary, best.end - headPadMs),
+            );
+            if (leftEnd < rightStart && leftEnd > refined[i].startMs && rightStart < refined[i + 1].endMs) {
+                refined[i].endMs = leftEnd;
+                refined[i + 1].startMs = rightStart;
+            }
+        }
+
+        return refined.filter((c) => c.text && c.endMs > c.startMs);
     }
 
     function redistributeBoundariesForTexts(startMs, endMs, texts) {
@@ -324,7 +615,7 @@
         return boundaries;
     }
 
-    function snapSplitIndexNearPunctuation(text, index, radius = 10) {
+    function snapSplitIndexNearPunctuation(text, index, radius = 10, breakWords = null) {
         const raw = String(text || '');
         const pos = Math.min(raw.length - 1, Math.max(1, Math.round(Number(index) || 0)));
         const start = Math.max(1, pos - radius);
@@ -332,6 +623,9 @@
         let best = pos;
         let bestScore = -1;
         let bestDist = Infinity;
+        const breakWordSet = breakWords != null
+            ? new Set(getBreakWordBreakIndices(raw, breakWords))
+            : null;
 
         for (let i = start; i <= end; i += 1) {
             const left = raw.slice(0, i).trim();
@@ -341,7 +635,8 @@
             const prev = raw[i - 1] || '';
             const ch = raw[i] || '';
             let score = 0;
-            if (/\s/.test(prev) || /\s/.test(ch)) score = 5;
+            if (breakWordSet && breakWordSet.has(i)) score = 6;
+            else if (/\s/.test(prev) || /\s/.test(ch)) score = 5;
             else if (STRONG_PUNCT_RE.test(prev) || STRONG_PUNCT_RE.test(ch)) score = 4;
             else if (WEAK_PUNCT_RE.test(prev) || WEAK_PUNCT_RE.test(ch)) score = 3;
             if (score <= 0) continue;
@@ -787,10 +1082,14 @@
         const start = Math.round(Number(startMs) || 0);
         const end = Math.round(Number(endMs) || 0);
         const raw = String(text || '').trim();
-        const sorted = alignSilenceSplitPointsToText(raw, start, end, splitPointsMs);
+        const breakOpts = {
+            breakWords: resolveBreakWords(timingOptions),
+            includePunctuation: timingOptions.includePunctuation !== false,
+        };
+        const sorted = alignSilenceSplitPointsToText(raw, start, end, splitPointsMs, intervals, breakOpts);
         if (!sorted.length) return null;
 
-        let texts = buildTextsFromTimeBoundaries(raw, start, end, sorted, snapRadius);
+        let texts = buildTextsFromTimeBoundaries(raw, start, end, sorted, snapRadius, breakOpts);
         if (!texts || texts.length < 2) return null;
 
         let boundaries = [start, ...sorted, end];
@@ -805,7 +1104,7 @@
 
         if (texts.length < 2 || boundaries.length !== texts.length + 1) return null;
 
-        const cues = [];
+        let cues = [];
         for (let i = 0; i < texts.length; i += 1) {
             cues.push({
                 startMs: boundaries[i],
@@ -816,13 +1115,15 @@
         if (cues.length < 2) return null;
 
         if (intervals?.length) {
+            cues = applySilenceEdgeBoundaries(cues, intervals, start, end, timingOptions);
+            if (!cues || cues.length < 2) return null;
             const refined = refineSilenceSplitCueTimings(cues, intervals, start, end, timingOptions);
             return refined.length >= 2 ? refined : null;
         }
         return cues;
     }
 
-    function buildTextsFromTimeBoundaries(text, startMs, endMs, splitPointsMs, snapRadius = 16) {
+    function buildTextsFromTimeBoundaries(text, startMs, endMs, splitPointsMs, snapRadius = 16, options = {}) {
         const raw = String(text || '').trim();
         if (!raw) return null;
 
@@ -838,16 +1139,25 @@
         const boundaries = [start, ...sorted, end];
         if (boundaries.length < 3) return null;
 
-        const wsBreaks = getWhitespaceBreakIndices(raw);
+        const breakWords = resolveBreakWords(options);
+        const textBreaks = getSilenceTextBreakIndices(raw, {
+            breakWords,
+            includePunctuation: options.includePunctuation !== false,
+        });
         const len = raw.length;
         const indices = boundaries.map((ms, i) => {
             if (i === 0) return 0;
             if (i === boundaries.length - 1) return len;
-            if (wsBreaks.length === 1 && boundaries.length === 3) {
-                return wsBreaks[0];
+            if (textBreaks.length === 1 && boundaries.length === 3) {
+                return textBreaks[0];
             }
             const ratio = (ms - start) / totalDur;
-            return snapSplitIndexNearPunctuation(raw, Math.round(ratio * len), snapRadius);
+            return snapSplitIndexNearPunctuation(
+                raw,
+                Math.round(ratio * len),
+                snapRadius,
+                breakWords,
+            );
         });
 
         for (let i = 1; i < indices.length; i += 1) {
@@ -879,6 +1189,9 @@
         splitTextIntoNParts,
         splitTextAtIndex,
         alignSilenceSplitPointsToText,
+        pickScoredSilenceSplitPoints,
+        pickScoredSplitPointsNearIdeals,
+        applySilenceEdgeBoundaries,
         normalizeSilenceIntervals,
         inferSpeechStartFromSilence,
         inferSpeechEndFromSilence,
@@ -887,6 +1200,8 @@
         snapCueTimingFromSilenceIntervals,
         refineSilenceSplitCueTimings,
         getWhitespaceBreakIndices,
+        getBreakWordBreakIndices,
+        getSilenceTextBreakIndices,
         snapSplitIndexNearPunctuation,
         buildCuesFromTexts,
         buildTextsFromTimeBoundaries,

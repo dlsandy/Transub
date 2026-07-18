@@ -222,6 +222,78 @@
         }
     }
 
+    async function runCheckAppUpdate({ triggerBtn } = {}) {
+        const el = moreStatusEl();
+        const btn = triggerBtn || document.getElementById('checkUpdateBtn');
+        const toolbarBtn = document.getElementById('checkUpdateToolbarBtn');
+        if (btn) btn.disabled = true;
+        if (toolbarBtn) toolbarBtn.disabled = true;
+        setUpdateDownloadProgressVisible(false);
+        if (el) el.textContent = '正在检查更新…';
+        let unsubProgress = null;
+        try {
+            const res = await electron?.transWithAiCheckAppUpdate?.();
+            if (!res?.ok) {
+                if (el) el.textContent = res?.error || '检查更新失败';
+                return;
+            }
+            if (el) el.textContent = res.message || `当前版本 v${res.currentVersion}`;
+
+            if (res.updateAvailable) {
+                if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
+                    const yes = window.confirm(
+                        `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？\n（仅 NSIS 安装版支持应用内更新）`,
+                    );
+                    if (yes) {
+                        if (el) el.textContent = `正在下载 v${res.latestVersion}…`;
+                        renderUpdateDownloadProgress({ percent: 0 }, res.latestVersion);
+                        unsubProgress = electron.onAppUpdateDownloadProgress?.((progress) => {
+                            renderUpdateDownloadProgress(progress, res.latestVersion);
+                        });
+                        const dl = await electron.transubDownloadAppUpdate();
+                        if (!dl?.ok) {
+                            setUpdateDownloadProgressVisible(false);
+                            if (el) el.textContent = dl?.error || '下载失败';
+                            const open = window.confirm('应用内下载失败，是否打开 GitHub Releases 手动下载？');
+                            if (open) {
+                                await electron.transubOpenUpdatePage?.({
+                                    url: res.downloadUrl || res.releasesUrl,
+                                });
+                            }
+                            return;
+                        }
+                        renderUpdateDownloadProgress({ percent: 100 }, res.latestVersion);
+                        const detail = document.getElementById('updateDownloadDetail');
+                        const label = document.getElementById('updateDownloadLabel');
+                        if (label) label.textContent = `v${res.latestVersion} 已下载完成`;
+                        if (detail) detail.textContent = '可立即重启安装';
+                        if (el) el.textContent = dl.message || '更新已下载';
+                        const install = window.confirm('更新已下载完成，是否立即重启安装？');
+                        if (install) {
+                            await electron.transubQuitAndInstallUpdate?.();
+                        }
+                    }
+                } else {
+                    const open = window.confirm(
+                        `发现新版本 v${res.latestVersion}。\n\n是否打开下载页面？`,
+                    );
+                    if (open) {
+                        await electron?.transubOpenUpdatePage?.({
+                            url: res.downloadUrl || res.releasesUrl,
+                        });
+                    }
+                }
+            }
+        } catch (err) {
+            setUpdateDownloadProgressVisible(false);
+            if (el) el.textContent = err?.message || '检查更新失败';
+        } finally {
+            try { unsubProgress?.(); } catch { /* ignore */ }
+            if (btn) btn.disabled = false;
+            if (toolbarBtn) toolbarBtn.disabled = false;
+        }
+    }
+
     function bindMoreTab() {
         document.getElementById('exportConfigBtn')?.addEventListener('click', async () => {
             const res = await electron?.transWithAiExportConfig?.();
@@ -237,73 +309,12 @@
                 if (el) el.textContent = '配置已导入';
             }
         });
-        document.getElementById('checkUpdateBtn')?.addEventListener('click', async () => {
-            const el = moreStatusEl();
-            const btn = document.getElementById('checkUpdateBtn');
-            if (btn) btn.disabled = true;
-            setUpdateDownloadProgressVisible(false);
-            if (el) el.textContent = '正在检查更新…';
-            let unsubProgress = null;
-            try {
-                const res = await electron?.transWithAiCheckAppUpdate?.();
-                if (!res?.ok) {
-                    if (el) el.textContent = res?.error || '检查更新失败';
-                    return;
-                }
-                if (el) el.textContent = res.message || `当前版本 v${res.currentVersion}`;
-
-                if (res.updateAvailable) {
-                    if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
-                        const yes = window.confirm(
-                            `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？\n（仅 NSIS 安装版支持应用内更新）`,
-                        );
-                        if (yes) {
-                            if (el) el.textContent = `正在下载 v${res.latestVersion}…`;
-                            renderUpdateDownloadProgress({ percent: 0 }, res.latestVersion);
-                            unsubProgress = electron.onAppUpdateDownloadProgress?.((progress) => {
-                                renderUpdateDownloadProgress(progress, res.latestVersion);
-                            });
-                            const dl = await electron.transubDownloadAppUpdate();
-                            if (!dl?.ok) {
-                                setUpdateDownloadProgressVisible(false);
-                                if (el) el.textContent = dl?.error || '下载失败';
-                                const open = window.confirm('应用内下载失败，是否打开 GitHub Releases 手动下载？');
-                                if (open) {
-                                    await electron.transubOpenUpdatePage?.({
-                                        url: res.downloadUrl || res.releasesUrl,
-                                    });
-                                }
-                                return;
-                            }
-                            renderUpdateDownloadProgress({ percent: 100 }, res.latestVersion);
-                            const detail = document.getElementById('updateDownloadDetail');
-                            const label = document.getElementById('updateDownloadLabel');
-                            if (label) label.textContent = `v${res.latestVersion} 已下载完成`;
-                            if (detail) detail.textContent = '可立即重启安装';
-                            if (el) el.textContent = dl.message || '更新已下载';
-                            const install = window.confirm('更新已下载完成，是否立即重启安装？');
-                            if (install) {
-                                await electron.transubQuitAndInstallUpdate?.();
-                            }
-                        }
-                    } else {
-                        const open = window.confirm(
-                            `发现新版本 v${res.latestVersion}。\n\n是否打开下载页面？`,
-                        );
-                        if (open) {
-                            await electron?.transubOpenUpdatePage?.({
-                                url: res.downloadUrl || res.releasesUrl,
-                            });
-                        }
-                    }
-                }
-            } catch (err) {
-                setUpdateDownloadProgressVisible(false);
-                if (el) el.textContent = err?.message || '检查更新失败';
-            } finally {
-                try { unsubProgress?.(); } catch { /* ignore */ }
-                if (btn) btn.disabled = false;
-            }
+        document.getElementById('checkUpdateBtn')?.addEventListener('click', () => runCheckAppUpdate());
+        document.getElementById('checkUpdateToolbarBtn')?.addEventListener('click', async () => {
+            core()?.openParamsModal?.('more');
+            await runCheckAppUpdate({
+                triggerBtn: document.getElementById('checkUpdateToolbarBtn'),
+            });
         });
         document.getElementById('openHistoryBtn')?.addEventListener('click', openHistoryModal);
         document.getElementById('openWebsiteBtn')?.addEventListener('click', async () => {

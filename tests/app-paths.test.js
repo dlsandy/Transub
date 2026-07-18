@@ -6,6 +6,8 @@ const {
     getProjectRoot,
     getWritableRoot,
     getInstallRoot,
+    findRendererRoot,
+    getAppRoot,
 } = require('../electron/app-paths');
 const { isPathInsideInstallTree } = require('../electron/ffmpeg-bridge');
 
@@ -27,6 +29,55 @@ describe('app-paths writable root', () => {
         const install = getInstallRoot();
         assert.ok(typeof install === 'string' && install.length > 0);
         assert.ok(fs.existsSync(install) || install === getProjectRoot());
+    });
+});
+
+describe('app-paths renderer root', () => {
+    it('finds renderer-dist when index.html is present', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-renderer-'));
+        const renderer = path.join(tmp, 'renderer-dist');
+        fs.mkdirSync(renderer, { recursive: true });
+        fs.writeFileSync(path.join(renderer, 'index.html'), '<html></html>\n');
+        assert.strictEqual(findRendererRoot(tmp), renderer);
+    });
+
+    it('prefers asar app path over exe-adjacent files when packaged', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-packaged-'));
+        const asarRoot = path.join(tmp, 'app');
+        const exeDir = path.join(tmp, 'exe');
+        const asarRenderer = path.join(asarRoot, 'renderer-dist');
+        const looseRenderer = path.join(exeDir, 'renderer-dist');
+        fs.mkdirSync(asarRenderer, { recursive: true });
+        fs.mkdirSync(looseRenderer, { recursive: true });
+        fs.writeFileSync(path.join(asarRenderer, 'index.html'), '<html>asar</html>\n');
+        fs.writeFileSync(path.join(looseRenderer, 'index.html'), '<html>loose</html>\n');
+
+        const prevExecPath = process.execPath;
+        const prevResources = process.resourcesPath;
+        Object.defineProperty(process, 'execPath', {
+            configurable: true,
+            value: path.join(exeDir, 'Transub.exe'),
+        });
+        Object.defineProperty(process, 'resourcesPath', {
+            configurable: true,
+            value: path.join(tmp, 'resources'),
+        });
+        try {
+            const root = getAppRoot({
+                isPackaged: true,
+                getAppPath: () => asarRoot,
+            });
+            assert.strictEqual(root, asarRenderer);
+        } finally {
+            Object.defineProperty(process, 'execPath', {
+                configurable: true,
+                value: prevExecPath,
+            });
+            Object.defineProperty(process, 'resourcesPath', {
+                configurable: true,
+                value: prevResources,
+            });
+        }
     });
 });
 

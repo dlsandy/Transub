@@ -1,14 +1,6 @@
 const assert = require('assert');
 
 const {
-    parseSilenceDetectLog,
-    clampSilenceIntervals,
-    silenceMidpointsToMs,
-    resolveFfmpegForExecution,
-    findBundledFfprobePath,
-} = require('../electron/ffmpeg-bridge');
-
-const {
     buildCuesFromSilenceSplits,
     buildTextsFromTimeBoundaries,
     inferSpeechEndFromSilence,
@@ -16,7 +8,18 @@ const {
     refineSilenceSplitCueTimings,
     buildSpeechRegionsFromSilence,
     snapCueTimingFromSilenceIntervals,
+    pickScoredSilenceSplitPoints,
+    applySilenceEdgeBoundaries,
 } = require('../src/js/subtitle-split-core');
+
+const {
+    parseSilenceDetectLog,
+    clampSilenceIntervals,
+    silenceMidpointsToMs,
+    resolveFfmpegForExecution,
+    findBundledFfprobePath,
+    buildSilenceDetectFilter,
+} = require('../electron/ffmpeg-bridge');
 
 function testParseSilenceDetectLog() {
     const stderr = `
@@ -258,6 +261,50 @@ function testSnapCueTimingNoSpeechKeepsOriginal() {
     assert.strictEqual(result.endMs, 2000);
 }
 
+function testBuildSilenceDetectFilter() {
+    const af = buildSilenceDetectFilter(-32, 0.15, {
+        atrimStartSec: 0.8,
+        atrimDurationSec: 4.5,
+    });
+    assert.match(af, /atrim=start=0\.8:duration=4\.5/);
+    assert.match(af, /asetpts=PTS-STARTPTS/);
+    assert.match(af, /aformat=channel_layouts=mono/);
+    assert.match(af, /highpass=f=80/);
+    assert.match(af, /silencedetect=noise=-32dB:duration=0\.15/);
+}
+
+function testPickScoredSilencePrefersLongerNearBreak() {
+    // Short breath near mid vs clear pause near the whitespace ideal (~30% into cue)
+    const points = pickScoredSilenceSplitPoints([
+        { startMs: 2800, endMs: 3600 }, // 800ms clear pause near "四年 "
+        { startMs: 6100, endMs: 6250 }, // short breath farther from break
+        { startMs: 1000, endMs: 1120 }, // leading-ish noise
+    ], 0, 10000, {
+        idealBreakMs: [3000],
+        minSilenceMs: 150,
+        edgeMs: 400,
+    });
+    assert.strictEqual(points.length, 1);
+    assert.ok(points[0] >= 2800 && points[0] <= 3600, `expected long pause near break, got ${points[0]}`);
+}
+
+function testApplySilenceEdgeBoundaries() {
+    const cues = applySilenceEdgeBoundaries([
+        { startMs: 0, endMs: 5000, text: '左' },
+        { startMs: 5000, endMs: 10000, text: '右' },
+    ], [
+        { startMs: 4700, endMs: 5400 },
+    ], 0, 10000, {
+        headPadMs: 60,
+        tailPadMs: 60,
+        minDurMs: 400,
+    });
+    assert.strictEqual(cues.length, 2);
+    assert.ok(cues[0].endMs <= 4800, `left should end at silence start+pad, got ${cues[0].endMs}`);
+    assert.ok(cues[1].startMs >= 5300, `right should start at silence end-pad, got ${cues[1].startMs}`);
+    assert.ok(cues[0].endMs < cues[1].startMs);
+}
+
 describe("ffmpeg-silence", () => {
     it("parse silence detect log", () => {
         testParseSilenceDetectLog();
@@ -306,5 +353,14 @@ describe("ffmpeg-silence", () => {
     });
     it("snap cue timing no speech keeps original", () => {
         testSnapCueTimingNoSpeechKeepsOriginal();
+    });
+    it("build silence detect filter", () => {
+        testBuildSilenceDetectFilter();
+    });
+    it("pick scored silence prefers longer near break", () => {
+        testPickScoredSilencePrefersLongerNearBreak();
+    });
+    it("apply silence edge boundaries", () => {
+        testApplySilenceEdgeBoundaries();
     });
 });

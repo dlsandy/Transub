@@ -16,6 +16,12 @@ const APP_ICON_CANDIDATES = [
     'icon-source.png',
 ];
 
+const EDITOR_ICON_CANDIDATES = [
+    'editor-app.ico',
+    'editor-icon-256.png',
+    'editor-icon-source.png',
+];
+
 function asarUnpackedPath(filePath) {
     const raw = String(filePath || '');
     if (!raw.includes(`${path.sep}app.asar${path.sep}`) && !raw.includes('/app.asar/')) {
@@ -59,6 +65,30 @@ function getAppIconPath() {
         if (found) return found;
     }
     return null;
+}
+
+/**
+ * Absolute path to the subtitle editor window icon (prefer .ico on Windows).
+ * Falls back to the main app icon if editor assets are missing.
+ */
+function getEditorIconPath() {
+    const resources = typeof process.resourcesPath === 'string' ? process.resourcesPath : '';
+    const packagedRoots = resources
+        ? [
+            path.join(resources, 'icons', 'editor-app.ico'),
+            path.join(resources, 'editor-app.ico'),
+        ]
+        : [];
+
+    const localIco = path.join(ICON_DIR, 'editor-app.ico');
+    const foundIco = firstExistingPath([...packagedRoots, localIco]);
+    if (foundIco) return foundIco;
+
+    for (const name of EDITOR_ICON_CANDIDATES) {
+        const found = firstExistingPath([path.join(ICON_DIR, name)]);
+        if (found) return found;
+    }
+    return getAppIconPath();
 }
 
 function readIconFile(fileName) {
@@ -113,9 +143,24 @@ function getWindowIconOption() {
     return image.isEmpty() ? undefined : image;
 }
 
+function getEditorWindowIconOption() {
+    const iconPath = getEditorIconPath();
+    if (iconPath) return iconPath;
+    return getWindowIconOption();
+}
+
 function applyWindowIcon(win) {
     if (!win || win.isDestroyed()) return;
     const iconPath = getAppIconPath();
+    if (!iconPath) return;
+    try {
+        win.setIcon(iconPath);
+    } catch (_) { /* ignore */ }
+}
+
+function applyEditorWindowIcon(win) {
+    if (!win || win.isDestroyed()) return;
+    const iconPath = getEditorIconPath();
     if (!iconPath) return;
     try {
         win.setIcon(iconPath);
@@ -126,6 +171,9 @@ module.exports = {
     getTrayIcon,
     getAppIcon,
     getAppIconPath,
+    getEditorIconPath,
     getWindowIconOption,
+    getEditorWindowIconOption,
     applyWindowIcon,
+    applyEditorWindowIcon,
 };

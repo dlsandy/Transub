@@ -11,6 +11,9 @@ const {
     isConnectedText,
     normalizeBreakWords,
     DEFAULT_BREAK_WORDS,
+    getBreakWordBreakIndices,
+    getSilenceTextBreakIndices,
+    buildCuesFromSilenceSplits,
 } = require('../src/js/subtitle-split-core');
 
 function testConnectedTextNotSplit() {
@@ -106,6 +109,42 @@ function testTextCharCountIgnoresSpaces() {
     assert.strictEqual(textCharCount('a b c'), 3);
 }
 
+function testSilenceTextBreakIndicesIncludeBreakWords() {
+    const text = '今天天气很好然后我们去公园玩';
+    const breaks = getBreakWordBreakIndices(text, ['然后']);
+    assert.ok(breaks.length >= 1);
+    assert.ok(breaks.every((idx) => idx > 0 && idx < text.length));
+    assert.strictEqual(text.slice(0, breaks[0]), '今天天气很好然后');
+
+    const merged = getSilenceTextBreakIndices('结婚了四年 然后开始工作', {
+        breakWords: ['然后'],
+        includePunctuation: true,
+    });
+    assert.ok(merged.length >= 2, `expected whitespace + break-word ideals, got ${merged.length}`);
+}
+
+function testBuildCuesFromSilenceSplitsWithBreakWords() {
+    const text = '今天天气很好然后我们去公园玩';
+    const cues = buildCuesFromSilenceSplits(
+        text,
+        0,
+        8000,
+        [4000],
+        16,
+        [{ startMs: 3800, endMs: 4200 }],
+        {
+            breakWords: ['然后'],
+            includePunctuation: true,
+            minDurMs: 400,
+            minTrailingSilenceMs: 200,
+            minLeadingSilenceMs: 200,
+        },
+    );
+    assert.ok(cues && cues.length === 2, `expected 2 cues, got ${cues && cues.length}`);
+    assert.ok(cues[0].text.endsWith('然后') || cues[0].text.includes('然后'), cues[0].text);
+    assert.ok(cues[1].text.startsWith('我们'), cues[1].text);
+}
+
 describe("subtitle-split", () => {
     it("connected text not split", () => {
         testConnectedTextNotSplit();
@@ -130,5 +169,11 @@ describe("subtitle-split", () => {
     });
     it("text char count ignores spaces", () => {
         testTextCharCountIgnoresSpaces();
+    });
+    it("silence text break indices include break words", () => {
+        testSilenceTextBreakIndicesIncludeBreakWords();
+    });
+    it("build cues from silence splits with break words", () => {
+        testBuildCuesFromSilenceSplitsWithBreakWords();
     });
 });

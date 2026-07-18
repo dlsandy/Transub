@@ -65,7 +65,10 @@
     </div>
     <header class="bg-white border-b border-gray-200 px-4 py-3 shrink-0 flex items-center justify-between gap-3">
         <div>
-            <h1 class="text-lg font-bold text-gray-900"><i class="fa fa-closed-captioning text-violet-600 mr-2"></i>Transub 字幕生成</h1>
+            <h1 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <img src="icon.png" alt="" class="w-7 h-7 shrink-0" width="28" height="28" decoding="async">
+                Transub字幕生成器
+            </h1>
         </div>
         <span id="jobStatusBadge" class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600">空闲</span>
     </header>
@@ -79,9 +82,14 @@
                     <span id="paramsSummary" class="text-xs font-normal text-gray-400 truncate">（GPU 翻译 · 翻译）</span>
                 </div>
             </div>
-            <button type="button" id="openParamsBtn" class="px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 rounded-lg text-sm shrink-0">
-                <i class="fa fa-cog mr-1"></i>设置
-            </button>
+            <div class="flex items-center gap-2 shrink-0">
+                <button type="button" id="checkUpdateToolbarBtn" class="toolbar-icon-btn" title="检查新版本" aria-label="检查新版本">
+                    <i class="fa fa-refresh" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="openParamsBtn" class="px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 rounded-lg text-sm shrink-0">
+                    <i class="fa fa-cog mr-1"></i>设置
+                </button>
+            </div>
         </section>
 
         <section id="filePanel" class="relative bg-white rounded-xl border border-gray-200 p-4 flex flex-col flex-1 min-h-[14rem] gap-3 overflow-visible">
@@ -216,10 +224,10 @@
                 <button type="button" class="log-tab-btn text-xs px-2 py-1 border-b-2 border-transparent" data-log-tab="infer">原始日志</button>
             </div>
             <div id="logPanelApp" class="log-panel active max-h-32 overflow-auto">
-                <div id="logHost" class="text-xs text-gray-500 font-mono space-y-0.5">日志将显示在此处…</div>
+                <div id="logHost" class="text-xs text-gray-500 font-mono space-y-0.5">Transub日志将显示在此处…</div>
             </div>
             <div id="logPanelInfer" class="log-panel max-h-32 overflow-auto">
-                <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">infer 日志将显示在此处…</div>
+                <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">TransWithAI日志将显示在此处…</div>
             </div>
         </section>
     </main>
@@ -233,7 +241,7 @@
                     </button>
                 </div>
                 <nav class="flex border-b border-gray-100 shrink-0 overflow-x-auto" role="tablist" aria-label="参数分区">
-                    <button type="button" class="params-tab-btn active px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="install" role="tab" aria-selected="true">安装</button>
+                    <button type="button" class="params-tab-btn active px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="install" role="tab" aria-selected="true">TransWithAI</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="runtime" role="tab">运行</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="output" role="tab">输出</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="transcribe" role="tab">转录</button>
@@ -319,7 +327,7 @@
                             <span>覆盖已有字幕（--overwrite）</span>
                         </label>
                         <label class="flex items-start gap-2 text-sm">
-                            <input type="checkbox" id="trayProgressCheck" class="rounded mt-0.5" checked>
+                            <input type="checkbox" id="trayProgressCheck" class="rounded mt-0.5">
                             <span>
                                 <span class="font-medium text-gray-700">任务时更新托盘进度</span>
                                 <span class="block text-xs text-gray-500 mt-0.5">在系统托盘图标提示中显示批次进度与预计剩余时间。</span>
@@ -332,6 +340,13 @@
                                 <span class="block text-xs text-gray-500 mt-0.5">从本窗口开始任务时隐藏到托盘；双击托盘图标可恢复。</span>
                             </span>
                         </label>
+                        <label class="flex items-start gap-2 text-sm">
+                            <input type="checkbox" id="trayNotifyCheck" class="rounded mt-0.5">
+                            <span>
+                                <span class="font-medium text-gray-700">系统托盘通知</span>
+                                <span class="block text-xs text-gray-500 mt-0.5">任务完成或最小化到托盘时弹出系统通知（默认关闭）。</span>
+                            </span>
+                        </label>
                         <p class="text-xs text-gray-500">AMD 版请下载对应 gfx 后缀的 ROCm 包；批处理仅适用于 cuda_batch 模式。</p>
                     </div>
 
@@ -340,8 +355,8 @@
                             <span class="text-sm text-gray-600">字幕格式</span>
                             <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm mt-1">
                                 <label class="flex items-center gap-2"><input type="checkbox" id="subFormatSrt" class="rounded" checked><span>SRT</span></label>
-                                <label class="flex items-center gap-2"><input type="checkbox" id="subFormatVtt" class="rounded" checked><span>VTT</span></label>
-                                <label class="flex items-center gap-2"><input type="checkbox" id="subFormatLrc" class="rounded" checked><span>LRC</span></label>
+                                <label class="flex items-center gap-2"><input type="checkbox" id="subFormatVtt" class="rounded"><span>VTT</span></label>
+                                <label class="flex items-center gap-2"><input type="checkbox" id="subFormatLrc" class="rounded"><span>LRC</span></label>
                             </div>
                         </div>
                         <label class="block text-sm">
@@ -442,12 +457,12 @@
                             <div id="mergeSettingsWrap" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <label class="block text-sm">
                                     <span class="text-gray-600">合并最大间隔（毫秒）</span>
-                                    <input type="number" id="mergeMaxGapInput" min="0" max="60000" step="100" value="2000"
+                                    <input type="number" id="mergeMaxGapInput" min="0" max="60000" step="100" value="500"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                 </label>
                                 <label class="block text-sm">
                                     <span class="text-gray-600">单条最大时长（毫秒）</span>
-                                    <input type="number" id="mergeMaxDurationInput" min="1000" max="600000" step="1000" value="20000"
+                                    <input type="number" id="mergeMaxDurationInput" min="1000" max="600000" step="1000" value="10000"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                 </label>
                             </div>
@@ -456,6 +471,20 @@
 
                     <div class="params-tab-panel space-y-4" data-tab-panel="editor">
                         <p class="text-xs text-gray-500">字幕编辑器相关选项。主题、自动焦点等界面偏好仍保存在编辑器本地。</p>
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                            <legend class="text-xs font-semibold text-gray-500 px-1">保存备份</legend>
+                            <label class="block text-sm">
+                                <span class="font-medium text-gray-700">.bak 备份文件</span>
+                                <select id="subtitleBakModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="off" selected>不生成备份文件</option>
+                                    <option value="beside">字幕文件所在目录</option>
+                                    <option value="appBackup">软件安装目录下的 backup 文件夹</option>
+                                </select>
+                                <span class="block text-xs text-gray-500 mt-1 leading-relaxed">
+                                    编辑器保存字幕时，是否将原文件复制为 .bak。默认不生成；选择字幕目录时写入同目录，选择软件目录时写入程序数据目录下的 backup 文件夹。
+                                </span>
+                            </label>
+                        </fieldset>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">重转写</legend>
                             <label class="flex items-start gap-2 text-sm">
@@ -471,11 +500,11 @@
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">批量完成后</legend>
                             <label class="flex items-start gap-2 text-sm">
-                                <input type="checkbox" id="postBatchQcCheck" class="rounded mt-0.5">
+                                <input type="checkbox" id="postBatchQcCheck" class="rounded mt-0.5" checked>
                                 <span>
                                     <span class="font-medium text-gray-700">完成后 QC 检测</span>
                                     <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
-                                        默认关闭。任务结束后扫描新生成字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量；不会自动修复或打开编辑器。
+                                        默认开启。任务结束后扫描新生成字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量；不会自动修复或打开编辑器。
                                     </span>
                                 </span>
                             </label>

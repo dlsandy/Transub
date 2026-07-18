@@ -97,6 +97,40 @@ Test cue
     assert.strictEqual(write.ok, true);
     assert.ok(fs.existsSync(`${file}.bak`));
     fs.unlinkSync(`${file}.bak`);
+
+    const writeBeside = writeSubtitleDocument(file, {
+        format: 'srt', cues: read.cues, backupMode: 'beside',
+    });
+    assert.strictEqual(writeBeside.ok, true);
+    assert.strictEqual(writeBeside.backupPath, `${file}.bak`);
+    assert.ok(fs.existsSync(`${file}.bak`));
+    fs.unlinkSync(`${file}.bak`);
+
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-bak-root-'));
+    const prevPortable = process.env.PORTABLE_EXECUTABLE_DIR;
+    process.env.PORTABLE_EXECUTABLE_DIR = appRoot;
+    try {
+        const writeApp = writeSubtitleDocument(file, {
+            format: 'srt', cues: read.cues, backupMode: 'appBackup',
+        });
+        assert.strictEqual(writeApp.ok, true);
+        const expected = path.join(appRoot, 'backup', `${path.basename(file)}.bak`);
+        assert.strictEqual(writeApp.backupPath, expected);
+        assert.ok(fs.existsSync(expected));
+        assert.ok(!fs.existsSync(`${file}.bak`));
+    } finally {
+        if (prevPortable == null) delete process.env.PORTABLE_EXECUTABLE_DIR;
+        else process.env.PORTABLE_EXECUTABLE_DIR = prevPortable;
+        fs.rmSync(appRoot, { recursive: true, force: true });
+    }
+
+    const writeOff = writeSubtitleDocument(file, {
+        format: 'srt', cues: read.cues, backupMode: 'off',
+    });
+    assert.strictEqual(writeOff.ok, true);
+    assert.ok(!writeOff.backupPath);
+    assert.ok(!fs.existsSync(`${file}.bak`));
+
     const writeNoBackup = writeSubtitleDocument(file, { format: 'srt', cues: read.cues });
     assert.strictEqual(writeNoBackup.ok, true);
     assert.ok(!fs.existsSync(`${file}.bak`));

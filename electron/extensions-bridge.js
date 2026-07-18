@@ -16,7 +16,7 @@ const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch, collectSubtitleSide
 const { parseSubtitle, serializeSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
 const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
-const { getProjectRoot } = require('./app-paths');
+const { getProjectRoot, getWritableRoot } = require('./app-paths');
 const { asString, assertEditableSubtitlePath, assertSubtitleMetaPath, assertVideoFilePath } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
 const { readSubtitleMeta, writeSubtitleMeta } = require('./subtitle-meta');
@@ -135,6 +135,31 @@ function scanSubtitleQc(filePath, options = {}) {
     };
 }
 
+const SUBTITLE_BAK_MODES = new Set(['off', 'beside', 'appBackup']);
+
+function normalizeSubtitleBakMode(value) {
+    const mode = String(value || '').trim();
+    return SUBTITLE_BAK_MODES.has(mode) ? mode : 'off';
+}
+
+function resolveSubtitleBackupPath(resolved, backupMode) {
+    const mode = normalizeSubtitleBakMode(backupMode);
+    if (mode === 'off') return null;
+    if (mode === 'appBackup') {
+        return path.join(getWritableRoot(), 'backup', `${path.basename(resolved)}.bak`);
+    }
+    return `${resolved}.bak`;
+}
+
+function resolveWriteBackupMode(payload = {}) {
+    if (payload.backupMode != null) {
+        return normalizeSubtitleBakMode(payload.backupMode);
+    }
+    if (payload.createBackup === true) return 'beside';
+    if (payload.createBackup === false) return 'off';
+    return 'off';
+}
+
 function writeSubtitleDocument(filePath, payload = {}) {
     const resolved = path.resolve(String(filePath || ''));
     const format = detectFormat(resolved, '');
@@ -151,9 +176,12 @@ function writeSubtitleDocument(filePath, payload = {}) {
             header: payload.header,
         });
         let backupPath;
-        if (payload.createBackup === true && fs.existsSync(resolved)) {
-            backupPath = `${resolved}.bak`;
-            fs.copyFileSync(resolved, backupPath);
+        const backupMode = resolveWriteBackupMode(payload);
+        const targetBackup = resolveSubtitleBackupPath(resolved, backupMode);
+        if (targetBackup && fs.existsSync(resolved)) {
+            fs.mkdirSync(path.dirname(targetBackup), { recursive: true });
+            fs.copyFileSync(resolved, targetBackup);
+            backupPath = targetBackup;
         }
         fs.writeFileSync(resolved, content, 'utf8');
         return { ok: true, path: resolved, backupPath, cueCount: cues.length };
@@ -471,7 +499,11 @@ function setupExtensionsBridge(api, deps) {
     register('transub-write-subtitle', async (_event, payload = {}) => {
         try {
             const filePath = assertEditableSubtitlePath(payload.path);
-            return writeSubtitleDocument(filePath, payload);
+            const settings = loadSettings(getAppRoot).options || {};
+            const backupMode = payload.backupMode != null
+                ? payload.backupMode
+                : normalizeSubtitleBakMode(settings.subtitleBakMode);
+            return writeSubtitleDocument(filePath, { ...payload, backupMode });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -700,6 +732,10 @@ function setupExtensionsBridge(api, deps) {
             const options = parsed.options ?? parsed;
             if (!options || typeof options !== 'object') return { ok: false, error: '无效配置文件' };
             saveSettings(getAppRoot, options);
+            try {
+                const { setTrayNotifyEnabled } = require('./notifications');
+                setTrayNotifyEnabled(!!options.trayNotifyEnabled);
+            } catch { /* ignore */ }
             return { ok: true, options };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -768,6 +804,8 @@ module.exports = {
     appendTaskHistory,
     readSubtitleDocument,
     writeSubtitleDocument,
+    normalizeSubtitleBakMode,
+    resolveSubtitleBackupPath,
     scanSubtitleQc,
     listSubtitleSidecars,
 };

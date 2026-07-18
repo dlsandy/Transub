@@ -247,6 +247,36 @@ body:not(.editor-waveform-on) .editor-waveform-row { display: none !important; }
     position: absolute; top: 0; bottom: 0; width: 2px; background: #f43f5e; z-index: 3; pointer-events: none;
     transform: translateX(-1px);
 }
+.editor-waveform-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    background: rgba(15, 23, 42, 0.72);
+    color: #e2e8f0;
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+    pointer-events: none;
+}
+.editor-waveform-loading.hidden { display: none !important; }
+.editor-waveform-loading-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(226, 232, 240, 0.28);
+    border-top-color: #93c5fd;
+    border-radius: 50%;
+    animation: editor-boot-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+.editor-waveform-toggle.is-loading {
+    opacity: 0.85;
+}
+.editor-waveform-toggle.is-loading i {
+    animation: editor-boot-spin 0.9s linear infinite;
+}
 .editor-timeline {
     flex-shrink: 0;
     height: 52px;
@@ -286,6 +316,32 @@ body:not(.editor-waveform-on) .editor-waveform-row { display: none !important; }
 .editor-timeline-playhead::before {
     content: ''; position: absolute; top: -1px; left: -4px;
     border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #f43f5e;
+}
+.editor-timeline-hscroll {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 8px 4px;
+    height: 14px;
+}
+.editor-timeline-hscroll.hidden { display: none !important; }
+.editor-timeline-hscroll input[type="range"] {
+    width: 100%;
+    height: 10px;
+    margin: 0;
+    accent-color: var(--ed-accent);
+    cursor: pointer;
+}
+.editor-timeline-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    margin-left: 0.15rem;
+}
+.editor-timeline-zoom button {
+    min-width: 1.7rem;
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
 }
 
 .editor-transport {
@@ -913,7 +969,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <button type="button" id="editorAutoFocusBtn" class="editor-btn editor-btn-icon" title="自动焦点：关闭（开启后播放时跟随当前字幕）" aria-label="自动焦点" aria-pressed="false">
                 <i class="fa fa-crosshairs"></i>
             </button>
-            <button type="button" id="editorWaveformToggle" class="editor-btn editor-btn-icon" title="波形时间轴：关闭（默认）" aria-label="波形时间轴" aria-pressed="false">
+            <button type="button" id="editorWaveformToggle" class="editor-btn editor-btn-icon editor-waveform-toggle" title="波形时间轴：关闭（默认）" aria-label="波形时间轴" aria-pressed="false">
                 <i class="fa fa-area-chart"></i>
             </button>
             <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
@@ -1053,11 +1109,15 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
             </div>
-            <div class="editor-timeline-stack" title="点击定位 · 拖拽字幕块调整时间">
+            <div id="editorTimelineStack" class="editor-timeline-stack" title="点击定位 · 拖拽字幕块调整时间 · 滚轮平移 · Ctrl+滚轮缩放">
                 <div id="editorWaveformRow" class="editor-waveform-row" aria-label="波形时间轴">
                     <div class="editor-waveform-track" id="editorWaveformTrack">
                         <canvas id="editorTimelineWaveform" class="editor-timeline-waveform" aria-hidden="true"></canvas>
                         <div class="editor-waveform-playhead" id="editorWaveformPlayhead"></div>
+                    </div>
+                    <div id="editorWaveformLoading" class="editor-waveform-loading hidden" role="status" aria-live="polite" aria-hidden="true">
+                        <span class="editor-waveform-loading-spinner" aria-hidden="true"></span>
+                        <span id="editorWaveformLoadingText">正在加载波形…</span>
                     </div>
                 </div>
                 <div id="editorTimeline" class="editor-timeline">
@@ -1066,11 +1126,19 @@ button.needs-video.is-no-video { opacity: 0.45; }
                         <div class="editor-timeline-playhead" id="editorTimelinePlayhead"></div>
                     </div>
                 </div>
+                <div id="editorTimelineHScrollWrap" class="editor-timeline-hscroll hidden" aria-hidden="true" aria-label="时间轴左右滚动">
+                    <input type="range" id="editorTimelineHScroll" min="0" max="1000" value="0" step="1" title="左右滚动时间轴">
+                </div>
             </div>
             <div class="editor-transport">
                 <button type="button" id="editorPlayPauseBtn" title="播放/暂停 (Space)"><i class="fa fa-play"></i></button>
                 <button type="button" id="editorSeekBackBtn" title="后退 1 秒">−1s</button>
                 <button type="button" id="editorSeekFwdBtn" title="前进 1 秒">+1s</button>
+                <span class="editor-timeline-zoom" role="group" aria-label="时间轴缩放">
+                    <button type="button" id="editorTimelineZoomOut" title="缩小时间轴（显示更长时间）"><i class="fa fa-search-minus"></i></button>
+                    <button type="button" id="editorTimelineZoomIn" title="放大时间轴（拉长波形）"><i class="fa fa-search-plus"></i></button>
+                    <button type="button" id="editorTimelineZoomFit" title="适应全部时长" disabled><i class="fa fa-arrows-h"></i></button>
+                </span>
                 <select id="editorRateSelect" title="播放速率" aria-label="播放速率">
                     <option value="0.5">0.5×</option>
                     <option value="0.75">0.75×</option>
@@ -1269,7 +1337,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-break-words-dismiss></div>
             <div class="editor-modal-panel break-words-panel">
                 <h3 id="editorBreakWordsTitle">断句词</h3>
-                <p class="break-words-hint">智能断句会在标点之外，优先在这些词之后切开字幕。支持中英文；可用逗号或换行一次添加多个。</p>
+                <p class="break-words-hint">智能断句与静音分割会在标点/空白之外，优先在这些词之后切开字幕。支持中英文；可用逗号或换行一次添加多个。</p>
                 <div id="editorBreakWordsChips" class="break-words-chips" aria-live="polite"></div>
                 <div class="break-words-add-row">
                     <input type="text" id="editorBreakWordsInput" spellcheck="false" placeholder="例如：总之, 另外, meanwhile" aria-label="新增断句词">
@@ -1770,6 +1838,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <tr><td>双击字幕行</td><td>视频跳转到该字幕起始时间</td></tr>
                     <tr><td>右键字幕行</td><td>分割、对齐、时长调节等上下文菜单</td></tr>
                     <tr><td>时间轴拖拽</td><td>拖字幕块整段移动；拖左右边改起止</td></tr>
+                    <tr><td>时间轴滚轮</td><td>左右平移（放大后）</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + 滚轮</td><td>放大 / 缩小时间轴与波形</td></tr>
+                    <tr><td><kbd>Shift</kbd> / <kbd>Alt</kbd> + 拖拽空白处</td><td>平移时间轴</td></tr>
+                    <tr><td>中键拖拽</td><td>平移时间轴</td></tr>
                 </tbody>
             </table>
             <div class="editor-modal-actions" style="margin-top: 0.75rem;">
