@@ -107,6 +107,12 @@ function warmEditorBridges() {
     } catch (err) {
         console.warn('[main] extensions bridge init failed:', err.message || err);
     }
+    // 设置窗口保存/读取参数需要 TransWithAI options bridge
+    try {
+        deferredBridges.ensure('transwithai');
+    } catch (err) {
+        console.warn('[main] transwithai bridge init failed:', err.message || err);
+    }
 }
 
 function openCliSubtitleEditor(editRequest) {
@@ -158,6 +164,11 @@ deferredBridges.installLazyRoutes({
     'transub-read-subtitle': 'extensions',
     'transub-write-subtitle': 'extensions',
     'transub-scan-subtitle-qc': 'extensions',
+    'transub-apply-subtitle-postprocess': 'extensions',
+    'transwithai-list-models': 'extensions',
+    'transwithai-validate-model': 'extensions',
+    'transub-copy-subtitle-as': 'extensions',
+    'transub-trial-compare': 'transwithai',
     'transub-read-subtitle-draft': 'extensions',
     'transub-write-subtitle-draft': 'extensions',
     'transub-clear-subtitle-draft': 'extensions',

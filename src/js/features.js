@@ -311,9 +311,18 @@
         });
         document.getElementById('checkUpdateBtn')?.addEventListener('click', () => runCheckAppUpdate());
         document.getElementById('checkUpdateToolbarBtn')?.addEventListener('click', async () => {
+            if (electron?.transubOpenSettings) {
+                await electron.transubOpenSettings({ tab: 'more', checkUpdate: true });
+                return;
+            }
             core()?.openParamsModal?.('more');
             await runCheckAppUpdate({
                 triggerBtn: document.getElementById('checkUpdateToolbarBtn'),
+            });
+        });
+        electron?.onSettingsCheckUpdate?.(() => {
+            void runCheckAppUpdate({
+                triggerBtn: document.getElementById('checkUpdateBtn'),
             });
         });
         document.getElementById('openHistoryBtn')?.addEventListener('click', openHistoryModal);

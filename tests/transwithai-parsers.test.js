@@ -56,6 +56,34 @@ function testNormalizeOutputOptions() {
     assert.strictEqual(opts.device, 'modal');
 }
 
+function testNormalizeHallucinationOptions() {
+    const defaults = normalizeTransWithAiRuntimeOptions({});
+    assert.strictEqual(defaults.noSpeechThreshold, 0.6);
+    assert.strictEqual(defaults.logProbThreshold, -1);
+    assert.strictEqual(defaults.compressionRatioThreshold, 2.4);
+    assert.strictEqual(defaults.hallucinationSilenceThreshold, null);
+    assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
+
+    const opts = normalizeTransWithAiRuntimeOptions({
+        noSpeechThreshold: 0.7,
+        logProbThreshold: -0.8,
+        compressionRatioThreshold: 2.1,
+        hallucinationSilenceThreshold: 1.5,
+        chineseSubtitleVariant: 'traditional',
+    });
+    assert.strictEqual(opts.noSpeechThreshold, 0.7);
+    assert.strictEqual(opts.logProbThreshold, -0.8);
+    assert.strictEqual(opts.compressionRatioThreshold, 2.1);
+    assert.strictEqual(opts.hallucinationSilenceThreshold, 1.5);
+    assert.strictEqual(opts.chineseSubtitleVariant, 'traditional');
+
+    const cleared = normalizeTransWithAiRuntimeOptions({ hallucinationSilenceThreshold: '' });
+    assert.strictEqual(cleared.hallucinationSilenceThreshold, null);
+
+    const invalidVariant = normalizeTransWithAiRuntimeOptions({ chineseSubtitleVariant: 'nope' });
+    assert.strictEqual(invalidVariant.chineseSubtitleVariant, 'simplified');
+}
+
 async function testDetectVersionFromLog() {
     const fs = require('fs');
     const os = require('os');
@@ -79,6 +107,9 @@ describe('transwithai-parsers', () => {
     });
     it('normalize output options', () => {
         testNormalizeOutputOptions();
+    });
+    it('normalize hallucination options', () => {
+        testNormalizeHallucinationOptions();
     });
     it('detect version from log', async () => {
         await testDetectVersionFromLog();

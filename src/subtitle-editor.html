@@ -924,7 +924,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
 
 </style>
 </head>
-<body class="editor-body editor-theme-light">
+<body class="editor-body editor-theme-light editor-waveform-on">
     <header class="editor-header">
         <div class="editor-header-actions">
             <button type="button" id="editorOpenFileBtn" class="editor-btn editor-btn-icon" title="打开其他字幕" aria-label="打开"><i class="fa fa-folder-open"></i></button>
@@ -969,7 +969,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <button type="button" id="editorAutoFocusBtn" class="editor-btn editor-btn-icon" title="自动焦点：关闭（开启后播放时跟随当前字幕）" aria-label="自动焦点" aria-pressed="false">
                 <i class="fa fa-crosshairs"></i>
             </button>
-            <button type="button" id="editorWaveformToggle" class="editor-btn editor-btn-icon editor-waveform-toggle" title="波形时间轴：关闭（默认）" aria-label="波形时间轴" aria-pressed="false">
+            <button type="button" id="editorWaveformToggle" class="editor-btn editor-btn-icon editor-waveform-toggle is-active" title="波形时间轴：开启（默认）" aria-label="波形时间轴" aria-pressed="true">
                 <i class="fa fa-area-chart"></i>
             </button>
             <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
@@ -1631,7 +1631,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-remove-noise-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorRemoveNoiseTitle">删除杂音</h3>
-                <p>批量删除 ASR 常见杂音条目：空文本、语气碎片、音效标签、纯符号，以及可选的连续重复句。不修改保留条目的文本内容。</p>
+                <p>批量删除 ASR 常见杂音条目：空文本、语气碎片、音效标签、纯符号、可选连续重复句，以及可选幻觉短句。不修改保留条目的文本内容。</p>
                 <div class="split-mode-list">
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorNoiseRemoveEmpty" checked>
@@ -1652,6 +1652,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorNoiseRemoveDuplicates">
                         <span>删除与上一条完全相同的连续重复</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveHallucinations" checked>
+                        <span>删除幻觉短句（完毕 / ○○○ / 过短占位等）</span>
                     </label>
                 </div>
                 <p id="editorRemoveNoisePreview" class="batch-dur-preview">—</p>
@@ -1836,7 +1840,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <tr><td><kbd>Space</kbd></td><td>播放 / 暂停（列表或播放区聚焦时）</td></tr>
                     <tr><td><kbd>Enter</kbd></td><td>在播放头处插入字幕（列表聚焦时）</td></tr>
                     <tr><td>双击字幕行</td><td>视频跳转到该字幕起始时间</td></tr>
-                    <tr><td>右键字幕行</td><td>分割、对齐、时长调节等上下文菜单</td></tr>
+                    <tr><td>右键字幕行 / 时间轴字幕块 / 波形</td><td>分割、对齐、时长调节等上下文菜单</td></tr>
                     <tr><td>时间轴拖拽</td><td>拖字幕块整段移动；拖左右边改起止</td></tr>
                     <tr><td>时间轴滚轮</td><td>左右平移（放大后）</td></tr>
                     <tr><td><kbd>Ctrl</kbd> + 滚轮</td><td>放大 / 缩小时间轴与波形</td></tr>

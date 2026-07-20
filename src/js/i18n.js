@@ -2,8 +2,8 @@
     const STRINGS = {
         zh: {
             title: 'Transub 字幕生成',
-            params: '字幕参数',
-            paramsSettings: '参数设置',
+            params: '当前设置',
+            paramsSettings: '设置',
             addVideos: '添加视频',
             addFolder: '添加文件夹',
             start: '开始生成',
