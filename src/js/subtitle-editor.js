@@ -368,6 +368,7 @@
             if (els.splitCueBtn) els.splitCueBtn.disabled = true;
             if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = true;
             if (els.silenceSplitCueBtn) els.silenceSplitCueBtn.disabled = true;
+            if (els.compressRepCueBtn) els.compressRepCueBtn.disabled = true;
             if (els.splitLinesBtn) els.splitLinesBtn.disabled = true;
             if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = true;
             if (els.charDurBtn) els.charDurBtn.disabled = true;
@@ -392,6 +393,10 @@
         if (els.silenceSplitCueBtn) {
             els.silenceSplitCueBtn.disabled = state.silenceSplitBusy || !canSilenceSplitCue(cue)
                 || !state.videoPath || !electron?.ffmpegDetectSilence;
+        }
+        if (els.compressRepCueBtn) {
+            const canCompress = !!text && !!fluencyCore.compressRepetitionInText(text)?.changed;
+            els.compressRepCueBtn.disabled = !canCompress;
         }
         if (els.splitLinesBtn) els.splitLinesBtn.disabled = !canSplitLines;
         if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = !canSplitSpaces;
@@ -4782,6 +4787,7 @@
             fixCpsByExtend: !!els.qcFixCpsExtend?.checked,
             enforceMinDur: !!els.qcEnforceMin?.checked,
             enforceMaxDur: !!els.qcEnforceMax?.checked,
+            compressRepetition: !!els.qcCompressRep?.checked,
             maxCps: Number(els.qcMaxCps?.value) || 18,
             minSec: Number(els.qcMinSec?.value) || 0.5,
             maxSec: Number(els.qcMaxSec?.value) || 10,
@@ -4798,6 +4804,7 @@
         { type: 'high_cps', countKey: 'highCps', label: '读速' },
         { type: 'splittable', countKey: 'splittable', label: '可分割' },
         { type: 'connected', countKey: 'connected', label: '连续文本' },
+        { type: 'repetition', countKey: 'repetition', label: '叠词' },
         { type: 'fluency', countKey: 'fluency', label: '通顺度', warn: true },
         { type: 'short', countKey: 'short', label: '过短' },
         { type: 'long', countKey: 'long', label: '过长' },
@@ -5141,6 +5148,112 @@
         if (state.selectedIndex >= 0) renderDetailPane();
         closeChineseConvertModal();
         setStatus(preview.summary, 'ok');
+    }
+
+    function readCompressRepOptions() {
+        const scope = els.compressRepScopeSelected?.checked ? 'selected' : 'all';
+        let indexes = null;
+        if (scope === 'selected') {
+            indexes = getSelectedCueIndexes();
+            if (!indexes.length && state.selectedIndex >= 0) indexes = [state.selectedIndex];
+        }
+        return {
+            scope,
+            indexes,
+            compressSingleChar: els.compressRepSingleChar?.checked !== false,
+            addExclaim: els.compressRepExclaim?.checked !== false,
+            minRepeats: 3,
+        };
+    }
+
+    function previewCompressRep() {
+        const opts = readCompressRepOptions();
+        if (opts.scope === 'selected' && (!opts.indexes || !opts.indexes.length)) {
+            return {
+                cues: state.cues.slice(),
+                stats: { cueTotal: state.cues.length, cueTouched: 0, runs: 0, charSaved: 0 },
+                summary: '请先选中一条或多条字幕',
+            };
+        }
+        return fluencyCore.compressRepetitionInCues(state.cues, {
+            indexes: opts.indexes,
+            compressSingleChar: opts.compressSingleChar,
+            addExclaim: opts.addExclaim,
+            minRepeats: opts.minRepeats,
+        });
+    }
+
+    function updateCompressRepModalState() {
+        if (!els.compressRepPreview) return;
+        if (!state.cues.length) {
+            els.compressRepPreview.textContent = '没有字幕条目';
+            els.compressRepPreview.classList.add('err');
+            if (els.compressRepConfirm) els.compressRepConfirm.disabled = true;
+            return;
+        }
+        const preview = previewCompressRep();
+        const noSelection = els.compressRepScopeSelected?.checked
+            && !getSelectedCueIndexes().length
+            && state.selectedIndex < 0;
+        const noop = !preview.stats.cueTouched;
+        els.compressRepPreview.textContent = preview.summary;
+        els.compressRepPreview.classList.toggle('err', noSelection || noop);
+        if (els.compressRepConfirm) els.compressRepConfirm.disabled = noSelection || noop;
+    }
+
+    function openCompressRepModal() {
+        if (!els.compressRepModal) return;
+        syncDetailToCue();
+        showEditorModal(els.compressRepModal, els.compressRepConfirm);
+        updateCompressRepModalState();
+    }
+
+    function closeCompressRepModal() {
+        hideEditorModal(els.compressRepModal);
+    }
+
+    function confirmCompressRep() {
+        syncDetailToCue();
+        const preview = previewCompressRep();
+        if (!preview.stats.cueTouched) {
+            updateCompressRepModalState();
+            setStatus(preview.summary || '无需压缩', 'ok');
+            return;
+        }
+        recordUndoBeforeChange();
+        state.cues.splice(0, state.cues.length, ...preview.cues);
+        setDirty(true);
+        renderCueList();
+        if (state.selectedIndex >= 0) renderDetailPane();
+        closeCompressRepModal();
+        setStatus(preview.summary.replace(/^将/, '已'), 'ok');
+    }
+
+    function quickCompressRepSelectedCue() {
+        syncDetailToCue();
+        let indexes = getSelectedCueIndexes();
+        if (!indexes.length && state.selectedIndex >= 0) indexes = [state.selectedIndex];
+        if (!indexes.length) {
+            setStatus('请先选择一条字幕', 'err');
+            return;
+        }
+        const preview = fluencyCore.compressRepetitionInCues(state.cues, {
+            indexes,
+            compressSingleChar: true,
+            addExclaim: true,
+            minRepeats: 3,
+        });
+        if (!preview.stats.cueTouched) {
+            setStatus('当前条目无需压缩叠词', 'ok');
+            updateDetailActionButtons();
+            return;
+        }
+        recordUndoBeforeChange();
+        state.cues.splice(0, state.cues.length, ...preview.cues);
+        setDirty(true);
+        renderCueList();
+        if (state.selectedIndex >= 0) renderDetailPane();
+        setStatus(preview.summary.replace(/^将/, '已'), 'ok');
     }
 
     async function confirmRemoveNoise() {
@@ -6270,6 +6383,15 @@
             el.addEventListener('change', updateChineseConvertModalState);
         });
         els.chineseProtectGlossary?.addEventListener('change', updateChineseConvertModalState);
+        els.compressRepBtn?.addEventListener('click', openCompressRepModal);
+        els.compressRepConfirm?.addEventListener('click', confirmCompressRep);
+        els.compressRepCancel?.addEventListener('click', closeCompressRepModal);
+        els.compressRepModal?.querySelectorAll('[data-compress-rep-dismiss]').forEach((el) => {
+            el.addEventListener('click', closeCompressRepModal);
+        });
+        els.compressRepModal?.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach((el) => {
+            el.addEventListener('change', updateCompressRepModalState);
+        });
         els.qcBtn?.addEventListener('click', openQcModal);
         els.retranscribeDurBtn?.addEventListener('click', openRetranscribeDurModal);
         els.smartSplitBtn?.addEventListener('click', openSmartSplitModal);
@@ -6284,6 +6406,7 @@
             });
         });
         els.silenceSplitCueBtn?.addEventListener('click', () => quickSilenceSplitSelectedCue());
+        els.compressRepCueBtn?.addEventListener('click', () => quickCompressRepSelectedCue());
         els.splitLinesBtn?.addEventListener('click', () => quickSplitSelectedCue('lines'));
         els.splitSpacesBtn?.addEventListener('click', () => quickSplitSelectedCue('spaces'));
         els.charDurBtn?.addEventListener('click', () => charCountAdjustSelectedCueDuration());
@@ -6392,6 +6515,7 @@
             els.qcFixCpsExtend,
             els.qcEnforceMin,
             els.qcEnforceMax,
+            els.qcCompressRep,
             els.qcMaxCps,
             els.qcMinSec,
             els.qcMaxSec,
@@ -6669,6 +6793,11 @@
                     closeChineseConvertModal();
                     return;
                 }
+                if (els.compressRepModal && !els.compressRepModal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    closeCompressRepModal();
+                    return;
+                }
                 if (els.qcModal && !els.qcModal.classList.contains('hidden')) {
                     e.preventDefault();
                     closeQcModal();
@@ -6753,6 +6882,7 @@
                     els.smartAdjustModal,
                     els.removeNoiseModal,
                     els.chineseConvertModal,
+                    els.compressRepModal,
                     els.qcModal,
                     els.retranscribeDurModal,
                     els.shortcutsModal,
@@ -6987,6 +7117,7 @@
             qcFixCpsExtend: document.getElementById('editorQcFixCpsExtend'),
             qcEnforceMin: document.getElementById('editorQcEnforceMin'),
             qcEnforceMax: document.getElementById('editorQcEnforceMax'),
+            qcCompressRep: document.getElementById('editorQcCompressRep'),
             qcMaxCps: document.getElementById('editorQcMaxCps'),
             qcMinSec: document.getElementById('editorQcMinSec'),
             qcMaxSec: document.getElementById('editorQcMaxSec'),
@@ -6999,6 +7130,7 @@
             silenceSplitBtn: document.getElementById('editorSilenceSplitBtn'),
             smartSplitCueBtn: document.getElementById('editorSmartSplitCueBtn'),
             silenceSplitCueBtn: document.getElementById('editorSilenceSplitCueBtn'),
+            compressRepCueBtn: document.getElementById('editorCompressRepCueBtn'),
             splitLinesBtn: document.getElementById('editorSplitLinesBtn'),
             splitSpacesBtn: document.getElementById('editorSplitSpacesBtn'),
             charDurBtn: document.getElementById('editorCharDurBtn'),
@@ -7059,6 +7191,15 @@
             chineseScopeAll: document.getElementById('editorChineseScopeAll'),
             chineseScopeSelected: document.getElementById('editorChineseScopeSelected'),
             chineseProtectGlossary: document.getElementById('editorChineseProtectGlossary'),
+            compressRepBtn: document.getElementById('editorCompressRepBtn'),
+            compressRepModal: document.getElementById('editorCompressRepModal'),
+            compressRepPreview: document.getElementById('editorCompressRepPreview'),
+            compressRepConfirm: document.getElementById('editorCompressRepConfirm'),
+            compressRepCancel: document.getElementById('editorCompressRepCancel'),
+            compressRepScopeAll: document.getElementById('editorCompressRepScopeAll'),
+            compressRepScopeSelected: document.getElementById('editorCompressRepScopeSelected'),
+            compressRepSingleChar: document.getElementById('editorCompressRepSingleChar'),
+            compressRepExclaim: document.getElementById('editorCompressRepExclaim'),
             restoreBtn: document.getElementById('editorRestoreBtn'),
             sidecarSelect: document.getElementById('editorSidecarSelect'),
             cueBody: document.getElementById('editorCueBody'),
@@ -7132,6 +7273,7 @@
             els.smartAdjustModal,
             els.removeNoiseModal,
             els.chineseConvertModal,
+            els.compressRepModal,
             els.qcModal,
             els.glossaryModal,
             els.breakWordsModal,

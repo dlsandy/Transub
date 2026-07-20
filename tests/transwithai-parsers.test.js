@@ -63,6 +63,8 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.compressionRatioThreshold, 2.4);
     assert.strictEqual(defaults.hallucinationSilenceThreshold, null);
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
+    assert.strictEqual(defaults.postBatchCompressRepetition, true);
+    assert.strictEqual(defaults.postBatchCpsSplit, true);
 
     const opts = normalizeTransWithAiRuntimeOptions({
         noSpeechThreshold: 0.7,
@@ -70,12 +72,21 @@ function testNormalizeHallucinationOptions() {
         compressionRatioThreshold: 2.1,
         hallucinationSilenceThreshold: 1.5,
         chineseSubtitleVariant: 'traditional',
+        postBatchCompressRepetition: true,
     });
     assert.strictEqual(opts.noSpeechThreshold, 0.7);
     assert.strictEqual(opts.logProbThreshold, -0.8);
     assert.strictEqual(opts.compressionRatioThreshold, 2.1);
     assert.strictEqual(opts.hallucinationSilenceThreshold, 1.5);
     assert.strictEqual(opts.chineseSubtitleVariant, 'traditional');
+    assert.strictEqual(opts.postBatchCompressRepetition, true);
+
+    const off = normalizeTransWithAiRuntimeOptions({
+        postBatchCompressRepetition: false,
+        postBatchCpsSplit: false,
+    });
+    assert.strictEqual(off.postBatchCompressRepetition, false);
+    assert.strictEqual(off.postBatchCpsSplit, false);
 
     const cleared = normalizeTransWithAiRuntimeOptions({ hallucinationSilenceThreshold: '' });
     assert.strictEqual(cleared.hallucinationSilenceThreshold, null);
