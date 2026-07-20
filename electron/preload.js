@@ -59,6 +59,17 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubReadSubtitle: (payload) => ipcRenderer.invoke('transub-read-subtitle', payload || {}),
     transubWriteSubtitle: (payload) => ipcRenderer.invoke('transub-write-subtitle', payload || {}),
     transubScanSubtitleQc: (payload) => ipcRenderer.invoke('transub-scan-subtitle-qc', payload || {}),
+    transubApplySubtitlePostprocess: (payload) => ipcRenderer.invoke('transub-apply-subtitle-postprocess', payload || {}),
+    transWithAiListModels: (payload) => ipcRenderer.invoke('transwithai-list-models', payload || {}),
+    transWithAiValidateModel: (payload) => ipcRenderer.invoke('transwithai-validate-model', payload || {}),
+    transubCopySubtitleAs: (payload) => ipcRenderer.invoke('transub-copy-subtitle-as', payload || {}),
+    transubTrialCompare: (payload) => ipcRenderer.invoke('transub-trial-compare', payload || {}),
+    onTransubTrialCompareProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-trial-compare-progress', handler);
+        return () => ipcRenderer.removeListener('transub-trial-compare-progress', handler);
+    },
     transubReadSubtitleDraft: (payload) => ipcRenderer.invoke('transub-read-subtitle-draft', payload || {}),
     transubWriteSubtitleDraft: (payload) => ipcRenderer.invoke('transub-write-subtitle-draft', payload || {}),
     transubClearSubtitleDraft: (payload) => ipcRenderer.invoke('transub-clear-subtitle-draft', payload || {}),
@@ -90,6 +101,18 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         const handler = (_event, payload) => callback(payload);
         ipcRenderer.on('transub-open-params', handler);
         return () => ipcRenderer.removeListener('transub-open-params', handler);
+    },
+    onSettingsCheckUpdate: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = () => callback();
+        ipcRenderer.on('transub-settings-check-update', handler);
+        return () => ipcRenderer.removeListener('transub-settings-check-update', handler);
+    },
+    onSettingsUpdated: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-settings-updated', handler);
+        return () => ipcRenderer.removeListener('transub-settings-updated', handler);
     },
     getMediaUrl: (filePath) => {
         try {

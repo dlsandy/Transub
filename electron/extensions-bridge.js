@@ -135,6 +135,267 @@ function scanSubtitleQc(filePath, options = {}) {
     };
 }
 
+/**
+ * 批量后处理：可选句读后空格、CPS 智能拆分、清理杂音/幻觉短句、翻译任务简繁体，写回字幕文件。
+ * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 简繁转换。
+ */
+function applySubtitlePostprocess(filePath, options = {}) {
+    const doc = readSubtitleDocument(filePath);
+    if (!doc.ok) return doc;
+
+    let cues = doc.cues;
+    const result = {
+        ok: true,
+        path: doc.path,
+        beforeCount: cues.length,
+        afterCount: cues.length,
+        spacePunct: null,
+        cpsSplit: null,
+        noise: null,
+        chinese: null,
+        written: false,
+    };
+
+    const doSpacePunct = options.spaceAfterChinesePunctuation === true;
+    const doCpsSplit = options.cpsSplit === true;
+    const doNoise = options.removeNoise === true || options.removeHallucinations === true;
+    const chineseVariant = String(options.chineseSubtitleVariant || '').trim();
+    const doChinese = chineseVariant === 'simplified' || chineseVariant === 'traditional';
+
+    if (doSpacePunct) {
+        let chinese;
+        try {
+            chinese = require('../src/js/subtitle-chinese-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载简繁转换模块' };
+        }
+        const spaced = chinese.spaceAfterChinesePunctuationCues(cues);
+        cues = spaced.cues;
+        result.spacePunct = {
+            summary: spaced.summary,
+            stats: spaced.stats,
+        };
+    }
+
+    if (doCpsSplit) {
+        let qc;
+        try {
+            qc = require('../src/js/subtitle-qc-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载 QC 模块' };
+        }
+        const fix = qc.applyQcFixes(cues, {
+            fixOverlap: options.fixOverlap !== false,
+            fixCpsBySplit: true,
+            fixCpsByExtend: options.fixCpsByExtend === true,
+            enforceMinDur: options.enforceMinDur === true,
+            enforceMaxDur: options.enforceMaxDur !== false,
+            maxCps: Number(options.maxCps) || 18,
+            maxSec: Number(options.maxSec) || 10,
+            smartMaxChars: Number(options.smartMaxChars) || 20,
+            smartLineChars: Number(options.smartLineChars) || 18,
+            targetCps: Number(options.targetCps) || 3,
+        });
+        cues = fix.cues;
+        result.cpsSplit = {
+            summary: fix.summary,
+            beforeCount: fix.beforeCount,
+            afterCount: fix.afterCount,
+            stats: fix.stats,
+        };
+    }
+
+    if (doNoise) {
+        let fluency;
+        try {
+            fluency = require('../src/js/subtitle-fluency-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载通顺度模块' };
+        }
+        const noise = fluency.removeNoiseFromCues(cues, {
+            removeEmpty: options.removeEmpty !== false,
+            removeFragments: options.removeFragments !== false,
+            removeSoundEffects: options.removeSoundEffects !== false,
+            removeSymbolOnly: options.removeSymbolOnly !== false,
+            removeDuplicates: options.removeDuplicates === true,
+            removeHallucinations: options.removeHallucinations !== false,
+        });
+        cues = noise.cues;
+        result.noise = {
+            summary: fluency.summarizeNoiseRemoval(noise.stats),
+            stats: noise.stats,
+        };
+    }
+
+    if (doChinese) {
+        let chinese;
+        try {
+            chinese = require('../src/js/subtitle-chinese-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载简繁转换模块' };
+        }
+        let protectTerms = Array.isArray(options.protectTerms) ? options.protectTerms : null;
+        if (!protectTerms) {
+            try {
+                const { readGlossary } = glossaryData();
+                const { collectProtectTerms } = require('../src/js/subtitle-glossary-core');
+                const gloss = readGlossary();
+                if (gloss?.ok && gloss.glossary) {
+                    protectTerms = collectProtectTerms(gloss.glossary);
+                }
+            } catch {
+                /* glossary optional */
+            }
+        }
+        const direction = chineseVariant === 'traditional' ? 's2t' : 't2s';
+        const converted = chinese.convertCues(cues, {
+            direction,
+            protectTerms: protectTerms || [],
+        });
+        cues = converted.cues;
+        result.chinese = {
+            summary: converted.summary,
+            stats: converted.stats,
+        };
+    }
+
+    result.afterCount = cues.length;
+    const changed = result.afterCount !== result.beforeCount
+        || (result.spacePunct && Number(result.spacePunct.stats?.cueTouched) > 0)
+        || (result.cpsSplit && Number(result.cpsSplit.stats?.affected) > 0)
+        || (result.noise && Number(result.noise.stats?.removed) > 0)
+        || (result.chinese && Number(result.chinese.stats?.cueTouched) > 0);
+
+    if (!changed) {
+        return { ...result, written: false, summary: '无需后处理' };
+    }
+    if (!cues.length) {
+        return { ok: false, error: '后处理后无剩余字幕，已取消写入', ...result, written: false };
+    }
+
+    const written = writeSubtitleDocument(doc.path, {
+        cues,
+        format: doc.format,
+        header: doc.header,
+        backupMode: options.backupMode || 'off',
+    });
+    if (!written.ok) return written;
+
+    const parts = [];
+    if (result.spacePunct?.summary && result.spacePunct.stats?.cueTouched) {
+        parts.push(result.spacePunct.summary);
+    }
+    if (result.cpsSplit?.summary) parts.push(result.cpsSplit.summary);
+    if (result.noise?.summary && result.noise.stats?.removed) parts.push(result.noise.summary);
+    if (result.chinese?.summary && result.chinese.stats?.cueTouched) parts.push(result.chinese.summary);
+    return {
+        ...result,
+        written: true,
+        summary: parts.join('；') || `已更新（${result.beforeCount} → ${result.afterCount} 条）`,
+    };
+}
+
+function inspectWhisperModelDir(modelDir) {
+    const dir = path.resolve(String(modelDir || ''));
+    if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+        return {
+            ok: false,
+            path: dir,
+            error: `模型目录不存在：${dir}`,
+            hasModelBin: false,
+            hasModelSafetensors: false,
+            hasConfig: false,
+            hasTokenizer: false,
+            hasVocabulary: false,
+            complete: false,
+        };
+    }
+    const hasModelBin = fs.existsSync(path.join(dir, 'model.bin'));
+    const hasModelSafetensors = fs.existsSync(path.join(dir, 'model.safetensors'));
+    const hasConfig = fs.existsSync(path.join(dir, 'config.json'));
+    const hasTokenizer = fs.existsSync(path.join(dir, 'tokenizer.json'));
+    const hasVocabulary = fs.existsSync(path.join(dir, 'vocabulary.json'))
+        || fs.existsSync(path.join(dir, 'vocabulary.txt'));
+    const hasWeight = hasModelBin || hasModelSafetensors;
+    const complete = hasWeight && hasConfig && hasTokenizer && hasVocabulary;
+    let error = '';
+    if (!hasWeight) {
+        error = '缺少 model.bin 或 model.safetensors（需 CTranslate2 格式）';
+    } else if (!hasModelBin && hasModelSafetensors && (!hasConfig || !hasTokenizer || !hasVocabulary)) {
+        error = '仅有 model.safetensors，缺少配套文件。请下载完整 CT2 包 TransWithAI/whisper-ja-1.5B-ct2（含 model.bin、config.json、tokenizer.json、vocabulary.json）';
+    } else if (!complete) {
+        const missing = [];
+        if (!hasConfig) missing.push('config.json');
+        if (!hasTokenizer) missing.push('tokenizer.json');
+        if (!hasVocabulary) missing.push('vocabulary.json');
+        error = `模型目录不完整，缺少：${missing.join('、')}`;
+    }
+    return {
+        ok: complete,
+        path: dir,
+        error: error || undefined,
+        hasModelBin,
+        hasModelSafetensors,
+        hasConfig,
+        hasTokenizer,
+        hasVocabulary,
+        complete,
+    };
+}
+
+function resolveModelDir(installPath, modelPath) {
+    const install = path.resolve(String(installPath || ''));
+    const raw = String(modelPath || '').trim();
+    if (!raw) return path.join(install, 'models');
+    if (path.isAbsolute(raw)) return path.resolve(raw);
+    return path.resolve(install, raw);
+}
+
+function listTransWithAiModels(installPath) {
+    const root = path.resolve(String(installPath || ''));
+    const modelsDir = path.join(root, 'models');
+    const items = [];
+    const pushItem = (id, relPath, label, kind, ready) => {
+        items.push({ id, path: relPath, label, kind, ready: ready !== false });
+    };
+
+    if (!fs.existsSync(modelsDir)) {
+        return { ok: true, modelsDir, items: [], note: '未找到 models 目录' };
+    }
+
+    const rootInfo = inspectWhisperModelDir(modelsDir);
+    if (rootInfo.hasModelBin || rootInfo.hasModelSafetensors || rootInfo.hasConfig) {
+        const label = rootInfo.ok
+            ? '默认主模型（models 根目录）'
+            : `默认主模型（不完整）`;
+        pushItem('default', 'models', label, 'root', rootInfo.ok);
+    }
+
+    let entries = [];
+    try {
+        entries = fs.readdirSync(modelsDir, { withFileTypes: true });
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), modelsDir, items };
+    }
+
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name === 'whisper-base') continue;
+        const sub = path.join(modelsDir, entry.name);
+        const info = inspectWhisperModelDir(sub);
+        if (!info.hasModelBin && !info.hasModelSafetensors && !info.hasConfig) continue;
+        const rel = path.join('models', entry.name).replace(/\\/g, '/');
+        let kind = 'custom';
+        const lower = entry.name.toLowerCase();
+        if (/translate|chicken|海南/.test(lower)) kind = 'translate';
+        if (/transcribe|whisper-ja|ja-1\.5|日文/.test(lower)) kind = 'transcribe';
+        const label = info.ok ? entry.name : `${entry.name}（不完整）`;
+        pushItem(entry.name, rel, label, kind, info.ok);
+    }
+
+    return { ok: true, modelsDir, items };
+}
+
 const SUBTITLE_BAK_MODES = new Set(['off', 'beside', 'appBackup']);
 
 function normalizeSubtitleBakMode(value) {
@@ -455,6 +716,55 @@ function setupExtensionsBridge(api, deps) {
         try {
             const filePath = assertEditableSubtitlePath(payload.path);
             return scanSubtitleQc(filePath, payload.options || {});
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-apply-subtitle-postprocess', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            return applySubtitlePostprocess(filePath, payload.options || payload || {});
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transwithai-list-models', async (_event, payload = {}) => {
+        try {
+            const installPath = asString(payload.installPath || loadSettings(getAppRoot).options?.installPath || '', 4096);
+            return listTransWithAiModels(installPath);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transwithai-validate-model', async (_event, payload = {}) => {
+        try {
+            const installPath = asString(
+                payload.installPath || loadSettings(getAppRoot).options?.installPath || '',
+                4096,
+            );
+            const modelPath = asString(payload.modelPath || '', 4096);
+            const dir = resolveModelDir(installPath, modelPath);
+            const info = inspectWhisperModelDir(dir);
+            return { ...info, modelPath: modelPath || 'models', installPath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-copy-subtitle-as', async (_event, payload = {}) => {
+        try {
+            const src = assertEditableSubtitlePath(payload.path || payload.sourcePath);
+            const destName = asString(payload.destName || payload.asName || '', 512).trim();
+            if (!destName) return { ok: false, error: '未指定目标文件名' };
+            const dest = path.join(path.dirname(src), destName);
+            if (path.resolve(dest) === path.resolve(src)) {
+                return { ok: true, path: dest, skipped: true };
+            }
+            fs.copyFileSync(src, dest);
+            return { ok: true, path: dest, source: src };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

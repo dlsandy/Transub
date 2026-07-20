@@ -1,6 +1,6 @@
 # Transub Windows build script
 param(
-    [ValidateSet('all', 'dir', 'portable', 'zip', 'nsis')]
+    [ValidateSet('all', 'dir', 'zip', 'nsis')]
     [string]$Target = 'all',
     [switch]$SkipTests,
     [switch]$SkipIcons
@@ -124,7 +124,6 @@ $configArg = "--config.directories.output=$packDir"
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 switch ($Target) {
     'dir' { npx --yes electron-builder --win dir $configArg --publish never }
-    'portable' { npx --yes electron-builder --win portable $configArg --publish never }
     'zip' { npx --yes electron-builder --win zip $configArg --publish never }
     'nsis' { npx --yes electron-builder --win nsis $configArg --publish never }
     default { npx --yes electron-builder $configArg --publish never }

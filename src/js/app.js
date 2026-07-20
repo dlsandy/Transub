@@ -66,7 +66,32 @@
     };
 
     let savedOptionsSnapshot = null;
-    let activeParamsTab = 'install';
+    let activeParamsTab = 'runtime';
+
+    const pageQuery = new URLSearchParams(global.location?.search || '');
+    const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
+    const initialSettingsTab = String(pageQuery.get('tab') || '').trim();
+    const shouldCheckUpdateOnOpen = pageQuery.get('checkUpdate') === '1';
+
+    /** Legacy / alias tab ids → current panel ids */
+    const PARAMS_TAB_ALIASES = {
+        ffmpeg: 'install',
+        advanced: 'editor',
+        environment: 'install',
+        general: 'runtime',
+    };
+
+    function resolveParamsTab(tabId) {
+        const raw = String(tabId || '').trim();
+        if (!raw) return 'runtime';
+        return PARAMS_TAB_ALIASES[raw] || raw;
+    }
+
+    function closeStandaloneSettingsWindow() {
+        try {
+            global.close();
+        } catch (_) { /* ignore */ }
+    }
 
     const state = {
         items: [],
@@ -270,14 +295,21 @@
             'installPathInput', 'installBrowseBtn', 'installTestBtn', 'installDownloadBtn',
             'deviceSelect', 'taskSelect', 'overwriteCheck',
             'maxBatchSizeWrap', 'maxBatchSizeInput', 'logLevelSelect', 'logLevelHint',
-            'subFormatSrt', 'subFormatVtt', 'subFormatLrc', 'modelPathInput',
+            'subFormatSrt', 'subFormatVtt', 'subFormatLrc',
+            'glossaryPromptCheck', 'chineseSubtitleVariantSelect',
             'languageSelect', 'beamSizeInput', 'vadThresholdInput',
             'vadMinSpeechDurationInput', 'vadMinSilenceDurationInput', 'vadSpeechPadInput',
             'repetitionPenaltyInput', 'maxInitialTimestampInput',
+            'noSpeechThresholdInput', 'logProbThresholdInput', 'compressionRatioThresholdInput',
+            'hallucinationSilenceThresholdInput',
             'smartSplitWithVadCheck', 'targetChunkDurationWrap', 'targetChunkDurationInput',
             'mergeSegmentsCheck', 'mergeSettingsWrap', 'mergeMaxGapInput', 'mergeMaxDurationInput',
             'retranscribeWarmLightCheck', 'subtitleBakModeSelect',
-            'trayProgressCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck', 'postBatchQcCheck',
+            'trayProgressCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
+            'postBatchQcCheck', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck',
+            'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
+            'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
+            'trialCompareStatus', 'trialCompareResult',
             'postTaskMenuBtn', 'postTaskMenu', 'postTaskMenuWrap', 'postTaskMenuItems',
             'shutdownDelayInput', 'shutdownDelayWrap', 'playSoundOnCompleteCheck',
             'presetSelect', 'savePresetBtn', 'outputModeSelect', 'outputDirInput', 'outputDirWrap', 'outputDirBrowseBtn', 'audioSuffixesInput',
@@ -511,8 +543,17 @@
         if (els.targetChunkDurationInput) els.targetChunkDurationInput.disabled = !enabled;
     }
 
+    function syncChineseSubtitleVariantUi() {
+        const isTranslate = els.taskSelect?.value !== 'transcribe';
+        if (els.chineseSubtitleVariantSelect) {
+            els.chineseSubtitleVariantSelect.disabled = !isTranslate;
+        }
+        document.getElementById('chineseSubtitleVariantWrap')
+            ?.classList.toggle('opacity-50', !isTranslate);
+    }
+
     function switchParamsTab(tabId) {
-        activeParamsTab = tabId || 'install';
+        activeParamsTab = resolveParamsTab(tabId || activeParamsTab);
         els.paramsTabBtns?.forEach((btn) => {
             const active = btn.dataset.tab === activeParamsTab;
             btn.classList.toggle('active', active);
@@ -521,21 +562,27 @@
         els.paramsTabPanels?.forEach((panel) => {
             panel.classList.toggle('active', panel.dataset.tabPanel === activeParamsTab);
         });
-    }
-
-    function openParamsModal(tabId) {
-        setPostTaskMenuOpen(false);
-        setAddMenuOpen(false);
-        savedOptionsSnapshot = buildSavedOptionsFromForm();
-        switchParamsTab(tabId || activeParamsTab);
-        els.paramsModal?.classList.remove('hidden');
-        if ((tabId || activeParamsTab) === 'install') {
+        if (activeParamsTab === 'install') {
             global.TransubFeatures?.showInstallWizard?.();
         }
     }
 
+    function openParamsModal(tabId) {
+        if (!isStandaloneSettings) {
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+        }
+        savedOptionsSnapshot = buildSavedOptionsFromForm();
+        switchParamsTab(tabId || activeParamsTab);
+        els.paramsModal?.classList.remove('hidden');
+    }
+
     function closeParamsModal(restore = false) {
         if (restore && savedOptionsSnapshot) applyOptionsToForm(savedOptionsSnapshot);
+        if (isStandaloneSettings) {
+            closeStandaloneSettingsWindow();
+            return;
+        }
         els.paramsModal?.classList.add('hidden');
         if (els.saveParamsStatus) {
             els.saveParamsStatus.textContent = '';
@@ -567,8 +614,13 @@
             els.overwriteCheck.checked = !!options.overwrite;
         }
         applySubFormatsToForm(options.subFormats);
-        if (els.modelPathInput && options.modelPath != null) {
-            els.modelPathInput.value = options.modelPath;
+        if (els.chineseSubtitleVariantSelect) {
+            els.chineseSubtitleVariantSelect.value = options.chineseSubtitleVariant === 'traditional'
+                ? 'traditional'
+                : 'simplified';
+        }
+        if (els.glossaryPromptCheck) {
+            els.glossaryPromptCheck.checked = options.glossaryPromptEnabled !== false;
         }
         if (els.outputModeSelect) {
             els.outputModeSelect.value = options.outputMode === 'custom' || options.outputDir ? 'custom' : 'same';
@@ -614,6 +666,20 @@
         if (els.maxInitialTimestampInput && options.maxInitialTimestamp != null) {
             els.maxInitialTimestampInput.value = String(options.maxInitialTimestamp);
         }
+        if (els.noSpeechThresholdInput && options.noSpeechThreshold != null) {
+            els.noSpeechThresholdInput.value = String(options.noSpeechThreshold);
+        }
+        if (els.logProbThresholdInput && options.logProbThreshold != null) {
+            els.logProbThresholdInput.value = String(options.logProbThreshold);
+        }
+        if (els.compressionRatioThresholdInput && options.compressionRatioThreshold != null) {
+            els.compressionRatioThresholdInput.value = String(options.compressionRatioThreshold);
+        }
+        if (els.hallucinationSilenceThresholdInput) {
+            els.hallucinationSilenceThresholdInput.value = options.hallucinationSilenceThreshold != null
+                ? String(options.hallucinationSilenceThreshold)
+                : '';
+        }
         if (els.smartSplitWithVadCheck) {
             els.smartSplitWithVadCheck.checked = options.smartSplitWithVad !== false;
         }
@@ -638,6 +704,12 @@
         if (els.postBatchQcCheck) {
             els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
+        if (els.postBatchCpsSplitCheck) {
+            els.postBatchCpsSplitCheck.checked = !!options.postBatchCpsSplit;
+        }
+        if (els.postBatchRemoveNoiseCheck) {
+            els.postBatchRemoveNoiseCheck.checked = !!options.postBatchRemoveNoise;
+        }
         if (els.targetChunkDurationInput && options.targetChunkDurationS != null) {
             els.targetChunkDurationInput.value = String(options.targetChunkDurationS);
         }
@@ -654,6 +726,7 @@
         syncLogLevelHint();
         syncMergeUi();
         syncSmartSplitUi();
+        syncChineseSubtitleVariantUi();
         updateParamsSummary();
     }
 
@@ -664,7 +737,11 @@
             task: els.taskSelect?.value === 'transcribe' ? 'transcribe' : 'translate',
             overwrite: !!els.overwriteCheck?.checked,
             subFormats: readSubFormatsFromForm(),
-            modelPath: els.modelPathInput?.value.trim() || '',
+            modelPath: '',
+            chineseSubtitleVariant: els.chineseSubtitleVariantSelect?.value === 'traditional'
+                ? 'traditional'
+                : 'simplified',
+            glossaryPromptEnabled: els.glossaryPromptCheck ? !!els.glossaryPromptCheck.checked : true,
             logLevel: els.logLevelSelect?.value || 'DEBUG',
             maxBatchSize: Number(els.maxBatchSizeInput?.value) || 8,
             language: els.languageSelect?.value || 'auto',
@@ -675,19 +752,30 @@
             vadSpeechPadMs: Number(els.vadSpeechPadInput?.value) || 200,
             repetitionPenalty: Number(els.repetitionPenaltyInput?.value) || 1.1,
             maxInitialTimestamp: Number(els.maxInitialTimestampInput?.value) || 30,
+            noSpeechThreshold: Number(els.noSpeechThresholdInput?.value) || 0.6,
+            logProbThreshold: Number(els.logProbThresholdInput?.value) || -1,
+            compressionRatioThreshold: Number(els.compressionRatioThresholdInput?.value) || 2.4,
+            hallucinationSilenceThreshold: (() => {
+                const raw = String(els.hallucinationSilenceThresholdInput?.value ?? '').trim();
+                if (!raw) return null;
+                const n = Number(raw);
+                return Number.isFinite(n) && n > 0 ? n : null;
+            })(),
             smartSplitWithVad: !!els.smartSplitWithVadCheck?.checked,
             targetChunkDurationS: Number(els.targetChunkDurationInput?.value) || 30,
             retranscribeWarmLight: !!els.retranscribeWarmLightCheck?.checked,
             subtitleBakMode: ['off', 'beside', 'appBackup'].includes(els.subtitleBakModeSelect?.value)
                 ? els.subtitleBakModeSelect.value
                 : 'off',
-            trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : false,
+            trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : true,
             minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
             trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
             postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
+            postBatchCpsSplit: !!els.postBatchCpsSplitCheck?.checked,
+            postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
             mergeSegments: !!els.mergeSegmentsCheck?.checked,
             mergeMaxGapMs: Number(els.mergeMaxGapInput?.value) || 500,
-            mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 10000,
+            mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 15000,
             outputMode: els.outputModeSelect?.value === 'custom' ? 'custom' : 'same',
             outputDir: resolveOutputDirFromForm(),
             audioSuffixes: els.audioSuffixesInput?.value.trim() || 'mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv',
@@ -873,7 +961,11 @@
                     els.saveParamsStatus.className = 'text-xs text-emerald-600';
                 }
                 updateParamsSummary();
-                setTimeout(() => closeParamsModal(false), 400);
+                if (isStandaloneSettings) {
+                    setTimeout(() => closeStandaloneSettingsWindow(), 350);
+                } else {
+                    setTimeout(() => closeParamsModal(false), 400);
+                }
             } else {
                 appendLog(res?.error || '保存参数失败', 'err');
                 if (els.saveParamsStatus) {
@@ -1571,6 +1663,88 @@
         renderList();
     }
 
+    async function runPostBatchAutoFix() {
+        const doCps = !!els.postBatchCpsSplitCheck?.checked;
+        const doNoise = !!els.postBatchRemoveNoiseCheck?.checked;
+        // 以磁盘配置为准（独立设置窗口保存后，主窗口表单可能尚未同步）
+        let savedOpts = null;
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            if (optsRes?.options) savedOpts = optsRes.options;
+        } catch { /* ignore */ }
+        const taskFromSaved = savedOpts?.task === 'transcribe' ? 'transcribe' : 'translate';
+        const isTranslate = (savedOpts ? taskFromSaved : els.taskSelect?.value) !== 'transcribe';
+        const variantFromSaved = savedOpts?.chineseSubtitleVariant === 'traditional'
+            ? 'traditional'
+            : 'simplified';
+        const variantFromForm = els.chineseSubtitleVariantSelect?.value === 'traditional'
+            ? 'traditional'
+            : 'simplified';
+        const chineseSubtitleVariant = isTranslate
+            ? (savedOpts ? variantFromSaved : variantFromForm)
+            : null;
+        const doChinese = !!chineseSubtitleVariant;
+        // 翻译任务默认：。？！后补空格（在 CPS 拆句之前）
+        const doSpacePunct = isTranslate;
+        if (!doCps && !doNoise && !doChinese && !doSpacePunct) return;
+        if (!electron?.transubApplySubtitlePostprocess) return;
+
+        const targets = state.items.filter((item) => {
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            return !!getSubtitlePathForItem(item);
+        });
+        if (!targets.length) return;
+
+        els.progressLabel.textContent = '后处理中…';
+        const parts = [];
+        if (doSpacePunct) parts.push('句读后空格');
+        if (doCps) parts.push('CPS 拆句');
+        if (doNoise) parts.push('清理杂音');
+        if (doChinese) {
+            parts.push(chineseSubtitleVariant === 'traditional' ? '转繁体' : '转简体');
+        }
+        appendLog(`开始批量后处理（${targets.length} 个字幕 · ${parts.join(' · ')}）…`, 'info');
+        let written = 0;
+        for (let i = 0; i < targets.length; i += 1) {
+            const item = targets[i];
+            const subPath = getSubtitlePathForItem(item);
+            els.progressLabel.textContent = `后处理中… ${i + 1}/${targets.length}`;
+            try {
+                const res = await electron.transubApplySubtitlePostprocess({
+                    path: subPath,
+                    options: {
+                        spaceAfterChinesePunctuation: doSpacePunct,
+                        cpsSplit: doCps,
+                        removeNoise: doNoise,
+                        removeHallucinations: doNoise,
+                        fixOverlap: true,
+                        enforceMaxDur: true,
+                        maxCps: 18,
+                        backupMode: 'off',
+                        chineseSubtitleVariant: chineseSubtitleVariant || undefined,
+                    },
+                });
+                if (res?.ok && res.written) {
+                    written += 1;
+                    appendLog(`${basename(subPath)}：${res.summary || '已后处理'}`, 'ok');
+                } else if (res?.ok) {
+                    appendLog(`${basename(subPath)}：${res.summary || '无需后处理'}`, 'info');
+                } else {
+                    appendLog(`${basename(subPath)}：${res?.error || '后处理失败'}`, 'err');
+                }
+            } catch (err) {
+                appendLog(`${basename(subPath)}：${err?.message || '后处理失败'}`, 'err');
+            }
+        }
+        appendLog(
+            written > 0
+                ? `后处理完成：已写回 ${written}/${targets.length} 个字幕`
+                : `后处理完成：${targets.length} 个字幕均无需写回`,
+            written > 0 ? 'ok' : 'info',
+        );
+        els.progressLabel.textContent = '后处理完成';
+    }
+
     async function onJobFinished(payload) {
         state.running = false;
         state.index = state.total;
@@ -1596,6 +1770,7 @@
 
         const failed = Number(payload?.failed) || state.failed;
         const cancelled = !!payload?.cancelled;
+
         if (cancelled) {
             setBadge('已停止', 'error');
             els.progressLabel.textContent = '任务已取消';
@@ -1607,6 +1782,11 @@
                 `任务结束：成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
                 failed > 0 ? 'warn' : 'ok',
             );
+            try {
+                await runPostBatchAutoFix();
+            } catch (err) {
+                appendLog(err?.message || '后处理失败', 'err');
+            }
             try {
                 await runPostBatchQcScan();
             } catch (err) {
@@ -1631,6 +1811,19 @@
         }
     }
 
+    async function reloadSavedOptionsIntoForm() {
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            if (optsRes?.options) {
+                applyOptionsToForm(optsRes.options);
+                savedOptionsSnapshot = buildSavedOptionsFromForm();
+                updateParamsSummary();
+                return optsRes.options;
+            }
+        } catch { /* ignore */ }
+        return null;
+    }
+
     async function startSubtitleGeneration() {
         const selected = getSelectedItems();
         if (!selected.length) {
@@ -1645,9 +1838,11 @@
             return;
         }
 
-        appendLog(`开始生成字幕 ${selected.length} 个文件…`, 'info');
         await refreshEtaRateFromHistory();
+        await reloadSavedOptionsIntoForm();
         const opts = buildRuntimeOptions();
+
+        appendLog(`开始生成字幕 ${selected.length} 个文件…`, 'info');
         const res = await electron?.transWithAiGenerateSubtitles?.({
             items: selected.map((i) => ({ fullPath: i.path, durationSec: i.duration || 0 })),
             options: opts,
@@ -1657,6 +1852,120 @@
         if (!res?.ok && !state.running) {
             setBadge('失败', 'error');
             appendLog(res?.error || '字幕生成失败', 'err');
+        }
+    }
+
+    function fillTrialPresetSelects(presets) {
+        const list = Array.isArray(presets) ? presets : [];
+        [els.trialPresetASelect, els.trialPresetBSelect].forEach((sel, idx) => {
+            if (!sel) return;
+            sel.innerHTML = '';
+            for (const p of list) {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name || p.id;
+                sel.appendChild(opt);
+            }
+            if (list.length) {
+                sel.value = list[Math.min(idx, list.length - 1)].id;
+                if (idx === 1 && list.length > 1) {
+                    const anti = list.find((p) => p.id === 'translate-anti-hallucination');
+                    if (anti) sel.value = anti.id;
+                }
+            }
+        });
+    }
+
+    async function openTrialCompareModal() {
+        if (!els.trialCompareModal) return;
+        const res = await electron?.transWithAiGetPresets?.();
+        fillTrialPresetSelects(res?.presets || []);
+        if (els.trialCompareResult) {
+            els.trialCompareResult.classList.add('hidden');
+            els.trialCompareResult.textContent = '';
+        }
+        if (els.trialCompareStatus) els.trialCompareStatus.textContent = '—';
+        els.trialCompareModal.classList.remove('hidden');
+        els.trialCompareModal.classList.add('flex');
+    }
+
+    function closeTrialCompareModal() {
+        els.trialCompareModal?.classList.add('hidden');
+        els.trialCompareModal?.classList.remove('flex');
+    }
+
+    async function runTrialCompare() {
+        const selected = getSelectedItems();
+        if (!selected.length) {
+            if (els.trialCompareStatus) els.trialCompareStatus.textContent = '请先在列表中勾选一个视频';
+            return;
+        }
+        if (state.running) {
+            if (els.trialCompareStatus) els.trialCompareStatus.textContent = '已有任务运行中';
+            return;
+        }
+        const presetsRes = await electron?.transWithAiGetPresets?.();
+        const presets = presetsRes?.presets || [];
+        const presetA = presets.find((p) => p.id === els.trialPresetASelect?.value);
+        const presetB = presets.find((p) => p.id === els.trialPresetBSelect?.value);
+        if (!presetA?.options || !presetB?.options) {
+            if (els.trialCompareStatus) els.trialCompareStatus.textContent = '请选择两个预设';
+            return;
+        }
+        const durationSec = Number(els.trialDurationInput?.value) || 30;
+        const base = buildRuntimeOptions();
+        if (els.trialCompareStatus) els.trialCompareStatus.textContent = '准备试跑…';
+        if (els.runTrialCompareBtn) els.runTrialCompareBtn.disabled = true;
+        try {
+            const unsub = electron?.onTransubTrialCompareProgress?.((p) => {
+                if (els.trialCompareStatus && p?.detail) {
+                    els.trialCompareStatus.textContent = p.detail;
+                }
+            });
+            const res = await electron.transubTrialCompare({
+                mediaPath: selected[0].path,
+                durationSec,
+                baseOptions: base,
+                optionsA: presetA.options,
+                optionsB: presetB.options,
+                labelA: presetA.name,
+                labelB: presetB.name,
+            });
+            if (typeof unsub === 'function') unsub();
+            if (!res?.ok) {
+                if (els.trialCompareStatus) {
+                    els.trialCompareStatus.textContent = res?.error || '试跑失败';
+                }
+                return;
+            }
+            const fmt = (side) => {
+                if (!side?.ok) return `${side?.label || '?'}: 失败 — ${side?.error || ''}`;
+                const prev = (side.preview || []).slice(0, 3).map((t) => `  · ${t}`).join('\n');
+                return [
+                    `${side.label}`,
+                    `  条数 ${side.cueCount} · QC问题 ${side.issueCount}`,
+                    prev || '  （无预览）',
+                ].join('\n');
+            };
+            const text = [
+                `试跑 ${res.durationSec}s · ${basename(selected[0].path)}`,
+                '',
+                fmt(res.a),
+                '',
+                fmt(res.b),
+            ].join('\n');
+            if (els.trialCompareResult) {
+                els.trialCompareResult.textContent = text;
+                els.trialCompareResult.classList.remove('hidden');
+            }
+            if (els.trialCompareStatus) els.trialCompareStatus.textContent = '对比完成';
+            appendLog('参数试跑对比完成，详见弹窗结果', 'ok');
+        } catch (err) {
+            if (els.trialCompareStatus) {
+                els.trialCompareStatus.textContent = err?.message || '试跑失败';
+            }
+        } finally {
+            if (els.runTrialCompareBtn) els.runTrialCompareBtn.disabled = false;
         }
     }
 
@@ -1739,33 +2048,51 @@
     function bindEvents() {
         if (!electron) return;
 
-        bindListActions();
-        setupDragDrop();
-        bindPostTaskMenu();
-        bindAddMenu();
-        els.removeSelectedBtn?.addEventListener('click', removeSelected);
-        els.clearListBtn?.addEventListener('click', clearList);
-        els.startBtn?.addEventListener('click', startSubtitleGeneration);
-        els.selectAllCheck?.addEventListener('change', () => {
-            const checked = els.selectAllCheck.checked;
-            state.items.forEach((i) => { i.selected = checked; });
-            renderList();
-            updateStartButton();
-        });
+        if (!isStandaloneSettings) {
+            bindListActions();
+            setupDragDrop();
+            bindPostTaskMenu();
+            bindAddMenu();
+            els.removeSelectedBtn?.addEventListener('click', removeSelected);
+            els.clearListBtn?.addEventListener('click', clearList);
+            els.startBtn?.addEventListener('click', startSubtitleGeneration);
+            els.selectAllCheck?.addEventListener('change', () => {
+                const checked = els.selectAllCheck.checked;
+                state.items.forEach((i) => { i.selected = checked; });
+                renderList();
+                updateStartButton();
+            });
+        }
         els.saveParamsBtn?.addEventListener('click', saveParamsSettings);
-        els.openParamsBtn?.addEventListener('click', () => openParamsModal('install'));
+        els.openParamsBtn?.addEventListener('click', () => {
+            if (electron?.transubOpenSettings) {
+                void electron.transubOpenSettings({ tab: 'runtime' });
+                return;
+            }
+            openParamsModal('runtime');
+        });
         els.closeParamsBtn?.addEventListener('click', () => closeParamsModal(true));
         els.cancelParamsBtn?.addEventListener('click', () => closeParamsModal(true));
         els.paramsModal?.addEventListener('click', (event) => {
+            if (isStandaloneSettings) return;
             if (event.target === els.paramsModal) closeParamsModal(true);
         });
         els.paramsTabBtns?.forEach((btn) => {
             btn.addEventListener('click', () => switchParamsTab(btn.dataset.tab));
         });
         electron?.onOpenParams?.((payload) => {
-            const tab = String(payload?.tab || 'editor').trim() || 'editor';
+            const tab = String(payload?.tab || (isStandaloneSettings ? 'runtime' : 'editor')).trim()
+                || (isStandaloneSettings ? 'runtime' : 'editor');
             openParamsModal(tab);
             void electron?.transubConsumePendingOpenParams?.();
+        });
+        electron?.onSettingsUpdated?.((payload) => {
+            if (isStandaloneSettings) return;
+            const options = payload?.options;
+            if (!options || typeof options !== 'object') return;
+            applyOptionsToForm(options);
+            savedOptionsSnapshot = buildSavedOptionsFromForm();
+            updateParamsSummary();
         });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && !els.paramsModal?.classList.contains('hidden')) {
@@ -1783,31 +2110,42 @@
             updateParamsSummary();
         });
         els.logLevelSelect?.addEventListener('change', syncLogLevelHint);
-        els.taskSelect?.addEventListener('change', updateParamsSummary);
+        els.taskSelect?.addEventListener('change', () => {
+            syncChineseSubtitleVariantUi();
+            updateParamsSummary();
+        });
         els.overwriteCheck?.addEventListener('change', updateParamsSummary);
         ['subFormatSrt', 'subFormatVtt', 'subFormatLrc'].forEach((id) => {
             els[id]?.addEventListener('change', updateParamsSummary);
         });
         els.mergeSegmentsCheck?.addEventListener('change', syncMergeUi);
         els.smartSplitWithVadCheck?.addEventListener('change', syncSmartSplitUi);
-        els.shutdownDelayInput?.addEventListener('change', syncPostTaskToMain);
-        els.shutdownDelayInput?.addEventListener('click', (event) => event.stopPropagation());
-        els.retryFailedBtn?.addEventListener('click', retryFailedItems);
-        els.stopBtn?.addEventListener('click', stopTask);
-        els.openSubtitleFileBtn?.addEventListener('click', () => {
-            global.TransubSubtitleEditor?.pickAndOpen?.();
+        els.trialCompareBtn?.addEventListener('click', () => openTrialCompareModal());
+        els.closeTrialCompareBtn?.addEventListener('click', closeTrialCompareModal);
+        els.closeTrialCompareBtn2?.addEventListener('click', closeTrialCompareModal);
+        els.runTrialCompareBtn?.addEventListener('click', () => runTrialCompare());
+        els.trialCompareModal?.addEventListener('click', (event) => {
+            if (event.target === els.trialCompareModal) closeTrialCompareModal();
         });
-        document.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-edit-sub]');
-            if (!btn) return;
-            e.preventDefault();
-            global.TransubSubtitleEditor?.openEditor?.(
-                btn.getAttribute('data-edit-sub'),
-                btn.getAttribute('data-edit-video') || '',
-            );
-        });
-
-        bindJobEventListeners();
+        if (!isStandaloneSettings) {
+            els.shutdownDelayInput?.addEventListener('change', syncPostTaskToMain);
+            els.shutdownDelayInput?.addEventListener('click', (event) => event.stopPropagation());
+            els.retryFailedBtn?.addEventListener('click', retryFailedItems);
+            els.stopBtn?.addEventListener('click', stopTask);
+            els.openSubtitleFileBtn?.addEventListener('click', () => {
+                global.TransubSubtitleEditor?.pickAndOpen?.();
+            });
+            document.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-edit-sub]');
+                if (!btn) return;
+                e.preventDefault();
+                global.TransubSubtitleEditor?.openEditor?.(
+                    btn.getAttribute('data-edit-sub'),
+                    btn.getAttribute('data-edit-video') || '',
+                );
+            });
+            bindJobEventListeners();
+        }
     }
 
     async function runBackgroundStartupChecks() {
@@ -1829,21 +2167,31 @@
     }
 
     async function init() {
+        if (isStandaloneSettings) {
+            document.documentElement.classList.add('settings-standalone');
+            document.title = 'Transub 设置';
+        }
+
         cacheEls();
         bindEvents();
-        setBadge('空闲', 'idle');
+        if (!isStandaloneSettings) {
+            setBadge('空闲', 'idle');
+        }
         syncBatchSizeUi();
         syncLogLevelHint();
         syncMergeUi();
         syncSmartSplitUi();
-        syncPostTaskMenuUi();
-        syncPostTaskExtrasUi();
-        resetPostTaskSelect();
-        renderList();
-        updateStartButton();
+        syncChineseSubtitleVariantUi();
+        if (!isStandaloneSettings) {
+            syncPostTaskMenuUi();
+            syncPostTaskExtrasUi();
+            resetPostTaskSelect();
+            renderList();
+            updateStartButton();
+        }
 
         if (!isDesktop()) {
-            appendLog('需在桌面版中使用', 'err');
+            if (!isStandaloneSettings) appendLog('需在桌面版中使用', 'err');
             setLoading(false);
             return;
         }
@@ -1855,11 +2203,25 @@
                 applyOptionsToForm(optsRes.options);
                 savedOptionsSnapshot = buildSavedOptionsFromForm();
             }
-            resetPostTaskSelect();
-            await syncPostTaskToMain();
+            if (!isStandaloneSettings) {
+                resetPostTaskSelect();
+                await syncPostTaskToMain();
+            }
         } finally {
-            // Show main UI ASAP — FFmpeg / TransWithAI / GPU checks run in background
             setLoading(false);
+        }
+
+        if (isStandaloneSettings) {
+            const pendingParams = await electron?.transubConsumePendingOpenParams?.().catch(() => null);
+            const tab = pendingParams?.tab || initialSettingsTab || 'runtime';
+            openParamsModal(tab);
+            void global.TransubFeatures?.loadPresets?.();
+            if (shouldCheckUpdateOnOpen) {
+                setTimeout(() => {
+                    document.getElementById('checkUpdateBtn')?.click();
+                }, 500);
+            }
+            return;
         }
 
         void runBackgroundStartupChecks();

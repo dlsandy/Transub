@@ -111,6 +111,45 @@
         return !stripped;
     }
 
+    /** 常见 ASR 幻觉短句 / 占位符（整条匹配） */
+    const HALLUCINATION_EXACT = new Set([
+        '完毕', '结束', '完', '谢谢观看', '感谢观看', '请订阅', '字幕by',
+        '请使用简体中文输出。', '请使用简体中文输出', '請使用繁體中文輸出。', '請使用繁體中文輸出',
+        '简体中文', '繁体中文', '繁體中文',
+        'ご視聴ありがとうございました', 'ご視聴頂きありがとうございます',
+        '字幕：', 'subtitles by', 'thanks for watching', 'the end',
+    ]);
+    const HALLUCINATION_RE = /^(?:[Oo○〇◯●・･\.。…]{2,}|[♪♫♩♬]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*)$/i;
+
+    function cueDurationMs(cue) {
+        const start = Number(cue?.startMs);
+        const end = cue?.endMs != null ? Number(cue.endMs) : start + 2000;
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+        return Math.max(0, end - start);
+    }
+
+    function isHallucinationCue(cueOrText, options = {}) {
+        const cue = cueOrText && typeof cueOrText === 'object' ? cueOrText : null;
+        const raw = String(cue ? cue.text : cueOrText || '').trim();
+        if (!raw) return false;
+        const maxChars = Math.max(1, Number(options.maxChars) || 12);
+        const maxDurMs = Math.max(100, Number(options.maxDurMs) || 1200);
+        const lower = raw.toLowerCase();
+        if (HALLUCINATION_EXACT.has(raw) || HALLUCINATION_EXACT.has(lower)) return true;
+        if (HALLUCINATION_RE.test(raw)) return true;
+        if (hasHeavyRepetition(raw) && textCharCount(raw) <= 24) return true;
+        if (/https?:\/\/|www\./i.test(raw) && textCharCount(raw) <= 40) return true;
+        if (cue) {
+            const chars = textCharCount(raw);
+            const dur = cueDurationMs(cue);
+            if (chars <= 2 && dur > 0 && dur <= maxDurMs) return true;
+            if (chars <= maxChars && dur > 0 && dur <= Math.min(maxDurMs, 800) && /^(完毕|结束|完了|okay|ok|はい|うん)$/i.test(raw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isNoiseCue(text, options = {}) {
         const opts = {
             removeEmpty: options.removeEmpty !== false,
@@ -127,7 +166,7 @@
     }
 
     /**
-     * 批量删除杂音字幕（空句 / 语气碎片 / 音效标签 / 纯符号 / 可选连续重复）。
+     * 批量删除杂音字幕（空句 / 语气碎片 / 音效标签 / 纯符号 / 可选连续重复 / 可选幻觉短句）。
      * @returns {{ cues: object[], stats: object, removedIndexes: number[] }}
      */
     function removeNoiseFromCues(cues, options = {}) {
@@ -137,6 +176,9 @@
             removeSoundEffects: options.removeSoundEffects !== false,
             removeSymbolOnly: options.removeSymbolOnly !== false,
             removeDuplicates: options.removeDuplicates === true,
+            removeHallucinations: options.removeHallucinations === true,
+            hallucinationMaxChars: options.hallucinationMaxChars,
+            hallucinationMaxDurMs: options.hallucinationMaxDurMs,
         };
         const list = Array.isArray(cues) ? cues : [];
         const kept = [];
@@ -149,6 +191,7 @@
             soundEffect: 0,
             symbolOnly: 0,
             duplicate: 0,
+            hallucination: 0,
         };
         let prevKeptText = '';
 
@@ -156,6 +199,12 @@
             const cue = list[i];
             const text = String(cue?.text || '').trim();
             let reason = isNoiseCue(text, opts);
+            if (!reason && opts.removeHallucinations && isHallucinationCue(cue, {
+                maxChars: opts.hallucinationMaxChars,
+                maxDurMs: opts.hallucinationMaxDurMs,
+            })) {
+                reason = 'hallucination';
+            }
             if (!reason && opts.removeDuplicates && prevKeptText && text === prevKeptText && text.length >= 1) {
                 reason = 'duplicate';
             }
@@ -180,6 +229,7 @@
         if (stats.fragment) parts.push(`语气碎片 ${stats.fragment}`);
         if (stats.soundEffect) parts.push(`音效标签 ${stats.soundEffect}`);
         if (stats.symbolOnly) parts.push(`纯符号 ${stats.symbolOnly}`);
+        if (stats.hallucination) parts.push(`幻觉短句 ${stats.hallucination}`);
         if (stats.duplicate) parts.push(`连续重复 ${stats.duplicate}`);
         return `将删除 ${stats.removed} 条（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条`;
     }
@@ -329,6 +379,7 @@
         isSoundEffectCue,
         isSymbolOnlyCue,
         isNoiseCue,
+        isHallucinationCue,
         removeNoiseFromCues,
         summarizeNoiseRemoval,
         lacksPunctuation,

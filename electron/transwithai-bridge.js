@@ -259,7 +259,7 @@ function mergeTransWithAiOptions(input = {}) {
         logLevel: 'DEBUG',
         mergeSegments: true,
         mergeMaxGapMs: 500,
-        mergeMaxDurationMs: 10000,
+        mergeMaxDurationMs: 15000,
         maxBatchSize: 8,
         beamSize: 5,
         language: 'auto',
@@ -269,11 +269,19 @@ function mergeTransWithAiOptions(input = {}) {
         vadSpeechPadMs: 200,
         maxInitialTimestamp: 30,
         repetitionPenalty: 1.1,
+        noSpeechThreshold: 0.6,
+        logProbThreshold: -1,
+        compressionRatioThreshold: 2.4,
+        hallucinationSilenceThreshold: null,
+        glossaryPromptEnabled: true,
+        chineseSubtitleVariant: 'simplified',
+        postBatchCpsSplit: false,
+        postBatchRemoveNoise: true,
         smartSplitWithVad: true,
         targetChunkDurationS: 30,
         retranscribeWarmLight: false,
         subtitleBakMode: 'off',
-        trayProgressEnabled: false,
+        trayProgressEnabled: true,
         minimizeToTrayOnStart: false,
         trayNotifyEnabled: false,
         postBatchQc: true,
@@ -314,7 +322,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             : 'DEBUG',
         mergeSegments: merged.mergeSegments !== false,
         mergeMaxGapMs: Math.max(0, Math.min(60000, Number(merged.mergeMaxGapMs) || 500)),
-        mergeMaxDurationMs: Math.max(1000, Math.min(600000, Number(merged.mergeMaxDurationMs) || 10000)),
+        mergeMaxDurationMs: Math.max(1000, Math.min(600000, Number(merged.mergeMaxDurationMs) || 15000)),
         maxBatchSize: Math.max(1, Math.min(32, Number(merged.maxBatchSize) || 8)),
         beamSize: Math.max(1, Math.min(20, Number(merged.beamSize) || 5)),
         language: VALID_LANGUAGES.has(language) ? language : 'auto',
@@ -324,6 +332,23 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         vadSpeechPadMs: Math.max(0, Math.min(2000, Number(merged.vadSpeechPadMs) || 200)),
         maxInitialTimestamp: Math.max(0, Math.min(60, Number(merged.maxInitialTimestamp) || 30)),
         repetitionPenalty: Math.max(1, Math.min(2, Number(merged.repetitionPenalty) || 1.1)),
+        noSpeechThreshold: Math.max(0.1, Math.min(1, Number(merged.noSpeechThreshold) || 0.6)),
+        logProbThreshold: Math.max(-5, Math.min(0, Number(merged.logProbThreshold) || -1)),
+        compressionRatioThreshold: Math.max(1, Math.min(10, Number(merged.compressionRatioThreshold) || 2.4)),
+        hallucinationSilenceThreshold: (() => {
+            if (merged.hallucinationSilenceThreshold == null || merged.hallucinationSilenceThreshold === '') {
+                return null;
+            }
+            const n = Number(merged.hallucinationSilenceThreshold);
+            if (!Number.isFinite(n) || n <= 0) return null;
+            return Math.max(0.1, Math.min(30, n));
+        })(),
+        glossaryPromptEnabled: merged.glossaryPromptEnabled !== false,
+        chineseSubtitleVariant: String(merged.chineseSubtitleVariant || '').trim() === 'traditional'
+            ? 'traditional'
+            : 'simplified',
+        postBatchCpsSplit: !!merged.postBatchCpsSplit,
+        postBatchRemoveNoise: !!merged.postBatchRemoveNoise,
         smartSplitWithVad: merged.smartSplitWithVad !== false,
         targetChunkDurationS: Math.max(5, Math.min(30, Number(merged.targetChunkDurationS) || 30)),
         retranscribeWarmLight: !!merged.retranscribeWarmLight,
@@ -386,6 +411,39 @@ function resolveGenerationConfigPath(installPath, options = {}, getUserDataPath)
     };
     merged.max_initial_timestamp = normalized.maxInitialTimestamp;
     merged.repetition_penalty = normalized.repetitionPenalty;
+    merged.no_speech_threshold = normalized.noSpeechThreshold;
+    merged.log_prob_threshold = normalized.logProbThreshold;
+    merged.compression_ratio_threshold = normalized.compressionRatioThreshold;
+    if (normalized.hallucinationSilenceThreshold != null) {
+        merged.hallucination_silence_threshold = normalized.hallucinationSilenceThreshold;
+        // faster-whisper 要求 word_timestamps=True 时 hallucination_silence_threshold 才生效
+        merged.word_timestamps = true;
+    } else {
+        delete merged.hallucination_silence_threshold;
+    }
+
+    if (normalized.glossaryPromptEnabled !== false) {
+        try {
+            const { readGlossary } = require('./glossary-data');
+            const { buildAsrPromptHints } = require('../src/js/subtitle-glossary-core');
+            const gloss = readGlossary();
+            if (gloss?.ok && gloss.glossary) {
+                const hints = buildAsrPromptHints(gloss.glossary);
+                if (hints.termCount > 0) {
+                    if (hints.initial_prompt) merged.initial_prompt = hints.initial_prompt;
+                    if (hints.hotwords) merged.hotwords = hints.hotwords;
+                }
+            }
+        } catch {
+            /* glossary optional */
+        }
+    } else {
+        delete merged.initial_prompt;
+        delete merged.hotwords;
+    }
+
+    // 简/繁体由批量完成后的 OpenCC 后处理负责，勿写入 initial_prompt（易被模型复述进字幕）
+
     merged.smart_split_with_vad = normalized.smartSplitWithVad;
     merged.target_chunk_duration_s = normalized.targetChunkDurationS;
     merged.segment_merge = {
@@ -431,6 +489,17 @@ async function saveTransWithAiOptions(getAppRoot, patch) {
     const next = stripPostTaskFields({ ...current, ...patch });
     saveSettings(getAppRoot, next);
     syncTrayNotifyFromOptions(next);
+    broadcastSettingsUpdated(next);
+}
+
+function broadcastSettingsUpdated(options = {}) {
+    try {
+        const payload = { options: stripPostTaskFields(options) || {} };
+        for (const win of BrowserWindow.getAllWindows()) {
+            if (!win || win.isDestroyed() || win.webContents.isDestroyed()) continue;
+            win.webContents.send('transub-settings-updated', payload);
+        }
+    } catch { /* ignore */ }
 }
 
 function syncTrayNotifyFromOptions(options = {}) {
@@ -554,8 +623,9 @@ async function resolveSubtitlePathAfterWrite(resolvedVideo, outputDir, subFormat
 }
 
 function buildInferArgs(installPath, videoPath, options = {}) {
+    const generationConfigOverride = String(options.generationConfigPath || '').trim();
     const merged = normalizeTransWithAiRuntimeOptions(options);
-    const generationConfig = merged.generationConfigPath
+    const generationConfig = generationConfigOverride
         || path.join(normalizeInstallPath(installPath), 'generation_config.json5');
     const resolvedVideo = path.resolve(String(videoPath || ''));
     const outputDir = resolveInferOutputDir(resolvedVideo, merged);
@@ -1684,6 +1754,114 @@ function setupTransWithAiBridge(api, deps) {
         }
     });
 
+    register('transub-trial-compare', async (event, payload = {}) => {
+        try {
+            if (jobRunning) {
+                return { ok: false, error: '已有字幕任务正在运行，请稍后再试' };
+            }
+            const mediaPath = path.resolve(String(payload.mediaPath || payload.videoPath || ''));
+            if (!mediaPath || !fs.existsSync(mediaPath)) {
+                return { ok: false, error: '视频文件不存在' };
+            }
+            const durationSec = Math.max(5, Math.min(120, Number(payload.durationSec) || 30));
+            const baseOptions = await readOptions(payload.baseOptions || {});
+            const optionA = normalizeTransWithAiRuntimeOptions({ ...baseOptions, ...(payload.optionsA || {}) });
+            const optionB = normalizeTransWithAiRuntimeOptions({ ...baseOptions, ...(payload.optionsB || {}) });
+            const labelA = String(payload.labelA || '方案 A').trim() || '方案 A';
+            const labelB = String(payload.labelB || '方案 B').trim() || '方案 B';
+
+            const { extractMediaRange } = require('./ffmpeg-bridge');
+            const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-trial-'));
+            const clipPath = path.join(tempRoot, 'trial-clip.wav');
+            const outA = path.join(tempRoot, 'out-a');
+            const outB = path.join(tempRoot, 'out-b');
+            fs.mkdirSync(outA, { recursive: true });
+            fs.mkdirSync(outB, { recursive: true });
+
+            const sendProgress = (detail) => {
+                try {
+                    if (!event?.sender?.isDestroyed?.()) {
+                        event.sender.send('transub-trial-compare-progress', { detail });
+                    }
+                } catch { /* ignore */ }
+            };
+
+            jobRunning = true;
+            jobCancelled = false;
+            try {
+                sendProgress(`截取前 ${durationSec} 秒音频…`);
+                const extracted = await extractMediaRange(
+                    mediaPath,
+                    0,
+                    durationSec * 1000,
+                    clipPath,
+                    { ffmpegPath: baseOptions.ffmpegPath },
+                );
+                if (!extracted?.ok) {
+                    return { ok: false, error: extracted?.error || '截取音频失败' };
+                }
+                if (jobCancelled) return { ok: false, cancelled: true, error: '已取消' };
+
+                const runOne = async (label, options, outputDir) => {
+                    sendProgress(`正在运行「${label}」…`);
+                    const opts = {
+                        ...options,
+                        overwrite: true,
+                        outputMode: 'custom',
+                        outputDir,
+                        subFormats: 'srt',
+                        mergeSegments: options.mergeSegments !== false,
+                        generationConfigPath: getUserDataPath
+                            ? resolveGenerationConfigPath(options.installPath, options, getUserDataPath)
+                            : undefined,
+                    };
+                    await runInferOnce(opts.installPath, clipPath, opts);
+                    const stem = path.basename(clipPath, path.extname(clipPath));
+                    const subPath = path.join(outputDir, `${stem}.srt`);
+                    if (!fs.existsSync(subPath)) {
+                        return { ok: false, label, error: '未生成字幕' };
+                    }
+                    const raw = fs.readFileSync(subPath, 'utf8');
+                    const { parseSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
+                    const format = detectFormat(subPath, raw);
+                    if (!isEditableFormat(format)) {
+                        return { ok: false, label, error: '格式不支持' };
+                    }
+                    const parsed = parseSubtitle(raw, format);
+                    const qc = require('../src/js/subtitle-qc-core');
+                    const { summary } = qc.scanCueIssues(parsed.cues, { checkFluency: true });
+                    return {
+                        ok: true,
+                        label,
+                        subtitlePath: subPath,
+                        cueCount: parsed.cues.length,
+                        issueCount: Number(summary?.total) || 0,
+                        summary,
+                        preview: parsed.cues.slice(0, 6).map((c) => String(c.text || '').trim()).filter(Boolean),
+                    };
+                };
+
+                const resultA = await runOne(labelA, optionA, outA);
+                if (jobCancelled) return { ok: false, cancelled: true, error: '已取消' };
+                const resultB = await runOne(labelB, optionB, outB);
+
+                return {
+                    ok: true,
+                    durationSec,
+                    mediaPath,
+                    a: resultA,
+                    b: resultB,
+                    tempRoot,
+                };
+            } finally {
+                jobRunning = false;
+            }
+        } catch (err) {
+            jobRunning = false;
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transwithai-get-options', async (_event, payload = {}) => {
         try {
             const options = await readOptions(payload);
@@ -1722,8 +1900,14 @@ function setupTransWithAiBridge(api, deps) {
                 'mergeMaxGapMs', 'mergeMaxDurationMs', 'maxBatchSize',
                 'beamSize', 'language', 'vadThreshold',
                 'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
-                'maxInitialTimestamp', 'repetitionPenalty', 'smartSplitWithVad', 'targetChunkDurationS',
+                'maxInitialTimestamp', 'repetitionPenalty',
+                'noSpeechThreshold', 'logProbThreshold', 'compressionRatioThreshold',
+                'hallucinationSilenceThreshold', 'glossaryPromptEnabled',
+                'chineseSubtitleVariant',
+                'postBatchCpsSplit', 'postBatchRemoveNoise',
+                'smartSplitWithVad', 'targetChunkDurationS',
                 'retranscribeWarmLight', 'subtitleBakMode',
+                'trayProgressEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'postBatchQc',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath',
             ]
                 .forEach((key) => {

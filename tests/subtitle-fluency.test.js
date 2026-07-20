@@ -78,6 +78,28 @@ function testRemoveNoise() {
     assert.strictEqual(withDup.cues[0].text, '你好世界');
 }
 
+function testHallucinationCleanup() {
+    const {
+        isHallucinationCue,
+        removeNoiseFromCues,
+    } = require('../src/js/subtitle-fluency-core');
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 500, text: '完毕' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 800, text: '○○○○○' }));
+    const cues = [
+        { startMs: 0, endMs: 500, text: '完毕' },
+        { startMs: 1000, endMs: 3000, text: '正常对白内容。' },
+    ];
+    const cleaned = removeNoiseFromCues(cues, {
+        removeEmpty: false,
+        removeFragments: false,
+        removeSoundEffects: false,
+        removeSymbolOnly: false,
+        removeHallucinations: true,
+    });
+    assert.strictEqual(cleaned.stats.hallucination, 1);
+    assert.strictEqual(cleaned.stats.kept, 1);
+}
+
 describe("subtitle-fluency", () => {
     it("repetition and stutter", () => {
         testRepetitionAndStutter();
@@ -93,5 +115,8 @@ describe("subtitle-fluency", () => {
     });
     it("remove noise", () => {
         testRemoveNoise();
+    });
+    it("hallucination cleanup", () => {
+        testHallucinationCleanup();
     });
 });

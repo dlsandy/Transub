@@ -336,6 +336,21 @@
         return terms.sort((a, b) => b.length - a.length || a.localeCompare(b, 'zh-CN'));
     }
 
+    /**
+     * 将术语表转为 faster-whisper 可用的 initial_prompt / hotwords（不改 TransWithAI 源码，仅写 generation_config）。
+     */
+    function buildAsrPromptHints(glossary, options = {}) {
+        const maxTerms = Math.max(1, Math.min(80, Number(options.maxTerms) || 40));
+        const terms = collectProtectTerms(glossary, options).slice(0, maxTerms);
+        if (!terms.length) {
+            return { initial_prompt: '', hotwords: '', termCount: 0 };
+        }
+        const hotwords = terms.join(' ');
+        const promptTerms = terms.slice(0, Math.min(24, terms.length));
+        const initial_prompt = `以下专有名词请优先采用：${promptTerms.join('、')}。`;
+        return { initial_prompt, hotwords, termCount: terms.length };
+    }
+
     return {
         GLOSSARY_VERSION,
         escapeRegExp,
@@ -354,6 +369,7 @@
         removeEntry,
         mergeGlossaries,
         collectProtectTerms,
+        buildAsrPromptHints,
         makeEntryId,
     };
 }));

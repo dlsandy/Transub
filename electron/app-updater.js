@@ -132,13 +132,13 @@ async function fetchGithubLatestRelease() {
 
 function pickSetupAsset(release) {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
-    // Prefer zip / portable — unsigned NSIS Setup.exe is frequently blocked by SmartScreen.
+    // Prefer zip; then NSIS Setup. Keep portable as fallback for older Releases.
     const zip = assets.find((a) => /\.zip$/i.test(a.name || '') && /transub/i.test(a.name || ''));
     if (zip) return zip;
-    const portable = assets.find((a) => /portable/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
-    if (portable) return portable;
     const setup = assets.find((a) => /setup/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
     if (setup) return setup;
+    const portable = assets.find((a) => /portable/i.test(a.name || '') && /\.exe$/i.test(a.name || ''));
+    if (portable) return portable;
     return assets.find((a) => /\.exe$/i.test(a.name || '')) || null;
 }
 
@@ -278,7 +278,7 @@ async function checkForAppUpdate() {
     const result = await checkViaGithubApi();
     if (isPortableBuild()) {
         result.message = result.updateAvailable
-            ? `${result.message}。便携版请手动下载安装包覆盖运行。`
+            ? `${result.message}。便携版已停更，请改用 zip 解压版或 Setup 安装版。`
             : result.message;
     } else if (!getElectronApp()?.isPackaged) {
         result.message = `${result.message}（开发模式仅检查，不自动安装）`;

@@ -1,184 +1,213 @@
 # Transub
 
-Transub 是基于 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 的 Windows 桌面字幕工具（当前版本 **1.3.2**）。**字幕转录、翻译及 Whisper 推理由 TransWithAI 提供**；Transub 在此基础上提供批量任务管理、参数预设、任务历史，以及带视频同步的结构化字幕编辑器（SRT / VTT / LRC）。
+![Transub](docs/screenshots/logo.png)
 
-> **特别感谢 [TransWithAI / Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)**
->
-> 本项目的核心字幕转录、翻译与 Whisper 推理能力，均来自 TransWithAI 项目。Transub 不包含推理引擎与模型，仅在其之上提供图形界面与编辑工具。
->
-> - 项目主页：[github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)
-> - 下载发行版：[Releases](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases)
->
-> 感谢 TransWithAI 作者与社区的开源贡献。使用前请遵循 TransWithAI 项目的许可条款。
+**把视频丢进去，字幕就出来了。**  
+再在编辑器里改时间轴、修读速、统一专名——从生成到成片，一条龙。
 
-![Transub 字幕生成与字幕编辑界面](intro.jpg)
+Windows 桌面字幕工具 · 当前版本 **1.4.0**  
+转录 / 翻译引擎由 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 提供
 
-## 功能概览
+[![下载](https://img.shields.io/github/v/release/dlsandy/Transub?label=下载&color=7c3aed)](https://github.com/dlsandy/Transub/releases)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)
 
-### 批量字幕生成
-- 视频/音频队列批量处理，转写或翻译为 SRT、VTT、LRC；支持拖放与文件夹扫描
-- GPU 环境自动检测，内置与自定义参数预设；配置可导入 / 导出
-- 任务历史记录；全部成功后可选择睡眠、退出应用或定时关机
-- 托盘进度与预计剩余时间（ETA）；可选开始时最小化到托盘
-- 可选「完成后 QC 检测」：仅扫描并在任务列表标出问题数（不自动修、不自动开编辑器）
-- 可选右键菜单：「用 Transub 生成字幕」；字幕文件（SRT / VTT / LRC）右键「用 Transub 字幕编辑器打开」，无需启动主程序
-- 完成后可从任务列表一键打开字幕编辑器并关联视频
+![Transub 总览：批量生成 + 字幕编辑器](docs/screenshots/01-overview.jpg)
 
-### 字幕编辑器（v1.3.0 重点升级）
+---
 
-面向成片精修的结构化编辑工作台：列表、详情、视频预览与时间轴联动，支持从任务完成一键进入，也可右键单独打开编辑器。
+## 适合谁用？
 
-**质量与通顺度**
-- **质量检查（QC）**：扫描重叠、过快读速（CPS）、过短/过长时长、通顺度嫌疑；支持一键修复与问题筛选
-- **通顺度规则**：标注口吃重复、语气碎片、句末残缺、音效/杂音标签等，避免误修文案
-- **低置信提示**：本地启发式估可疑条目，列表可筛「低置信 / QC / 查找命中」，并跳到下一条问题
-- **删除杂音**：批量清理语气词碎片与音效标签类条目
+- 需要给**整批视频**快速出 SRT / VTT / LRC 字幕
+- 想把 AI 初稿**精修成片**：对口型、控读速、清杂音
+- 习惯「拖进去 → 开跑 → 睡一觉 / 关机」的无人值守流程
 
-**术语与专名**
-- **术语表**：全局与项目级（字幕旁 sidecar）合并维护；扫描全文不一致并一键统一专名
-- **简繁转换**：短语优先 + 字符映射；可保护术语表词条
+---
 
-**时间轴与音频对齐**
-- **可视化时间轴**：点击定位、拖拽字幕块调时；可选波形层（默认关）
-- **音频贴边**：按静音将起止贴到语音边界；智能时长按静音缩短过长条目
-- **分割（8 种）**：智能断句、换行、空格、字符数、均分、光标、播放头、静音切分
-- **批量**：智能分割 / 静音分割 / 时长调整 / 智能调整（重叠与 CPS）；长任务可取消
+## 亮点功能
 
-**重转写与交互**
-- **按时长重转**：从起始点按指定秒数调用 TransWithAI 重转当前段（需关联视频）
-- **多选批量**：Ctrl/Shift 多选后删除、合并、简繁、偏移等
-- **自动备份**：保存写 `.bak`；定时草稿与打开时恢复
-- **深色 / 浅色主题**、可调列表宽度、播放跟随焦点
-- **撤销 / 重做 / 复原到打开时**；查找替换；全体或选中时间轴 ±0.5s
-- 快捷键：`Ctrl+S` 保存、`Ctrl+Z` / `Ctrl+Y` 撤销重做、`Ctrl+F` / `Ctrl+H` 查找替换、`Ctrl+A` 全选、`F11` / `F12` 对齐播放头、空格播放暂停、`Enter` 插入字幕
+### 1. 拖进视频，批量开跑
 
-## 环境要求
+添加文件或文件夹，选好转写或翻译预设，点「开始生成」。进度、ETA、原始日志一目了然；全部完成后可选睡眠、退出或关机。
+
+![批量字幕生成](docs/screenshots/02-batch-generate.jpg)
+
+- GPU（CUDA）加速，日志里能看到 Smart VAD 分块进度
+- 内置参数预设，也可保存自己的常用配置
+- 完成后可一键打开字幕编辑器，视频已关联好
+
+---
+
+### 2. 结构化字幕编辑器
+
+列表、详情、视频预览联动。低置信 / QC / 查找筛选，方便只盯问题行；支持多选批量删除、合并、简繁转换。
+
+![字幕列表与筛选](docs/screenshots/03-editor-list.jpg)
+
+- CPS（每秒字符数）列：一眼看出读速过快的条目
+- 深色 / 浅色主题，列表宽度可调
+- 撤销 / 重做 / 复原；查找替换；自动备份与草稿恢复
+
+---
+
+### 3. 质量检查 + 一键修复
+
+扫描重叠、读速、时长、通顺度等，按类型筛选；时间类问题可预览影响条数后一键修复。
+
+![质量检查与一键修复](docs/screenshots/04-qc-panel.jpg)
+
+- 可调 CPS 上限、最小 / 最大时长、条目间隔
+- 通顺度嫌疑单独标出，避免误修文案
+- 批量任务结束后也可只做 QC 扫描，在任务列表标出问题数
+
+---
+
+### 4. 智能分割与时长工具
+
+读速过快时给出提示；支持智能断句、换行 / 空格切分、静音分割、智能时长等，按场景选用。
+
+![分割与时长工具](docs/screenshots/05-split-tools.jpg)
+
+- F11 / F12 对齐播放头起止
+- 静音分割结合断句词，切点更接近自然句界
+- 长任务（静音批处理、贴边、重转写）可随时取消
+
+---
+
+### 5. 视频预览 + 波形时间轴
+
+边播边改：字幕叠在画面上；可选波形层，拖动字幕块微调起止。局部不满意时，可对当前段「重转写」。
+
+![视频预览与波形时间轴](docs/screenshots/06-timeline-waveform.jpg)
+
+- 时间轴缩放平移（Ctrl+滚轮），倍率会记住
+- 插入字幕、±1s 跳转、倍速播放
+- 常用快捷键：空格播放、`Ctrl+S` 保存
+
+---
+
+### 还有这些省心能力
+
+| 能力 | 说明 |
+|------|------|
+| 术语表 | 全局 + 项目级合并；扫描不一致并一键统一专名 |
+| 简繁转换 | 短语优先；可保护术语表词条 |
+| 抑幻听 | 转录参数可调；内置「翻译 · 抑幻听」预设 |
+| 中文简繁输出 | 翻译任务可自动转为简体或繁体 |
+| 右键菜单 | 视频「生成字幕」、字幕文件「用编辑器打开」 |
+| 检查更新 | 设置旁一键比对 GitHub Releases |
+
+---
+
+## 下载安装
+
+1. 打开 [Releases](https://github.com/dlsandy/Transub/releases)
+2. 推荐下载 **`Transub-*-win.zip`**，解压后运行 `Transub.exe`  
+   （或使用 **`Transub-Setup-*.exe`** 安装版）
+3. 另装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases)，首次启动按引导选择其安装路径
+
+> 当前发行包**未做代码签名**。请优先用 zip；未签名的 Setup 安装包易被 SmartScreen 拦截。后续版本不再提供 portable 便携版。
+
+### 环境要求
 
 | 依赖 | 说明 |
 |------|------|
-| **Windows 10/11** | **唯一支持平台**（不提供 macOS / Linux 发行版） |
-| **Node.js 22.12+** | 开发与从源码运行（Electron 43 要求） |
-| **TransWithAI** | 需单独安装 [TransWithAI 发行版](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases) |
-| **FFmpeg**（推荐） | 运行 `npm run setup:ffmpeg` 下载到 `_internal/bin/`（或自行放入）；静音分割 / 智能时长 / 音频贴边依赖 FFmpeg；也可在设置中指定自定义路径 |
+| Windows 10 / 11 | 唯一支持平台 |
+| TransWithAI | 提供转录、翻译与 Whisper 推理 |
+| FFmpeg | 发行版通常已内置；静音分割 / 贴边 / 波形等依赖它 |
 
-## 快速开始
-
-### 从源码运行
-
-```bash
-git clone https://github.com/dlsandy/Transub.git
-cd Transub
-npm install
-npm run setup:ffmpeg   # 若 _internal/bin 尚无 ffmpeg/ffprobe，则自动下载
-npm start
-```
-
-仅启动字幕编辑器（不打开主窗口）：
-
-```bash
-npm run start:editor
-# 或直接打开指定字幕（可附带视频）
-npm start -- --edit-sub="path\to\file.srt"
-npm start -- --edit-sub="path\to\file.srt" --edit-video="path\to\video.mp4"
-```
-
-首次启动会在应用内引导配置 TransWithAI 安装路径。也可参考 [`transub-settings.example.json`](transub-settings.example.json) 手动创建 `transub-settings.json`（该文件含本机路径，**不要提交到 Git**）。
-
-### 打包发布
-
-```bash
-npm run dist
-# 或使用 Windows 打包脚本
-npm run build              # 默认：zip + 便携版 + dir
-npm run build:zip
-npm run build:portable
-npm run build:setup        # 可选 NSIS（未签名时易被系统拦截，默认不发布）
-```
-
-产物输出到 `dist/`（或经 LocalAppData 暂存目录中转）。**默认发版上传** `Transub-*-win.zip` 与 `Transub-*-portable.exe`。若本地额外打了 NSIS，也可附带 `Transub-Setup-*.exe`、`latest.yml` 与 `.blockmap`。
-
-### 应用更新（GitHub）
-
-设置中的「检查更新」会查询 [GitHub Releases](https://github.com/dlsandy/Transub/releases)：
-
-| 安装方式 | 行为 |
-|---------|------|
-| **zip / 便携版** / 开发模式 | 比对版本后打开下载页（优先 zip，其次便携版），需手动安装 |
-| **NSIS 安装版** + Release 含 `latest.yml` | 可应用内下载并重启安装（可选产物，默认不发布） |
-
-当前**不进行代码签名**（付费 Authenticode）。请优先使用：
-
-1. **`Transub-*-win.zip`**：解压后运行 `Transub.exe`
-2. **`Transub-*-portable.exe`**：单文件便携版
-
-NSIS `Transub-Setup-*.exe` 未签名时容易被 SmartScreen / 杀软拦截，因此默认不再作为发布产物。
-
-变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
-
-### 注册右键菜单
-
-打包完成后：
+可选：打包后注册资源管理器右键菜单：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/register-context-menu.ps1
 ```
 
-会为视频文件注册「用 Transub 生成字幕」，为 SRT / VTT / LRC 注册「用 Transub 字幕编辑器打开」（仅启动编辑器，不打开主窗口）。
+---
 
-移除菜单：
+## 从源码运行
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/register-context-menu.ps1 -Unregister
-```
-
-## 开发
+面向开发者。日常使用请直接下载发行版。
 
 ```bash
-npm run build:css      # 编译 Tailwind CSS
-npm run build:renderer # 打包前端资源（发布前）
-npm test               # Vitest 单元测试
-npm run test:coverage  # 测试覆盖率
-npm run lint           # ESLint
-npm run setup:ffmpeg   # 下载内置 FFmpeg / ffprobe 到 _internal/bin
-npm run icons          # 重新生成应用图标
+git clone https://github.com/dlsandy/Transub.git
+cd Transub
+npm install
+npm run setup:ffmpeg   # 若尚无内置 ffmpeg/ffprobe
+npm start
 ```
 
-## 项目结构
+仅开编辑器：
+
+```bash
+npm run start:editor
+npm start -- --edit-sub="path\to\file.srt" --edit-video="path\to\video.mp4"
+```
+
+更多脚本、打包与配置字段见下方「开发说明」。变更记录：[CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 致谢
+
+**TransWithAI** — 字幕转录、翻译与底层 Whisper 推理完全依赖  
+[Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice)。  
+感谢作者与社区的开源工作；使用前请遵循其许可条款。
+
+本项目（Transub）采用 [MIT License](LICENSE)。UI 图标使用 [Font Awesome 4.7](https://fontawesome.com/)（SIL OFL 1.1）。
+
+---
+
+<details>
+<summary><strong>开发说明</strong>（打包、测试、配置字段）</summary>
+
+### 打包
+
+```bash
+npm run dist
+npm run build              # zip + Setup (NSIS) + dir
+npm run build:zip
+npm run build:setup
+```
+
+产物在 `dist/`。默认发版上传 `Transub-*-win.zip` 与 `Transub-Setup-*.exe`。
+
+### 常用脚本
+
+```bash
+npm run build:css
+npm run build:renderer
+npm test
+npm run lint
+npm run setup:ffmpeg
+npm run icons
+```
+
+### 项目结构
 
 ```
 Transub/
-├── _internal/              # 内置 FFmpeg / ffprobe（npm run setup:ffmpeg）
-├── electron/               # Electron 主进程（IPC、TransWithAI 桥接、字幕格式）
-├── src/                    # 渲染进程 UI
-│   └── js/subtitle-editor/ # 字幕编辑器模块（utils / undo / prefs / …）
-├── tests/                  # Vitest 单元测试
-├── tools/                  # 构建与安装脚本
-└── package.json
+├── _internal/     # 内置 FFmpeg / ffprobe
+├── electron/      # 主进程
+├── src/           # 渲染进程 UI
+├── tests/         # Vitest
+├── tools/         # 构建与安装脚本
+└── docs/screenshots/
 ```
 
-## 配置说明
+### 配置要点
 
-运行时配置保存在项目根目录的 `transub-settings.json`（开发模式）或应用目录下。主要字段：
+运行时配置为 `transub-settings.json`（开发模式在项目根；打包后在稳定用户目录）。常用字段：
 
-- `installPath` — TransWithAI 安装目录（含 `infer.exe`）
-- `device` — 推理设备：`cuda` / `cpu` / `cuda_low_vram` 等
-- `task` — `transcribe`（转写）或 `translate`（翻译）
-- `subFormats` — 输出格式，如 `srt`、`vtt`、`lrc`
-- `ffmpegPath` — FFmpeg 可执行文件路径（可选；留空则优先使用内置 `_internal/bin`）
+- `installPath` — TransWithAI 目录（含 `infer.exe`）
+- `device` — `cuda` / `cpu` / `cuda_low_vram` 等
+- `task` — `transcribe` 或 `translate`
+- `subFormats` — 如 `srt`、`vtt`、`lrc`
+- `ffmpegPath` — 可选；留空优先用内置
 
-## 致谢与许可
+可参考 [`transub-settings.example.json`](transub-settings.example.json)（含本机路径，勿提交）。
 
-### 致谢
+### 应用更新
 
-**TransWithAI** — 本项目的字幕转录、翻译及底层 Whisper 推理，完全依赖 [Faster-Whisper-TransWithAI-ChickenRice](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 提供。感谢 TransWithAI 作者与社区的开源工作。
+设置中「检查更新」查询 [GitHub Releases](https://github.com/dlsandy/Transub/releases)：zip 解压版打开下载页；若使用带 `latest.yml` 的 NSIS 安装版，可应用内更新。
 
-| 项目 | 链接 |
-|------|------|
-| TransWithAI 仓库 | https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice |
-| TransWithAI 发行版 | https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases |
-
-### 许可
-
-本项目（Transub）采用 [MIT License](LICENSE)。
-
-TransWithAI 为独立项目，使用前请遵循其各自许可条款。UI 使用 [Font Awesome 4.7](https://fontawesome.com/)（SIL OFL 1.1）。
+</details>
