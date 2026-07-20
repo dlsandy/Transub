@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.4.2
+
+### 修复
+
+- **打包缺模块**：正式包 `app.asar` 未打入 `subtitle-chinese-core`，批量完成后做简繁转换时报 `Cannot find module '../src/js/subtitle-chinese-core'`
+
+### 其它
+
+- **推荐安装**：下载 `Transub-1.4.2-win.zip` 解压后运行 `Transub.exe`，或使用 `Transub-Setup-1.4.2.exe`
+
 ## 1.4.1
 
 ### 新功能
