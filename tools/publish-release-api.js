@@ -196,18 +196,16 @@ function findDistZip() {
 }
 
 function resolveReleaseAssets() {
-    // Prefer zip + portable (unsigned NSIS Setup is often blocked by SmartScreen/AV).
-    // Keep NSIS + latest.yml optional for local/optional setup builds.
+    // Release assets: zip + NSIS Setup (portable builds discontinued).
     const zip = findDistZip();
-    const portable = path.join(ROOT, 'dist', `Transub-${VERSION}-portable.exe`);
+    const setup = path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe`);
     if (!zip) throw new Error(`Missing release asset: Transub-${VERSION}-win.zip`);
-    if (!fs.existsSync(portable)) throw new Error(`Missing release asset: ${portable}`);
+    if (!fs.existsSync(setup)) throw new Error(`Missing release asset: ${setup}`);
     const optional = [
-        path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe`),
         path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe.blockmap`),
         path.join(ROOT, 'dist', 'latest.yml'),
     ].filter((a) => fs.existsSync(a));
-    return [zip, portable, ...optional];
+    return [zip, setup, ...optional];
 }
 
 function createRelease(commitSha) {

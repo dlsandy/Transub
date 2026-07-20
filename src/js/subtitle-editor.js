@@ -116,7 +116,7 @@
         qcIssueIndexSet: new Set(),
         qcTypeFilter: null,
         autoFocus: false,
-        waveformEnabled: false,
+        waveformEnabled: true,
         waveform: {
             peaks: null,
             durationSec: 0,
@@ -2072,6 +2072,17 @@
         if (y + rect.height > window.innerHeight - pad) y = window.innerHeight - rect.height - pad;
         menu.style.left = `${Math.max(pad, x)}px`;
         menu.style.top = `${Math.max(pad, y)}px`;
+    }
+
+    function openCueContextMenuAt(idx, clientX, clientY, { scroll = false } = {}) {
+        if (!Number.isFinite(idx) || idx < 0 || idx >= state.cues.length) return;
+        if (!getSelectedCueIndexes().includes(idx)) {
+            selectCue(idx, { scroll });
+        } else {
+            state.selectedIndex = idx;
+            renderDetailPane();
+        }
+        showCueContextMenu(clientX, clientY);
     }
 
     function handleContextMenuAction(action) {
@@ -5019,6 +5030,7 @@
             removeSoundEffects: !!els.noiseRemoveSoundEffects?.checked,
             removeSymbolOnly: !!els.noiseRemoveSymbolOnly?.checked,
             removeDuplicates: !!els.noiseRemoveDuplicates?.checked,
+            removeHallucinations: !!els.noiseRemoveHallucinations?.checked,
         };
     }
 
@@ -5026,7 +5038,7 @@
         if (!els.removeNoisePreview) return;
         const opts = readRemoveNoiseOptions();
         if (!opts.removeEmpty && !opts.removeFragments && !opts.removeSoundEffects
-            && !opts.removeSymbolOnly && !opts.removeDuplicates) {
+            && !opts.removeSymbolOnly && !opts.removeDuplicates && !opts.removeHallucinations) {
             els.removeNoisePreview.textContent = '请至少勾选一项清理规则';
             els.removeNoisePreview.classList.add('err');
             if (els.removeNoiseConfirm) els.removeNoiseConfirm.disabled = true;
@@ -5593,7 +5605,7 @@
             if (on) {
                 els.waveformToggle.title = text;
             } else if (state.waveformEnabled) {
-                els.waveformToggle.title = '波形时间轴：开启';
+                els.waveformToggle.title = '波形时间轴：开启（默认）';
             }
         }
         if (els.waveformRow) {
@@ -5772,6 +5784,7 @@
         track.dataset.bound = '1';
 
         const startPan = (e, trackEl) => {
+            hideCueContextMenu();
             const originX = e.clientX;
             const originStart = state.timeline.viewStartMs;
             const originEnd = state.timeline.viewEndMs;
@@ -5884,6 +5897,14 @@
             window.addEventListener('mouseup', onUp);
         });
 
+        track.addEventListener('contextmenu', (e) => {
+            const cueEl = e.target.closest?.('.editor-timeline-cue');
+            if (!cueEl) return;
+            e.preventDefault();
+            const idx = Number(cueEl.getAttribute('data-tl-idx'));
+            openCueContextMenuAt(idx, e.clientX, e.clientY, { scroll: true });
+        });
+
         const waveTrack = els.waveformTrack;
         if (waveTrack && waveTrack.dataset.bound !== '1') {
             waveTrack.dataset.bound = '1';
@@ -5901,6 +5922,16 @@
                 const ms = Math.max(0, timelineXToMs(x, waveTrack));
                 els.video.currentTime = ms / 1000;
                 syncPlaybackFromVideo(true);
+            });
+            waveTrack.addEventListener('contextmenu', (e) => {
+                if (!state.waveformEnabled) return;
+                const rect = waveTrack.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const ms = Math.max(0, timelineXToMs(x, waveTrack));
+                const idx = findPlaybackIndex(ms);
+                if (idx < 0) return;
+                e.preventDefault();
+                openCueContextMenuAt(idx, e.clientX, e.clientY, { scroll: true });
             });
         }
 
@@ -6329,6 +6360,7 @@
             els.noiseRemoveSoundEffects,
             els.noiseRemoveSymbolOnly,
             els.noiseRemoveDuplicates,
+            els.noiseRemoveHallucinations,
         ].forEach((el) => {
             el?.addEventListener('change', updateRemoveNoiseModalState);
         });
@@ -6563,14 +6595,7 @@
             const row = e.target.closest('tr[data-cue-idx]');
             if (!row) return;
             e.preventDefault();
-            const idx = Number(row.dataset.cueIdx);
-            if (!getSelectedCueIndexes().includes(idx)) {
-                selectCue(idx, { scroll: false });
-            } else {
-                state.selectedIndex = idx;
-                renderDetailPane();
-            }
-            showCueContextMenu(e.clientX, e.clientY);
+            openCueContextMenuAt(Number(row.dataset.cueIdx), e.clientX, e.clientY, { scroll: false });
         });
 
         els.cueContextMenu?.querySelectorAll('[data-ctx-action]').forEach((btn) => {
@@ -7023,6 +7048,7 @@
             noiseRemoveSoundEffects: document.getElementById('editorNoiseRemoveSoundEffects'),
             noiseRemoveSymbolOnly: document.getElementById('editorNoiseRemoveSymbolOnly'),
             noiseRemoveDuplicates: document.getElementById('editorNoiseRemoveDuplicates'),
+            noiseRemoveHallucinations: document.getElementById('editorNoiseRemoveHallucinations'),
             chineseConvertBtn: document.getElementById('editorChineseConvertBtn'),
             chineseConvertModal: document.getElementById('editorChineseConvertModal'),
             chineseConvertPreview: document.getElementById('editorChineseConvertPreview'),

@@ -321,7 +321,7 @@
                 els.waveformToggle.classList.toggle('is-active', on);
                 els.waveformToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
                 if (!els.waveformToggle.classList.contains('is-loading')) {
-                    els.waveformToggle.title = on ? '波形时间轴：开启' : '波形时间轴：关闭（默认）';
+                    els.waveformToggle.title = on ? '波形时间轴：开启（默认）' : '波形时间轴：关闭';
                 }
             }
             if (els.waveformRow) {
@@ -334,8 +334,12 @@
 
         function loadWaveformPref() {
             const { state } = ctx;
-            let on = false;
-            try { on = localStorage.getItem(WAVEFORM_KEY) === '1'; } catch (_) { /* ignore */ }
+            let on = true;
+            try {
+                const raw = localStorage.getItem(WAVEFORM_KEY);
+                if (raw === '0') on = false;
+                else if (raw === '1') on = true;
+            } catch (_) { /* ignore */ }
             state.waveformEnabled = on === true;
             applyWaveformUi();
         }

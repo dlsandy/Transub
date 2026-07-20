@@ -65,6 +65,56 @@
         return normalizeDirection(direction) === 't2s' ? '繁体 → 简体' : '简体 → 繁体';
     }
 
+    /** 移除旧版 initial_prompt 简繁提示被 Whisper 复述进字幕的片段 */
+    function stripTranslatePromptLeakage(text) {
+        let out = String(text ?? '');
+        if (!out) return out;
+        out = out.replace(/请使用简体中文输出[。.…]*/g, '');
+        out = out.replace(/請使用繁體中文輸出[。.…]*/g, '');
+        out = out.replace(/(?:^|[\s，,、；;])?(?:简体中文|繁体中文|繁體中文)(?:[。.…]|[\s，,、；;]|$)/g, ' ');
+        return out.replace(/\s{2,}/g, ' ').trim();
+    }
+
+    /**
+     * 中文句号 / 问号 / 感叹号后补空格（已有空白则不重复；行末不补）。
+     * 便于后续 CPS 拆句识别句界。
+     */
+    function ensureSpaceAfterChinesePunctuation(text) {
+        const raw = String(text ?? '');
+        if (!raw) return raw;
+        return raw.replace(/([。？！])(?!\s|$)/g, '$1 ');
+    }
+
+    function spaceAfterChinesePunctuationCues(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        const nextCues = [];
+        let cueTouched = 0;
+        let punctSpaced = 0;
+        for (const cue of list) {
+            const base = {
+                startMs: cue?.startMs,
+                endMs: cue?.endMs,
+                text: String(cue?.text ?? ''),
+            };
+            const textOut = ensureSpaceAfterChinesePunctuation(base.text);
+            if (textOut !== base.text) {
+                cueTouched += 1;
+                punctSpaced += [...textOut].length - [...base.text].length;
+                nextCues.push({ ...base, text: textOut });
+            } else {
+                nextCues.push(base);
+            }
+        }
+        const stats = { cueTotal: list.length, cueTouched, punctSpaced };
+        return {
+            cues: nextCues,
+            stats,
+            summary: cueTouched
+                ? `句读后空格：更新 ${cueTouched} 条（+${punctSpaced} 空格）`
+                : '句读后空格：无需修改',
+        };
+    }
+
     function normalizeProtectTerms(protectTerms) {
         if (!Array.isArray(protectTerms) || !protectTerms.length) return [];
         const seen = new Set();
@@ -203,11 +253,18 @@
                 stats.cueSkipped += 1;
                 continue;
             }
-            const converted = convertText(base.text, direction, { protectTerms });
-            if (converted.changed > 0) {
-                stats.cueTouched += 1;
-                stats.charChanged += converted.changed;
-                nextCues.push({ ...base, text: converted.text });
+            const strippedText = options.stripPromptLeakage === false
+                ? base.text
+                : stripTranslatePromptLeakage(base.text);
+            const converted = convertText(strippedText, direction, { protectTerms });
+            const textOut = converted.text;
+            const leakageStripped = strippedText !== base.text;
+            if (leakageStripped || converted.changed > 0) {
+                if (textOut !== base.text) {
+                    stats.cueTouched += 1;
+                    stats.charChanged += converted.changed + (leakageStripped ? 1 : 0);
+                }
+                nextCues.push({ ...base, text: textOut });
             } else {
                 nextCues.push(base);
             }
@@ -232,6 +289,9 @@
         DIRECTIONS: ['s2t', 't2s'],
         normalizeDirection,
         directionLabel,
+        stripTranslatePromptLeakage,
+        ensureSpaceAfterChinesePunctuation,
+        spaceAfterChinesePunctuationCues,
         convertText,
         convertCues,
         summarizeConversion,

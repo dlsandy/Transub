@@ -234,30 +234,6 @@ async function pickSubtitleFile(parentWindow) {
 /** @type {string|null} */
 let pendingOpenParamsTab = null;
 
-function openMainSettingsWindow(windowManager, tab = 'editor') {
-    if (!windowManager?.showMainWindow) {
-        return { ok: false, error: '主窗口不可用' };
-    }
-    const win = windowManager.showMainWindow();
-    if (!win || win.isDestroyed()) {
-        return { ok: false, error: '无法打开主窗口' };
-    }
-    const resolvedTab = asString(tab, 64).trim() || 'editor';
-    pendingOpenParamsTab = resolvedTab;
-    const payload = { tab: resolvedTab };
-    const send = () => {
-        if (win.isDestroyed() || win.webContents.isDestroyed()) return;
-        win.webContents.send('transub-open-params', payload);
-    };
-    if (win.webContents.isLoading()) {
-        win.webContents.once('did-finish-load', () => setTimeout(send, 80));
-    } else {
-        send();
-        setTimeout(send, 200);
-    }
-    return { ok: true };
-}
-
 function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, windowManager } = {}) {
     register('transub-open-subtitle-editor', async (event, payload = {}) => {
         try {
@@ -285,18 +261,32 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         }
     });
 
-    register('transub-open-settings', async (_event, payload = {}) => {
+    register('transub-open-settings', async (event, payload = {}) => {
         try {
-            return openMainSettingsWindow(windowManager, payload?.tab || 'editor');
+            warmBridges?.();
+            const parentWin = BrowserWindow.fromWebContents(event.sender);
+            const { openSettingsWindow } = require('./settings-window');
+            return openSettingsWindow(app, {
+                tab: payload?.tab || 'editor',
+                parent: parentWin || undefined,
+                checkUpdate: !!payload?.checkUpdate,
+            });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
     });
 
     register('transub-consume-pending-open-params', async () => {
-        const tab = pendingOpenParamsTab;
-        pendingOpenParamsTab = null;
-        return { ok: true, tab: tab || null };
+        try {
+            const { consumePendingSettingsTab } = require('./settings-window');
+            const tab = consumePendingSettingsTab() || pendingOpenParamsTab;
+            pendingOpenParamsTab = null;
+            return { ok: true, tab: tab || null };
+        } catch {
+            const tab = pendingOpenParamsTab;
+            pendingOpenParamsTab = null;
+            return { ok: true, tab: tab || null };
+        }
     });
 
     register('transub-editor-refocus', async (event) => {

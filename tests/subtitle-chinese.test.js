@@ -6,6 +6,9 @@ const {
     summarizeConversion,
     normalizeDirection,
     directionLabel,
+    stripTranslatePromptLeakage,
+    ensureSpaceAfterChinesePunctuation,
+    spaceAfterChinesePunctuationCues,
 } = require('../src/js/subtitle-chinese-core');
 
 function testNormalizeDirection() {
@@ -104,6 +107,30 @@ function testConvertCuesWithProtectTerms() {
     assert.ok(!result.cues[0].text.includes('軟件'));
 }
 
+function testStripTranslatePromptLeakage() {
+    assert.strictEqual(stripTranslatePromptLeakage('请使用简体中文输出。'), '');
+    assert.strictEqual(stripTranslatePromptLeakage('你好请使用简体中文输出。世界'), '你好世界');
+    assert.strictEqual(stripTranslatePromptLeakage('請使用繁體中文輸出。'), '');
+    const res = convertCues([{ startMs: 0, endMs: 1000, text: '请使用简体中文输出。' }], {
+        direction: 't2s',
+    });
+    assert.strictEqual(res.cues[0].text, '');
+}
+
+function testEnsureSpaceAfterChinesePunctuation() {
+    assert.strictEqual(ensureSpaceAfterChinesePunctuation('你好。世界'), '你好。 世界');
+    assert.strictEqual(ensureSpaceAfterChinesePunctuation('真的吗？好的！继续'), '真的吗？ 好的！ 继续');
+    assert.strictEqual(ensureSpaceAfterChinesePunctuation('你好。 世界'), '你好。 世界');
+    assert.strictEqual(ensureSpaceAfterChinesePunctuation('结束。'), '结束。');
+    const res = spaceAfterChinesePunctuationCues([
+        { startMs: 0, endMs: 1, text: '啊？怎么了！没事。' },
+        { startMs: 1, endMs: 2, text: 'OK' },
+    ]);
+    assert.strictEqual(res.cues[0].text, '啊？ 怎么了！ 没事。');
+    assert.strictEqual(res.cues[1].text, 'OK');
+    assert.strictEqual(res.stats.cueTouched, 1);
+}
+
 describe('subtitle-chinese', () => {
     it('normalize direction', () => {
         testNormalizeDirection();
@@ -140,5 +167,11 @@ describe('subtitle-chinese', () => {
     });
     it('convert cues honors protectTerms', () => {
         testConvertCuesWithProtectTerms();
+    });
+    it('strips leaked translate prompt text', () => {
+        testStripTranslatePromptLeakage();
+    });
+    it('ensures space after Chinese punctuation', () => {
+        testEnsureSpaceAfterChinesePunctuation();
     });
 });
