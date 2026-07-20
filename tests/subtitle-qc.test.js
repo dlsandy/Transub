@@ -134,6 +134,33 @@ function testScanDetectsFluency() {
     assert.ok(summarizeScan(summary).includes('通顺度'));
 }
 
+function testScanDetectsRepetition() {
+    const cues = [
+        { startMs: 0, endMs: 2000, text: '好的好的好的好的好的' },
+        { startMs: 2000, endMs: 4000, text: '正常对白内容。' },
+    ];
+    const { summary, issues } = scanCueIssues(cues, {
+        fixOverlap: false,
+        checkFluency: true,
+        maxCps: 100,
+        minSec: 0.1,
+        maxSec: 60,
+    });
+    assert.ok(summary.repetition >= 1, 'should detect compressible repetition');
+    assert.ok(issues.some((i) => i.types.includes('repetition')));
+    assert.ok(summarizeScan(summary).includes('叠词'));
+
+    const repOpts = buildQcOptionsForIssueType({}, 'repetition');
+    assert.ok(repOpts);
+    assert.strictEqual(repOpts.compressRepetition, true);
+
+    const plan = buildQcFixPlan(cues, { ...repOpts, issueTypeFilter: 'repetition' });
+    assert.ok(plan.ok, plan.summary);
+    const fixed = applyQcFixes(cues, repOpts);
+    assert.ok(fixed.stats.compressRepFixed >= 1);
+    assert.strictEqual(fixed.cues[0].text, '好的…好的！');
+}
+
 function testBuildOptionsForIssueType() {
     const overlap = buildQcOptionsForIssueType({
         fixOverlap: true,
@@ -191,6 +218,9 @@ describe("subtitle-qc", () => {
     });
     it("scan detects fluency", () => {
         testScanDetectsFluency();
+    });
+    it("scan detects repetition", () => {
+        testScanDetectsRepetition();
     });
     it("build options for issue type", () => {
         testBuildOptionsForIssueType();

@@ -631,11 +631,11 @@
                                 </span>
                             </label>
                             <label class="flex items-start gap-2 text-sm">
-                                <input type="checkbox" id="postBatchCpsSplitCheck" class="rounded mt-0.5">
+                                <input type="checkbox" id="postBatchCpsSplitCheck" class="rounded mt-0.5" checked>
                                 <span>
                                     <span class="font-medium text-gray-700">完成后自动按 CPS 拆句</span>
                                     <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
-                                        默认关闭。对读速过快的条目智能拆分并写回，缓解单条过长（连续无空格文本可能无法自动拆）。
+                                        默认开启。对读速过快的条目智能拆分并写回，缓解单条过长（连续无空格文本可能无法自动拆）。
                                     </span>
                                 </span>
                             </label>
@@ -645,6 +645,15 @@
                                     <span class="font-medium text-gray-700">完成后清理杂音 / 幻觉短句</span>
                                     <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
                                         默认开启。删除空句、语气碎片、音效标签、纯符号及常见幻觉短句（如「完毕」）。
+                                    </span>
+                                </span>
+                            </label>
+                            <label class="flex items-start gap-2 text-sm">
+                                <input type="checkbox" id="postBatchCompressRepCheck" class="rounded mt-0.5" checked>
+                                <span>
+                                    <span class="font-medium text-gray-700">完成后压缩叠词</span>
+                                    <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                                        默认开启。将连续重复 ≥3 次的短语/单字压成「词…词！」，降低 CPS（如「好的」×8 →「好的…好的！」）。
                                     </span>
                                 </span>
                             </label>
