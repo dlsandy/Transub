@@ -60,6 +60,222 @@
         return false;
     }
 
+    function isCompressiblePhrase(phrase) {
+        const s = String(phrase || '');
+        if (!s || /^\s+$/.test(s)) return false;
+        // 纯标点/省略号不压
+        if (/^[。！？!?…·.•,，、；;:：\-\—_~～"'「」『』【】[\]()（）\s]+$/.test(s)) return false;
+        return /[\u4e00-\u9fffA-Za-z0-9]/.test(s);
+    }
+
+    function absorbTrailingPartial(chars, end, phrase) {
+        const phraseChars = Array.from(phrase);
+        if (phraseChars.length < 2 || end >= chars.length) return end;
+        const minPrefix = Math.max(2, Math.ceil(phraseChars.length / 2));
+        for (let prefixLen = phraseChars.length - 1; prefixLen >= minPrefix; prefixLen -= 1) {
+            const prefix = phraseChars.slice(0, prefixLen);
+            let match = true;
+            for (let k = 0; k < prefixLen; k += 1) {
+                if (chars[end + k] !== prefix[k]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) continue;
+            // 后面若还能接完整 phrase，则交给下一轮，不吸收半截
+            const after = end + prefixLen;
+            if (after + phraseChars.length <= chars.length) {
+                let fullNext = true;
+                for (let k = 0; k < phraseChars.length; k += 1) {
+                    if (chars[after + k] !== phraseChars[k]) {
+                        fullNext = false;
+                        break;
+                    }
+                }
+                if (fullNext) continue;
+            }
+            return after;
+        }
+        return end;
+    }
+
+    /**
+     * 从 chars[i] 起查找「连续 / 空白分隔」的短语重复。
+     * 同覆盖长度下优先重复次数更多（更短原子短语），避免「好的好的」抢先于「好的」。
+     * @returns {{ phrase: string, count: number, end: number } | null}
+     */
+    function findRepetitionRun(chars, i, options = {}) {
+        const minRepeats = Math.max(2, Number(options.minRepeats) || 3);
+        const minPhraseLen = Math.max(1, Number(options.minPhraseLen) || 1);
+        const maxPhraseLen = Math.max(minPhraseLen, Number(options.maxPhraseLen) || 6);
+        const remain = chars.length - i;
+        if (remain < minPhraseLen * minRepeats) return null;
+
+        let best = null;
+
+        function consider(phrase, count, end) {
+            if (count < minRepeats) return;
+            const resolvedEnd = absorbTrailingPartial(chars, end, phrase);
+            if (!best
+                || count > best.count
+                || (count === best.count && resolvedEnd > best.end)
+                || (count === best.count && resolvedEnd === best.end && phrase.length < best.phrase.length)) {
+                best = { phrase, count, end: resolvedEnd };
+            }
+        }
+
+        for (let plen = Math.min(maxPhraseLen, Math.floor(remain / minRepeats)); plen >= minPhraseLen; plen -= 1) {
+            const phraseArr = chars.slice(i, i + plen);
+            const phrase = phraseArr.join('');
+            if (!isCompressiblePhrase(phrase)) continue;
+
+            // 无间隔连续重复
+            let count = 1;
+            let pos = i + plen;
+            while (pos + plen <= chars.length) {
+                let same = true;
+                for (let k = 0; k < plen; k += 1) {
+                    if (chars[pos + k] !== phraseArr[k]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same) break;
+                count += 1;
+                pos += plen;
+            }
+            consider(phrase, count, pos);
+
+            // 空白分隔重复：词 + 空白 + 词…
+            count = 1;
+            pos = i + plen;
+            while (pos < chars.length) {
+                let ws = 0;
+                while (pos + ws < chars.length && /\s/.test(chars[pos + ws])) ws += 1;
+                if (ws < 1 || pos + ws + plen > chars.length) break;
+                let same = true;
+                for (let k = 0; k < plen; k += 1) {
+                    if (chars[pos + ws + k] !== phraseArr[k]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same) break;
+                count += 1;
+                pos = pos + ws + plen;
+            }
+            consider(phrase, count, pos);
+        }
+        return best;
+    }
+
+    function formatCompressedRun(phrase, options = {}) {
+        const addExclaim = options.addExclaim !== false;
+        let out = `${phrase}…${phrase}`;
+        if (addExclaim && !/[。！？!?…]$/.test(out)) out += '！';
+        return out;
+    }
+
+    /**
+     * 压缩单条文本中的叠词/叠句（如「好的」×N →「好的…好的！」）。
+     * @returns {{ text: string, changed: boolean, runs: number }}
+     */
+    function compressRepetitionInText(text, options = {}) {
+        const raw = String(text ?? '');
+        const chars = Array.from(raw);
+        if (chars.length < 3) {
+            return { text: raw, changed: false, runs: 0 };
+        }
+
+        const opts = {
+            minRepeats: Math.max(2, Number(options.minRepeats) || 3),
+            minPhraseLen: options.compressSingleChar === false ? 2 : 1,
+            maxPhraseLen: Math.max(1, Number(options.maxPhraseLen) || 6),
+            addExclaim: options.addExclaim !== false,
+        };
+
+        const out = [];
+        let i = 0;
+        let runs = 0;
+        while (i < chars.length) {
+            const hit = findRepetitionRun(chars, i, opts);
+            if (hit) {
+                const nextCh = hit.end < chars.length ? chars[hit.end] : '';
+                const skipExclaim = /[。！？!?]/.test(nextCh);
+                out.push(formatCompressedRun(hit.phrase, {
+                    addExclaim: opts.addExclaim && !skipExclaim,
+                }));
+                runs += 1;
+                i = hit.end;
+                continue;
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        let result = out.join('');
+        // 压缩后可能紧贴原有感叹号：好的…好的！！ → 好的…好的！
+        result = result.replace(/！{2,}/g, '！').replace(/!{2,}/g, '!');
+        return {
+            text: result,
+            changed: result !== raw,
+            runs,
+        };
+    }
+
+    /**
+     * 批量压缩字幕叠词。不改时间轴。
+     * @returns {{ cues: object[], stats: object, changedIndexes: number[], summary: string }}
+     */
+    function compressRepetitionInCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const indexSet = options.indexes == null
+            ? null
+            : new Set((Array.isArray(options.indexes) ? options.indexes : [])
+                .map((n) => Number(n))
+                .filter((n) => Number.isInteger(n) && n >= 0));
+        const next = list.map((c) => ({
+            startMs: c?.startMs,
+            endMs: c?.endMs,
+            text: c?.text,
+        }));
+        const changedIndexes = [];
+        let runTotal = 0;
+        let charSaved = 0;
+
+        for (let i = 0; i < next.length; i += 1) {
+            if (indexSet && !indexSet.has(i)) continue;
+            const before = String(next[i].text ?? '');
+            const { text, changed, runs } = compressRepetitionInText(before, options);
+            if (!changed) continue;
+            next[i] = { ...next[i], text };
+            changedIndexes.push(i);
+            runTotal += runs;
+            charSaved += Math.max(0, textCharCount(before) - textCharCount(text));
+        }
+
+        const stats = {
+            cueTotal: list.length,
+            cueTouched: changedIndexes.length,
+            runs: runTotal,
+            charSaved,
+        };
+        return {
+            cues: next,
+            stats,
+            changedIndexes,
+            summary: summarizeRepetitionCompress(stats),
+        };
+    }
+
+    function summarizeRepetitionCompress(stats) {
+        if (!stats?.cueTouched) return '未发现可压缩的叠词条目';
+        const parts = [`${stats.cueTouched} 条`];
+        if (stats.runs) parts.push(`${stats.runs} 处叠词`);
+        if (stats.charSaved) parts.push(`约少 ${stats.charSaved} 字`);
+        return `将压缩 ${parts.join(' · ')}`;
+    }
+
     function hasStutter(text) {
         const raw = String(text || '').trim();
         if (raw.length < 3) return false;
@@ -382,6 +598,9 @@
         isHallucinationCue,
         removeNoiseFromCues,
         summarizeNoiseRemoval,
+        compressRepetitionInText,
+        compressRepetitionInCues,
+        summarizeRepetitionCompress,
         lacksPunctuation,
         analyzeTextFluency,
         scanFluencyIssues,

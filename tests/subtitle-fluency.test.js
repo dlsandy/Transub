@@ -100,6 +100,55 @@ function testHallucinationCleanup() {
     assert.strictEqual(cleaned.stats.kept, 1);
 }
 
+function testCompressRepetition() {
+    const {
+        compressRepetitionInText,
+        compressRepetitionInCues,
+        summarizeRepetitionCompress,
+    } = require('../src/js/subtitle-fluency-core');
+
+    const a = compressRepetitionInText('好的好的好的好的好的好的好的好的');
+    assert.ok(a.changed);
+    assert.strictEqual(a.text, '好的…好的！');
+
+    const b = compressRepetitionInText('太好了太好了太好了太好了太好了太好了太好');
+    assert.ok(b.changed);
+    assert.strictEqual(b.text, '太好了…太好了！');
+
+    const c = compressRepetitionInText('来 这边也要 从这边过去 啊 走走走走走走走走走走');
+    assert.ok(c.changed);
+    assert.ok(c.text.includes('走…走！'));
+    assert.ok(c.text.includes('从这边过去'));
+
+    const d = compressRepetitionInText('啊 真好笑 哈哈哈哈哈哈哈哈');
+    assert.strictEqual(d.text, '啊 真好笑 哈…哈！');
+
+    const e = compressRepetitionInText('快点 快点 快点 快点');
+    assert.strictEqual(e.text, '快点…快点！');
+
+    const f = compressRepetitionInText('哈哈哈哈哈哈');
+    assert.strictEqual(f.text, '哈…哈！');
+
+    const g = compressRepetitionInText('好的好的');
+    assert.ok(!g.changed, '少于 3 次不压缩');
+
+    const cues = [
+        { startMs: 0, endMs: 1000, text: '好的好的好的好的' },
+        { startMs: 1000, endMs: 2000, text: '正常对白' },
+        { startMs: 2000, endMs: 3000, text: '加油加油加油加油 快点快点快点快点' },
+    ];
+    const batch = compressRepetitionInCues(cues);
+    assert.strictEqual(batch.stats.cueTouched, 2);
+    assert.strictEqual(batch.cues[0].text, '好的…好的！');
+    assert.strictEqual(batch.cues[1].text, '正常对白');
+    assert.ok(batch.cues[2].text.includes('加油…加油！'));
+    assert.ok(batch.cues[2].text.includes('快点…快点！'));
+    assert.ok(summarizeRepetitionCompress(batch.stats).includes('压缩'));
+
+    const scoped = compressRepetitionInCues(cues, { indexes: [1] });
+    assert.strictEqual(scoped.stats.cueTouched, 0);
+}
+
 describe("subtitle-fluency", () => {
     it("repetition and stutter", () => {
         testRepetitionAndStutter();
@@ -118,5 +167,8 @@ describe("subtitle-fluency", () => {
     });
     it("hallucination cleanup", () => {
         testHallucinationCleanup();
+    });
+    it("compress repetition", () => {
+        testCompressRepetition();
     });
 });

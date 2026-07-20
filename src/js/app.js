@@ -306,7 +306,7 @@
             'mergeSegmentsCheck', 'mergeSettingsWrap', 'mergeMaxGapInput', 'mergeMaxDurationInput',
             'retranscribeWarmLightCheck', 'subtitleBakModeSelect',
             'trayProgressCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
-            'postBatchQcCheck', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck',
+            'postBatchQcCheck', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
             'trialCompareStatus', 'trialCompareResult',
@@ -705,10 +705,13 @@
             els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
         if (els.postBatchCpsSplitCheck) {
-            els.postBatchCpsSplitCheck.checked = !!options.postBatchCpsSplit;
+            els.postBatchCpsSplitCheck.checked = options.postBatchCpsSplit !== false;
         }
         if (els.postBatchRemoveNoiseCheck) {
-            els.postBatchRemoveNoiseCheck.checked = !!options.postBatchRemoveNoise;
+            els.postBatchRemoveNoiseCheck.checked = options.postBatchRemoveNoise !== false;
+        }
+        if (els.postBatchCompressRepCheck) {
+            els.postBatchCompressRepCheck.checked = options.postBatchCompressRepetition !== false;
         }
         if (els.targetChunkDurationInput && options.targetChunkDurationS != null) {
             els.targetChunkDurationInput.value = String(options.targetChunkDurationS);
@@ -771,8 +774,9 @@
             minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
             trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
             postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
-            postBatchCpsSplit: !!els.postBatchCpsSplitCheck?.checked,
+            postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
             postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
+            postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
             mergeSegments: !!els.mergeSegmentsCheck?.checked,
             mergeMaxGapMs: Number(els.mergeMaxGapInput?.value) || 500,
             mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 15000,
@@ -1664,14 +1668,21 @@
     }
 
     async function runPostBatchAutoFix() {
-        const doCps = !!els.postBatchCpsSplitCheck?.checked;
-        const doNoise = !!els.postBatchRemoveNoiseCheck?.checked;
         // 以磁盘配置为准（独立设置窗口保存后，主窗口表单可能尚未同步）
         let savedOpts = null;
         try {
             const optsRes = await electron?.transWithAiGetOptions?.();
             if (optsRes?.options) savedOpts = optsRes.options;
         } catch { /* ignore */ }
+        const doCps = savedOpts
+            ? savedOpts.postBatchCpsSplit !== false
+            : (els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true);
+        const doNoise = savedOpts
+            ? savedOpts.postBatchRemoveNoise !== false
+            : (els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true);
+        const doCompressRep = savedOpts
+            ? savedOpts.postBatchCompressRepetition !== false
+            : (els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true);
         const taskFromSaved = savedOpts?.task === 'transcribe' ? 'transcribe' : 'translate';
         const isTranslate = (savedOpts ? taskFromSaved : els.taskSelect?.value) !== 'transcribe';
         const variantFromSaved = savedOpts?.chineseSubtitleVariant === 'traditional'
@@ -1686,7 +1697,7 @@
         const doChinese = !!chineseSubtitleVariant;
         // 翻译任务默认：。？！后补空格（在 CPS 拆句之前）
         const doSpacePunct = isTranslate;
-        if (!doCps && !doNoise && !doChinese && !doSpacePunct) return;
+        if (!doCps && !doNoise && !doCompressRep && !doChinese && !doSpacePunct) return;
         if (!electron?.transubApplySubtitlePostprocess) return;
 
         const targets = state.items.filter((item) => {
@@ -1700,6 +1711,7 @@
         if (doSpacePunct) parts.push('句读后空格');
         if (doCps) parts.push('CPS 拆句');
         if (doNoise) parts.push('清理杂音');
+        if (doCompressRep) parts.push('压缩叠词');
         if (doChinese) {
             parts.push(chineseSubtitleVariant === 'traditional' ? '转繁体' : '转简体');
         }
@@ -1717,6 +1729,7 @@
                         cpsSplit: doCps,
                         removeNoise: doNoise,
                         removeHallucinations: doNoise,
+                        compressRepetition: doCompressRep,
                         fixOverlap: true,
                         enforceMaxDur: true,
                         maxCps: 18,

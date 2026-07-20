@@ -136,8 +136,8 @@ function scanSubtitleQc(filePath, options = {}) {
 }
 
 /**
- * 批量后处理：可选句读后空格、CPS 智能拆分、清理杂音/幻觉短句、翻译任务简繁体，写回字幕文件。
- * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 简繁转换。
+ * 批量后处理：可选句读后空格、CPS 智能拆分、清理杂音/幻觉短句、压缩叠词、翻译任务简繁体，写回字幕文件。
+ * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 压缩叠词 → 简繁转换。
  */
 function applySubtitlePostprocess(filePath, options = {}) {
     const doc = readSubtitleDocument(filePath);
@@ -152,6 +152,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
         spacePunct: null,
         cpsSplit: null,
         noise: null,
+        compressRep: null,
         chinese: null,
         written: false,
     };
@@ -159,6 +160,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
     const doSpacePunct = options.spaceAfterChinesePunctuation === true;
     const doCpsSplit = options.cpsSplit === true;
     const doNoise = options.removeNoise === true || options.removeHallucinations === true;
+    const doCompressRep = options.compressRepetition === true;
     const chineseVariant = String(options.chineseSubtitleVariant || '').trim();
     const doChinese = chineseVariant === 'simplified' || chineseVariant === 'traditional';
 
@@ -227,6 +229,25 @@ function applySubtitlePostprocess(filePath, options = {}) {
         };
     }
 
+    if (doCompressRep) {
+        let fluency;
+        try {
+            fluency = require('../src/js/subtitle-fluency-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载通顺度模块' };
+        }
+        const compressed = fluency.compressRepetitionInCues(cues, {
+            compressSingleChar: options.compressSingleChar !== false,
+            addExclaim: options.addExclaim !== false,
+            minRepeats: Number(options.minRepeats) || 3,
+        });
+        cues = compressed.cues;
+        result.compressRep = {
+            summary: compressed.summary,
+            stats: compressed.stats,
+        };
+    }
+
     if (doChinese) {
         let chinese;
         try {
@@ -264,6 +285,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
         || (result.spacePunct && Number(result.spacePunct.stats?.cueTouched) > 0)
         || (result.cpsSplit && Number(result.cpsSplit.stats?.affected) > 0)
         || (result.noise && Number(result.noise.stats?.removed) > 0)
+        || (result.compressRep && Number(result.compressRep.stats?.cueTouched) > 0)
         || (result.chinese && Number(result.chinese.stats?.cueTouched) > 0);
 
     if (!changed) {
@@ -287,6 +309,9 @@ function applySubtitlePostprocess(filePath, options = {}) {
     }
     if (result.cpsSplit?.summary) parts.push(result.cpsSplit.summary);
     if (result.noise?.summary && result.noise.stats?.removed) parts.push(result.noise.summary);
+    if (result.compressRep?.summary && result.compressRep.stats?.cueTouched) {
+        parts.push(result.compressRep.summary.replace(/^将/, '已'));
+    }
     if (result.chinese?.summary && result.chinese.stats?.cueTouched) parts.push(result.chinese.summary);
     return {
         ...result,

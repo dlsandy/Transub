@@ -278,9 +278,9 @@ body.editor-body {
     border-bottom: 1px solid var(--ed-border);
 }
 .editor-cue-table .cell-text {
-    overflow: hidden; font-size: 0.74rem; color: var(--ed-text);
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    white-space: normal; line-height: 1.25; max-height: 2.5em;
+    overflow: visible; font-size: 0.74rem; color: var(--ed-text);
+    white-space: normal; word-break: break-word; overflow-wrap: anywhere;
+    line-height: 1.35;
 }
 .editor-cue-table tbody tr { border-bottom: 1px solid var(--ed-border); cursor: pointer; }
 .editor-cue-table tbody tr:hover { background: var(--ed-surface-2); }
@@ -443,7 +443,8 @@ body.editor-theme-dark #editorStatusLowConf {
 }
 .detail-nav-group:last-of-type { border-right: none; padding-right: 0; }
 #editorSplitCueBtn, #editorDetailInsertCueBtn,
-#editorSmartSplitCueBtn, #editorSplitLinesBtn, #editorSplitSpacesBtn, #editorSilenceSplitCueBtn {
+#editorSmartSplitCueBtn, #editorSplitLinesBtn, #editorSplitSpacesBtn, #editorSilenceSplitCueBtn,
+#editorCompressRepCueBtn {
     color: var(--ed-accent);
 }
 

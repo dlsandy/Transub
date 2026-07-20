@@ -5,7 +5,7 @@
 **把视频丢进去，字幕就出来了。**  
 再在编辑器里改时间轴、修读速、统一专名——从生成到成片，一条龙。
 
-Windows 桌面字幕工具 · 当前版本 **1.4.0**  
+Windows 桌面字幕工具 · 当前版本 **1.4.1**  
 转录 / 翻译引擎由 [TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 提供
 
 [![下载](https://img.shields.io/github/v/release/dlsandy/Transub?label=下载&color=7c3aed)](https://github.com/dlsandy/Transub/releases)

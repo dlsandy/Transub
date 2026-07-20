@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",

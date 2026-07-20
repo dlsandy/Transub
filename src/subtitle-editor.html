@@ -383,9 +383,9 @@ body:not(.editor-waveform-on) .editor-waveform-row { display: none !important; }
     border-bottom: 1px solid var(--ed-border);
 }
 .editor-cue-table .cell-text {
-    overflow: hidden; font-size: 0.74rem; color: var(--ed-text);
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    white-space: normal; line-height: 1.25; max-height: 2.5em;
+    overflow: visible; font-size: 0.74rem; color: var(--ed-text);
+    white-space: normal; word-break: break-word; overflow-wrap: anywhere;
+    line-height: 1.35;
 }
 .editor-cue-table tbody tr { border-bottom: 1px solid var(--ed-border); cursor: pointer; }
 .editor-cue-table tbody tr:hover { background: var(--ed-surface-2); }
@@ -564,7 +564,8 @@ body.editor-theme-dark #editorStatusLowConf {
 }
 .detail-nav-group:last-of-type { border-right: none; padding-right: 0; }
 #editorSplitCueBtn,
-#editorSmartSplitCueBtn, #editorSplitLinesBtn, #editorSplitSpacesBtn, #editorSilenceSplitCueBtn {
+#editorSmartSplitCueBtn, #editorSplitLinesBtn, #editorSplitSpacesBtn, #editorSilenceSplitCueBtn,
+#editorCompressRepCueBtn {
     color: var(--ed-accent);
 }
 
@@ -952,6 +953,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <button type="button" id="editorGlossaryBtn" role="menuitem" title="术语表与专名一致性"><i class="fa fa-book"></i>术语表<span id="editorGlossaryBadge">0</span></button>
                     <button type="button" id="editorBreakWordsBtn" role="menuitem" title="管理智能断句使用的断句词"><i class="fa fa-ellipsis-h"></i>断句词</button>
                     <button type="button" id="editorChineseConvertBtn" role="menuitem" title="批量简繁体转换"><i class="fa fa-language"></i>简繁转换</button>
+                    <button type="button" id="editorCompressRepBtn" role="menuitem" title="压缩叠词叠句，降低 CPS"><i class="fa fa-compress"></i>压缩叠词</button>
                     <div class="dd-sep"></div>
                     <div class="dd-label">批量处理</div>
                     <button type="button" id="editorBatchDurBtn" role="menuitem" title="按条件批量调整字幕时长"><i class="fa fa-clock-o"></i>时长调整</button>
@@ -1088,6 +1090,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                                 <button type="button" id="editorSplitLinesBtn" title="按换行分割当前字幕（每行一条）"><i class="fa fa-align-left"></i> 换行分割</button>
                                 <button type="button" id="editorSplitSpacesBtn" title="按空格分割当前字幕（每词/每段一条）"><i class="fa fa-font"></i> 空格分割</button>
                                 <button type="button" id="editorSilenceSplitCueBtn" class="needs-video" title="按视频静音分割当前字幕（需关联视频）"><i class="fa fa-volume-off"></i> 静音分割</button>
+                                <button type="button" id="editorCompressRepCueBtn" title="压缩当前/选中字幕的叠词叠句"><i class="fa fa-compress"></i> 叠词压缩</button>
                             </div>
                         </div>
                     </div>
@@ -1701,11 +1704,42 @@ button.needs-video.is-no-video { opacity: 0.45; }
             </div>
         </div>
 
+        <div id="editorCompressRepModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorCompressRepTitle">
+            <div class="editor-modal-backdrop" data-compress-rep-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorCompressRepTitle">压缩叠词</h3>
+                <p>将连续重复 ≥3 次的短语/单字压成「词…词！」（如「好的」×8 →「好的…好的！」），降低 CPS。不改时间轴；强度用省略号表达，请听音校对。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorCompressRepScope" id="editorCompressRepScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorCompressRepScope" id="editorCompressRepScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorCompressRepSingleChar" checked>
+                        <span>压缩单字叠音（啊啊啊 / 哈哈哈…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorCompressRepExclaim" checked>
+                        <span>结尾加感叹号</span>
+                    </label>
+                </div>
+                <p id="editorCompressRepPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorCompressRepCancel" data-compress-rep-dismiss>取消</button>
+                    <button type="button" id="editorCompressRepConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
         <div id="editorQcModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorQcTitle">
             <div class="editor-modal-backdrop" data-qc-dismiss></div>
             <div class="editor-modal-panel qc-panel">
                 <h3 id="editorQcTitle">质量检查</h3>
-                <p>扫描重叠、读速、时长与通顺度嫌疑；点击上方标签可按问题类型筛选。一键修复可调时间轴/分割，不通顺文本请重转写或手工改。</p>
+                <p>扫描重叠、读速、时长、叠词与通顺度嫌疑；点击上方标签可按问题类型筛选。一键修复可调时间轴/分割/压缩叠词；其它通顺度问题请重转写或手工改。</p>
                 <div id="editorQcSummaryBar" class="qc-summary-bar" aria-live="polite"></div>
                 <div id="editorQcIssueList" class="qc-issue-list" role="list"></div>
                 <div class="split-mode-list">
@@ -1738,6 +1772,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div class="split-mode-extra">
                         最长 <input type="number" id="editorQcMaxSec" min="0.5" max="600" step="0.01" value="10.00" class="tabular-nums"> 秒
                     </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcCompressRep">
+                        <span>压缩叠词（词…词！）</span>
+                    </label>
                 </div>
                 <div class="batch-dur-target">
                     <label for="editorQcGapMs">条目间隔</label>

@@ -53,6 +53,7 @@
             fixCpsByExtend: options.fixCpsByExtend !== false && options.fixCps !== false,
             enforceMinDur: options.enforceMinDur !== false,
             enforceMaxDur: options.enforceMaxDur !== false,
+            compressRepetition: options.compressRepetition === true,
             maxCps: Math.max(1, Number(options.maxCps) || 18),
             minSec,
             maxSec,
@@ -84,6 +85,7 @@
             connected: 0,
             splittable: 0,
             fluency: 0,
+            repetition: 0,
         };
 
         for (let i = 0; i < list.length; i += 1) {
@@ -162,6 +164,15 @@
                 }
             }
 
+            if (fluencyCore?.compressRepetitionInText && text) {
+                const compressed = fluencyCore.compressRepetitionInText(text);
+                if (compressed?.changed) {
+                    types.push('repetition');
+                    messages.push('可压缩叠词');
+                    summary.repetition += 1;
+                }
+            }
+
             if (!types.length) continue;
             summary.total += 1;
             issues.push({
@@ -186,6 +197,7 @@
         if (summary.long) parts.push(`过长 ${summary.long}`);
         if (summary.invalid) parts.push(`无效 ${summary.invalid}`);
         if (summary.connected) parts.push(`连续文本 ${summary.connected}`);
+        if (summary.repetition) parts.push(`叠词 ${summary.repetition}`);
         if (summary.fluency) parts.push(`通顺度 ${summary.fluency}`);
         return `${summary.total} 条有问题：${parts.join(' · ')}`;
     }
@@ -320,6 +332,7 @@
         if (stats.cpsFixed) parts.push(`延长读速 ${stats.cpsFixed} 条`);
         if (stats.minDurFixed) parts.push(`过短 ${stats.minDurFixed} 条`);
         if (stats.maxDurFixed) parts.push(`过长 ${stats.maxDurFixed} 条`);
+        if (stats.compressRepFixed) parts.push(`叠词 ${stats.compressRepFixed} 条`);
         if (stats.skipConnected) parts.push(`跳过连续文本 ${stats.skipConnected}`);
         if (!parts.length) return '当前字幕无需修复';
         const countHint = afterCount !== beforeCount
@@ -344,8 +357,21 @@
             cpsFixed: 0,
             minDurFixed: 0,
             maxDurFixed: 0,
+            compressRepFixed: 0,
             skipConnected: 0,
         };
+
+        if (opts.compressRepetition && fluencyCore?.compressRepetitionInCues) {
+            const compressed = fluencyCore.compressRepetitionInCues(working, {
+                compressSingleChar: true,
+                addExclaim: true,
+                minRepeats: 3,
+            });
+            for (let i = 0; i < working.length; i += 1) {
+                if (compressed.cues[i]) working[i].text = compressed.cues[i].text;
+            }
+            stats.compressRepFixed = Number(compressed.stats?.cueTouched) || 0;
+        }
 
         if (opts.fixCpsBySplit) {
             for (let i = working.length - 1; i >= 0; i -= 1) {
@@ -381,9 +407,9 @@
             stats.cpsFixed = adj.cpsFixed;
             stats.minDurFixed = adj.minDurFixed;
             stats.maxDurFixed = adj.maxDurFixed;
-            stats.affected = adj.affected + stats.splitCount;
+            stats.affected = adj.affected + stats.splitCount + stats.compressRepFixed;
         } else {
-            stats.affected = stats.splitCount;
+            stats.affected = stats.splitCount + stats.compressRepFixed;
         }
 
         const afterScan = scanCueIssues(working, opts);
@@ -409,6 +435,7 @@
             fixCpsByExtend: false,
             enforceMinDur: false,
             enforceMaxDur: false,
+            compressRepetition: false,
         };
         switch (issueType) {
             case 'overlap':
@@ -428,6 +455,8 @@
                 return { ...off, enforceMinDur: true };
             case 'long':
                 return { ...off, enforceMaxDur: true };
+            case 'repetition':
+                return { ...off, compressRepetition: true };
             default:
                 return null;
         }
@@ -437,7 +466,7 @@
         const opts = normalizeQcOptions(options);
         const before = scanCueIssues(cues, opts);
         const selected = opts.fixOverlap || opts.fixCpsBySplit || opts.fixCpsByExtend
-            || opts.enforceMinDur || opts.enforceMaxDur;
+            || opts.enforceMinDur || opts.enforceMaxDur || opts.compressRepetition;
         if (!selected) {
             return {
                 ok: false,
@@ -450,11 +479,17 @@
         const result = applyQcFixes(cues, opts);
         let summary = result.summary;
         const fluencyLeft = before.summary?.fluency || 0;
-        if (fluencyLeft && !options.issueTypeFilter) {
-            summary += `；通顺度嫌疑 ${fluencyLeft} 条需手工改或重转写`;
+        const repetitionLeft = before.summary?.repetition || 0;
+        if (!options.issueTypeFilter) {
+            if (fluencyLeft && !opts.compressRepetition) {
+                summary += `；通顺度嫌疑 ${fluencyLeft} 条需手工改或重转写`;
+            }
+            if (repetitionLeft && !opts.compressRepetition) {
+                summary += `；叠词 ${repetitionLeft} 条可勾选压缩或筛选后一键修复`;
+            }
         }
         return {
-            ok: result.stats.affected > 0 || result.stats.splitCount > 0,
+            ok: result.stats.affected > 0 || result.stats.splitCount > 0 || result.stats.compressRepFixed > 0,
             before,
             affected: result.stats.affected,
             stats: result.stats,
