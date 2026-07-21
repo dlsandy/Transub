@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.4.4
+
+### 修复
+
+- **Smart App Control 拦截**：关闭 electron-builder 向 exe 写入 asar integrity（该改写会让未签名的 `Transub.exe` 在 Windows 11「智能应用控制」强制模式下被拦截）；仍保持未签名，图标/版本信息继续由 after-pack 写入
+
+### 其它
+
+- **推荐安装**：下载 `Transub-1.4.4-win.zip` 解压后运行 `Transub.exe`，或使用 `Transub-Setup-1.4.4.exe`
+
 ## 1.4.3
 
 ### 修复

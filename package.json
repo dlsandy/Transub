@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -103,6 +103,7 @@
       }
     ],
     "asar": true,
+    "disableAsarIntegrity": true,
     "afterPack": "tools/after-pack.js",
     "extraMetadata": {
       "description": "Transub 字幕工具"
@@ -118,6 +119,8 @@
       "icon": "app.ico",
       "signExecutable": false,
       "signAndEditExecutable": true,
+      "forceCodeSigning": false,
+      "verifyUpdateCodeSignature": false,
       "target": [
         {
           "target": "zip",
