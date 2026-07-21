@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -73,12 +73,8 @@
       "electron/**/*",
       "package.json",
       "renderer-dist/**/*",
-      "src/js/eta-core.js",
-      "src/js/subtitle-glossary-core.js",
-      "src/js/subtitle-qc-core.js",
-      "src/js/subtitle-split-core.js",
-      "src/js/subtitle-fluency-core.js",
-      "src/js/subtitle-chinese-core.js"
+      "src/js/*-core.js",
+      "src/js/subtitle-chinese-dict.js"
     ],
     "asarUnpack": [
       "electron/app.ico",
