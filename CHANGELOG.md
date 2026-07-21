@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.4.3
+
+### 修复
+
+- **打包缺词典**：`subtitle-chinese-core` 依赖的 `subtitle-chinese-dict` 未打入 `app.asar`，简繁转换仍会失败；打包清单改为纳入全部 `*-core.js` 与该词典
+
+### 其它
+
+- **推荐安装**：下载 `Transub-1.4.3-win.zip` 解压后运行 `Transub.exe`，或使用 `Transub-Setup-1.4.3.exe`
+
 ## 1.4.2
 
 ### 修复
