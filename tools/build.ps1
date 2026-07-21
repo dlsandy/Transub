@@ -139,6 +139,12 @@ $copied = 0
 $pkgVersion = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
 $wantedZip = "Transub-$pkgVersion-win.zip"
 
+function Unblock-Tree([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+}
+
 Get-ChildItem $packDir -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap', '.zip' } |
     ForEach-Object {
@@ -146,7 +152,9 @@ Get-ChildItem $packDir -File -ErrorAction SilentlyContinue |
         if ($_.Extension -eq '.zip' -and $destName -ne $wantedZip) {
             $destName = $wantedZip
         }
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $distDir $destName) -Force
+        $dest = Join-Path $distDir $destName
+        Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+        Unblock-File -LiteralPath $dest -ErrorAction SilentlyContinue
         Write-Host "  copied $destName" -ForegroundColor Green
         $copied++
     }
@@ -161,7 +169,8 @@ if (Test-Path -LiteralPath $packUnpacked) {
         ) -Wait -PassThru -NoNewWindow
         # robocopy exit codes 0-7 are success
         if ($rc.ExitCode -le 7 -and (Test-Path (Join-Path $distUnpacked 'Transub.exe'))) {
-            Write-Host '  copied win-unpacked\' -ForegroundColor Green
+            Unblock-Tree $distUnpacked
+            Write-Host '  copied win-unpacked\ (unsigned, unblocked)' -ForegroundColor Green
         } else {
             Write-Host "  robocopy to dist\win-unpacked exit=$($rc.ExitCode); using staging copy" -ForegroundColor Yellow
         }

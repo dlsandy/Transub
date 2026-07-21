@@ -196,16 +196,12 @@ function findDistZip() {
 }
 
 function resolveReleaseAssets() {
-    // Release assets: zip + NSIS Setup (portable builds discontinued).
+    // Release assets: zip + NSIS Setup only (no latest.yml / .blockmap).
     const zip = findDistZip();
     const setup = path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe`);
     if (!zip) throw new Error(`Missing release asset: Transub-${VERSION}-win.zip`);
     if (!fs.existsSync(setup)) throw new Error(`Missing release asset: ${setup}`);
-    const optional = [
-        path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe.blockmap`),
-        path.join(ROOT, 'dist', 'latest.yml'),
-    ].filter((a) => fs.existsSync(a));
-    return [zip, setup, ...optional];
+    return [zip, setup];
 }
 
 function createRelease(commitSha) {
