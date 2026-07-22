@@ -8,11 +8,14 @@ const { refocusWindow } = require('./window-focus');
 
 /** @type {Map<string, import('electron').BrowserWindow>} */
 const editorWindows = new Map();
+const EMPTY_EDITOR_KEY = '__welcome__';
 
 function editorWindowKey(subPath) {
+    const raw = String(subPath || '').trim();
+    if (!raw) return EMPTY_EDITOR_KEY;
     return process.platform === 'win32'
-        ? path.resolve(String(subPath || '')).toLowerCase()
-        : path.resolve(String(subPath || ''));
+        ? path.resolve(raw).toLowerCase()
+        : path.resolve(raw);
 }
 
 function sendEditorInit(win, payload) {
@@ -20,82 +23,79 @@ function sendEditorInit(win, payload) {
     win.webContents.send('subtitle-editor-init', payload);
 }
 
-function createEditorPickSplashWindow(app) {
-    const win = new BrowserWindow({
-        width: 420,
-        height: 210,
-        resizable: false,
-        maximizable: false,
-        minimizable: true,
-        fullscreenable: false,
-        title: 'Transub 字幕编辑器',
-        icon: getEditorWindowIconOption(),
-        autoHideMenuBar: true,
-        backgroundColor: '#f3f4f6',
-        center: true,
-        webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-        },
-        show: false,
-    });
-    win.setMenuBarVisibility(false);
-    win.removeMenu();
-    const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-<style>
-html,body{margin:0;height:100%;font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:#f3f4f6;color:#1f2937}
-.wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:1.25rem;box-sizing:border-box}
-.card{width:100%;text-align:center}
-.brand{font-size:0.75rem;font-weight:600;letter-spacing:0.04em;color:#6d28d9;margin:0 0 0.7rem}
-h1{font-size:1rem;font-weight:600;margin:0 0 0.35rem}
-p{margin:0;font-size:0.8rem;color:#6b7280;line-height:1.45}
-.spin{width:1.15rem;height:1.15rem;margin:0.85rem auto 0;border:2px solid #ddd6fe;border-top-color:#6d28d9;border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-</style></head><body><div class="wrap"><div class="card">
-<p class="brand">Transub</p>
-<h1>正在启动字幕编辑器</h1>
-<p>请在弹出的对话框中选择要编辑的字幕文件…</p>
-<div class="spin" aria-hidden="true"></div>
-</div></div></body></html>`;
-    applyEditorWindowIcon(win);
-    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    win.once('ready-to-show', () => {
-        if (!win.isDestroyed()) {
-            applyEditorWindowIcon(win);
-            win.show();
-        }
-    });
-    // 即使页面未及时 ready，也不要长时间完全无窗口
-    setTimeout(() => {
-        if (!win.isDestroyed() && !win.isVisible()) win.show();
-    }, 300);
-    return win;
+function unbindEditorWindow(win) {
+    for (const [key, existing] of editorWindows.entries()) {
+        if (existing === win) editorWindows.delete(key);
+    }
+}
+
+function bindEditorWindow(win, subPath) {
+    if (!win || win.isDestroyed()) return;
+    unbindEditorWindow(win);
+    editorWindows.set(editorWindowKey(subPath), win);
+}
+
+const WELCOME_WINDOW = {
+    width: 480,
+    height: 640,
+    minWidth: 420,
+    minHeight: 520,
+};
+
+const EDITOR_WINDOW = {
+    width: 1100,
+    height: 720,
+    minWidth: 800,
+    minHeight: 520,
+};
+
+function maximizeEditorWindow(win) {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    if (!win.isMaximized()) win.maximize();
 }
 
 function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
-    const resolvedSub = path.resolve(String(subPath || ''));
+    const rawSub = String(subPath || '').trim();
+    const resolvedSub = rawSub ? path.resolve(rawSub) : '';
     const key = editorWindowKey(resolvedSub);
     const existing = editorWindows.get(key);
     if (existing && !existing.isDestroyed()) {
         existing.focus();
-        if (!existing.isMaximized()) existing.maximize();
-        sendEditorInit(existing, {
-            subPath: resolvedSub,
-            videoPath: videoPath || guessVideoPathForSubtitle(resolvedSub) || '',
-        });
+        if (resolvedSub) {
+            maximizeEditorWindow(existing);
+            sendEditorInit(existing, {
+                subPath: resolvedSub,
+                videoPath: videoPath || guessVideoPathForSubtitle(resolvedSub) || '',
+            });
+        }
         return existing;
     }
 
-    const linkedVideo = String(videoPath || '').trim()
-        || guessVideoPathForSubtitle(resolvedSub)
-        || '';
+    // 无路径启动时仅复用空启动窗（保持小窗，不最大化）
+    if (!resolvedSub) {
+        const welcome = editorWindows.get(EMPTY_EDITOR_KEY);
+        if (welcome && !welcome.isDestroyed()) {
+            if (welcome.isMinimized()) welcome.restore();
+            welcome.show();
+            welcome.focus();
+            return welcome;
+        }
+    }
+
+    const linkedVideo = resolvedSub
+        ? (String(videoPath || '').trim() || guessVideoPathForSubtitle(resolvedSub) || '')
+        : '';
+    const size = resolvedSub ? EDITOR_WINDOW : WELCOME_WINDOW;
     const win = new BrowserWindow({
-        width: 1100,
-        height: 720,
-        minWidth: 800,
-        minHeight: 520,
-        title: `Transub字幕编辑器 — ${path.basename(resolvedSub)}`,
+        width: size.width,
+        height: size.height,
+        minWidth: size.minWidth,
+        minHeight: size.minHeight,
+        center: !resolvedSub,
+        title: resolvedSub
+            ? `Transub Editor — ${path.basename(resolvedSub)}`
+            : 'Transub Editor',
         icon: getEditorWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f3f4f6',
@@ -114,14 +114,17 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     win.removeMenu();
     applyEditorWindowIcon(win);
 
-    const initPayload = { subPath: resolvedSub, videoPath: linkedVideo };
+    const initPayload = resolvedSub
+        ? { subPath: resolvedSub, videoPath: linkedVideo }
+        : { welcome: true };
     let shown = false;
     const reveal = () => {
         if (shown || win.isDestroyed()) return;
         shown = true;
         applyEditorWindowIcon(win);
         win.show();
-        if (!win.isMaximized()) win.maximize();
+        // 有字幕文件时最大化；启动欢迎页保持小窗居中
+        if (resolvedSub) maximizeEditorWindow(win);
         applyEditorWindowIcon(win);
     };
     win.once('ready-to-show', reveal);
@@ -132,9 +135,10 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         sendEditorInit(win, initPayload);
     });
 
-    win.loadFile(resolveHtmlPath(app, 'subtitle-editor.html'), {
-        query: { sub: path.basename(resolvedSub) },
-    });
+    const loadOpts = resolvedSub
+        ? { query: { sub: path.basename(resolvedSub) } }
+        : { query: { welcome: '1' } };
+    win.loadFile(resolveHtmlPath(app, 'subtitle-editor.html'), loadOpts);
 
     let closingConfirmed = false;
 
@@ -197,10 +201,10 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     });
 
     win.on('closed', () => {
-        editorWindows.delete(key);
+        unbindEditorWindow(win);
     });
 
-    editorWindows.set(key, win);
+    bindEditorWindow(win, resolvedSub);
     return win;
 }
 
@@ -252,10 +256,35 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
             }
 
             const subPath = asString(payload.subPath || payload.path, 4096).trim();
-            if (!subPath) return { ok: false, error: '缺少字幕路径' };
+            if (!subPath) {
+                if (payload.welcome) {
+                    createSubtitleEditorWindow(app, {});
+                    return { ok: true, welcome: true };
+                }
+                return { ok: false, error: '缺少字幕路径' };
+            }
             const videoPath = asString(payload.videoPath, 4096).trim();
             createSubtitleEditorWindow(app, { subPath, videoPath });
             return { ok: true, path: path.resolve(subPath) };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-editor-register-path', async (event, payload = {}) => {
+        try {
+            const win = BrowserWindow.fromWebContents(event.sender);
+            if (!win || win.isDestroyed()) return { ok: false, error: '窗口不存在' };
+            const subPath = asString(payload.subPath || payload.path, 4096).trim();
+            if (!subPath) return { ok: false, error: '缺少字幕路径' };
+            const resolved = path.resolve(subPath);
+            bindEditorWindow(win, resolved);
+            try {
+                win.setMinimumSize(EDITOR_WINDOW.minWidth, EDITOR_WINDOW.minHeight);
+                win.setTitle(`Transub Editor — ${path.basename(resolved)}`);
+            } catch (_) { /* ignore */ }
+            maximizeEditorWindow(win);
+            return { ok: true, path: resolved };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -271,6 +300,46 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 parent: parentWin || undefined,
                 checkUpdate: !!payload?.checkUpdate,
             });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-open-update-window', async (event, payload = {}) => {
+        try {
+            warmBridges?.();
+            const parentWin = BrowserWindow.fromWebContents(event.sender);
+            const { openUpdateWindow } = require('./update-window');
+            return openUpdateWindow(app, {
+                parent: parentWin || undefined,
+                autoCheck: payload?.autoCheck !== false,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-open-about-window', async (event) => {
+        try {
+            warmBridges?.();
+            const parentWin = BrowserWindow.fromWebContents(event.sender);
+            const { openAboutWindow } = require('./about-window');
+            return openAboutWindow(app, {
+                parent: parentWin || undefined,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-show-main-window', async () => {
+        try {
+            warmBridges?.();
+            if (!windowManager?.showMainWindow) {
+                return { ok: false, error: '无法打开字幕生成器' };
+            }
+            windowManager.showMainWindow();
+            return { ok: true };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -330,22 +399,7 @@ function closeAllSubtitleEditorWindows() {
 }
 
 async function openSubtitleEditorOrPick(app) {
-    const splash = createEditorPickSplashWindow(app);
-    try {
-        const picked = await pickSubtitleFile(splash);
-        if (picked.canceled || !picked.path) {
-            app.quit();
-            return null;
-        }
-        return createSubtitleEditorWindow(app, {
-            subPath: picked.path,
-            videoPath: picked.videoPath,
-        });
-    } finally {
-        if (splash && !splash.isDestroyed()) {
-            splash.destroy();
-        }
-    }
+    return createSubtitleEditorWindow(app, {});
 }
 
 module.exports = {

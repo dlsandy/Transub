@@ -259,18 +259,6 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
 
         const shouldMaximize = !!saved?.isMaximized;
 
-        mainWindow.loadFile(resolveHtmlPath(app, 'index.html'));
-        attachTrayBehavior(mainWindow);
-        attachWindowStatePersistence(mainWindow);
-
-        mainWindow.on('closed', () => {
-            if (saveStateTimer) {
-                clearTimeout(saveStateTimer);
-                saveStateTimer = null;
-            }
-            mainWindow = null;
-        });
-
         let revealed = false;
         const reveal = () => {
             if (revealed || !mainWindow || mainWindow.isDestroyed()) return;
@@ -287,9 +275,38 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             applyWindowIcon(mainWindow);
         };
 
-        mainWindow.once('ready-to-show', reveal);
-        // Fallback if ready-to-show is missed on some Windows GPU paths
-        setTimeout(reveal, 800);
+        const indexHtml = resolveHtmlPath(app, 'index.html');
+        const splashHtml = resolveHtmlPath(app, 'splash.html');
+        const useSplash = !options.startMinimizedToTray && fs.existsSync(splashHtml);
+
+        if (useSplash) {
+            // Tiny splash paints first so the user sees "loading" instead of a blank gap.
+            let mainQueued = false;
+            const showThenLoadMain = () => {
+                reveal();
+                if (mainQueued || !mainWindow || mainWindow.isDestroyed()) return;
+                mainQueued = true;
+                mainWindow.loadFile(indexHtml);
+            };
+            mainWindow.loadFile(splashHtml);
+            mainWindow.once('ready-to-show', showThenLoadMain);
+            setTimeout(showThenLoadMain, 280);
+        } else {
+            mainWindow.loadFile(indexHtml);
+            mainWindow.once('ready-to-show', reveal);
+            setTimeout(reveal, 450);
+        }
+
+        attachTrayBehavior(mainWindow);
+        attachWindowStatePersistence(mainWindow);
+
+        mainWindow.on('closed', () => {
+            if (saveStateTimer) {
+                clearTimeout(saveStateTimer);
+                saveStateTimer = null;
+            }
+            mainWindow = null;
+        });
 
         // Tray can wait until the window is about to appear
         setTimeout(() => {

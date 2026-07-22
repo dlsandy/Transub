@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:;">
+    <title>关于 Transub</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
+    <link rel="stylesheet" href="vendor/app.css">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        body {
+            background: #f9fafb;
+            color: #1f2937;
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .about-main {
+            flex: 1;
+            min-height: 0;
+            padding: 1.5rem 1.5rem 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 0.75rem;
+            overflow-y: auto;
+        }
+        .about-main img {
+            width: 4rem;
+            height: 4rem;
+            border-radius: 0.75rem;
+        }
+        .about-main h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #111827;
+        }
+        .about-version {
+            margin: 0;
+            font-size: 0.8125rem;
+            color: #9ca3af;
+            font-variant-numeric: tabular-nums;
+        }
+        .about-desc {
+            margin: 0.25rem 0 0;
+            font-size: 0.8125rem;
+            line-height: 1.55;
+            color: #4b5563;
+            max-width: 22rem;
+        }
+        .about-meta {
+            margin: 0;
+            font-size: 0.75rem;
+            color: #9ca3af;
+            line-height: 1.5;
+        }
+        .about-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 0.5rem;
+        }
+        .about-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.45rem 0.85rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background: #fff;
+            color: #374151;
+            font-size: 0.8125rem;
+            cursor: pointer;
+        }
+        .about-btn:hover {
+            background: #f3f4f6;
+            border-color: #d1d5db;
+        }
+        .about-btn i {
+            color: #9ca3af;
+        }
+        .about-footer {
+            flex-shrink: 0;
+            padding: 0.75rem 1.25rem 1rem;
+            border-top: 1px solid #e5e7eb;
+            background: #fff;
+            display: flex;
+            justify-content: center;
+        }
+        .about-close {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 5.5rem;
+            padding: 0.45rem 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background: #fff;
+            color: #374151;
+            font-size: 0.8125rem;
+            cursor: pointer;
+        }
+        .about-close:hover {
+            background: #f3f4f6;
+        }
+    </style>
+</head>
+<body>
+    <main class="about-main">
+        <img src="icon-64.png" alt="" width="64" height="64" decoding="async">
+        <h1>Transub</h1>
+        <p id="aboutVersion" class="about-version">…</p>
+        <p class="about-desc">字幕批量转写 / 翻译，结构化字幕编辑与视频同步预览。</p>
+        <p class="about-meta">开源软件 · MIT License<br>引擎：Faster-Whisper TransWithAI</p>
+        <div class="about-actions">
+            <button type="button" id="aboutGithubBtn" class="about-btn">
+                <i class="fa fa-github" aria-hidden="true"></i>
+                <span>Transub</span>
+            </button>
+            <button type="button" id="aboutEngineBtn" class="about-btn">
+                <i class="fa fa-external-link" aria-hidden="true"></i>
+                <span>TransWithAI</span>
+            </button>
+        </div>
+    </main>
+    <footer class="about-footer">
+        <button type="button" id="aboutCloseBtn" class="about-close">关闭</button>
+    </footer>
+    <script src="js/about-window.js"></script>
+</body>
+</html>

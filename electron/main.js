@@ -1,10 +1,15 @@
 const { app, ipcMain } = require('electron');
+const path = require('path');
 const { getAppRoot, migrateLegacyUserDataFiles } = require('./app-paths');
 const { createDeferredBridgeSetup } = require('./bridge-registry');
 const { createWindowManager } = require('./window-manager');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
 const { isEditableSubtitleFile } = require('./subtitle-utils');
 const { loadSettings } = require('./settings-data');
+const {
+    mergeTransWithAiOptions,
+    stripPostTaskFields,
+} = require('./transwithai-options');
 registerMediaScheme();
 
 /** @type {string[]} */
@@ -21,7 +26,7 @@ function setPendingFilesForWindow(files) {
     }
 }
 
-// Avoid "Unable to move the cache / Gpu Cache Creation failed" on Windows when
+// Avoid "Unable to move the cache / Reverse Cache Creation failed" on Windows when
 // Chromium rotates shader cache directories under a locked userData folder.
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 
@@ -101,13 +106,15 @@ function warmEditorBridges() {
     } catch (err) {
         console.warn('[main] editorWindow bridge init failed:', err.message || err);
     }
-    // 预热字幕读/写与媒体探测桥，避免首开文档时冷加载造成长时间无反馈
+}
+
+/** Heavy bridges: schedule after first paint so editor window can show sooner. */
+function warmEditorHeavyBridges() {
     try {
         deferredBridges.ensure('extensions');
     } catch (err) {
         console.warn('[main] extensions bridge init failed:', err.message || err);
     }
-    // 设置窗口保存/读取参数需要 TransWithAI options bridge
     try {
         deferredBridges.ensure('transwithai');
     } catch (err) {
@@ -115,9 +122,18 @@ function warmEditorBridges() {
     }
 }
 
+function scheduleWarmEditorHeavyBridges() {
+    setTimeout(() => {
+        try {
+            warmEditorHeavyBridges();
+        } catch (_) { /* ignore */ }
+    }, 0);
+}
+
 function openCliSubtitleEditor(editRequest) {
     if (!editRequest?.subPath) return;
     warmEditorBridges();
+    scheduleWarmEditorHeavyBridges();
     const { createSubtitleEditorWindow } = require('./subtitle-editor-window');
     createSubtitleEditorWindow(app, editRequest);
 }
@@ -128,19 +144,55 @@ const windowManager = createWindowManager({
     getUserDataPath,
 });
 
+// Cold-start IPC: answer without loading heavy bridges (extensions / full transwithai).
+ipcMain.handle('transub-get-app-version', async () => {
+    try {
+        let version = '';
+        try {
+            version = String(app.getVersion() || '').trim();
+        } catch { /* fall through */ }
+        if (!version) {
+            version = String(require(path.join(__dirname, '..', 'package.json')).version || '');
+        }
+        return { ok: true, version };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), version: '' };
+    }
+});
+
+ipcMain.handle('transwithai-get-options', async (_event, payload = {}) => {
+    try {
+        const options = mergeTransWithAiOptions({
+            ...stripPostTaskFields(loadSettings(() => getAppRoot(app)).options || {}),
+            ...stripPostTaskFields(payload || {}),
+        });
+        return { ok: true, options };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    }
+});
+
 deferredBridges.installLazyRoutes({
     'electron-select-folder': 'transwithai',
     'transwithai-validate': 'transwithai',
+    'transwithai-check-engine-update': 'transwithai',
     'transwithai-generate-subtitles': 'transwithai',
     'transwithai-cancel': 'transwithai',
     'transub-transcribe-range': 'transwithai',
-    'transwithai-get-options': 'transwithai',
     'transub-read-subtitle-meta': 'extensions',
     'transub-write-subtitle-meta': 'extensions',
     'transub-get-glossary': 'extensions',
     'transub-save-glossary': 'extensions',
     'transub-export-glossary': 'extensions',
     'transub-import-glossary': 'extensions',
+    'transub-get-text-presets': 'extensions',
+    'transub-save-text-presets': 'extensions',
+    'transub-export-text-presets': 'extensions',
+    'transub-import-text-presets': 'extensions',
+    'transub-get-editor-workflows': 'extensions',
+    'transub-save-editor-workflows': 'extensions',
+    'transub-export-editor-workflows': 'extensions',
+    'transub-import-editor-workflows': 'extensions',
     'transwithai-save-options': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
     'transwithai-get-pending-files': 'transwithai',
@@ -159,10 +211,17 @@ deferredBridges.installLazyRoutes({
     'transwithai-save-preset': 'extensions',
     'transwithai-delete-preset': 'extensions',
     'transwithai-get-task-history': 'extensions',
+    'transwithai-clear-task-history': 'extensions',
+    'transub-get-editor-history': 'extensions',
+    'transub-append-editor-history': 'extensions',
+    'transub-clear-editor-history': 'extensions',
+    'transub-file-exists': 'extensions',
     'transwithai-detect-gpu': 'extensions',
     'transwithai-subtitle-preview': 'extensions',
     'transub-read-subtitle': 'extensions',
     'transub-write-subtitle': 'extensions',
+    'transub-export-subtitle': 'extensions',
+    'transub-delete-subtitle-files': 'extensions',
     'transub-scan-subtitle-qc': 'extensions',
     'transub-apply-subtitle-postprocess': 'extensions',
     'transwithai-list-models': 'extensions',
@@ -179,7 +238,11 @@ deferredBridges.installLazyRoutes({
     'transub-guess-video-for-subtitle': 'extensions',
     'transub-resolve-media-url': 'extensions',
     'transub-open-subtitle-editor': 'editorWindow',
+    'transub-editor-register-path': 'editorWindow',
     'transub-open-settings': 'editorWindow',
+    'transub-open-update-window': 'editorWindow',
+    'transub-open-about-window': 'editorWindow',
+    'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
     'transub-editor-refocus': 'editorWindow',
     'transub-editor-confirm': 'editorWindow',
@@ -203,7 +266,10 @@ deferredBridges.defer('extensions', (api) => {
 deferredBridges.defer('editorWindow', (api) => {
     const { registerSubtitleEditorWindowRoutes } = require('./subtitle-editor-window');
     registerSubtitleEditorWindowRoutes(api.register, app, {
-        warmBridges: warmEditorBridges,
+        warmBridges: () => {
+            warmEditorBridges();
+            scheduleWarmEditorHeavyBridges();
+        },
         windowManager,
     });
 });
@@ -248,13 +314,6 @@ app.on('second-instance', (_event, commandLine) => {
 
 app.whenReady().then(() => {
     registerMediaProtocolHandler();
-    try {
-        migrateLegacyUserDataFiles();
-        // Touch settings early so install-dir → userData migration runs before bridges.
-        loadSettings(() => getAppRoot(app));
-    } catch (err) {
-        console.warn('[main] user data migration failed:', err.message || err);
-    }
     const cliEdit = parseCliEditSubtitle();
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
@@ -267,13 +326,24 @@ app.whenReady().then(() => {
             const { openSubtitleEditorOrPick } = require('./subtitle-editor-window');
             openSubtitleEditorOrPick(app);
         }
+        scheduleWarmEditorHeavyBridges();
     } else if (cliEdit) {
         openCliSubtitleEditor(cliEdit);
         windowManager.createMainWindow({ startMinimizedToTray: true });
     } else {
-        // Main window path: bridges load on first IPC (getOptions / validates)
+        // Main window path: bridges load on first IPC (validate / generate / …)
         windowManager.createMainWindow();
     }
+
+    // Migrate after window creation is scheduled so first paint is not blocked.
+    setImmediate(() => {
+        try {
+            migrateLegacyUserDataFiles();
+            loadSettings(() => getAppRoot(app));
+        } catch (err) {
+            console.warn('[main] user data migration failed:', err.message || err);
+        }
+    });
 });
 
 app.on('window-all-closed', () => {

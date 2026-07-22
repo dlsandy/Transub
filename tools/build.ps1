@@ -107,6 +107,10 @@ Write-Step 'Build renderer'
 npm run build:renderer
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+Write-Step 'Verify packaging inputs'
+npm run verify:packaging
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Write-Step 'Prepare packaging'
 Stop-PackagingLocks
 $distDir = Join-Path $root 'dist'
@@ -132,6 +136,13 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "electron-builder failed with exit code $LASTEXITCODE" -ForegroundColor Red
     Write-Host "If EPERM/EBUSY persists: close Transub, pause antivirus scan on LocalAppData\Transub, retry." -ForegroundColor Yellow
     exit $LASTEXITCODE
+}
+
+$asarPath = Join-Path $packDir 'win-unpacked\resources\app.asar'
+if (Test-Path -LiteralPath $asarPath) {
+    Write-Step 'Verify packed asar'
+    node tools/verify-packaging.js "--asar-root=$asarPath"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 Write-Step 'Copy artifacts to dist'
