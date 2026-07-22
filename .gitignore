@@ -12,11 +12,17 @@ tools/tmp-release/
 _internal/bin/*.exe
 _internal/bin/*.dll
 
-# User-specific runtime data (paths, task history)
+# User-specific runtime data (paths, task history, presets)
 transub-settings.json
 transub-task-history.json
+transub-glossary.json
+transub-presets.json
+transub-text-presets.json
+transub-editor-history.json
+transub-editor-workflows.json
 transwithai-settings.json
 window-state.json
+*.lnk
 
 # Logs & OS
 *.log

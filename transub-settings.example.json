@@ -7,6 +7,8 @@
     "overwrite": false,
     "subFormats": "srt",
     "modelPath": "",
+    "transcribeModelPath": "",
+    "translateModelPath": "",
     "logLevel": "DEBUG",
     "mergeSegments": true,
     "mergeMaxGapMs": 500,
@@ -26,6 +28,8 @@
     "hallucinationSilenceThreshold": null,
     "glossaryPromptEnabled": true,
     "chineseSubtitleVariant": "simplified",
+    "mergeBilingualSubtitles": false,
+    "deleteSourcesAfterMergeBilingual": false,
     "postBatchCpsSplit": true,
     "postBatchRemoveNoise": true,
     "postBatchCompressRepetition": true,
@@ -40,7 +44,8 @@
     "outputDir": "",
     "outputMode": "same",
     "audioSuffixes": "mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv",
-    "ffmpegPath": ""
+    "ffmpegPath": "",
+    "settingsUiMode": "standard"
   },
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }

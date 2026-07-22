@@ -4,17 +4,36 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { dialog, BrowserWindow, shell } = require('electron');
 const { resolveSafePath, asString, assertSafeExternalUrl } = require('./ipc-validate');
-const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch } = require('./subtitle-utils');
+const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch, resolveDualSubtitlePaths } = require('./subtitle-utils');
 const { loadSettings, saveSettings } = require('./settings-data');
 const { parseSubtitle } = require('./subtitle-format');
+const dualCore = require('../src/js/dual-subtitle-core');
+const modelCore = require('../src/js/transwithai-model-core');
+const {
+    DEFAULT_INSTALL_PATH,
+    AUDIO_SUFFIXES,
+    DEFAULT_SESSION_POST_TASK,
+    stripPostTaskFields,
+    normalizePostTaskOptions,
+    mergeTransWithAiOptions,
+} = require('./transwithai-options');
 
-const DEFAULT_INSTALL_PATH = 'F:\\UltraTools\\TransWithAI';
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
-const AUDIO_SUFFIXES = 'mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv';
+const TRANWITHAI_LATEST_API = 'https://api.github.com/repos/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases/latest';
 const VALID_DEVICES = new Set(['cuda', 'cpu', 'cuda_low_vram', 'cuda_batch', 'amd', 'modal']);
 const VALID_LOG_LEVELS = new Set(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
 const VALID_LANGUAGES = new Set(['auto', 'ja', 'zh', 'en']);
+const VALID_TASKS = new Set(['translate', 'transcribe', 'dual']);
 const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp'];
+
+function normalizeTask(value) {
+    const task = String(value || '').trim().toLowerCase();
+    return VALID_TASKS.has(task) ? task : 'translate';
+}
+
+function inferTaskArg(task) {
+    return task === 'transcribe' ? 'transcribe' : 'translate';
+}
 
 /** @type {string[]} */
 let pendingFilesForWindow = [];
@@ -166,38 +185,95 @@ async function validateInstallWithVersion(installPath, options = {}) {
     return { ...base, version: version || null, quick: !!options.quick };
 }
 
-const POST_TASK_OPTION_KEYS = new Set([
-    'closeWindowOnComplete',
-    'postTaskAction',
-    'quitAppOnComplete',
-    'shutdownOnComplete',
-    'shutdownDelaySec',
-    'openOutputFolderOnComplete',
-    'sleepOnComplete',
-    'playSoundOnComplete',
-    'lastOutputDir',
-]);
+function normalizeEngineVersion(raw) {
+    return String(raw || '').trim().replace(/^v/i, '');
+}
 
-const DEFAULT_SESSION_POST_TASK = {
-    closeWindowOnComplete: false,
-    postTaskAction: 'none',
-    quitAppOnComplete: false,
-    shutdownOnComplete: false,
-    shutdownDelaySec: 60,
-    openOutputFolderOnComplete: false,
-    sleepOnComplete: false,
-    playSoundOnComplete: false,
-    lastOutputDir: '',
-};
+async function fetchTransWithAiLatestRelease() {
+    const res = await fetch(TRANWITHAI_LATEST_API, {
+        headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'Transub-Engine-Updater',
+            'X-GitHub-Api-Version': '2022-11-28',
+        },
+    });
+    if (!res.ok) {
+        throw new Error(`GitHub API ${res.status}`);
+    }
+    return res.json();
+}
+
+/**
+ * Compare installed TransWithAI version with GitHub latest release.
+ * @param {string} installPath
+ * @param {{ allowInferProbe?: boolean }} [options]
+ */
+async function checkTransWithAiEngineUpdate(installPath, options = {}) {
+    const { compareVersions } = require('./app-updater');
+    const check = validateInstall(installPath);
+    let currentVersion = null;
+    if (check.ok) {
+        currentVersion = normalizeEngineVersion(await detectTransWithAiVersion(check.path, {
+            allowInferProbe: options.allowInferProbe !== false,
+        }));
+    }
+
+    let release;
+    try {
+        release = await fetchTransWithAiLatestRelease();
+    } catch (err) {
+        return {
+            ok: false,
+            installed: !!check.ok,
+            currentVersion: currentVersion || null,
+            error: err?.message || '检查引擎更新失败',
+            releasesUrl: TRANWITHAI_RELEASES_URL,
+        };
+    }
+
+    const latestVersion = normalizeEngineVersion(release?.tag_name || release?.name || '');
+    const releaseUrl = String(release?.html_url || '').trim() || TRANWITHAI_RELEASES_URL;
+    if (!latestVersion) {
+        return {
+            ok: true,
+            installed: !!check.ok,
+            currentVersion: currentVersion || null,
+            latestVersion: null,
+            updateAvailable: false,
+            releasesUrl: TRANWITHAI_RELEASES_URL,
+            releaseUrl,
+            message: '无法解析 GitHub 最新版本号',
+        };
+    }
+
+    const updateAvailable = !!(currentVersion && compareVersions(latestVersion, currentVersion) > 0);
+    let message;
+    if (!check.ok) {
+        message = `本地未检测到引擎；GitHub 最新为 v${latestVersion}`;
+    } else if (!currentVersion) {
+        message = `已安装，但未能识别本地版本；GitHub 最新为 v${latestVersion}`;
+    } else if (updateAvailable) {
+        message = `发现新版本 v${latestVersion}（当前 v${currentVersion}）`;
+    } else if (compareVersions(latestVersion, currentVersion) === 0) {
+        message = `已是最新版本 v${currentVersion}`;
+    } else {
+        message = `当前 v${currentVersion}，GitHub 最新 v${latestVersion}`;
+    }
+
+    return {
+        ok: true,
+        installed: !!check.ok,
+        currentVersion: currentVersion || null,
+        latestVersion,
+        updateAvailable,
+        releasesUrl: TRANWITHAI_RELEASES_URL,
+        releaseUrl,
+        message,
+    };
+}
 
 /** @type {typeof DEFAULT_SESSION_POST_TASK} */
 let sessionPostTaskOptions = { ...DEFAULT_SESSION_POST_TASK };
-
-function stripPostTaskFields(options = {}) {
-    const out = { ...options };
-    POST_TASK_OPTION_KEYS.forEach((key) => { delete out[key]; });
-    return out;
-}
 
 function getSessionPostTaskOptions() {
     return { ...sessionPostTaskOptions };
@@ -218,86 +294,6 @@ function resetSessionPostTaskOptions() {
     sessionPostTaskOptions = { ...DEFAULT_SESSION_POST_TASK };
 }
 
-function inferPostTaskAction(options = {}) {
-    const action = String(options.postTaskAction || '').trim();
-    if (['shutdown', 'quit', 'none', 'open_folder', 'sleep'].includes(action)) return action;
-    if (options.sleepOnComplete) return 'sleep';
-    if (options.openOutputFolderOnComplete) return 'open_folder';
-    if (options.shutdownOnComplete) return 'shutdown';
-    if (options.quitAppOnComplete) return 'quit';
-    return 'none';
-}
-
-function normalizePostTaskOptions(options = {}) {
-    const postTaskAction = inferPostTaskAction(options);
-    return {
-        postTaskAction,
-        closeWindowOnComplete: !!options.closeWindowOnComplete,
-        quitAppOnComplete: postTaskAction === 'quit' || postTaskAction === 'shutdown',
-        shutdownOnComplete: postTaskAction === 'shutdown',
-        shutdownDelaySec: Math.max(0, Math.min(600, Number(options.shutdownDelaySec) || 60)),
-        openOutputFolderOnComplete: postTaskAction === 'open_folder' || !!options.openOutputFolderOnComplete,
-        sleepOnComplete: postTaskAction === 'sleep' || !!options.sleepOnComplete,
-        playSoundOnComplete: !!options.playSoundOnComplete,
-        lastOutputDir: String(options.lastOutputDir || '').trim(),
-    };
-}
-
-function mergeTransWithAiOptions(input = {}) {
-    const merged = {
-        installPath: DEFAULT_INSTALL_PATH,
-        device: 'cuda',
-        task: 'translate',
-        overwrite: false,
-        closeWindowOnComplete: false,
-        postTaskAction: 'none',
-        quitAppOnComplete: false,
-        shutdownOnComplete: false,
-        shutdownDelaySec: 60,
-        subFormats: 'srt',
-        modelPath: '',
-        logLevel: 'DEBUG',
-        mergeSegments: true,
-        mergeMaxGapMs: 500,
-        mergeMaxDurationMs: 15000,
-        maxBatchSize: 8,
-        beamSize: 5,
-        language: 'auto',
-        vadThreshold: 0.5,
-        vadMinSpeechDurationMs: 300,
-        vadMinSilenceDurationMs: 100,
-        vadSpeechPadMs: 200,
-        maxInitialTimestamp: 30,
-        repetitionPenalty: 1.1,
-        noSpeechThreshold: 0.6,
-        logProbThreshold: -1,
-        compressionRatioThreshold: 2.4,
-        hallucinationSilenceThreshold: null,
-        glossaryPromptEnabled: true,
-        chineseSubtitleVariant: 'simplified',
-        postBatchCpsSplit: true,
-        postBatchRemoveNoise: true,
-        postBatchCompressRepetition: true,
-        smartSplitWithVad: true,
-        targetChunkDurationS: 30,
-        retranscribeWarmLight: false,
-        subtitleBakMode: 'off',
-        trayProgressEnabled: true,
-        minimizeToTrayOnStart: false,
-        trayNotifyEnabled: false,
-        postBatchQc: true,
-        outputDir: '',
-        outputMode: 'same',
-        audioSuffixes: AUDIO_SUFFIXES,
-        ffmpegPath: '',
-        ...input,
-    };
-    return {
-        ...merged,
-        ...normalizePostTaskOptions(merged),
-    };
-}
-
 function normalizeSubFormats(value) {
     const parts = String(value || '')
         .split(/[,;\s]+/)
@@ -313,11 +309,13 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
     return {
         installPath: normalizeInstallPath(merged.installPath),
         device: VALID_DEVICES.has(merged.device) ? merged.device : 'cuda',
-        task: merged.task === 'transcribe' ? 'transcribe' : 'translate',
+        task: normalizeTask(merged.task),
         overwrite: !!merged.overwrite,
         closeWindowOnComplete: !!merged.closeWindowOnComplete,
         subFormats: normalizeSubFormats(merged.subFormats),
         modelPath: String(merged.modelPath || '').trim(),
+        transcribeModelPath: String(merged.transcribeModelPath || '').trim(),
+        translateModelPath: String(merged.translateModelPath || '').trim(),
         logLevel: VALID_LOG_LEVELS.has(String(merged.logLevel || '').toUpperCase())
             ? String(merged.logLevel).toUpperCase()
             : 'DEBUG',
@@ -348,6 +346,13 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         chineseSubtitleVariant: String(merged.chineseSubtitleVariant || '').trim() === 'traditional'
             ? 'traditional'
             : 'simplified',
+        dualTargetSuffix: dualCore.normalizeDualTargetSuffix(merged.dualTargetSuffix),
+        dualPrimaryTrack: dualCore.normalizeDualPrimaryTrack(merged.dualPrimaryTrack),
+        dualDisplayMode: dualCore.normalizeDualDisplayMode(merged.dualDisplayMode),
+        mergeBilingualSubtitles: !!merged.mergeBilingualSubtitles && normalizeTask(merged.task) === 'dual',
+        deleteSourcesAfterMergeBilingual: !!merged.deleteSourcesAfterMergeBilingual
+            && !!merged.mergeBilingualSubtitles
+            && normalizeTask(merged.task) === 'dual',
         postBatchCpsSplit: merged.postBatchCpsSplit !== false,
         postBatchRemoveNoise: merged.postBatchRemoveNoise !== false,
         postBatchCompressRepetition: merged.postBatchCompressRepetition !== false,
@@ -365,6 +370,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         outputMode: merged.outputMode === 'custom' ? 'custom' : 'same',
         audioSuffixes: normalizeAudioSuffixes(merged.audioSuffixes),
         ffmpegPath: String(merged.ffmpegPath || '').trim(),
+        settingsUiMode: String(merged.settingsUiMode || '').trim() === 'expert' ? 'expert' : 'standard',
         ...normalizePostTaskOptions(merged),
     };
 }
@@ -397,7 +403,8 @@ function resolveGenerationConfigPath(installPath, options = {}, getUserDataPath)
     }
 
     const merged = { ...base };
-    merged.task = normalized.task;
+    // dual 为 Transub 编排任务，写入引擎配置时映射为 translate（实际按 pass 覆盖）
+    merged.task = inferTaskArg(normalized.task);
     if (normalized.language && normalized.language !== 'auto') {
         merged.language = normalized.language;
     } else {
@@ -611,17 +618,149 @@ async function resolveSubtitlePathAfterWrite(resolvedVideo, outputDir, subFormat
     const stem = path.basename(resolvedVideo, path.extname(resolvedVideo));
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
-        const found = resolveLocalSubtitlePath(resolvedVideo, dir);
-        if (found) return found;
+        // Prefer exact `{stem}.{ext}` (engine default) before any suffixed sidecars
         for (const fmt of formats) {
             const direct = path.join(dir, `${stem}.${fmt}`);
             if (fs.existsSync(direct)) return direct;
+        }
+        const found = resolveLocalSubtitlePath(resolvedVideo, dir);
+        if (found) {
+            const foundBase = path.basename(found, path.extname(found));
+            // Ignore `{stem}.{lang}.{ext}` while waiting for plain stem output
+            if (foundBase === stem) return found;
         }
         if (attempt < 7) {
             await new Promise((resolve) => { setTimeout(resolve, 200); });
         }
     }
+    for (const fmt of formats) {
+        const direct = path.join(dir, `${stem}.${fmt}`);
+        if (fs.existsSync(direct)) return direct;
+    }
     return resolveLocalSubtitlePath(resolvedVideo, dir);
+}
+
+/**
+ * Rename engine output `{stem}.{ext}` → `{stem}.{suffix}.{ext}` for each format.
+ */
+function renameStemSubtitlesWithSuffix(videoPath, outputDir, subFormats, suffix, { overwrite = true } = {}) {
+    const resolved = path.resolve(String(videoPath || ''));
+    const dir = path.resolve(String(outputDir || path.dirname(resolved)));
+    const stem = path.basename(resolved, path.extname(resolved));
+    const tag = String(suffix || '').trim().toLowerCase();
+    if (!tag) throw new Error('缺少双语后缀');
+    const formats = String(subFormats || 'srt')
+        .split(/[,;\s]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => ['srt', 'vtt', 'lrc'].includes(s));
+    const unique = formats.length ? [...new Set(formats)] : ['srt'];
+    const renamed = [];
+    for (const fmt of unique) {
+        const src = path.join(dir, `${stem}.${fmt}`);
+        const dest = path.join(dir, `${stem}.${tag}.${fmt}`);
+        if (!fs.existsSync(src)) continue;
+        if (path.resolve(src) === path.resolve(dest)) {
+            renamed.push(dest);
+            continue;
+        }
+        if (fs.existsSync(dest)) {
+            if (!overwrite) {
+                throw new Error(`目标字幕已存在：${path.basename(dest)}`);
+            }
+            fs.unlinkSync(dest);
+        }
+        fs.renameSync(src, dest);
+        renamed.push(dest);
+    }
+    if (!renamed.length) {
+        throw new Error(`未找到可重命名的字幕（期望 ${stem}.{srt|vtt|lrc}）`);
+    }
+    return renamed;
+}
+
+/**
+ * Merge dual-track subtitle files next to them.
+ * Default name: `{stem}.bilingual.{ext}`；nameAsVideoStem 时为 `{stem}.{ext}`。
+ * Timing follows dualPrimaryTrack (default target).
+ */
+function writeMergedBilingualSubtitleFiles(sourcePath, targetPath, {
+    primaryTrack = 'target',
+    lineOrder = 'target-first',
+    nameAsVideoStem = false,
+} = {}) {
+    const { serializeSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
+    const srcResolved = path.resolve(String(sourcePath || ''));
+    const tgtResolved = path.resolve(String(targetPath || ''));
+    if (!fs.existsSync(srcResolved) || !fs.existsSync(tgtResolved)) {
+        throw new Error('合并双语失败：原文或译文字幕不存在');
+    }
+    const readOne = (filePath) => {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        const format = detectFormat(filePath, raw);
+        if (!isEditableFormat(format)) {
+            throw new Error(`不支持合并格式：${path.basename(filePath)}`);
+        }
+        const parsed = parseSubtitle(raw, format);
+        return { format: parsed.format, cues: parsed.cues || [], header: parsed.header || [] };
+    };
+    const sourceDoc = readOne(srcResolved);
+    const targetDoc = readOne(tgtResolved);
+    const primary = dualCore.normalizeDualPrimaryTrack(primaryTrack);
+    const primaryDoc = primary === 'source' ? sourceDoc : targetDoc;
+    const pairDoc = primary === 'source' ? targetDoc : sourceDoc;
+    const mergedCues = dualCore.buildMergedDualCues(primaryDoc.cues, pairDoc.cues, {
+        primaryRole: primary,
+        order: dualCore.normalizeDualLineOrder(lineOrder),
+    });
+    if (!mergedCues.length) {
+        throw new Error('合并双语失败：结果为空');
+    }
+    const format = primaryDoc.format || targetDoc.format || 'srt';
+    const suggested = dualCore.suggestMergedExportName(tgtResolved, { asVideoName: !!nameAsVideoStem });
+    const dest = path.join(path.dirname(tgtResolved), suggested);
+    const content = serializeSubtitle({
+        format,
+        cues: mergedCues,
+        header: primaryDoc.header,
+    });
+    fs.writeFileSync(dest, content, 'utf8');
+    return dest;
+}
+
+function unlinkSubtitleFilesQuietly(filePaths) {
+    const list = Array.isArray(filePaths) ? filePaths : [filePaths];
+    for (const filePath of list) {
+        const resolved = path.resolve(String(filePath || ''));
+        if (!resolved || !fs.existsSync(resolved)) continue;
+        try {
+            fs.unlinkSync(resolved);
+        } catch (_) {
+            // best-effort cleanup
+        }
+    }
+}
+
+function resolveInferModelPath(installPath, modelPath) {
+    const raw = String(modelPath || '').trim();
+    if (!raw) return '';
+    if (path.isAbsolute(raw)) return path.resolve(raw);
+    return path.resolve(normalizeInstallPath(installPath), raw);
+}
+
+function buildDualPassOptions(baseOptions, task, checkPath, getUserDataPath) {
+    const passModel = modelCore.resolvePassModelPath(baseOptions, task);
+    const pass = {
+        ...baseOptions,
+        task,
+        modelPath: passModel,
+        overwrite: true,
+    };
+    return {
+        ...pass,
+        generationConfigPath: getUserDataPath
+            ? resolveGenerationConfigPath(checkPath, pass, getUserDataPath)
+            : path.join(checkPath, 'generation_config.json5'),
+    };
 }
 
 function buildInferArgs(installPath, videoPath, options = {}) {
@@ -631,18 +770,25 @@ function buildInferArgs(installPath, videoPath, options = {}) {
         || path.join(normalizeInstallPath(installPath), 'generation_config.json5');
     const resolvedVideo = path.resolve(String(videoPath || ''));
     const outputDir = resolveInferOutputDir(resolvedVideo, merged);
+    const inferTask = merged.task === 'dual'
+        ? inferTaskArg(options.task || merged.task)
+        : inferTaskArg(merged.task);
+    // Prefer explicit pass modelPath; otherwise resolve from dedicated fields
+    const passModelRaw = String(options.modelPath || '').trim()
+        || modelCore.resolvePassModelPath(merged, inferTask);
+    const modelAbs = resolveInferModelPath(installPath, passModelRaw);
 
     const args = [
         `--audio_suffixes=${merged.audioSuffixes || AUDIO_SUFFIXES}`,
         `--generation_config=${generationConfig}`,
         // 传入 infer 的 --log_level；DEBUG 可输出每句时间轴，便于 Transub 解析进度
         `--log_level=${merged.logLevel}`,
-        `--task=${merged.task === 'transcribe' ? 'transcribe' : 'translate'}`,
+        `--task=${inferTask}`,
         ...buildDeviceArgs(merged),
     ];
 
-    if (merged.modelPath) {
-        args.push(`--model_name_or_path=${merged.modelPath}`);
+    if (modelAbs) {
+        args.push(`--model_name_or_path=${modelAbs}`);
     }
 
     if (merged.mergeSegments) {
@@ -758,7 +904,7 @@ function buildSyntheticTranscribeUpdate(mediaDurationSec, transcribeStartedAt, p
         videoProgress,
         videoCurrentSec,
         videoTotalSec: totalSec,
-        detail: `转写 ${formatMediaTime(videoCurrentSec)} / ${formatMediaTime(totalSec)}`,
+        detail: `${formatMediaTime(videoCurrentSec)} / ${formatMediaTime(totalSec)}`,
     };
 }
 
@@ -771,10 +917,10 @@ function parseInferProgressLine(line, parseState = {}) {
     if (!text) return null;
 
     if (/正在初始化增强VAD/.test(text)) {
-        return { stage: 'vad', videoProgress: 0, detail: '初始化 VAD…' };
+        return { stage: 'vad', videoProgress: 0, detail: '初始化语音检测…' };
     }
     if (/增强VAD已激活/.test(text)) {
-        return { stage: 'vad', videoProgress: 0, detail: 'VAD 就绪' };
+        return { stage: 'vad', videoProgress: 0, detail: '语音检测就绪' };
     }
 
     const vadProgressMatch = text.match(/VAD进度：\s*(\d+)\s*\/\s*(\d+)\s*块（([\d.]+)%）/);
@@ -782,7 +928,7 @@ function parseInferProgressLine(line, parseState = {}) {
         const current = Number(vadProgressMatch[1]) || 0;
         const total = Number(vadProgressMatch[2]) || 0;
         const pct = Math.max(0, Math.min(100, Math.round(Number(vadProgressMatch[3]) || 0)));
-        const detail = total > 0 ? `VAD 分析 ${current}/${total} 块 · ${pct}%` : `VAD 分析 · ${pct}%`;
+        const detail = total > 0 ? `语音检测 ${current}/${total} 块 · ${pct}%` : `语音检测 · ${pct}%`;
         // VAD 块进度仅用于详情文案，不写入 videoProgress / 时间轴，避免计入任务百分比
         return {
             stage: 'vad',
@@ -792,10 +938,10 @@ function parseInferProgressLine(line, parseState = {}) {
     }
 
     if (/正在加载Whisper模型/.test(text)) {
-        return { stage: 'model', videoProgress: 0, detail: '加载 Whisper 模型…' };
+        return { stage: 'model', videoProgress: 0, detail: '加载模型…' };
     }
     if (/模型运行精度/.test(text)) {
-        return { stage: 'model', videoProgress: 0, detail: '模型已加载' };
+        return { stage: 'model', videoProgress: 0, detail: '模型已就绪' };
     }
 
     const processingMatch = text.match(/正在处理（[^，]+，\s*(\d+)\s*\/\s*(\d+)）/);
@@ -807,11 +953,11 @@ function parseInferProgressLine(line, parseState = {}) {
             videoProgress: 0,
             videoCurrentSec: current,
             videoTotalSec: total,
-            detail: total > 0 ? `转写 / 翻译中（${current}/${total}）…` : '转写 / 翻译中…',
+            detail: total > 0 ? `片段 ${current}/${total}` : '识别中…',
         };
     }
     if (/正在处理（/.test(text)) {
-        return { stage: 'transcribe', videoProgress: 0, detail: '转写 / 翻译中…' };
+        return { stage: 'transcribe', videoProgress: 0, detail: '识别中…' };
     }
 
     const durationMatch = text.match(/时长：\s*(.+?)\s*→\s*(.+?)(?:（|$)/);
@@ -862,7 +1008,7 @@ function parseInferProgressLine(line, parseState = {}) {
         const endSec = parseLrcTimestampSeconds(segMatch[1], segMatch[2]);
         const ratio = Math.min(1, endSec / timelineTotalSec);
         const videoProgress = Math.min(100, Math.round(ratio * 100));
-        const detail = `转写 ${formatMediaTime(endSec)} / ${formatMediaTime(timelineTotalSec)}`;
+        const detail = `${formatMediaTime(endSec)} / ${formatMediaTime(timelineTotalSec)}`;
         return {
             stage: 'transcribe',
             videoProgress,
@@ -1194,15 +1340,62 @@ async function notifySubtitleTaskJobStart(windowManager, payload, { minimizeToTr
     return true;
 }
 
-async function executeSubtitleBatchLoop(items, options, check, windowManager, invokeSender, onBatchProgress) {
+async function executeSubtitleBatchLoop(items, options, check, windowManager, invokeSender, onBatchProgress, extra = {}) {
     let generated = 0;
     let skipped = 0;
     let failed = 0;
     const errors = [];
+    const outputs = [];
+    const getUserDataPath = extra.getUserDataPath || null;
+    const isDual = options.task === 'dual';
+    const sourceSuffix = dualCore.resolveDualSourceSuffix(options.language, options.dualTargetSuffix);
+    const targetSuffix = dualCore.normalizeDualTargetSuffix(options.dualTargetSuffix);
 
     const emitBatchProgress = (payload) => {
         onBatchProgress?.(payload);
         broadcastProgress(windowManager, payload, invokeSender);
+    };
+
+    const runSingleInferItem = async (safePath, itemOptions, durationHint, progressMeta) => {
+        const result = await runInferOnce(check.path, safePath, {
+            ...itemOptions,
+            durationHint,
+        }, (update) => {
+            const stage = update.stage || 'transcribe';
+            const pipelinePct = update.pipelineProgress ?? mapInferStageProgress(
+                stage,
+                update.videoProgress ?? 0,
+                update.videoCurrentSec ?? 0,
+                update.videoTotalSec ?? 0,
+            );
+            const dualPhase = progressMeta?.dualPhase || null;
+            const itemProgress = dualPhase
+                ? dualCore.mapDualPassProgress(progressMeta.passIndex || 0, pipelinePct)
+                : pipelinePct;
+            // 阶段名由前端 stageLabel 展示；此处只传时间轴 / 语音检测 / 模型等补充信息
+            let detail = String(update.detail || '').trim() || undefined;
+            if (detail) {
+                detail = detail
+                    .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
+                    .trim() || undefined;
+            }
+            emitBatchProgress({
+                index: progressMeta.index,
+                total: progressMeta.total,
+                fullPath: progressMeta.fullPath,
+                sourcePath: progressMeta.sourcePath,
+                phase: 'running',
+                itemProgress,
+                itemStage: stage,
+                itemDetail: detail,
+                itemDualPhase: dualPhase || undefined,
+                videoCurrentSec: update.videoCurrentSec ?? 0,
+                videoTotalSec: update.videoTotalSec ?? 0,
+            });
+        }, (line) => {
+            broadcastToSubtitleTaskUi(windowManager, invokeSender, 'transwithai-infer-log', { line });
+        });
+        return result;
     };
 
     for (let i = 0; i < items.length; i += 1) {
@@ -1220,77 +1413,220 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
             ...options,
             outputDir: subtitleOutputDir,
         };
-
-        if (!options.overwrite) {
-            const existing = resolveLocalSubtitlePath(fullPath, subtitleOutputDir);
-            if (existing) {
-                skipped += 1;
-                emitBatchProgress({
-                    index: i + 1,
-                    total: items.length,
-                    fullPath,
-                    sourcePath,
-                    phase: 'skipped',
-                    subtitlePath: existing,
-                    itemProgress: 100,
-                    itemStage: 'skipped',
-                    itemDetail: '已有字幕',
-                });
-                continue;
-            }
-        }
-
-        emitBatchProgress({
+        const progressMetaBase = {
             index: i + 1,
             total: items.length,
             fullPath,
             sourcePath,
+        };
+
+        if (!options.overwrite) {
+            if (isDual) {
+                const pair = resolveDualSubtitlePaths(fullPath, subtitleOutputDir, {
+                    sourceSuffix,
+                    targetSuffix,
+                    subFormats: options.subFormats,
+                });
+                if (pair.complete) {
+                    skipped += 1;
+                    outputs.push({
+                        videoPath: fullPath,
+                        subtitlePath: pair.targetPath || pair.sourcePath || '',
+                        sourceSubtitlePath: pair.sourcePath || '',
+                        targetSubtitlePath: pair.targetPath || '',
+                        status: 'skipped',
+                    });
+                    emitBatchProgress({
+                        ...progressMetaBase,
+                        phase: 'skipped',
+                        subtitlePath: pair.targetPath || pair.sourcePath,
+                        sourceSubtitlePath: pair.sourcePath || undefined,
+                        targetSubtitlePath: pair.targetPath || undefined,
+                        itemProgress: 100,
+                        itemStage: 'skipped',
+                        itemDetail: '已有双语字幕',
+                    });
+                    continue;
+                }
+            } else {
+                const existing = resolveLocalSubtitlePath(fullPath, subtitleOutputDir);
+                if (existing) {
+                    skipped += 1;
+                    outputs.push({
+                        videoPath: fullPath,
+                        subtitlePath: existing,
+                        status: 'skipped',
+                    });
+                    emitBatchProgress({
+                        ...progressMetaBase,
+                        phase: 'skipped',
+                        subtitlePath: existing,
+                        itemProgress: 100,
+                        itemStage: 'skipped',
+                        itemDetail: '已有字幕',
+                    });
+                    continue;
+                }
+            }
+        }
+
+        emitBatchProgress({
+            ...progressMetaBase,
             phase: 'running',
             itemProgress: 0,
             itemStage: 'starting',
-            itemDetail: '准备中…',
+            itemDualPhase: isDual ? 'transcribe' : undefined,
         });
 
         try {
             const safePath = resolveSafePath(fullPath);
             const durationHint = Number(item.durationSec || item.duration || 0) || 0;
-            const result = await runInferOnce(check.path, safePath, {
-                ...itemOptions,
-                durationHint,
-            }, (update) => {
-                const stage = update.stage || 'transcribe';
-                emitBatchProgress({
-                    index: i + 1,
-                    total: items.length,
-                    fullPath,
-                    sourcePath,
-                    phase: 'running',
-                    itemProgress: update.pipelineProgress ?? mapInferStageProgress(
-                        stage,
-                        update.videoProgress ?? 0,
-                        update.videoCurrentSec ?? 0,
-                        update.videoTotalSec ?? 0,
-                    ),
-                    itemStage: stage,
-                    itemDetail: update.detail,
-                    videoCurrentSec: update.videoCurrentSec ?? 0,
-                    videoTotalSec: update.videoTotalSec ?? 0,
+
+            if (!isDual) {
+                const singleOpts = {
+                    ...itemOptions,
+                    modelPath: modelCore.resolvePassModelPath(itemOptions, itemOptions.task),
+                };
+                const result = await runSingleInferItem(safePath, singleOpts, durationHint, progressMetaBase);
+                setSessionPostTaskOptions({ lastOutputDir: subtitleOutputDir });
+                generated += 1;
+                outputs.push({
+                    videoPath: fullPath,
+                    subtitlePath: result.subtitlePath || '',
+                    status: 'done',
                 });
-            }, (line) => {
-                broadcastToSubtitleTaskUi(windowManager, invokeSender, 'transwithai-infer-log', { line });
-            });
+                emitBatchProgress({
+                    ...progressMetaBase,
+                    phase: 'done',
+                    subtitlePath: result.subtitlePath,
+                    itemProgress: 100,
+                    itemStage: 'done',
+                    itemDetail: '完成',
+                    videoCurrentSec: 0,
+                    videoTotalSec: 0,
+                });
+                continue;
+            }
+
+            // —— dual: transcribe → rename → translate → rename ——
+            let sourceSubtitlePath = null;
+            let targetSubtitlePath = null;
+            let sourceSubtitlePaths = [];
+            let targetSubtitlePaths = [];
+
+            try {
+                const transcribeOpts = buildDualPassOptions(itemOptions, 'transcribe', check.path, getUserDataPath);
+                await runSingleInferItem(safePath, transcribeOpts, durationHint, {
+                    ...progressMetaBase,
+                    dualPhase: 'transcribe',
+                    passIndex: 0,
+                });
+                const sourceRenamed = renameStemSubtitlesWithSuffix(
+                    safePath,
+                    subtitleOutputDir,
+                    options.subFormats,
+                    sourceSuffix,
+                    { overwrite: true },
+                );
+                sourceSubtitlePaths = sourceRenamed;
+                sourceSubtitlePath = sourceRenamed[0] || null;
+
+                emitBatchProgress({
+                    ...progressMetaBase,
+                    phase: 'running',
+                    itemProgress: 49,
+                    itemStage: 'starting',
+                    itemDetail: undefined,
+                    itemDualPhase: 'translate',
+                    sourceSubtitlePath,
+                });
+
+                const translateOpts = buildDualPassOptions(itemOptions, 'translate', check.path, getUserDataPath);
+                await runSingleInferItem(safePath, translateOpts, durationHint, {
+                    ...progressMetaBase,
+                    dualPhase: 'translate',
+                    passIndex: 1,
+                });
+                const targetRenamed = renameStemSubtitlesWithSuffix(
+                    safePath,
+                    subtitleOutputDir,
+                    options.subFormats,
+                    targetSuffix,
+                    { overwrite: true },
+                );
+                targetSubtitlePaths = targetRenamed;
+                targetSubtitlePath = targetRenamed[0] || null;
+            } catch (dualErr) {
+                const msg = dualErr.message || String(dualErr);
+                const wrapped = new Error(
+                    sourceSubtitlePath
+                        ? `翻译失败（原文已保留）：${msg}`
+                        : msg,
+                );
+                wrapped.sourceSubtitlePath = sourceSubtitlePath;
+                throw wrapped;
+            }
+
+            let bilingualSubtitlePath = null;
+            let deletedSourcesAfterMerge = false;
+            if (options.mergeBilingualSubtitles && sourceSubtitlePaths.length && targetSubtitlePaths.length) {
+                try {
+                    const nameAsVideoStem = !!options.deleteSourcesAfterMergeBilingual;
+                    const mergedPaths = [];
+                    for (const src of sourceSubtitlePaths) {
+                        const srcExt = path.extname(src).toLowerCase();
+                        const tgt = targetSubtitlePaths.find(
+                            (t) => path.extname(t).toLowerCase() === srcExt,
+                        );
+                        if (!tgt) continue;
+                        mergedPaths.push(writeMergedBilingualSubtitleFiles(src, tgt, {
+                            primaryTrack: options.dualPrimaryTrack,
+                            lineOrder: 'target-first',
+                            nameAsVideoStem,
+                        }));
+                    }
+                    bilingualSubtitlePath = mergedPaths.find((p) => /\.srt$/i.test(p))
+                        || mergedPaths[0]
+                        || null;
+                    if (bilingualSubtitlePath && options.deleteSourcesAfterMergeBilingual) {
+                        unlinkSubtitleFilesQuietly([...sourceSubtitlePaths, ...targetSubtitlePaths]);
+                        deletedSourcesAfterMerge = true;
+                        sourceSubtitlePath = null;
+                        targetSubtitlePath = null;
+                        sourceSubtitlePaths = [];
+                        targetSubtitlePaths = [];
+                    }
+                } catch (mergeErr) {
+                    const msg = mergeErr.message || String(mergeErr);
+                    broadcastToSubtitleTaskUi(windowManager, invokeSender, 'transwithai-infer-log', {
+                        line: `[warn] 双语轨已生成，但合并失败：${msg}`,
+                    });
+                }
+            }
+
             setSessionPostTaskOptions({ lastOutputDir: subtitleOutputDir });
             generated += 1;
+            outputs.push({
+                videoPath: fullPath,
+                subtitlePath: bilingualSubtitlePath || targetSubtitlePath || sourceSubtitlePath || '',
+                sourceSubtitlePath: sourceSubtitlePath || '',
+                targetSubtitlePath: targetSubtitlePath || '',
+                bilingualSubtitlePath: bilingualSubtitlePath || '',
+                status: 'done',
+            });
+            const mergeDetail = bilingualSubtitlePath
+                ? (deletedSourcesAfterMerge ? '已合并并清理原轨' : '已合并双语')
+                : '完成';
             emitBatchProgress({
-                index: i + 1,
-                total: items.length,
-                fullPath,
-                sourcePath,
+                ...progressMetaBase,
                 phase: 'done',
-                subtitlePath: result.subtitlePath,
+                subtitlePath: bilingualSubtitlePath || targetSubtitlePath || sourceSubtitlePath,
+                sourceSubtitlePath: sourceSubtitlePath || undefined,
+                targetSubtitlePath: targetSubtitlePath || undefined,
+                bilingualSubtitlePath: bilingualSubtitlePath || undefined,
                 itemProgress: 100,
                 itemStage: 'done',
-                itemDetail: '完成',
+                itemDetail: mergeDetail,
                 videoCurrentSec: 0,
                 videoTotalSec: 0,
             });
@@ -1299,13 +1635,20 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
             if (errors.length < 8) {
                 errors.push(`${path.basename(fullPath)}: ${err.message || err}`);
             }
+            if (err.sourceSubtitlePath) {
+                outputs.push({
+                    videoPath: fullPath,
+                    subtitlePath: err.sourceSubtitlePath,
+                    sourceSubtitlePath: err.sourceSubtitlePath,
+                    status: 'failed',
+                });
+            }
             emitBatchProgress({
-                index: i + 1,
-                total: items.length,
-                fullPath,
-                sourcePath,
+                ...progressMetaBase,
                 phase: 'failed',
                 error: err.message || String(err),
+                sourceSubtitlePath: err.sourceSubtitlePath || undefined,
+                subtitlePath: err.sourceSubtitlePath || undefined,
                 itemProgress: 100,
                 itemStage: 'failed',
                 itemDetail: err.message || String(err),
@@ -1323,6 +1666,7 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
             failed,
             total: items.length,
             errors,
+            outputs,
         }
         : {
             ok: failed === 0,
@@ -1331,6 +1675,7 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
             failed,
             total: items.length,
             errors,
+            outputs,
         };
 }
 
@@ -1368,6 +1713,36 @@ async function runSubtitleBatch({
 
     try {
         const merged = normalizeTransWithAiRuntimeOptions(options || {});
+
+        // Soft-fill empty model paths from install models dir when possible
+        try {
+            const { listTransWithAiModels } = require('./extensions-bridge');
+            const listed = listTransWithAiModels(merged.installPath);
+            if (listed?.ok) {
+                Object.assign(merged, modelCore.fillMissingModelPaths(merged, listed.items || []));
+            }
+        } catch { /* list may be unavailable in some test contexts */ }
+
+        if (merged.task === 'dual'
+            || merged.task === 'transcribe'
+            || merged.task === 'translate') {
+            try {
+                const { listTransWithAiModels } = require('./extensions-bridge');
+                const listed = listTransWithAiModels(merged.installPath);
+                const gate = modelCore.validateModelsForTask(merged, listed?.items || [], merged.task);
+                if (!gate.ok) {
+                    return { ok: false, error: gate.error || '模型配置无效' };
+                }
+                if (gate.options) Object.assign(merged, gate.options);
+            } catch (err) {
+                // If listing fails, still allow run when paths are explicitly set
+                const gate = modelCore.validateModelsForTask(merged, [], merged.task);
+                if (!gate.ok && (merged.task === 'dual')) {
+                    return { ok: false, error: gate.error || err.message || '模型配置无效' };
+                }
+            }
+        }
+
         const check = validateInstall(merged.installPath, merged.device);
         if (!check.ok) {
             return { ok: false, error: check.error };
@@ -1375,9 +1750,11 @@ async function runSubtitleBatch({
 
         const runtimeOptions = {
             ...merged,
-            generationConfigPath: getUserDataPath
-                ? resolveGenerationConfigPath(check.path, merged, getUserDataPath)
-                : path.join(check.path, 'generation_config.json5'),
+            generationConfigPath: merged.task === 'dual'
+                ? null
+                : (getUserDataPath
+                    ? resolveGenerationConfigPath(check.path, merged, getUserDataPath)
+                    : path.join(check.path, 'generation_config.json5')),
         };
 
         const shouldMinimizeToTray = minimizeToTray !== undefined
@@ -1395,12 +1772,15 @@ async function runSubtitleBatch({
         try {
             const { loadTaskHistory } = require('./task-history');
             const { rateFromHistory, DEFAULT_WALL_FACTOR } = require('../src/js/eta-core');
+            const fallback = runtimeOptions.task === 'dual'
+                ? DEFAULT_WALL_FACTOR * 2
+                : DEFAULT_WALL_FACTOR;
             historyRate = rateFromHistory(loadTaskHistory().entries, {
                 device: runtimeOptions.device,
                 task: runtimeOptions.task,
-            }) ?? DEFAULT_WALL_FACTOR;
+            }) ?? fallback;
         } catch {
-            historyRate = 0.35;
+            historyRate = runtimeOptions.task === 'dual' ? 0.7 : 0.35;
         }
 
         activeBatchTrayCtx = {
@@ -1429,7 +1809,15 @@ async function runSubtitleBatch({
             device: runtimeOptions.device,
         }, { minimizeToTray: shouldMinimizeToTray });
 
-        const result = await executeSubtitleBatchLoop(list, runtimeOptions, check, windowManager, invokeSender, onBatchProgress);
+        const result = await executeSubtitleBatchLoop(
+            list,
+            runtimeOptions,
+            check,
+            windowManager,
+            invokeSender,
+            onBatchProgress,
+            { getUserDataPath },
+        );
 
         try {
             const { appendTaskHistory } = require('./task-history');
@@ -1451,6 +1839,7 @@ async function runSubtitleBatch({
                 cancelled: !!result.cancelled,
                 options: stripPostTaskFields(runtimeOptions),
                 errors: result.errors,
+                outputs: result.outputs,
             });
         } catch { /* ignore */ }
 
@@ -1520,35 +1909,33 @@ function applyRetranscribeWarmLightOptions(options = {}) {
     };
 }
 
-function mapRetranscribeProgressMessage(update = {}, { warmLight = false } = {}) {
+function mapRetranscribeProgressMessage(update = {}, { warmLight = false, task = 'transcribe' } = {}) {
     const prefix = warmLight ? '[轻量] ' : '';
     const stage = String(update.stage || '');
-    const detail = String(update.detail || '').trim();
+    const isTranslate = String(task || '') === 'translate';
+    let detail = String(update.detail || '').trim()
+        .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
+        .trim();
     switch (stage) {
         case 'warmup':
-            return `${prefix}正在预热转写配置…`;
+            return `${prefix}预热配置…`;
         case 'extract':
-            return `${prefix}正在截取音频片段…`;
+            return `${prefix}截取音频…`;
         case 'starting':
-            return `${prefix}正在启动转写引擎…`;
+            return `${prefix}启动引擎…`;
         case 'vad':
-            return detail
-                ? `${prefix}${detail}`
-                : `${prefix}正在初始化语音检测 (VAD)…`;
+            return detail ? `${prefix}${detail}` : `${prefix}初始化语音检测…`;
         case 'model':
-            return detail
-                ? `${prefix}${detail}`
-                : `${prefix}正在加载 Whisper 模型，请稍候…`;
+            return detail ? `${prefix}${detail}` : `${prefix}加载模型…`;
         case 'transcribe':
-            return detail
-                ? `${prefix}${detail}`
-                : `${prefix}正在识别语音…`;
+            if (detail) return `${prefix}${detail}`;
+            return `${prefix}${isTranslate ? '翻译中…' : '识别中…'}`;
         case 'save':
-            return `${prefix}正在写入字幕结果…`;
+            return `${prefix}整理结果…`;
         case 'done':
-            return `${prefix}重转写完成`;
+            return `${prefix}${isTranslate ? '重译完成' : '重转写完成'}`;
         default:
-            return detail || `${prefix}区间重转写进行中…`;
+            return detail || `${prefix}${isTranslate ? '重译进行中…' : '重转写进行中…'}`;
     }
 }
 
@@ -1586,13 +1973,16 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
         closeWindowOnComplete: false,
         playSoundOnComplete: false,
     });
+    const rangeTask = payload.options?.task === 'translate' ? 'translate' : 'transcribe';
+    baseOptions.task = rangeTask;
+    baseOptions.modelPath = modelCore.resolvePassModelPath(baseOptions, rangeTask);
     const warmLight = !!baseOptions.retranscribeWarmLight;
     const emitProgress = (update) => {
         if (!onProgress) return;
         const payloadOut = {
             ...update,
             warmLight,
-            message: mapRetranscribeProgressMessage(update, { warmLight }),
+            message: mapRetranscribeProgressMessage(update, { warmLight, task: rangeTask }),
         };
         try { onProgress(payloadOut); } catch (_) { /* ignore */ }
     };
@@ -1611,9 +2001,10 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
 
     jobRunning = true;
     jobCancelled = false;
+    const actionNoun = rangeTask === 'translate' ? '重译' : '重转写';
 
     try {
-        emitProgress({ stage: 'warmup', detail: warmLight ? '轻量模式：预热转写配置' : '预热转写配置' });
+        emitProgress({ stage: 'warmup', detail: warmLight ? '轻量模式：预热配置' : '预热配置' });
         const generationConfigPath = getUserDataPath
             ? resolveGenerationConfigPath(
                 check.path,
@@ -1641,7 +2032,7 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
 
         emitProgress({
             stage: 'starting',
-            detail: warmLight ? '轻量模式：启动转写引擎' : '启动转写引擎',
+            detail: warmLight ? '轻量模式：启动引擎' : '启动引擎',
         });
         const result = await runInferOnce(
             check.path,
@@ -1650,7 +2041,7 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
             (update) => emitProgress(update || {}),
         );
         if (!result?.subtitlePath || !fs.existsSync(result.subtitlePath)) {
-            return { ok: false, error: '重转写未生成字幕文件' };
+            return { ok: false, error: `${actionNoun}未生成字幕文件` };
         }
 
         emitProgress({ stage: 'save', detail: '解析字幕结果' });
@@ -1663,10 +2054,10 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
         })).filter((cue) => cue.text);
 
         if (!cues.length) {
-            return { ok: false, error: '重转写结果为空' };
+            return { ok: false, error: `${actionNoun}结果为空` };
         }
 
-        emitProgress({ stage: 'done', detail: '重转写完成' });
+        emitProgress({ stage: 'done', detail: `${actionNoun}完成` });
         return {
             ok: true,
             cues,
@@ -1711,6 +2102,18 @@ function setupTransWithAiBridge(api, deps) {
                 quick: !!payload.quick,
                 allowInferProbe: payload.probeVersion !== false && !payload.quick,
             });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transwithai-check-engine-update', async (_event, payload = {}) => {
+        try {
+            const options = await readOptions(payload || {});
+            return await checkTransWithAiEngineUpdate(
+                payload?.installPath || options.installPath,
+                { allowInferProbe: payload?.probeVersion !== false },
+            );
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1864,14 +2267,7 @@ function setupTransWithAiBridge(api, deps) {
         }
     });
 
-    register('transwithai-get-options', async (_event, payload = {}) => {
-        try {
-            const options = await readOptions(payload);
-            return { ok: true, options };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
+    // transwithai-get-options is registered in main.js (lightweight cold-start path)
 
     register('transwithai-set-post-task', async (_event, payload = {}) => {
         try {
@@ -1898,7 +2294,8 @@ function setupTransWithAiBridge(api, deps) {
             }
             [
                 'device', 'task', 'overwrite',
-                'subFormats', 'modelPath', 'logLevel', 'mergeSegments',
+                'subFormats', 'modelPath', 'transcribeModelPath', 'translateModelPath',
+                'logLevel', 'mergeSegments',
                 'mergeMaxGapMs', 'mergeMaxDurationMs', 'maxBatchSize',
                 'beamSize', 'language', 'vadThreshold',
                 'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
@@ -1906,11 +2303,13 @@ function setupTransWithAiBridge(api, deps) {
                 'noSpeechThreshold', 'logProbThreshold', 'compressionRatioThreshold',
                 'hallucinationSilenceThreshold', 'glossaryPromptEnabled',
                 'chineseSubtitleVariant',
+                'dualTargetSuffix', 'dualPrimaryTrack', 'dualDisplayMode',
+                'mergeBilingualSubtitles', 'deleteSourcesAfterMergeBilingual',
                 'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',
                 'smartSplitWithVad', 'targetChunkDurationS',
                 'retranscribeWarmLight', 'subtitleBakMode',
                 'trayProgressEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'postBatchQc',
-                'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath',
+                'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath', 'settingsUiMode',
             ]
                 .forEach((key) => {
                     if (payload[key] != null) patch[key] = payload[key];
@@ -1983,11 +2382,14 @@ module.exports = {
     normalizeInstallPath,
     validateInstall,
     validateInstallWithVersion,
+    checkTransWithAiEngineUpdate,
     detectTransWithAiVersion,
     mergeTransWithAiOptions,
     normalizeTransWithAiRuntimeOptions,
     buildTransWithAiOptionsFromPayload,
     buildInferArgs,
+    renameStemSubtitlesWithSuffix,
+    resolveInferModelPath,
     runInferOnce,
     transcribeMediaRange,
     applyRetranscribeWarmLightOptions,

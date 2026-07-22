@@ -9,6 +9,7 @@ function buildMediaUrl(filePath) {
 contextBridge.exposeInMainWorld('__ELECTRON__', {
     isDesktop: true,
     platform: process.platform,
+    getAppVersion: () => ipcRenderer.invoke('transub-get-app-version'),
     getPathForFile: (file) => {
         try {
             if (!file) return '';
@@ -42,6 +43,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     }),
     selectFfmpeg: (options) => ipcRenderer.invoke('electron-select-ffmpeg', options || {}),
     transWithAiValidate: (payload) => ipcRenderer.invoke('transwithai-validate', payload || {}),
+    transWithAiCheckEngineUpdate: (payload) => ipcRenderer.invoke('transwithai-check-engine-update', payload || {}),
     transWithAiGenerateSubtitles: (payload) => ipcRenderer.invoke('transwithai-generate-subtitles', payload || {}),
     transWithAiGetOptions: (payload) => ipcRenderer.invoke('transwithai-get-options', payload || {}),
     transWithAiSaveOptions: (payload) => ipcRenderer.invoke('transwithai-save-options', payload || {}),
@@ -54,10 +56,17 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiSavePreset: (payload) => ipcRenderer.invoke('transwithai-save-preset', payload || {}),
     transWithAiDeletePreset: (payload) => ipcRenderer.invoke('transwithai-delete-preset', payload || {}),
     transWithAiGetTaskHistory: () => ipcRenderer.invoke('transwithai-get-task-history'),
+    transWithAiClearTaskHistory: () => ipcRenderer.invoke('transwithai-clear-task-history'),
+    transubGetEditorHistory: () => ipcRenderer.invoke('transub-get-editor-history'),
+    transubAppendEditorHistory: (payload) => ipcRenderer.invoke('transub-append-editor-history', payload || {}),
+    transubClearEditorHistory: () => ipcRenderer.invoke('transub-clear-editor-history'),
+    transubFileExists: (payload) => ipcRenderer.invoke('transub-file-exists', payload || {}),
     transWithAiDetectGpu: () => ipcRenderer.invoke('transwithai-detect-gpu'),
     transWithAiSubtitlePreview: (payload) => ipcRenderer.invoke('transwithai-subtitle-preview', payload || {}),
     transubReadSubtitle: (payload) => ipcRenderer.invoke('transub-read-subtitle', payload || {}),
     transubWriteSubtitle: (payload) => ipcRenderer.invoke('transub-write-subtitle', payload || {}),
+    transubExportSubtitle: (payload) => ipcRenderer.invoke('transub-export-subtitle', payload || {}),
+    transubDeleteSubtitleFiles: (payload) => ipcRenderer.invoke('transub-delete-subtitle-files', payload || {}),
     transubScanSubtitleQc: (payload) => ipcRenderer.invoke('transub-scan-subtitle-qc', payload || {}),
     transubApplySubtitlePostprocess: (payload) => ipcRenderer.invoke('transub-apply-subtitle-postprocess', payload || {}),
     transWithAiListModels: (payload) => ipcRenderer.invoke('transwithai-list-models', payload || {}),
@@ -80,6 +89,14 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubSaveGlossary: (payload) => ipcRenderer.invoke('transub-save-glossary', payload || {}),
     transubExportGlossary: () => ipcRenderer.invoke('transub-export-glossary'),
     transubImportGlossary: () => ipcRenderer.invoke('transub-import-glossary'),
+    transubGetTextPresets: () => ipcRenderer.invoke('transub-get-text-presets'),
+    transubSaveTextPresets: (payload) => ipcRenderer.invoke('transub-save-text-presets', payload || {}),
+    transubExportTextPresets: () => ipcRenderer.invoke('transub-export-text-presets'),
+    transubImportTextPresets: () => ipcRenderer.invoke('transub-import-text-presets'),
+    transubGetEditorWorkflows: () => ipcRenderer.invoke('transub-get-editor-workflows'),
+    transubSaveEditorWorkflows: (payload) => ipcRenderer.invoke('transub-save-editor-workflows', payload || {}),
+    transubExportEditorWorkflows: () => ipcRenderer.invoke('transub-export-editor-workflows'),
+    transubImportEditorWorkflows: () => ipcRenderer.invoke('transub-import-editor-workflows'),
     transubTranscribeRange: (payload) => ipcRenderer.invoke('transub-transcribe-range', payload || {}),
     onTransubRetranscribeProgress: (callback) => {
         if (typeof callback !== 'function') return () => {};
@@ -92,7 +109,11 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubSelectEditorVideo: (payload) => ipcRenderer.invoke('transub-select-editor-video', payload || {}),
     transubGuessVideoForSubtitle: (payload) => ipcRenderer.invoke('transub-guess-video-for-subtitle', payload || {}),
     transubOpenSubtitleEditor: (payload) => ipcRenderer.invoke('transub-open-subtitle-editor', payload || {}),
+    transubEditorRegisterPath: (payload) => ipcRenderer.invoke('transub-editor-register-path', payload || {}),
     transubOpenSettings: (payload) => ipcRenderer.invoke('transub-open-settings', payload || {}),
+    transubOpenUpdateWindow: (payload) => ipcRenderer.invoke('transub-open-update-window', payload || {}),
+    transubOpenAboutWindow: (payload) => ipcRenderer.invoke('transub-open-about-window', payload || {}),
+    transubShowMainWindow: (payload) => ipcRenderer.invoke('transub-show-main-window', payload || {}),
     transubConsumePendingOpenParams: () => ipcRenderer.invoke('transub-consume-pending-open-params'),
     transubEditorRefocus: () => ipcRenderer.invoke('transub-editor-refocus'),
     transubEditorConfirm: (payload) => ipcRenderer.invoke('transub-editor-confirm', payload || {}),
@@ -107,6 +128,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         const handler = () => callback();
         ipcRenderer.on('transub-settings-check-update', handler);
         return () => ipcRenderer.removeListener('transub-settings-check-update', handler);
+    },
+    onUpdateWindowCheck: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = () => callback();
+        ipcRenderer.on('transub-update-window-check', handler);
+        return () => ipcRenderer.removeListener('transub-update-window-check', handler);
     },
     onSettingsUpdated: (callback) => {
         if (typeof callback !== 'function') return () => {};
