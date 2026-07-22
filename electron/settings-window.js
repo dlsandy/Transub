@@ -44,14 +44,16 @@ function focusSettingsWindow(tab) {
  * @param {{ tab?: string, parent?: import('electron').BrowserWindow|null, checkUpdate?: boolean }} [options]
  */
 function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
+    if (checkUpdate) {
+        const { openUpdateWindow } = require('./update-window');
+        return openUpdateWindow(app, { parent, autoCheck: true });
+    }
+
     const resolved = resolveTab(tab);
     pendingSettingsTab = resolved;
 
     const existing = focusSettingsWindow(resolved);
     if (existing) {
-        if (checkUpdate) {
-            existing.webContents.send('transub-settings-check-update');
-        }
         return { ok: true };
     }
 
@@ -89,7 +91,6 @@ function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
         standaloneSettings: '1',
         tab: resolved,
     });
-    if (checkUpdate) query.set('checkUpdate', '1');
 
     win.loadFile(resolveHtmlPath(app, 'index.html'), { search: query.toString() });
 
@@ -100,11 +101,6 @@ function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
         win.focus();
         sendOpenTab(win, resolved);
         setTimeout(() => sendOpenTab(win, resolved), 150);
-        if (checkUpdate) {
-            setTimeout(() => {
-                if (!win.isDestroyed()) win.webContents.send('transub-settings-check-update');
-            }, 400);
-        }
     });
 
     return { ok: true };

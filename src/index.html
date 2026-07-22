@@ -11,13 +11,32 @@
     <style>
         .subtitle-task-table { table-layout: fixed; width: 100%; }
         .subtitle-task-table .col-file { width: 28%; min-width: 8rem; }
-        .subtitle-task-table .col-processed { width: 5.5rem; }
-        .subtitle-task-table .col-detail { max-width: 0; }
-        .subtitle-task-table .col-time { width: 4.5rem; }
+        .subtitle-task-table .col-progress { width: 7rem; }
+        .subtitle-task-table .col-status {
+            width: 18rem;
+            min-width: 16rem;
+        }
+        .subtitle-task-table td.col-status {
+            overflow: hidden;
+        }
+        .subtitle-task-table td.col-status .row-status-badge {
+            display: inline-flex;
+            max-width: 100%;
+            white-space: nowrap;
+        }
+        .subtitle-task-table td.col-status .cell-ellipsis {
+            display: block;
+            max-width: 100%;
+        }
+        .subtitle-task-table .col-qc {
+            width: 2.25rem;
+            min-width: 2.25rem;
+            max-width: 2.25rem;
+        }
         .subtitle-task-table .col-actions {
-            width: 4.5rem;
-            min-width: 4.5rem;
-            max-width: 4.5rem;
+            width: 5.5rem;
+            min-width: 5.5rem;
+            max-width: 5.5rem;
         }
         .subtitle-task-table .row-actions {
             display: inline-flex;
@@ -41,6 +60,13 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        .toolbar-editor-icon {
+            width: 1rem;
+            height: 1rem;
+            border-radius: 9999px;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
         .params-tab-btn.active {
             color: rgb(109 40 217);
             border-bottom-color: rgb(109 40 217);
@@ -48,11 +74,28 @@
         }
         .params-tab-panel { display: none; }
         .params-tab-panel.active { display: block; }
+        .settings-ui-mode-btn.active {
+            background-color: rgb(109 40 217);
+            color: #fff;
+            border-color: rgb(109 40 217);
+        }
+        #paramsModal.settings-mode-standard [data-settings-level="expert"] {
+            display: none !important;
+        }
+        #paramsModal.settings-mode-expert [data-settings-level="standard"] {
+            display: none !important;
+        }
         #paramsModal:not(.hidden) { display: flex; }
+        #presetNameModal:not(.hidden) { display: flex; }
         #previewModal:not(.hidden), #historyModal:not(.hidden) { display: flex; }
         .log-tab-btn.active { color: rgb(109 40 217); border-bottom-color: rgb(109 40 217); }
         .log-panel { display: none; }
         .log-panel.active { display: block; }
+        body.density-compact .subtitle-task-table td,
+        body.density-compact .subtitle-task-table th { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+        body.density-compact .subtitle-task-table { font-size: 0.75rem; }
+        body.log-collapsed #logSectionBody { display: none; }
+        body.log-collapsed #logCollapseIcon { transform: rotate(-90deg); }
 
         /* Standalone settings BrowserWindow: show only the settings chrome */
         html.settings-standalone,
@@ -85,46 +128,77 @@
         html.settings-standalone #loadingOverlay {
             display: none !important;
         }
+        /* Self-contained boot spinner — visible before Font Awesome / app.css finish */
+        #loadingOverlay .boot-spinner {
+            width: 2rem;
+            height: 2rem;
+            margin: 0 auto 0.75rem;
+            border: 2.5px solid #e5e7eb;
+            border-top-color: #7c3aed;
+            border-radius: 50%;
+            animation: transub-boot-spin 0.7s linear infinite;
+        }
+        @keyframes transub-boot-spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="bg-gray-50 h-screen overflow-hidden text-gray-800 flex flex-col">
     <div id="loadingOverlay" class="fixed inset-0 z-[110] flex items-center justify-center bg-gray-50/85 backdrop-blur-[2px]">
         <div class="bg-white rounded-xl shadow-lg border border-gray-200 px-8 py-6 text-center max-w-sm mx-4">
-            <i class="fa fa-spinner fa-spin text-3xl text-primary mb-3"></i>
+            <div class="boot-spinner" aria-hidden="true"></div>
             <p id="loadingMessage" class="text-sm font-medium text-gray-700">正在加载配置…</p>
             <p class="text-xs text-gray-400 mt-2">即将就绪</p>
         </div>
     </div>
-    <header class="bg-white border-b border-gray-200 px-4 py-3 shrink-0 flex items-center justify-between gap-3">
-        <div>
-            <h1 class="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <img src="icon.png" alt="" class="w-7 h-7 shrink-0" width="28" height="28" decoding="async">
-                Transub字幕生成器
-            </h1>
-        </div>
-        <span id="jobStatusBadge" class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600">空闲</span>
-    </header>
-
-    <main class="flex-1 min-h-0 flex flex-col p-4 gap-3 overflow-y-auto">
-        <section class="bg-white rounded-xl border border-gray-200 px-4 py-3 shrink-0 flex flex-wrap items-center justify-between gap-3">
-            <div class="min-w-0">
-                <div class="text-sm font-semibold text-gray-800 flex items-center gap-2">
-                    <i class="fa fa-sliders text-violet-600"></i>
-                    当前设置
-                    <span id="paramsSummary" class="text-xs font-normal text-gray-400 truncate">（GPU 翻译 · 翻译）</span>
+    <header class="app-header bg-white border-b border-gray-200 px-4 py-2.5 shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 class="text-base font-bold text-gray-900 flex items-baseline gap-1.5 shrink-0 tracking-tight">
+            <img src="icon.png" alt="" class="w-7 h-7 shrink-0 self-center" width="28" height="28" decoding="async">
+            <span>Transub</span>
+            <span id="appVersionLabel" class="text-xs font-normal text-gray-400 tracking-normal leading-none" aria-label="软件版本"></span>
+        </h1>
+        <div class="flex items-center gap-2 shrink-0 ml-auto">
+            <span id="jobStatusBadge" class="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">空闲</span>
+            <button type="button" id="openParamsBtn" class="px-3 py-1.5 border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-lg text-sm shrink-0">
+                <i class="fa fa-cog mr-1 text-gray-400"></i>设置
+            </button>
+            <div class="relative shrink-0" id="moreMenuWrap">
+                <button type="button" id="moreMenuBtn" class="toolbar-icon-btn" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false">
+                    <i class="fa fa-ellipsis-v" aria-hidden="true"></i>
+                </button>
+                <div id="moreMenu" class="post-task-menu hidden w-44" role="menu" aria-label="更多">
+                    <button type="button" id="checkUpdateToolbarBtn" class="post-task-menu-item" role="menuitem">
+                        <i class="fa fa-refresh w-3 text-center text-gray-400" aria-hidden="true"></i>
+                        <span>检查更新</span>
+                    </button>
+                    <button type="button" id="openHistoryMenuBtn" class="post-task-menu-item" role="menuitem">
+                        <i class="fa fa-history w-3 text-center text-gray-400" aria-hidden="true"></i>
+                        <span>任务历史</span>
+                    </button>
+                    <button type="button" id="toggleDensityBtn" class="post-task-menu-item" role="menuitem">
+                        <i class="fa fa-compress w-3 text-center text-gray-400" aria-hidden="true"></i>
+                        <span id="toggleDensityLabel">紧凑列表</span>
+                    </button>
+                    <button type="button" id="openAboutBtn" class="post-task-menu-item" role="menuitem">
+                        <i class="fa fa-info-circle w-3 text-center text-gray-400" aria-hidden="true"></i>
+                        <span>关于 Transub</span>
+                    </button>
                 </div>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
-                <button type="button" id="checkUpdateToolbarBtn" class="toolbar-icon-btn" title="检查新版本" aria-label="检查新版本">
-                    <i class="fa fa-refresh" aria-hidden="true"></i>
-                </button>
-                <button type="button" id="openParamsBtn" class="px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 rounded-lg text-sm shrink-0">
-                    <i class="fa fa-cog mr-1"></i>设置
-                </button>
-            </div>
-        </section>
+        </div>
+    </header>
 
-        <section id="filePanel" class="relative bg-white rounded-xl border border-gray-200 p-4 flex flex-col flex-1 min-h-[14rem] gap-3 overflow-visible">
+    <main class="flex-1 min-h-0 flex flex-col p-3 gap-2.5 overflow-y-auto">
+        <div id="envBanner" class="hidden shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
+            <span id="envBannerText">尚未配置 TransWithAI 引擎，请先完成环境检测。</span>
+            <button type="button" id="envBannerBtn" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs hover:bg-amber-50 shrink-0">去配置环境</button>
+        </div>
+        <div id="qcBanner" class="hidden shrink-0 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
+            <span id="qcBannerText">有条目存在 QC 问题</span>
+            <button type="button" id="qcBannerDismissBtn" class="toolbar-icon-btn !w-7 !h-7 shrink-0" title="关闭" aria-label="关闭"><i class="fa fa-times text-xs"></i></button>
+        </div>
+
+        <section id="filePanel" class="relative bg-white rounded-xl border border-gray-200 p-3 flex flex-col flex-1 min-h-[14rem] gap-2.5 overflow-visible shadow-sm">
             <div id="dropOverlay" class="absolute inset-0 z-20 hidden items-center justify-center bg-violet-50/95 border-2 border-dashed border-violet-400 rounded-xl pointer-events-none">
                 <div class="text-center px-4">
                     <i class="fa fa-cloud-upload text-3xl text-violet-500 mb-2"></i>
@@ -133,44 +207,78 @@
                 </div>
             </div>
             <div class="relative z-10 flex flex-wrap items-center gap-2 shrink-0">
-                <div class="relative shrink-0" id="addMenuWrap">
-                    <button type="button" id="addMenuBtn"
-                        class="bg-primary hover:bg-accent text-white px-3 py-1.5 rounded-lg text-sm inline-flex items-center gap-1.5"
-                        aria-haspopup="menu" aria-expanded="false">
-                        <i class="fa fa-plus" aria-hidden="true"></i>
-                        <span>添加</span>
-                        <i class="fa fa-caret-down text-xs opacity-90" aria-hidden="true"></i>
-                    </button>
-                    <div id="addMenu" class="post-task-menu post-task-menu--left hidden w-36" role="menu" aria-label="添加视频">
-                        <button type="button" class="post-task-menu-item" data-add-action="videos" role="menuitem">
-                            <i class="fa fa-file-video-o w-3 text-center text-gray-400" aria-hidden="true"></i>
-                            <span>添加视频</span>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <div class="relative shrink-0" id="addMenuWrap">
+                        <button type="button" id="addMenuBtn"
+                            class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg text-sm inline-flex items-center gap-1.5"
+                            aria-haspopup="menu" aria-expanded="false">
+                            <i class="fa fa-plus" aria-hidden="true"></i>
+                            <span>添加</span>
+                            <i class="fa fa-caret-down text-xs opacity-90" aria-hidden="true"></i>
                         </button>
-                        <button type="button" class="post-task-menu-item" data-add-action="folder" role="menuitem">
-                            <i class="fa fa-folder-open w-3 text-center text-gray-400" aria-hidden="true"></i>
-                            <span>添加文件夹</span>
-                        </button>
+                        <div id="addMenu" class="post-task-menu post-task-menu--left hidden w-36" role="menu" aria-label="添加视频">
+                            <button type="button" class="post-task-menu-item" data-add-action="videos" role="menuitem">
+                                <i class="fa fa-file-video-o w-3 text-center text-gray-400" aria-hidden="true"></i>
+                                <span>添加视频</span>
+                            </button>
+                            <button type="button" class="post-task-menu-item" data-add-action="folder" role="menuitem">
+                                <i class="fa fa-folder-open w-3 text-center text-gray-400" aria-hidden="true"></i>
+                                <span>添加文件夹</span>
+                            </button>
+                        </div>
                     </div>
+                    <button type="button" id="openSubtitleFileBtn" class="toolbar-text-btn" title="打开字幕编辑器" aria-label="字幕编辑器">
+                        <img src="icon-editor.png" alt="" class="toolbar-editor-icon" width="16" height="16" decoding="async">
+                        <span>字幕编辑器</span>
+                    </button>
+                    <button type="button" id="removeSelectedBtn" class="toolbar-text-btn" title="移除选中 (Delete)" aria-label="移除选中">
+                        <i class="fa fa-minus" aria-hidden="true"></i><span>移除</span>
+                    </button>
+                    <button type="button" id="clearListBtn" class="toolbar-text-btn" title="清空列表" aria-label="清空列表">
+                        <i class="fa fa-trash-o" aria-hidden="true"></i><span>清空</span>
+                    </button>
                 </div>
-                <button type="button" id="removeSelectedBtn" class="toolbar-icon-btn" title="移除选中" aria-label="移除选中">
-                    <i class="fa fa-minus" aria-hidden="true"></i>
-                </button>
-                <button type="button" id="retryFailedBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50 hidden">重试失败项</button>
-                <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
-                <button type="button" id="clearListBtn" class="toolbar-icon-btn" title="清空列表" aria-label="清空列表">
-                    <i class="fa fa-trash-o" aria-hidden="true"></i>
-                </button>
-                <button type="button" id="openSubtitleFileBtn" class="px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 rounded-lg text-sm" title="打开 SRT / VTT / LRC 字幕文件进行编辑">
-                    <i class="fa fa-pencil mr-1"></i>字幕编辑器
-                </button>
+                <div id="paramsChips" class="flex items-center gap-1.5 shrink-0 flex-wrap border-l border-gray-200 pl-2 ml-0.5" aria-label="常用设置">
+                    <label class="param-chip" title="字幕任务">
+                        <span class="param-chip-label">任务</span>
+                        <select id="quickTaskSelect" class="param-chip-select" aria-label="字幕任务">
+                            <option value="translate">翻译</option>
+                            <option value="transcribe">原语言</option>
+                            <option value="dual">双语</option>
+                        </select>
+                    </label>
+                    <label class="param-chip" title="片源语言">
+                        <span class="param-chip-label">片源</span>
+                        <select id="quickLanguageSelect" class="param-chip-select" aria-label="片源语言">
+                            <option value="auto">自动</option>
+                            <option value="ja">日语</option>
+                            <option value="zh">中文</option>
+                            <option value="en">英语</option>
+                        </select>
+                    </label>
+                    <label class="param-chip" id="quickTargetLangWrap" title="目标语言（翻译/双语任务）">
+                        <span class="param-chip-label">目标</span>
+                        <select id="quickTargetLangSelect" class="param-chip-select" aria-label="目标语言">
+                            <option value="simplified">简体中文</option>
+                            <option value="traditional">繁体中文</option>
+                        </select>
+                    </label>
+                    <button type="button" id="quickFormatBtn" class="param-chip param-chip-btn" title="字幕格式（点击打开输出设置）">
+                        <span class="param-chip-label">格式</span>
+                        <span id="quickFormatLabel" class="param-chip-value">srt</span>
+                    </button>
+                    <span id="paramsSummary" class="sr-only">当前设置摘要</span>
+                    <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
+                </div>
                 <div class="flex items-center gap-2 ml-auto flex-wrap justify-end">
                     <div class="relative z-20 shrink-0" id="postTaskMenuWrap">
                         <button type="button" id="postTaskMenuBtn"
-                            class="post-task-power-btn"
+                            class="post-task-power-btn post-task-label-btn"
                             title="任务完成后操作"
                             aria-haspopup="menu"
                             aria-expanded="false">
-                            <i class="fa fa-power-off" aria-hidden="true"></i>
+                            <i class="fa fa-flag-checkered" aria-hidden="true"></i>
+                            <span id="postTaskMenuLabel">完成后</span>
                         </button>
                         <div id="postTaskMenu" class="post-task-menu hidden" role="menu" aria-label="任务完成后操作">
                             <p class="post-task-menu-hint">全部字幕成功后</p>
@@ -205,76 +313,113 @@
                             </label>
                         </div>
                     </div>
-                    <button type="button" id="stopBtn" class="px-4 py-1.5 border border-red-300 text-red-700 hover:bg-red-50 rounded-lg text-sm disabled:opacity-40 disabled:pointer-events-none" disabled>
+                    <button type="button" id="stopBtn" class="px-3.5 py-1.5 border border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-700 hover:bg-red-50 rounded-lg text-sm disabled:opacity-40 disabled:pointer-events-none" disabled>
                         <i class="fa fa-stop mr-1"></i>停止
                     </button>
-                    <button type="button" id="startBtn" class="bg-violet-600 hover:bg-violet-700 text-white px-4 py-1.5 rounded-lg text-sm disabled:opacity-50" disabled>
+                    <button type="button" id="startBtn" class="btn-primary-cta bg-violet-600 hover:bg-violet-700 text-white px-5 py-1.5 rounded-lg text-sm font-medium shadow-sm disabled:opacity-50 disabled:shadow-none" disabled>
                         <i class="fa fa-play mr-1"></i>开始生成
                     </button>
                 </div>
             </div>
 
-            <div id="dropZone" class="flex-1 min-h-0 relative border border-gray-200 rounded-lg overflow-hidden transition-colors">
-                <div class="h-full min-h-[8rem] overflow-auto">
+            <div id="dropZone" class="flex-1 min-h-0 relative border border-gray-200 rounded-lg overflow-hidden transition-colors bg-gray-50/40">
+                <div id="emptyState" class="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 px-6 text-center">
+                    <div class="w-14 h-14 rounded-2xl bg-violet-50 text-violet-500 flex items-center justify-center text-2xl">
+                        <i class="fa fa-film" aria-hidden="true"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-800">添加视频开始生成字幕</p>
+                        <p class="text-xs text-gray-400 mt-1">支持拖放多个文件，或从下方选择</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-center gap-2">
+                        <button type="button" id="emptyAddVideosBtn" class="px-3.5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">
+                            <i class="fa fa-file-video-o mr-1"></i>添加视频
+                        </button>
+                        <button type="button" id="emptyAddFolderBtn" class="px-3.5 py-2 border border-gray-200 hover:bg-white rounded-lg text-sm text-gray-700">
+                            <i class="fa fa-folder-open mr-1"></i>添加文件夹
+                        </button>
+                    </div>
+                    <p class="text-[11px] text-gray-400">快捷键 A 添加 · Enter 开始</p>
+                </div>
+                <div id="listScroll" class="h-full min-h-[8rem] overflow-auto hidden">
                 <table class="w-full text-sm subtitle-task-table">
-                    <thead class="sticky top-0 bg-gray-50 text-xs text-gray-600">
+                    <thead class="sticky top-0 bg-gray-50/95 backdrop-blur-sm text-xs text-gray-500 z-[1]">
                         <tr>
-                            <th class="px-2 py-2 w-8"><input type="checkbox" id="selectAllCheck" title="全选"></th>
+                            <th class="px-2 py-2 w-8"><input type="checkbox" id="selectAllCheck" title="全选 (Ctrl+A)"></th>
                             <th class="px-2 py-2 text-left col-file">文件</th>
-                            <th class="px-2 py-2 text-right w-20">片长</th>
-                            <th class="px-2 py-2 text-right col-time">已用时</th>
-                            <th class="px-2 py-2 text-right col-processed">已处理</th>
-                            <th class="px-2 py-2 text-left col-detail">详情</th>
-                            <th class="px-2 py-2 text-center w-14" title="质量检查">QC</th>
+                            <th class="px-2 py-2 text-right w-16 col-duration">片长</th>
+                            <th class="px-2 py-2 text-left col-progress" style="width:7rem">进度</th>
+                            <th class="px-2 py-2 text-left col-status">状态</th>
+                            <th class="px-1 py-2 text-center col-qc" title="质量检查">QC</th>
                             <th class="px-2 py-2 col-actions text-center" title="操作"></th>
                         </tr>
                     </thead>
-                    <tbody id="fileListBody" class="divide-y divide-gray-100">
-                        <tr id="emptyListRow">
-                            <td colspan="8" class="px-4 py-8 text-center text-gray-400 text-sm">点击「添加视频」选择文件，或将多个视频拖入此区域</td>
-                        </tr>
-                    </tbody>
+                    <tbody id="fileListBody" class="divide-y divide-gray-100 bg-white"></tbody>
                 </table>
                 </div>
             </div>
 
-            <div class="shrink-0 space-y-2">
-                <div class="flex items-center justify-between text-sm">
-                    <span id="progressLabel" class="font-medium text-gray-700">等待任务…</span>
-                    <span id="progressCount" class="text-gray-500 tabular-nums">0 / 0</span>
+            <div class="shrink-0 space-y-1.5 pt-0.5">
+                <div class="flex items-center justify-between gap-3 text-sm">
+                    <span id="progressLabel" class="font-medium text-gray-700 truncate">等待任务…</span>
+                    <span id="progressEta" class="text-xs text-violet-700 font-medium tabular-nums shrink-0 hidden"></span>
                 </div>
                 <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div id="progressBar" class="h-full bg-violet-500 transition-all duration-300" style="width:0%"></div>
+                    <div id="progressBar" class="h-full bg-violet-500 transition-all duration-300 ease-out" style="width:0%"></div>
                 </div>
-                <p id="currentFile" class="text-xs text-gray-500 break-all truncate" title="">—</p>
+                <div class="flex items-center justify-between gap-2 text-xs text-gray-500">
+                    <p id="currentFile" class="min-w-0 break-all truncate" title="">—</p>
+                    <span id="progressCount" class="tabular-nums shrink-0">0 / 0</span>
+                </div>
             </div>
         </section>
 
-        <section class="bg-white rounded-xl border border-gray-200 p-3 shrink-0">
-            <div class="flex items-center gap-2 border-b border-gray-100 mb-2 pb-1">
+        <section id="logSection" class="bg-white rounded-xl border border-gray-200 shrink-0 shadow-sm">
+            <div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100">
+                <button type="button" id="logCollapseBtn" class="toolbar-icon-btn !w-7 !h-7" title="展开/收起日志" aria-label="展开/收起日志" aria-expanded="true">
+                    <i id="logCollapseIcon" class="fa fa-chevron-down text-xs transition-transform" aria-hidden="true"></i>
+                </button>
                 <button type="button" class="log-tab-btn active text-xs px-2 py-1 border-b-2 border-transparent" data-log-tab="app">应用日志</button>
                 <button type="button" class="log-tab-btn text-xs px-2 py-1 border-b-2 border-transparent" data-log-tab="infer">原始日志</button>
+                <div class="ml-auto flex items-center gap-1">
+                    <button type="button" id="clearLogBtn" class="text-[11px] text-gray-400 hover:text-gray-600 px-1.5 py-0.5" title="清空应用日志">清空</button>
+                    <button type="button" id="copyLogBtn" class="text-[11px] text-gray-400 hover:text-gray-600 px-1.5 py-0.5" title="复制应用日志">复制</button>
+                </div>
             </div>
-            <div id="logPanelApp" class="log-panel active max-h-32 overflow-auto">
-                <div id="logHost" class="text-xs text-gray-500 font-mono space-y-0.5">Transub日志将显示在此处…</div>
-            </div>
-            <div id="logPanelInfer" class="log-panel max-h-32 overflow-auto">
-                <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">TransWithAI日志将显示在此处…</div>
+            <div id="logSectionBody">
+                <div id="logPanelApp" class="log-panel active max-h-28 overflow-auto px-3 py-2">
+                    <div id="logHost" class="text-xs text-gray-500 font-mono space-y-0.5">Transub日志将显示在此处…</div>
+                </div>
+                <div id="logPanelInfer" class="log-panel max-h-28 overflow-auto px-3 py-2">
+                    <div id="inferLogHost" class="text-xs text-gray-500 font-mono space-y-0.5 whitespace-pre-wrap break-all">TransWithAI日志将显示在此处…</div>
+                </div>
             </div>
         </section>
     </main>
 
-    <div id="paramsModal" class="hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="paramsModalTitle">
+    <div id="paramsModal" class="settings-mode-standard hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="paramsModalTitle">
             <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-2xl max-h-[min(88vh,40rem)] flex flex-col overflow-hidden">
                 <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
-                    <h2 id="paramsModalTitle" class="text-base font-semibold text-gray-900">设置</h2>
-                    <button type="button" id="closeParamsBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" title="关闭">
-                        <i class="fa fa-times"></i>
-                    </button>
+                    <h2 id="paramsModalTitle" class="text-base font-semibold text-gray-900 shrink-0">设置</h2>
+                    <div class="flex items-center gap-2 min-w-0 flex-1 justify-end">
+                        <div class="flex items-center gap-1.5 min-w-0 max-w-[min(100%,18rem)] sm:max-w-xs">
+                            <select id="presetSelect" class="min-w-0 flex-1 border rounded-lg px-2 py-1.5 text-xs sm:text-sm bg-white" aria-label="选择参数预设" title="一键套用常用参数组合">
+                                <option value="">— 选择预设 —</option>
+                            </select>
+                            <button type="button" id="savePresetBtn" class="px-2 py-1.5 border rounded-lg text-xs sm:text-sm shrink-0 hover:bg-gray-50" title="将当前全部参数存为自定义预设">存为预设</button>
+                        </div>
+                        <div id="settingsUiModeToggle" class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 shrink-0" role="group" aria-label="设置模式">
+                            <button type="button" class="settings-ui-mode-btn active px-2.5 py-1 text-xs font-medium rounded-md text-gray-600 border border-transparent" data-settings-ui-mode="standard" title="日常常用选项">标准</button>
+                            <button type="button" class="settings-ui-mode-btn px-2.5 py-1 text-xs font-medium rounded-md text-gray-600 border border-transparent" data-settings-ui-mode="expert" title="显示全部高级参数">专家</button>
+                        </div>
+                        <button type="button" id="closeParamsBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 shrink-0" title="关闭">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
                 </div>
                 <nav class="flex border-b border-gray-100 shrink-0 overflow-x-auto" role="tablist" aria-label="设置分区">
                     <button type="button" class="params-tab-btn active px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="runtime" role="tab" aria-selected="true" title="任务、设备与日常选项">常规</button>
-                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="install" role="tab" title="TransWithAI 与 FFmpeg 路径">环境</button>
+                    <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="install" role="tab" title="TransWithAI 安装路径与模型">环境</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="output" role="tab" title="格式与保存位置">输出</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="transcribe" role="tab" title="语言、VAD 与抑幻听等转写参数">转录</button>
                     <button type="button" class="params-tab-btn px-4 py-2.5 text-sm font-medium text-gray-600 border-b-2 border-transparent whitespace-nowrap" data-tab="editor" role="tab" title="编辑器备份与批量完成后处理">编辑</button>
@@ -282,29 +427,17 @@
                 </nav>
                 <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
                     <div class="params-tab-panel active space-y-4" data-tab-panel="runtime">
-                        <p class="text-xs text-gray-500 leading-relaxed">日常最常调整的选项：选预设、选任务与设备，以及托盘行为。</p>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
-                            <legend class="text-xs font-semibold text-gray-500 px-1">参数预设</legend>
-                            <p class="text-xs text-gray-500 leading-relaxed">一键套用常用组合（设备、语言、抑幻听等）。改完其它页参数后也可「存为预设」方便下次使用。</p>
-                            <label class="block text-sm">
-                                <div class="flex gap-2">
-                                    <select id="presetSelect" class="flex-1 border rounded-lg px-3 py-2 text-sm" aria-label="选择预设">
-                                        <option value="">— 选择预设 —</option>
-                                    </select>
-                                    <button type="button" id="savePresetBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0" title="将当前全部参数存为自定义预设">存为预设</button>
-                                </div>
-                            </label>
-                        </fieldset>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">任务与设备</legend>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <label class="block text-sm">
                                     <span class="text-gray-700 font-medium">字幕任务</span>
                                     <select id="taskSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
-                                        <option value="translate">翻译（转写 + 译成中文）</option>
-                                        <option value="transcribe">仅转写（保留原语言）</option>
+                                        <option value="translate">翻译</option>
+                                        <option value="transcribe">原语言</option>
+                                        <option value="dual">双语</option>
                                     </select>
-                                    <span class="block text-xs text-gray-500 mt-1">翻译会再走一遍翻译模型；仅转写更快，适合只要原文稿。</span>
+                                    <span class="block text-xs text-gray-500 mt-1">翻译输出单份中文；原语言保留原文；双语会依次生成原文轨与中文轨并共同显示。</span>
                                 </label>
                                 <label class="block text-sm">
                                     <span class="text-gray-700 font-medium">推理设备</span>
@@ -312,13 +445,34 @@
                                         <option value="cuda">GPU（NVIDIA，默认）</option>
                                         <option value="amd">GPU（AMD ROCm）</option>
                                         <option value="cpu">CPU</option>
-                                        <option value="cuda_low_vram">GPU 低显存 (int8)</option>
-                                        <option value="cuda_batch">GPU 批处理加速</option>
-                                        <option value="modal">Modal 云端（需 modal_infer.exe）</option>
+                                        <option value="cuda_low_vram" data-expert-device="1">GPU 低显存 (int8)</option>
+                                        <option value="cuda_batch" data-expert-device="1">GPU 批处理加速</option>
+                                        <option value="modal" data-expert-device="1">Modal 云端（需 modal_infer.exe）</option>
                                     </select>
                                     <span class="block text-xs text-gray-500 mt-1">AMD 请下载对应 gfx 后缀的 ROCm 包；显存不足可试「低显存」。</span>
+                                    <span id="deviceExpertHint" class="hidden block text-xs text-amber-700 mt-1" data-settings-level="standard">当前为专家设备选项，切换到专家模式可更改。</span>
                                 </label>
-                                <label class="block text-sm" id="maxBatchSizeWrap">
+                                <div class="block text-sm hidden" id="mergeBilingualWrap">
+                                    <span class="text-gray-700 font-medium">合并双语字幕</span>
+                                    <label class="flex items-start gap-2 mt-2 text-sm">
+                                        <input type="checkbox" id="mergeBilingualCheck" class="rounded mt-0.5 shrink-0">
+                                        <span>
+                                            <span class="font-medium text-gray-700">生成后合并为一份双语文件</span>
+                                            <span class="block text-xs text-gray-500 mt-0.5">额外写出 <code class="text-[0.7rem]">*.bilingual.srt</code>（默认译文在上、原文在下）。仅「双语」任务可用。</span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="block text-sm hidden opacity-50" id="deleteSourcesAfterMergeWrap">
+                                    <span class="text-gray-700 font-medium invisible select-none" aria-hidden="true">合并后删除？</span>
+                                    <label class="flex items-start gap-2 mt-2 text-sm">
+                                        <input type="checkbox" id="deleteSourcesAfterMergeCheck" class="rounded mt-0.5 shrink-0" disabled>
+                                        <span>
+                                            <span class="font-medium text-gray-700">合并后删除原字幕和译文字幕</span>
+                                            <span class="block text-xs text-gray-500 mt-0.5">合并文件以影片文件名命名（如 <code class="text-[0.7rem]">影片名.srt</code>），并删除原文轨与译文轨。需先勾选左侧合并选项。</span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <label class="block text-sm hidden" id="maxBatchSizeWrap" data-settings-level="expert">
                                     <span class="text-gray-700 font-medium">批处理大小</span>
                                     <input type="number" id="maxBatchSizeInput" min="1" max="32" step="1" value="8"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" title="仅 GPU 批处理模式有效（max_batch_size）">
@@ -329,11 +483,10 @@
                                 <input type="checkbox" id="overwriteCheck" class="rounded mt-0.5">
                                 <span>
                                     <span class="font-medium text-gray-700">覆盖已有字幕</span>
-                                    <span class="block text-xs text-gray-500 mt-0.5">若视频旁已有同名字幕，仍重新生成并覆盖（对应 --overwrite）。</span>
                                 </span>
                             </label>
                         </fieldset>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3" data-settings-level="expert">
                             <legend class="text-xs font-semibold text-gray-500 px-1">日志</legend>
                             <label class="block text-sm">
                                 <span class="text-gray-700 font-medium">日志级别</span>
@@ -352,31 +505,26 @@
                                 <input type="checkbox" id="trayProgressCheck" class="rounded mt-0.5" checked>
                                 <span>
                                     <span class="font-medium text-gray-700">任务时更新托盘进度</span>
-                                    <span class="block text-xs text-gray-500 mt-0.5">默认开启。在托盘图标提示中显示批次进度与预计剩余时间。</span>
                                 </span>
                             </label>
                             <label class="flex items-start gap-2 text-sm">
                                 <input type="checkbox" id="minimizeToTrayOnStartCheck" class="rounded mt-0.5">
                                 <span>
-                                    <span class="font-medium text-gray-700">开始时最小化到托盘</span>
-                                    <span class="block text-xs text-gray-500 mt-0.5">开始任务后隐藏主窗口；双击托盘图标可恢复。</span>
+                                    <span class="font-medium text-gray-700">任务开始自动最小化到托盘</span>
                                 </span>
                             </label>
                             <label class="flex items-start gap-2 text-sm">
                                 <input type="checkbox" id="trayNotifyCheck" class="rounded mt-0.5">
                                 <span>
                                     <span class="font-medium text-gray-700">系统托盘通知</span>
-                                    <span class="block text-xs text-gray-500 mt-0.5">任务完成或最小化到托盘时弹出系统通知（默认关闭）。</span>
                                 </span>
                             </label>
                         </fieldset>
                     </div>
 
                     <div class="params-tab-panel space-y-4" data-tab-panel="install">
-                        <p class="text-xs text-gray-500 leading-relaxed">配置字幕引擎与媒体处理依赖。首次使用请先指定 TransWithAI 安装目录并完成检测。</p>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">TransWithAI 引擎</legend>
-                            <p class="text-xs text-gray-500 leading-relaxed">实际执行转写/翻译的程序目录，需包含 infer 等可执行文件。</p>
                             <label class="block text-sm">
                                 <span class="text-gray-700 font-medium">安装目录</span>
                                 <div class="flex gap-2 mt-1">
@@ -386,12 +534,56 @@
                             </label>
                             <div class="flex flex-wrap items-center gap-2">
                                 <button type="button" id="installTestBtn" class="px-3 py-1.5 border rounded-lg text-sm">检测安装</button>
+                                <button type="button" id="installCheckUpdateBtn" class="px-3 py-1.5 border rounded-lg text-sm" title="对照 GitHub 检查 TransWithAI 是否有新版本">
+                                    <i class="fa fa-refresh mr-1" aria-hidden="true"></i>检查新版本
+                                </button>
                                 <button type="button" id="installDownloadBtn" class="px-3 py-1.5 border rounded-lg text-sm text-violet-700 hover:bg-violet-50">
                                     <i class="fa fa-download mr-1"></i>下载 TransWithAI
                                 </button>
                                 <button type="button" id="openLatestLogBtn" class="px-3 py-1.5 text-xs text-violet-700 hover:underline">打开 latest.log</button>
                             </div>
                             <p id="transWithAiStatus" class="text-xs text-gray-500 min-h-[1.25rem]"></p>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div class="block text-sm">
+                                    <span class="text-gray-700 font-medium">转写模型路径</span>
+                                    <div class="flex gap-2 mt-1">
+                                        <input type="text" id="transcribeModelPathInput"
+                                            class="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm font-mono"
+                                            placeholder="留空=自动 / 安装默认" maxlength="4096"
+                                            spellcheck="false" autocomplete="off">
+                                        <button type="button" id="transcribeModelBrowseBtn"
+                                            class="px-3 py-2 border rounded-lg text-sm shrink-0 hover:bg-gray-50"
+                                            title="选择转写模型文件夹（含 model.bin / config.json 等）">浏览</button>
+                                    </div>
+                                    <label class="block mt-1.5">
+                                        <span class="sr-only">从已发现转写模型中选择</span>
+                                        <select id="transcribeModelSelect" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" title="从安装目录已发现的模型中选择">
+                                            <option value="">（自动 / 安装默认）</option>
+                                        </select>
+                                    </label>
+                                    <span class="block text-xs text-gray-500 mt-1">用于「仅转写」与双语</span>
+                                </div>
+                                <div class="block text-sm">
+                                    <span class="text-gray-700 font-medium">翻译模型路径</span>
+                                    <div class="flex gap-2 mt-1">
+                                        <input type="text" id="translateModelPathInput"
+                                            class="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm font-mono"
+                                            placeholder="留空=自动 / 安装默认" maxlength="4096"
+                                            spellcheck="false" autocomplete="off">
+                                        <button type="button" id="translateModelBrowseBtn"
+                                            class="px-3 py-2 border rounded-lg text-sm shrink-0 hover:bg-gray-50"
+                                            title="选择翻译模型文件夹（含 model.bin / config.json 等）">浏览</button>
+                                    </div>
+                                    <label class="block mt-1.5">
+                                        <span class="sr-only">从已发现翻译模型中选择</span>
+                                        <select id="translateModelSelect" class="w-full border rounded-lg px-3 py-2 text-sm font-mono" title="从安装目录已发现的模型中选择">
+                                            <option value="">（自动 / 安装默认）</option>
+                                        </select>
+                                    </label>
+                                    <span class="block text-xs text-gray-500 mt-1">用于「翻译」与双语</span>
+                                </div>
+                            </div>
+                            <p id="modelSelectHint" class="text-xs text-amber-700 min-h-[1rem]"></p>
                             <div id="installWizardBox" class="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs text-gray-600 space-y-1 hidden">
                                 <p class="font-medium text-violet-800">环境检测建议</p>
                                 <p id="installWizardText" class="whitespace-pre-line leading-relaxed">—</p>
@@ -401,7 +593,7 @@
                                 </button>
                             </div>
                         </fieldset>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3" data-settings-level="expert">
                             <legend class="text-xs font-semibold text-gray-500 px-1">FFmpeg</legend>
                             <p class="text-xs text-gray-500 leading-relaxed">用于视频探测、静音分割与编辑器相关媒体处理。留空则优先使用软件内置 FFmpeg，其次系统 PATH。</p>
                             <label class="block text-sm">
@@ -420,7 +612,6 @@
                     </div>
 
                     <div class="params-tab-panel space-y-4" data-tab-panel="output">
-                        <p class="text-xs text-gray-500 leading-relaxed">决定字幕写成什么格式、保存在哪里，以及翻译相关选项。</p>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">格式与保存位置</legend>
                             <div>
@@ -446,7 +637,7 @@
                                     <button type="button" id="outputDirBrowseBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">浏览</button>
                                 </div>
                             </label>
-                            <label class="block text-sm">
+                            <label class="block text-sm" id="audioSuffixesWrap" data-settings-level="expert">
                                 <span class="text-gray-700 font-medium">可识别的音视频后缀</span>
                                 <input type="text" id="audioSuffixesInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" placeholder="mp3,wav,mp4,mkv,...">
                                 <span class="block text-xs text-gray-500 mt-1">引擎扫描媒体文件时使用的后缀列表（audio_suffixes），一般无需修改。</span>
@@ -460,7 +651,7 @@
                                     <option value="simplified">简体中文（默认）</option>
                                     <option value="traditional">繁体中文</option>
                                 </select>
-                                <span class="block text-xs text-gray-500 mt-1">仅在字幕任务为「翻译」时生效；生成完成后用 OpenCC 做简繁转换。</span>
+                                <span class="block text-xs text-gray-500 mt-1">在「翻译」「双语」任务中生效。</span>
                             </label>
                             <label class="flex items-start gap-2 text-sm">
                                 <input type="checkbox" id="glossaryPromptCheck" class="rounded mt-0.5" checked>
@@ -473,12 +664,13 @@
                     </div>
 
                     <div class="params-tab-panel space-y-4" data-tab-panel="transcribe">
-                        <p class="text-xs text-gray-500 leading-relaxed">影响识别质量与速度的引擎参数。不确定时可用「常规」页的内置预设，或只改源语言。</p>
+                        <p id="transcribeExpertCustomHint" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2" data-settings-level="standard">已有专家自定义（抑幻听 / VAD / Beam 等）。切换到专家模式可查看或修改；也可改用预设覆盖。</p>
+                        <p class="text-xs text-gray-500 leading-relaxed" data-settings-level="standard">标准模式仅显示常用项。抑幻听、VAD、Beam 等请用预设，或切换专家模式。</p>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">基础</legend>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <label class="block text-sm">
-                                    <span class="text-gray-700 font-medium">源语言</span>
+                                    <span class="text-gray-700 font-medium">片源</span>
                                     <select id="languageSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                         <option value="auto">自动检测</option>
                                         <option value="ja">日语 (ja)</option>
@@ -487,19 +679,19 @@
                                     </select>
                                     <span class="block text-xs text-gray-500 mt-1">已知语种时锁定可减少误检；日语内容建议选「日语」。</span>
                                 </label>
-                                <label class="block text-sm">
+                                <label class="block text-sm" data-settings-level="expert">
                                     <span class="text-gray-700 font-medium">集束宽度</span>
                                     <input type="number" id="beamSizeInput" min="1" max="20" step="1" value="5"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" title="Beam Size：越大越准但越慢，默认 5">
                                     <span class="block text-xs text-gray-500 mt-1">Beam Size。越大通常越准但更慢，默认 5。</span>
                                 </label>
-                                <label class="block text-sm">
+                                <label class="block text-sm" data-settings-level="expert">
                                     <span class="text-gray-700 font-medium">重复惩罚</span>
                                     <input type="number" id="repetitionPenaltyInput" min="1" max="2" step="0.05" value="1.1"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" title="repetition_penalty">
                                     <span class="block text-xs text-gray-500 mt-1">抑制同一句反复出现；幻听重复多时可略调高（如 1.15–1.3）。</span>
                                 </label>
-                                <label class="block text-sm">
+                                <label class="block text-sm" data-settings-level="expert">
                                     <span class="text-gray-700 font-medium">最大初始时间戳（秒）</span>
                                     <input type="number" id="maxInitialTimestampInput" min="0" max="60" step="1" value="30"
                                         class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" title="避免时间轴向前偏移过长">
@@ -507,7 +699,7 @@
                                 </label>
                             </div>
                         </fieldset>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3" data-settings-level="expert">
                             <legend class="text-xs font-semibold text-gray-500 px-1">抑幻听</legend>
                             <p class="text-xs text-gray-500 leading-relaxed">
                                 过滤静音段胡编、低置信与过度重复文本。BGM 或静音较多时可略提高「无语音阈值」与「重复惩罚」；也可直接选用预设「翻译 · 抑幻听」。
@@ -544,7 +736,7 @@
                                 </label>
                             </div>
                         </fieldset>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3" data-settings-level="expert">
                             <legend class="text-xs font-semibold text-gray-500 px-1">语音活动检测（VAD）</legend>
                             <p class="text-xs text-gray-500 leading-relaxed">决定哪里算「有人说话」。阈值过高可能漏掉轻声；过低可能把噪声当语音。</p>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -583,7 +775,7 @@
                                     <span class="block text-xs text-gray-500 mt-0.5">按语音边界把长音频切成小块再识别，通常更稳、也更省显存。</span>
                                 </span>
                             </label>
-                            <label class="block text-sm" id="targetChunkDurationWrap">
+                            <label class="block text-sm" id="targetChunkDurationWrap" data-settings-level="expert">
                                 <span class="text-gray-700 font-medium">切分块目标时长（秒，最大 30）</span>
                                 <input type="number" id="targetChunkDurationInput" min="5" max="30" step="1" value="30"
                                     class="w-full border rounded-lg px-3 py-2 mt-1 text-sm sm:max-w-xs">
@@ -599,7 +791,7 @@
                                     <span class="block text-xs text-gray-500 mt-0.5">引擎输出后合并过近或重复的条目，减少碎句与叠字。</span>
                                 </span>
                             </label>
-                            <div id="mergeSettingsWrap" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div id="mergeSettingsWrap" class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-settings-level="expert">
                                 <label class="block text-sm">
                                     <span class="text-gray-700 font-medium">合并最大间隔（毫秒）</span>
                                     <input type="number" id="mergeMaxGapInput" min="0" max="60000" step="100" value="500"
@@ -617,16 +809,15 @@
                     </div>
 
                     <div class="params-tab-panel space-y-4" data-tab-panel="editor">
-                        <p class="text-xs text-gray-500 leading-relaxed">字幕编辑器与批量任务结束后的自动处理。主题、自动焦点等界面偏好仍保存在编辑器本地。</p>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
                             <legend class="text-xs font-semibold text-gray-500 px-1">批量完成后</legend>
-                            <p class="text-xs text-gray-500 leading-relaxed">主窗口批量生成结束时自动执行，不打开编辑器。</p>
+                            <p class="text-xs text-gray-500 leading-relaxed">主窗口批量生成结束时自动执行，不打开Transub Editor编辑器。</p>
                             <label class="flex items-start gap-2 text-sm">
                                 <input type="checkbox" id="postBatchQcCheck" class="rounded mt-0.5" checked>
                                 <span>
                                     <span class="font-medium text-gray-700">完成后 QC 检测</span>
                                     <span class="block text-xs text-gray-500 mt-0.5 leading-relaxed">
-                                        默认开启。扫描新字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量；不会自动修复。
+                                        默认开启。扫描新字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量。
                                     </span>
                                 </span>
                             </label>
@@ -672,7 +863,7 @@
                                 </span>
                             </label>
                         </fieldset>
-                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3">
+                        <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-3" data-settings-level="expert">
                             <legend class="text-xs font-semibold text-gray-500 px-1">编辑器 · 重转写</legend>
                             <label class="flex items-start gap-2 text-sm">
                                 <input type="checkbox" id="retranscribeWarmLightCheck" class="rounded mt-0.5">
@@ -711,21 +902,12 @@
                                 </button>
                             </div>
                             <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
-                            <div id="updateDownloadProgress" class="hidden space-y-1.5 mt-1" aria-live="polite">
-                                <div class="flex items-center justify-between gap-2 text-xs text-gray-600">
-                                    <span id="updateDownloadLabel">正在下载更新…</span>
-                                    <span id="updateDownloadPercent" class="font-mono tabular-nums shrink-0">0%</span>
-                                </div>
-                                <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                    <div id="updateDownloadBar" class="h-full bg-violet-500 transition-all duration-200 ease-out" style="width:0%"></div>
-                                </div>
-                                <p id="updateDownloadDetail" class="text-xs text-gray-400 min-h-[1rem]"></p>
-                            </div>
+                            <p class="text-xs text-gray-400">点击后将打开独立更新窗口，可在窗口内完成检查与下载。</p>
                         </fieldset>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-2">
                             <legend class="text-xs font-semibold text-gray-500 px-1">工具与关于</legend>
                             <div class="grid grid-cols-1 gap-2">
-                                <button type="button" id="trialCompareBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                <button type="button" id="trialCompareBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60" data-settings-level="expert">
                                     <i class="fa fa-exchange w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>参数试跑对比
                                     <span class="block text-xs text-gray-500 mt-0.5 ml-5 font-normal">用列表中首个勾选视频的前 N 秒，对比两套预设效果</span>
                                 </button>
@@ -746,6 +928,20 @@
                     </div>
                 </div>
             </div>
+            <div id="presetNameModal" class="hidden absolute inset-0 z-20 items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-labelledby="presetNameModalTitle">
+                <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-sm p-4 space-y-3">
+                    <h3 id="presetNameModalTitle" class="text-sm font-semibold text-gray-900">存为预设</h3>
+                    <label class="block text-sm">
+                        <span class="text-gray-700 font-medium">预设名称</span>
+                        <input type="text" id="presetNameInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" maxlength="64" placeholder="例如：日语·抑幻听" autocomplete="off">
+                    </label>
+                    <p id="presetNameStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" id="presetNameCancelBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">取消</button>
+                        <button type="button" id="presetNameConfirmBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">保存</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
 
@@ -761,9 +957,18 @@
 
     <div id="historyModal" class="hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/40" role="dialog">
         <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-2xl max-h-[70vh] flex flex-col overflow-hidden">
-            <div class="flex items-center justify-between px-4 py-3 border-b">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b">
                 <h3 class="font-semibold text-sm">任务历史</h3>
-                <button type="button" id="closeHistoryBtn" class="text-gray-400 hover:text-gray-600"><i class="fa fa-times"></i></button>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="clearHistoryBtn"
+                        class="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-xs hover:bg-red-50 disabled:opacity-40 disabled:pointer-events-none"
+                        title="清除全部任务历史">
+                        <i class="fa fa-trash-o mr-1" aria-hidden="true"></i>清除历史
+                    </button>
+                    <button type="button" id="closeHistoryBtn" class="text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100" aria-label="关闭">
+                        <i class="fa fa-times"></i>
+                    </button>
+                </div>
             </div>
             <div id="historyList" class="p-4 overflow-auto flex-1 text-xs space-y-2"></div>
         </div>
@@ -800,6 +1005,8 @@
     </div>
 
     <script src="js/eta-core.js"></script>
+    <script src="js/transwithai-model-core.js"></script>
+    <script src="js/dual-subtitle-core.js"></script>
     <script src="js/app.js"></script>
     <script src="js/features.js"></script>
     <script src="js/subtitle-editor-launcher.js"></script>

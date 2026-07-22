@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transub</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #f9fafb;
+            color: #1f2937;
+            font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .wrap {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            padding: 1.5rem;
+            box-sizing: border-box;
+        }
+        .logo {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            object-fit: cover;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        }
+        .brand {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .msg {
+            margin: 0;
+            font-size: 0.8125rem;
+            color: #6b7280;
+        }
+        .spinner {
+            width: 1.75rem;
+            height: 1.75rem;
+            border: 2.5px solid #e5e7eb;
+            border-top-color: #7c3aed;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin-top: 0.25rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap" role="status" aria-live="polite">
+        <img class="logo" src="icon.png" alt="" width="56" height="56" decoding="async">
+        <p class="brand">Transub</p>
+        <p class="msg" id="splashMsg">正在启动…</p>
+        <div class="spinner" aria-hidden="true"></div>
+    </div>
+    <script>
+        (function () {
+            var msgs = ['正在启动…', '正在加载界面…', '即将就绪…'];
+            var i = 0;
+            var el = document.getElementById('splashMsg');
+            setInterval(function () {
+                i = (i + 1) % msgs.length;
+                if (el) el.textContent = msgs[i];
+            }, 1200);
+        }());
+    </script>
+</body>
+</html>

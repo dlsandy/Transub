@@ -7,6 +7,8 @@
     const qcCore = global.TransubSubtitleQc;
     const metaCore = global.TransubSubtitleMeta;
     const glossaryCore = global.TransubSubtitleGlossary;
+    const textPresetsCore = global.TransubSubtitleTextPresets;
+    const workflowsCore = global.TransubSubtitleWorkflows;
     const fluencyCore = global.TransubSubtitleFluency;
     const chineseCore = global.TransubSubtitleChinese;
     if (!splitCore) {
@@ -20,6 +22,12 @@
     }
     if (!glossaryCore) {
         throw new Error('subtitle-glossary-core.js must load before subtitle-editor.js');
+    }
+    if (!textPresetsCore) {
+        throw new Error('subtitle-text-presets-core.js must load before subtitle-editor.js');
+    }
+    if (!workflowsCore) {
+        throw new Error('subtitle-workflows-core.js must load before subtitle-editor.js');
     }
     if (!fluencyCore) {
         throw new Error('subtitle-fluency-core.js must load before subtitle-editor.js');
@@ -42,6 +50,9 @@
     }
     if (!editorParts?.installPrefs) {
         throw new Error('subtitle-editor/prefs.js must load before subtitle-editor.js');
+    }
+    if (!editorParts?.installWorkflows) {
+        throw new Error('subtitle-editor/workflows.js must load before subtitle-editor.js');
     }
     const {
         esc,
@@ -81,9 +92,21 @@
         previewTextTrack: null,
         textTrackRefreshTimer: null,
         overlayText: '',
+        overlaySourceText: '',
         overlayVisible: false,
+        pairPath: '',
+        pairCues: [],
+        pairFormat: 'srt',
+        pairHeader: [],
+        pairDirty: false,
+        dualRole: null,
+        dualDisplayMode: 'both',
+        dualLineOrder: 'source-first',
         cueBoundaryTimer: null,
         playheadTimer: null,
+        /** Last wall-clock sync from video timeupdate / boundary (ms). */
+        lastPlaybackSyncAt: 0,
+        timelineFollowRaf: 0,
         lastPlayheadLabel: '',
         detailSyncing: false,
         detailRenderedDurSec: null,
@@ -111,6 +134,9 @@
         glossaryScope: 'global',
         glossaryEditingId: '',
         glossaryIssues: [],
+        textPresetsDoc: { version: 2, updatedAt: null, groups: [] },
+        textPresetEditingId: '',
+        textPresetsQuery: '',
         breakWords: null,
         listFilter: 'all',
         qcIssueIndexSet: new Set(),
@@ -146,6 +172,277 @@
     let cachedFfmpegPath = '';
     let draftAutosaveTimer = null;
     const DRAFT_AUTOSAVE_MS = 45000;
+
+    const dualCore = global.TransubDualSubtitle || null;
+    const DUAL_DISPLAY_KEY = 'transub-editor-dual-display';
+    const DUAL_LINE_ORDER_KEY = 'transub-editor-dual-line-order';
+
+    function loadDualDisplayMode() {
+        try {
+            const raw = localStorage.getItem(DUAL_DISPLAY_KEY);
+            if (dualCore) return dualCore.normalizeDualDisplayMode(raw || 'both');
+            if (raw === 'source' || raw === 'target' || raw === 'both') return raw;
+        } catch (_) { /* ignore */ }
+        return 'both';
+    }
+
+    function saveDualDisplayMode(mode) {
+        const normalized = dualCore
+            ? dualCore.normalizeDualDisplayMode(mode)
+            : (mode === 'source' || mode === 'target' ? mode : 'both');
+        state.dualDisplayMode = normalized;
+        try {
+            localStorage.setItem(DUAL_DISPLAY_KEY, normalized);
+        } catch (_) { /* ignore */ }
+        if (els.dualDisplaySelect) els.dualDisplaySelect.value = normalized;
+        updateVideoSubtitleOverlay(true);
+    }
+
+    function loadDualLineOrder() {
+        try {
+            const raw = localStorage.getItem(DUAL_LINE_ORDER_KEY);
+            if (dualCore) return dualCore.normalizeDualLineOrder(raw || 'source-first');
+            if (raw === 'target-first') return 'target-first';
+        } catch (_) { /* ignore */ }
+        return 'source-first';
+    }
+
+    function saveDualLineOrder(order) {
+        const normalized = dualCore
+            ? dualCore.normalizeDualLineOrder(order)
+            : (order === 'target-first' ? 'target-first' : 'source-first');
+        state.dualLineOrder = normalized;
+        try {
+            localStorage.setItem(DUAL_LINE_ORDER_KEY, normalized);
+        } catch (_) { /* ignore */ }
+        if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = normalized;
+        updateVideoSubtitleOverlay(true);
+    }
+
+    function syncDualDisplaySelectVisibility() {
+        if (!els.dualDisplaySelect) return;
+        const hasPair = hasDualPair();
+        els.dualDisplaySelect.classList.toggle('hidden', !hasPair);
+        els.dualLineOrderSelect?.classList.toggle('hidden', !hasPair);
+        els.exportDualBtn?.classList.toggle('hidden', !hasPair);
+        els.exportDualMenuBtn?.classList.toggle('hidden', !hasPair);
+        els.cueTable?.classList.toggle('has-dual-pair', hasPair);
+        document.querySelectorAll('.ctx-dual-only').forEach((el) => {
+            el.classList.toggle('hidden', !hasPair);
+        });
+    }
+
+    function hasDualPair() {
+        return !!state.pairPath && Array.isArray(state.pairCues) && state.pairCues.length > 0;
+    }
+
+    function cueListColspan() {
+        return hasDualPair() ? 7 : 6;
+    }
+
+    function clearPairTrack() {
+        state.pairPath = '';
+        state.pairCues = [];
+        state.pairFormat = 'srt';
+        state.pairHeader = [];
+        state.pairDirty = false;
+        state.dualRole = null;
+        syncDualDisplaySelectVisibility();
+    }
+
+    function basenameNoExt(filePath) {
+        const base = basename(filePath);
+        const idx = base.lastIndexOf('.');
+        return idx > 0 ? base.slice(0, idx) : base;
+    }
+
+    function videoStemFromPath(videoPath) {
+        if (!videoPath) return '';
+        return basenameNoExt(videoPath);
+    }
+
+    async function loadPairTrack(primaryPath, videoPath, { preferTargetPrimary = true } = {}) {
+        clearPairTrack();
+        if (!dualCore || !primaryPath || !electron?.transubReadSubtitle) return null;
+        const stem = videoStemFromPath(videoPath)
+            || dualCore.parseSubtitleStemParts(basenameNoExt(primaryPath), '').videoStem;
+        const inferred = dualCore.inferDualRole(basenameNoExt(primaryPath), stem);
+        if (!inferred.role || !(inferred.videoStem || stem)) return null;
+
+        const extMatch = String(primaryPath).match(/(\.[^.]+)$/);
+        const ext = extMatch ? extMatch[1] : '.srt';
+        const dir = String(primaryPath).replace(/[/\\][^/\\]+$/, '');
+        const sep = primaryPath.includes('\\') ? '\\' : '/';
+        const videoStem = inferred.videoStem || stem;
+
+        const suffixCandidates = dualCore.listPairSuffixCandidates(
+            inferred.role,
+            inferred.pairSuffix,
+        );
+
+        let pairPath = '';
+        let editable = [];
+
+        if (videoPath && electron.transubListSubtitleSidecars) {
+            try {
+                const res = await electron.transubListSubtitleSidecars({ videoPath });
+                editable = (res?.sidecars || []).filter((s) => s.editable);
+                pairPath = dualCore.findComplementarySidecarPath(
+                    primaryPath,
+                    videoStem,
+                    editable,
+                    {
+                        primaryRole: inferred.role,
+                        preferredPairSuffix: inferred.pairSuffix,
+                    },
+                ) || '';
+            } catch (_) { /* fall back to sibling paths */ }
+        }
+
+        if (!pairPath) {
+            for (const suffix of suffixCandidates) {
+                const candidate = `${dir}${sep}${videoStem}.${suffix}${ext}`;
+                if (candidate === primaryPath) continue;
+                try {
+                    const probe = await electron.transubReadSubtitle({ path: candidate });
+                    if (probe?.ok && Array.isArray(probe.cues) && probe.cues.length) {
+                        pairPath = candidate;
+                        break;
+                    }
+                } catch (_) { /* try next */ }
+            }
+        }
+
+        if (!pairPath || pairPath === primaryPath) return null;
+
+        try {
+            const doc = await electron.transubReadSubtitle({ path: pairPath });
+            if (!doc?.ok) return null;
+
+            // 打开原文轨时，默认切到译文轨作主编辑（文本=译文，对照=原文）
+            if (preferTargetPrimary && inferred.role === 'source') {
+                return {
+                    swapToTarget: true,
+                    targetPath: pairPath,
+                    sourcePath: primaryPath,
+                };
+            }
+
+            state.pairPath = pairPath;
+            state.pairCues = Array.isArray(doc.cues) ? doc.cues : [];
+            state.pairFormat = doc.format || state.format || 'srt';
+            state.pairHeader = Array.isArray(doc.header) ? doc.header : [];
+            state.pairDirty = false;
+            state.dualRole = inferred.role;
+            state.dualDisplayMode = loadDualDisplayMode();
+            state.dualLineOrder = loadDualLineOrder();
+            if (els.dualDisplaySelect) els.dualDisplaySelect.value = state.dualDisplayMode;
+            if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = state.dualLineOrder;
+            syncDualDisplaySelectVisibility();
+            return { swapToTarget: false, pairPath, role: inferred.role };
+        } catch (_) {
+            clearPairTrack();
+            return null;
+        }
+    }
+
+    function resolvePairedTextForCue(cue) {
+        if (!cue || !state.pairCues?.length || !dualCore) return '';
+        const end = Number(cue.endMs);
+        const start = Number(cue.startMs) || 0;
+        const endMs = Number.isFinite(end) ? end : start;
+        const hit = dualCore.findBestOverlapCue(state.pairCues, start, endMs);
+        return String(hit.cue?.text || '').trim();
+    }
+
+    async function savePairDocument() {
+        if (!state.pairPath || !electron?.transubWriteSubtitle) return { ok: false };
+        const res = await electron.transubWriteSubtitle({
+            path: state.pairPath,
+            format: state.pairFormat || state.format || 'srt',
+            cues: state.pairCues,
+            header: state.pairHeader,
+            backupMode: 'off',
+        });
+        if (res?.ok) state.pairDirty = false;
+        return res;
+    }
+
+    async function exportMergedDualSubtitle() {
+        if (!hasDualPair() || !dualCore) {
+            setStatus('当前没有配对的双语字幕', 'err');
+            return;
+        }
+        if (!electron?.transubExportSubtitle) {
+            setStatus('当前环境不支持导出', 'err');
+            return;
+        }
+        syncDetailToCue();
+        const lineOrder = state.dualLineOrder || loadDualLineOrder();
+        const merged = dualCore.buildMergedDualCues(state.cues, state.pairCues, {
+            primaryRole: state.dualRole || 'target',
+            order: lineOrder,
+        });
+        if (!merged.length) {
+            setStatus('合并结果为空', 'err');
+            return;
+        }
+        const suggested = dualCore.suggestMergedExportName(state.path || 'subtitle.srt');
+        let defaultPath = suggested;
+        if (state.path) {
+            const dir = String(state.path).replace(/[/\\][^/\\]+$/, '');
+            const sep = state.path.includes('\\') ? '\\' : '/';
+            defaultPath = `${dir}${sep}${suggested}`;
+        }
+        const res = await electron.transubExportSubtitle({
+            title: '导出合并双语字幕',
+            defaultName: defaultPath,
+            format: state.format || 'srt',
+            cues: merged,
+            header: state.header,
+        });
+        if (res?.canceled) return;
+        if (!res?.ok) {
+            setStatus(res?.error || '导出失败', 'err');
+            return;
+        }
+
+        const sourcePath = state.path;
+        const pairPath = state.pairPath;
+        const exportedPath = res.path;
+        const deleteSources = await editorConfirm(
+            '合并后是否删除源字幕文件？',
+            {
+                title: '删除源字幕',
+                detail: `已导出：${basename(exportedPath)}\n将删除：\n· ${basename(sourcePath)}\n· ${basename(pairPath)}\n\n选择「删除」后不可恢复（将打开合并后的双语文件）。`,
+                okLabel: '删除',
+                cancelLabel: '保留',
+                type: 'warning',
+            },
+        );
+
+        if (deleteSources && electron?.transubDeleteSubtitleFiles) {
+            const del = await electron.transubDeleteSubtitleFiles({
+                paths: [sourcePath, pairPath].filter(Boolean),
+            });
+            if (!del?.ok) {
+                setStatus(`已导出双语，但删除源文件失败：${del?.error || '未知错误'}`, 'err');
+                return;
+            }
+            clearPairTrack();
+            state.dirty = false;
+            state.pairDirty = false;
+            if (exportedPath && exportedPath !== sourcePath) {
+                await loadDocument(exportedPath, state.videoPath);
+                setStatus(`已导出并删除源文件：${basename(exportedPath)}`, 'ok');
+            } else {
+                setStatus(`已导出双语并删除源文件：${basename(exportedPath)}`, 'ok');
+            }
+            return;
+        }
+
+        setStatus(`已导出双语：${basename(res.path)}`, 'ok');
+    }
 
     function stopDraftAutosave() {
         if (draftAutosaveTimer) {
@@ -214,11 +511,21 @@
     }
 
     function bootstrapEditorDocument(payload) {
-        if (!payload?.subPath) return;
+        if (!payload) return;
+        if (payload.welcome && !payload.subPath) {
+            if (!editorBootstrapped) {
+                pendingEditorInit = payload;
+                return;
+            }
+            showWelcomeScreen();
+            return;
+        }
+        if (!payload.subPath) return;
         if (!editorBootstrapped) {
             pendingEditorInit = payload;
             return;
         }
+        hideWelcomeScreen();
         openDocument(payload.subPath, payload.videoPath || '');
     }
 
@@ -232,10 +539,172 @@
         }`;
     }
 
+    function formatRelativeOpenedAt(iso) {
+        const t = Date.parse(String(iso || ''));
+        if (!Number.isFinite(t)) return '';
+        const diffSec = Math.round((Date.now() - t) / 1000);
+        if (diffSec < 60) return '刚刚';
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
+        if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
+        if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`;
+        try {
+            return new Date(t).toLocaleString();
+        } catch {
+            return '';
+        }
+    }
+
+    function showWelcomeScreen() {
+        if (!els.welcome) return;
+        els.welcome.classList.remove('hidden');
+        hideBootProgress();
+        setStatus('就绪', '');
+        void refreshWelcomeHistory();
+    }
+
+    function hideWelcomeScreen() {
+        if (!els.welcome) return;
+        els.welcome.classList.add('hidden');
+        els.welcomeIconWrap?.classList.remove('is-dragover');
+    }
+
+    async function refreshWelcomeHistory() {
+        if (!els.welcomeHistoryList) return;
+        let entries = [];
+        try {
+            const res = await electron?.transubGetEditorHistory?.();
+            if (res?.ok && Array.isArray(res.entries)) entries = res.entries;
+        } catch (_) { /* ignore */ }
+        if (!entries.length) {
+            els.welcomeHistoryList.innerHTML = '<div class="editor-welcome-history-empty">暂无最近编辑记录</div>';
+            if (els.welcomeClearBtn) els.welcomeClearBtn.disabled = true;
+            return;
+        }
+        if (els.welcomeClearBtn) els.welcomeClearBtn.disabled = false;
+        els.welcomeHistoryList.innerHTML = entries.map((entry) => {
+            const missing = entry.exists === false;
+            const when = formatRelativeOpenedAt(entry.openedAt);
+            const meta = missing
+                ? (when ? `${when} · 文件不存在` : '文件不存在')
+                : when;
+            return `<button type="button" class="editor-welcome-history-item${missing ? ' is-missing' : ''}" role="listitem" data-path="${esc(entry.path)}" data-video="${esc(entry.videoPath || '')}" title="${esc(entry.path)}">
+                <span class="editor-welcome-history-name">${esc(entry.basename || basename(entry.path))}</span>
+                <span class="editor-welcome-history-path">${esc(entry.path)}</span>
+                ${meta ? `<span class="editor-welcome-history-meta">${esc(meta)}</span>` : ''}
+            </button>`;
+        }).join('');
+    }
+
+    async function recordEditorHistory(subPath, videoPath) {
+        if (!subPath || !electron?.transubAppendEditorHistory) return;
+        try {
+            await electron.transubAppendEditorHistory({
+                path: subPath,
+                videoPath: videoPath || '',
+                basename: basename(subPath),
+            });
+        } catch (_) { /* ignore */ }
+    }
+
+    async function clearWelcomeHistory() {
+        const yes = await editorConfirm('确定清除全部字幕编辑历史？', {
+            title: '清除历史记录',
+            okLabel: '清除',
+            detail: '此操作不可撤销。',
+        });
+        if (!yes) return;
+        try {
+            await electron?.transubClearEditorHistory?.();
+        } catch (_) { /* ignore */ }
+        await refreshWelcomeHistory();
+        setStatus('已清除编辑历史', 'ok');
+    }
+
+    function pathFromDroppedFile(file) {
+        if (!file) return '';
+        const legacy = file.path || '';
+        if (legacy) return legacy;
+        return electron?.getPathForFile?.(file) || '';
+    }
+
+    function isSubtitleDropPath(filePath) {
+        const lower = String(filePath || '').toLowerCase();
+        return ['.srt', '.vtt', '.lrc'].some((ext) => lower.endsWith(ext));
+    }
+
+    async function openDroppedSubtitle(dataTransfer) {
+        const files = dataTransfer?.files;
+        if (!files?.length) {
+            setStatus('未识别到可打开的字幕文件', 'err');
+            return;
+        }
+        let subPath = '';
+        for (const file of files) {
+            const p = pathFromDroppedFile(file);
+            if (p && isSubtitleDropPath(p)) {
+                subPath = p;
+                break;
+            }
+            if (!p && isSubtitleDropPath(file.name || '')) {
+                setStatus('无法获取拖放文件路径', 'err');
+                return;
+            }
+        }
+        if (!subPath) {
+            setStatus('请拖放 SRT / VTT / LRC 字幕文件', 'err');
+            return;
+        }
+        await openDocument(subPath, '');
+    }
+
+    function bindWelcomeEvents() {
+        els.welcomeOpenBtn?.addEventListener('click', () => { void pickAndOpenInWindow(); });
+        els.welcomeClearBtn?.addEventListener('click', () => { void clearWelcomeHistory(); });
+        els.welcomeHistoryList?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-path]');
+            if (!btn) return;
+            const subPath = btn.getAttribute('data-path') || '';
+            const videoPath = btn.getAttribute('data-video') || '';
+            if (!subPath) return;
+            void openDocument(subPath, videoPath);
+        });
+
+        const dropTarget = els.welcomeIconWrap || els.welcomeIcon || els.welcome;
+        if (!dropTarget) return;
+        let dragDepth = 0;
+        const setDragOver = (on) => {
+            els.welcomeIconWrap?.classList.toggle('is-dragover', !!on);
+        };
+        dropTarget.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragDepth += 1;
+            setDragOver(true);
+        });
+        dropTarget.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            setDragOver(true);
+        });
+        dropTarget.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) setDragOver(false);
+        });
+        dropTarget.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragDepth = 0;
+            setDragOver(false);
+            void openDroppedSubtitle(e.dataTransfer);
+        });
+        // 防止拖到启动页其它区域时浏览器导航离开
+        els.welcome?.addEventListener('dragover', (e) => e.preventDefault());
+        els.welcome?.addEventListener('drop', (e) => e.preventDefault());
+    }
+
     function updateWindowTitle() {
         document.title = state.path
-            ? `${state.dirty ? '* ' : ''}字幕编辑 — ${basename(state.path)}`
-            : 'Transub — 字幕编辑';
+            ? `${state.dirty ? '* ' : ''}Transub Editor — ${basename(state.path)}`
+            : 'Transub Editor';
     }
 
     function setDirty(v) {
@@ -430,6 +899,8 @@
             if (els.lineLen) els.lineLen.textContent = '0';
             if (els.textLen) els.textLen.textContent = '0';
             if (els.detailWarn) els.detailWarn.classList.add('hidden');
+            if (els.detailPairWrap) els.detailPairWrap.classList.add('hidden');
+            if (els.detailPairText) els.detailPairText.textContent = '';
             updateDetailActionButtons();
             state.detailRenderedDurSec = null;
             state.detailSyncing = false;
@@ -441,6 +912,16 @@
         if (els.detailDuration) els.detailDuration.value = formatDurationSec(cueDurationMs(cue));
         if (els.detailEnd) els.detailEnd.value = formatDisplayTime(cueEndMs(cue), state.format);
         if (els.detailText) els.detailText.value = cue.text || '';
+        if (els.detailPairWrap && els.detailPairText) {
+            if (hasDualPair()) {
+                const pairText = resolvePairedTextForCue(cue);
+                els.detailPairText.textContent = pairText || '（无时间重叠的对照）';
+                els.detailPairWrap.classList.remove('hidden');
+            } else {
+                els.detailPairText.textContent = '';
+                els.detailPairWrap.classList.add('hidden');
+            }
+        }
         updateDetailActionButtons();
         updateDetailMeta();
         state.detailRenderedDurSec = cueDurationMs(cue) / 1000;
@@ -576,8 +1057,10 @@
 
     function renderCueList() {
         if (!els.cueBody) return;
+        const colspan = cueListColspan();
+        syncDualDisplaySelectVisibility();
         if (!state.cues.length) {
-            els.cueBody.innerHTML = '<tr><td colspan="6" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">无字幕条目</td></tr>';
+            els.cueBody.innerHTML = `<tr><td colspan="${colspan}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">无字幕条目</td></tr>`;
             if (els.filterCount) els.filterCount.textContent = '';
             renderTimeline();
             state.selectedIndex = -1;
@@ -600,14 +1083,22 @@
         }
         if (!visibleIdxs.length) {
             const emptyMsg = state.listFilter === 'all' ? '无字幕条目' : '当前筛选无匹配条目';
-            els.cueBody.innerHTML = `<tr><td colspan="6" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">${emptyMsg}</td></tr>`;
+            els.cueBody.innerHTML = `<tr><td colspan="${colspan}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">${emptyMsg}</td></tr>`;
         } else {
+            const showPair = hasDualPair();
+            const pairHead = els.cueTable?.querySelector('.col-pair-head');
+            if (pairHead) {
+                pairHead.textContent = state.dualRole === 'source' ? '译文对照' : '原文对照';
+            }
             els.cueBody.innerHTML = visibleIdxs.map((idx) => {
                 const cue = state.cues[idx];
                 const prev = idx > 0 ? state.cues[idx - 1] : null;
                 const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
                 const w = getCueWarnings(cue, prev, next);
                 const preview = String(cue.text || '').replace(/\s+/g, ' ').trim();
+                const pairPreview = showPair
+                    ? String(resolvePairedTextForCue(cue) || '').replace(/\s+/g, ' ').trim()
+                    : '';
                 const low = !!state.cueMeta[idx]?.low;
                 const cps = computeCps(cue.text, cueDurationMs(cue));
                 const cpsNum = cps != null ? Number(cps) : null;
@@ -621,6 +1112,7 @@
                 <td class="text-[11px] tabular-nums align-middle ${w.dur ? 'cell-warn' : ''}">${esc(formatDurationSec(cueDurationMs(cue)))}</td>
                 <td class="cue-cps-cell align-middle ${cpsHot ? 'hot' : ''}">${cps != null ? esc(cps) : '—'}</td>
                 <td class="cell-text align-middle">${esc(preview || '—')}</td>
+                ${showPair ? `<td class="cell-pair align-middle" title="${esc(pairPreview || '')}">${esc(pairPreview || '—')}</td>` : ''}
             </tr>`;
             }).join('');
         }
@@ -669,6 +1161,10 @@
         }
         if (cells[5]) {
             cells[5].textContent = String(cue.text || '').replace(/\s+/g, ' ').trim() || '—';
+        }
+        if (hasDualPair() && cells[6]) {
+            cells[6].textContent = String(resolvePairedTextForCue(cue) || '').replace(/\s+/g, ' ').trim() || '—';
+            cells[6].title = cells[6].textContent === '—' ? '' : cells[6].textContent;
         }
         if (idx > 0) refreshListRowWarningsOnly(idx - 1);
         if (idx < state.cues.length - 1) refreshListRowWarningsOnly(idx + 1);
@@ -934,32 +1430,69 @@
 
     function hidePlaybackSubtitleOverlay() {
         state.overlayText = '';
+        state.overlaySourceText = '';
         state.overlayVisible = false;
         if (els.videoSubtitle) els.videoSubtitle.classList.add('hidden');
         if (els.videoSubtitleText) els.videoSubtitleText.textContent = '';
+        if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = '';
         if (state.previewTextTrack) {
             try { state.previewTextTrack.mode = 'hidden'; } catch (_) { /* noop */ }
         }
     }
 
-    function updateVideoSubtitleOverlay() {
+    function updateVideoSubtitleOverlay(force = false) {
         if (!els.videoSubtitle || !els.videoSubtitleText) return;
         const idx = state.playbackIndex;
-        let text = '';
-        let visible = false;
+        let primaryText = '';
+        let pairedText = '';
         if (idx >= 0 && idx < state.cues.length) {
-            text = String(state.cues[idx].text || '').trim();
-            visible = !!text;
+            const cue = state.cues[idx];
+            primaryText = String(cue.text || '').trim();
+            if (state.pairPath && state.pairCues.length) {
+                pairedText = resolvePairedTextForCue(cue);
+            }
         }
-        if (text === state.overlayText && visible === state.overlayVisible) return;
-        state.overlayText = text;
+
+        let sourceText = '';
+        let targetText = '';
+        let visible = false;
+        if (dualCore && state.dualRole && (primaryText || pairedText)) {
+            const composed = dualCore.composeDualOverlayText({
+                primaryText,
+                pairedText,
+                primaryRole: state.dualRole,
+                displayMode: state.dualDisplayMode || 'both',
+                lineOrder: state.dualLineOrder || 'source-first',
+            });
+            sourceText = composed.sourceText;
+            targetText = composed.targetText;
+            visible = composed.visible;
+        } else {
+            targetText = primaryText;
+            visible = !!primaryText;
+        }
+
+        const key = `${sourceText}\n${targetText}\n${state.dualLineOrder || ''}`;
+        if (!force && key === state.overlayText && sourceText === state.overlaySourceText && visible === state.overlayVisible) {
+            return;
+        }
+        state.overlayText = key;
+        state.overlaySourceText = sourceText;
         state.overlayVisible = visible;
         if (!visible) {
             els.videoSubtitle.classList.add('hidden');
             els.videoSubtitleText.textContent = '';
+            if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = '';
+            els.videoSubtitle.classList.remove('line-order-target-first');
             return;
         }
-        els.videoSubtitleText.textContent = text;
+        if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = sourceText;
+        els.videoSubtitleText.textContent = targetText;
+        els.videoSubtitle.classList.toggle(
+            'line-order-target-first',
+            (state.dualLineOrder || 'source-first') === 'target-first'
+                && !!(sourceText && targetText),
+        );
         els.videoSubtitle.classList.remove('hidden');
     }
 
@@ -1022,6 +1555,10 @@
             clearInterval(state.playheadTimer);
             state.playheadTimer = null;
         }
+        if (state.timelineFollowRaf) {
+            cancelAnimationFrame(state.timelineFollowRaf);
+            state.timelineFollowRaf = 0;
+        }
     }
 
     function scheduleCueBoundarySync() {
@@ -1032,7 +1569,7 @@
         if (!els.video || els.video.paused || els.video.ended) return;
 
         const tMs = (els.video.currentTime || 0) * 1000;
-        const rate = els.video.playbackRate || 1;
+        const rate = Math.max(0.05, els.video.playbackRate || 1);
         let nextMs = findNextBoundaryMs(tMs, state.playbackIndex);
         if (nextMs == null) {
             const durMs = (els.video.duration || 0) * 1000;
@@ -1040,7 +1577,9 @@
             else return;
         }
 
-        const delay = Math.max(20, (nextMs - tMs) / rate);
+        // Cap delay so a stalled/buffered clock or busy main thread cannot leave
+        // overlay / playing-row stuck until the user seeks the waveform.
+        const delay = Math.min(250, Math.max(20, (nextMs - tMs) / rate));
         state.cueBoundaryTimer = setTimeout(() => {
             state.cueBoundaryTimer = null;
             if (!els.video || els.video.paused) return;
@@ -1073,22 +1612,17 @@
 
     function updatePlayingRowHighlight(prevIdx, nextIdx) {
         if (prevIdx === nextIdx) return;
-        const run = () => {
-            if (prevIdx >= 0) {
-                els.cueBody?.querySelector(`tr[data-cue-idx="${prevIdx}"]`)
-                    ?.classList.remove('cue-row-playing');
-            }
-            if (nextIdx >= 0) {
-                const row = els.cueBody?.querySelector(`tr[data-cue-idx="${nextIdx}"]`);
-                if (row) row.classList.add('cue-row-playing');
-            }
-            // 播放指示绝不主动滚动列表；列表跟随只由 followPlaybackFocus / selectCue 负责
-        };
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(run, { timeout: 120 });
-        } else {
-            requestAnimationFrame(run);
+        // Apply immediately — idle deferral made the playing row lag behind video,
+        // which felt like the cue list stuttering during preview.
+        if (prevIdx >= 0) {
+            els.cueBody?.querySelector(`tr[data-cue-idx="${prevIdx}"]`)
+                ?.classList.remove('cue-row-playing');
         }
+        if (nextIdx >= 0) {
+            const row = els.cueBody?.querySelector(`tr[data-cue-idx="${nextIdx}"]`);
+            if (row) row.classList.add('cue-row-playing');
+        }
+        // 播放指示绝不主动滚动列表；列表跟随只由 followPlaybackFocus / selectCue 负责
     }
 
     function syncPlaybackFromVideo(updatePlayhead = true) {
@@ -1201,12 +1735,20 @@
             return;
         }
         els.sidecarSelect.classList.remove('hidden');
-        els.sidecarSelect.innerHTML = editable.map((s) =>
-            `<option value="${esc(s.path)}" ${s.path === currentPath ? 'selected' : ''}>${esc(s.basename)} (${s.format.toUpperCase()})</option>`
-        ).join('');
+        els.sidecarSelect.innerHTML = editable.map((s) => {
+            let label = `${s.basename} (${s.format.toUpperCase()})`;
+            if (dualCore && state.videoPath) {
+                const stem = videoStemFromPath(state.videoPath);
+                const role = dualCore.inferDualRole(basenameNoExt(s.path), stem).role;
+                if (role === 'source') label = `${s.basename}（原文）`;
+                else if (role === 'target') label = `${s.basename}（译文）`;
+            }
+            return `<option value="${esc(s.path)}" ${s.path === currentPath ? 'selected' : ''}>${esc(label)}</option>`;
+        }).join('');
     }
 
-    async function loadDocument(subPath, videoPath) {
+    async function loadDocument(subPath, videoPath, options = {}) {
+        const allowRoleSwap = options.allowRoleSwap !== false;
         const fileLabel = basename(subPath);
         documentLoadInFlight = true;
         showBootProgress({
@@ -1240,11 +1782,13 @@
             state.playbackIndex = -1;
             state.previewTextTrack = null;
             state.overlayText = '';
+            state.overlaySourceText = '';
             state.overlayVisible = false;
             state.detailRenderedDurSec = null;
             state.lastPlayheadLabel = '';
             state.sidecarMeta = null;
             state.cueMeta = [];
+            clearPairTrack();
             setDirty(!!draft);
             clearUndoHistory();
             startDraftAutosave();
@@ -1269,17 +1813,31 @@
             });
             await flushBootProgressPaint();
             await loadVideo(state.videoPath);
+            const pairInfo = await loadPairTrack(res.path, state.videoPath);
+            // 打开原文轨时切到译文作主编辑（文本=译文，对照=原文）
+            if (allowRoleSwap && pairInfo?.swapToTarget && pairInfo.targetPath) {
+                documentLoadInFlight = false;
+                return loadDocument(pairInfo.targetPath, state.videoPath, { allowRoleSwap: false });
+            }
+            // 配对在首次 render 之后完成，必须重绘列表才有对照列单元格
+            if (hasDualPair()) renderCueList();
             refreshVideoTextTrack();
-            updateVideoSubtitleOverlay();
+            updateVideoSubtitleOverlay(true);
             await populateSidecarSelect(state.videoPath, res.path);
             const low = metaCore.summarizeLowConfidence(state.cueMeta).low;
             const draftHint = draft ? '（已恢复草稿）' : '';
+            const dualHint = hasDualPair() ? `，已配对对照轨 ${basename(state.pairPath)}` : '';
             setStatus(
                 low
-                    ? `已加载 ${state.cues.length} 条字幕，其中 ${low} 条低置信${draftHint}`
-                    : `已加载 ${state.cues.length} 条字幕${draftHint}`,
+                    ? `已加载 ${state.cues.length} 条字幕，其中 ${low} 条低置信${draftHint}${dualHint}`
+                    : `已加载 ${state.cues.length} 条字幕${draftHint}${dualHint}`,
                 'ok',
             );
+            hideWelcomeScreen();
+            try {
+                await electron?.transubEditorRegisterPath?.({ path: res.path });
+            } catch (_) { /* ignore */ }
+            void recordEditorHistory(res.path, state.videoPath || '');
             return true;
         } finally {
             documentLoadInFlight = false;
@@ -1292,6 +1850,7 @@
             const yes = await editorConfirm('当前字幕未保存，打开新文件将丢失修改，继续？');
             if (!yes) return;
         }
+        hideWelcomeScreen();
         let linkedVideo = videoPath || '';
         try {
             if (!linkedVideo && subPath) {
@@ -1304,10 +1863,14 @@
                 if (guess?.ok && guess.videoPath) linkedVideo = guess.videoPath;
             }
             const ok = await loadDocument(subPath, linkedVideo);
-            if (!ok) return;
+            if (!ok) {
+                if (!state.path) showWelcomeScreen();
+                return;
+            }
             state.ready = true;
         } catch (err) {
             hideBootProgress();
+            if (!state.path) showWelcomeScreen();
             setStatus(err?.message || '打开字幕失败', 'err');
         }
     }
@@ -2042,6 +2605,9 @@
             } else if (action === 'retranscribe') {
                 btn.disabled = !hasCue || state.retranscribeBusy || state.silenceSplitBusy
                     || !state.videoPath || !electron?.transubTranscribeRange;
+            } else if (action === 'retranslate' || action === 'retranscribe-dual') {
+                btn.disabled = !hasCue || !hasDualPair() || state.retranscribeBusy || state.silenceSplitBusy
+                    || !state.videoPath || !electron?.transubTranscribeRange;
             } else if (action === 'retranscribe-dur') {
                 btn.disabled = state.retranscribeBusy || state.silenceSplitBusy
                     || !state.videoPath || !electron?.transubTranscribeRange;
@@ -2062,6 +2628,7 @@
 
     function showCueContextMenu(clientX, clientY) {
         if (!els.cueContextMenu) return;
+        syncDualDisplaySelectVisibility();
         updateContextMenuState();
         const menu = els.cueContextMenu;
         menu.classList.remove('hidden');
@@ -2138,6 +2705,12 @@
                 break;
             case 'retranscribe':
                 retranscribeSelectedCue();
+                break;
+            case 'retranslate':
+                retranslateSelectedCue();
+                break;
+            case 'retranscribe-dual':
+                retranscribeDualSelectedCue();
                 break;
             case 'retranscribe-dur':
                 openRetranscribeDurModal();
@@ -2549,7 +3122,7 @@
     }
 
     /**
-     * @param {{ startMs: number, endMs: number, padMs?: number, mode?: 'cue'|'range', detail?: string, snapAfter?: boolean }} opts
+     * @param {{ startMs: number, endMs: number, padMs?: number, mode?: 'cue'|'range', detail?: string, snapAfter?: boolean, task?: 'transcribe'|'translate', dualPass?: boolean }} opts
      */
     async function runRetranscribeRange(opts) {
         if (!canRetranscribeNow()) return { ok: false };
@@ -2558,6 +3131,10 @@
         const padMs = Math.max(0, Math.min(2000, Math.round(Number(opts.padMs ?? 350))));
         const mode = opts.mode === 'cue' ? 'cue' : 'range';
         const snapAfter = opts.snapAfter === true;
+        const dualPass = opts.dualPass === true && hasDualPair();
+        const task = dualPass
+            ? 'transcribe'
+            : (opts.task === 'translate' ? 'translate' : 'transcribe');
 
         if (endMs - startMs < 200) {
             setStatus('重转写时间范围过短', 'err');
@@ -2567,16 +3144,76 @@
         state.retranscribeBusy = true;
         state.jobAbortRequested = false;
         updateRetranscribeTransportBtn();
+        const titleBase = dualPass
+            ? '双语重跑'
+            : (task === 'translate' ? '重译' : '重转写');
+        let activeRangeTask = task;
+        let activePhaseTitle = titleBase;
         showSilenceSplitProgress({
-            title: '正在重转写',
-            detail: opts.detail || `正在截取并转写 ${((endMs - startMs) / 1000).toFixed(1)}s…`,
+            title: titleBase,
+            detail: opts.detail || `截取并处理 ${((endMs - startMs) / 1000).toFixed(1)}s…`,
             indeterminate: true,
-            statusMessage: '区间重转写进行中…',
+            statusMessage: `${titleBase}进行中…`,
         });
         if (els.silenceProgressHint) {
-            els.silenceProgressHint.textContent = '将调用 TransWithAI 对选定时间段重新转写；加载模型时请耐心等待。可点取消或按 Esc 中止。';
+            els.silenceProgressHint.textContent = dualPass
+                ? '将依次生成原文与译文；加载模型时请稍候。可点取消或按 Esc 中止。'
+                : (task === 'translate'
+                    ? '将对选定时间段重新翻译；加载模型时请稍候。'
+                    : '将对选定时间段重新转写；加载模型时请稍候。可点取消或按 Esc 中止。');
         }
         await flushSilenceProgressPaint();
+
+        const applyCuesToList = (listRef, newCues, selectedIdxForCueMode) => {
+            let selectAt = 0;
+            let replacedCount = 0;
+            if (mode === 'cue' && selectedIdxForCueMode >= 0 && selectedIdxForCueMode < listRef.length) {
+                listRef.splice(selectedIdxForCueMode, 1, ...newCues);
+                selectAt = selectedIdxForCueMode;
+                replacedCount = 1;
+            } else {
+                const result = metaCore.replaceCuesInTimeRange(listRef, startMs, endMs, newCues);
+                listRef.splice(0, listRef.length, ...result.cues);
+                selectAt = result.insertAt;
+                replacedCount = result.replaced;
+            }
+            return { selectAt, replacedCount };
+        };
+
+        const invokeRange = async (rangeTask, phaseLabel) => {
+            activeRangeTask = rangeTask;
+            activePhaseTitle = phaseLabel || titleBase;
+            if (els.silenceProgressTitle) {
+                els.silenceProgressTitle.textContent = activePhaseTitle;
+            }
+            const res = await electron.transubTranscribeRange({
+                mediaPath: state.videoPath,
+                startMs,
+                endMs,
+                padMs,
+                ffmpegPath: cachedFfmpegPath,
+                options: {
+                    task: rangeTask,
+                    mergeSegments: false,
+                    subFormats: 'srt',
+                },
+            });
+            if (isJobAbortRequested() || res?.cancelled) {
+                return { ok: false, cancelled: true };
+            }
+            if (!res?.ok || !Array.isArray(res.cues) || !res.cues.length) {
+                return { ok: false, error: res?.error || `${phaseLabel || '处理'}失败` };
+            }
+            const newCues = res.cues.map((c) => ({
+                startMs: c.startMs,
+                endMs: c.endMs,
+                text: String(c.text || '').trim(),
+            })).filter((c) => c.text);
+            if (!newCues.length) {
+                return { ok: false, error: `${phaseLabel || '处理'}结果为空` };
+            }
+            return { ok: true, cues: newCues };
+        };
 
         let unsubProgress = null;
         try {
@@ -2591,92 +3228,172 @@
                     statusMessage: message,
                 });
                 if (els.silenceProgressTitle) {
-                    if (isModel) els.silenceProgressTitle.textContent = '正在加载模型';
-                    else if (stage === 'vad') els.silenceProgressTitle.textContent = '正在初始化语音检测';
-                    else if (stage === 'extract' || stage === 'warmup') els.silenceProgressTitle.textContent = '正在准备音频';
-                    else if (stage === 'transcribe') els.silenceProgressTitle.textContent = '正在识别语音';
-                    else if (stage === 'save' || stage === 'done') els.silenceProgressTitle.textContent = '正在整理结果';
-                    else els.silenceProgressTitle.textContent = progress?.warmLight ? '正在重转写（轻量）' : '正在重转写';
+                    if (isModel) els.silenceProgressTitle.textContent = '加载模型';
+                    else if (stage === 'vad') els.silenceProgressTitle.textContent = '语音检测';
+                    else if (stage === 'extract' || stage === 'warmup') els.silenceProgressTitle.textContent = '准备音频';
+                    else if (stage === 'transcribe') {
+                        els.silenceProgressTitle.textContent = dualPass
+                            ? (activeRangeTask === 'translate' ? '双语 · 生成译文' : '双语 · 生成原文')
+                            : (activeRangeTask === 'translate' ? '翻译中' : '识别中');
+                    }
+                    else if (stage === 'save' || stage === 'done') els.silenceProgressTitle.textContent = '整理结果';
+                    else els.silenceProgressTitle.textContent = progress?.warmLight
+                        ? `${activePhaseTitle}（轻量）`
+                        : activePhaseTitle;
                 }
                 if (els.silenceProgressHint) {
                     if (isModel) {
                         els.silenceProgressHint.textContent = progress?.warmLight
-                            ? '轻量模式：正在加载 Whisper 模型到显存/内存，首次或切换模型时较慢'
-                            : '正在加载 Whisper 模型到显存/内存，首次或切换模型时可能需要数十秒';
+                            ? '轻量模式：正在加载模型，首次或切换模型时较慢'
+                            : '正在加载模型到显存/内存，首次或切换模型时可能需要数十秒';
                     } else if (stage === 'vad') {
-                        els.silenceProgressHint.textContent = '正在初始化 VAD 语音活动检测…';
+                        els.silenceProgressHint.textContent = '正在初始化语音检测…';
                     } else if (stage === 'starting') {
-                        els.silenceProgressHint.textContent = '正在启动 TransWithAI 转写引擎…';
+                        els.silenceProgressHint.textContent = '正在启动引擎…';
                     } else if (progress?.warmLight) {
                         els.silenceProgressHint.textContent = '轻量加速已开启（Beam=1）；如需更高精度请在设置中关闭「重转写加速」';
                     }
                 }
             }) || null;
 
-            const res = await electron.transubTranscribeRange({
-                mediaPath: state.videoPath,
-                startMs,
-                endMs,
-                padMs,
-                ffmpegPath: cachedFfmpegPath,
-                options: {
-                    task: 'transcribe',
-                    mergeSegments: false,
-                    subFormats: 'srt',
-                },
-            });
-            if (isJobAbortRequested() || res?.cancelled) {
-                setStatus('重转写已取消', 'warn');
-                return { ok: false, cancelled: true };
-            }
-            if (!res?.ok || !Array.isArray(res.cues) || !res.cues.length) {
-                setStatus(res?.error || '重转写失败', 'err');
-                return { ok: false };
-            }
+            let sourceCues = null;
+            let targetCues = null;
 
-            const newCues = res.cues.map((c) => ({
-                startMs: c.startMs,
-                endMs: c.endMs,
-                text: String(c.text || '').trim(),
-            })).filter((c) => c.text);
-            if (!newCues.length) {
-                setStatus('重转写结果为空', 'err');
-                return { ok: false };
+            if (dualPass) {
+                const srcRes = await invokeRange('transcribe', '双语 · 原文');
+                if (!srcRes.ok) {
+                    if (srcRes.cancelled) setStatus('双语重跑已取消', 'warn');
+                    else setStatus(srcRes.error || '原文生成失败', 'err');
+                    return { ok: false, cancelled: !!srcRes.cancelled };
+                }
+                sourceCues = srcRes.cues;
+                const tgtRes = await invokeRange('translate', '双语 · 译文');
+                if (!tgtRes.ok) {
+                    if (tgtRes.cancelled) setStatus('双语重跑已取消（原文已更新；译文未完成）', 'warn');
+                    else setStatus(tgtRes.error || '译文生成失败', 'err');
+                    // Still apply source to pair/primary so work isn't lost
+                } else {
+                    targetCues = tgtRes.cues;
+                }
+            } else if (task === 'translate') {
+                const res = await invokeRange('translate', '重译');
+                if (!res.ok) {
+                    if (res.cancelled) setStatus('重译已取消', 'warn');
+                    else setStatus(res.error || '重译失败', 'err');
+                    return { ok: false, cancelled: !!res.cancelled };
+                }
+                targetCues = res.cues;
+            } else {
+                const res = await invokeRange('transcribe', '重转写');
+                if (!res.ok) {
+                    if (res.cancelled) setStatus('重转写已取消', 'warn');
+                    else setStatus(res.error || '重转写失败', 'err');
+                    return { ok: false, cancelled: !!res.cancelled };
+                }
+                sourceCues = res.cues;
             }
 
             recordUndoBeforeChange();
-            let selectAt = 0;
+            let selectAt = state.selectedIndex >= 0 ? state.selectedIndex : 0;
             let replacedCount = 0;
-            if (mode === 'cue' && state.selectedIndex >= 0) {
-                const idx = state.selectedIndex;
-                state.cues.splice(idx, 1, ...newCues);
-                selectAt = idx;
-                replacedCount = 1;
+            let pairUpdated = false;
+
+            const applySource = (cues) => {
+                if (!cues?.length) return;
+                if (hasDualPair() && state.dualRole === 'target') {
+                    const r = applyCuesToList(state.pairCues, cues, -1);
+                    replacedCount = r.replacedCount;
+                    state.pairDirty = true;
+                    pairUpdated = true;
+                } else {
+                    const r = applyCuesToList(
+                        state.cues,
+                        cues,
+                        mode === 'cue' ? state.selectedIndex : -1,
+                    );
+                    selectAt = r.selectAt;
+                    replacedCount = r.replacedCount;
+                }
+            };
+
+            const applyTarget = (cues) => {
+                if (!cues?.length) return;
+                if (hasDualPair() && state.dualRole === 'source') {
+                    const r = applyCuesToList(state.pairCues, cues, -1);
+                    replacedCount = Math.max(replacedCount, r.replacedCount);
+                    state.pairDirty = true;
+                    pairUpdated = true;
+                } else if (hasDualPair() && state.dualRole === 'target') {
+                    const r = applyCuesToList(
+                        state.cues,
+                        cues,
+                        mode === 'cue' ? state.selectedIndex : -1,
+                    );
+                    selectAt = r.selectAt;
+                    replacedCount = Math.max(replacedCount, r.replacedCount);
+                } else {
+                    const r = applyCuesToList(
+                        state.cues,
+                        cues,
+                        mode === 'cue' ? state.selectedIndex : -1,
+                    );
+                    selectAt = r.selectAt;
+                    replacedCount = r.replacedCount;
+                }
+            };
+
+            if (dualPass) {
+                applySource(sourceCues);
+                applyTarget(targetCues);
+                if (!targetCues?.length && sourceCues?.length && pairUpdated) {
+                    await savePairDocument();
+                    setDirty(true);
+                    renderCueList();
+                    setStatus('翻译失败，但原文对照轨已更新并保存', 'warn');
+                    return { ok: false };
+                }
+                if (!targetCues?.length) {
+                    setStatus('双语重跑失败', 'err');
+                    return { ok: false };
+                }
+            } else if (task === 'translate') {
+                applyTarget(targetCues);
             } else {
-                const result = metaCore.replaceCuesInTimeRange(state.cues, startMs, endMs, newCues);
-                state.cues.splice(0, state.cues.length, ...result.cues);
-                selectAt = result.insertAt;
-                replacedCount = result.replaced;
+                // Plain retranscribe: keep updating the active document (backward compatible)
+                // When viewing target with pair, still prefer updating primary unless dualPass
+                if (hasDualPair() && state.dualRole === 'target' && opts.applyToPair === true) {
+                    applySource(sourceCues);
+                } else {
+                    const r = applyCuesToList(
+                        state.cues,
+                        sourceCues,
+                        mode === 'cue' ? state.selectedIndex : -1,
+                    );
+                    selectAt = r.selectAt;
+                    replacedCount = r.replacedCount;
+                }
             }
+
             maybeFixOverlapAfterSplit();
 
+            const newCount = (targetCues || sourceCues || []).length;
             let snappedCount = 0;
-            if (snapAfter && electron?.ffmpegDetectSilence) {
+            if (snapAfter && electron?.ffmpegDetectSilence && !pairUpdated) {
                 const indices = [];
-                for (let i = 0; i < newCues.length; i += 1) {
+                for (let i = 0; i < newCount; i += 1) {
                     const at = selectAt + i;
                     if (at >= 0 && at < state.cues.length) indices.push(at);
                 }
                 const silencePrefs = getSilenceSplitOpts({});
                 showSilenceSplitProgress({
                     title: '正在按音频贴边',
-                    detail: `重转写完成，正在贴边 ${indices.length} 条…`,
+                    detail: `处理完成，正在贴边 ${indices.length} 条…`,
                     current: 0,
                     total: indices.length,
                     statusMessage: `贴边 0/${indices.length}…`,
                 });
                 if (els.silenceProgressHint) {
-                    els.silenceProgressHint.textContent = '重转写后根据静音微调起止时间，文本保持不变';
+                    els.silenceProgressHint.textContent = '根据静音微调起止时间，文本保持不变';
                 }
                 await flushSilenceProgressPaint();
                 for (let i = 0; i < indices.length; i += 1) {
@@ -2696,23 +3413,31 @@
                 }
             }
 
-            markRetranscribedMeta(selectAt, newCues.length);
+            if (pairUpdated) {
+                const pairSave = await savePairDocument();
+                if (!pairSave?.ok) {
+                    setStatus(pairSave?.error || '对照轨保存失败', 'err');
+                }
+            }
+
+            markRetranscribedMeta(selectAt, newCount);
             await persistCueMeta();
 
             state.selectedIndex = Math.min(Math.max(selectAt, 0), state.cues.length - 1);
             setDirty(true);
             renderCueList();
             const durSec = ((endMs - startMs) / 1000).toFixed(1);
-            const snapHint = snapAfter
-                ? `，贴边 ${snappedCount}/${newCues.length}`
+            const snapHint = snapAfter && snappedCount
+                ? `，贴边 ${snappedCount}/${newCount}`
                 : '';
+            const actionLabel = dualPass ? '双语重跑' : (task === 'translate' ? '重译' : '重转写');
             setStatus(
-                `已重转写 ${durSec}s：替换 ${replacedCount} 条 → ${newCues.length} 条${snapHint}`,
+                `已${actionLabel} ${durSec}s：替换 ${replacedCount} 条 → ${newCount} 条${snapHint}`,
                 'ok',
             );
-            return { ok: true, newCount: newCues.length, replacedCount, snappedCount };
+            return { ok: true, newCount, replacedCount, snappedCount };
         } catch (err) {
-            setStatus(err?.message || '重转写失败', 'err');
+            setStatus(err?.message || '处理失败', 'err');
             return { ok: false };
         } finally {
             if (typeof unsubProgress === 'function') {
@@ -2725,6 +3450,54 @@
             }
             updateRetranscribeTransportBtn();
         }
+    }
+
+    async function retranslateSelectedCue() {
+        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
+            setStatus('请先选中一条字幕', 'err');
+            return;
+        }
+        if (!hasDualPair()) {
+            setStatus('当前没有配对双语轨，无法单独重译', 'err');
+            return;
+        }
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        const prefs = loadRetranscribeDurPrefs();
+        await runRetranscribeRange({
+            startMs: cue.startMs,
+            endMs: cueEndMs(cue),
+            padMs: prefs.padMs ?? 350,
+            mode: 'cue',
+            task: 'translate',
+            snapAfter: false,
+            detail: `正在重译第 ${idx + 1} 条…`,
+        });
+    }
+
+    async function retranscribeDualSelectedCue() {
+        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
+            setStatus('请先选中一条字幕', 'err');
+            return;
+        }
+        if (!hasDualPair()) {
+            setStatus('当前没有配对双语轨', 'err');
+            return;
+        }
+        syncDetailToCue();
+        const idx = state.selectedIndex;
+        const cue = state.cues[idx];
+        const prefs = loadRetranscribeDurPrefs();
+        await runRetranscribeRange({
+            startMs: cue.startMs,
+            endMs: cueEndMs(cue),
+            padMs: prefs.padMs ?? 350,
+            mode: 'cue',
+            dualPass: true,
+            snapAfter: prefs.snapAfter !== false,
+            detail: `正在双语重跑第 ${idx + 1} 条…`,
+        });
     }
 
     async function retranscribeSelectedCue() {
@@ -4779,6 +5552,297 @@
         setStatus(result.summary, 'ok');
     }
 
+    function refreshTextPresetsBadge() {
+        if (!els.textPresetsBadge) return;
+        const n = state.textPresetsDoc?.groups?.length || 0;
+        els.textPresetsBadge.textContent = String(n);
+        els.textPresetsBtn?.classList.toggle('has-presets', n > 0);
+    }
+
+    async function loadTextPresets() {
+        if (!electron?.transubGetTextPresets) {
+            state.textPresetsDoc = textPresetsCore.emptyPresetsDoc();
+            refreshTextPresetsBadge();
+            return;
+        }
+        try {
+            const res = await electron.transubGetTextPresets();
+            if (res?.ok && res.presetsDoc) {
+                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
+            } else if (!state.textPresetsDoc?.groups?.length) {
+                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc({
+                    groups: textPresetsCore.defaultStarterGroups(),
+                });
+            }
+        } catch (_) {
+            if (!state.textPresetsDoc?.groups?.length) {
+                state.textPresetsDoc = textPresetsCore.emptyPresetsDoc();
+            }
+        }
+        refreshTextPresetsBadge();
+        renderTextPresetQuickMenu();
+    }
+
+    async function persistTextPresets() {
+        if (!electron?.transubSaveTextPresets) return false;
+        try {
+            const res = await electron.transubSaveTextPresets({
+                presetsDoc: state.textPresetsDoc,
+            });
+            if (res?.ok && res.presetsDoc) {
+                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
+            }
+            refreshTextPresetsBadge();
+            renderTextPresetQuickMenu();
+            return !!res?.ok;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function defaultDraftItems() {
+        return [
+            { id: textPresetsCore.makeItemId(), label: '片名', text: '《影片名称》', startSec: 0, endSec: 0.5 },
+            { id: textPresetsCore.makeItemId(), label: '演员', text: '主演\n演员甲', startSec: 0.6, endSec: 1.5 },
+        ];
+    }
+
+    function textPresetItemDurationSec(it) {
+        const start = Number(it?.startSec) || 0;
+        const end = Number(it?.endSec);
+        if (Number.isFinite(end) && end > start) {
+            return Math.round((end - start) * 1000) / 1000;
+        }
+        return 0.5;
+    }
+
+    function renderTextPresetItemRows(items) {
+        if (!els.textPresetItemsHost) return;
+        const list = Array.isArray(items) && items.length ? items : defaultDraftItems();
+        els.textPresetItemsHost.innerHTML = list.map((it) => {
+            const startSec = Number(it.startSec) || 0;
+            const durationSec = textPresetItemDurationSec(it);
+            return `
+            <div class="text-preset-item-row" data-item-id="${esc(it.id || '')}">
+                <input type="text" data-tp-field="label" spellcheck="false" placeholder="标签" value="${esc(it.label || '')}" title="条目标签，如：片名">
+                <input type="number" data-tp-field="startSec" min="0" max="36000" step="0.1" value="${esc(String(startSec))}" title="起始秒（相对时间基准）">
+                <input type="number" data-tp-field="durationSec" min="0.1" max="36000" step="0.1" value="${esc(String(durationSec))}" title="时长（秒）">
+                <textarea data-tp-field="text" spellcheck="false" placeholder="字幕文本" title="字幕文本">${esc(it.text || '')}</textarea>
+                <button type="button" class="tp-remove" data-tp-remove title="删除条目">删</button>
+            </div>`;
+        }).join('');
+    }
+
+    function readTextPresetItemsFromForm() {
+        if (!els.textPresetItemsHost) return [];
+        return Array.from(els.textPresetItemsHost.querySelectorAll('.text-preset-item-row')).map((row) => {
+            const startSec = Number(row.querySelector('[data-tp-field="startSec"]')?.value) || 0;
+            const durationSec = Number(row.querySelector('[data-tp-field="durationSec"]')?.value) || 0.5;
+            return {
+                id: row.getAttribute('data-item-id') || textPresetsCore.makeItemId(),
+                label: row.querySelector('[data-tp-field="label"]')?.value || '',
+                text: row.querySelector('[data-tp-field="text"]')?.value || '',
+                startSec,
+                endSec: startSec + Math.max(0.1, durationSec),
+            };
+        });
+    }
+
+    function clearTextPresetForm() {
+        state.textPresetEditingId = '';
+        if (els.textPresetName) els.textPresetName.value = '';
+        if (els.textPresetAnchor) els.textPresetAnchor.value = 'playhead';
+        renderTextPresetItemRows(defaultDraftItems());
+        if (els.textPresetsStatus) {
+            els.textPresetsStatus.textContent = '新建组：设置组名与条目时间轴后保存';
+        }
+        renderTextPresetsList();
+    }
+
+    function fillTextPresetForm(group) {
+        if (!group) {
+            clearTextPresetForm();
+            return;
+        }
+        state.textPresetEditingId = group.id;
+        if (els.textPresetName) els.textPresetName.value = group.name || '';
+        if (els.textPresetAnchor) els.textPresetAnchor.value = group.anchor || 'playhead';
+        renderTextPresetItemRows(group.items || []);
+        if (els.textPresetsStatus) {
+            const anchor = textPresetsCore.ANCHOR_LABELS[group.anchor] || group.anchor;
+            els.textPresetsStatus.textContent = `编辑「${group.name}」· ${group.items.length} 条 · ${anchor}`;
+        }
+        renderTextPresetsList();
+    }
+
+    function renderTextPresetsList() {
+        if (!els.textPresetsList) return;
+        const list = textPresetsCore.filterGroups(state.textPresetsDoc, {
+            query: state.textPresetsQuery,
+        });
+        if (!list.length) {
+            els.textPresetsList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:var(--ed-muted)">暂无预设组。可点「示例」写入「常规预设1」，或新建组。</div>';
+            return;
+        }
+        els.textPresetsList.innerHTML = list.map((g) => {
+            const active = g.id === state.textPresetEditingId ? ' active' : '';
+            const summary = textPresetsCore.summarizeGroup(g);
+            return `<button type="button" class="glossary-entry-item${active}" data-text-preset-id="${esc(g.id)}" role="listitem">
+                <span class="g-can">${esc(g.name)} <span style="font-weight:400;color:var(--ed-muted)">· ${g.items.length} 条</span></span>
+                <span class="g-alias">${esc(summary)}</span>
+            </button>`;
+        }).join('');
+    }
+
+    function renderTextPresetQuickMenu() {
+        if (!els.textPresetQuickSelect) return;
+        const list = state.textPresetsDoc?.groups || [];
+        const opts = ['<option value="">插入预设组…</option>'];
+        list.forEach((g) => {
+            opts.push(`<option value="${esc(g.id)}">${esc(g.name)}（${g.items.length}）</option>`);
+        });
+        opts.push('<option value="__manage__">管理预设组…</option>');
+        els.textPresetQuickSelect.innerHTML = opts.join('');
+        els.textPresetQuickSelect.value = '';
+    }
+
+    async function openTextPresetsModal() {
+        if (!els.textPresetsModal) return;
+        await loadTextPresets();
+        if (els.textPresetsSearch) els.textPresetsSearch.value = state.textPresetsQuery || '';
+        clearTextPresetForm();
+        showEditorModal(els.textPresetsModal, els.textPresetName);
+    }
+
+    function closeTextPresetsModal() {
+        hideEditorModal(els.textPresetsModal);
+    }
+
+    async function saveTextPresetFromForm() {
+        const result = textPresetsCore.upsertGroup(state.textPresetsDoc, {
+            id: state.textPresetEditingId || undefined,
+            name: els.textPresetName?.value || '',
+            anchor: els.textPresetAnchor?.value || 'playhead',
+            items: readTextPresetItemsFromForm(),
+        });
+        if (!result.ok) {
+            setStatus(result.error || '保存预设组失败', 'err');
+            if (els.textPresetsStatus) els.textPresetsStatus.textContent = result.error || '保存失败';
+            return;
+        }
+        state.textPresetsDoc = result.doc;
+        const ok = await persistTextPresets();
+        if (!ok) {
+            setStatus('预设组保存失败', 'err');
+            return;
+        }
+        fillTextPresetForm(result.group);
+        setStatus(`已保存预设组「${result.group.name}」`, 'ok');
+    }
+
+    async function deleteTextPresetFromForm() {
+        if (!state.textPresetEditingId) {
+            clearTextPresetForm();
+            return;
+        }
+        if (!(await editorConfirm('确定删除当前预设组？'))) return;
+        state.textPresetsDoc = textPresetsCore.removeGroup(state.textPresetsDoc, state.textPresetEditingId);
+        await persistTextPresets();
+        clearTextPresetForm();
+        setStatus('已删除预设组', 'ok');
+    }
+
+    async function seedTextPresetExamples() {
+        const starters = textPresetsCore.defaultStarterGroups();
+        let doc = textPresetsCore.normalizePresetsDoc(state.textPresetsDoc);
+        const names = new Set(doc.groups.map((g) => g.name));
+        let added = 0;
+        for (const g of starters) {
+            if (names.has(g.name)) continue;
+            const r = textPresetsCore.upsertGroup(doc, { ...g, id: undefined });
+            if (r.ok) {
+                doc = r.doc;
+                added += 1;
+            }
+        }
+        state.textPresetsDoc = doc;
+        await persistTextPresets();
+        renderTextPresetsList();
+        setStatus(added ? `已添加 ${added} 个示例预设组` : '示例预设组已存在', 'ok');
+        if (els.textPresetsStatus) {
+            els.textPresetsStatus.textContent = added ? `已添加 ${added} 个示例组` : '示例已存在，未重复添加';
+        }
+    }
+
+    function insertPresetGroup(group) {
+        if (!group?.items?.length) {
+            setStatus('预设组为空', 'err');
+            return false;
+        }
+        syncDetailToCue();
+        const baseMs = group.anchor === 'absolute' ? 0 : getPlaybackTimeMs();
+        const built = textPresetsCore.buildCuesFromGroup(group, { baseMs });
+        if (!built.length) {
+            setStatus('预设组没有可插入的条目', 'err');
+            return false;
+        }
+        recordUndoBeforeChange();
+        const created = built.map((c) => ({
+            index: state.cues.length + 1,
+            startMs: c.startMs,
+            endMs: c.endMs,
+            text: c.text,
+        }));
+        state.cues.push(...created);
+        state.cues.sort((a, b) => a.startMs - b.startMs);
+        const focus = state.cues.indexOf(created[0]);
+        setDirty(true);
+        state.selectedIndex = focus >= 0 ? focus : 0;
+        renderCueList();
+        selectCue(state.selectedIndex, { scroll: true, seek: true });
+        els.detailText?.focus();
+        const where = group.anchor === 'absolute' ? '视频起点' : '播放位置';
+        setStatus(`已插入预设组「${group.name}」共 ${created.length} 条（相对${where}）`, 'ok');
+        return true;
+    }
+
+    function insertTextPresetById(id) {
+        const group = textPresetsCore.findGroup(state.textPresetsDoc, id);
+        if (!group) {
+            setStatus('未找到该预设组', 'err');
+            return;
+        }
+        insertPresetGroup(group);
+    }
+
+    async function exportTextPresets() {
+        const res = await electron?.transubExportTextPresets?.();
+        if (res?.canceled) return;
+        if (!res?.ok) {
+            setStatus(res?.error || '导出失败', 'err');
+            return;
+        }
+        setStatus(`已导出预设：${basename(res.path)}`, 'ok');
+    }
+
+    async function importTextPresets() {
+        const res = await electron?.transubImportTextPresets?.();
+        if (res?.canceled) return;
+        if (!res?.ok) {
+            setStatus(res?.error || '导入失败', 'err');
+            return;
+        }
+        if (res.presetsDoc) {
+            state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
+        } else {
+            await loadTextPresets();
+        }
+        clearTextPresetForm();
+        refreshTextPresetsBadge();
+        renderTextPresetQuickMenu();
+        setStatus(`已导入 ${state.textPresetsDoc.groups.length} 个预设组`, 'ok');
+    }
+
     function readQcOptions() {
         const prefs = loadSplitPrefs();
         return {
@@ -5452,6 +6516,17 @@
         }
     }
 
+    async function openSubtitleGenerator() {
+        try {
+            const res = await electron?.transubShowMainWindow?.();
+            if (res?.ok === false) {
+                setStatus(res?.error || '无法打开字幕生成器', 'err');
+            }
+        } catch (err) {
+            setStatus(err?.message || '无法打开字幕生成器', 'err');
+        }
+    }
+
     function closeToolsMenu() {
         if (!els.toolsMenu) return;
         els.toolsMenu.classList.add('hidden');
@@ -5689,11 +6764,73 @@
         return state.timeline.viewStartMs + (x / w) * span;
     }
 
-    function updateTimelinePlayhead(ms, { follow = false } = {}) {
-        if (follow && els.video && !els.video.paused) {
-            if (ensurePlayheadInView(ms)) {
+    /**
+     * After a view-window pan, update cue block geometry without rebuilding
+     * innerHTML when the same cues stay on-screen (avoids stutter while playing).
+     * Returns false if a full renderTimeline is required.
+     */
+    function syncTimelineCuePositions() {
+        if (!els.timelineCues) return false;
+        const trackW = els.timelineTrack?.clientWidth || 0;
+        const nodes = els.timelineCues.querySelectorAll('.editor-timeline-cue');
+        if (!nodes.length && state.cues.length) return false;
+
+        const byIdx = new Map();
+        nodes.forEach((el) => {
+            const idx = Number(el.getAttribute('data-tl-idx'));
+            if (Number.isInteger(idx)) byIdx.set(idx, el);
+        });
+
+        for (let idx = 0; idx < state.cues.length; idx += 1) {
+            const cue = state.cues[idx];
+            const left = timelineMsToX(cue.startMs);
+            const right = timelineMsToX(cueEndMs(cue));
+            const onScreen = !(trackW > 0 && (right < -4 || left > trackW + 4));
+            const el = byIdx.get(idx);
+            if (onScreen && !el) return false;
+            if (!el) continue;
+            if (!onScreen) {
+                el.style.display = 'none';
+                continue;
+            }
+            el.style.display = '';
+            el.style.left = `${left}px`;
+            el.style.width = `${Math.max(3, right - left)}px`;
+        }
+        return true;
+    }
+
+    function scheduleTimelineFollowRender() {
+        if (state.timelineFollowRaf) return;
+        state.timelineFollowRaf = requestAnimationFrame(() => {
+            state.timelineFollowRaf = 0;
+            if (!els.video || els.video.paused) return;
+            const t = Math.round((els.video.currentTime || 0) * 1000);
+            if (!ensurePlayheadInView(t)) {
+                updateTimelinePlayhead(t);
+                return;
+            }
+            if (!syncTimelineCuePositions()) {
                 renderTimeline({ skipDuration: true });
                 return;
+            }
+            updateTimelineZoomUi();
+            updateTimelinePlayhead(t);
+            if (state.waveformEnabled) drawTimelineWaveform();
+        });
+    }
+
+    function updateTimelinePlayhead(ms, { follow = false } = {}) {
+        if (follow && els.video && !els.video.paused) {
+            if (isTimelineZoomed()) {
+                const span = getTimelineViewSpan();
+                const margin = span * 0.12;
+                const start = state.timeline.viewStartMs;
+                const end = state.timeline.viewEndMs;
+                if (ms < start + margin || ms > end - margin) {
+                    scheduleTimelineFollowRender();
+                    // Keep playhead painted even before the coalesced pan lands.
+                }
             }
         }
         const x = timelineMsToX(ms);
@@ -6198,6 +7335,69 @@
         restoreInitialSnapshot,
     } = undoCtx;
 
+    const workflowApi = editorParts.installWorkflows({
+        workflowsCore,
+        state,
+        els,
+        electron,
+        showEditorModal,
+        hideEditorModal,
+        setStatus,
+        recordUndoBeforeChange,
+        syncDetailToCue,
+        setDirty,
+        renderCueList,
+        renderDetailPane,
+        refreshQcBadge,
+        getDefaultQcScanOptions,
+        getTargetCps,
+        loadSplitPrefs,
+        getEffectiveGlossary,
+        getSelectedCueIndexes,
+        qcCore,
+        fluencyCore,
+        chineseCore,
+        glossaryCore,
+        textPresetsCore,
+        metaCore,
+        insertPresetGroup,
+        exportMergedDualSubtitle,
+        saveDocument,
+        flushDraftAutosave,
+        shiftAllCues,
+        applyGlossaryUnification,
+        openGlossaryModal,
+        openBreakWordsModal,
+        openTextPresetsModal,
+        openFindReplaceModal,
+        openQcModal,
+        restoreInitialSnapshot,
+        mergeSelectedCues,
+        confirmBatchSilenceSplit,
+        confirmBatchSilenceDurAdjust,
+        confirmBatchAudioSnapAdjust,
+        collectBatchDurMatches,
+        collectSmartSplitMatches,
+        collectSilenceSplitMatches,
+        computeSplitParts,
+        maybeFixOverlapAfterSplit,
+        cueEndMs,
+        runRetranscribeRange,
+        retranslateSelectedCue,
+        retranscribeDualSelectedCue,
+        selectCue,
+        showSilenceSplitProgress,
+        updateSilenceSplitProgress,
+        hideSilenceSplitProgress,
+        flushSilenceProgressPaint,
+        setSilenceSplitBusy,
+        canSilenceSplitCue,
+        loadRetranscribeDurPrefs,
+        getPlaybackTimeMs,
+        buildFindRegex,
+        esc,
+    });
+
     function bindEvents() {
         loadTheme();
         loadPanelWidth();
@@ -6211,6 +7411,9 @@
         els.themeToggle?.addEventListener('click', toggleTheme);
         els.settingsBtn?.addEventListener('click', () => {
             void openEditorSettings();
+        });
+        els.openGeneratorBtn?.addEventListener('click', () => {
+            void openSubtitleGenerator();
         });
         els.autoFocusBtn?.addEventListener('click', toggleAutoFocus);
         els.waveformToggle?.addEventListener('click', toggleWaveform);
@@ -6251,17 +7454,22 @@
             if (els.video) els.video.volume = Number(els.volumeSlider.value) || 0;
         });
 
+        els.exportDualBtn?.addEventListener('click', () => { void exportMergedDualSubtitle(); });
+        els.exportDualMenuBtn?.addEventListener('click', () => { void exportMergedDualSubtitle(); });
         els.saveBtn?.addEventListener('click', saveDocument);
         els.addCueBtn?.addEventListener('click', insertCueAtPlayhead);
         els.insertCueBtn?.addEventListener('click', insertCueAtPlayhead);
         els.detailInsertCueBtn?.addEventListener('click', insertCueAtPlayhead);
         els.retranscribeCueBtn?.addEventListener('click', openRetranscribeDurModal);
         els.openFileBtn?.addEventListener('click', pickAndOpenInWindow);
+        bindWelcomeEvents();
         els.shiftBackBtn?.addEventListener('click', () => shiftAllCues(-500));
         els.shiftFwdBtn?.addEventListener('click', () => shiftAllCues(500));
         els.linkVideoBtn?.addEventListener('click', linkVideo);
         els.findReplaceBtn?.addEventListener('click', () => openFindReplaceModal(false));
         els.glossaryBtn?.addEventListener('click', () => { void openGlossaryModal(); });
+        els.textPresetsBtn?.addEventListener('click', () => { void openTextPresetsModal(); });
+        workflowApi.bindWorkflowEvents();
         els.breakWordsBtn?.addEventListener('click', openBreakWordsModal);
         els.splitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
         els.smartSplitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
@@ -6333,6 +7541,76 @@
             );
         });
         els.glossaryConfirm?.addEventListener('click', () => { void applyGlossaryUnification(); });
+
+        els.textPresetsClose?.addEventListener('click', closeTextPresetsModal);
+        els.textPresetsModal?.querySelectorAll('[data-text-presets-dismiss]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeTextPresetsModal();
+            });
+        });
+        els.textPresetsAddBtn?.addEventListener('click', clearTextPresetForm);
+        els.textPresetSaveBtn?.addEventListener('click', () => { void saveTextPresetFromForm(); });
+        els.textPresetDeleteBtn?.addEventListener('click', () => { void deleteTextPresetFromForm(); });
+        els.textPresetsImportBtn?.addEventListener('click', () => { void importTextPresets(); });
+        els.textPresetsExportBtn?.addEventListener('click', () => { void exportTextPresets(); });
+        els.textPresetsSeedBtn?.addEventListener('click', () => { void seedTextPresetExamples(); });
+        els.textPresetsSearch?.addEventListener('input', () => {
+            state.textPresetsQuery = els.textPresetsSearch.value || '';
+            renderTextPresetsList();
+        });
+        els.textPresetsList?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-text-preset-id]');
+            if (!btn) return;
+            const group = textPresetsCore.findGroup(state.textPresetsDoc, btn.getAttribute('data-text-preset-id'));
+            fillTextPresetForm(group);
+        });
+        els.textPresetAddItemBtn?.addEventListener('click', () => {
+            const items = readTextPresetItemsFromForm();
+            const last = items[items.length - 1];
+            const start = last ? Number(last.endSec) + 0.1 : 0;
+            items.push({
+                id: textPresetsCore.makeItemId(),
+                label: '',
+                text: '',
+                startSec: Math.round(start * 10) / 10,
+                endSec: Math.round((start + 0.5) * 10) / 10,
+            });
+            renderTextPresetItemRows(items);
+        });
+        els.textPresetItemsHost?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-tp-remove]');
+            if (!btn) return;
+            const row = btn.closest('.text-preset-item-row');
+            row?.remove();
+            if (!els.textPresetItemsHost.querySelector('.text-preset-item-row')) {
+                renderTextPresetItemRows(defaultDraftItems());
+            }
+        });
+        els.textPresetInsertNewBtn?.addEventListener('click', () => {
+            const draft = textPresetsCore.normalizeGroup({
+                id: state.textPresetEditingId || undefined,
+                name: els.textPresetName?.value || '未命名组',
+                anchor: els.textPresetAnchor?.value || 'playhead',
+                items: readTextPresetItemsFromForm(),
+            });
+            if (!draft.items.length) {
+                setStatus('请先填写组内条目（标签+文本）', 'warn');
+                return;
+            }
+            insertPresetGroup(draft);
+        });
+        els.textPresetQuickSelect?.addEventListener('change', () => {
+            const value = els.textPresetQuickSelect.value;
+            els.textPresetQuickSelect.value = '';
+            if (!value) return;
+            if (value === '__manage__') {
+                void openTextPresetsModal();
+                return;
+            }
+            insertTextPresetById(value);
+        });
+
         els.findInput?.addEventListener('input', () => runFindSearch({ navigate: false }));
         els.findCase?.addEventListener('change', () => runFindSearch({ navigate: false }));
         els.findNextBtn?.addEventListener('click', findNextMatch);
@@ -6414,6 +7692,18 @@
         els.audioSnapBtn?.addEventListener('click', () => { void silenceSnapSelectedCueTiming(); });
         els.silenceSplitConfirm?.addEventListener('click', confirmBatchSilenceSplit);
         els.silenceProgressCancel?.addEventListener('click', () => {
+            if (state.workflowBusy) {
+                workflowApi.cancelWorkflowRun();
+                requestEditorJobAbort();
+                return;
+            }
+            // 完成摘要阶段：点「关闭」立即收起
+            if (els.silenceProgress && !els.silenceProgress.classList.contains('hidden')
+                && els.silenceProgressCancel?.textContent === '关闭') {
+                hideSilenceSplitProgress();
+                if (els.silenceProgressCancel) els.silenceProgressCancel.textContent = '取消';
+                return;
+            }
             requestEditorJobAbort();
         });
         els.silenceSplitCancel?.addEventListener('click', closeSilenceSplitModal);
@@ -6695,6 +7985,16 @@
             }
         });
 
+        els.dualDisplaySelect?.addEventListener('change', () => {
+            saveDualDisplayMode(els.dualDisplaySelect.value);
+        });
+        els.dualLineOrderSelect?.addEventListener('change', () => {
+            saveDualLineOrder(els.dualLineOrderSelect.value);
+        });
+        state.dualDisplayMode = loadDualDisplayMode();
+        state.dualLineOrder = loadDualLineOrder();
+        if (els.dualDisplaySelect) els.dualDisplaySelect.value = state.dualDisplayMode;
+        if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = state.dualLineOrder;
         els.cueBody?.addEventListener('click', (e) => {
             const row = e.target.closest('tr[data-cue-idx]');
             if (!row) return;
@@ -6943,6 +8243,11 @@
         els.video?.addEventListener('pause', onVideoPause);
         els.video?.addEventListener('ended', onVideoPause);
         els.video?.addEventListener('playing', () => {
+            // Resume after buffer stall: re-arm cue sync so overlay cannot freeze.
+            if (els.video && !els.video.paused) {
+                syncPlaybackFromVideo(true);
+                scheduleCueBoundarySync();
+            }
             requestAnimationFrame(() => {
                 const v = els.video;
                 if (!v || v.paused) return;
@@ -6970,9 +8275,16 @@
             updatePlayPauseButton();
         });
         els.video?.addEventListener('timeupdate', () => {
-            if (els.video && !els.video.paused) {
-                updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000), { follow: true });
+            if (!els.video || els.video.paused) return;
+            // timeupdate is the reliable clock. Boundary timers alone can drift when
+            // the main thread is busy (timeline redraw) or the media pipeline stalls,
+            // leaving the on-video subtitle preview stuck until a waveform seek.
+            const now = performance.now();
+            if (now - (state.lastPlaybackSyncAt || 0) >= 50) {
+                state.lastPlaybackSyncAt = now;
+                syncPlaybackFromVideo(false);
             }
+            updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000), { follow: true });
         });
     }
 
@@ -6986,6 +8298,8 @@
             dirtyBadge: document.getElementById('editorDirtyBadge'),
             saveStatus: document.getElementById('editorSaveStatus'),
             saveBtn: document.getElementById('editorSaveBtn'),
+            exportDualBtn: document.getElementById('editorExportDualBtn'),
+            exportDualMenuBtn: document.getElementById('editorExportDualMenuBtn'),
             addCueBtn: document.getElementById('editorAddCueBtn'),
             insertCueBtn: document.getElementById('editorInsertCueBtn'),
             detailInsertCueBtn: document.getElementById('editorDetailInsertCueBtn'),
@@ -6997,6 +8311,7 @@
             toolsMenuBtn: document.getElementById('editorToolsMenuBtn'),
             toolsMenu: document.getElementById('editorToolsMenu'),
             themeToggle: document.getElementById('editorThemeToggle'),
+            openGeneratorBtn: document.getElementById('editorOpenGeneratorBtn'),
             settingsBtn: document.getElementById('editorSettingsBtn'),
             splitter: document.getElementById('editorSplitter'),
             cuesPanel: document.getElementById('editorCuesPanel'),
@@ -7008,6 +8323,8 @@
             seekBackBtn: document.getElementById('editorSeekBackBtn'),
             seekFwdBtn: document.getElementById('editorSeekFwdBtn'),
             rateSelect: document.getElementById('editorRateSelect'),
+            dualDisplaySelect: document.getElementById('editorDualDisplaySelect'),
+            dualLineOrderSelect: document.getElementById('editorDualLineOrderSelect'),
             volumeSlider: document.getElementById('editorVolumeSlider'),
             videoEmpty: document.getElementById('editorVideoEmpty'),
             timelineStack: document.getElementById('editorTimelineStack'),
@@ -7043,6 +8360,52 @@
             glossaryScopeProjectLabel: document.getElementById('editorGlossaryScopeProjectLabel'),
             glossaryEntryList: document.getElementById('editorGlossaryEntryList'),
             glossaryIssueList: document.getElementById('editorGlossaryIssueList'),
+            textPresetsBtn: document.getElementById('editorTextPresetsBtn'),
+            textPresetsBadge: document.getElementById('editorTextPresetsBadge'),
+            textPresetsModal: document.getElementById('editorTextPresetsModal'),
+            workflowBtn: document.getElementById('editorWorkflowBtn'),
+            workflowModal: document.getElementById('editorWorkflowModal'),
+            workflowSelect: document.getElementById('editorWorkflowSelect'),
+            workflowNote: document.getElementById('editorWorkflowNote'),
+            workflowStepList: document.getElementById('editorWorkflowStepList'),
+            workflowStatus: document.getElementById('editorWorkflowStatus'),
+            workflowRunBtn: document.getElementById('editorWorkflowRunBtn'),
+            workflowCancelRunBtn: document.getElementById('editorWorkflowCancelRunBtn'),
+            workflowClose: document.getElementById('editorWorkflowClose'),
+            workflowDupBtn: document.getElementById('editorWorkflowDupBtn'),
+            workflowNewBtn: document.getElementById('editorWorkflowNewBtn'),
+            workflowDeleteBtn: document.getElementById('editorWorkflowDeleteBtn'),
+            workflowImportBtn: document.getElementById('editorWorkflowImportBtn'),
+            workflowExportBtn: document.getElementById('editorWorkflowExportBtn'),
+            workflowAddRow: document.getElementById('editorWorkflowAddRow'),
+            workflowAddStepSelect: document.getElementById('editorWorkflowAddStepSelect'),
+            workflowAddStepBtn: document.getElementById('editorWorkflowAddStepBtn'),
+            workflowPauseBanner: document.getElementById('editorWorkflowPauseBanner'),
+            workflowPauseMessage: document.getElementById('editorWorkflowPauseMessage'),
+            workflowContinueBtn: document.getElementById('editorWorkflowContinueBtn'),
+            workflowSkipStepBtn: document.getElementById('editorWorkflowSkipStepBtn'),
+            workflowAbortBtn: document.getElementById('editorWorkflowAbortBtn'),
+            workflowPauseOverlay: document.getElementById('editorWorkflowPauseOverlay'),
+            workflowPauseOverlayMessage: document.getElementById('editorWorkflowPauseOverlayMessage'),
+            workflowOverlayContinueBtn: document.getElementById('editorWorkflowOverlayContinueBtn'),
+            workflowOverlaySkipBtn: document.getElementById('editorWorkflowOverlaySkipBtn'),
+            workflowOverlayAbortBtn: document.getElementById('editorWorkflowOverlayAbortBtn'),
+            textPresetsList: document.getElementById('editorTextPresetsList'),
+            textPresetsSearch: document.getElementById('editorTextPresetsSearch'),
+            textPresetsStatus: document.getElementById('editorTextPresetsStatus'),
+            textPresetsAddBtn: document.getElementById('editorTextPresetsAddBtn'),
+            textPresetsImportBtn: document.getElementById('editorTextPresetsImportBtn'),
+            textPresetsExportBtn: document.getElementById('editorTextPresetsExportBtn'),
+            textPresetsSeedBtn: document.getElementById('editorTextPresetsSeedBtn'),
+            textPresetsClose: document.getElementById('editorTextPresetsClose'),
+            textPresetName: document.getElementById('editorTextPresetName'),
+            textPresetAnchor: document.getElementById('editorTextPresetAnchor'),
+            textPresetItemsHost: document.getElementById('editorTextPresetItemsHost'),
+            textPresetAddItemBtn: document.getElementById('editorTextPresetAddItemBtn'),
+            textPresetSaveBtn: document.getElementById('editorTextPresetSaveBtn'),
+            textPresetDeleteBtn: document.getElementById('editorTextPresetDeleteBtn'),
+            textPresetInsertNewBtn: document.getElementById('editorTextPresetInsertNewBtn'),
+            textPresetQuickSelect: document.getElementById('editorTextPresetQuickSelect'),
             glossaryCanonical: document.getElementById('editorGlossaryCanonical'),
             glossaryAliases: document.getElementById('editorGlossaryAliases'),
             glossaryCaseSensitive: document.getElementById('editorGlossaryCaseSensitive'),
@@ -7203,6 +8566,7 @@
             restoreBtn: document.getElementById('editorRestoreBtn'),
             sidecarSelect: document.getElementById('editorSidecarSelect'),
             cueBody: document.getElementById('editorCueBody'),
+            cueTable: document.getElementById('editorCueTable'),
             listWrap: document.getElementById('editorListWrap'),
             cueContextMenu: document.getElementById('editorCueContextMenu'),
             detailPane: document.getElementById('editorDetailPane'),
@@ -7210,6 +8574,8 @@
             detailDuration: document.getElementById('editorDetailDuration'),
             detailEnd: document.getElementById('editorDetailEnd'),
             detailText: document.getElementById('editorDetailText'),
+            detailPairWrap: document.getElementById('editorDetailPairWrap'),
+            detailPairText: document.getElementById('editorDetailPairText'),
             detailCps: document.getElementById('editorDetailCps'),
             targetCps: document.getElementById('editorTargetCps'),
             lineLen: document.getElementById('editorLineLen'),
@@ -7244,9 +8610,16 @@
             videoWrap: document.getElementById('editorVideoWrap'),
             videoHint: document.getElementById('editorVideoHint'),
             videoSubtitle: document.getElementById('editorVideoSubtitle'),
+            videoSubtitleSource: document.getElementById('editorVideoSubtitleSource'),
             videoSubtitleText: document.getElementById('editorVideoSubtitleText'),
             statusLine: document.getElementById('editorStatusLine'),
             bootProgress: document.getElementById('editorBootProgress'),
+            welcome: document.getElementById('editorWelcome'),
+            welcomeIconWrap: document.getElementById('editorWelcomeIconWrap'),
+            welcomeIcon: document.getElementById('editorWelcomeIcon'),
+            welcomeOpenBtn: document.getElementById('editorWelcomeOpenBtn'),
+            welcomeHistoryList: document.getElementById('editorWelcomeHistoryList'),
+            welcomeClearBtn: document.getElementById('editorWelcomeClearBtn'),
             bootProgressTitle: document.getElementById('editorBootProgressTitle'),
             bootProgressDetail: document.getElementById('editorBootProgressDetail'),
             silenceProgress: document.getElementById('editorSilenceProgress'),
@@ -7276,6 +8649,8 @@
             els.compressRepModal,
             els.qcModal,
             els.glossaryModal,
+            els.textPresetsModal,
+            els.workflowModal,
             els.breakWordsModal,
             els.retranscribeDurModal,
             els.shortcutsModal,
@@ -7285,6 +8660,8 @@
         bindEvents();
         loadBreakWords();
         void loadGlossary();
+        void loadTextPresets();
+        void workflowApi.loadWorkflows();
         // ffmpeg 路径仅供静音/探测等工具使用，不阻塞字幕文档打开
         void loadAppFfmpegPath();
 
@@ -7308,16 +8685,12 @@
                 detail: '等待打开字幕文件…',
                 statusMessage: '正在等待字幕文件…',
             });
-            // 若短时间内仍无文档可开，收起启动遮罩，避免空窗一直挡操作
+            // 若短时间内仍无文档可开，展示启动页
             setTimeout(() => {
-                if (!state.ready && !pendingEditorInit && !documentLoadInFlight) {
-                    hideBootProgress();
-                    if (els.statusLine?.textContent === '正在等待字幕文件…'
-                        || els.statusLine?.textContent === '正在启动…') {
-                        setStatus('就绪', '');
-                    }
+                if (!state.ready && !pendingEditorInit && !documentLoadInFlight && !state.path) {
+                    showWelcomeScreen();
                 }
-            }, 1200);
+            }, 400);
         }
     }
 

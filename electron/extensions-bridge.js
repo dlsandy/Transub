@@ -10,7 +10,8 @@ const {
     extractWaveformPeaks,
 } = require('./ffmpeg-bridge');
 const { loadPresets, saveCustomPreset, deleteCustomPreset } = require('./presets-data');
-const { loadTaskHistory, appendTaskHistory } = require('./task-history');
+const { loadTaskHistory, appendTaskHistory, clearTaskHistory } = require('./task-history');
+const { loadEditorHistory, appendEditorHistory, clearEditorHistory } = require('./editor-history');
 const { detectGpuEnvironment } = require('./gpu-detect');
 const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch, collectSubtitleSidecars, isSubtitleFile, guessVideoPathForSubtitle, VIDEO_EXTENSIONS: SUBTITLE_VIDEO_EXTENSIONS } = require('./subtitle-utils');
 const { parseSubtitle, serializeSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
@@ -26,9 +27,18 @@ const {
     clearSubtitleDraft,
     shouldOfferDraftRestore,
 } = require('./subtitle-draft');
+const modelCore = require('../src/js/transwithai-model-core');
 function glossaryData() {
     // Lazy: avoid loading src/js shared cores when only opening updater / ffmpeg routes
     return require('./glossary-data');
+}
+
+function textPresetsData() {
+    return require('./text-presets-data');
+}
+
+function editorWorkflowsData() {
+    return require('./editor-workflows-data');
 }
 const {
     checkForAppUpdate,
@@ -355,6 +365,25 @@ function inspectWhisperModelDir(modelDir) {
         if (!hasVocabulary) missing.push('vocabulary.json');
         error = `模型目录不完整，缺少：${missing.join('、')}`;
     }
+
+    let fingerprint = null;
+    let detected = null;
+    if (hasConfig) {
+        try {
+            const raw = fs.readFileSync(path.join(dir, 'config.json'), 'utf8');
+            const config = JSON.parse(raw);
+            fingerprint = modelCore.extractConfigFingerprint(config);
+            detected = modelCore.detectModelKind({
+                folderName: path.basename(dir),
+                config,
+            });
+        } catch (_) {
+            detected = modelCore.detectModelKind({ folderName: path.basename(dir) });
+        }
+    } else {
+        detected = modelCore.detectModelKind({ folderName: path.basename(dir) });
+    }
+
     return {
         ok: complete,
         path: dir,
@@ -365,6 +394,11 @@ function inspectWhisperModelDir(modelDir) {
         hasTokenizer,
         hasVocabulary,
         complete,
+        fingerprint: fingerprint || undefined,
+        kind: detected?.kind || 'custom',
+        kindSource: detected?.source || 'unknown',
+        kindConfidence: detected?.confidence || 0,
+        kindMatchId: detected?.matchId || undefined,
     };
 }
 
@@ -380,8 +414,18 @@ function listTransWithAiModels(installPath) {
     const root = path.resolve(String(installPath || ''));
     const modelsDir = path.join(root, 'models');
     const items = [];
-    const pushItem = (id, relPath, label, kind, ready) => {
-        items.push({ id, path: relPath, label, kind, ready: ready !== false });
+    const pushItem = (id, relPath, label, kind, ready, meta = {}) => {
+        items.push({
+            id,
+            path: relPath,
+            label,
+            kind,
+            ready: ready !== false,
+            kindSource: meta.kindSource || 'unknown',
+            kindConfidence: meta.kindConfidence || 0,
+            kindMatchId: meta.kindMatchId,
+            fingerprint: meta.fingerprint,
+        });
     };
 
     if (!fs.existsSync(modelsDir)) {
@@ -390,10 +434,19 @@ function listTransWithAiModels(installPath) {
 
     const rootInfo = inspectWhisperModelDir(modelsDir);
     if (rootInfo.hasModelBin || rootInfo.hasModelSafetensors || rootInfo.hasConfig) {
+        // Prefer file-feature kind; fall back to generic "root" only when unknown
+        const rootKind = (rootInfo.kind === 'transcribe' || rootInfo.kind === 'translate')
+            ? rootInfo.kind
+            : 'root';
         const label = rootInfo.ok
             ? '默认主模型（models 根目录）'
-            : `默认主模型（不完整）`;
-        pushItem('default', 'models', label, 'root', rootInfo.ok);
+            : '默认主模型（不完整）';
+        pushItem('default', 'models', label, rootKind, rootInfo.ok, {
+            kindSource: rootInfo.kindSource,
+            kindConfidence: rootInfo.kindConfidence,
+            kindMatchId: rootInfo.kindMatchId,
+            fingerprint: rootInfo.fingerprint,
+        });
     }
 
     let entries = [];
@@ -410,12 +463,16 @@ function listTransWithAiModels(installPath) {
         const info = inspectWhisperModelDir(sub);
         if (!info.hasModelBin && !info.hasModelSafetensors && !info.hasConfig) continue;
         const rel = path.join('models', entry.name).replace(/\\/g, '/');
-        let kind = 'custom';
-        const lower = entry.name.toLowerCase();
-        if (/translate|chicken|海南/.test(lower)) kind = 'translate';
-        if (/transcribe|whisper-ja|ja-1\.5|日文/.test(lower)) kind = 'transcribe';
+        const kind = (info.kind === 'transcribe' || info.kind === 'translate')
+            ? info.kind
+            : 'custom';
         const label = info.ok ? entry.name : `${entry.name}（不完整）`;
-        pushItem(entry.name, rel, label, kind, info.ok);
+        pushItem(entry.name, rel, label, kind, info.ok, {
+            kindSource: info.kindSource,
+            kindConfidence: info.kindConfidence,
+            kindMatchId: info.kindMatchId,
+            fingerprint: info.fingerprint,
+        });
     }
 
     return { ok: true, modelsDir, items };
@@ -704,7 +761,79 @@ function setupExtensionsBridge(api, deps) {
 
     register('transwithai-get-task-history', async () => {
         try {
-            return { ok: true, entries: loadTaskHistory().entries };
+            const entries = loadTaskHistory().entries.map((entry) => {
+                const outputs = Array.isArray(entry.outputs)
+                    ? entry.outputs.map((o) => {
+                        const subtitlePath = String(o?.subtitlePath || '').trim();
+                        const sourceSubtitlePath = String(o?.sourceSubtitlePath || '').trim();
+                        const targetSubtitlePath = String(o?.targetSubtitlePath || '').trim();
+                        const bilingualSubtitlePath = String(o?.bilingualSubtitlePath || '').trim();
+                        const openPath = bilingualSubtitlePath || targetSubtitlePath || subtitlePath || sourceSubtitlePath;
+                        return {
+                            ...o,
+                            openPath,
+                            exists: !!(openPath && fs.existsSync(openPath)),
+                        };
+                    })
+                    : [];
+                return { ...entry, outputs };
+            });
+            return { ok: true, entries };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transwithai-clear-task-history', async () => {
+        try {
+            clearTaskHistory();
+            return { ok: true, entries: [] };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-get-editor-history', async () => {
+        try {
+            const entries = loadEditorHistory().entries.map((entry) => ({
+                ...entry,
+                exists: !!(entry.path && fs.existsSync(entry.path)),
+            }));
+            return { ok: true, entries };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), entries: [] };
+        }
+    });
+
+    register('transub-append-editor-history', async (_event, payload = {}) => {
+        try {
+            const record = appendEditorHistory(payload || {});
+            if (!record) return { ok: false, error: '缺少字幕路径' };
+            return { ok: true, entry: record, entries: loadEditorHistory().entries };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-clear-editor-history', async () => {
+        try {
+            clearEditorHistory();
+            return { ok: true, entries: [] };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-file-exists', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path || payload.filePath || '', 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少路径' };
+            const resolved = path.resolve(filePath);
+            return {
+                ok: true,
+                path: resolved,
+                exists: fs.existsSync(resolved),
+            };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -844,6 +973,66 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-export-subtitle', async (event, payload = {}) => {
+        try {
+            const cues = Array.isArray(payload.cues) ? payload.cues : [];
+            if (!cues.length) return { ok: false, error: '字幕内容为空' };
+            const formatHint = String(payload.format || 'srt').toLowerCase();
+            const format = ['srt', 'vtt', 'lrc'].includes(formatHint) ? formatHint : 'srt';
+            const defaultName = asString(payload.defaultName || payload.suggestedName || '', 512).trim()
+                || `subtitle.${format}`;
+            const title = asString(payload.title || '', 200).trim() || '导出字幕';
+            const win = browserWindowFromEvent(event);
+            const filters = format === 'vtt'
+                ? [{ name: 'WebVTT', extensions: ['vtt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }]
+                : format === 'lrc'
+                    ? [{ name: 'LRC', extensions: ['lrc'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }]
+                    : [{ name: 'SubRip', extensions: ['srt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }];
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title,
+                defaultPath: defaultName,
+                filters,
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            const dest = result.filePath;
+            const ext = path.extname(dest).toLowerCase().replace(/^\./, '');
+            const saveFormat = ['srt', 'vtt', 'lrc'].includes(ext) ? ext : format;
+            return writeSubtitleDocument(dest, {
+                format: saveFormat,
+                cues,
+                header: payload.header,
+                backupMode: 'off',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-delete-subtitle-files', async (_event, payload = {}) => {
+        try {
+            const rawPaths = Array.isArray(payload.paths) ? payload.paths : [payload.path];
+            const deleted = [];
+            const missing = [];
+            for (const raw of rawPaths) {
+                if (!raw) continue;
+                const filePath = assertEditableSubtitlePath(raw);
+                if (!fs.existsSync(filePath)) {
+                    missing.push(filePath);
+                    continue;
+                }
+                fs.unlinkSync(filePath);
+                deleted.push(filePath);
+            }
+            if (!deleted.length && !missing.length) {
+                return { ok: false, error: '未指定要删除的字幕文件' };
+            }
+            return { ok: true, deleted, missing };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-read-subtitle-meta', async (_event, payload = {}) => {
         try {
             const filePath = assertSubtitleMetaPath(payload.path);
@@ -937,6 +1126,155 @@ function setupExtensionsBridge(api, deps) {
             const saved = writeGlossary(glossary);
             if (!saved.ok) return saved;
             return { ok: true, glossary: saved.glossary, path: saved.path };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-get-text-presets', async () => {
+        try {
+            return textPresetsData().readTextPresets();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-save-text-presets', async (_event, payload = {}) => {
+        try {
+            const doc = payload.presetsDoc || payload;
+            return textPresetsData().writeTextPresets(doc);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-export-text-presets', async (event) => {
+        try {
+            const { readTextPresets } = textPresetsData();
+            const win = browserWindowFromEvent(event);
+            const current = readTextPresets();
+            if (!current.ok) return current;
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title: '导出字幕文本预设',
+                defaultPath: 'transub-text-presets.json',
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            fs.writeFileSync(
+                result.filePath,
+                `${JSON.stringify(current.presetsDoc || { version: 1, presets: [] }, null, 2)}\n`,
+                'utf8',
+            );
+            return { ok: true, path: result.filePath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-import-text-presets', async (event) => {
+        try {
+            const { writeTextPresets } = textPresetsData();
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win || undefined, {
+                title: '导入字幕文本预设',
+                properties: ['openFile'],
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePaths?.length) {
+                return { ok: true, canceled: true };
+            }
+            const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+            const saved = writeTextPresets(parsed);
+            if (!saved.ok) return saved;
+            return { ok: true, presetsDoc: saved.presetsDoc, path: saved.path };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-get-editor-workflows', async () => {
+        try {
+            return editorWorkflowsData().readEditorWorkflows();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-save-editor-workflows', async (_event, payload = {}) => {
+        try {
+            const doc = payload.workflowsDoc || payload;
+            return editorWorkflowsData().writeEditorWorkflows(doc);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-export-editor-workflows', async (event) => {
+        try {
+            const { readEditorWorkflows } = editorWorkflowsData();
+            const win = browserWindowFromEvent(event);
+            const current = readEditorWorkflows();
+            if (!current.ok) return current;
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title: '导出字幕编辑器工作流',
+                defaultPath: 'transub-editor-workflows.json',
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            fs.writeFileSync(
+                result.filePath,
+                `${JSON.stringify(current.workflowsDoc || { version: 1, workflows: [] }, null, 2)}\n`,
+                'utf8',
+            );
+            return { ok: true, path: result.filePath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-import-editor-workflows', async (event) => {
+        try {
+            const { writeEditorWorkflows, readEditorWorkflows } = editorWorkflowsData();
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win || undefined, {
+                title: '导入字幕编辑器工作流',
+                properties: ['openFile'],
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePaths?.length) {
+                return { ok: true, canceled: true };
+            }
+            const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+            const core = require('../src/js/subtitle-workflows-core');
+            const incoming = core.normalizeWorkflowsDoc(parsed);
+            const current = readEditorWorkflows();
+            const base = current.ok ? current.workflowsDoc : core.emptyWorkflowsDoc();
+            const merged = core.ensureBuiltinWorkflows(base);
+            for (const wf of incoming.workflows) {
+                if (wf.builtin) continue;
+                const copy = {
+                    ...wf,
+                    id: core.makeWorkflowId(),
+                    builtin: false,
+                    steps: (wf.steps || []).map((s) => ({
+                        ...s,
+                        id: core.makeStepId(),
+                        params: { ...(s.params || {}) },
+                    })),
+                };
+                const up = core.upsertWorkflow(merged, copy);
+                if (up.ok) {
+                    merged.workflows = up.doc.workflows;
+                    merged.activeId = up.doc.activeId;
+                }
+            }
+            const saved = writeEditorWorkflows(merged);
+            if (!saved.ok) return saved;
+            return { ok: true, workflowsDoc: saved.workflowsDoc, path: saved.path };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1077,6 +1415,8 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    // transub-get-app-version is registered in main.js (avoids loading this bridge at startup)
+
     register('transwithai-check-app-update', async () => {
         try {
             return await checkForAppUpdate();
@@ -1143,4 +1483,7 @@ module.exports = {
     resolveSubtitleBackupPath,
     scanSubtitleQc,
     listSubtitleSidecars,
+    listTransWithAiModels,
+    inspectWhisperModelDir,
+    resolveModelDir,
 };

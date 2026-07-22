@@ -12,9 +12,28 @@ function extRank(filePath) {
     return idx >= 0 ? idx : PREFERRED_SUBTITLE_EXTS.length + SUBTITLE_EXTS.indexOf(ext);
 }
 
+/**
+ * Prefer bilingual target (*.zh.*) over unsuffixed / source-language sidecars
+ * so "编辑字幕" opens the Chinese track when dual files exist.
+ */
+function trackRank(filePath) {
+    const base = path.basename(String(filePath || ''), path.extname(filePath)).toLowerCase();
+    const parts = base.split('.');
+    if (parts.length < 2) return 1;
+    const tag = parts[parts.length - 1];
+    if (tag === 'zh') return 0;
+    if (tag === 'source' || tag === 'ja' || tag === 'en') return 3;
+    if (/^[a-z]{2,8}$/.test(tag)) return 2;
+    return 1;
+}
+
 function pickPreferredSidecar(candidates) {
     if (!candidates.length) return null;
-    return [...candidates].sort((a, b) => extRank(a) - extRank(b))[0];
+    return [...candidates].sort((a, b) => {
+        const byExt = extRank(a) - extRank(b);
+        if (byExt !== 0) return byExt;
+        return trackRank(a) - trackRank(b);
+    })[0];
 }
 
 function matchSidecarsInDir(dir, stem) {
@@ -80,6 +99,53 @@ function resolveLocalSubtitlePath(videoPath, preferredDir) {
     return pickPreferredSidecar(sidecars);
 }
 
+/**
+ * Resolve dual-track paths for a video: `{stem}.{src}.{ext}` + `{stem}.{tgt}.{ext}`.
+ */
+function resolveDualSubtitlePaths(videoPath, preferredDir, {
+    sourceSuffix = 'source',
+    targetSuffix = 'zh',
+    subFormats = 'srt',
+} = {}) {
+    const resolved = path.resolve(String(videoPath || ''));
+    const dir = preferredDir
+        ? path.resolve(String(preferredDir))
+        : path.dirname(resolved);
+    const stem = path.basename(resolved, path.extname(resolved));
+    const formats = String(subFormats || 'srt')
+        .split(/[,;\s]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => ['srt', 'vtt', 'lrc'].includes(s));
+    const uniqueFormats = formats.length ? [...new Set(formats)] : ['srt'];
+    const src = String(sourceSuffix || 'source').toLowerCase();
+    const tgt = String(targetSuffix || 'zh').toLowerCase();
+
+    const sourcePaths = [];
+    const targetPaths = [];
+    for (const fmt of uniqueFormats) {
+        const sourcePath = path.join(dir, `${stem}.${src}.${fmt}`);
+        const targetPath = path.join(dir, `${stem}.${tgt}.${fmt}`);
+        if (fs.existsSync(sourcePath)) sourcePaths.push(sourcePath);
+        if (fs.existsSync(targetPath)) targetPaths.push(targetPath);
+    }
+
+    return {
+        dir,
+        stem,
+        sourceSuffix: src,
+        targetSuffix: tgt,
+        formats: uniqueFormats,
+        sourcePaths,
+        targetPaths,
+        sourcePath: pickPreferredSidecar(sourcePaths),
+        targetPath: pickPreferredSidecar(targetPaths),
+        complete: uniqueFormats.every((fmt) => (
+            fs.existsSync(path.join(dir, `${stem}.${src}.${fmt}`))
+            && fs.existsSync(path.join(dir, `${stem}.${tgt}.${fmt}`))
+        )),
+    };
+}
+
 function resolveLocalSubtitleBatch(entries = []) {
     const results = {};
     for (const entry of entries) {
@@ -130,5 +196,6 @@ module.exports = {
     pickPreferredSidecar,
     resolveLocalSubtitlePath,
     resolveLocalSubtitleBatch,
+    resolveDualSubtitlePaths,
     guessVideoPathForSubtitle,
 };

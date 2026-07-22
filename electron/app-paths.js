@@ -91,7 +91,10 @@ function resolveHtmlPath(app, fileName) {
 function migrateLegacyUserDataFiles(fileNames = [
     'transub-glossary.json',
     'transub-task-history.json',
+    'transub-editor-history.json',
     'transub-presets.json',
+    'transub-text-presets.json',
+    'transub-editor-workflows.json',
 ]) {
     let writable;
     let install;

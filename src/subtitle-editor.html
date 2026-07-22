@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' file: blob: transub-media:; connect-src 'self'; font-src 'self' data:;">
-    <title>Transub — 字幕编辑</title>
+    <title>Transub Editor</title>
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="vendor/app.css">
@@ -207,13 +207,35 @@ body.editor-body {
 
 .editor-video-subtitle {
     position: absolute; left: 0; right: 0; bottom: 10%; z-index: 2;
-    display: flex; justify-content: center; padding: 0 1.5rem; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
+    padding: 0 1.5rem; pointer-events: none;
 }
 .editor-video-subtitle.hidden { display: none; }
+.editor-video-subtitle-source {
+    max-width: 92%; padding: 0.25rem 0.7rem; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.88);
+    font-size: clamp(12px, 1.8vw, 18px); line-height: 1.4; text-align: center;
+    border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+}
+.editor-video-subtitle-source:empty { display: none; }
 .editor-video-subtitle-inner {
     max-width: 92%; padding: 0.4rem 0.85rem; background: rgba(0,0,0,0.78); color: #fff;
     font-size: clamp(15px, 2.4vw, 24px); line-height: 1.45; text-align: center;
     border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+}
+.editor-video-subtitle-inner:empty { display: none; }
+.editor-dual-display {
+    margin-left: 0.35rem;
+    max-width: 7.5rem;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.35rem;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+}
+.editor-dual-display.hidden { display: none; }
+.editor-video-subtitle.line-order-target-first {
+    flex-direction: column-reverse;
 }
 
 .editor-timeline-stack {
@@ -375,6 +397,15 @@ body:not(.editor-waveform-on) .editor-waveform-row { display: none !important; }
 .editor-cue-table .col-time { width: 5.8rem; }
 .editor-cue-table .col-dur { width: 2.8rem; }
 .editor-cue-table .col-cps { width: 2.6rem; }
+.editor-cue-table .col-pair { width: 28%; }
+.editor-cue-table.has-dual-pair .col-pair-head,
+.editor-cue-table.has-dual-pair .col-pair { display: table-cell; }
+.editor-cue-table .col-pair-head,
+.editor-cue-table .col-pair { display: none; }
+.editor-cue-table .cell-pair {
+    overflow: hidden; font-size: 0.7rem; color: var(--ed-muted);
+    white-space: nowrap; text-overflow: ellipsis;
+}
 .editor-cue-table td, .editor-cue-table th { padding: 0.28rem 0.35rem; }
 .editor-cue-table thead {
     position: sticky; top: 0; z-index: 10;
@@ -454,6 +485,37 @@ body.editor-theme-dark #editorStatusLowConf {
 #editorGlossaryBtn.has-issues #editorGlossaryBadge { display: inline-block; }
 #editorGlossaryBtn.has-issues, #editorQcBtn.has-issues {
     color: var(--ed-warn-text); border-color: #fbbf24; background: var(--ed-warn-bg);
+}
+#editorTextPresetsBadge.editor-btn-badge { display: none; }
+#editorTextPresetsBtn.has-presets #editorTextPresetsBadge { display: inline-block; }
+#editorTextPresetsBadge {
+    min-width: 1.1rem; padding: 0 0.3rem; margin-left: 0.15rem;
+    font-size: 0.58rem; line-height: 1.1rem; border-radius: 999px;
+    background: var(--ed-accent); color: #fff; font-variant-numeric: tabular-nums; text-align: center;
+}
+.text-preset-items-host {
+    display: flex; flex-direction: column; gap: 0.4rem;
+    max-height: 14rem; overflow: auto; padding: 0.35rem;
+    border: 1px solid var(--ed-border); border-radius: 0.375rem; background: var(--ed-surface-2);
+}
+.text-preset-item-row {
+    display: grid; gap: 0.3rem;
+    grid-template-columns: minmax(3.5rem, 5rem) 3.4rem 3.4rem minmax(0, 1fr) auto;
+    align-items: start;
+}
+.text-preset-item-row input,
+.text-preset-item-row textarea {
+    width: 100%; border: 1px solid var(--ed-border); border-radius: 0.3rem;
+    padding: 0.25rem 0.35rem; font-size: 0.7rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.text-preset-item-row textarea { min-height: 2.4rem; resize: vertical; line-height: 1.35; }
+.text-preset-item-row .tp-remove {
+    font-size: 0.65rem; padding: 0.2rem 0.35rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: #b91c1c; cursor: pointer;
+}
+@media (max-width: 640px) {
+    .text-preset-item-row { grid-template-columns: 1fr 1fr auto; }
+    .text-preset-item-row textarea { grid-column: 1 / -1; }
 }
 
 .glossary-toolbar { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.55rem; }
@@ -610,6 +672,106 @@ body.editor-theme-dark #editorStatusLowConf {
 .editor-modal-panel.find-replace-panel { width: min(26rem, 94vw); }
 .editor-modal-panel.batch-dur-panel { width: min(24rem, 94vw); }
 .editor-modal-panel.qc-panel { width: min(28rem, 94vw); }
+.editor-modal-panel.workflow-panel { width: min(30rem, 96vw); }
+.workflow-select-row {
+    display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.6rem; flex-wrap: wrap;
+}
+.workflow-select-row select {
+    flex: 1 1 12rem; min-width: 0; padding: 0.3rem 0.45rem;
+    border: 1px solid var(--ed-border); border-radius: 0.35rem;
+    background: var(--ed-surface); color: var(--ed-text);
+}
+.workflow-note {
+    font-size: 0.72rem; color: var(--ed-muted); margin: 0 0 0.55rem; line-height: 1.35;
+}
+.workflow-step-list {
+    display: flex; flex-direction: column; gap: 0.35rem;
+    max-height: min(42vh, 22rem); overflow: auto; margin-bottom: 0.65rem;
+}
+.workflow-step-item {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 0.4rem 0.5rem;
+    align-items: start; padding: 0.45rem 0.5rem;
+    border: 1px solid var(--ed-border); border-radius: 0.4rem;
+    background: var(--ed-surface-2);
+}
+.workflow-step-item.is-disabled { opacity: 0.55; }
+.workflow-step-item .wf-step-main { min-width: 0; }
+.workflow-step-item .wf-step-title {
+    font-size: 0.8rem; font-weight: 600; color: var(--ed-text);
+    display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;
+}
+.workflow-step-item .wf-step-meta {
+    font-size: 0.68rem; color: var(--ed-faint); margin-top: 0.15rem;
+}
+.workflow-step-item .wf-chip {
+    font-size: 0.62rem; font-weight: 500; padding: 0.05rem 0.35rem;
+    border-radius: 999px; border: 1px solid var(--ed-border); color: var(--ed-muted);
+}
+.workflow-step-item .wf-chip.warn { color: var(--ed-warn-text); border-color: #fbbf24; }
+.workflow-toolbar {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.55rem;
+}
+.workflow-toolbar button,
+.workflow-add-row > button,
+.workflow-run-bar > button,
+.workflow-pause-actions > button,
+.workflow-step-item button {
+    font-size: 0.7rem; padding: 0.25rem 0.5rem; border: 1px solid var(--ed-border);
+    border-radius: 0.25rem; background: var(--ed-surface); color: var(--ed-text);
+    cursor: pointer; line-height: 1.25;
+}
+.workflow-toolbar button:hover,
+.workflow-add-row > button:hover,
+.workflow-run-bar > button:hover,
+.workflow-pause-actions > button:hover,
+.workflow-step-item button:hover:not(:disabled) {
+    background: var(--ed-surface-2);
+}
+.workflow-toolbar button:disabled,
+.workflow-add-row > button:disabled,
+.workflow-run-bar > button:disabled,
+.workflow-pause-actions > button:disabled,
+.workflow-step-item button:disabled {
+    opacity: 0.45; cursor: not-allowed;
+}
+.workflow-toolbar button:disabled:hover,
+.workflow-add-row > button:disabled:hover,
+.workflow-run-bar > button:disabled:hover,
+.workflow-pause-actions > button:disabled:hover {
+    background: var(--ed-surface);
+}
+.workflow-run-bar > button.editor-btn-primary,
+.workflow-pause-actions > button.editor-btn-primary {
+    background: var(--ed-accent); border-color: var(--ed-accent); color: #fff;
+    font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem;
+}
+.workflow-run-bar > button.editor-btn-primary:hover:not(:disabled),
+.workflow-pause-actions > button.editor-btn-primary:hover:not(:disabled) {
+    background: var(--ed-accent-hover);
+}
+.workflow-step-item button {
+    min-width: 1.4rem; padding: 0.12rem 0.28rem; font-size: 0.65rem;
+}
+.workflow-run-bar {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.35rem;
+}
+.workflow-status {
+    font-size: 0.72rem; color: var(--ed-muted); min-height: 1.2em; margin: 0.4rem 0 0;
+}
+.workflow-pause-banner {
+    display: none; margin: 0.5rem 0; padding: 0.55rem 0.65rem;
+    border: 1px solid #fbbf24; border-radius: 0.4rem; background: var(--ed-warn-bg);
+    color: var(--ed-warn-text); font-size: 0.78rem; line-height: 1.4;
+}
+.workflow-pause-banner.visible { display: block; }
+.workflow-pause-actions { display: flex; gap: 0.4rem; margin-top: 0.45rem; flex-wrap: wrap; }
+.workflow-add-row {
+    display: flex; gap: 0.35rem; align-items: center; margin-bottom: 0.55rem; flex-wrap: wrap;
+}
+.workflow-add-row select { flex: 1 1 10rem; min-width: 0; padding: 0.28rem 0.4rem;
+    border: 1px solid var(--ed-border); border-radius: 0.35rem;
+    background: var(--ed-surface); color: var(--ed-text);
+}
 .break-words-chips {
     display: flex; flex-wrap: wrap; gap: 0.35rem;
     max-height: 14rem; overflow: auto; padding: 0.45rem;
@@ -646,7 +808,8 @@ body.editor-theme-dark #editorStatusLowConf {
 .editor-modal.editor-drawer .editor-modal-panel.glossary-panel,
 .editor-modal.editor-drawer .editor-modal-panel.break-words-panel,
 .editor-modal.editor-drawer .editor-modal-panel.find-replace-panel,
-.editor-modal.editor-drawer .editor-modal-panel.qc-panel {
+.editor-modal.editor-drawer .editor-modal-panel.qc-panel,
+.editor-modal.editor-drawer .editor-modal-panel.workflow-panel {
     width: min(28rem, 96vw);
 }
 
@@ -903,8 +1066,44 @@ body.editor-theme-dark .qc-chip.ok { background: #064e3b; color: #6ee7b7; }
 }
 .editor-silence-progress-hint { font-size: 0.68rem; color: var(--ed-muted); line-height: 1.4; }
 .editor-silence-progress-count {
-    font-size: 0.72rem; color: var(--ed-accent); font-weight: 600;
-    font-variant-numeric: tabular-nums; margin-bottom: 0.35rem;
+    font-size: 0.75rem; color: var(--ed-accent); font-variant-numeric: tabular-nums; margin: 0.2rem 0;
+}
+.editor-workflow-pause-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 1.25rem; pointer-events: none;
+    background: transparent;
+}
+.editor-workflow-pause-overlay.hidden { display: none; }
+.editor-workflow-pause-card {
+    pointer-events: auto;
+    width: min(28rem, 94vw);
+    padding: 0.85rem 1rem;
+    border-radius: 0.55rem;
+    border: 1px solid #fbbf24;
+    background: var(--ed-surface);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.28);
+    color: var(--ed-text);
+}
+.editor-workflow-pause-card .wf-pause-title {
+    font-size: 0.8rem; font-weight: 600; margin: 0 0 0.25rem; color: var(--ed-warn-text);
+}
+.editor-workflow-pause-card .wf-pause-msg {
+    font-size: 0.78rem; line-height: 1.4; color: var(--ed-muted); margin: 0 0 0.65rem;
+}
+.editor-workflow-pause-card .wf-pause-actions {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end;
+}
+.editor-workflow-pause-card .wf-pause-actions button {
+    font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 0.375rem;
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text); cursor: pointer;
+}
+.editor-workflow-pause-card .wf-pause-actions button:hover { background: var(--ed-surface-2); }
+.editor-workflow-pause-card .wf-pause-actions button.editor-btn-primary {
+    background: var(--ed-accent); border-color: var(--ed-accent); color: #fff;
+}
+.editor-workflow-pause-card .wf-pause-actions button.editor-btn-primary:hover {
+    background: var(--ed-accent-hover);
 }
 .editor-boot-progress-brand {
     font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
@@ -923,6 +1122,180 @@ body.editor-theme-dark .qc-chip.ok { background: #064e3b; color: #6ee7b7; }
 button.needs-video.is-no-video { opacity: 0.45; }
 .hidden { display: none !important; }
 
+/* —— 启动欢迎页（无字幕文件时） —— */
+.editor-welcome {
+    position: fixed;
+    inset: 0;
+    z-index: 85;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 1.25rem 1.25rem;
+    background: var(--ed-bg);
+    color: var(--ed-text);
+    overflow: auto;
+}
+.editor-welcome.hidden { display: none !important; }
+.editor-welcome-inner {
+    width: min(100%, 28rem);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: min(100%, 36rem);
+}
+.editor-welcome-icon-wrap {
+    flex: 0 0 auto;
+    margin-bottom: 1.1rem;
+}
+.editor-welcome-icon {
+    width: 7.5rem;
+    height: 7.5rem;
+    display: block;
+    border-radius: 50%;
+    object-fit: cover;
+    cursor: copy;
+    user-select: none;
+    -webkit-user-drag: none;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+}
+.editor-welcome-icon-wrap.is-dragover .editor-welcome-icon {
+    transform: scale(1.06);
+    box-shadow: 0 10px 32px rgba(109, 40, 217, 0.28);
+}
+.editor-welcome-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 1.35rem;
+}
+.editor-welcome-open-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-width: 9.5rem;
+    padding: 0.55rem 1.15rem;
+    border: none;
+    border-radius: 0.55rem;
+    background: var(--ed-accent);
+    color: #fff;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.editor-welcome-open-btn:hover { background: var(--ed-accent-hover); }
+.editor-welcome-hint {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--ed-muted);
+    text-align: center;
+    max-width: 18rem;
+}
+.editor-welcome-history {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.65rem;
+    background: var(--ed-surface);
+    overflow: hidden;
+}
+.editor-welcome-history-title {
+    margin: 0;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ed-muted);
+    border-bottom: 1px solid var(--ed-border);
+    background: var(--ed-surface-2);
+}
+.editor-welcome-history-list {
+    flex: 1 1 auto;
+    min-height: 8rem;
+    max-height: 14rem;
+    overflow: auto;
+    padding: 0.35rem;
+}
+.editor-welcome-history-empty {
+    padding: 1.5rem 0.85rem;
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--ed-faint);
+}
+.editor-welcome-history-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    width: 100%;
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    border: none;
+    border-radius: 0.45rem;
+    background: transparent;
+    color: var(--ed-text);
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+.editor-welcome-history-item:hover {
+    background: var(--ed-selected);
+}
+.editor-welcome-history-item.is-missing {
+    opacity: 0.55;
+}
+.editor-welcome-history-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.3;
+    word-break: break-all;
+}
+.editor-welcome-history-path {
+    font-size: 0.68rem;
+    color: var(--ed-muted);
+    line-height: 1.35;
+    word-break: break-all;
+}
+.editor-welcome-history-meta {
+    font-size: 0.65rem;
+    color: var(--ed-faint);
+}
+.editor-welcome-footer {
+    width: 100%;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    padding-top: 0.85rem;
+}
+.editor-welcome-clear-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.45rem;
+    background: var(--ed-surface);
+    color: var(--ed-danger);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.editor-welcome-clear-btn:hover {
+    background: color-mix(in srgb, var(--ed-danger) 8%, var(--ed-surface));
+    border-color: color-mix(in srgb, var(--ed-danger) 35%, var(--ed-border));
+}
+.editor-welcome-clear-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+
 </style>
 </head>
 <body class="editor-body editor-theme-light editor-waveform-on">
@@ -931,10 +1304,17 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <button type="button" id="editorOpenFileBtn" class="editor-btn editor-btn-icon" title="打开其他字幕" aria-label="打开"><i class="fa fa-folder-open"></i></button>
             <button type="button" id="editorLinkVideoBtn" class="editor-btn editor-btn-icon" title="关联视频" aria-label="关联视频"><i class="fa fa-film"></i></button>
             <button type="button" id="editorSaveBtn" class="editor-btn editor-btn-icon editor-btn-primary" title="保存 (Ctrl+S)" aria-label="保存"><i class="fa fa-save"></i></button>
+            <button type="button" id="editorExportDualBtn" class="editor-btn editor-btn-icon hidden" title="导出合并双语字幕" aria-label="导出双语"><i class="fa fa-language"></i></button>
             <button type="button" id="editorUndoBtn" class="editor-btn editor-btn-icon" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled><i class="fa fa-undo"></i></button>
             <button type="button" id="editorRedoBtn" class="editor-btn editor-btn-icon" title="重做 (Ctrl+Y)" aria-label="重做" disabled><i class="fa fa-repeat"></i></button>
             <button type="button" id="editorFindReplaceBtn" class="editor-btn editor-btn-icon" title="查找替换 (Ctrl+F)" aria-label="查找替换"><i class="fa fa-search"></i></button>
             <button type="button" id="editorQcBtn" class="editor-btn editor-btn-icon" title="质量检查" aria-label="质量检查"><i class="fa fa-heartbeat"></i><span id="editorQcBadge" class="editor-btn-badge">0</span></button>
+            <button type="button" id="editorTextPresetsBtn" class="editor-btn editor-btn-icon" title="预设组：按时间轴批量插入片名/演员等" aria-label="字幕预设组">
+                <i class="fa fa-bookmark"></i><span id="editorTextPresetsBadge" class="editor-btn-badge">0</span>
+            </button>
+            <button type="button" id="editorWorkflowBtn" class="editor-btn editor-btn-icon" title="工作流：一键批处理" aria-label="工作流">
+                <i class="fa fa-sitemap"></i>
+            </button>
 
             <div class="editor-menu-wrap">
                 <button type="button" id="editorToolsMenuBtn" class="editor-btn editor-btn-icon editor-btn-icon-menu" title="更多工具" aria-label="更多工具" aria-haspopup="true" aria-expanded="false">
@@ -962,6 +1342,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <button type="button" id="editorSmartAdjustBtn" role="menuitem" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic"></i>智能调整</button>
                     <button type="button" id="editorRemoveNoiseBtn" role="menuitem" title="批量删除语气碎片、音效标签等杂音字幕"><i class="fa fa-filter"></i>删除杂音</button>
                     <button type="button" id="editorRetranscribeDurBtn" class="needs-video" role="menuitem" title="从起始点按指定时长重转写（需关联视频）"><i class="fa fa-refresh"></i>按时长重转</button>
+                    <button type="button" id="editorExportDualMenuBtn" class="hidden" role="menuitem" title="将原文与译文合并为一份字幕导出"><i class="fa fa-language"></i>导出合并双语</button>
                     <div class="dd-sep"></div>
                     <div class="dd-label">历史</div>
                     <button type="button" id="editorRestoreBtn" class="editor-btn-danger-soft" role="menuitem" title="恢复到打开文件时的初始字幕" disabled><i class="fa fa-history"></i>复原到初始</button>
@@ -975,6 +1356,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <i class="fa fa-area-chart"></i>
             </button>
             <button type="button" id="editorThemeToggle" class="editor-btn editor-btn-icon" title="切换深色/浅色主题" aria-label="主题"><i class="fa fa-moon-o"></i></button>
+            <button type="button" id="editorOpenGeneratorBtn" class="editor-btn editor-btn-icon" title="打开字幕生成器" aria-label="字幕生成器"><i class="fa fa-play-circle"></i></button>
             <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
             <button type="button" id="editorShortcutsBtn" class="editor-btn editor-btn-icon" title="快捷键说明" aria-label="快捷键"><i class="fa fa-keyboard-o"></i></button>
         </div>
@@ -998,7 +1380,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <span id="editorFilterCount" style="font-size:0.65rem;color:var(--ed-faint);font-variant-numeric:tabular-nums"></span>
             </div>
             <div id="editorListWrap" class="editor-list-wrap" tabindex="-1">
-                <table class="editor-cue-table text-sm">
+                <table class="editor-cue-table text-sm" id="editorCueTable">
                     <thead>
                         <tr>
                             <th class="text-left col-idx">#</th>
@@ -1006,7 +1388,8 @@ button.needs-video.is-no-video { opacity: 0.45; }
                             <th class="text-left col-time">结束</th>
                             <th class="text-left col-dur">时长</th>
                             <th class="text-left col-cps">CPS</th>
-                            <th class="text-left">文本</th>
+                            <th class="text-left col-text-head">文本</th>
+                            <th class="text-left col-pair-head col-pair">对照</th>
                         </tr>
                     </thead>
                     <tbody id="editorCueBody"></tbody>
@@ -1038,11 +1421,21 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 </div>
 
                 <div class="detail-text-wrap">
-                    <div class="flex items-center justify-between mb-0.5" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.15rem">
+                    <div class="flex items-center justify-between mb-0.5" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.15rem;gap:0.35rem">
                         <label for="editorDetailText" style="font-size:10px;color:var(--ed-muted)">文本</label>
-                        <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
+                        <div style="display:flex;align-items:center;gap:0.35rem;min-width:0">
+                            <select id="editorTextPresetQuickSelect" title="插入预设组" aria-label="插入预设组"
+                                style="max-width:8.5rem;font-size:10px;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.05rem 0.2rem;background:var(--ed-surface);color:var(--ed-text)">
+                                <option value="">插入预设组…</option>
+                            </select>
+                            <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
+                        </div>
                     </div>
                     <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
+                    <div id="editorDetailPairWrap" class="hidden" style="margin-top:0.35rem">
+                        <div style="font-size:10px;color:var(--ed-muted);margin-bottom:0.15rem">对照轨（只读）</div>
+                        <div id="editorDetailPairText" style="font-size:0.74rem;color:var(--ed-muted);line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:4.5rem;overflow:auto;padding:0.35rem 0.45rem;border:1px solid var(--ed-border);border-radius:0.35rem;background:var(--ed-surface-2)"></div>
+                    </div>
                 </div>
 
                 <div class="detail-meta">
@@ -1109,6 +1502,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div style="font-size:0.7rem;opacity:0.8">点击顶栏「关联视频」，或仅编辑文本与时间</div>
                 </div>
                 <div id="editorVideoSubtitle" class="editor-video-subtitle hidden" aria-live="off">
+                    <div id="editorVideoSubtitleSource" class="editor-video-subtitle-source"></div>
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
             </div>
@@ -1150,6 +1544,15 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <option value="1.5">1.5×</option>
                     <option value="2">2×</option>
                 </select>
+                <select id="editorDualDisplaySelect" class="editor-dual-display hidden" title="双语预览" aria-label="双语预览">
+                    <option value="both">双语</option>
+                    <option value="target">仅译文</option>
+                    <option value="source">仅原文</option>
+                </select>
+                <select id="editorDualLineOrderSelect" class="editor-dual-display hidden" title="双语上下顺序" aria-label="双语上下顺序">
+                    <option value="source-first">原文在上</option>
+                    <option value="target-first">译文在上</option>
+                </select>
                 <input type="range" id="editorVolumeSlider" min="0" max="1" step="0.05" value="1" title="音量">
                 <button type="button" id="editorInsertCueBtn" class="transport-primary" title="在当前播放位置插入字幕 (Enter)">
                     <i class="fa fa-plus-circle"></i> 插入
@@ -1177,15 +1580,43 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <p id="editorBootProgressDetail" class="editor-boot-progress-detail">请稍候，界面马上可用…</p>
         </div>
     </div>
+
+    <div id="editorWelcome" class="editor-welcome hidden" aria-label="字幕编辑器启动页">
+        <div class="editor-welcome-inner">
+            <div id="editorWelcomeIconWrap" class="editor-welcome-icon-wrap" title="将字幕文件拖放到此处打开">
+                <img id="editorWelcomeIcon" class="editor-welcome-icon" src="tseditor.png" alt="TS EDITOR" width="120" height="120" draggable="false">
+            </div>
+            <div class="editor-welcome-actions">
+                <button type="button" id="editorWelcomeOpenBtn" class="editor-welcome-open-btn">
+                    <i class="fa fa-folder-open" aria-hidden="true"></i>打开字幕
+                </button>
+                <p class="editor-welcome-hint">将字幕文件拖放到 TS EDITOR 图标打开编辑</p>
+            </div>
+            <section class="editor-welcome-history" aria-label="最近编辑">
+                <h2 class="editor-welcome-history-title">最近编辑</h2>
+                <div id="editorWelcomeHistoryList" class="editor-welcome-history-list" role="list"></div>
+            </section>
+            <div class="editor-welcome-footer">
+                <button type="button" id="editorWelcomeClearBtn" class="editor-welcome-clear-btn" disabled>
+                    <i class="fa fa-trash-o" aria-hidden="true"></i>清除历史记录
+                </button>
+            </div>
+        </div>
+    </div>
     <script>
     (function () {
         try {
             var params = new URLSearchParams(location.search || '');
             var sub = params.get('sub') || '';
+            var welcome = params.get('welcome') === '1';
             var detail = document.getElementById('editorBootProgressDetail');
             var status = document.getElementById('editorStatusLine');
             if (sub && detail) detail.textContent = '正在打开 ' + sub + '…';
-            if (status) status.textContent = sub ? ('正在加载 ' + sub + '…') : '正在启动…';
+            if (status) {
+                status.textContent = sub
+                    ? ('正在加载 ' + sub + '…')
+                    : (welcome ? '就绪' : '正在启动…');
+            }
         } catch (_) {}
     })();
     </script>
@@ -1354,6 +1785,93 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <div class="editor-modal-actions">
                     <button type="button" id="editorBreakWordsClose" data-break-words-dismiss>关闭</button>
                 </div>
+            </div>
+        </div>
+
+        <div id="editorTextPresetsModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorTextPresetsTitle">
+            <div class="editor-modal-backdrop" data-text-presets-dismiss></div>
+            <div class="editor-modal-panel glossary-panel text-presets-panel">
+                <h3 id="editorTextPresetsTitle">字幕预设组</h3>
+                <p class="break-words-hint">一组可包含多条按时段排列的文案（如片名 0–0.5s、演员 0.6–1.5s）。插入时按「播放位置」或「视频起点」批量新建字幕。</p>
+                <div class="glossary-toolbar">
+                    <button type="button" id="editorTextPresetsAddBtn"><i class="fa fa-plus mr-1"></i>新建组</button>
+                    <button type="button" id="editorTextPresetsImportBtn">导入</button>
+                    <button type="button" id="editorTextPresetsExportBtn">导出</button>
+                    <button type="button" id="editorTextPresetsSeedBtn" title="写入内置「常规预设1」示例">示例</button>
+                </div>
+                <div class="glossary-scope-list" style="margin-bottom:0.4rem">
+                    <input type="search" id="editorTextPresetsSearch" placeholder="搜索组名 / 条目…" spellcheck="false"
+                        style="flex:1;min-width:8rem;font-size:0.72rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.2rem 0.4rem;background:var(--ed-surface);color:var(--ed-text)">
+                </div>
+                <div id="editorTextPresetsList" class="glossary-entry-list" role="list"></div>
+                <div class="glossary-form">
+                    <div>
+                        <label for="editorTextPresetName">组名称</label>
+                        <input type="text" id="editorTextPresetName" spellcheck="false" placeholder="例如：常规预设1">
+                    </div>
+                    <div>
+                        <label for="editorTextPresetAnchor">时间基准</label>
+                        <select id="editorTextPresetAnchor" style="width:100%;font-size:0.75rem;border:1px solid var(--ed-border);border-radius:0.375rem;padding:0.35rem 0.5rem;background:var(--ed-surface);color:var(--ed-text)">
+                            <option value="playhead" selected>相对当前播放位置（推荐）</option>
+                            <option value="absolute">相对视频起点（绝对时间）</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.25rem">
+                            <label style="margin:0">组内条目（标签 · 起始 · 时长 · 文本）</label>
+                            <button type="button" id="editorTextPresetAddItemBtn" class="text-xs px-2 py-0.5 border rounded">+ 条目</button>
+                        </div>
+                        <div id="editorTextPresetItemsHost" class="text-preset-items-host"></div>
+                    </div>
+                    <div class="glossary-form-row" style="flex-wrap:wrap">
+                        <button type="button" id="editorTextPresetSaveBtn" class="text-xs px-2 py-1 border rounded">保存组</button>
+                        <button type="button" id="editorTextPresetDeleteBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除组</button>
+                        <span style="flex:1"></span>
+                        <button type="button" id="editorTextPresetInsertNewBtn" class="text-xs px-2 py-1 border rounded" title="按组内时间轴批量新建字幕">插入本组</button>
+                    </div>
+                </div>
+                <p id="editorTextPresetsStatus" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorTextPresetsClose" data-text-presets-dismiss>关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorWorkflowModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorWorkflowTitle">
+            <div class="editor-modal-backdrop" data-workflow-dismiss></div>
+            <div class="editor-modal-panel workflow-panel">
+                <h3 id="editorWorkflowTitle">工作流</h3>
+                <p class="break-words-hint">将编辑器批处理工具编排成可复用配方，一键按序执行。内置模板只读，可复制后自定义。</p>
+                <div class="workflow-select-row">
+                    <select id="editorWorkflowSelect" aria-label="选择工作流"></select>
+                </div>
+                <p id="editorWorkflowNote" class="workflow-note"></p>
+                <div class="workflow-toolbar">
+                    <button type="button" id="editorWorkflowDupBtn" title="复制当前为自定义"><i class="fa fa-copy mr-1"></i>复制</button>
+                    <button type="button" id="editorWorkflowNewBtn" title="新建空工作流"><i class="fa fa-plus mr-1"></i>新建</button>
+                    <button type="button" id="editorWorkflowDeleteBtn" title="删除自定义工作流"><i class="fa fa-trash mr-1"></i>删除</button>
+                    <button type="button" id="editorWorkflowImportBtn">导入</button>
+                    <button type="button" id="editorWorkflowExportBtn">导出</button>
+                </div>
+                <div class="workflow-add-row" id="editorWorkflowAddRow">
+                    <select id="editorWorkflowAddStepSelect" aria-label="添加步骤类型"></select>
+                    <button type="button" id="editorWorkflowAddStepBtn">添加步骤</button>
+                </div>
+                <div id="editorWorkflowStepList" class="workflow-step-list" role="list"></div>
+                <div id="editorWorkflowPauseBanner" class="workflow-pause-banner" role="status">
+                    <div id="editorWorkflowPauseMessage"></div>
+                    <div class="workflow-pause-actions">
+                        <button type="button" id="editorWorkflowContinueBtn" class="editor-btn-primary">继续</button>
+                        <button type="button" id="editorWorkflowSkipStepBtn">跳过此步</button>
+                        <button type="button" id="editorWorkflowAbortBtn">中止</button>
+                    </div>
+                </div>
+                <div class="workflow-run-bar">
+                    <button type="button" id="editorWorkflowRunBtn" class="editor-btn-primary"><i class="fa fa-play mr-1"></i>运行</button>
+                    <button type="button" id="editorWorkflowCancelRunBtn" disabled>取消运行</button>
+                    <button type="button" id="editorWorkflowClose" data-workflow-dismiss>关闭</button>
+                </div>
+                <p id="editorWorkflowStatus" class="workflow-status">—</p>
             </div>
         </div>
 
@@ -1850,6 +2368,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
         </div>
     </div>
 
+    <div id="editorWorkflowPauseOverlay" class="editor-workflow-pause-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editorWorkflowPauseOverlayTitle">
+        <div class="editor-workflow-pause-card">
+            <p id="editorWorkflowPauseOverlayTitle" class="wf-pause-title">工作流暂停</p>
+            <p id="editorWorkflowPauseOverlayMessage" class="wf-pause-msg">请确认后继续</p>
+            <div class="wf-pause-actions">
+                <button type="button" id="editorWorkflowOverlayAbortBtn">中止</button>
+                <button type="button" id="editorWorkflowOverlaySkipBtn">跳过此步</button>
+                <button type="button" id="editorWorkflowOverlayContinueBtn" class="editor-btn-primary">继续</button>
+            </div>
+        </div>
+    </div>
+
     <div id="editorShortcutsModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorShortcutsTitle">
         <div class="editor-modal-backdrop" data-shortcuts-dismiss></div>
         <div class="editor-modal-panel" style="width: min(28rem, 94vw);">
@@ -1909,6 +2439,8 @@ button.needs-video.is-no-video { opacity: 0.45; }
         <button type="button" data-ctx-action="audio-snap-batch" role="menuitem">批量按音频贴边…</button>
         <div class="ctx-sep" role="separator"></div>
         <button type="button" data-ctx-action="retranscribe" role="menuitem">重转写本条</button>
+        <button type="button" data-ctx-action="retranslate" role="menuitem" class="ctx-dual-only hidden">重译本条</button>
+        <button type="button" data-ctx-action="retranscribe-dual" role="menuitem" class="ctx-dual-only hidden">双语重跑本条</button>
         <button type="button" data-ctx-action="retranscribe-dur" role="menuitem">按时长重转写…</button>
         <button type="button" data-ctx-action="confirm-meta" role="menuitem">标记为可信</button>
         <div class="ctx-sep" role="separator"></div>
@@ -1922,13 +2454,17 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-qc-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
+    <script src="js/subtitle-text-presets-core.js"></script>
+    <script src="js/subtitle-workflows-core.js"></script>
     <script src="js/subtitle-chinese-dict.js"></script>
     <script src="js/subtitle-chinese-core.js"></script>
+    <script src="js/dual-subtitle-core.js"></script>
     <script src="js/subtitle-editor/utils.js"></script>
     <script src="js/subtitle-editor/undo.js"></script>
     <script src="js/subtitle-editor/modals.js"></script>
     <script src="js/subtitle-editor/boot.js"></script>
     <script src="js/subtitle-editor/prefs.js"></script>
+    <script src="js/subtitle-editor/workflows.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>
 </html>

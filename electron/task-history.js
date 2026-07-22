@@ -34,6 +34,15 @@ function appendTaskHistory(entry) {
             : 0;
     }
     const opts = entry.options && typeof entry.options === 'object' ? entry.options : {};
+    const rawOutputs = Array.isArray(entry.outputs) ? entry.outputs : [];
+    const outputs = rawOutputs.slice(0, 80).map((o) => ({
+        videoPath: String(o?.videoPath || '').trim(),
+        subtitlePath: String(o?.subtitlePath || '').trim(),
+        sourceSubtitlePath: String(o?.sourceSubtitlePath || '').trim(),
+        targetSubtitlePath: String(o?.targetSubtitlePath || '').trim(),
+        bilingualSubtitlePath: String(o?.bilingualSubtitlePath || '').trim(),
+        status: String(o?.status || '').trim() || 'done',
+    })).filter((o) => o.subtitlePath || o.videoPath);
     const record = {
         id: entry.id || `job-${Date.now()}`,
         startedAt,
@@ -49,6 +58,7 @@ function appendTaskHistory(entry) {
         cancelled: !!entry.cancelled,
         options: opts,
         errors: Array.isArray(entry.errors) ? entry.errors.slice(0, 8) : [],
+        outputs,
     };
     const next = [record, ...entries].slice(0, MAX_ENTRIES);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -56,7 +66,15 @@ function appendTaskHistory(entry) {
     return record;
 }
 
+function clearTaskHistory() {
+    const filePath = getHistoryFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify({ version: 1, entries: [] }, null, 2)}\n`, 'utf8');
+    return { ok: true, entries: [] };
+}
+
 module.exports = {
     loadTaskHistory,
     appendTaskHistory,
+    clearTaskHistory,
 };

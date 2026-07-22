@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:;">
+    <title>检查更新 — Transub</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
+    <link rel="stylesheet" href="vendor/app.css">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        body {
+            background: #f9fafb;
+            color: #1f2937;
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .upd-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+            background: #fff;
+            flex-shrink: 0;
+        }
+        .upd-header img {
+            width: 2rem;
+            height: 2rem;
+        }
+        .upd-header h1 {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+        .upd-header p {
+            margin: 0.15rem 0 0;
+            font-size: 0.75rem;
+            color: #9ca3af;
+        }
+        .upd-body {
+            flex: 1;
+            min-height: 0;
+            padding: 1rem 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.875rem;
+            overflow-y: auto;
+        }
+        .upd-status {
+            font-size: 0.875rem;
+            color: #4b5563;
+            line-height: 1.5;
+            min-height: 1.25rem;
+        }
+        .upd-status.is-ok { color: #059669; }
+        .upd-status.is-err { color: #dc2626; }
+        .upd-status.is-info { color: #6d28d9; }
+        .upd-meta {
+            font-size: 0.75rem;
+            color: #9ca3af;
+        }
+        .upd-progress {
+            display: none;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .upd-progress.is-visible { display: flex; }
+        .upd-progress-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: #4b5563;
+        }
+        .upd-progress-pct {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+        .upd-bar-track {
+            height: 0.5rem;
+            background: #e5e7eb;
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+        .upd-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: #7c3aed;
+            border-radius: 9999px;
+            transition: width 0.2s ease-out;
+        }
+        .upd-progress-detail {
+            margin: 0;
+            font-size: 0.75rem;
+            color: #9ca3af;
+            min-height: 1rem;
+        }
+        .upd-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: auto;
+            padding-top: 0.25rem;
+        }
+        .upd-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+            padding: 0.5rem 0.875rem;
+            border-radius: 0.5rem;
+            border: 1px solid #e5e7eb;
+            background: #fff;
+            color: #374151;
+            font-size: 0.8125rem;
+            cursor: pointer;
+            line-height: 1.25;
+        }
+        .upd-btn:hover:not(:disabled) {
+            background: #f9fafb;
+        }
+        .upd-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .upd-btn-primary {
+            background: #7c3aed;
+            border-color: #7c3aed;
+            color: #fff;
+        }
+        .upd-btn-primary:hover:not(:disabled) {
+            background: #6d28d9;
+            border-color: #6d28d9;
+        }
+        .upd-btn-ghost {
+            background: transparent;
+            border-color: transparent;
+            color: #6b7280;
+        }
+        .upd-btn-ghost:hover:not(:disabled) {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .upd-footer {
+            padding: 0.625rem 1.25rem;
+            border-top: 1px solid #e5e7eb;
+            background: #fff;
+            flex-shrink: 0;
+        }
+        .upd-footer p {
+            margin: 0;
+            font-size: 0.6875rem;
+            color: #9ca3af;
+            line-height: 1.4;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <header class="upd-header">
+        <img src="icon.png" alt="" width="32" height="32" decoding="async">
+        <div>
+            <h1>软件更新</h1>
+            <p id="currentVersionLabel">当前版本 …</p>
+        </div>
+    </header>
+
+    <main class="upd-body">
+        <p id="updateStatus" class="upd-status" role="status" aria-live="polite">准备检查更新…</p>
+        <p id="updateMeta" class="upd-meta"></p>
+
+        <div id="updateDownloadProgress" class="upd-progress" aria-live="polite">
+            <div class="upd-progress-row">
+                <span id="updateDownloadLabel">正在下载更新…</span>
+                <span id="updateDownloadPercent" class="upd-progress-pct">0%</span>
+            </div>
+            <div class="upd-bar-track">
+                <div id="updateDownloadBar" class="upd-bar-fill" style="width:0%"></div>
+            </div>
+            <p id="updateDownloadDetail" class="upd-progress-detail"></p>
+        </div>
+
+        <div class="upd-actions">
+            <button type="button" id="checkAgainBtn" class="upd-btn">
+                <i class="fa fa-refresh" aria-hidden="true"></i>
+                <span>重新检查</span>
+            </button>
+            <button type="button" id="downloadBtn" class="upd-btn upd-btn-primary hidden" disabled>
+                <i class="fa fa-download" aria-hidden="true"></i>
+                <span>下载并安装</span>
+            </button>
+            <button type="button" id="openReleasesBtn" class="upd-btn hidden" disabled>
+                <i class="fa fa-external-link" aria-hidden="true"></i>
+                <span>打开下载页</span>
+            </button>
+            <button type="button" id="installBtn" class="upd-btn upd-btn-primary hidden" disabled>
+                <i class="fa fa-power-off" aria-hidden="true"></i>
+                <span>重启安装</span>
+            </button>
+            <button type="button" id="closeBtn" class="upd-btn upd-btn-ghost">关闭</button>
+        </div>
+    </main>
+
+    <footer class="upd-footer">
+        <p>安装版可在窗口内下载并重启安装；便携版请从 GitHub Releases 手动下载。</p>
+    </footer>
+
+    <script src="js/update-window.js"></script>
+</body>
+</html>

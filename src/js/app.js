@@ -13,18 +13,42 @@
     const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
 
     const DEVICE_LABELS = {
-        cuda: 'GPU 翻译',
+        cuda: 'GPU',
         amd: 'GPU AMD',
-        cpu: 'CPU 翻译',
+        cpu: 'CPU',
         cuda_low_vram: 'GPU 低显存',
         cuda_batch: 'GPU 批处理',
+        modal: 'Modal 云端',
+    };
+
+    const EXPERT_DEVICES = new Set(['cuda_low_vram', 'cuda_batch', 'modal']);
+    const DEFAULT_AUDIO_SUFFIXES = 'mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv';
+    const EXPERT_PARAM_DEFAULTS = {
+        logLevel: 'DEBUG',
+        maxBatchSize: 8,
+        beamSize: 5,
+        vadThreshold: 0.5,
+        vadMinSpeechDurationMs: 300,
+        vadMinSilenceDurationMs: 100,
+        vadSpeechPadMs: 200,
+        maxInitialTimestamp: 30,
+        repetitionPenalty: 1.1,
+        noSpeechThreshold: 0.6,
+        logProbThreshold: -1,
+        compressionRatioThreshold: 2.4,
+        hallucinationSilenceThreshold: null,
+        targetChunkDurationS: 30,
+        mergeMaxGapMs: 500,
+        mergeMaxDurationMs: 15000,
+        retranscribeWarmLight: false,
+        audioSuffixes: DEFAULT_AUDIO_SUFFIXES,
     };
 
     const STAGE_LABELS = {
         starting: '启动',
-        vad: 'VAD 分析',
+        vad: '语音检测',
         model: '加载模型',
-        transcribe: '转写',
+        transcribe: '转写中',
         save: '保存字幕',
         done: '完成',
     };
@@ -42,8 +66,97 @@
         return STAGE_RANK[stage] ?? 0;
     }
 
+    function scrubProgressDetail(detail) {
+        return String(detail || '')
+            .trim()
+            .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
+            .trim();
+    }
+
     function stageLabel(stage) {
-        return STAGE_LABELS[stage] || '处理中';
+        const base = STAGE_LABELS[stage] || '处理中';
+        if (state.itemDualPhase === 'transcribe') {
+            if (stage === 'starting') return '双语 · 准备原文';
+            if (stage === 'transcribe') return '双语 · 生成原文';
+            return `双语 · 原文 · ${base}`;
+        }
+        if (state.itemDualPhase === 'translate') {
+            // 引擎第二阶段仍上报 itemStage=transcribe
+            if (stage === 'starting') return '双语 · 准备译文';
+            if (stage === 'transcribe') return '双语 · 生成译文';
+            return `双语 · 译文 · ${base}`;
+        }
+        const task = readTaskFromForm();
+        if (task === 'translate' && stage === 'transcribe') return '翻译中';
+        if (task === 'transcribe' && stage === 'transcribe') return '转写中';
+        return base;
+    }
+
+    /** 列表行副文案：只保留时间轴 / 语音检测等补充信息，避免与状态徽章叠词 */
+    function formatListRunningDetail(rawDetail) {
+        let scrubbed = scrubProgressDetail(rawDetail);
+        if (state.itemDualPhase) {
+            scrubbed = scrubbed
+                .replace(/^(生成原文|生成译文|双语准备中|双语生成中|已合并.*)[…\.]*\s*/u, '')
+                .trim();
+        }
+        return scrubbed;
+    }
+
+    function formatRunningProgressLabel(stage, detail) {
+        const head = stageLabel(stage);
+        let scrubbed = scrubProgressDetail(detail);
+        // 去掉与双语标题重复的「生成原文/译文」「双语准备」等套话
+        if (state.itemDualPhase) {
+            scrubbed = scrubbed
+                .replace(/^(生成原文|生成译文|双语准备中|双语生成中)[…\.]*\s*/u, '')
+                .trim();
+        }
+        if (!scrubbed) return `${head}…`;
+        if (scrubbed === head || scrubbed.startsWith(`${head} ·`)) return scrubbed;
+        return `${head} · ${scrubbed}`;
+    }
+
+    function effectiveItemProgress(stage, progress) {
+        const raw = Math.max(0, Number(progress) || 0);
+        // 运行中故意封顶 99%，避免未完成时显示 100%；结束后允许到 100%
+        const cap = (!state.running || stage === 'done' || stage === 'skipped') ? 100 : 99;
+        const pct = Math.min(cap, raw);
+        if (isPreTranscribeStage(stage)) {
+            // 双语第二阶段启动/VAD 时保留已映射进度
+            if (state.running && state.itemDualPhase === 'translate') return Math.min(99, pct);
+            if (!state.running) return pct;
+            return 0;
+        }
+        return pct;
+    }
+
+    function computeDisplayProgress() {
+        // 任务已正常结束：进度条到 100%（顶部文案由 progressLabel 负责）
+        if (!state.running && state.itemStage === 'done' && state.total > 0) {
+            return { pct: 100, label: '100%' };
+        }
+        const cap = state.running ? 99 : 100;
+        const itemPct = effectiveItemProgress(state.itemStage, state.videoProgress);
+        const displayPct = Math.max(0, Math.min(cap, itemPct));
+        const hasMediaTimeline = state.running
+            && state.videoTotalSec >= 60
+            && state.itemStage === 'transcribe'
+            && state.itemDualPhase !== 'translate';
+        if (hasMediaTimeline && displayPct > 0) {
+            const timeline = `${formatDuration(state.videoCurrentSec)} / ${formatDuration(state.videoTotalSec)}`;
+            // 底部计数区只显示时间轴与百分比，阶段文案留给 progressLabel
+            return {
+                pct: displayPct,
+                label: `${timeline} · ${displayPct}%`,
+            };
+        }
+        if (state.total > 0 && state.index > 0) {
+            const batchPct = Math.round(((state.index - 1) + displayPct / 100) / state.total * 100);
+            const pct = Math.min(cap, batchPct);
+            return { pct, label: `第 ${state.index} / ${state.total} 个 · ${pct}%` };
+        }
+        return { pct: displayPct, label: displayPct > 0 ? `${displayPct}%` : '…' };
     }
 
     const POST_TASK_SELECT_VALUES = new Set(['none', 'quit', 'shutdown', 'sleep', 'open_folder']);
@@ -67,11 +180,11 @@
 
     let savedOptionsSnapshot = null;
     let activeParamsTab = 'runtime';
+    let settingsUiMode = 'standard';
 
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
     const initialSettingsTab = String(pageQuery.get('tab') || '').trim();
-    const shouldCheckUpdateOnOpen = pageQuery.get('checkUpdate') === '1';
 
     /** Legacy / alias tab ids → current panel ids */
     const PARAMS_TAB_ALIASES = {
@@ -85,6 +198,94 @@
         const raw = String(tabId || '').trim();
         if (!raw) return 'runtime';
         return PARAMS_TAB_ALIASES[raw] || raw;
+    }
+
+    function normalizeSettingsUiMode(value) {
+        return String(value || '').trim() === 'expert' ? 'expert' : 'standard';
+    }
+
+    function nearlyEqual(a, b, eps = 1e-6) {
+        return Math.abs(Number(a) - Number(b)) <= eps;
+    }
+
+    function hasExpertCustomizations(options = buildSavedOptionsFromForm()) {
+        if (EXPERT_DEVICES.has(options.device)) return true;
+        if (String(options.logLevel || 'DEBUG').toUpperCase() !== EXPERT_PARAM_DEFAULTS.logLevel) return true;
+        if (!nearlyEqual(options.maxBatchSize, EXPERT_PARAM_DEFAULTS.maxBatchSize)) return true;
+        if (!nearlyEqual(options.beamSize, EXPERT_PARAM_DEFAULTS.beamSize)) return true;
+        if (!nearlyEqual(options.vadThreshold, EXPERT_PARAM_DEFAULTS.vadThreshold)) return true;
+        if (!nearlyEqual(options.vadMinSpeechDurationMs, EXPERT_PARAM_DEFAULTS.vadMinSpeechDurationMs)) return true;
+        if (!nearlyEqual(options.vadMinSilenceDurationMs, EXPERT_PARAM_DEFAULTS.vadMinSilenceDurationMs)) return true;
+        if (!nearlyEqual(options.vadSpeechPadMs, EXPERT_PARAM_DEFAULTS.vadSpeechPadMs)) return true;
+        if (!nearlyEqual(options.maxInitialTimestamp, EXPERT_PARAM_DEFAULTS.maxInitialTimestamp)) return true;
+        if (!nearlyEqual(options.repetitionPenalty, EXPERT_PARAM_DEFAULTS.repetitionPenalty)) return true;
+        if (!nearlyEqual(options.noSpeechThreshold, EXPERT_PARAM_DEFAULTS.noSpeechThreshold)) return true;
+        if (!nearlyEqual(options.logProbThreshold, EXPERT_PARAM_DEFAULTS.logProbThreshold)) return true;
+        if (!nearlyEqual(options.compressionRatioThreshold, EXPERT_PARAM_DEFAULTS.compressionRatioThreshold)) return true;
+        if ((options.hallucinationSilenceThreshold ?? null) !== EXPERT_PARAM_DEFAULTS.hallucinationSilenceThreshold) {
+            return true;
+        }
+        if (!nearlyEqual(options.targetChunkDurationS, EXPERT_PARAM_DEFAULTS.targetChunkDurationS)) return true;
+        if (!nearlyEqual(options.mergeMaxGapMs, EXPERT_PARAM_DEFAULTS.mergeMaxGapMs)) return true;
+        if (!nearlyEqual(options.mergeMaxDurationMs, EXPERT_PARAM_DEFAULTS.mergeMaxDurationMs)) return true;
+        if (!!options.retranscribeWarmLight !== EXPERT_PARAM_DEFAULTS.retranscribeWarmLight) return true;
+        const suffixes = String(options.audioSuffixes || DEFAULT_AUDIO_SUFFIXES)
+            .split(/[,;\s]+/)
+            .map((p) => p.trim().toLowerCase())
+            .filter(Boolean)
+            .sort()
+            .join(',');
+        const defaultSuffixes = DEFAULT_AUDIO_SUFFIXES.split(',').map((p) => p.trim()).sort().join(',');
+        if (suffixes !== defaultSuffixes) return true;
+        return false;
+    }
+
+    function syncDeviceOptionsForMode() {
+        const current = els.deviceSelect?.value || 'cuda';
+        const expertMode = settingsUiMode === 'expert';
+        els.deviceSelect?.querySelectorAll('option[data-expert-device="1"]').forEach((opt) => {
+            const keepVisible = expertMode || opt.value === current;
+            opt.hidden = !keepVisible;
+            opt.disabled = !keepVisible;
+        });
+        const showDeviceHint = !expertMode && EXPERT_DEVICES.has(current);
+        els.deviceExpertHint?.classList.toggle('hidden', !showDeviceHint);
+    }
+
+    function syncExpertCustomHints() {
+        const show = settingsUiMode === 'standard' && hasExpertCustomizations();
+        els.transcribeExpertCustomHint?.classList.toggle('hidden', !show);
+    }
+
+    function applySettingsUiMode() {
+        const mode = normalizeSettingsUiMode(settingsUiMode);
+        settingsUiMode = mode;
+        els.paramsModal?.classList.toggle('settings-mode-standard', mode === 'standard');
+        els.paramsModal?.classList.toggle('settings-mode-expert', mode === 'expert');
+        document.querySelectorAll('[data-settings-ui-mode]').forEach((btn) => {
+            const active = btn.getAttribute('data-settings-ui-mode') === mode;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        syncDeviceOptionsForMode();
+        syncBatchSizeUi();
+        syncMergeUi();
+        syncSmartSplitUi();
+        syncExpertCustomHints();
+    }
+
+    async function setSettingsUiMode(mode, { persist = true } = {}) {
+        const next = normalizeSettingsUiMode(mode);
+        if (next === settingsUiMode && els.paramsModal?.classList.contains(`settings-mode-${next}`)) {
+            applySettingsUiMode();
+            return;
+        }
+        settingsUiMode = next;
+        applySettingsUiMode();
+        if (!persist || !isDesktop()) return;
+        try {
+            await electron?.transWithAiSaveOptions?.({ settingsUiMode: next });
+        } catch (_) { /* ignore */ }
     }
 
     function closeStandaloneSettingsWindow() {
@@ -107,6 +308,8 @@
         videoProgress: 0,
         videoCurrentSec: 0,
         videoTotalSec: 0,
+        itemStage: 'starting',
+        itemDualPhase: null,
         jobStartedAt: 0,
         elapsedTicker: null,
         pendingQueue: [],
@@ -114,6 +317,8 @@
         playSoundOnComplete: false,
         postTaskMenuOpen: false,
         addMenuOpen: false,
+        moreMenuOpen: false,
+        qcBannerDismissed: false,
         etaRate: null,
         historyEntries: [],
     };
@@ -214,11 +419,6 @@
         return stageRank(stage) < stageRank('transcribe');
     }
 
-    function effectiveItemProgress(stage, progress) {
-        if (isPreTranscribeStage(stage)) return 0;
-        return Math.max(0, Math.min(99, Number(progress) || 0));
-    }
-
     function startElapsedTicker() {
         if (state.elapsedTicker) return;
         state.elapsedTicker = setInterval(() => {
@@ -290,18 +490,26 @@
     function cacheEls() {
         [
             'loadingOverlay', 'loadingMessage',
-            'paramsSummary', 'transWithAiStatus', 'openParamsBtn',
+            'appVersionLabel', 'paramsSummary', 'paramsChips', 'quickTaskSelect', 'quickLanguageSelect', 'quickTargetLangSelect', 'quickTargetLangWrap',
+            'quickFormatBtn', 'quickFormatLabel', 'transWithAiStatus', 'openParamsBtn',
+            'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
+            'openAboutBtn',
+            'envBanner', 'envBannerText', 'envBannerBtn', 'qcBanner', 'qcBannerText', 'qcBannerDismissBtn',
             'paramsModal', 'closeParamsBtn', 'cancelParamsBtn',
-            'installPathInput', 'installBrowseBtn', 'installTestBtn', 'installDownloadBtn',
-            'deviceSelect', 'taskSelect', 'overwriteCheck',
-            'maxBatchSizeWrap', 'maxBatchSizeInput', 'logLevelSelect', 'logLevelHint',
+            'installPathInput', 'installBrowseBtn', 'installTestBtn', 'installCheckUpdateBtn', 'installDownloadBtn',
+            'transcribeModelSelect', 'translateModelSelect', 'modelSelectHint',
+            'transcribeModelPathInput', 'translateModelPathInput',
+            'transcribeModelBrowseBtn', 'translateModelBrowseBtn',
+            'deviceSelect', 'taskSelect', 'overwriteCheck', 'mergeBilingualCheck', 'mergeBilingualWrap',
+            'deleteSourcesAfterMergeCheck', 'deleteSourcesAfterMergeWrap',
+            'deviceExpertHint', 'maxBatchSizeWrap', 'maxBatchSizeInput', 'logLevelSelect', 'logLevelHint',
             'subFormatSrt', 'subFormatVtt', 'subFormatLrc',
             'glossaryPromptCheck', 'chineseSubtitleVariantSelect',
             'languageSelect', 'beamSizeInput', 'vadThresholdInput',
             'vadMinSpeechDurationInput', 'vadMinSilenceDurationInput', 'vadSpeechPadInput',
             'repetitionPenaltyInput', 'maxInitialTimestampInput',
             'noSpeechThresholdInput', 'logProbThresholdInput', 'compressionRatioThresholdInput',
-            'hallucinationSilenceThresholdInput',
+            'hallucinationSilenceThresholdInput', 'transcribeExpertCustomHint',
             'smartSplitWithVadCheck', 'targetChunkDurationWrap', 'targetChunkDurationInput',
             'mergeSegmentsCheck', 'mergeSettingsWrap', 'mergeMaxGapInput', 'mergeMaxDurationInput',
             'retranscribeWarmLightCheck', 'subtitleBakModeSelect',
@@ -310,12 +518,14 @@
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
             'trialCompareStatus', 'trialCompareResult',
-            'postTaskMenuBtn', 'postTaskMenu', 'postTaskMenuWrap', 'postTaskMenuItems',
+            'postTaskMenuBtn', 'postTaskMenu', 'postTaskMenuWrap', 'postTaskMenuItems', 'postTaskMenuLabel',
             'shutdownDelayInput', 'shutdownDelayWrap', 'playSoundOnCompleteCheck',
             'presetSelect', 'savePresetBtn', 'outputModeSelect', 'outputDirInput', 'outputDirWrap', 'outputDirBrowseBtn', 'audioSuffixesInput',
             'ffmpegPathInput', 'ffmpegBrowseBtn', 'ffmpegFolderBtn', 'ffmpegTestBtn', 'ffmpegStatus',
             'addMenuBtn', 'addMenu', 'addMenuWrap',
-            'retryFailedBtn', 'pendingQueueBadge',
+            'pendingQueueBadge',
+            'emptyState', 'listScroll', 'emptyAddVideosBtn', 'emptyAddFolderBtn',
+            'logCollapseBtn', 'logSectionBody', 'clearLogBtn', 'copyLogBtn', 'progressEta',
             'saveParamsBtn', 'saveParamsStatus',
             'jobStatusBadge', 'progressLabel', 'progressCount', 'progressBar',
             'currentFile', 'logHost',
@@ -325,6 +535,7 @@
         ].forEach((id) => { els[id] = document.getElementById(id); });
         els.paramsTabBtns = Array.from(document.querySelectorAll('.params-tab-btn'));
         els.paramsTabPanels = Array.from(document.querySelectorAll('.params-tab-panel'));
+        els.settingsUiModeBtns = Array.from(document.querySelectorAll('[data-settings-ui-mode]'));
         els.postTaskMenuItems = Array.from(document.querySelectorAll('#postTaskMenu .post-task-menu-item'));
         els.addMenuItems = Array.from(document.querySelectorAll('[data-add-action]'));
     }
@@ -335,7 +546,11 @@
     }
 
     function setPostTaskAction(action) {
-        const next = POST_TASK_SELECT_VALUES.has(action) ? action : 'none';
+        let next = POST_TASK_SELECT_VALUES.has(action) ? action : 'none';
+        if (next === 'shutdown') {
+            const ok = window.confirm('全部成功后将关机。确定选择「关机」吗？');
+            if (!ok) next = getPostTaskAction();
+        }
         state.postTaskAction = next;
         syncPostTaskMenuUi();
         syncPostTaskExtrasUi();
@@ -346,6 +561,9 @@
         const action = getPostTaskAction();
         const label = POST_TASK_LABELS[action] || POST_TASK_LABELS.none;
         els.postTaskMenuBtn?.classList.toggle('active', action !== 'none');
+        if (els.postTaskMenuLabel) {
+            els.postTaskMenuLabel.textContent = action === 'none' ? '完成后' : label;
+        }
         if (els.postTaskMenuBtn) {
             els.postTaskMenuBtn.title = action === 'none'
                 ? '任务完成后操作'
@@ -422,6 +640,180 @@
         document.addEventListener('click', () => {
             if (state.postTaskMenuOpen) setPostTaskMenuOpen(false);
             if (state.addMenuOpen) setAddMenuOpen(false);
+            if (state.moreMenuOpen) setMoreMenuOpen(false);
+        });
+    }
+
+    function setMoreMenuOpen(open) {
+        state.moreMenuOpen = !!open;
+        els.moreMenu?.classList.toggle('hidden', !open);
+        if (els.moreMenuBtn) {
+            els.moreMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        if (open) {
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+        }
+    }
+
+    function applyUiPrefs() {
+        let density = 'comfort';
+        let logCollapsed = true;
+        try {
+            density = localStorage.getItem('transub.density') || 'comfort';
+            logCollapsed = localStorage.getItem('transub.logCollapsed') !== '0';
+        } catch (_) { /* ignore */ }
+        document.body.classList.toggle('density-compact', density === 'compact');
+        document.body.classList.toggle('log-collapsed', logCollapsed);
+        if (els.toggleDensityLabel) {
+            els.toggleDensityLabel.textContent = density === 'compact' ? '舒适列表' : '紧凑列表';
+        }
+        if (els.logCollapseBtn) {
+            els.logCollapseBtn.setAttribute('aria-expanded', logCollapsed ? 'false' : 'true');
+        }
+    }
+
+    function toggleDensity() {
+        const next = document.body.classList.contains('density-compact') ? 'comfort' : 'compact';
+        try { localStorage.setItem('transub.density', next); } catch (_) { /* ignore */ }
+        applyUiPrefs();
+    }
+
+    function toggleLogCollapsed() {
+        const nextCollapsed = !document.body.classList.contains('log-collapsed');
+        try { localStorage.setItem('transub.logCollapsed', nextCollapsed ? '1' : '0'); } catch (_) { /* ignore */ }
+        applyUiPrefs();
+    }
+
+    function isTypingTarget(el) {
+        if (!el) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+        return !!el.isContentEditable;
+    }
+
+    function bindMainUiExtras() {
+        els.moreMenuBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setMoreMenuOpen(!state.moreMenuOpen);
+        });
+        els.moreMenu?.addEventListener('click', (event) => {
+            const item = event.target.closest('[role="menuitem"]');
+            if (item) setMoreMenuOpen(false);
+            event.stopPropagation();
+        });
+        els.toggleDensityBtn?.addEventListener('click', () => {
+            toggleDensity();
+            setMoreMenuOpen(false);
+        });
+        els.openAboutBtn?.addEventListener('click', () => {
+            setMoreMenuOpen(false);
+            void electron?.transubOpenAboutWindow?.();
+        });
+        els.openHistoryMenuBtn?.addEventListener('click', () => {
+            setMoreMenuOpen(false);
+            document.getElementById('openHistoryBtn')?.click();
+        });
+        els.emptyAddVideosBtn?.addEventListener('click', () => addVideos());
+        els.emptyAddFolderBtn?.addEventListener('click', () => addFolder());
+        els.qcBannerDismissBtn?.addEventListener('click', () => {
+            state.qcBannerDismissed = true;
+            updateQcBanner();
+        });
+        els.envBannerBtn?.addEventListener('click', () => {
+            if (electron?.transubOpenSettings) {
+                void electron.transubOpenSettings({ tab: 'install' });
+                return;
+            }
+            openParamsModal('install');
+        });
+        els.logCollapseBtn?.addEventListener('click', toggleLogCollapsed);
+        els.clearLogBtn?.addEventListener('click', () => {
+            if (els.logHost) els.logHost.innerHTML = '<span class="text-gray-400">日志已清空</span>';
+        });
+        els.copyLogBtn?.addEventListener('click', async () => {
+            const text = els.logHost?.innerText || '';
+            try {
+                await navigator.clipboard?.writeText?.(text);
+                appendLog('已复制应用日志', 'ok');
+            } catch (_) {
+                appendLog('复制日志失败', 'err');
+            }
+        });
+        els.quickTaskSelect?.addEventListener('change', () => {
+            if (els.taskSelect) {
+                els.taskSelect.value = els.quickTaskSelect.value;
+                els.taskSelect.dispatchEvent(new Event('change'));
+            }
+            void persistFormOptionsQuiet();
+        });
+        els.quickLanguageSelect?.addEventListener('change', () => {
+            if (els.languageSelect) {
+                els.languageSelect.value = els.quickLanguageSelect.value;
+            }
+            updateParamsSummary();
+            void persistFormOptionsQuiet();
+        });
+        els.quickTargetLangSelect?.addEventListener('change', () => {
+            if (els.chineseSubtitleVariantSelect) {
+                els.chineseSubtitleVariantSelect.value = els.quickTargetLangSelect.value || 'simplified';
+            }
+            updateParamsSummary();
+            void persistFormOptionsQuiet();
+        });
+        els.chineseSubtitleVariantSelect?.addEventListener('change', () => {
+            if (els.quickTargetLangSelect) {
+                els.quickTargetLangSelect.value = els.chineseSubtitleVariantSelect.value || 'simplified';
+            }
+            updateParamsSummary();
+        });
+        els.quickFormatBtn?.addEventListener('click', () => {
+            if (electron?.transubOpenSettings) {
+                void electron.transubOpenSettings({ tab: 'output' });
+                return;
+            }
+            openParamsModal('output');
+        });
+        els.languageSelect?.addEventListener('change', updateParamsSummary);
+        document.addEventListener('keydown', (event) => {
+            if (isStandaloneSettings) return;
+            if (!els.paramsModal?.classList.contains('hidden')) return;
+            if (isTypingTarget(event.target)) return;
+            const key = event.key;
+            if ((key === 'a' || key === 'A') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                event.preventDefault();
+                setAddMenuOpen(true);
+                return;
+            }
+            if (key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                if (!els.startBtn?.disabled) {
+                    event.preventDefault();
+                    startSubtitleGeneration();
+                }
+                return;
+            }
+            if (key === 'Escape' && state.running) {
+                event.preventDefault();
+                stopTask();
+                return;
+            }
+            if ((key === 'a' || key === 'A') && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                if (els.selectAllCheck && !els.selectAllCheck.disabled) {
+                    els.selectAllCheck.checked = true;
+                    state.items.forEach((i) => { i.selected = true; });
+                    renderList();
+                    updateStartButton();
+                }
+                return;
+            }
+            if ((key === 'Delete' || key === 'Backspace') && !event.ctrlKey && !event.metaKey) {
+                if (state.running) return;
+                if (state.items.some((i) => i.selected)) {
+                    event.preventDefault();
+                    removeSelected();
+                }
+            }
         });
     }
 
@@ -543,13 +935,248 @@
         if (els.targetChunkDurationInput) els.targetChunkDurationInput.disabled = !enabled;
     }
 
+    const modelApi = global.TransubTransWithAiModels || null;
+    let cachedModelItems = [];
+
+    function readTaskFromForm() {
+        const v = els.taskSelect?.value;
+        if (v === 'transcribe' || v === 'dual') return v;
+        return 'translate';
+    }
+
+    function taskLabelOf(task) {
+        if (task === 'transcribe') return '原语言';
+        if (task === 'dual') return '双语';
+        return '翻译';
+    }
+
+    function isTranslateLikeTask(task) {
+        return task === 'translate' || task === 'dual';
+    }
+
+    function kindBadge(kind, item = null) {
+        const base = kind === 'transcribe' ? '转写'
+            : kind === 'translate' ? '翻译'
+                : kind === 'root' ? '默认'
+                    : '其他';
+        if (item?.kindSource === 'signature') return `${base}·特征`;
+        if (item?.kindSource === 'name') return `${base}·名称`;
+        return base;
+    }
+
+    function readModelPathFromForm(kind) {
+        if (kind === 'translate') {
+            return String(els.translateModelPathInput?.value || '').trim();
+        }
+        return String(els.transcribeModelPathInput?.value || '').trim();
+    }
+
+    function syncModelSelectToPath(kind, pathValue) {
+        const selectEl = kind === 'translate' ? els.translateModelSelect : els.transcribeModelSelect;
+        if (!selectEl) return;
+        const want = String(pathValue || '').replace(/\\/g, '/');
+        const match = [...selectEl.options].find(
+            (opt) => String(opt.value || '').replace(/\\/g, '/') === want,
+        );
+        if (match) {
+            selectEl.value = match.value;
+            return;
+        }
+        if (want) {
+            const opt = document.createElement('option');
+            opt.value = pathValue;
+            opt.textContent = `${pathValue}（自定义）`;
+            selectEl.appendChild(opt);
+            selectEl.value = pathValue;
+            return;
+        }
+        selectEl.value = '';
+    }
+
+    function setModelPathOnForm(kind, pathValue, { syncSelect = true } = {}) {
+        const raw = String(pathValue || '').trim();
+        const inputEl = kind === 'translate' ? els.translateModelPathInput : els.transcribeModelPathInput;
+        if (inputEl) inputEl.value = raw;
+        if (syncSelect) syncModelSelectToPath(kind, raw);
+    }
+
+    function fillModelSelect(selectEl, items, selectedPath, preferKind) {
+        if (!selectEl) return;
+        const list = Array.isArray(items) ? items : [];
+        const want = String(selectedPath || '').replace(/\\/g, '/');
+        const opts = ['<option value=\"\">（自动 / 安装默认）</option>'];
+        const sorted = [...list].sort((a, b) => {
+            const score = (it) => {
+                if (preferKind && it.kind === preferKind) return 0;
+                if (it.kind === 'root') return 2;
+                return 1;
+            };
+            return score(a) - score(b) || String(a.label || '').localeCompare(String(b.label || ''));
+        });
+        for (const it of sorted) {
+            const pathVal = String(it.path || '').replace(/\\/g, '/');
+            const ready = it.ready !== false ? '' : ' · 不完整';
+            const label = `${it.label || pathVal} [${kindBadge(it.kind, it)}]${ready}`;
+            const sel = pathVal === want ? ' selected' : '';
+            opts.push(`<option value="${esc(pathVal)}"${sel}>${esc(label)}</option>`);
+        }
+        if (want && !list.some((it) => String(it.path || '').replace(/\\/g, '/') === want)) {
+            opts.push(`<option value="${esc(want)}" selected>${esc(want)}（自定义）</option>`);
+        }
+        selectEl.innerHTML = opts.join('');
+        if (want) selectEl.value = want;
+        else selectEl.value = '';
+    }
+
+    async function refreshModelSelects(options = {}) {
+        const installPath = els.installPathInput?.value.trim()
+            || options.installPath
+            || 'F:\\UltraTools\\TransWithAI';
+        let items = [];
+        try {
+            const res = await electron?.transWithAiListModels?.({ installPath });
+            if (res?.ok && Array.isArray(res.items)) items = res.items;
+        } catch { /* ignore */ }
+        cachedModelItems = items;
+
+        let transcribePath = options.transcribeModelPath != null
+            ? String(options.transcribeModelPath || '').trim()
+            : readModelPathFromForm('transcribe');
+        let translatePath = options.translateModelPath != null
+            ? String(options.translateModelPath || '').trim()
+            : readModelPathFromForm('translate');
+
+        if (modelApi) {
+            const filled = modelApi.fillMissingModelPaths({
+                transcribeModelPath: transcribePath,
+                translateModelPath: translatePath,
+                modelPath: options.modelPath || '',
+            }, items);
+            transcribePath = filled.transcribeModelPath || '';
+            translatePath = filled.translateModelPath || '';
+        }
+
+        fillModelSelect(els.transcribeModelSelect, items, transcribePath, 'transcribe');
+        fillModelSelect(els.translateModelSelect, items, translatePath, 'translate');
+        setModelPathOnForm('transcribe', transcribePath, { syncSelect: false });
+        setModelPathOnForm('translate', translatePath, { syncSelect: false });
+        syncModelSelectToPath('transcribe', transcribePath);
+        syncModelSelectToPath('translate', translatePath);
+        updateModelSelectHint();
+    }
+
+    /** Auto-correct crossed / wrong-kind model picks using the last listed packages. */
+    function applyAutoDetectedModelsFromCache() {
+        if (!modelApi || !cachedModelItems.length) return;
+        const before = {
+            transcribeModelPath: readModelPathFromForm('transcribe'),
+            translateModelPath: readModelPathFromForm('translate'),
+        };
+        const filled = modelApi.fillMissingModelPaths(before, cachedModelItems);
+        const nextTranscribe = filled.transcribeModelPath || '';
+        const nextTranslate = filled.translateModelPath || '';
+        if (nextTranscribe !== before.transcribeModelPath) {
+            setModelPathOnForm('transcribe', nextTranscribe);
+            fillModelSelect(els.transcribeModelSelect, cachedModelItems, nextTranscribe, 'transcribe');
+        }
+        if (nextTranslate !== before.translateModelPath) {
+            setModelPathOnForm('translate', nextTranslate);
+            fillModelSelect(els.translateModelSelect, cachedModelItems, nextTranslate, 'translate');
+        }
+    }
+
+    async function browseModelPath(kind) {
+        const title = kind === 'translate'
+            ? '选择翻译模型文件夹'
+            : '选择转写模型文件夹';
+        const res = await electron?.selectFolder?.({ title });
+        if (!res?.ok || res.canceled || !res.path) return;
+        const modelPath = String(res.path || '').trim();
+        if (!modelPath) return;
+
+        const installPath = els.installPathInput?.value.trim() || '';
+        try {
+            const check = await electron?.transWithAiValidateModel?.({ installPath, modelPath });
+            if (check && check.ok === false) {
+                const warn = check.error || '模型目录可能不完整';
+                appendLog(`${kind === 'translate' ? '翻译' : '转写'}模型：${warn}`, 'info');
+            }
+        } catch { /* ignore */ }
+
+        setModelPathOnForm(kind, modelPath);
+        fillModelSelect(
+            kind === 'translate' ? els.translateModelSelect : els.transcribeModelSelect,
+            cachedModelItems,
+            modelPath,
+            kind,
+        );
+        syncModelSelectToPath(kind, modelPath);
+        updateModelSelectHint();
+        updateParamsSummary();
+    }
+
+    function updateModelSelectHint() {
+        if (!els.modelSelectHint || !modelApi) return;
+        const task = readTaskFromForm();
+        const opts = {
+            transcribeModelPath: readModelPathFromForm('transcribe'),
+            translateModelPath: readModelPathFromForm('translate'),
+        };
+        const gate = modelApi.validateModelsForTask(opts, cachedModelItems, task);
+        if (!gate.ok) {
+            els.modelSelectHint.textContent = gate.error || '';
+            els.modelSelectHint.className = 'text-xs text-red-600 min-h-[1rem]';
+            return;
+        }
+        const warnings = gate.warnings || [];
+        if (warnings.length) {
+            els.modelSelectHint.textContent = warnings.join(' ');
+            els.modelSelectHint.className = 'text-xs text-amber-700 min-h-[1rem]';
+            return;
+        }
+        if (task === 'dual') {
+            const a = modelApi.modelLabelFromPath(opts.transcribeModelPath);
+            const b = modelApi.modelLabelFromPath(opts.translateModelPath);
+            els.modelSelectHint.textContent = `双语将使用：转写「${a}」→ 翻译「${b}」`;
+            els.modelSelectHint.className = 'text-xs text-gray-500 min-h-[1rem]';
+            return;
+        }
+        els.modelSelectHint.textContent = '';
+        els.modelSelectHint.className = 'text-xs text-gray-500 min-h-[1rem]';
+    }
+
     function syncChineseSubtitleVariantUi() {
-        const isTranslate = els.taskSelect?.value !== 'transcribe';
+        const isTranslate = isTranslateLikeTask(readTaskFromForm());
         if (els.chineseSubtitleVariantSelect) {
             els.chineseSubtitleVariantSelect.disabled = !isTranslate;
         }
+        if (els.quickTargetLangSelect) {
+            els.quickTargetLangSelect.disabled = !isTranslate;
+        }
         document.getElementById('chineseSubtitleVariantWrap')
             ?.classList.toggle('opacity-50', !isTranslate);
+        els.quickTargetLangWrap?.classList.toggle('opacity-50', !isTranslate);
+        els.quickTargetLangWrap?.classList.toggle('pointer-events-none', !isTranslate);
+        syncMergeBilingualUi();
+        updateModelSelectHint();
+    }
+
+    function syncMergeBilingualUi() {
+        const isDual = readTaskFromForm() === 'dual';
+        if (els.mergeBilingualCheck) els.mergeBilingualCheck.disabled = !isDual;
+        if (els.mergeBilingualWrap) {
+            els.mergeBilingualWrap.classList.toggle('hidden', !isDual);
+            els.mergeBilingualWrap.classList.toggle('opacity-50', !isDual);
+        }
+        const mergeOn = isDual && !!els.mergeBilingualCheck?.checked;
+        if (els.deleteSourcesAfterMergeCheck) {
+            els.deleteSourcesAfterMergeCheck.disabled = !mergeOn;
+            if (!mergeOn) els.deleteSourcesAfterMergeCheck.checked = false;
+        }
+        if (els.deleteSourcesAfterMergeWrap) {
+            els.deleteSourcesAfterMergeWrap.classList.toggle('hidden', !isDual);
+            els.deleteSourcesAfterMergeWrap.classList.toggle('opacity-50', !mergeOn);
+        }
     }
 
     function switchParamsTab(tabId) {
@@ -578,7 +1205,9 @@
     }
 
     function closeParamsModal(restore = false) {
-        if (restore && savedOptionsSnapshot) applyOptionsToForm(savedOptionsSnapshot);
+        if (restore && savedOptionsSnapshot) {
+            applyOptionsToForm(savedOptionsSnapshot, { applyUiMode: false });
+        }
         if (isStandaloneSettings) {
             closeStandaloneSettingsWindow();
             return;
@@ -591,16 +1220,43 @@
     }
 
     function updateParamsSummary() {
-        if (!els.paramsSummary) return;
         const device = els.deviceSelect?.value || 'cuda';
         const deviceLabel = DEVICE_LABELS[device] || device;
-        const taskLabel = els.taskSelect?.value === 'transcribe' ? '仅转写' : '翻译';
+        const task = readTaskFromForm();
+        const taskLabel = taskLabelOf(task);
         const overwriteLabel = els.overwriteCheck?.checked ? ' · 覆盖' : '';
+        const mergeBiLabel = task === 'dual' && els.mergeBilingualCheck?.checked
+            ? (els.deleteSourcesAfterMergeCheck?.checked ? ' · 合并双语并删原轨' : ' · 合并双语')
+            : '';
         const formatLabel = readSubFormatsFromForm().replace(/,/g, '/');
-        els.paramsSummary.textContent = `（${deviceLabel} · ${taskLabel} · ${formatLabel}${overwriteLabel}）`;
+        let modelLabel = '';
+        if (modelApi) {
+            if (task === 'dual') {
+                modelLabel = ` · ${modelApi.modelLabelFromPath(readModelPathFromForm('transcribe'))}→${modelApi.modelLabelFromPath(readModelPathFromForm('translate'))}`;
+            } else if (task === 'transcribe') {
+                modelLabel = ` · ${modelApi.modelLabelFromPath(readModelPathFromForm('transcribe'))}`;
+            } else {
+                modelLabel = ` · ${modelApi.modelLabelFromPath(readModelPathFromForm('translate'))}`;
+            }
+        }
+        const summary = `${deviceLabel} · ${taskLabel}${modelLabel} · ${formatLabel}${overwriteLabel}${mergeBiLabel}`;
+        if (els.paramsSummary) els.paramsSummary.textContent = summary;
+        if (els.quickTaskSelect && els.taskSelect) {
+            els.quickTaskSelect.value = els.taskSelect.value || 'translate';
+        }
+        if (els.quickLanguageSelect && els.languageSelect) {
+            els.quickLanguageSelect.value = els.languageSelect.value || 'auto';
+        }
+        if (els.quickTargetLangSelect && els.chineseSubtitleVariantSelect) {
+            els.quickTargetLangSelect.value = els.chineseSubtitleVariantSelect.value || 'simplified';
+        }
+        if (els.quickFormatLabel) {
+            els.quickFormatLabel.textContent = formatLabel || 'srt';
+        }
+        updateEnvBanner();
     }
 
-    function applyOptionsToForm(options = {}) {
+    function applyOptionsToForm(options = {}, { applyUiMode = true } = {}) {
         if (els.installPathInput && options.installPath) {
             els.installPathInput.value = options.installPath;
         }
@@ -608,10 +1264,20 @@
             els.deviceSelect.value = options.device;
         }
         if (els.taskSelect) {
-            els.taskSelect.value = options.task === 'transcribe' ? 'transcribe' : 'translate';
+            const task = options.task === 'transcribe' || options.task === 'dual'
+                ? options.task
+                : 'translate';
+            els.taskSelect.value = task;
         }
         if (els.overwriteCheck) {
             els.overwriteCheck.checked = !!options.overwrite;
+        }
+        if (els.mergeBilingualCheck) {
+            els.mergeBilingualCheck.checked = !!options.mergeBilingualSubtitles;
+        }
+        if (els.deleteSourcesAfterMergeCheck) {
+            els.deleteSourcesAfterMergeCheck.checked = !!options.mergeBilingualSubtitles
+                && !!options.deleteSourcesAfterMergeBilingual;
         }
         applySubFormatsToForm(options.subFormats);
         if (els.chineseSubtitleVariantSelect) {
@@ -725,11 +1391,12 @@
         if (els.mergeMaxDurationInput && options.mergeMaxDurationMs != null) {
             els.mergeMaxDurationInput.value = String(options.mergeMaxDurationMs);
         }
-        syncBatchSizeUi();
-        syncLogLevelHint();
-        syncMergeUi();
-        syncSmartSplitUi();
+        if (applyUiMode && options.settingsUiMode != null) {
+            settingsUiMode = normalizeSettingsUiMode(options.settingsUiMode);
+        }
+        applySettingsUiMode();
         syncChineseSubtitleVariantUi();
+        void refreshModelSelects(options);
         updateParamsSummary();
     }
 
@@ -737,10 +1404,16 @@
         return {
             installPath: els.installPathInput?.value.trim() || 'F:\\UltraTools\\TransWithAI',
             device: els.deviceSelect?.value || 'cuda',
-            task: els.taskSelect?.value === 'transcribe' ? 'transcribe' : 'translate',
+            task: readTaskFromForm(),
             overwrite: !!els.overwriteCheck?.checked,
+            mergeBilingualSubtitles: readTaskFromForm() === 'dual' && !!els.mergeBilingualCheck?.checked,
+            deleteSourcesAfterMergeBilingual: readTaskFromForm() === 'dual'
+                && !!els.mergeBilingualCheck?.checked
+                && !!els.deleteSourcesAfterMergeCheck?.checked,
             subFormats: readSubFormatsFromForm(),
-            modelPath: '',
+            modelPath: readModelPathFromForm('translate') || readModelPathFromForm('transcribe') || '',
+            transcribeModelPath: readModelPathFromForm('transcribe'),
+            translateModelPath: readModelPathFromForm('translate'),
             chineseSubtitleVariant: els.chineseSubtitleVariantSelect?.value === 'traditional'
                 ? 'traditional'
                 : 'simplified',
@@ -782,8 +1455,9 @@
             mergeMaxDurationMs: Number(els.mergeMaxDurationInput?.value) || 15000,
             outputMode: els.outputModeSelect?.value === 'custom' ? 'custom' : 'same',
             outputDir: resolveOutputDirFromForm(),
-            audioSuffixes: els.audioSuffixesInput?.value.trim() || 'mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv',
+            audioSuffixes: els.audioSuffixesInput?.value.trim() || DEFAULT_AUDIO_SUFFIXES,
             ffmpegPath: els.ffmpegPathInput?.value.trim() || '',
+            settingsUiMode: normalizeSettingsUiMode(settingsUiMode),
         };
     }
 
@@ -816,6 +1490,7 @@
                 els.transWithAiStatus.textContent = '请填写安装目录';
                 els.transWithAiStatus.className = 'text-xs text-amber-600';
             }
+            updateEnvBanner();
             return { ok: false };
         }
         if (els.transWithAiStatus) {
@@ -828,10 +1503,12 @@
                 els.transWithAiStatus.textContent = formatTransWithAiStatusText(res.version);
                 els.transWithAiStatus.className = 'text-xs text-emerald-600';
             }
+            await refreshModelSelects(buildSavedOptionsFromForm());
         } else if (els.transWithAiStatus) {
             els.transWithAiStatus.textContent = res?.error || '检测失败';
             els.transWithAiStatus.className = 'text-xs text-red-600';
         }
+        updateEnvBanner();
         return res;
     }
 
@@ -840,27 +1517,6 @@
         if (res?.ok) appendLog(formatTransWithAiStatusText(res.version), 'ok');
         else appendLog(res?.error || 'TransWithAI 未就绪', 'err');
         global.TransubFeatures?.showInstallWizard?.();
-    }
-
-    function retryFailedItems() {
-        if (state.running) return;
-        let count = 0;
-        state.items.forEach((item) => {
-            if (item.status === 'failed') {
-                item.status = 'ready';
-                item.progress = 0;
-                item.processedSec = 0;
-                item.processedTotalSec = 0;
-                item.detail = '';
-                item.error = '';
-                item.selected = true;
-                count += 1;
-            }
-        });
-        if (!count) return;
-        renderList();
-        updateStartButton();
-        appendLog(`已选中 ${count} 个失败项，可点击开始重新处理`, 'info');
     }
 
     async function flushPendingQueue() {
@@ -931,6 +1587,67 @@
         } else {
             els.ffmpegStatus.textContent = res?.error || 'FFmpeg 不可用';
             els.ffmpegStatus.className = 'text-xs text-red-600';
+        }
+    }
+
+    async function checkTransWithAiEngineUpdate() {
+        const installPath = els.installPathInput?.value.trim();
+        if (!installPath) {
+            if (els.transWithAiStatus) {
+                els.transWithAiStatus.textContent = '请先填写安装目录';
+                els.transWithAiStatus.className = 'text-xs text-amber-600';
+            }
+            return;
+        }
+        if (els.installCheckUpdateBtn) els.installCheckUpdateBtn.disabled = true;
+        if (els.transWithAiStatus) {
+            els.transWithAiStatus.textContent = '正在检查 TransWithAI 新版本…';
+            els.transWithAiStatus.className = 'text-xs text-gray-400';
+        }
+        try {
+            const res = await electron?.transWithAiCheckEngineUpdate?.({ installPath });
+            if (!res?.ok) {
+                const err = res?.error || '检查更新失败';
+                if (els.transWithAiStatus) {
+                    els.transWithAiStatus.textContent = err;
+                    els.transWithAiStatus.className = 'text-xs text-red-600';
+                }
+                appendLog(err, 'err');
+                return;
+            }
+            const msg = res.message || (res.updateAvailable
+                ? `发现新版本 v${res.latestVersion}`
+                : `当前已是最新${res.currentVersion ? ` v${res.currentVersion}` : ''}`);
+            if (els.transWithAiStatus) {
+                els.transWithAiStatus.textContent = msg;
+                els.transWithAiStatus.className = res.updateAvailable
+                    ? 'text-xs text-amber-700'
+                    : 'text-xs text-emerald-600';
+            }
+            appendLog(msg, res.updateAvailable ? 'info' : 'ok');
+            if (res.updateAvailable) {
+                const open = window.confirm(`${msg}\n\n是否打开下载页面？`);
+                if (open) {
+                    const url = res.releaseUrl || res.releasesUrl || TRANWITHAI_RELEASES_URL;
+                    const openRes = await electron?.openExternal?.(url);
+                    if (openRes?.ok === false) appendLog(openRes?.error || '无法打开下载页面', 'err');
+                }
+            } else if (!res.currentVersion && res.latestVersion) {
+                const open = window.confirm(`${msg}\n\n是否打开下载页面查看？`);
+                if (open) {
+                    const url = res.releaseUrl || res.releasesUrl || TRANWITHAI_RELEASES_URL;
+                    await electron?.openExternal?.(url);
+                }
+            }
+        } catch (err) {
+            const text = err?.message || '检查更新失败';
+            if (els.transWithAiStatus) {
+                els.transWithAiStatus.textContent = text;
+                els.transWithAiStatus.className = 'text-xs text-red-600';
+            }
+            appendLog(text, 'err');
+        } finally {
+            if (els.installCheckUpdateBtn) els.installCheckUpdateBtn.disabled = false;
         }
     }
 
@@ -1031,8 +1748,6 @@
         if (els.removeSelectedBtn) els.removeSelectedBtn.disabled = state.running;
         if (els.clearListBtn) els.clearListBtn.disabled = state.running;
         if (els.selectAllCheck) els.selectAllCheck.disabled = state.running;
-        const hasFailed = state.items.some((i) => i.status === 'failed');
-        if (els.retryFailedBtn) els.retryFailedBtn.classList.toggle('hidden', !hasFailed || state.running);
         updateStopButton();
     }
 
@@ -1168,11 +1883,62 @@
     }
 
     function getSubtitlePathForItem(item) {
-        return item.subtitlePath || item.existingSubtitle || '';
+        // 双语任务后处理/编辑应优先译文轨，避免叠词等中文后处理打到原文轨
+        return item.targetSubtitlePath
+            || item.subtitlePath
+            || item.existingSubtitle
+            || '';
     }
 
     function showPathForItem(item) {
         return getSubtitlePathForItem(item) || item.path || '';
+    }
+
+    function statusMeta(status) {
+        const map = {
+            pending: { label: '排队', cls: 'row-status-pending' },
+            probing: { label: '探测中', cls: 'row-status-probing' },
+            ready: { label: '就绪', cls: 'row-status-ready' },
+            running: { label: '进行中', cls: 'row-status-running' },
+            done: { label: '完成', cls: 'row-status-done' },
+            skipped: { label: '已跳过', cls: 'row-status-skipped' },
+            failed: { label: '失败', cls: 'row-status-failed' },
+            error: { label: '错误', cls: 'row-status-error' },
+        };
+        return map[status] || { label: status || '—', cls: 'row-status-pending' };
+    }
+
+    function countQcIssues() {
+        return state.items.filter((i) => Number(i.qcIssueCount) > 0).length;
+    }
+
+    function updateQcBanner() {
+        if (!els.qcBanner) return;
+        const n = countQcIssues();
+        if (n <= 0 || state.qcBannerDismissed) {
+            els.qcBanner.classList.add('hidden');
+            return;
+        }
+        if (els.qcBannerText) {
+            els.qcBannerText.textContent = `${n} 条字幕有 QC 问题，可在编辑器中查看并修复`;
+        }
+        els.qcBanner.classList.remove('hidden');
+    }
+
+    function updateEnvBanner() {
+        if (!els.envBanner) return;
+        const path = String(els.installPathInput?.value || '').trim();
+        const statusOk = els.transWithAiStatus?.className?.includes('emerald');
+        const needs = !path || (els.transWithAiStatus && /未|失败|无效|缺少/i.test(els.transWithAiStatus.textContent || '') && !statusOk);
+        // Only show when path empty (strong signal); avoid noisy false positives after load
+        const show = !path;
+        els.envBanner.classList.toggle('hidden', !show);
+    }
+
+    function updateEmptyStateUi() {
+        const hasItems = state.items.length > 0;
+        els.emptyState?.classList.toggle('hidden', hasItems);
+        els.listScroll?.classList.toggle('hidden', !hasItems);
     }
 
     async function openItemInFolder(item) {
@@ -1184,13 +1950,43 @@
         }
     }
 
+    function openItemEditor(item) {
+        if (!item) return;
+        const subPath = getSubtitlePathForItem(item);
+        if (!subPath) {
+            appendLog('该条目尚无字幕可编辑', 'warn');
+            return;
+        }
+        global.TransubSubtitleEditor?.openEditor?.(subPath, item.path || '');
+    }
+
+    function retrySingleItem(idx) {
+        if (state.running) return;
+        const item = state.items[idx];
+        if (!item || (item.status !== 'failed' && item.status !== 'error')) return;
+        item.status = 'ready';
+        item.progress = 0;
+        item.processedSec = 0;
+        item.processedTotalSec = 0;
+        item.detail = '';
+        item.error = '';
+        item.selected = true;
+        state.items.forEach((it, i) => {
+            if (i !== idx) it.selected = false;
+        });
+        renderList();
+        updateStartButton();
+        appendLog(`已选中「${basename(item.path)}」，可点击开始重新处理`, 'info');
+    }
+
     function buildListRowHtml(item, idx) {
         const revealPath = showPathForItem(item);
         const subPath = getSubtitlePathForItem(item);
         const folderTitle = subPath
             ? `在文件夹中显示字幕：${basename(subPath)}`
             : `在文件夹中显示：${basename(item.path)}`;
-        const detail = item.detail || item.error || '—';
+        const detail = item.detail || item.error || '';
+        const meta = statusMeta(item.status);
         const subBadge = item.existingSubtitle && item.status === 'ready'
             ? '<span class="ml-1 text-amber-600" title="已有字幕">●</span>' : '';
         let qcCell = '<span class="text-gray-300">—</span>';
@@ -1200,22 +1996,46 @@
             const n = Number(item.qcIssueCount);
             const tip = esc(item.qcSummary || (n ? `${n} 项问题` : '通过'));
             qcCell = n > 0
-                ? `<span class="inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5" title="${tip}">${n}</span>`
+                ? `<button type="button" data-qc-open="${idx}" class="inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 hover:bg-amber-200" title="${tip}（点击编辑）">${n}</button>`
                 : `<span class="text-emerald-600 text-xs" title="${tip}">✓</span>`;
         }
         const editBtn = subPath
             ? `<button type="button" data-edit-sub="${esc(subPath)}" data-edit-video="${esc(item.path)}" class="row-action-btn text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="编辑字幕"><i class="fa fa-pencil text-xs"></i></button>` : '';
+        const retryBtn = (item.status === 'failed' || item.status === 'error') && !state.running
+            ? `<button type="button" data-retry-idx="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="重试本条"><i class="fa fa-repeat text-xs"></i></button>`
+            : '';
+        const pct = Math.max(0, Math.min(100, Number(item.progress) || 0));
+        const elapsed = formatElapsedCell(item);
+        const processed = formatProcessedCell(item);
+        let progressCell = `<span class="text-gray-400 text-xs">—</span>`;
+        if (item.status === 'running') {
+            progressCell = `
+                <div class="space-y-0.5" title="已用 ${esc(elapsed)} · ${esc(processed)}">
+                    <div class="row-mini-progress"><span style="width:${pct}%"></span></div>
+                    <div class="text-[10px] text-gray-500 tabular-nums">${pct}%</div>
+                </div>`;
+        } else if (item.status === 'done' || item.status === 'skipped') {
+            progressCell = `<span class="text-xs text-gray-500 tabular-nums" title="已用 ${esc(elapsed)}">${esc(processed)}</span>`;
+        } else if (item.status === 'failed') {
+            progressCell = `<span class="text-xs text-gray-400 tabular-nums" title="已用 ${esc(elapsed)}">${pct ? `${pct}%` : '—'}</span>`;
+        }
+        const detailHtml = detail
+            ? `<div class="cell-ellipsis text-[10px] text-gray-400 mt-0.5" title="${esc(detail)}">${esc(detail)}</div>`
+            : '';
         return `
-            <tr class="hover:bg-gray-50/80" data-idx="${idx}" data-path="${esc(normPath(item.path))}">
+            <tr class="task-row hover:bg-gray-50/80" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
                 <td class="px-2 py-1.5"><input type="checkbox" data-row-check ${item.selected ? 'checked' : ''} ${state.running ? 'disabled' : ''}></td>
-                <td class="px-2 py-1.5 text-xs col-file"><div class="cell-ellipsis" title="${esc(item.path)}">${esc(basename(item.path))}${subBadge}</div></td>
-                <td class="px-2 py-1.5 text-right text-xs tabular-nums col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
-                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-600 col-elapsed">${formatElapsedCell(item)}</td>
-                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-600 col-processed">${formatProcessedCell(item)}</td>
-                <td class="px-2 py-1.5 text-xs col-detail text-gray-500"><div class="cell-ellipsis" title="${esc(detail)}">${esc(detail)}</div></td>
-                <td class="px-1 py-1.5 text-center text-xs">${qcCell}</td>
+                <td class="px-2 py-1.5 text-xs col-file"><div class="cell-ellipsis font-medium text-gray-800" title="${esc(item.path)}">${esc(basename(item.path))}${subBadge}</div></td>
+                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
+                <td class="px-2 py-1.5 col-progress">${progressCell}</td>
+                <td class="px-2 py-1.5 text-xs col-status">
+                    <span class="row-status-badge ${meta.cls}">${esc(meta.label)}</span>
+                    ${detailHtml}
+                </td>
+                <td class="px-1 py-1.5 text-center text-xs col-qc">${qcCell}</td>
                 <td class="px-1 py-1.5 text-center col-actions">
                     <div class="row-actions">
+                    ${retryBtn}
                     ${editBtn}
                     <button type="button" data-show-folder="${esc(revealPath)}" data-idx="${idx}"
                         class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100 disabled:opacity-30"
@@ -1246,13 +2066,17 @@
         if (!els.fileListBody || idx < 0 || idx >= state.items.length) return false;
         const item = state.items[idx];
         const row = els.fileListBody.querySelector(`tr[data-idx="${idx}"]`);
-        if (!row) return false;
+        if (!row) {
+            renderList();
+            return true;
+        }
         const tmp = document.createElement('tbody');
         tmp.innerHTML = buildListRowHtml(item, idx).trim();
         const next = tmp.firstElementChild;
         if (!next) return false;
         row.replaceWith(next);
         bindListRowEvents(next);
+        updateQcBanner();
         return true;
     }
 
@@ -1271,15 +2095,17 @@
         if (!els.fileListBody) return;
         if (!state.items.length) {
             els.fileListBody.innerHTML = '';
-            els.emptyListRow = document.createElement('tr');
-            els.emptyListRow.id = 'emptyListRow';
-            els.emptyListRow.innerHTML = '<td colspan="8" class="px-4 py-8 text-center text-gray-400 text-sm">点击「添加视频」选择文件，或将多个视频拖入此区域</td>';
-            els.fileListBody.appendChild(els.emptyListRow);
+            updateEmptyStateUi();
+            updateQcBanner();
             return;
         }
 
-        els.fileListBody.innerHTML = state.items.map((item, idx) => buildListRowHtml(item, idx)).join('');
+        const rows = state.items.map((item, idx) => buildListRowHtml(item, idx));
+        els.fileListBody.innerHTML = rows.join('');
         bindListRowEvents(els.fileListBody);
+        updateEmptyStateUi();
+        updateQcBanner();
+        updateStartButton();
     }
 
     function getSelectedItems() {
@@ -1323,8 +2149,24 @@
     function updateItem(path, patch = {}) {
         const item = findItem(path);
         if (!item) return;
+        const wasRunning = item.status === 'running';
         Object.assign(item, patch);
         if (!refreshListRow(item)) renderList();
+        if (wasRunning && (patch.status === 'done' || patch.status === 'skipped')) {
+            const idx = state.items.indexOf(item);
+            const row = idx >= 0
+                ? els.fileListBody?.querySelector(`tr[data-idx="${idx}"]`)
+                : null;
+            row?.classList.add('task-row-flash');
+        }
+    }
+
+    async function persistFormOptionsQuiet() {
+        try {
+            const opts = buildSavedOptionsFromForm();
+            const res = await electron?.transWithAiSaveOptions?.(opts);
+            if (res?.ok) savedOptionsSnapshot = opts;
+        } catch (_) { /* ignore */ }
     }
 
     function resetVideoProgress() {
@@ -1339,31 +2181,6 @@
             els.loadingOverlay.classList.add('hidden');
             els.loadingOverlay.classList.remove('flex');
         }
-    }
-
-    function computeDisplayProgress() {
-        const cap = state.running ? 99 : 100;
-        const itemPct = effectiveItemProgress(state.itemStage, state.videoProgress);
-        const displayPct = Math.max(0, Math.min(cap, itemPct));
-        const stageText = state.running ? stageLabel(state.itemStage) : '';
-        const hasMediaTimeline = state.videoTotalSec >= 60 && state.itemStage === 'transcribe';
-        if (hasMediaTimeline && displayPct > 0) {
-            const timeline = `${formatDuration(state.videoCurrentSec)} / ${formatDuration(state.videoTotalSec)}`;
-            return {
-                pct: displayPct,
-                label: stageText ? `${stageText} · ${timeline} · ${displayPct}%` : `${timeline} · ${displayPct}%`,
-            };
-        }
-        if (state.total > 0 && state.index > 0) {
-            const batchPct = Math.round(((state.index - 1) + displayPct / 100) / state.total * 100);
-            const pct = Math.min(cap, batchPct);
-            const batch = `第 ${state.index} / ${state.total} 个 · ${pct}%`;
-            return { pct, label: stageText ? `${stageText} · ${batch}` : batch };
-        }
-        if (stageText) {
-            return { pct: displayPct, label: displayPct > 0 ? `${stageText} · ${displayPct}%` : `${stageText}…` };
-        }
-        return { pct: displayPct, label: displayPct > 0 ? `${displayPct}%` : '处理中…' };
     }
 
     function computeEtaSec() {
@@ -1385,11 +2202,18 @@
         let countText = label;
         if (state.running && state.jobStartedAt) {
             const elapsed = formatDuration(elapsedSecSince(state.jobStartedAt));
+            countText = `${label} · 已用 ${elapsed}`;
             const etaSec = computeEtaSec();
-            const etaPart = etaApi?.formatEtaCompact
-                ? ` · 剩余 ${etaApi.formatEtaCompact(etaSec)}`
-                : '';
-            countText = `${label} · 已用 ${elapsed}${etaPart}`;
+            if (els.progressEta) {
+                const etaText = etaApi?.formatEtaCompact
+                    ? `预计剩余 ${etaApi.formatEtaCompact(etaSec)}`
+                    : '';
+                els.progressEta.textContent = etaText;
+                els.progressEta.classList.toggle('hidden', !etaText);
+            }
+        } else if (els.progressEta) {
+            els.progressEta.textContent = '';
+            els.progressEta.classList.add('hidden');
         }
         if (els.progressCount) els.progressCount.textContent = countText;
     }
@@ -1406,10 +2230,11 @@
                 : (Array.isArray(res?.entries) ? res.entries : []);
             state.historyEntries = entries;
             const device = els.deviceSelect?.value || 'cuda';
-            const task = els.taskSelect?.value === 'transcribe' ? 'transcribe' : 'translate';
+            const task = readTaskFromForm();
             state.etaRate = etaApi.rateFromHistory(entries, { device, task })
-                ?? etaApi.DEFAULT_WALL_FACTOR
-                ?? 0.35;
+                ?? (task === 'dual'
+                    ? (etaApi.DEFAULT_WALL_FACTOR ?? 0.35) * 2
+                    : (etaApi.DEFAULT_WALL_FACTOR ?? 0.35));
         } catch {
             state.etaRate = etaApi.DEFAULT_WALL_FACTOR ?? 0.35;
         }
@@ -1417,12 +2242,21 @@
 
     function syncVideoProgressFromPayload(p) {
         if (p.phase !== 'running') return;
+        if (p.itemDualPhase && p.itemDualPhase !== state.itemDualPhase) {
+            state.itemDualPhase = p.itemDualPhase;
+            state.itemStage = p.itemStage || 'starting';
+        }
         const stage = p.itemStage || 'transcribe';
         if (stageRank(stage) >= stageRank(state.itemStage)) {
             state.itemStage = stage;
         }
         // VAD / 加载模型等转写前阶段不计入进度百分比，也不写入时间轴
+        // 双语第二阶段的启动/VAD 仍保留已映射的 itemProgress，避免进度回跳
         if (isPreTranscribeStage(state.itemStage)) {
+            if (p.itemDualPhase && Number.isFinite(Number(p.itemProgress))) {
+                state.videoProgress = bumpProgress(state.videoProgress, Number(p.itemProgress));
+                return;
+            }
             state.videoProgress = 0;
             return;
         }
@@ -1466,6 +2300,7 @@
         state.activePath = '';
         state.jobStartedAt = Date.now();
         state.itemStage = 'starting';
+        state.itemDualPhase = null;
 
         const paths = Array.isArray(payload?.items) ? payload.items : [];
         state.items = buildItemsFromPaths(paths);
@@ -1492,8 +2327,14 @@
         if (path) state.activePath = path;
 
         if (p.itemStage === 'starting') {
-            resetVideoProgress();
+            // 双语第二阶段（翻译）开始时不要清零进度
+            if (!(p.itemDualPhase === 'translate' && state.itemDualPhase === 'transcribe')) {
+                if (!p.itemDualPhase || p.itemDualPhase === 'transcribe') {
+                    resetVideoProgress();
+                }
+            }
             state.itemStage = 'starting';
+            if (p.itemDualPhase) state.itemDualPhase = p.itemDualPhase;
         }
 
         if (path) {
@@ -1501,17 +2342,22 @@
                 syncVideoProgressFromPayload(p);
                 const existing = findItem(path);
                 const stage = state.itemStage;
-                const progress = isPreTranscribeStage(stage)
-                    ? 0
+                const keepDualProgress = !!p.itemDualPhase
+                    && isPreTranscribeStage(stage)
+                    && Number.isFinite(Number(p.itemProgress));
+                const progress = isPreTranscribeStage(stage) && !keepDualProgress
+                    ? (p.itemDualPhase === 'translate'
+                        ? bumpProgress(existing?.progress, state.videoProgress)
+                        : 0)
                     : bumpProgress(existing?.progress, state.videoProgress);
                 state.videoProgress = progress;
                 const itemPatch = {
                     status: 'running',
                     progress,
-                    detail: p.itemDetail || '处理中…',
+                    detail: formatListRunningDetail(p.itemDetail) || stageLabel(stage),
                     stage,
                 };
-                if (isPreTranscribeStage(stage)) {
+                if (isPreTranscribeStage(stage) && !keepDualProgress && p.itemDualPhase !== 'translate') {
                     itemPatch.processedSec = 0;
                 } else {
                     if (Number(p.videoTotalSec) > 0) {
@@ -1521,7 +2367,7 @@
                         itemPatch.processedSec = Number(p.videoCurrentSec);
                     }
                 }
-                if (!existing?.startedAt || p.itemStage === 'starting') {
+                if (!existing?.startedAt || (p.itemStage === 'starting' && p.itemDualPhase !== 'translate')) {
                     itemPatch.startedAt = Date.now();
                 }
                 updateItem(path, itemPatch);
@@ -1530,8 +2376,11 @@
                     status: 'skipped',
                     progress: 100,
                     detail: p.itemDetail || '已有字幕',
+                    selected: false,
                     subtitlePath: p.subtitlePath,
                     existingSubtitle: p.subtitlePath,
+                    sourceSubtitlePath: p.sourceSubtitlePath || undefined,
+                    targetSubtitlePath: p.targetSubtitlePath || undefined,
                 };
                 if (findItem(path)?.startedAt) skippedPatch.completedAt = Date.now();
                 updateItem(path, skippedPatch);
@@ -1545,8 +2394,11 @@
                     status: 'done',
                     progress: 100,
                     detail: p.itemDetail || '完成',
+                    selected: false,
                     subtitlePath: p.subtitlePath || undefined,
                     existingSubtitle: p.subtitlePath || undefined,
+                    sourceSubtitlePath: p.sourceSubtitlePath || undefined,
+                    targetSubtitlePath: p.targetSubtitlePath || undefined,
                 };
                 const doneTotal = Number(p.videoTotalSec) || findItem(path)?.duration || 0;
                 if (doneTotal > 0) {
@@ -1577,11 +2429,9 @@
         els.currentFile.title = path || '';
 
         if (p.phase === 'running') {
-            const stage = stageLabel(state.itemStage);
-            const detail = String(p.itemDetail || '').trim();
-            els.progressLabel.textContent = detail ? `${stage} · ${detail}` : `${stage}…`;
+            els.progressLabel.textContent = formatRunningProgressLabel(state.itemStage, p.itemDetail);
             if (p.itemStage === 'starting') {
-                appendLog(`处理中：${name}`, 'info');
+                appendLog(`${stageLabel(state.itemStage)}：${name}`, 'info');
             }
         } else if (p.phase === 'skipped') {
             state.skipped += 1;
@@ -1591,7 +2441,14 @@
         } else if (p.phase === 'done') {
             state.generated += 1;
             els.progressLabel.textContent = '本条已完成';
-            appendLog(`完成：${name}${p.subtitlePath ? ` → ${basename(p.subtitlePath)}` : ''}`, 'ok');
+            appendLog(
+                p.bilingualSubtitlePath && !p.sourceSubtitlePath && !p.targetSubtitlePath
+                    ? `完成：${name} → ${basename(p.subtitlePath)}（已合并并清理原轨）`
+                    : p.sourceSubtitlePath && p.targetSubtitlePath
+                        ? `完成：${name} → ${basename(p.targetSubtitlePath)}（原文 ${basename(p.sourceSubtitlePath)}${p.bilingualSubtitlePath ? ` · 合并 ${basename(p.bilingualSubtitlePath)}` : ''}）`
+                        : `完成：${name}${p.subtitlePath ? ` → ${basename(p.subtitlePath)}` : ''}`,
+                'ok',
+            );
         } else if (p.phase === 'failed') {
             state.failed += 1;
             els.progressLabel.textContent = '本条失败';
@@ -1612,13 +2469,15 @@
         let changed = false;
         for (const item of state.items) {
             const sub = res.subtitles[item.path];
-            if (!sub) continue;
-            if (item.subtitlePath !== sub) {
-                item.subtitlePath = sub;
+            // 已记录双语译文轨时勿被 sidecar 探测改回原文（.ja/.source）
+            const preferred = item.targetSubtitlePath || sub;
+            if (!preferred) continue;
+            if (item.subtitlePath !== preferred) {
+                item.subtitlePath = preferred;
                 changed = true;
             }
             if (item.status === 'done' || item.status === 'skipped') {
-                item.existingSubtitle = sub;
+                item.existingSubtitle = preferred;
             }
         }
         if (changed) renderList();
@@ -1664,7 +2523,9 @@
             withIssues > 0 ? 'warn' : 'ok',
         );
         els.progressLabel.textContent = withIssues > 0 ? 'QC 完成（有问题项）' : 'QC 完成';
+        if (withIssues > 0) state.qcBannerDismissed = false;
         renderList();
+        updateQcBanner();
     }
 
     async function runPostBatchAutoFix() {
@@ -1683,8 +2544,11 @@
         const doCompressRep = savedOpts
             ? savedOpts.postBatchCompressRepetition !== false
             : (els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true);
-        const taskFromSaved = savedOpts?.task === 'transcribe' ? 'transcribe' : 'translate';
-        const isTranslate = (savedOpts ? taskFromSaved : els.taskSelect?.value) !== 'transcribe';
+        const taskFromSaved = savedOpts?.task === 'transcribe' || savedOpts?.task === 'dual'
+            ? savedOpts.task
+            : (savedOpts?.task ? 'translate' : null);
+        const taskNow = taskFromSaved || readTaskFromForm();
+        const isTranslate = isTranslateLikeTask(taskNow);
         const variantFromSaved = savedOpts?.chineseSubtitleVariant === 'traditional'
             ? 'traditional'
             : 'simplified';
@@ -1695,7 +2559,7 @@
             ? (savedOpts ? variantFromSaved : variantFromForm)
             : null;
         const doChinese = !!chineseSubtitleVariant;
-        // 翻译任务默认：。？！后补空格（在 CPS 拆句之前）
+        // 翻译/双语任务默认：。？！后补空格（在 CPS 拆句之前）；双语后处理只作用于译文轨
         const doSpacePunct = isTranslate;
         if (!doCps && !doNoise && !doCompressRep && !doChinese && !doSpacePunct) return;
         if (!electron?.transubApplySubtitlePostprocess) return;
@@ -1715,7 +2579,8 @@
         if (doChinese) {
             parts.push(chineseSubtitleVariant === 'traditional' ? '转繁体' : '转简体');
         }
-        appendLog(`开始批量后处理（${targets.length} 个字幕 · ${parts.join(' · ')}）…`, 'info');
+        const dualHint = taskNow === 'dual' ? '（译文轨）' : '';
+        appendLog(`开始批量后处理（${targets.length} 个字幕${dualHint} · ${parts.join(' · ')}）…`, 'info');
         let written = 0;
         for (let i = 0; i < targets.length; i += 1) {
             const item = targets[i];
@@ -1764,6 +2629,7 @@
         state.activePath = '';
         state.videoProgress = 100;
         state.itemStage = 'done';
+        state.itemDualPhase = null;
         stopElapsedTicker();
 
         state.items.forEach((item) => {
@@ -1855,7 +2721,34 @@
         await reloadSavedOptionsIntoForm();
         const opts = buildRuntimeOptions();
 
+        if (modelApi) {
+            const gate = modelApi.validateModelsForTask(opts, cachedModelItems, opts.task);
+            if (!gate.ok) {
+                appendLog(gate.error || '模型配置无效', 'err');
+                setBadge('模型未就绪', 'error');
+                openParamsModal('install');
+                return;
+            }
+            (gate.warnings || []).forEach((w) => appendLog(w, 'warn'));
+            if (gate.options) {
+                opts.transcribeModelPath = gate.options.transcribeModelPath;
+                opts.translateModelPath = gate.options.translateModelPath;
+                opts.modelPath = gate.options.modelPath;
+            }
+        }
+
         appendLog(`开始生成字幕 ${selected.length} 个文件…`, 'info');
+        if (document.body.classList.contains('log-collapsed')) {
+            // 开跑时展开日志便于观察
+            try { localStorage.setItem('transub.logCollapsed', '0'); } catch (_) { /* ignore */ }
+            applyUiPrefs();
+        }
+        if (opts.task === 'dual') {
+            appendLog(
+                `双语模型：转写=${opts.transcribeModelPath || '默认'} · 翻译=${opts.translateModelPath || '默认'}`,
+                'info',
+            );
+        }
         const res = await electron?.transWithAiGenerateSubtitles?.({
             items: selected.map((i) => ({ fullPath: i.path, durationSec: i.duration || 0 })),
             options: opts,
@@ -2032,6 +2925,20 @@
         if (!els.fileListBody || els.fileListBody.dataset.actionsBound) return;
         els.fileListBody.dataset.actionsBound = '1';
         els.fileListBody.addEventListener('click', (e) => {
+            const retryBtn = e.target.closest('[data-retry-idx]');
+            if (retryBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                retrySingleItem(Number(retryBtn.dataset.retryIdx));
+                return;
+            }
+            const qcBtn = e.target.closest('[data-qc-open]');
+            if (qcBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                openItemEditor(state.items[Number(qcBtn.dataset.qcOpen)]);
+                return;
+            }
             const btn = e.target.closest('[data-show-folder]');
             if (!btn || btn.disabled) return;
             e.preventDefault();
@@ -2046,6 +2953,12 @@
             if (path) {
                 electron?.showInFolder?.(path);
             }
+        });
+        els.fileListBody.addEventListener('dblclick', (e) => {
+            if (e.target.closest('input,button,a,select,label')) return;
+            const row = e.target.closest('tr[data-idx]');
+            if (!row) return;
+            openItemEditor(state.items[Number(row.dataset.idx)]);
         });
     }
 
@@ -2066,6 +2979,8 @@
             setupDragDrop();
             bindPostTaskMenu();
             bindAddMenu();
+            bindMainUiExtras();
+            applyUiPrefs();
             els.removeSelectedBtn?.addEventListener('click', removeSelected);
             els.clearListBtn?.addEventListener('click', clearList);
             els.startBtn?.addEventListener('click', startSubtitleGeneration);
@@ -2093,6 +3008,11 @@
         els.paramsTabBtns?.forEach((btn) => {
             btn.addEventListener('click', () => switchParamsTab(btn.dataset.tab));
         });
+        els.settingsUiModeBtns?.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                void setSettingsUiMode(btn.getAttribute('data-settings-ui-mode'));
+            });
+        });
         electron?.onOpenParams?.((payload) => {
             const tab = String(payload?.tab || (isStandaloneSettings ? 'runtime' : 'editor')).trim()
                 || (isStandaloneSettings ? 'runtime' : 'editor');
@@ -2108,11 +3028,19 @@
             updateParamsSummary();
         });
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && !els.paramsModal?.classList.contains('hidden')) {
-                closeParamsModal(true);
+            if (event.key !== 'Escape' || els.paramsModal?.classList.contains('hidden')) return;
+            const presetNameModal = document.getElementById('presetNameModal');
+            if (presetNameModal && !presetNameModal.classList.contains('hidden')) {
+                presetNameModal.classList.add('hidden');
+                event.preventDefault();
+                return;
             }
+            closeParamsModal(true);
         });
         els.installTestBtn?.addEventListener('click', testInstall);
+        els.installCheckUpdateBtn?.addEventListener('click', () => {
+            void checkTransWithAiEngineUpdate();
+        });
         els.installBrowseBtn?.addEventListener('click', browseInstallPath);
         els.ffmpegBrowseBtn?.addEventListener('click', browseFfmpegPath);
         els.ffmpegFolderBtn?.addEventListener('click', browseFfmpegFolder);
@@ -2120,19 +3048,83 @@
         els.installDownloadBtn?.addEventListener('click', openTransWithAiReleases);
         els.deviceSelect?.addEventListener('change', () => {
             syncBatchSizeUi();
+            syncDeviceOptionsForMode();
+            syncExpertCustomHints();
             updateParamsSummary();
         });
-        els.logLevelSelect?.addEventListener('change', syncLogLevelHint);
+        els.logLevelSelect?.addEventListener('change', () => {
+            syncLogLevelHint();
+            syncExpertCustomHints();
+        });
         els.taskSelect?.addEventListener('change', () => {
             syncChineseSubtitleVariantUi();
             updateParamsSummary();
+        });
+        els.mergeBilingualCheck?.addEventListener('change', () => {
+            syncMergeBilingualUi();
+            updateParamsSummary();
+        });
+        els.deleteSourcesAfterMergeCheck?.addEventListener('change', updateParamsSummary);
+        els.transcribeModelSelect?.addEventListener('change', () => {
+            setModelPathOnForm('transcribe', els.transcribeModelSelect.value, { syncSelect: false });
+            applyAutoDetectedModelsFromCache();
+            updateModelSelectHint();
+            updateParamsSummary();
+        });
+        els.translateModelSelect?.addEventListener('change', () => {
+            setModelPathOnForm('translate', els.translateModelSelect.value, { syncSelect: false });
+            applyAutoDetectedModelsFromCache();
+            updateModelSelectHint();
+            updateParamsSummary();
+        });
+        els.transcribeModelPathInput?.addEventListener('change', () => {
+            syncModelSelectToPath('transcribe', readModelPathFromForm('transcribe'));
+            updateModelSelectHint();
+            updateParamsSummary();
+        });
+        els.translateModelPathInput?.addEventListener('change', () => {
+            syncModelSelectToPath('translate', readModelPathFromForm('translate'));
+            updateModelSelectHint();
+            updateParamsSummary();
+        });
+        els.transcribeModelBrowseBtn?.addEventListener('click', () => {
+            void browseModelPath('transcribe');
+        });
+        els.translateModelBrowseBtn?.addEventListener('click', () => {
+            void browseModelPath('translate');
+        });
+        els.installPathInput?.addEventListener('change', () => {
+            void refreshModelSelects(buildSavedOptionsFromForm());
         });
         els.overwriteCheck?.addEventListener('change', updateParamsSummary);
         ['subFormatSrt', 'subFormatVtt', 'subFormatLrc'].forEach((id) => {
             els[id]?.addEventListener('change', updateParamsSummary);
         });
-        els.mergeSegmentsCheck?.addEventListener('change', syncMergeUi);
-        els.smartSplitWithVadCheck?.addEventListener('change', syncSmartSplitUi);
+        els.mergeSegmentsCheck?.addEventListener('change', () => {
+            syncMergeUi();
+            syncExpertCustomHints();
+        });
+        els.smartSplitWithVadCheck?.addEventListener('change', () => {
+            syncSmartSplitUi();
+            syncExpertCustomHints();
+        });
+        els.paramsModal?.addEventListener('change', (event) => {
+            const t = event.target;
+            if (!(t instanceof HTMLElement)) return;
+            if (t.closest('[data-settings-level="expert"]') || t.id === 'audioSuffixesInput'
+                || t.id === 'retranscribeWarmLightCheck' || t.id === 'logLevelSelect'
+                || t.id === 'maxBatchSizeInput') {
+                syncExpertCustomHints();
+            }
+        });
+        els.paramsModal?.addEventListener('input', (event) => {
+            const t = event.target;
+            if (!(t instanceof HTMLElement)) return;
+            if (t.closest('[data-settings-level="expert"]') || t.id === 'audioSuffixesInput'
+                || t.id === 'maxBatchSizeInput') {
+                syncExpertCustomHints();
+            }
+        });
         els.trialCompareBtn?.addEventListener('click', () => openTrialCompareModal());
         els.closeTrialCompareBtn?.addEventListener('click', closeTrialCompareModal);
         els.closeTrialCompareBtn2?.addEventListener('click', closeTrialCompareModal);
@@ -2143,10 +3135,9 @@
         if (!isStandaloneSettings) {
             els.shutdownDelayInput?.addEventListener('change', syncPostTaskToMain);
             els.shutdownDelayInput?.addEventListener('click', (event) => event.stopPropagation());
-            els.retryFailedBtn?.addEventListener('click', retryFailedItems);
             els.stopBtn?.addEventListener('click', stopTask);
             els.openSubtitleFileBtn?.addEventListener('click', () => {
-                global.TransubSubtitleEditor?.pickAndOpen?.();
+                global.TransubSubtitleEditor?.openWelcome?.();
             });
             document.addEventListener('click', (e) => {
                 const btn = e.target.closest('[data-edit-sub]');
@@ -2162,21 +3153,34 @@
     }
 
     async function runBackgroundStartupChecks() {
+        // Keep first paint light: only a quick FFmpeg path check; defer install probe.
         try {
-            await Promise.all([
-                refreshFfmpegStatus({ quick: true, persist: false }),
-                refreshInstallStatus({ quick: true }),
-            ]);
+            await refreshFfmpegStatus({ quick: true, persist: false });
         } catch (_) { /* ignore */ }
 
-        // Full FFmpeg spawn check after UI is interactive (fills version string)
         const schedule = global.requestIdleCallback
-            || ((cb) => setTimeout(() => cb({ didTimeout: false }), 1800));
+            || ((cb) => setTimeout(() => cb({ didTimeout: false }), 2200));
         schedule(async () => {
             try {
-                await refreshFfmpegStatus({ quick: false, persist: false });
+                await Promise.all([
+                    refreshInstallStatus({ quick: true }),
+                    refreshFfmpegStatus({ quick: false, persist: false }),
+                ]);
             } catch (_) { /* ignore */ }
-        }, { timeout: 2500 });
+        }, { timeout: 4000 });
+    }
+
+    async function fillAppVersionLabel() {
+        if (!els.appVersionLabel) return;
+        let ver = '';
+        if (typeof electron?.getAppVersion === 'function') {
+            try {
+                const res = await electron.getAppVersion();
+                ver = String(res?.version || '').trim();
+            } catch (_) { /* ignore */ }
+        }
+        ver = ver.replace(/^v/i, '');
+        els.appVersionLabel.textContent = ver ? `v${ver}` : '';
     }
 
     async function init() {
@@ -2186,7 +3190,9 @@
         }
 
         cacheEls();
+        void fillAppVersionLabel();
         bindEvents();
+        applySettingsUiMode();
         if (!isStandaloneSettings) {
             setBadge('空闲', 'idle');
         }
@@ -2201,6 +3207,7 @@
             resetPostTaskSelect();
             renderList();
             updateStartButton();
+            updateEnvBanner();
         }
 
         if (!isDesktop()) {
@@ -2215,6 +3222,7 @@
             if (optsRes?.options) {
                 applyOptionsToForm(optsRes.options);
                 savedOptionsSnapshot = buildSavedOptionsFromForm();
+                updateParamsSummary();
             }
             if (!isStandaloneSettings) {
                 resetPostTaskSelect();
@@ -2229,11 +3237,6 @@
             const tab = pendingParams?.tab || initialSettingsTab || 'runtime';
             openParamsModal(tab);
             void global.TransubFeatures?.loadPresets?.();
-            if (shouldCheckUpdateOnOpen) {
-                setTimeout(() => {
-                    document.getElementById('checkUpdateBtn')?.click();
-                }, 500);
-            }
             return;
         }
 

@@ -48,8 +48,14 @@ console.log('[build-renderer] 2/3 复制渲染层');
 if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 copyRecursive(path.join(src, 'index.html'), path.join(outDir, 'index.html'));
+copyRecursive(path.join(src, 'splash.html'), path.join(outDir, 'splash.html'));
 copyRecursive(path.join(src, 'subtitle-editor.html'), path.join(outDir, 'subtitle-editor.html'));
+copyRecursive(path.join(src, 'update.html'), path.join(outDir, 'update.html'));
+copyRecursive(path.join(src, 'about.html'), path.join(outDir, 'about.html'));
 copyRecursive(path.join(src, 'icon.png'), path.join(outDir, 'icon.png'));
+copyRecursive(path.join(src, 'icon-64.png'), path.join(outDir, 'icon-64.png'));
+copyRecursive(path.join(src, 'icon-editor.png'), path.join(outDir, 'icon-editor.png'));
+copyRecursive(path.join(src, 'tseditor.png'), path.join(outDir, 'tseditor.png'));
 copyRecursive(path.join(src, 'js'), path.join(outDir, 'js'));
 copyRecursive(path.join(src, 'vendor'), path.join(outDir, 'vendor'));
 
