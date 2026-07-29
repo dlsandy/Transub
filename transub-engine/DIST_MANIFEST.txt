@@ -1,0 +1,7 @@
+﻿name: transub-engine-0.1.0
+version: 0.1.0
+layout: standalone
+python: 3.12.10
+ffmpeg: provided by Transub host (_internal/bin); optional local copy for CLI-only
+models: whisper-tiny + fsmn-vad shipped; other Hub weights on-demand (use --link-models for local junction)
+extras: numpy + small Whisper/Hub wheels (faster-whisper, tokenizers, huggingface-hub, …) + funasr wheel in base; CT2/av/onnxruntime/torch/CUDA/numba still on-demand
