@@ -12,6 +12,8 @@ Windows 桌面字幕工具 · 当前版本 **2.0.0**
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)
 
+欢迎通过 [爱发电](https://afdian.com/a/transub) 支持本项目！
+
 ![Transub 总览：批量生成 + 字幕编辑器](docs/screenshots/01-overview.jpg)
 
 ---
