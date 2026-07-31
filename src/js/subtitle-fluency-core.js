@@ -6,14 +6,22 @@
     const splitCore = (typeof module !== 'undefined' && module.exports)
         ? require('./subtitle-split-core')
         : (global && global.TransubSubtitleSplit);
-    const api = factory(splitCore);
+    let jaNames = null;
+    try {
+        jaNames = (typeof module !== 'undefined' && module.exports)
+            ? require('./ja-person-names-core')
+            : (global && global.TransubJaPersonNames);
+    } catch (_) {
+        jaNames = null;
+    }
+    const api = factory(splitCore, jaNames);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSubtitleFluency = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleFluencyCoreFactory(splitCore) {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleFluencyCoreFactory(splitCore, jaNames) {
     const CJK_PARTICLES = new Set([
         '的', '了', '着', '过', '和', '与', '及', '或', '在', '把', '被', '对', '向', '从', '给',
         '吗', '呢', '吧', '啊', '呀', '嘛', '哎', '嗯',
@@ -64,7 +72,7 @@
         const s = String(phrase || '');
         if (!s || /^\s+$/.test(s)) return false;
         // 纯标点/省略号不压
-        if (/^[。！？!?…·.•,，、；;:：\-\—_~～"'「」『』【】[\]()（）\s]+$/.test(s)) return false;
+        if (/^[。！？!?…·.•,，、；;:：\-—_~～"'「」『』【】[\]()（）\s]+$/.test(s)) return false;
         return /[\u4e00-\u9fffA-Za-z0-9]/.test(s);
     }
 
@@ -308,7 +316,124 @@
         if (FRAGMENT_ONLY.has(lower)) return true;
         if (EN_DANGLING.has(lower) && !/\s/.test(normalized)) return true;
         if (/^[\u4e00-\u9fff]$/.test(normalized) && CJK_PARTICLES.has(normalized)) return true;
+        // JA ASR word-tail / orphan fragments (しい / こで / bare っ)
+        if (/^(しい|こで|っ|ゃ|ゅ|ょ)$/.test(normalized)) return true;
         return false;
+    }
+
+    function isJaScriptHeavy(text) {
+        const t = String(text || '').replace(/\s+/g, '');
+        if (!t) return false;
+        const ja = (t.match(/[\u3040-\u30ff々ー]/g) || []).length;
+        return ja >= 2 && ja / Math.max(1, t.length) >= 0.45;
+    }
+
+    function endsJaBroken(text) {
+        const t = String(text || '').trim();
+        if (!t || /[。！？!?]$/.test(t)) return false;
+        const plain = t.replace(/\s+/g, '');
+        // Explicit mid-word cuts seen in AV ASR (ごめん / 少し / ちんちん …)
+        if (/(?:ご|少|ちんち|あたよ|ちょっと少)$/.test(plain)) return true;
+        if (/[てでにとをはがのっンん]$/.test(plain) && plain.length >= 6) return true;
+        return false;
+    }
+
+    function startsJaContinuation(text) {
+        const t = String(text || '').trim().replace(/\s+/g, '');
+        if (!t) return false;
+        if (/^(めん?なさい|なさい|しだけ|んいっぱい|こで|しい)/.test(t)) return true;
+        if (/^っ[、,]/.test(t)) return true;
+        return false;
+    }
+
+    function isStrongJaContinuation(text) {
+        const t = String(text || '').trim().replace(/\s+/g, '');
+        return /^(めん?なさい|しだけ|こで|しい|んいっぱい)/.test(t);
+    }
+
+    /**
+     * Stitch JA ASR mid-phrase splits (e.g. 「…ご」+「めんなさい…」).
+     * Conservative: only strong continuation patterns / tiny kana tails.
+     * @param {Array<{startMs?:number,endMs?:number,text?:string}>} cues
+     * @param {object} [options]
+     * @returns {{ cues: object[], stats: object, mergedPairs: number }}
+     */
+    function stitchJaFragmentCues(cues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const maxGapMs = Math.max(0, Math.min(2000, Number(options.maxGapMs) || 600));
+        const wideGapMs = Math.max(maxGapMs, Math.min(4000, Number(options.wideGapMs) || 2200));
+        const maxMergedDurMs = Math.max(3000, Math.min(60000, Number(options.maxMergedDurMs) || 12000));
+        const out = [];
+        let mergedPairs = 0;
+        let i = 0;
+        while (i < list.length) {
+            const cur = {
+                startMs: list[i]?.startMs,
+                endMs: list[i]?.endMs,
+                text: list[i]?.text,
+            };
+            let j = i + 1;
+            while (j < list.length) {
+                const next = list[j];
+                const aEnd = Number(cur.endMs);
+                const bStart = Number(next?.startMs);
+                const gap = Number.isFinite(aEnd) && Number.isFinite(bStart)
+                    ? bStart - aEnd
+                    : 0;
+
+                const at = String(cur.text || '').trim();
+                const bt = String(next?.text || '').trim();
+                if (!at || !bt) break;
+                if (!isJaScriptHeavy(at) && !isJaScriptHeavy(bt)) break;
+                if (/[。！？!?]$/.test(at)) break;
+
+                const broken = endsJaBroken(at);
+                const cont = startsJaContinuation(bt);
+                const strongCont = isStrongJaContinuation(bt);
+                const bPlain = bt.replace(/[。．.！？!?…\s　♪♫、，,]+/g, '');
+                const tinyTail = gap <= 200 && /^(しい|ゃ|ゅ|ょ)$/.test(bPlain);
+
+                let allow = false;
+                if (tinyTail) {
+                    allow = true;
+                } else if (strongCont && gap <= wideGapMs) {
+                    allow = true;
+                } else if (cont && broken && gap <= maxGapMs) {
+                    allow = true;
+                } else if (cont && /^っ[、,]/.test(bt.replace(/\s+/g, '')) && gap <= maxGapMs) {
+                    allow = true;
+                }
+                if (!allow) break;
+
+                const nextEnd = Number(next?.endMs);
+                const mergedEnd = Number.isFinite(nextEnd) ? nextEnd : cur.endMs;
+                const mergedDur = Number.isFinite(Number(cur.startMs)) && Number.isFinite(Number(mergedEnd))
+                    ? Number(mergedEnd) - Number(cur.startMs)
+                    : 0;
+                if (mergedDur > maxMergedDurMs) break;
+
+                cur.text = `${at}${bt}`;
+                cur.endMs = mergedEnd;
+                mergedPairs += 1;
+                j += 1;
+            }
+            out.push(cur);
+            i = Math.max(j, i + 1);
+        }
+        return {
+            cues: out,
+            mergedPairs,
+            stats: {
+                before: list.length,
+                after: out.length,
+                mergedPairs,
+            },
+        };
+    }
+
+    function summarizeJaStitch(stats) {
+        if (!stats?.mergedPairs) return '无需拼接日语断词';
+        return `拼接日语断词 ${stats.mergedPairs} 处（${stats.before}→${stats.after} 条）`;
     }
 
     function isSoundEffectCue(text) {
@@ -333,9 +458,67 @@
         '请使用简体中文输出。', '请使用简体中文输出', '請使用繁體中文輸出。', '請使用繁體中文輸出',
         '简体中文', '繁体中文', '繁體中文',
         'ご視聴ありがとうございました', 'ご視聴頂きありがとうございます',
-        '字幕：', 'subtitles by', 'thanks for watching', 'the end',
+        'ご視聴いただきありがとうございます', 'ご清聴ありがとうございました',
+        'チャンネル登録よろしくお願いします', 'チャンネル登録お願いいたします',
+        '高評価よろしくお願いします', 'グッドボタンよろしくお願いします',
+        'お疲れ様でした', 'お疲れさまでした',
+        'おめでとうございます', 'それではまた', '次回もお楽しみに',
+        'バイバイ', 'ばいばい', 'Bye-bye', 'bye-bye', 'BYE-BYE',
+        '字幕：', 'subtitles by', 'thanks for watching', 'thank you for watching', 'the end',
+        '本集', '本集。',
+        '寂寞', '寂寞酷', '寂寞曲', '寂寞笑',
+        '好厉害', '准备',
     ]);
-    const HALLUCINATION_RE = /^(?:[Oo○〇◯●・･\.。…]{2,}|[♪♫♩♬]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*)$/i;
+    // JA YouTube / soft-scene filler often emitted as whole cues by Whisper
+    // Single "." / "…" music-bed hallucinations are common on film English ASR.
+    const HALLUCINATION_RE = /^(?:[Oo○〇◯●]{2,}|[・･.。…]{1,}|[♪♫♩♬]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*|ご視聴.*ありがとう.*|チャンネル登録.*|高評価.*|グッドボタン.*|李宗盛.*)$/i;
+    const PROMPT_LEAK_RE = /人名です|登場人物の名前は|登場人物：|舞は人名|トミーは人名|ダンスではない/;
+    const LATIN_CJK_JAM_RE = /[A-Za-z]{2,}[\u3040-\u30ff\u4e00-\u9fff]|[\u3040-\u30ff\u4e00-\u9fff][A-Za-z]{2,}/;
+
+    /**
+     * Normalize Latin Whisper artifacts on source tracks.
+     * ▁ → space, don ' t → don't, 1 0 → 10, greatI → great I.
+     */
+    function normalizeAsrText(text) {
+        let s = String(text || '');
+        if (!s) return '';
+        if (s.includes('\u2581')) s = s.replace(/\u2581/g, ' ');
+        const aposSuffixes = new Set(['m', 's', 're', 've', 'll', 'd', 't', 'am', 'em']);
+        for (let i = 0; i < 3; i += 1) {
+            const nxt = s.replace(/\b([A-Za-z]+)\s+'\s*([A-Za-z]+)\b/g, (_, left, right) => {
+                if (aposSuffixes.has(String(right).toLowerCase()) || String(right).length <= 2) {
+                    return `${left}'${right}`;
+                }
+                return `${left} ${right}`;
+            });
+            if (nxt === s) break;
+            s = nxt;
+        }
+        for (let i = 0; i < 4; i += 1) {
+            const nxt = s.replace(/(?<!\d)(\d)\s+(\d)(?!\d)/g, '$1$2');
+            if (nxt === s) break;
+            s = nxt;
+        }
+        s = s.replace(/([a-z])([A-Z])/g, '$1 $2');
+        s = s.replace(/\s+([,.!?;:])/g, '$1');
+        s = s.replace(/[ \t\u3000]+/g, ' ').trim();
+        return s;
+    }
+
+    function normalizeAsrTextInCues(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        let changed = 0;
+        const out = list.map((cue) => {
+            const prev = String(cue?.text || '');
+            const next = normalizeAsrText(prev);
+            if (next !== prev) {
+                changed += 1;
+                return { ...cue, text: next };
+            }
+            return cue;
+        });
+        return { cues: out, changed };
+    }
 
     function cueDurationMs(cue) {
         const start = Number(cue?.startMs);
@@ -353,6 +536,8 @@
         const lower = raw.toLowerCase();
         if (HALLUCINATION_EXACT.has(raw) || HALLUCINATION_EXACT.has(lower)) return true;
         if (HALLUCINATION_RE.test(raw)) return true;
+        if (PROMPT_LEAK_RE.test(raw)) return true;
+        if (raw.length <= 24 && LATIN_CJK_JAM_RE.test(raw)) return true;
         if (hasHeavyRepetition(raw) && textCharCount(raw) <= 24) return true;
         if (/https?:\/\/|www\./i.test(raw) && textCharCount(raw) <= 40) return true;
         if (cue) {
@@ -382,6 +567,18 @@
     }
 
     /**
+     * Rewrite cues: strip Whisper JA name/filler loops (玲奈玲奈 / 葵葵葵) in place.
+     * @param {object[]} cues
+     * @returns {{ cues: object[], changed: number }}
+     */
+    function stripAsrNameLoopsInCues(cues) {
+        if (!jaNames?.stripAsrHallucinationLoopsInCues) {
+            return { cues: Array.isArray(cues) ? cues : [], changed: 0 };
+        }
+        return jaNames.stripAsrHallucinationLoopsInCues(cues);
+    }
+
+    /**
      * 批量删除杂音字幕（空句 / 语气碎片 / 音效标签 / 纯符号 / 可选连续重复 / 可选幻觉短句）。
      * @returns {{ cues: object[], stats: object, removedIndexes: number[] }}
      */
@@ -393,23 +590,44 @@
             removeSymbolOnly: options.removeSymbolOnly !== false,
             removeDuplicates: options.removeDuplicates === true,
             removeHallucinations: options.removeHallucinations === true,
+            stripAsrNameLoops: options.stripAsrNameLoops !== false,
+            normalizeAsrText: options.normalizeAsrText !== false,
             hallucinationMaxChars: options.hallucinationMaxChars,
             hallucinationMaxDurMs: options.hallucinationMaxDurMs,
+            // Translate tracks: blank noise instead of deleting so cue count stays aligned
+            blankInsteadOfRemove: options.blankInsteadOfRemove === true,
+            blankPlaceholder: String(options.blankPlaceholder || '…'),
         };
-        const list = Array.isArray(cues) ? cues : [];
+        let list = Array.isArray(cues) ? cues : [];
+        let asrLoopChanged = 0;
+        let asrNormChanged = 0;
+        if (opts.normalizeAsrText) {
+            const normalized = normalizeAsrTextInCues(list);
+            list = normalized.cues;
+            asrNormChanged = normalized.changed || 0;
+        }
+        if (opts.stripAsrNameLoops) {
+            const cleaned = stripAsrNameLoopsInCues(list);
+            list = cleaned.cues;
+            asrLoopChanged = cleaned.changed || 0;
+        }
         const kept = [];
         const removedIndexes = [];
         const stats = {
             removed: 0,
             kept: 0,
+            blanked: 0,
             empty: 0,
             fragment: 0,
             soundEffect: 0,
             symbolOnly: 0,
             duplicate: 0,
             hallucination: 0,
+            asrNameLoops: asrLoopChanged,
+            asrNormalize: asrNormChanged,
         };
         let prevKeptText = '';
+        const placeholder = opts.blankPlaceholder || '…';
 
         for (let i = 0; i < list.length; i += 1) {
             const cue = list[i];
@@ -425,6 +643,16 @@
                 reason = 'duplicate';
             }
             if (reason) {
+                if (opts.blankInsteadOfRemove) {
+                    // Keep timing slot; avoid re-flagging the placeholder as symbol-only noise
+                    const alreadyBlank = text === placeholder || text === '...' || text === '……';
+                    kept.push(alreadyBlank ? cue : { ...cue, text: placeholder });
+                    if (!alreadyBlank) stats.blanked += 1;
+                    if (stats[reason] != null) stats[reason] += 1;
+                    prevKeptText = placeholder;
+                    stats.kept += 1;
+                    continue;
+                }
                 removedIndexes.push(i);
                 stats.removed += 1;
                 if (stats[reason] != null) stats[reason] += 1;
@@ -439,14 +667,24 @@
     }
 
     function summarizeNoiseRemoval(stats) {
-        if (!stats?.removed) return '未发现可删除的杂音条目';
         const parts = [];
+        if (stats?.asrNormalize) parts.push(`ASR规范化 ${stats.asrNormalize}`);
+        if (stats?.asrNameLoops) parts.push(`ASR叠名 ${stats.asrNameLoops}`);
+        if (stats?.blanked) parts.push(`占位保留 ${stats.blanked}`);
+        if (!stats?.removed && !stats?.blanked) {
+            return parts.length
+                ? `已清理（${parts.join(' · ')}）`
+                : '未发现可删除的杂音条目';
+        }
         if (stats.empty) parts.push(`空文本 ${stats.empty}`);
         if (stats.fragment) parts.push(`语气碎片 ${stats.fragment}`);
         if (stats.soundEffect) parts.push(`音效标签 ${stats.soundEffect}`);
         if (stats.symbolOnly) parts.push(`纯符号 ${stats.symbolOnly}`);
         if (stats.hallucination) parts.push(`幻觉短句 ${stats.hallucination}`);
         if (stats.duplicate) parts.push(`连续重复 ${stats.duplicate}`);
+        if (stats.blanked && !stats.removed) {
+            return `已清理（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条时间轴`;
+        }
         return `将删除 ${stats.removed} 条（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条`;
     }
 
@@ -592,10 +830,19 @@
         hasStutter,
         endsWithDangling,
         isFragmentCue,
+        isJaScriptHeavy,
+        endsJaBroken,
+        startsJaContinuation,
+        isStrongJaContinuation,
+        stitchJaFragmentCues,
+        summarizeJaStitch,
         isSoundEffectCue,
         isSymbolOnlyCue,
         isNoiseCue,
         isHallucinationCue,
+        normalizeAsrText,
+        normalizeAsrTextInCues,
+        stripAsrNameLoopsInCues,
         removeNoiseFromCues,
         summarizeNoiseRemoval,
         compressRepetitionInText,

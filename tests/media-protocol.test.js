@@ -28,6 +28,11 @@ function testResolveMediaUrl() {
     assert.strictEqual(resolved.path, file);
     assert.ok(resolved.url.includes(encodeURIComponent(file)));
     assert.strictEqual(isAllowedMediaPath(file), true);
+    const audio = path.join(tmp, 'podcast.mp3');
+    fs.writeFileSync(audio, Buffer.alloc(64, 1));
+    const resolvedAudio = resolveMediaUrl(audio);
+    assert.strictEqual(resolvedAudio.ok, true);
+    assert.strictEqual(isAllowedMediaPath(audio), true);
     const missing = resolveMediaUrl(path.join(tmp, 'missing.mp4'));
     assert.strictEqual(missing.ok, false);
     const badExt = path.join(tmp, 'notes.txt');

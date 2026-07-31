@@ -23,7 +23,13 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     showInFolder: (filePath) => ipcRenderer.invoke('transwithai-show-in-folder', filePath || ''),
     openPath: (filePath) => ipcRenderer.invoke('transwithai-open-path', filePath || ''),
     ffmpegProbe: (payload) => ipcRenderer.invoke('ffmpeg-probe', payload || {}),
+    ffmpegProbeAcoustic: (payload) => ipcRenderer.invoke('ffmpeg-probe-acoustic', payload || {}),
+    transubSenseMemoryLookup: (payload) => ipcRenderer.invoke('transub-sense-memory-lookup', payload || {}),
+    transubSenseMemoryRecord: (payload) => ipcRenderer.invoke('transub-sense-memory-record', payload || {}),
+    transubSenseMemoryStats: () => ipcRenderer.invoke('transub-sense-memory-stats'),
+    transubSenseMemoryClear: () => ipcRenderer.invoke('transub-sense-memory-clear'),
     ffmpegValidate: (payload) => ipcRenderer.invoke('ffmpeg-validate', payload || {}),
+    transubEnvCheck: (payload) => ipcRenderer.invoke('transub-env-check', payload || {}),
     ffmpegDetectSilence: (payload = {}) => ipcRenderer.invoke('ffmpeg-detect-silence', {
         path: payload.path || '',
         startMs: Number(payload.startMs) || 0,
@@ -45,8 +51,69 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiValidate: (payload) => ipcRenderer.invoke('transwithai-validate', payload || {}),
     transWithAiCheckEngineUpdate: (payload) => ipcRenderer.invoke('transwithai-check-engine-update', payload || {}),
     transWithAiGenerateSubtitles: (payload) => ipcRenderer.invoke('transwithai-generate-subtitles', payload || {}),
+    transubEngineValidate: (payload) => ipcRenderer.invoke('transub-engine-validate', payload || {}),
+    transubEngineBundledPath: () => ipcRenderer.invoke('transub-engine-bundled-path'),
+    transubEngineListModels: (payload) => ipcRenderer.invoke('transub-engine-list-models', payload || {}),
+    transubEngineRecommend: (payload) => ipcRenderer.invoke('transub-engine-recommend', payload || {}),
+    transubEngineDetectLanguage: (payload) => ipcRenderer.invoke('transub-engine-detect-language', payload || {}),
+    transubEngineDownloadModels: (payload) => ipcRenderer.invoke('transub-engine-download-models', payload || {}),
+    transubEngineGpuStatus: (payload) => ipcRenderer.invoke('transub-engine-gpu-status', payload || {}),
+    transubEngineAsrWhisperStatus: (payload) => ipcRenderer.invoke('transub-engine-asr-whisper-status', payload || {}),
+    transubEngineEnsureGpu: (payload) => ipcRenderer.invoke('transub-engine-ensure-gpu', payload || {}),
+    transubEngineAudioSeparateStatus: (payload) => ipcRenderer.invoke('transub-engine-audio-separate-status', payload || {}),
+    transubEngineOpenDownload: (payload) => ipcRenderer.invoke('transub-engine-open-download', payload || {}),
+    transubEngineRunDownload: (payload) => ipcRenderer.invoke('transub-engine-run-download', payload || {}),
+    transubEngineCancelDownload: () => ipcRenderer.invoke('transub-engine-cancel-download'),
+    transubEngineDownloadInfo: (payload) => ipcRenderer.invoke('transub-engine-download-info', payload || {}),
+    transubEngineOpenManualUrl: (payload) => ipcRenderer.invoke('transub-engine-open-manual-url', payload || {}),
+    transubEngineOpenDownloadFolder: (payload) => ipcRenderer.invoke('transub-engine-open-download-folder', payload || {}),
+    transubEnginePickWhl: (payload) => ipcRenderer.invoke('transub-engine-pick-whl', payload || {}),
+    transubEngineInstallLocalWheels: (payload) => ipcRenderer.invoke('transub-engine-install-local-wheels', payload || {}),
+    onEngineDownloadProgress: (callback) => {
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-engine-download-progress', listener);
+        return () => ipcRenderer.removeListener('transub-engine-download-progress', listener);
+    },
+    transubEngineGenerateSubtitles: (payload) => ipcRenderer.invoke('transub-engine-generate-subtitles', payload || {}),
+    transubEngineTranslateCues: (payload) => ipcRenderer.invoke('transub-engine-translate-cues', payload || {}),
+    onEngineTranslateProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-engine-translate-progress', handler);
+        return () => ipcRenderer.removeListener('transub-engine-translate-progress', handler);
+    },
+    transubEngineCancel: () => ipcRenderer.invoke('transub-engine-cancel'),
+    transubEngineOpenLatestLog: () => ipcRenderer.invoke('transub-engine-open-latest-log'),
+    transubEngineGetLogPath: () => ipcRenderer.invoke('transub-engine-get-log-path'),
+    transubEngineSaveOptions: (payload) => ipcRenderer.invoke('transub-engine-save-options', payload || {}),
+    transubGenerateSubtitles: (payload) => ipcRenderer.invoke('transub-generate-subtitles', payload || {}),
+    transubComputeTaskStatus: () => ipcRenderer.invoke('transub-compute-task-status'),
+    onTransubComputeTaskChanged: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-compute-task-changed', handler);
+        return () => ipcRenderer.removeListener('transub-compute-task-changed', handler);
+    },
+    onTransubEngineProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-engine-progress', handler);
+        return () => ipcRenderer.removeListener('transub-engine-progress', handler);
+    },
+    onTransubEngineInferLog: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-engine-infer-log', handler);
+        return () => ipcRenderer.removeListener('transub-engine-infer-log', handler);
+    },
     transWithAiGetOptions: (payload) => ipcRenderer.invoke('transwithai-get-options', payload || {}),
+    transubHasSettingsFile: () => ipcRenderer.invoke('transub-has-settings-file'),
+    transubGetSystemResources: (payload) => ipcRenderer.invoke('transub-get-system-resources', payload || {}),
+    transubGetUiZoom: () => ipcRenderer.invoke('transub-get-ui-zoom'),
+    transubSetUiZoom: (payload) => ipcRenderer.invoke('transub-set-ui-zoom', payload || {}),
     transWithAiSaveOptions: (payload) => ipcRenderer.invoke('transwithai-save-options', payload || {}),
+    transubTestProxy: (payload) => ipcRenderer.invoke('transub-test-proxy', payload || {}),
+    transubTestHfEndpoint: (payload) => ipcRenderer.invoke('transub-test-hf-endpoint', payload || {}),
     transWithAiSetPostTask: (payload) => ipcRenderer.invoke('transwithai-set-post-task', payload || {}),
     transWithAiGetPendingFiles: () => ipcRenderer.invoke('transwithai-get-pending-files'),
     transWithAiSelectVideos: (options) => ipcRenderer.invoke('transwithai-select-videos', options || {}),
@@ -55,8 +122,13 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiGetPresets: () => ipcRenderer.invoke('transwithai-get-presets'),
     transWithAiSavePreset: (payload) => ipcRenderer.invoke('transwithai-save-preset', payload || {}),
     transWithAiDeletePreset: (payload) => ipcRenderer.invoke('transwithai-delete-preset', payload || {}),
+    transWithAiExportPreset: (payload) => ipcRenderer.invoke('transwithai-export-preset', payload || {}),
+    transWithAiImportPreset: () => ipcRenderer.invoke('transwithai-import-preset'),
     transWithAiGetTaskHistory: () => ipcRenderer.invoke('transwithai-get-task-history'),
     transWithAiClearTaskHistory: () => ipcRenderer.invoke('transwithai-clear-task-history'),
+    transubClearTranscriptCache: (payload) => ipcRenderer.invoke('transub-clear-transcript-cache', payload || {}),
+    transubFindKeptTranscript: (payload) => ipcRenderer.invoke('transub-find-kept-transcript', payload || {}),
+    transubPinKeptTranscript: (payload) => ipcRenderer.invoke('transub-pin-kept-transcript', payload || {}),
     transubGetEditorHistory: () => ipcRenderer.invoke('transub-get-editor-history'),
     transubAppendEditorHistory: (payload) => ipcRenderer.invoke('transub-append-editor-history', payload || {}),
     transubClearEditorHistory: () => ipcRenderer.invoke('transub-clear-editor-history'),
@@ -111,11 +183,14 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubOpenSubtitleEditor: (payload) => ipcRenderer.invoke('transub-open-subtitle-editor', payload || {}),
     transubEditorRegisterPath: (payload) => ipcRenderer.invoke('transub-editor-register-path', payload || {}),
     transubOpenSettings: (payload) => ipcRenderer.invoke('transub-open-settings', payload || {}),
+    transubOpenSetupWizard: (payload) => ipcRenderer.invoke('transub-open-setup-wizard', payload || {}),
     transubOpenUpdateWindow: (payload) => ipcRenderer.invoke('transub-open-update-window', payload || {}),
     transubOpenAboutWindow: (payload) => ipcRenderer.invoke('transub-open-about-window', payload || {}),
     transubShowMainWindow: (payload) => ipcRenderer.invoke('transub-show-main-window', payload || {}),
     transubConsumePendingOpenParams: () => ipcRenderer.invoke('transub-consume-pending-open-params'),
+    transubConsumePendingSetupWizard: () => ipcRenderer.invoke('transub-consume-pending-setup-wizard'),
     transubEditorRefocus: () => ipcRenderer.invoke('transub-editor-refocus'),
+    transubEditorSyncMenuState: (payload) => ipcRenderer.invoke('transub-editor-sync-menu', payload || {}),
     transubEditorConfirm: (payload) => ipcRenderer.invoke('transub-editor-confirm', payload || {}),
     onOpenParams: (callback) => {
         if (typeof callback !== 'function') return () => {};
@@ -123,11 +198,11 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         ipcRenderer.on('transub-open-params', handler);
         return () => ipcRenderer.removeListener('transub-open-params', handler);
     },
-    onSettingsCheckUpdate: (callback) => {
+    onOpenSetupWizard: (callback) => {
         if (typeof callback !== 'function') return () => {};
-        const handler = () => callback();
-        ipcRenderer.on('transub-settings-check-update', handler);
-        return () => ipcRenderer.removeListener('transub-settings-check-update', handler);
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-open-setup-wizard', handler);
+        return () => ipcRenderer.removeListener('transub-open-setup-wizard', handler);
     },
     onUpdateWindowCheck: (callback) => {
         if (typeof callback !== 'function') return () => {};
@@ -153,7 +228,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiExportConfig: () => ipcRenderer.invoke('transwithai-export-config'),
     transWithAiImportConfig: () => ipcRenderer.invoke('transwithai-import-config'),
     transWithAiCheckAppUpdate: () => ipcRenderer.invoke('transwithai-check-app-update'),
-    transubDownloadAppUpdate: () => ipcRenderer.invoke('transub-download-app-update'),
+    transubDownloadAppUpdate: (payload) => ipcRenderer.invoke('transub-download-app-update', payload || {}),
     transubQuitAndInstallUpdate: () => ipcRenderer.invoke('transub-quit-and-install-update'),
     transubOpenUpdatePage: (payload) => ipcRenderer.invoke('transub-open-update-page', payload || {}),
     onAppUpdateDownloadProgress: (callback) => {
@@ -162,6 +237,77 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         ipcRenderer.on('transub-app-update-progress', handler);
         return () => ipcRenderer.removeListener('transub-app-update-progress', handler);
     },
+    transubAdvancedGetStatus: () => ipcRenderer.invoke('transub-advanced-get-status'),
+    transubAdvancedActivate: (payload) => ipcRenderer.invoke('transub-advanced-activate', payload || {}),
+    transubAdvancedTransfer: (payload) => ipcRenderer.invoke('transub-advanced-transfer', payload || {}),
+    transubAdvancedRedeemAfdian: (payload) => ipcRenderer.invoke('transub-advanced-redeem-afdian', payload || {}),
+    transubAdvancedRevalidate: () => ipcRenderer.invoke('transub-advanced-revalidate'),
+    transubAdvancedDeactivate: () => ipcRenderer.invoke('transub-advanced-deactivate'),
+    transubAdvancedSaveByok: (payload) => ipcRenderer.invoke('transub-advanced-save-byok', payload || {}),
+    transubAdvancedClearByokKey: () => ipcRenderer.invoke('transub-advanced-clear-byok-key'),
+    transubAdvancedManagedLlmStatus: () => ipcRenderer.invoke('transub-advanced-managed-llm-status'),
+    transubAdvancedManagedLlmSelect: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-select', payload || {}),
+    transubAdvancedManagedLlmOpenPick: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-open-pick', payload || {}),
+    transubAdvancedManagedLlmOpenDownload: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-open-download', payload || {}),
+    transubAdvancedManagedLlmDownloadInfo: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-download-info', payload || {}),
+    transubAdvancedManagedLlmOpenManual: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-open-manual', payload || {}),
+    transubAdvancedManagedLlmOpenFolder: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-open-folder', payload || {}),
+    transubAdvancedManagedLlmVerifyManual: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-verify-manual', payload || {}),
+    transubAdvancedManagedLlmPull: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-pull', payload || {}),
+    transubAdvancedManagedLlmInstallRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-install-runtime', payload || {}),
+    transubAdvancedManagedLlmCancelPull: () => ipcRenderer.invoke('transub-advanced-managed-llm-cancel-pull'),
+    transubAdvancedManagedLlmStopServer: () => ipcRenderer.invoke('transub-advanced-managed-llm-stop-server'),
+    transubAdvancedManagedLlmPerfTest: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-perf-test', payload || {}),
+    transubAdvancedOpenOllamaDownload: () => ipcRenderer.invoke('transub-advanced-open-ollama-download'),
+    onAdvancedManagedLlmProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-advanced-managed-llm-progress', listener);
+        return () => ipcRenderer.removeListener('transub-advanced-managed-llm-progress', listener);
+    },
+    onAdvancedLlmPickRefresh: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-advanced-llm-pick-refresh', listener);
+        return () => ipcRenderer.removeListener('transub-advanced-llm-pick-refresh', listener);
+    },
+    onAdvancedLlmModelChanged: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-advanced-llm-model-changed', listener);
+        return () => ipcRenderer.removeListener('transub-advanced-llm-model-changed', listener);
+    },
+    transubAdvancedRequireFeature: (payload) => ipcRenderer.invoke('transub-advanced-require-feature', payload || {}),
+    transubAdvancedContextReconstruct: (payload) => ipcRenderer.invoke('transub-advanced-context-reconstruct', payload || {}),
+    transubAdvancedFilmContextReconstruct: (payload) => ipcRenderer.invoke('transub-advanced-film-context-reconstruct', payload || {}),
+    transubAdvancedSmartTranslate: (payload) => ipcRenderer.invoke('transub-advanced-smart-translate', payload || {}),
+    transubAdvancedBilingualSemanticReview: (payload) => ipcRenderer.invoke('transub-advanced-bilingual-semantic-review', payload || {}),
+    transubAdvancedBatchContextReconstruct: (payload) => ipcRenderer.invoke('transub-advanced-batch-context-reconstruct', payload || {}),
+    transubAdvancedCancelBatchContextReconstruct: () => ipcRenderer.invoke('transub-advanced-cancel-batch-context-reconstruct'),
+    transubAdvancedCancelContextReconstruct: () => ipcRenderer.invoke('transub-advanced-cancel-context-reconstruct'),
+    transubSakuraStatus: (payload) => ipcRenderer.invoke('transub-sakura-status', payload || {}),
+    transubSakuraTranslate: (payload) => ipcRenderer.invoke('transub-sakura-translate', payload || {}),
+    transubSakuraCancelTranslate: () => ipcRenderer.invoke('transub-sakura-cancel-translate'),
+    onSakuraTranslateProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-sakura-translate-progress', handler);
+        return () => ipcRenderer.removeListener('transub-sakura-translate-progress', handler);
+    },
+    onAdvancedBatchProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-advanced-batch-progress', handler);
+        return () => ipcRenderer.removeListener('transub-advanced-batch-progress', handler);
+    },
+    onAdvancedReconstructProgress: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, progress) => callback(progress);
+        ipcRenderer.on('transub-advanced-reconstruct-progress', handler);
+        return () => ipcRenderer.removeListener('transub-advanced-reconstruct-progress', handler);
+    },
+    transubAdvancedTestByok: (payload) => ipcRenderer.invoke('transub-advanced-test-byok', payload || {}),
+    transubAdvancedReloadModule: () => ipcRenderer.invoke('transub-advanced-reload-module'),
     transWithAiCancel: () => ipcRenderer.invoke('transwithai-cancel'),
     onTransWithAiProgress: (callback) => {
         if (typeof callback !== 'function') return () => {};
@@ -186,6 +332,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         const handler = (_event, payload) => callback(payload);
         ipcRenderer.on('subtitle-editor-init', handler);
         return () => ipcRenderer.removeListener('subtitle-editor-init', handler);
+    },
+    onSubtitleEditorMenuAction: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('subtitle-editor-menu-action', handler);
+        return () => ipcRenderer.removeListener('subtitle-editor-menu-action', handler);
     },
     onSubtitleEditorRefocus: (callback) => {
         if (typeof callback !== 'function') return () => {};

@@ -76,18 +76,41 @@ function testRemoveNoise() {
     assert.strictEqual(withDup.stats.duplicate, 1);
     assert.strictEqual(withDup.stats.kept, 1);
     assert.strictEqual(withDup.cues[0].text, '你好世界');
+
+    const blanked = removeNoiseFromCues(cues, {
+        removeDuplicates: true,
+        blankInsteadOfRemove: true,
+    });
+    assert.strictEqual(blanked.cues.length, cues.length, 'translate track must keep cue count');
+    assert.ok(blanked.stats.blanked >= 1);
+    assert.ok(blanked.cues.every((c) => String(c.text || '').trim()));
 }
 
 function testHallucinationCleanup() {
     const {
         isHallucinationCue,
         removeNoiseFromCues,
+        normalizeAsrText,
     } = require('../src/js/subtitle-fluency-core');
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 500, text: '完毕' }));
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 800, text: '○○○○○' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: '本集' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: '舞は人名です。' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: 'iz磨吉平洋' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: '寂寞笑' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 350, text: '.' }));
+    assert.strictEqual(normalizeAsrText("All right , let ' s do this"), "All right, let's do this");
+    assert.strictEqual(normalizeAsrText('and for 1 0 years'), 'and for 10 years');
+    assert.strictEqual(normalizeAsrText('▁the rest'), 'the rest');
+    assert.strictEqual(normalizeAsrText('greatI saved'), 'great I saved');
+    assert.strictEqual(normalizeAsrText("I ' been the one"), 'I been the one');
+    assert.strictEqual(normalizeAsrText("I ' m pretty"), "I'm pretty");
+    assert.strictEqual(normalizeAsrText("we don ' t really"), "we don't really");
     const cues = [
         { startMs: 0, endMs: 500, text: '完毕' },
         { startMs: 1000, endMs: 3000, text: '正常对白内容。' },
+        { startMs: 3000, endMs: 3350, text: '.' },
+        { startMs: 4000, endMs: 5000, text: "I ' m pretty" },
     ];
     const cleaned = removeNoiseFromCues(cues, {
         removeEmpty: false,
@@ -96,8 +119,8 @@ function testHallucinationCleanup() {
         removeSymbolOnly: false,
         removeHallucinations: true,
     });
-    assert.strictEqual(cleaned.stats.hallucination, 1);
-    assert.strictEqual(cleaned.stats.kept, 1);
+    assert.ok(cleaned.stats.hallucination >= 2);
+    assert.ok(cleaned.cues.some((c) => c.text === "I'm pretty"));
 }
 
 function testCompressRepetition() {
@@ -149,6 +172,41 @@ function testCompressRepetition() {
     assert.strictEqual(scoped.stats.cueTouched, 0);
 }
 
+function testJaFragmentStitch() {
+    const {
+        stitchJaFragmentCues,
+        summarizeJaStitch,
+        isFragmentCue,
+        endsJaBroken,
+        startsJaContinuation,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.ok(endsJaBroken('あはは恥ずかしいのいやちょっと恥ずかしいっす恥ずかしいご'));
+    assert.ok(startsJaContinuation('めんなさい恥ずかしいのあいやああちょっとああ'));
+    assert.ok(isFragmentCue('しい'));
+
+    const cues = [
+        { startMs: 0, endMs: 1000, text: '少しだけ見せていやちょっと待ってほしいんですよちょっと少' },
+        { startMs: 1000, endMs: 2500, text: 'しだけいやちょっと待ってください少しならいいでしょ' },
+        { startMs: 2500, endMs: 4000, text: 'あはは恥ずかしいのいやちょっと恥ずかしいっす恥ずかしいご' },
+        { startMs: 4000, endMs: 5500, text: 'めんなさい恥ずかしいのあいやああちょっとああ' },
+        { startMs: 6000, endMs: 7000, text: 'ああ入った入ったあそこあそ' },
+        { startMs: 8750, endMs: 9500, text: 'こで気持ちいい' },
+        { startMs: 10000, endMs: 10500, text: 'ちんちんビンビンだね嬉' },
+        { startMs: 12600, endMs: 12800, text: 'しい' },
+        { startMs: 15000, endMs: 16000, text: '普通の台詞です。' },
+        { startMs: 16000, endMs: 16500, text: 'うん…' },
+    ];
+    const stitched = stitchJaFragmentCues(cues);
+    assert.ok(stitched.mergedPairs >= 3, JSON.stringify(stitched.stats));
+    assert.ok(stitched.cues.some((c) => String(c.text).includes('ごめんなさい')));
+    assert.ok(stitched.cues.some((c) => String(c.text).includes('あそこで気持ちいい')));
+    assert.ok(stitched.cues.some((c) => String(c.text).includes('嬉しい')));
+    // Do not glue a normal sentence onto a following うん
+    assert.ok(stitched.cues.some((c) => String(c.text).trim() === 'うん…'));
+    assert.ok(summarizeJaStitch(stitched.stats).includes('拼接'));
+}
+
 describe("subtitle-fluency", () => {
     it("repetition and stutter", () => {
         testRepetitionAndStutter();
@@ -170,5 +228,8 @@ describe("subtitle-fluency", () => {
     });
     it("compress repetition", () => {
         testCompressRepetition();
+    });
+    it("stitch JA ASR fragments", () => {
+        testJaFragmentStitch();
     });
 });

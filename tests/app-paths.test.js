@@ -6,8 +6,10 @@ const {
     getProjectRoot,
     getWritableRoot,
     getInstallRoot,
+    getLegacyUserDataRoot,
     findRendererRoot,
     getAppRoot,
+    migrateLegacyUserDataFiles,
 } = require('../electron/app-paths');
 const { isPathInsideInstallTree } = require('../electron/ffmpeg-bridge');
 
@@ -29,6 +31,19 @@ describe('app-paths writable root', () => {
         const install = getInstallRoot();
         assert.ok(typeof install === 'string' && install.length > 0);
         assert.ok(fs.existsSync(install) || install === getProjectRoot());
+    });
+
+    it('keeps writable root under software dir in unpackaged mode', () => {
+        const env = { ...process.env };
+        delete env.PORTABLE_EXECUTABLE_DIR;
+        const writable = getWritableRoot(env);
+        assert.strictEqual(writable, getInstallRoot());
+        assert.strictEqual(writable, getProjectRoot());
+    });
+
+    it('exposes legacy userData helper and safe no-op migrate', () => {
+        assert.strictEqual(typeof getLegacyUserDataRoot, 'function');
+        assert.doesNotThrow(() => migrateLegacyUserDataFiles());
     });
 });
 

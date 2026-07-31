@@ -3,23 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('node:stream');
 const { pathToFileURL } = require('url');
+const { MEDIA_MIME, getMediaMime, isMediaExt } = require('../src/js/media-extensions-core');
 
 const SCHEME = 'transub-media';
 
-const VIDEO_MIME = {
-    '.mp4': 'video/mp4',
-    '.m4v': 'video/mp4',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska',
-    '.avi': 'video/x-msvideo',
-    '.mov': 'video/quicktime',
-    '.wmv': 'video/x-ms-wmv',
-    '.flv': 'video/x-flv',
-    '.ts': 'video/mp2t',
-    '.mpeg': 'video/mpeg',
-    '.mpg': 'video/mpeg',
-    '.3gp': 'video/3gpp',
-};
+/** @deprecated Use MEDIA_MIME — kept for callers that still import VIDEO_MIME. */
+const VIDEO_MIME = MEDIA_MIME;
 
 /** Paths explicitly allowed via resolveMediaUrl (renderer cannot invent arbitrary URLs). */
 const allowedMediaPaths = new Set();
@@ -39,8 +28,7 @@ function allowMediaPath(filePath) {
 function isAllowedMediaPath(filePath) {
     const resolved = path.resolve(String(filePath || ''));
     if (!resolved) return false;
-    const ext = path.extname(resolved).toLowerCase();
-    if (!VIDEO_MIME[ext]) return false;
+    if (!isMediaExt(resolved)) return false;
     return allowedMediaPaths.has(mediaPathKey(resolved));
 }
 
@@ -49,8 +37,7 @@ function clearAllowedMediaPaths() {
 }
 
 function getVideoMime(filePath) {
-    const ext = path.extname(String(filePath || '')).toLowerCase();
-    return VIDEO_MIME[ext] || 'application/octet-stream';
+    return getMediaMime(filePath);
 }
 
 function registerMediaScheme() {
@@ -141,10 +128,10 @@ function registerMediaProtocolHandler() {
 
 function resolveMediaUrl(filePath) {
     const resolved = path.resolve(String(filePath || '').trim());
-    if (!resolved) return { ok: false, error: '缺少视频路径' };
+    if (!resolved) return { ok: false, error: '缺少媒体路径' };
     const ext = path.extname(resolved).toLowerCase();
-    if (!VIDEO_MIME[ext]) return { ok: false, error: `不支持的视频格式: ${ext || '(无)'}` };
-    if (!fs.existsSync(resolved)) return { ok: false, error: '视频文件不存在' };
+    if (!isMediaExt(resolved)) return { ok: false, error: `不支持的媒体格式: ${ext || '(无)'}` };
+    if (!fs.existsSync(resolved)) return { ok: false, error: '媒体文件不存在' };
     allowMediaPath(resolved);
     return {
         ok: true,
@@ -157,6 +144,7 @@ function resolveMediaUrl(filePath) {
 module.exports = {
     SCHEME,
     VIDEO_MIME,
+    MEDIA_MIME,
     registerMediaScheme,
     registerMediaProtocolHandler,
     buildMediaUrl,

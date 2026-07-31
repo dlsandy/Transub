@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getDataDir } = require('./data-dir');
-const { getWritableRoot, getInstallRoot } = require('./app-paths');
+const { getWritableRoot, getInstallRoot, getLegacyUserDataRoot } = require('./app-paths');
 
 const SETTINGS_FILE_NAME = 'transub-settings.json';
 const LEGACY_SETTINGS_FILE_NAME = 'transwithai-settings.json';
@@ -37,6 +37,26 @@ function getLegacyInstallSettingsCandidates() {
     ];
 }
 
+/** Builds that stored settings under Electron userData / AppData. */
+function getLegacyUserDataSettingsCandidates() {
+    let legacyRoot;
+    try {
+        legacyRoot = getLegacyUserDataRoot();
+    } catch {
+        return [];
+    }
+    const writable = getWritableRoot();
+    if (!legacyRoot || path.resolve(legacyRoot) === path.resolve(writable)) {
+        return [];
+    }
+    return [
+        path.join(legacyRoot, SETTINGS_FILE_NAME),
+        path.join(legacyRoot, 'data', SETTINGS_FILE_NAME),
+        path.join(legacyRoot, 'data', LEGACY_SETTINGS_FILE_NAME),
+        path.join(legacyRoot, LEGACY_SETTINGS_FILE_NAME),
+    ];
+}
+
 function readSettingsFile(filePath) {
     if (!fs.existsSync(filePath)) return null;
     try {
@@ -56,6 +76,7 @@ function loadSettings(getAppRoot) {
         const legacyCandidates = [
             getLegacyDataSettingsFilePath(),
             getLegacySettingsFilePath(),
+            ...getLegacyUserDataSettingsCandidates(),
             ...getLegacyInstallSettingsCandidates(),
         ];
         for (const legacyPath of legacyCandidates) {
@@ -93,6 +114,7 @@ function patchSettings(getAppRoot, patch = {}) {
 function hasSettingsFile(getAppRoot) {
     return fs.existsSync(getSettingsFilePath(getAppRoot))
         || fs.existsSync(getLegacySettingsFilePath())
+        || getLegacyUserDataSettingsCandidates().some((p) => fs.existsSync(p))
         || getLegacyInstallSettingsCandidates().some((p) => fs.existsSync(p));
 }
 

@@ -65,6 +65,32 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchCpsSplit, true);
+    assert.strictEqual(defaults.sakuraNsfwPrompt, null);
+    // Engine fields must be present so settings save/load does not drop them
+    assert.strictEqual(defaults.engineBackend, 'transub');
+    assert.strictEqual(typeof defaults.engineInstallPath, 'string');
+    assert.ok(String(defaults.engineUrl || '').includes('127.0.0.1'));
+    assert.strictEqual(defaults.engineAsrModel, 'sensevoice-small');
+    assert.strictEqual(defaults.engineAutoStart, true);
+
+    const engine = normalizeTransWithAiRuntimeOptions({
+        engineInstallPath: 'D:\\MyEngine',
+        engineUrl: 'http://127.0.0.1:9000/',
+        engineHfEndpoint: '',
+        engineProfile: 'quality',
+        engineAsrModel: 'whisper-large-v3-turbo',
+        engineMtModel: 'opus-mt-ja-zh',
+        engineVadModel: 'silero-vad',
+        engineAutoStart: false,
+    });
+    assert.strictEqual(engine.engineInstallPath, 'D:\\MyEngine');
+    assert.strictEqual(engine.engineUrl, 'http://127.0.0.1:9000');
+    assert.strictEqual(engine.engineHfEndpoint, '');
+    assert.strictEqual(engine.engineProfile, 'quality');
+    assert.strictEqual(engine.engineAsrModel, 'whisper-large-v3-turbo');
+    assert.strictEqual(engine.engineMtModel, 'opus-mt-ja-zh');
+    assert.strictEqual(engine.engineVadModel, 'silero-vad');
+    assert.strictEqual(engine.engineAutoStart, false);
 
     const opts = normalizeTransWithAiRuntimeOptions({
         noSpeechThreshold: 0.7,

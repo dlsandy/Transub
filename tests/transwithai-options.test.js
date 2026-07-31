@@ -11,7 +11,18 @@ describe('transwithai-options', () => {
         assert.strictEqual(opts.task, 'translate');
         assert.strictEqual(opts.device, 'cuda');
         assert.strictEqual(opts.postTaskAction, 'none');
+        assert.strictEqual(opts.startupWindow, 'generator');
         assert.ok(opts.installPath);
+    });
+
+    it('normalizes startupWindow preference', () => {
+        assert.strictEqual(mergeTransWithAiOptions({ startupWindow: 'editor' }).startupWindow, 'editor');
+        assert.strictEqual(
+            mergeTransWithAiOptions({ startupWindow: 'subtitle-editor' }).startupWindow,
+            'editor',
+        );
+        assert.strictEqual(mergeTransWithAiOptions({ startupWindow: 'generator' }).startupWindow, 'generator');
+        assert.strictEqual(mergeTransWithAiOptions({ startupWindow: 'nope' }).startupWindow, 'generator');
     });
 
     it('preserves dual task and dual fields', () => {
@@ -50,5 +61,53 @@ describe('transwithai-options', () => {
         const n = normalizePostTaskOptions({ sleepOnComplete: true });
         assert.strictEqual(n.postTaskAction, 'sleep');
         assert.strictEqual(n.sleepOnComplete, true);
+    });
+
+    it('clears sticky sleep/open_folder when action is none', () => {
+        const n = normalizePostTaskOptions({
+            postTaskAction: 'none',
+            sleepOnComplete: true,
+            openOutputFolderOnComplete: true,
+        });
+        assert.strictEqual(n.postTaskAction, 'none');
+        assert.strictEqual(n.sleepOnComplete, false);
+        assert.strictEqual(n.openOutputFolderOnComplete, false);
+    });
+
+    it('derives open_folder strictly from action', () => {
+        const n = normalizePostTaskOptions({
+            postTaskAction: 'quit',
+            openOutputFolderOnComplete: true,
+            sleepOnComplete: true,
+        });
+        assert.strictEqual(n.postTaskAction, 'quit');
+        assert.strictEqual(n.openOutputFolderOnComplete, false);
+        assert.strictEqual(n.sleepOnComplete, false);
+        assert.strictEqual(n.quitAppOnComplete, true);
+    });
+});
+
+describe('transwithai-bridge post-task export', () => {
+    it('exports runPostSubtitleTaskActions for engine path', () => {
+        const bridge = require('../electron/transwithai-bridge');
+        assert.strictEqual(typeof bridge.runPostSubtitleTaskActions, 'function');
+        assert.strictEqual(typeof bridge.setSessionPostTaskOptions, 'function');
+    });
+
+    it('keeps session shutdown when lastOutputDir is updated', () => {
+        const bridge = require('../electron/transwithai-bridge');
+        bridge.resetSessionPostTaskOptions();
+        bridge.setSessionPostTaskOptions({
+            postTaskAction: 'shutdown',
+            shutdownOnComplete: true,
+            quitAppOnComplete: true,
+            shutdownDelaySec: 30,
+        });
+        bridge.setSessionPostTaskOptions({ lastOutputDir: 'F:\\out' });
+        const session = bridge.getSessionPostTaskOptions();
+        assert.strictEqual(session.postTaskAction, 'shutdown');
+        assert.strictEqual(session.shutdownOnComplete, true);
+        assert.strictEqual(session.lastOutputDir, 'F:\\out');
+        bridge.resetSessionPostTaskOptions();
     });
 });

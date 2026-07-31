@@ -1,0 +1,24 @@
+Transub Pro Proprietary License
+
+Copyright (c) 2026 Transub. All rights reserved.
+
+The following materials are proprietary and confidential:
+
+- The closed module installed as `_advanced/` (including minified bundles)
+- Pro reconstruct / film-understanding / bilingual semantic review algorithms
+  and prompt templates (including corresponding source under electron/ and
+  src/js/ that implement those algorithms)
+- tools/advanced-module-entry.js and any generated `_advanced` artifacts
+
+You may use Transub Pro features only under a valid Transub Pro license
+(device-bound buyout key) obtained from the copyright holder (e.g. via Afdian).
+
+You may not copy, modify, reverse engineer (except to the limited extent
+permitted by applicable law), redistribute, sublicense, or create derivative
+works of the proprietary materials above, except as expressly allowed in
+writing by the copyright holder.
+
+The open-source Core of Transub remains under the MIT terms in LICENSE.
+Entitlement gates, license crypto verification (public key), BYOK storage
+shape, and the `_advanced` load path are part of Core so that integrations
+can detect Pro entitlement without redistributing proprietary algorithms.

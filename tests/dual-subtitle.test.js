@@ -20,6 +20,42 @@ describe('dual-subtitle-core', () => {
         const tgt = dual.inferDualRole('demo.zh', 'demo', { sourceSuffix: 'ja', targetSuffix: 'zh' });
         assert.strictEqual(tgt.role, 'target');
         assert.strictEqual(tgt.pairSuffix, 'ja');
+
+        // Same name as video → no suffix, role unknown from filename
+        const bare = dual.inferDualRole('demo', 'demo');
+        assert.strictEqual(bare.role, null);
+    });
+
+    it('infers language / dual role from cue text when filename has no suffix', () => {
+        const ja = dual.inferLanguageFromCues([
+            { text: '本日担当させていただきます' },
+            { text: '皐月と申します' },
+            { text: 'お客様は男士按摩店ですか' },
+        ]);
+        assert.strictEqual(ja.language, 'ja');
+        assert.strictEqual(ja.role, 'source');
+        assert.ok(ja.confidence >= 0.5);
+
+        const zh = dual.inferLanguageFromCues([
+            { text: '今天由我负责接待' },
+            { text: '我叫皐月' },
+            { text: '客人是男士按摩店吗' },
+            { text: '哈啊…哈啊' },
+        ]);
+        assert.strictEqual(zh.language, 'zh');
+        assert.strictEqual(zh.role, 'target');
+
+        const roleJa = dual.inferDualRoleFromCues([
+            { text: 'はじめまして、よろしくお願いします。' },
+        ]);
+        assert.strictEqual(roleJa.role, 'source');
+        assert.strictEqual(roleJa.pairSuffix, 'zh');
+
+        const roleZh = dual.inferDualRoleFromCues([
+            { text: '初次见面，请多关照。' },
+            { text: '好的，没问题。' },
+        ]);
+        assert.strictEqual(roleZh.role, 'target');
     });
 
     it('finds best overlap cue', () => {
@@ -40,6 +76,21 @@ describe('dual-subtitle-core', () => {
         const miss = dual.findBestOverlapCue(cues, 2500, 2800, { maxStartGapMs: 100 });
         assert.strictEqual(miss.cue, null);
         assert.strictEqual(miss.match, 'none');
+    });
+
+    it('finds best overlap cue via sorted index', () => {
+        const cues = [];
+        for (let i = 0; i < 500; i += 1) {
+            cues.push({ startMs: i * 1000, endMs: i * 1000 + 800, text: `t${i}` });
+        }
+        cues.push({ startMs: 250500, endMs: 251200, text: 'target' });
+        const index = dual.buildOverlapIndex(cues);
+        const hit = dual.findBestOverlapCue(cues, 250600, 251000, { index });
+        assert.strictEqual(hit.cue.text, 'target');
+        assert.strictEqual(hit.match, 'overlap');
+        const linear = dual.findBestOverlapCue(cues, 250600, 251000);
+        assert.strictEqual(linear.cue.text, hit.cue.text);
+        assert.strictEqual(linear.index, hit.index);
     });
 
     it('lists pair suffix candidates for zh primary', () => {
@@ -104,7 +155,11 @@ describe('dual-subtitle-core', () => {
         assert.strictEqual(merged.length, 2);
         assert.strictEqual(merged[0].text, 'Hello\n你好');
         assert.strictEqual(merged[1].text, 'World\n世界');
-        assert.strictEqual(dual.suggestMergedExportName('D:/x/demo.zh.srt'), 'demo.bilingual.srt');
+        assert.strictEqual(dual.suggestMergedExportName('D:/x/demo.zh.srt'), 'demo.srt');
+        assert.strictEqual(
+            dual.suggestMergedExportName('D:/x/demo.zh.srt', { asVideoName: false }),
+            'demo.bilingual.srt',
+        );
         assert.strictEqual(
             dual.suggestMergedExportName('D:/x/demo.zh.srt', { asVideoName: true }),
             'demo.srt',
@@ -186,5 +241,13 @@ describe('pickPreferredSidecar', () => {
             'D:/v/demo.zh.srt',
         ]);
         assert.ok(String(picked).toLowerCase().endsWith('demo.zh.srt'));
+    });
+
+    it('prefers unsuffixed (same as video) over zh when both exist', () => {
+        const picked = pickPreferredSidecar([
+            'D:/v/demo.zh.srt',
+            'D:/v/demo.srt',
+        ]);
+        assert.ok(String(picked).toLowerCase().endsWith('demo.srt'));
     });
 });

@@ -1,11 +1,11 @@
 const { app, ipcMain } = require('electron');
 const path = require('path');
-const { getAppRoot, migrateLegacyUserDataFiles } = require('./app-paths');
+const { getAppRoot, getWritableRoot, migrateLegacyUserDataFiles } = require('./app-paths');
 const { createDeferredBridgeSetup } = require('./bridge-registry');
 const { createWindowManager } = require('./window-manager');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
 const { isEditableSubtitleFile } = require('./subtitle-utils');
-const { loadSettings } = require('./settings-data');
+const { loadSettings, hasSettingsFile } = require('./settings-data');
 const {
     mergeTransWithAiOptions,
     stripPostTaskFields,
@@ -50,8 +50,9 @@ if (process.platform === 'win32') {
     app.setAppUserModelId('com.transub.app');
 }
 
+/** Writable app data (settings / TWAI config cache) — software directory, not AppData. */
 function getUserDataPath() {
-    return app.getPath('userData');
+    return getWritableRoot();
 }
 
 function parseCliFiles(argv = process.argv.slice(1)) {
@@ -96,6 +97,11 @@ function isEditorOnlyArgv(argv = process.argv.slice(1)) {
         return true;
     }
     return Boolean(parseCliEditSubtitle(argv));
+}
+
+function resolveStartupWindowPref(options = {}) {
+    const raw = String(options?.startupWindow || '').trim().toLowerCase();
+    return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
 }
 
 let editorOnlyMode = isEditorOnlyArgv(process.argv.slice(1));
@@ -172,13 +178,88 @@ ipcMain.handle('transwithai-get-options', async (_event, payload = {}) => {
     }
 });
 
+ipcMain.handle('transub-has-settings-file', async () => {
+    try {
+        return { ok: true, exists: !!hasSettingsFile(() => getAppRoot(app)) };
+    } catch (err) {
+        return { ok: false, exists: false, error: err.message || String(err) };
+    }
+});
+
+ipcMain.handle('transub-get-system-resources', async (_event, payload = {}) => {
+    try {
+        const { sampleSystemResources } = require('./system-resources');
+        const includeGpu = payload?.includeGpu !== false;
+        return await sampleSystemResources({ includeGpu });
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), text: '' };
+    }
+});
+
+ipcMain.handle('transub-get-ui-zoom', async () => {
+    try {
+        const { getUiZoomPref, resolveZoomFactor, loadUiZoomPref } = require('./ui-zoom');
+        const { screen } = require('electron');
+        const pref = getUiZoomPref();
+        let factor = 1;
+        try {
+            const display = screen.getPrimaryDisplay();
+            factor = resolveZoomFactor(loadUiZoomPref(), display);
+        } catch { /* ignore */ }
+        return { ok: true, uiZoom: pref, factor };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), uiZoom: 'auto', factor: 1 };
+    }
+});
+
+ipcMain.handle('transub-set-ui-zoom', async (_event, payload = {}) => {
+    try {
+        const { setUiZoomPref, resolveZoomFactor } = require('./ui-zoom');
+        const { screen } = require('electron');
+        const pref = setUiZoomPref(payload?.uiZoom);
+        let factor = 1;
+        try {
+            factor = resolveZoomFactor(pref, screen.getPrimaryDisplay());
+        } catch { /* ignore */ }
+        return { ok: true, uiZoom: pref, factor };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    }
+});
+
 deferredBridges.installLazyRoutes({
     'electron-select-folder': 'transwithai',
     'transwithai-validate': 'transwithai',
     'transwithai-check-engine-update': 'transwithai',
     'transwithai-generate-subtitles': 'transwithai',
     'transwithai-cancel': 'transwithai',
-    'transub-transcribe-range': 'transwithai',
+    'transub-engine-validate': 'engine',
+    'transub-engine-bundled-path': 'engine',
+    'transub-engine-list-models': 'engine',
+    'transub-engine-recommend': 'engine',
+    'transub-engine-detect-language': 'engine',
+    'transub-engine-download-models': 'engine',
+    'transub-engine-gpu-status': 'engine',
+    'transub-engine-asr-whisper-status': 'engine',
+    'transub-engine-ensure-gpu': 'engine',
+    'transub-engine-audio-separate-status': 'engine',
+    'transub-engine-open-download': 'engine',
+    'transub-engine-run-download': 'engine',
+    'transub-engine-cancel-download': 'engine',
+    'transub-engine-download-info': 'engine',
+    'transub-engine-open-manual-url': 'engine',
+    'transub-engine-open-download-folder': 'engine',
+    'transub-engine-pick-whl': 'engine',
+    'transub-engine-install-local-wheels': 'engine',
+    'transub-engine-generate-subtitles': 'engine',
+    'transub-engine-translate-cues': 'engine',
+    'transub-engine-cancel': 'engine',
+    'transub-engine-open-latest-log': 'engine',
+    'transub-engine-get-log-path': 'engine',
+    'transub-engine-save-options': 'engine',
+    'transub-generate-subtitles': 'engine',
+    'transub-compute-task-status': 'engine',
+    'transub-transcribe-range': 'engine',
     'transub-read-subtitle-meta': 'extensions',
     'transub-write-subtitle-meta': 'extensions',
     'transub-get-glossary': 'extensions',
@@ -194,13 +275,21 @@ deferredBridges.installLazyRoutes({
     'transub-export-editor-workflows': 'extensions',
     'transub-import-editor-workflows': 'extensions',
     'transwithai-save-options': 'transwithai',
+    'transub-test-proxy': 'transwithai',
+    'transub-test-hf-endpoint': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
     'transwithai-get-pending-files': 'transwithai',
     'transwithai-select-videos': 'transwithai',
     'transwithai-show-in-folder': 'transwithai',
     'transwithai-open-external': 'transwithai',
     'ffmpeg-probe': 'extensions',
+    'ffmpeg-probe-acoustic': 'extensions',
+    'transub-sense-memory-lookup': 'extensions',
+    'transub-sense-memory-record': 'extensions',
+    'transub-sense-memory-stats': 'extensions',
+    'transub-sense-memory-clear': 'extensions',
     'ffmpeg-validate': 'extensions',
+    'transub-env-check': 'extensions',
     'ffmpeg-detect-silence': 'extensions',
     'ffmpeg-cancel': 'extensions',
     'ffmpeg-extract-waveform': 'extensions',
@@ -210,8 +299,13 @@ deferredBridges.installLazyRoutes({
     'transwithai-get-presets': 'extensions',
     'transwithai-save-preset': 'extensions',
     'transwithai-delete-preset': 'extensions',
+    'transwithai-export-preset': 'extensions',
+    'transwithai-import-preset': 'extensions',
     'transwithai-get-task-history': 'extensions',
     'transwithai-clear-task-history': 'extensions',
+    'transub-clear-transcript-cache': 'extensions',
+    'transub-find-kept-transcript': 'extensions',
+    'transub-pin-kept-transcript': 'extensions',
     'transub-get-editor-history': 'extensions',
     'transub-append-editor-history': 'extensions',
     'transub-clear-editor-history': 'extensions',
@@ -240,12 +334,15 @@ deferredBridges.installLazyRoutes({
     'transub-open-subtitle-editor': 'editorWindow',
     'transub-editor-register-path': 'editorWindow',
     'transub-open-settings': 'editorWindow',
+    'transub-open-setup-wizard': 'editorWindow',
     'transub-open-update-window': 'editorWindow',
     'transub-open-about-window': 'editorWindow',
     'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
+    'transub-consume-pending-setup-wizard': 'editorWindow',
     'transub-editor-refocus': 'editorWindow',
     'transub-editor-confirm': 'editorWindow',
+    'transub-editor-sync-menu': 'editorWindow',
     'transwithai-open-latest-log': 'extensions',
     'transwithai-export-config': 'extensions',
     'transwithai-import-config': 'extensions',
@@ -254,6 +351,46 @@ deferredBridges.installLazyRoutes({
     'transub-quit-and-install-update': 'extensions',
     'transub-open-update-page': 'extensions',
     'transwithai-open-path': 'extensions',
+    'transub-advanced-get-status': 'advanced',
+    'transub-advanced-activate': 'advanced',
+    'transub-advanced-transfer': 'advanced',
+    'transub-advanced-redeem-afdian': 'advanced',
+    'transub-advanced-revalidate': 'advanced',
+    'transub-advanced-deactivate': 'advanced',
+    'transub-advanced-save-byok': 'advanced',
+    'transub-advanced-clear-byok-key': 'advanced',
+    'transub-advanced-managed-llm-status': 'advanced',
+    'transub-advanced-managed-llm-select': 'advanced',
+    'transub-advanced-managed-llm-open-pick': 'advanced',
+    'transub-advanced-managed-llm-open-download': 'advanced',
+    'transub-advanced-managed-llm-download-info': 'advanced',
+    'transub-advanced-managed-llm-open-manual': 'advanced',
+    'transub-advanced-managed-llm-open-folder': 'advanced',
+    'transub-advanced-managed-llm-verify-manual': 'advanced',
+    'transub-advanced-managed-llm-pull': 'advanced',
+    'transub-advanced-managed-llm-install-runtime': 'advanced',
+    'transub-advanced-managed-llm-cancel-pull': 'advanced',
+    'transub-advanced-managed-llm-stop-server': 'advanced',
+    'transub-advanced-managed-llm-perf-test': 'advanced',
+    'transub-advanced-open-ollama-download': 'advanced',
+    'transub-advanced-require-feature': 'advanced',
+    'transub-advanced-context-reconstruct': 'advanced',
+    'transub-advanced-film-context-reconstruct': 'advanced',
+    'transub-advanced-smart-translate': 'advanced',
+    'transub-advanced-bilingual-semantic-review': 'advanced',
+    'transub-advanced-batch-context-reconstruct': 'advanced',
+    'transub-advanced-cancel-batch-context-reconstruct': 'advanced',
+    'transub-advanced-cancel-context-reconstruct': 'advanced',
+    'transub-advanced-test-byok': 'advanced',
+    'transub-advanced-reload-module': 'advanced',
+    'transub-sakura-status': 'engine',
+    'transub-sakura-translate': 'engine',
+    'transub-sakura-cancel-translate': 'engine',
+});
+
+deferredBridges.defer('advanced', (api) => {
+    const { setupAdvancedBridge } = require('./advanced-bridge');
+    setupAdvancedBridge(api, { windowManager });
 });
 
 deferredBridges.defer('extensions', (api) => {
@@ -271,6 +408,15 @@ deferredBridges.defer('editorWindow', (api) => {
             scheduleWarmEditorHeavyBridges();
         },
         windowManager,
+    });
+});
+
+deferredBridges.defer('engine', (api) => {
+    const { setupEngineBridge } = require('./engine-bridge');
+    setupEngineBridge(api, {
+        getAppRoot: () => getAppRoot(app),
+        windowManager,
+        ensureBridge: (name) => deferredBridges.ensure(name),
     });
 });
 
@@ -318,7 +464,18 @@ app.whenReady().then(() => {
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
-    if (editorOnlyMode) {
+    let preferEditorStartup = false;
+    if (!editorOnlyMode && !cliEdit && !cliFiles.length) {
+        try {
+            const loaded = loadSettings(() => getAppRoot(app));
+            preferEditorStartup = resolveStartupWindowPref(loaded?.options || {}) === 'editor';
+        } catch (err) {
+            console.warn('[main] read startupWindow failed:', err.message || err);
+        }
+    }
+
+    if (editorOnlyMode || preferEditorStartup) {
+        if (preferEditorStartup) editorOnlyMode = true;
         warmEditorBridges();
         if (cliEdit) {
             openCliSubtitleEditor(cliEdit);
@@ -339,13 +496,22 @@ app.whenReady().then(() => {
     setImmediate(() => {
         try {
             migrateLegacyUserDataFiles();
-            loadSettings(() => getAppRoot(app));
+            const loaded = loadSettings(() => getAppRoot(app));
+            try {
+                windowManager.setMinimizeToTrayEnabled?.(loaded?.options?.minimizeToTrayEnabled !== false);
+            } catch { /* ignore */ }
+            try {
+                const { applyProxyFromSettings } = require('./proxy-settings');
+                const { session } = require('electron');
+                void applyProxyFromSettings(loaded?.options || {}, { session: session.defaultSession });
+            } catch (err) {
+                console.warn('[main] proxy apply failed:', err.message || err);
+            }
         } catch (err) {
             console.warn('[main] user data migration failed:', err.message || err);
         }
     });
 });
-
 app.on('window-all-closed', () => {
     if (windowManager.isQuitting()) return;
     // Windows-only app: always quit when all windows close
@@ -361,6 +527,18 @@ app.on('before-quit', () => {
     try {
         const { stopSubtitleJobs } = require('./transwithai-bridge');
         stopSubtitleJobs();
+    } catch { /* ignore */ }
+    try {
+        const { stopEngineJobs } = require('./engine-bridge');
+        stopEngineJobs();
+    } catch { /* ignore */ }
+    try {
+        const { stopLlamaServer } = require('./advanced-llama-server');
+        stopLlamaServer();
+    } catch { /* ignore */ }
+    try {
+        const { forceRelease } = require('./compute-task-lock');
+        forceRelease();
     } catch { /* ignore */ }
 });
 

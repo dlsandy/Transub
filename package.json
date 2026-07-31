@@ -1,10 +1,10 @@
 {
   "name": "transub",
-  "version": "2.0.0",
-  "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与视频同步预览",
+  "version": "3.0.0",
+  "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dlsandy/Transub.git"
@@ -23,9 +23,13 @@
     "start:editor": "node tools/patch-electron-icon.js && electron . --subtitle-editor-only",
     "build:css": "node tools/build-css.js",
     "build:renderer": "node tools/build-renderer.js",
+    "build:advanced": "node tools/build-advanced-module.js",
+    "check:release": "node tools/check-release-ready.js",
     "verify:packaging": "node tools/verify-packaging.js",
-    "pack": "npm run build:renderer && npm run verify:packaging && electron-builder --dir",
-    "dist": "npm run build:renderer && npm run verify:packaging && electron-builder",
+    "ensure:bundled-models": "node tools/ensure-bundled-models.js",
+    "ensure:bundled-wheels": "node tools/ensure-bundled-wheels.js",
+    "pack": "npm run build:renderer && npm run build:advanced && npm run ensure:bundled-models && npm run ensure:bundled-wheels && npm run verify:packaging && electron-builder --dir",
+    "dist": "npm run build:renderer && npm run build:advanced && npm run ensure:bundled-models && npm run ensure:bundled-wheels && npm run verify:packaging && electron-builder",
     "build": "powershell -ExecutionPolicy Bypass -File tools/build.ps1",
     "build:dir": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target dir",
     "build:zip": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip",
@@ -33,6 +37,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "fetch:av-makers": "node tools/fetch-av-makers.js",
     "lint": "eslint electron src/js tests tools --max-warnings 200",
     "lint:fix": "eslint electron src/js tests tools --fix",
     "format": "prettier --write \"electron/**/*.js\" \"src/js/**/*.js\" \"tests/**/*.js\" \"tools/**/*.js\"",
@@ -41,7 +46,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "json5": "^2.2.3"
+    "json5": "^2.2.3",
+    "undici": "^8.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
@@ -72,10 +78,23 @@
     },
     "files": [
       "electron/**/*",
+      "!electron/advanced-context-reconstruct.js",
+      "!electron/advanced-film-reconstruct.js",
+      "!electron/advanced-bilingual-semantic.js",
+      "!electron/advanced-reconstruct-runtime.js",
+      "!electron/advanced-smart-translate.js",
       "package.json",
       "renderer-dist/**/*",
+      "!renderer-dist/js/advanced-film-reconstruct-core.js",
+      "!renderer-dist/js/advanced-smart-translate-core.js",
       "src/js/*-core.js",
-      "src/js/subtitle-chinese-dict.js"
+      "!src/js/advanced-film-reconstruct-core.js",
+      "!src/js/advanced-smart-translate-core.js",
+      "src/js/subtitle-chinese-dict.js",
+      "src/js/tone-adapt.tz1",
+      "src/js/av-makers.am1",
+      "src/js/av-makers-embed.js",
+      "shared/ja-asr-domain-fixes.json"
     ],
     "asarUnpack": [
       "electron/app.ico",
@@ -96,10 +115,67 @@
     ],
     "extraFiles": [
       {
+        "from": "_advanced",
+        "to": "_advanced",
+        "filter": [
+          "index.js",
+          "MODULE.json"
+        ]
+      },
+      {
+        "from": "shared/ja-asr-domain-fixes.json",
+        "to": "shared/ja-asr-domain-fixes.json"
+      },
+      {
         "from": "_internal",
         "to": "_internal",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "transub-engine",
+        "to": "transub-engine",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/.venv/**",
+          "!**/venv/**",
+          "!**/_internal/bin/*.exe",
+          "!**/_internal/bin/*.dll",
+          "!**/.cache/**",
+          "!models/asr/**",
+          "!models/mt/**",
+          "!models/vad/**",
+          "!**/site-packages/nvidia/**",
+          "!**/site-packages/nvidia_*.dist-info/**",
+          "!**/site-packages/torch/**",
+          "!**/site-packages/torch-*.dist-info/**",
+          "!**/site-packages/torchaudio/**",
+          "!**/site-packages/torchaudio-*.dist-info/**",
+          "!**/site-packages/torchvision/**",
+          "!**/site-packages/torchvision-*.dist-info/**",
+          "!**/site-packages/onnxruntime/**",
+          "!**/site-packages/onnxruntime_*/**",
+          "!**/site-packages/onnxruntime-*.dist-info/**",
+          "!**/site-packages/ctranslate2/**",
+          "!**/site-packages/ctranslate2-*.dist-info/**",
+          "!**/site-packages/whisper/**",
+          "!**/site-packages/openai_whisper-*.dist-info/**",
+          "!**/site-packages/demucs/**",
+          "!**/site-packages/demucs-*.dist-info/**",
+          "!**/*.onnx",
+          "!**/*.pt",
+          "!**/*.pth",
+          "!**/*.bin",
+          "!**/*.safetensors",
+          "!**/*.gguf",
+          "!**/*.ct2",
+          "!**/*.ckpt",
+          "models/asr/whisper-tiny/**",
+          "models/vad/fsmn-vad/**",
+          "!models/**/.cache/**"
         ]
       }
     ],

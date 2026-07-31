@@ -7,7 +7,7 @@
     const metaEl = () => document.getElementById('updateMeta');
     const progressHost = () => document.getElementById('updateDownloadProgress');
 
-    /** @type {{ latestVersion?: string, downloadUrl?: string, releasesUrl?: string, canAutoInstall?: boolean } | null} */
+    /** @type {{ latestVersion?: string, downloadUrl?: string, releasesUrl?: string, canAutoInstall?: boolean, installKind?: string, preservesEngineData?: boolean } | null} */
     let lastCheck = null;
     let busy = false;
     /** @type {(() => void) | null} */
@@ -151,7 +151,11 @@
             showEl('downloadBtn', true);
             const btn = document.getElementById('downloadBtn');
             if (btn) btn.disabled = false;
-            setMeta('可在本窗口下载并在重启后安装（NSIS 安装版）。');
+            if (res.preservesEngineData || res.installKind === 'zip' || res.installKind === 'nsis') {
+                setMeta('可在本窗口下载并重启安装。已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。');
+            } else {
+                setMeta('可在本窗口下载并在重启后安装。');
+            }
         } else {
             showEl('openReleasesBtn', true);
             const btn = document.getElementById('openReleasesBtn');
@@ -194,7 +198,9 @@
                 renderProgress(progress, lastCheck.latestVersion);
             }) || null;
 
-            const dl = await electron.transubDownloadAppUpdate();
+            const dl = await electron.transubDownloadAppUpdate({
+                version: lastCheck.latestVersion,
+            });
             if (!dl?.ok) {
                 setProgressVisible(false);
                 setStatus(dl?.error || '下载失败', 'err');

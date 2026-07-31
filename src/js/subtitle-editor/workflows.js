@@ -20,8 +20,10 @@
             getDefaultQcScanOptions,
             getTargetCps,
             loadSplitPrefs,
+            loadFilmHints,
             getEffectiveGlossary,
             getSelectedCueIndexes,
+            getVisibleCueIndexes,
             qcCore,
             fluencyCore,
             chineseCore,
@@ -54,14 +56,26 @@
             retranslateSelectedCue,
             retranscribeDualSelectedCue,
             selectCue,
+            refreshListRow,
             showSilenceSplitProgress,
             updateSilenceSplitProgress,
             hideSilenceSplitProgress,
             flushSilenceProgressPaint,
+            showInferenceProgress,
+            updateInferenceProgress,
+            hideInferenceProgress,
+            formatInferenceElapsed,
             setSilenceSplitBusy,
             canSilenceSplitCue,
             loadRetranscribeDurPrefs,
             esc,
+            syncDualDisplaySelectVisibility,
+            invalidatePairOverlapIndex,
+            loadDualDisplayMode,
+            loadDualLineOrder,
+            savePairDocument,
+            basename: basenameFn,
+            editorConfirm,
         } = ctx;
 
         if (!workflowsCore) {
@@ -79,6 +93,20 @@
 
         function isEditableWorkflow(wf) {
             return !!(wf && !wf.builtin);
+        }
+
+        async function applyTraditionalIfNeeded(updates) {
+            const list = Array.isArray(updates) ? updates : [];
+            if (!list.length || !chineseCore?.convertText) return list;
+            try {
+                const optsRes = await electron?.transWithAiGetOptions?.({});
+                if (optsRes?.options?.chineseSubtitleVariant !== 'traditional') return list;
+                for (const u of list) {
+                    const converted = chineseCore.convertText(String(u.text ?? ''), 's2t');
+                    if (converted?.text != null) u.text = converted.text;
+                }
+            } catch (_) { /* ignore */ }
+            return list;
         }
 
         async function loadWorkflows() {
@@ -143,7 +171,8 @@
             for (const [group, steps] of groups) {
                 parts.push(`<optgroup label="${esc(group)}">`);
                 for (const s of steps) {
-                    parts.push(`<option value="${esc(s.id)}">${esc(s.label)}</option>`);
+                    const suffix = s.advanced ? ' · 需许可' : '';
+                    parts.push(`<option value="${esc(s.id)}">${esc(s.label)}${suffix}</option>`);
                 }
                 parts.push('</optgroup>');
             }
@@ -179,7 +208,7 @@
                 const meta = workflowsCore.getStepMeta(s.type);
                 const chips = [];
                 if (s.requireConfirm) chips.push('<span class="wf-chip warn">需确认</span>');
-                if (s.params?.scope) chips.push(`<span class="wf-chip">${esc(s.params.scope)}</span>`);
+                if (s.params?.scope) chips.push(`<span class="wf-chip">${esc(scopeChipLabel(s.params.scope))}</span>`);
                 const moveBtns = editable
                     ? `<div style="display:flex;flex-direction:column;gap:0.15rem">
                         <button type="button" data-wf-move="-1" data-wf-idx="${idx}" title="上移" ${idx === 0 ? 'disabled' : ''}>▲</button>
@@ -277,14 +306,33 @@
             return true;
         }
 
+        function scopeChipLabel(scope) {
+            const map = {
+                all: '全部',
+                selected: '选中',
+                filtered: '当前筛选',
+                lowConfidence: '低置信',
+                bookmarks: '书签',
+            };
+            return map[scope] || scope;
+        }
+
         function resolveScopeIndexes(scope, { maxCues = 0 } = {}) {
             const mode = workflowsCore.normalizeScope(scope, 'all');
             let indexes = [];
             if (mode === 'selected') {
                 indexes = getSelectedCueIndexes();
+            } else if (mode === 'bookmarks') {
+                const markersCore = global.TransubEditorMarkers;
+                if (markersCore?.filterIndexesByBookmarks) {
+                    indexes = markersCore.filterIndexesByBookmarks(state.cues, state.markers, { padMs: 80 });
+                } else {
+                    indexes = [];
+                }
             } else if (mode === 'filtered') {
-                // filtered ≈ current list filter: prefer QC/low if active via selected set; else all
-                if (state.listFilter === 'low') {
+                if (typeof getVisibleCueIndexes === 'function') {
+                    indexes = getVisibleCueIndexes();
+                } else if (state.listFilter === 'low') {
                     indexes = state.cues.map((_, i) => i).filter((i) => state.cueMeta[i]?.low);
                 } else if (state.listFilter === 'qc') {
                     const scan = qcCore.scanCueIssues(state.cues, getDefaultQcScanOptions());
@@ -316,6 +364,1509 @@
                 added += result.cues.length - 1;
             }
             return { splitCount, added };
+        }
+
+        /**
+         * 重构结果对照确认。
+         * @param {Array<{ index: number, before: string, after: string, changed: boolean, fallback?: boolean }>} rows
+         * @param {{ title?: string, lead?: string, failedIndexes?: number[], onRetryFailed?: () => Promise<Array<{ index: number, text: string }>|null> }} [options]
+         * @returns {Promise<Array<{ index: number, text: string }>|null>}
+         */
+        const RECON_REVIEW_ONLY_CHANGED_KEY = 'transub-editor-recon-review-only-changed';
+
+        function promptReconstructReview(rows, options = {}) {
+            const modal = els.reconstructReviewModal;
+            const listEl = els.reconstructReviewList;
+            if (!modal || !listEl || !showEditorModal || !hideEditorModal) {
+                return Promise.resolve(
+                    rows.filter((r) => r.changed).map((r) => ({ index: r.index, text: r.after })),
+                );
+            }
+
+            const failedSet = new Set(
+                (Array.isArray(options.failedIndexes) ? options.failedIndexes : [])
+                    .filter((n) => Number.isInteger(n)),
+            );
+
+            return new Promise((resolve) => {
+                let onlyChanged = true;
+                try {
+                    const raw = localStorage.getItem(RECON_REVIEW_ONLY_CHANGED_KEY);
+                    if (raw === 'false') onlyChanged = false;
+                } catch (_) { /* ignore */ }
+
+                // Do not auto-check fallback / failed rows (e.g. MT source-echo)
+                const selected = new Set(
+                    rows
+                        .filter((r) => r.changed && !r.fallback && !failedSet.has(r.index))
+                        .map((r) => r.index),
+                );
+                const escape = typeof esc === 'function'
+                    ? esc
+                    : (s) => String(s ?? '')
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;');
+
+                if (els.reconstructReviewTitle) {
+                    els.reconstructReviewTitle.textContent = options.title || '重构结果对照';
+                }
+                if (els.reconstructReviewLead) {
+                    els.reconstructReviewLead.textContent = options.lead
+                        || '左边为原文，右边为重构结果。勾选要替换的条目后确认，才会覆盖字幕。';
+                }
+                if (els.reconstructReviewBeforeLabel) {
+                    els.reconstructReviewBeforeLabel.textContent = options.beforeLabel || '原文';
+                }
+                if (els.reconstructReviewAfterLabel) {
+                    els.reconstructReviewAfterLabel.textContent = options.afterLabel || '重构后';
+                }
+
+                const updateMeta = () => {
+                    if (!els.reconstructReviewMeta) return;
+                    const changed = rows.filter((r) => r.changed).length;
+                    els.reconstructReviewMeta.textContent = `变更 ${changed} / 共 ${rows.length} 条 · 已勾选 ${selected.size}`;
+                };
+
+                const syncOnlyChangedBtn = () => {
+                    if (!els.reconstructReviewOnlyChanged) return;
+                    els.reconstructReviewOnlyChanged.textContent = onlyChanged
+                        ? '显示全部返回'
+                        : '仅显示变更';
+                };
+
+                const renderList = () => {
+                    const visible = onlyChanged ? rows.filter((r) => r.changed) : rows;
+                    if (!visible.length) {
+                        listEl.innerHTML = '<div class="recon-review-empty">没有文本变更</div>';
+                        updateMeta();
+                        return;
+                    }
+                    listEl.innerHTML = visible.map((row) => {
+                        const checked = selected.has(row.index) ? ' checked' : '';
+                        const disabled = row.changed ? '' : ' disabled';
+                        const rowClass = [
+                            row.changed ? '' : ' is-unchanged',
+                            row.fallback || failedSet.has(row.index) ? ' is-fallback' : '',
+                        ].join('');
+                        const label = Number.isInteger(row.index) ? `#${row.index + 1}` : '—';
+                        const fallbackTag = (row.fallback || failedSet.has(row.index))
+                            ? '<span class="recon-fallback-tag">回退</span>'
+                            : '';
+                        return `
+                            <div class="recon-review-row${rowClass}" role="listitem" data-recon-index="${row.index}">
+                                <input type="checkbox" class="recon-check" data-recon-check="${row.index}"${checked}${disabled}>
+                                <button type="button" class="recon-idx" data-recon-jump="${row.index}">${escape(label)}${fallbackTag}</button>
+                                <span class="recon-review-cell is-before">${escape(row.before || '（空）')}</span>
+                                <textarea class="recon-review-after recon-review-cell is-after" data-recon-after="${row.index}" rows="2">${escape(row.after || '')}</textarea>
+                            </div>
+                        `;
+                    }).join('');
+                    updateMeta();
+                };
+
+                let settled = false;
+                const cleanup = () => {
+                    modal.querySelectorAll('[data-recon-review-dismiss]').forEach((el) => {
+                        el.removeEventListener('click', onCancel);
+                    });
+                    els.reconstructReviewConfirm?.removeEventListener('click', onConfirm);
+                    els.reconstructReviewSelectAll?.removeEventListener('click', onSelectAll);
+                    els.reconstructReviewSelectNone?.removeEventListener('click', onSelectNone);
+                    els.reconstructReviewOnlyChanged?.removeEventListener('click', onToggleOnlyChanged);
+                    els.reconstructReviewRetryFailed?.removeEventListener('click', onRetryFailed);
+                    listEl.removeEventListener('change', onListChange);
+                    listEl.removeEventListener('click', onListClick);
+                    document.removeEventListener('keydown', onKey);
+                };
+                const finish = (payload) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    hideEditorModal(modal);
+                    resolve(payload);
+                };
+                const readAcceptedFromUi = () => rows
+                    .filter((r) => r.changed && selected.has(r.index))
+                    .map((r) => {
+                        const ta = listEl.querySelector(`[data-recon-after="${r.index}"]`);
+                        const text = ta ? String(ta.value ?? '') : String(r.after ?? '');
+                        return { index: r.index, text };
+                    });
+                const onCancel = () => finish(null);
+                const onConfirm = () => finish(readAcceptedFromUi());
+                const onSelectAll = () => {
+                    rows.forEach((r) => {
+                        if (r.changed && !r.fallback && !failedSet.has(r.index)) {
+                            selected.add(r.index);
+                        }
+                    });
+                    renderList();
+                };
+                const onSelectNone = () => {
+                    selected.clear();
+                    renderList();
+                };
+                const onToggleOnlyChanged = () => {
+                    onlyChanged = !onlyChanged;
+                    try {
+                        localStorage.setItem(RECON_REVIEW_ONLY_CHANGED_KEY, onlyChanged ? 'true' : 'false');
+                    } catch (_) { /* ignore */ }
+                    syncOnlyChangedBtn();
+                    renderList();
+                };
+                const onListChange = (ev) => {
+                    const input = ev.target?.closest?.('[data-recon-check]');
+                    if (!input) return;
+                    const idx = Number(input.getAttribute('data-recon-check'));
+                    if (!Number.isInteger(idx)) return;
+                    if (input.checked) selected.add(idx);
+                    else selected.delete(idx);
+                    updateMeta();
+                };
+                const onListClick = (ev) => {
+                    if (ev.target.closest('[data-recon-check]')) return;
+                    if (ev.target.closest('textarea')) return;
+                    const jump = ev.target.closest?.('[data-recon-jump]');
+                    const row = jump || ev.target.closest?.('[data-recon-index]');
+                    if (!row) return;
+                    const idx = Number(row.getAttribute('data-recon-jump') ?? row.getAttribute('data-recon-index'));
+                    if (Number.isInteger(idx) && typeof selectCue === 'function') {
+                        selectCue(idx, { scroll: true, seek: true });
+                    }
+                };
+                const onRetryFailed = async () => {
+                    if (!options.onRetryFailed || settled) return;
+                    const retryBtn = els.reconstructReviewRetryFailed;
+                    if (retryBtn) retryBtn.disabled = true;
+                    try {
+                        const merged = await options.onRetryFailed();
+                        if (!merged?.length) return;
+                        for (const u of merged) {
+                            const idx = Number(u.index);
+                            if (!Number.isInteger(idx)) continue;
+                            const row = rows.find((r) => r.index === idx);
+                            if (!row) continue;
+                            const after = String(u.text ?? '');
+                            row.after = after;
+                            row.changed = row.before !== after;
+                            row.fallback = false;
+                            failedSet.delete(idx);
+                            if (row.changed) selected.add(idx);
+                        }
+                        if (els.reconstructReviewRetryFailed) {
+                            els.reconstructReviewRetryFailed.classList.toggle('hidden', failedSet.size === 0);
+                        }
+                        renderList();
+                    } finally {
+                        if (retryBtn) retryBtn.disabled = false;
+                    }
+                };
+                const onKey = (ev) => {
+                    if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        onCancel();
+                    }
+                };
+
+                modal.querySelectorAll('[data-recon-review-dismiss]').forEach((el) => {
+                    el.addEventListener('click', onCancel);
+                });
+                els.reconstructReviewConfirm?.addEventListener('click', onConfirm);
+                els.reconstructReviewSelectAll?.addEventListener('click', onSelectAll);
+                els.reconstructReviewSelectNone?.addEventListener('click', onSelectNone);
+                els.reconstructReviewOnlyChanged?.addEventListener('click', onToggleOnlyChanged);
+                if (els.reconstructReviewRetryFailed) {
+                    const showRetry = failedSet.size > 0 && typeof options.onRetryFailed === 'function';
+                    els.reconstructReviewRetryFailed.classList.toggle('hidden', !showRetry);
+                    els.reconstructReviewRetryFailed.disabled = !showRetry;
+                    if (showRetry) {
+                        els.reconstructReviewRetryFailed.addEventListener('click', onRetryFailed);
+                    }
+                }
+                listEl.addEventListener('change', onListChange);
+                listEl.addEventListener('click', onListClick);
+                document.addEventListener('keydown', onKey);
+
+                syncOnlyChangedBtn();
+                renderList();
+                showEditorModal(modal, els.reconstructReviewConfirm);
+            });
+        }
+
+        /**
+         * 影片简要预览确认（可编辑后再改写）。
+         * @returns {Promise<object|null>}
+         */
+        function promptFilmBriefPreview(brief) {
+            const modal = els.filmBriefModal;
+            if (!modal || !showEditorModal || !hideEditorModal) {
+                return Promise.resolve(brief || null);
+            }
+            const filmCore = global.TransubAdvancedFilmReconstruct;
+            const normalized = filmCore?.normalizeFilmBrief
+                ? filmCore.normalizeFilmBrief(brief)
+                : (brief || {});
+
+            return new Promise((resolve) => {
+                if (els.filmBriefTitleGuess) els.filmBriefTitleGuess.value = normalized.titleGuess || '';
+                if (els.filmBriefGenre) els.filmBriefGenre.value = normalized.genre || '';
+                if (els.filmBriefSynopsis) els.filmBriefSynopsis.value = normalized.synopsis || '';
+                if (els.filmBriefTone) els.filmBriefTone.value = normalized.tone || '';
+                if (els.filmBriefStyleNotes) els.filmBriefStyleNotes.value = normalized.styleNotes || '';
+
+                let settled = false;
+                const finish = (payload) => {
+                    if (settled) return;
+                    settled = true;
+                    modal.querySelectorAll('[data-film-brief-dismiss]').forEach((el) => {
+                        el.removeEventListener('click', onCancel);
+                    });
+                    els.filmBriefConfirm?.removeEventListener('click', onConfirm);
+                    document.removeEventListener('keydown', onKey);
+                    hideEditorModal(modal);
+                    resolve(payload);
+                };
+                const onCancel = () => finish(null);
+                const onConfirm = () => {
+                    const next = filmCore?.normalizeFilmBrief
+                        ? filmCore.normalizeFilmBrief({
+                            titleGuess: els.filmBriefTitleGuess?.value || '',
+                            genre: els.filmBriefGenre?.value || '',
+                            synopsis: els.filmBriefSynopsis?.value || '',
+                            tone: els.filmBriefTone?.value || '',
+                            styleNotes: els.filmBriefStyleNotes?.value || '',
+                            characters: normalized.characters,
+                            terms: normalized.terms,
+                            timeline: normalized.timeline,
+                            avoid: normalized.avoid,
+                        })
+                        : normalized;
+                    finish(next);
+                };
+                const onKey = (ev) => {
+                    if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        onCancel();
+                    }
+                };
+
+                modal.querySelectorAll('[data-film-brief-dismiss]').forEach((el) => {
+                    el.addEventListener('click', onCancel);
+                });
+                els.filmBriefConfirm?.addEventListener('click', onConfirm);
+                document.addEventListener('keydown', onKey);
+                showEditorModal(modal, els.filmBriefTitleGuess || els.filmBriefConfirm);
+            });
+        }
+
+        async function runContextReconstructOnce({
+            scope = 'all',
+            windowCues = 30,
+            preserveTiming = true,
+            mode = 'basic',
+            sceneMaxCues = 36,
+            sceneGapMs = 2500,
+            filmTitle = '',
+            filmSynopsis = '',
+            filmTerms = '',
+            filmBrief = null,
+            userNote = '',
+            note = '',
+            intensity = 'balanced',
+            skipReview = false,
+            cueIndexes = null,
+        } = {}) {
+            const filmMode = mode === 'film';
+            const invoke = filmMode
+                ? electron?.transubAdvancedFilmContextReconstruct
+                : electron?.transubAdvancedContextReconstruct;
+            if (!invoke) {
+                return { status: 'failed', summary: '当前环境不支持 Pro' };
+            }
+            if (state.reconstructBusy) {
+                return { status: 'skipped', summary: '语境重构进行中' };
+            }
+            if (state.computeBusy) {
+                return {
+                    status: 'skipped',
+                    summary: state.computeBusyLabel
+                        ? `已有${state.computeBusyLabel}正在运行`
+                        : '其它窗口有引擎或 LLM 任务正在运行',
+                };
+            }
+            let indexes = Array.isArray(cueIndexes) && cueIndexes.length
+                ? [...cueIndexes].filter((n) => Number.isInteger(n))
+                : resolveScopeIndexes(scope);
+            if (!indexes.length) {
+                return { status: 'skipped', summary: '范围内无字幕' };
+            }
+            if (!state.pairCues?.length && state.keptTranscript?.found && !state.keptTranscript.cues?.length) {
+                try {
+                    const doc = await electron?.transubReadSubtitle?.({ path: state.keptTranscript.path });
+                    if (doc?.ok) state.keptTranscript.cues = Array.isArray(doc.cues) ? doc.cues : [];
+                } catch (_) { /* ignore */ }
+            }
+            const dualApi = global.TransubDualSubtitle || null;
+            const buildCuesPayload = (idxList) => idxList.map((idx) => {
+                const cue = state.cues[idx];
+                let sourceText = '';
+                if (dualApi && state.pairCues?.length && cue) {
+                    const hit = dualApi.findBestOverlapCue(
+                        state.pairCues,
+                        cue.startMs,
+                        cue.endMs,
+                    );
+                    sourceText = String(hit?.cue?.text || '');
+                }
+                // Fallback: kept ASR transcript cache when no dual pair is mounted
+                if (!sourceText && state.keptTranscript?.cues?.length && cue) {
+                    const compare = global.TransubTranscriptCompare;
+                    const hit = compare?.findBestOverlapCue?.(
+                        state.keptTranscript.cues,
+                        cue.startMs,
+                        cue.endMs,
+                    );
+                    sourceText = String(hit?.cue?.text || '');
+                }
+                return {
+                    index: idx,
+                    startMs: cue?.startMs,
+                    endMs: cue?.endMs,
+                    text: cue?.text || '',
+                    sourceText,
+                };
+            });
+
+            const effectiveNote = String(userNote || note || '').trim();
+            const effectiveTitle = String(filmTitle || '').trim();
+            const effectiveSynopsis = String(filmSynopsis || '').trim();
+            const effectiveTerms = String(filmTerms || '').trim();
+            const effectiveIntensity = String(intensity || 'balanced').trim() || 'balanced';
+
+            state.reconstructBusy = true;
+            const titleText = filmMode ? '影片理解重构中' : '语境重构中';
+            const formatElapsed = typeof formatInferenceElapsed === 'function'
+                ? formatInferenceElapsed
+                : ((ms) => {
+                    const sec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+                    if (sec < 60) return `${sec}s`;
+                    return `${Math.floor(sec / 60)}m${sec % 60}s`;
+                });
+            const chunkDurations = [];
+            let lastChunkMark = Date.now();
+            const showProgress = (info = {}) => {
+                if (info.phase === 'chunk-done' && info.chunk) {
+                    const now = Date.now();
+                    if (lastChunkMark) chunkDurations.push(now - lastChunkMark);
+                    lastChunkMark = now;
+                } else if (info.phase === 'chunk' && info.chunk === 1) {
+                    lastChunkMark = Date.now();
+                }
+                let countText = `${indexes.length} 条`;
+                if (info.phase === 'brief' || info.phase === 'brief-done') countText = 'Brief';
+                else if (info.chunk && info.total) countText = `块 ${info.chunk} / ${info.total}`;
+
+                const elapsed = info.elapsedMs != null ? ` · 已用时 ${formatElapsed(info.elapsedMs)}` : '';
+                let eta = '';
+                if (info.chunk && info.total && chunkDurations.length) {
+                    const avg = chunkDurations.reduce((a, b) => a + b, 0) / chunkDurations.length;
+                    const remaining = Math.max(0, Number(info.total) - Number(info.chunk));
+                    if (remaining > 0) {
+                        eta = ` · 预计剩余 ~${formatElapsed(avg * remaining)}`;
+                    }
+                }
+                const hint = filmMode
+                    ? `先分析全片 Brief，再按场景改写，可随时取消${elapsed}${eta}`
+                    : `正在按块调用大模型改写译文，可随时取消${elapsed}${eta}`;
+
+                if (typeof showInferenceProgress === 'function') {
+                    const overlay = document.getElementById('editorReconstructProgress');
+                    if (!overlay || overlay.classList.contains('hidden')) {
+                        showInferenceProgress({
+                            kind: filmMode ? 'film' : 'reconstruct',
+                            badge: '大模型推理',
+                            title: titleText,
+                            detail: info.message || `正在处理 ${indexes.length} 条字幕…`,
+                            countText,
+                            hint,
+                            pct: info.pct,
+                            indeterminate: !Number.isFinite(Number(info.pct)),
+                        });
+                    } else {
+                        updateInferenceProgress({
+                            title: titleText,
+                            message: info.message || `正在处理 ${indexes.length} 条字幕…`,
+                            countText,
+                            hint,
+                            pct: info.pct,
+                            phase: info.phase,
+                            chunk: info.chunk,
+                            total: info.total,
+                        });
+                    }
+                } else {
+                    setStatus(info.message || `${titleText}…`);
+                }
+            };
+            const hideProgress = () => {
+                if (typeof hideInferenceProgress === 'function') hideInferenceProgress();
+                else {
+                    const overlay = document.getElementById('editorReconstructProgress');
+                    overlay?.classList.add('hidden');
+                    overlay?.setAttribute('aria-busy', 'false');
+                    state.reconstructBusy = false;
+                }
+            };
+
+            const collectFailedIndexes = (res) => {
+                const out = new Set();
+                for (const f of res?.failures || []) {
+                    for (const idx of f?.indexes || []) {
+                        if (Number.isInteger(idx)) out.add(idx);
+                    }
+                }
+                return [...out];
+            };
+
+            const buildRowsFromUpdates = (updates, failedIndexes = []) => {
+                const failedSet = new Set(failedIndexes);
+                const rows = [];
+                for (const u of updates) {
+                    const idx = Number(u.index);
+                    if (!Number.isInteger(idx) || !state.cues[idx]) continue;
+                    const before = String(state.cues[idx].text ?? '');
+                    const after = String(u.text ?? '');
+                    rows.push({
+                        index: idx,
+                        before,
+                        after,
+                        changed: before !== after,
+                        fallback: failedSet.has(idx),
+                    });
+                }
+                return rows;
+            };
+
+            const invokeReconstruct = async ({
+                idxList,
+                brief = filmBrief,
+                keepServer = false,
+                briefOnly = false,
+            } = {}) => {
+                const payload = {
+                    cues: buildCuesPayload(idxList),
+                    scope,
+                    windowCues,
+                    preserveTiming,
+                    sceneMaxCues,
+                    sceneGapMs,
+                    glossary: getEffectiveGlossary(),
+                    filmTitle: effectiveTitle,
+                    filmSynopsis: effectiveSynopsis,
+                    filmTerms: effectiveTerms,
+                    userNote: effectiveNote,
+                    note: effectiveNote,
+                    intensity: effectiveIntensity,
+                    _keepManagedServer: keepServer,
+                };
+                if (brief) payload.filmBrief = brief;
+                if (briefOnly) payload.briefOnly = true;
+                return invoke(payload);
+            };
+
+            showProgress({
+                message: filmMode
+                    ? `影片理解重构中（${indexes.length} 条）…`
+                    : `语境重构中（${indexes.length} 条）…`,
+                pct: 0,
+            });
+            const offProgress = electron.onAdvancedReconstructProgress?.((info) => {
+                if (!info || info.mode === 'batch') return;
+                showProgress(info);
+            });
+
+            try {
+                let resolvedBrief = filmBrief;
+                if (filmMode && !resolvedBrief) {
+                    const briefRes = await invokeReconstruct({
+                        idxList: indexes,
+                        brief: null,
+                        keepServer: true,
+                        briefOnly: true,
+                    });
+                    if (!briefRes?.ok) {
+                        try { await electron?.transubAdvancedManagedLlmStopServer?.(); } catch (_) { /* ignore */ }
+                        return {
+                            status: briefRes?.code === 'aborted' ? 'cancelled' : 'failed',
+                            summary: briefRes?.error || '影片简要生成失败',
+                        };
+                    }
+                    if (briefRes.briefOnly && briefRes.filmBrief) {
+                        hideProgress();
+                        const confirmedBrief = await promptFilmBriefPreview(briefRes.filmBrief);
+                        if (!confirmedBrief) {
+                            try { await electron?.transubAdvancedManagedLlmStopServer?.(); } catch (_) { /* ignore */ }
+                            return { status: 'cancelled', summary: '已取消 Brief 确认' };
+                        }
+                        resolvedBrief = confirmedBrief;
+                        showProgress({
+                            message: `Brief 已确认，开始场景改写（${indexes.length} 条）…`,
+                            pct: 12,
+                        });
+                    }
+                }
+
+                let res = await invokeReconstruct({
+                    idxList: indexes,
+                    brief: resolvedBrief,
+                    keepServer: false,
+                });
+                if (!res?.ok) {
+                    return {
+                        status: res?.code === 'aborted' ? 'cancelled' : 'failed',
+                        summary: res?.error || (filmMode ? '影片理解重构失败' : '语境重构失败'),
+                    };
+                }
+                const updates = Array.isArray(res.cues) ? res.cues : [];
+                if (!updates.length && !res.briefOnly) {
+                    return {
+                        status: 'skipped',
+                        summary: res.message || '未返回改写结果',
+                    };
+                }
+                await applyTraditionalIfNeeded(updates);
+
+                let failedIndexes = collectFailedIndexes(res);
+                let rows = buildRowsFromUpdates(updates, failedIndexes);
+                if (!rows.length) {
+                    return { status: 'skipped', summary: '未返回可应用条目' };
+                }
+                const changedCount = rows.filter((r) => r.changed).length;
+                if (!changedCount) {
+                    return { status: 'skipped', summary: '无文本变更' };
+                }
+
+                hideProgress();
+                setStatus(`重构完成，请对照确认（变更 ${changedCount} 条）…`);
+
+                const via = res.via === 'mock' ? '模拟'
+                    : (res.via === 'module' ? '模块'
+                        : (filmMode ? '影片理解' : '内置'));
+                const failHint = res.stats?.failedChunks
+                    ? `，${res.stats.failedChunks} 块回退`
+                    : '';
+
+                let accepted = null;
+                if (skipReview) {
+                    accepted = rows
+                        .filter((r) => r.changed)
+                        .map((r) => ({ index: r.index, text: r.after }));
+                } else {
+                    accepted = await promptReconstructReview(rows, {
+                        title: filmMode ? '影片理解重构 · 结果对照' : '语境重构 · 结果对照',
+                        lead: `来源：${via}${failHint}。确认后才会覆盖原字幕；放弃则不做任何修改。`,
+                        failedIndexes,
+                        onRetryFailed: failedIndexes.length
+                            ? async () => {
+                                showProgress({
+                                    message: `重试失败块（${failedIndexes.length} 条）…`,
+                                    pct: 0,
+                                });
+                                const retryRes = await invokeReconstruct({
+                                    idxList: failedIndexes,
+                                    brief: resolvedBrief,
+                                    keepServer: true,
+                                });
+                                hideProgress();
+                                if (!retryRes?.ok) {
+                                    setStatus(retryRes?.error || '重试失败', 'err');
+                                    return null;
+                                }
+                                const retryUpdates = Array.isArray(retryRes.cues) ? retryRes.cues : [];
+                                await applyTraditionalIfNeeded(retryUpdates);
+                                const retryFailed = collectFailedIndexes(retryRes);
+                                failedIndexes = retryFailed;
+                                res = retryRes;
+                                return retryUpdates.map((u) => ({
+                                    index: Number(u.index),
+                                    text: String(u.text ?? ''),
+                                })).filter((u) => Number.isInteger(u.index));
+                            }
+                            : undefined,
+                    });
+                }
+
+                if (!accepted) {
+                    return { status: 'cancelled', summary: '已放弃替换' };
+                }
+                if (!accepted.length) {
+                    return { status: 'skipped', summary: '未勾选任何变更' };
+                }
+
+                recordUndoBeforeChange();
+                let changed = 0;
+                for (const u of accepted) {
+                    const idx = Number(u.index);
+                    if (!Number.isInteger(idx) || !state.cues[idx]) continue;
+                    const nextText = String(u.text ?? '');
+                    if (nextText !== state.cues[idx].text) {
+                        state.cues[idx].text = nextText;
+                        changed += 1;
+                    }
+                }
+                if (!changed) return { status: 'skipped', summary: '无文本变更' };
+                setDirty(true);
+                if (changed > 80 || typeof refreshListRow !== 'function') {
+                    renderCueList();
+                } else {
+                    for (const u of accepted) {
+                        const idx = Number(u.index);
+                        if (Number.isInteger(idx)) refreshListRow(idx);
+                    }
+                }
+                renderDetailPane();
+                return {
+                    status: 'done',
+                    summary: `已替换 ${changed} 条（${via}${failHint}）`,
+                    changed: true,
+                };
+            } finally {
+                if (typeof offProgress === 'function') offProgress();
+                state.reconstructBusy = false;
+                hideProgress();
+            }
+        }
+
+        function pathBasename(filePath) {
+            if (typeof basenameFn === 'function') return basenameFn(filePath);
+            const s = String(filePath || '');
+            const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+            return i >= 0 ? s.slice(i + 1) : s;
+        }
+
+        function pathDirname(filePath) {
+            const s = String(filePath || '');
+            const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+            return i >= 0 ? s.slice(0, i) : '';
+        }
+
+        function pathSep(filePath) {
+            return String(filePath || '').includes('\\') ? '\\' : '/';
+        }
+
+        function stemNoExt(filePath) {
+            const base = pathBasename(filePath);
+            const i = base.lastIndexOf('.');
+            return i > 0 ? base.slice(0, i) : base;
+        }
+
+        function fileExt(filePath) {
+            const base = pathBasename(filePath);
+            const i = base.lastIndexOf('.');
+            return i > 0 ? base.slice(i) : '.srt';
+        }
+
+        /**
+         * Effective source/target role for MT routing.
+         * Priority: explicit dual mount → filename suffix (.ja/.zh) → cue text script.
+         * Video-homonymous files (no suffix) rely on text: kana→原文, 汉字无假名→译文.
+         */
+        function inferPrimaryDualRole() {
+            const dualApi = global.TransubDualSubtitle;
+            if (state.dualRole === 'source' || state.dualRole === 'target') return state.dualRole;
+            const primary = String(state.path || '').trim();
+            if (primary && dualApi?.inferDualRole) {
+                const videoStem = state.videoPath ? stemNoExt(state.videoPath) : '';
+                const fromName = dualApi.inferDualRole(stemNoExt(primary), videoStem || undefined);
+                if (fromName?.role === 'source' || fromName?.role === 'target') return fromName.role;
+            }
+            // No suffix / unknown name → judge from dialogue script
+            if (dualApi?.inferDualRoleFromCues && state.cues?.length) {
+                const fromText = dualApi.inferDualRoleFromCues(state.cues);
+                if (fromText?.role === 'source' || fromText?.role === 'target') {
+                    return fromText.role;
+                }
+            }
+            return null;
+        }
+
+        function cueListHasText(list) {
+            return (Array.isArray(list) ? list : []).some((c) => String(c?.text || '').trim());
+        }
+
+        /**
+         * Resolve where JA/source text for MT comes from.
+         * Translation must never use the translation-track text as input.
+         */
+        function resolveOriginalSourceInfo() {
+            const role = inferPrimaryDualRole();
+            if (state.dualRole === 'source' && cueListHasText(state.cues)) {
+                return { available: true, kind: 'current', role: 'source' };
+            }
+            if (state.dualRole === 'target' && cueListHasText(state.pairCues)) {
+                return { available: true, kind: 'pair', role: 'target' };
+            }
+            if (state.keptTranscript?.found && cueListHasText(state.keptTranscript.cues)) {
+                return { available: true, kind: 'kept', role: state.dualRole || role };
+            }
+            if (state.keptTranscript?.found && !state.keptTranscript.cues?.length) {
+                // path known but not loaded yet — caller should load first
+                return { available: true, kind: 'kept', role: state.dualRole || role, needsLoad: true };
+            }
+            if (!state.pairCues?.length) {
+                if (role === 'target') {
+                    return {
+                        available: false,
+                        kind: null,
+                        role: 'target',
+                        canGenerate: !!state.videoPath,
+                    };
+                }
+                // source-named or unsuffixed monolingual → current cues are the original
+                if (cueListHasText(state.cues)) {
+                    return { available: true, kind: 'current', role: role || 'source' };
+                }
+            }
+            if (state.pairCues?.length && state.dualRole !== 'target' && cueListHasText(state.cues)) {
+                return { available: true, kind: 'current', role: state.dualRole || role || 'source' };
+            }
+            return {
+                available: false,
+                kind: null,
+                role: role || state.dualRole || null,
+                canGenerate: !!state.videoPath,
+            };
+        }
+
+        /**
+         * How accepted MT text should be written back.
+         * - current: editing target track (or target-named monolingual) → write ZH here
+         * - pair / promote-dual: keep JA on primary, write ZH to target pair track
+         */
+        function resolveTranslateWriteMode() {
+            if (state.pairCues?.length && state.dualRole === 'target') return 'current';
+            if (state.pairCues?.length) return 'pair';
+            const role = inferPrimaryDualRole();
+            if (role === 'target') return 'current';
+            return 'promote-dual';
+        }
+
+        /**
+         * Derive a sibling `.zh` (or inferred pair) path for monolingual → dual promote.
+         */
+        function deriveTargetPairPath(primaryPath, videoPath) {
+            const dualApi = global.TransubDualSubtitle;
+            const primary = String(primaryPath || '').trim();
+            if (!primary) return '';
+            const dir = pathDirname(primary);
+            const sep = pathSep(primary);
+            const ext = fileExt(primary);
+            const noExt = stemNoExt(primary);
+            const videoStem = videoPath ? stemNoExt(videoPath) : '';
+            if (dualApi?.inferDualRole) {
+                const inferred = dualApi.inferDualRole(noExt, videoStem || undefined);
+                const stem = inferred.videoStem || videoStem || noExt;
+                if (inferred.role === 'source' && inferred.pairSuffix) {
+                    const next = `${dir}${sep}${stem}.${inferred.pairSuffix}${ext}`;
+                    return next === primary ? '' : next;
+                }
+                if (inferred.role === 'target') {
+                    return '';
+                }
+                const next = `${dir}${sep}${stem}.zh${ext}`;
+                return next === primary ? '' : next;
+            }
+            const next = `${dir}${sep}${noExt}.zh${ext}`;
+            return next === primary ? '' : next;
+        }
+
+        /** Sibling source path when primary is a target-named file (e.g. .zh → .ja/.source). */
+        function deriveSourcePairPath(primaryPath, videoPath) {
+            const dualApi = global.TransubDualSubtitle;
+            const primary = String(primaryPath || '').trim();
+            if (!primary) return '';
+            const dir = pathDirname(primary);
+            const sep = pathSep(primary);
+            const ext = fileExt(primary);
+            const noExt = stemNoExt(primary);
+            const videoStem = videoPath ? stemNoExt(videoPath) : '';
+            if (dualApi?.inferDualRole) {
+                const inferred = dualApi.inferDualRole(noExt, videoStem || undefined);
+                const stem = inferred.videoStem || videoStem || noExt;
+                if (inferred.role === 'target') {
+                    const suffix = inferred.pairSuffix || 'ja';
+                    const next = `${dir}${sep}${stem}.${suffix}${ext}`;
+                    return next === primary ? '' : next;
+                }
+            }
+            const stem = videoStem || noExt.replace(/\.zh$/i, '') || noExt;
+            const next = `${dir}${sep}${stem}.ja${ext}`;
+            return next === primary ? '' : next;
+        }
+
+        function cloneCueShell(cue) {
+            return {
+                index: cue?.index,
+                startMs: cue?.startMs,
+                endMs: cue?.endMs,
+                text: String(cue?.text ?? ''),
+            };
+        }
+
+        function syncDualUiAfterMount() {
+            state.dualDisplayMode = typeof loadDualDisplayMode === 'function'
+                ? loadDualDisplayMode()
+                : (state.dualDisplayMode || 'both');
+            state.dualLineOrder = typeof loadDualLineOrder === 'function'
+                ? loadDualLineOrder()
+                : (state.dualLineOrder || 'source-first');
+            if (els.dualDisplaySelect) els.dualDisplaySelect.value = state.dualDisplayMode;
+            if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = state.dualLineOrder;
+            if (typeof invalidatePairOverlapIndex === 'function') invalidatePairOverlapIndex();
+            else state._pairOverlapIndex = null;
+            if (typeof syncDualDisplaySelectVisibility === 'function') {
+                syncDualDisplaySelectVisibility();
+            }
+        }
+
+        /**
+         * Ensure a source pair track exists so ASR can write 原文 without overwriting 译文.
+         */
+        async function ensureSourceTrackForGenerate() {
+            if (state.dualRole === 'source') return { ok: true };
+            if (state.dualRole === 'target' && state.pairCues?.length) return { ok: true };
+
+            const sourcePath = deriveSourcePairPath(state.path, state.videoPath);
+            if (!sourcePath) {
+                return { ok: false, error: '无法推导原文对照轨路径，请先保存为 .zh 字幕或手动配对原文' };
+            }
+            let seeded = null;
+            if (electron?.transubReadSubtitle) {
+                try {
+                    const existing = await electron.transubReadSubtitle({ path: sourcePath });
+                    if (existing?.ok && Array.isArray(existing.cues) && existing.cues.length) {
+                        seeded = existing.cues;
+                    }
+                } catch (_) { /* create fresh */ }
+            }
+            state.pairPath = sourcePath;
+            state.pairCues = seeded
+                ? seeded.map(cloneCueShell)
+                : state.cues.map((c) => {
+                    const shell = cloneCueShell(c);
+                    shell.text = '';
+                    return shell;
+                });
+            state.pairFormat = state.format || 'srt';
+            state.pairHeader = Array.isArray(state.header) ? [...state.header] : [];
+            state.pairDirty = false;
+            state.dualRole = 'target';
+            syncDualUiAfterMount();
+            renderCueList?.();
+            return { ok: true, created: !seeded };
+        }
+
+        async function generateOriginalForIndexes(indexes) {
+            if (typeof runRetranscribeRange !== 'function') {
+                return { ok: false, error: '当前环境不支持生成原文' };
+            }
+            if (!state.videoPath) {
+                return { ok: false, error: '请先关联视频后再生成原文' };
+            }
+            const ensured = await ensureSourceTrackForGenerate();
+            if (!ensured.ok) return ensured;
+
+            let startMs = Infinity;
+            let endMs = 0;
+            for (const idx of indexes) {
+                const cue = state.cues[idx];
+                if (!cue) continue;
+                const a = Math.round(Number(cue.startMs) || 0);
+                const b = typeof cueEndMs === 'function'
+                    ? Math.round(Number(cueEndMs(cue)) || 0)
+                    : Math.round(Number(cue.endMs) || a);
+                if (a < startMs) startMs = a;
+                if (b > endMs) endMs = b;
+            }
+            if (!Number.isFinite(startMs) || endMs <= startMs) {
+                startMs = 0;
+                endMs = Math.max(1000, Math.round(Number(state.durationMs) || 0));
+            }
+            const padMs = Math.max(0, Math.min(2000, Number(loadRetranscribeDurPrefs?.()?.padMs) || 350));
+            const res = await runRetranscribeRange({
+                startMs,
+                endMs,
+                padMs,
+                mode: 'range',
+                writeAs: 'source',
+                snapAfter: false,
+                detail: '正在生成原文（语音识别）…',
+            });
+            if (!res?.ok) {
+                return {
+                    ok: false,
+                    cancelled: !!res?.cancelled,
+                    error: res?.error || '生成原文失败',
+                };
+            }
+            return { ok: true };
+        }
+
+        /**
+         * Read original text for one primary-track cue index.
+         * Never returns translation-track text when a source role is known.
+         */
+        function readOriginalTextForCue(idx, dualApi) {
+            const cue = state.cues[idx];
+            if (!cue) return '';
+            if (state.dualRole === 'source') {
+                return String(cue.text || '').trim();
+            }
+            if (state.dualRole === 'target' && dualApi && state.pairCues?.length) {
+                const hit = dualApi.findBestOverlapCue(
+                    state.pairCues,
+                    cue.startMs,
+                    typeof cueEndMs === 'function' ? cueEndMs(cue) : cue.endMs,
+                );
+                const pairText = String(hit?.cue?.text || '').trim();
+                if (pairText) return pairText;
+            }
+            if (state.keptTranscript?.cues?.length) {
+                const compare = global.TransubTranscriptCompare;
+                const hit = compare?.findBestOverlapCue?.(
+                    state.keptTranscript.cues,
+                    cue.startMs,
+                    typeof cueEndMs === 'function' ? cueEndMs(cue) : cue.endMs,
+                );
+                const keptText = String(hit?.cue?.text || '').trim();
+                if (keptText) return keptText;
+            }
+            // Monolingual source / unsuffixed: current is original
+            if (!state.pairCues?.length && state.dualRole !== 'target') {
+                const role = inferPrimaryDualRole();
+                if (role !== 'target') return String(cue.text || '').trim();
+            }
+            return '';
+        }
+
+        /**
+         * 文本翻译（推理翻译：本地 LLM MT / 智能翻译 / 机器翻译 Opus）。
+         * 始终从原文翻译；无原文时提示是否先生成原文。
+         * 写入：译文轨 / 自动挂载译文对照轨，不覆盖原文。
+         */
+        async function runTextTranslateOnce({
+            scope = 'all',
+            engine = 'llm',
+            skipReview = false,
+            cueIndexes = null,
+            modelId = '',
+            faithfulTone = null,
+        } = {}) {
+            const useSmart = engine === 'smart' || engine === 'advanced';
+            const useOpus = engine === 'opus' || engine === 'engine';
+            const invoke = useSmart
+                ? electron?.transubAdvancedSmartTranslate
+                : (useOpus
+                    ? electron?.transubEngineTranslateCues
+                    : electron?.transubSakuraTranslate);
+            if (!invoke) {
+                return {
+                    status: 'failed',
+                    summary: useSmart
+                        ? '当前环境不支持智能翻译'
+                        : (useOpus ? '当前环境不支持机器翻译' : '当前环境不支持推理翻译'),
+                };
+            }
+            if (state.reconstructBusy) {
+                return { status: 'skipped', summary: '翻译或重构进行中' };
+            }
+            if (state.computeBusy) {
+                return {
+                    status: 'skipped',
+                    summary: state.computeBusyLabel
+                        ? `已有${state.computeBusyLabel}正在运行`
+                        : '其它窗口有引擎或 LLM 任务正在运行',
+                };
+            }
+
+            let indexes = Array.isArray(cueIndexes) && cueIndexes.length
+                ? [...cueIndexes].filter((n) => Number.isInteger(n))
+                : resolveScopeIndexes(scope);
+            if (!indexes.length) {
+                return { status: 'skipped', summary: '范围内无字幕' };
+            }
+
+            if (state.keptTranscript?.found && !state.keptTranscript.cues?.length) {
+                try {
+                    const doc = await electron?.transubReadSubtitle?.({ path: state.keptTranscript.path });
+                    if (doc?.ok) state.keptTranscript.cues = Array.isArray(doc.cues) ? doc.cues : [];
+                } catch (_) { /* ignore */ }
+            }
+
+            let sourceInfo = resolveOriginalSourceInfo();
+            if (!sourceInfo.available) {
+                if (skipReview || typeof editorConfirm !== 'function') {
+                    return {
+                        status: 'failed',
+                        summary: sourceInfo.canGenerate
+                            ? '原文不存在。请先生成原文（语音识别）后再翻译'
+                            : '原文不存在。请配对原文轨、挂载原文缓存，或关联视频后生成原文',
+                    };
+                }
+                const confirmGen = await editorConfirm(
+                    '原文不存在，是否先生成原文？',
+                    {
+                        title: '缺少原文',
+                        detail: sourceInfo.canGenerate
+                            ? '将按当前字幕时间范围做语音识别，写入原文对照轨；完成后继续翻译。'
+                            : '当前未关联视频，无法自动生成原文。仍可取消后手动配对原文轨或挂载原文缓存。',
+                        okLabel: sourceInfo.canGenerate ? '生成原文' : '知道了',
+                        cancelLabel: '取消',
+                        type: 'warning',
+                    },
+                );
+                if (!confirmGen || !sourceInfo.canGenerate) {
+                    return {
+                        status: 'cancelled',
+                        summary: sourceInfo.canGenerate
+                            ? '已取消（原文不存在）'
+                            : '原文不存在：请先关联视频，或配对/挂载原文轨',
+                    };
+                }
+                const gen = await generateOriginalForIndexes(indexes);
+                if (!gen.ok) {
+                    return {
+                        status: gen.cancelled ? 'cancelled' : 'failed',
+                        summary: gen.error || '生成原文失败',
+                    };
+                }
+                sourceInfo = resolveOriginalSourceInfo();
+                if (!sourceInfo.available) {
+                    return { status: 'failed', summary: '已尝试生成原文，但仍未找到可用原文' };
+                }
+            }
+
+            let faithfulPreferred = faithfulTone;
+            if (useSmart && faithfulPreferred == null) {
+                try {
+                    const res = await electron?.transWithAiGetOptions?.({});
+                    faithfulPreferred = !!res?.options?.smartTranslateFaithfulTone;
+                } catch (_) {
+                    faithfulPreferred = false;
+                }
+            }
+
+            const dualApi = global.TransubDualSubtitle || null;
+            const buildCuesPayload = (idxList) => idxList.map((idx) => {
+                const cue = state.cues[idx];
+                const sourceText = readOriginalTextForCue(idx, dualApi);
+                return {
+                    index: idx,
+                    startMs: cue?.startMs,
+                    endMs: cue?.endMs,
+                    text: sourceText,
+                };
+            }).filter((c) => String(c.text || '').trim());
+
+            const titleText = useSmart ? '智能翻译中'
+                : (useOpus ? '机器翻译中' : '推理翻译中');
+            state.reconstructBusy = true;
+            state.translateEngine = useSmart ? 'smart' : (useOpus ? 'opus' : 'llm');
+
+            const showProgress = (info = {}) => {
+                const pct = info.pct ?? info.percent;
+                const phase = String(info.phase || '').trim();
+                let countText = `${indexes.length} 条`;
+                let stageHint = '正在调用 Pro 大模型翻译，通常需要数十秒到数分钟，可随时取消';
+                if (useSmart) {
+                    if (phase === 'brief' || phase === 'brief-done') {
+                        countText = '理解全文';
+                        stageHint = '正在生成影片简要，归纳人物 / 专名 / 语气…';
+                    } else if (phase === 'consistency') {
+                        countText = '一致性校对';
+                        stageHint = '正在统一人名、专名与称呼…';
+                    } else if (info.chunk && info.total) {
+                        countText = `分块翻译 ${info.chunk} / ${info.total}`;
+                        stageHint = '正在按块翻译，并带入 Brief 与上下文…';
+                    } else if (phase === 'chunk' || phase === 'chunk-done' || phase === 'chunk-retry') {
+                        countText = '分块翻译';
+                        stageHint = '正在按块翻译，并带入 Brief 与上下文…';
+                    }
+                }
+                const hint = useSmart
+                    ? stageHint
+                    : (useOpus
+                        ? '正在调用引擎 Opus 机器翻译，通常较快，可随时取消'
+                        : '正在调用本地 LLM 推理翻译（单遍局部上下文），通常需要数十秒到数分钟，可随时取消');
+                if (typeof showInferenceProgress === 'function') {
+                    const overlay = document.getElementById('editorReconstructProgress');
+                    if (!overlay || overlay.classList.contains('hidden')) {
+                        showInferenceProgress({
+                            kind: useSmart ? 'smart' : (useOpus ? 'opus' : 'llm'),
+                            badge: useOpus ? '机器翻译' : '大模型推理',
+                            title: titleText,
+                            detail: info.message || info.detail
+                                || `正在翻译 ${indexes.length} 条字幕…`,
+                            countText,
+                            hint,
+                            pct,
+                            indeterminate: !Number.isFinite(Number(pct)) || Number(pct) <= 0,
+                        });
+                    } else {
+                        updateInferenceProgress({
+                            title: titleText,
+                            message: info.message || info.detail
+                                || `正在翻译 ${indexes.length} 条字幕…`,
+                            countText,
+                            hint,
+                            pct,
+                            phase: info.phase,
+                            chunk: info.chunk,
+                            total: info.total,
+                        });
+                    }
+                } else {
+                    setStatus(info.message || info.detail || `${titleText}…`);
+                }
+            };
+            const hideProgress = () => {
+                if (typeof hideInferenceProgress === 'function') hideInferenceProgress();
+                else {
+                    const overlay = document.getElementById('editorReconstructProgress');
+                    overlay?.classList.add('hidden');
+                    overlay?.setAttribute('aria-busy', 'false');
+                    state.reconstructBusy = false;
+                }
+            };
+
+            const writeMode = resolveTranslateWriteMode();
+            const mtSanitize = global.TransubMtSanitize || null;
+
+            const readDestText = (idx) => {
+                const cue = state.cues[idx];
+                if (!cue) return '';
+                if (writeMode === 'current') return String(cue.text ?? '');
+                if (writeMode === 'pair' && dualApi && state.pairCues?.length) {
+                    const hit = dualApi.findBestOverlapCue(
+                        state.pairCues,
+                        cue.startMs,
+                        cue.endMs ?? cue.startMs,
+                    );
+                    return String(hit?.cue?.text || '');
+                }
+                return '';
+            };
+
+            const sourceLooksLikeJapanese = (text) => {
+                if (mtSanitize?.sourceLooksLikeJapanese) {
+                    return mtSanitize.sourceLooksLikeJapanese(text);
+                }
+                return (String(text || '').match(/[\u3040-\u30ff]/g) || []).length >= 2;
+            };
+
+            const isBadTranslation = (translated, original) => {
+                const after = String(translated ?? '').trim();
+                const src = String(original ?? '').trim();
+                if (!after) return true;
+                if (mtSanitize?.looksLikeSourceEcho?.(after, src)) return true;
+                if (mtSanitize?.isBlankOrPunctTranslation?.(after, src)) return true;
+                // Fallback if sanitize module is not loaded in the editor window
+                const srcIsJa = sourceLooksLikeJapanese(src);
+                if (srcIsJa && after.replace(/\s+/g, '') === src.replace(/\s+/g, '')) return true;
+                if (srcIsJa) {
+                    const kana = (after.match(/[\u3040-\u30ff]/g) || []).length;
+                    const han = (after.match(/[\u4e00-\u9fff]/g) || []).length;
+                    if (kana >= 6 && kana >= Math.max(4, Math.floor(han * 0.35))) return true;
+                }
+                return false;
+            };
+
+            const buildRowsFromUpdates = (updates) => {
+                const rows = [];
+                for (const u of updates) {
+                    const idx = Number(u.index);
+                    if (!Number.isInteger(idx) || !state.cues[idx]) continue;
+                    const original = readOriginalTextForCue(idx, dualApi)
+                        || String(state.cues[idx].text ?? '');
+                    const destBefore = readDestText(idx);
+                    const after = String(u.text ?? '');
+                    const bad = isBadTranslation(after, original);
+                    const trimmed = after.trim();
+                    // Show model output even when bad so user can manually edit in review.
+                    // Auto-select only good new translations.
+                    const usable = !bad && !!trimmed && trimmed !== String(destBefore || '').trim();
+                    rows.push({
+                        index: idx,
+                        before: original,
+                        after,
+                        destBefore,
+                        changed: usable || (bad && !!trimmed),
+                        fallback: bad,
+                    });
+                }
+                return rows;
+            };
+
+            showProgress({ message: `${titleText}（${indexes.length} 条）…`, pct: 0 });
+            const offSmartProgress = useSmart
+                ? electron.onAdvancedReconstructProgress?.((info) => {
+                    if (!info || info.mode === 'batch') return;
+                    if (info.feature && info.feature !== 'smartTranslate') return;
+                    showProgress(info);
+                })
+                : null;
+            const offOpusProgress = useOpus
+                ? electron.onEngineTranslateProgress?.((info) => showProgress(info))
+                : null;
+            const offSakuraProgress = !useSmart && !useOpus
+                ? electron.onSakuraTranslateProgress?.((info) => showProgress(info))
+                : null;
+
+            try {
+                const cuesPayload = buildCuesPayload(indexes);
+                if (!cuesPayload.length) {
+                    return {
+                        status: 'skipped',
+                        summary: '范围内没有可用原文（对照轨/原文缓存无重叠文本）',
+                    };
+                }
+                const payload = {
+                    cues: cuesPayload,
+                    glossary: getEffectiveGlossary(),
+                    fileName: state.path || state.videoPath || '',
+                };
+                if (useSmart) {
+                    payload.smartTranslateFaithfulTone = !!faithfulPreferred;
+                } else if (!useOpus && modelId) {
+                    payload.modelId = modelId;
+                }
+
+                const res = await invoke(payload);
+                if (!res?.ok) {
+                    return {
+                        status: res?.cancelled || res?.code === 'cancelled' || res?.code === 'aborted'
+                            ? 'cancelled'
+                            : 'failed',
+                        summary: res?.error || (useSmart
+                            ? '智能翻译失败'
+                            : (useOpus ? '机器翻译失败' : '推理翻译失败')),
+                    };
+                }
+                const updates = Array.isArray(res.cues) ? res.cues : [];
+                if (!updates.length) {
+                    return { status: 'skipped', summary: res.summary || '未返回翻译结果' };
+                }
+                await applyTraditionalIfNeeded(updates);
+
+                const rows = buildRowsFromUpdates(updates);
+                if (!rows.length) {
+                    return { status: 'skipped', summary: '未返回可应用条目' };
+                }
+                const usableCount = rows.filter((r) => r.changed && !r.fallback).length;
+                const failedCount = rows.filter((r) => r.fallback).length;
+                if (!usableCount && !failedCount) {
+                    return { status: 'skipped', summary: '译文与目标轨相同，无变更' };
+                }
+                if (!usableCount && failedCount && skipReview) {
+                    return {
+                        status: 'failed',
+                        summary: `翻译未产出有效中文（${failedCount} 条仍为原文或被清理）。原文已找到，请重试或更换模型`,
+                    };
+                }
+
+                hideProgress();
+                setStatus(
+                    usableCount
+                        ? `翻译完成，请对照确认（可用 ${usableCount} 条）…`
+                        : `模型未产出可用译文（${failedCount} 条），请在对照中手动修改或放弃后重试…`,
+                );
+
+                const via = useSmart
+                    ? (res.via === 'mock' ? '模拟' : (res.via === 'module' ? '模块' : '智能翻译'))
+                    : (useOpus ? '机器翻译' : '推理翻译');
+
+                let accepted = null;
+                const reviewLead = usableCount
+                    ? (writeMode === 'current'
+                        ? `来源：${via}。左边为原文，右边为译文。确认后写入当前译文轨；标记「回退」的条目默认不覆盖。放弃则不做任何修改。`
+                        : `来源：${via}。左边为原文，右边为译文。确认后将保留原文并写入译文对照轨；放弃则不做任何修改。`)
+                    : `来源：${via}。已找到原文，但模型未产出有效中文（可能原样返回日文）。请在右侧手动改成译文后勾选确认，或放弃后重试/换模型。`;
+                if (skipReview) {
+                    accepted = rows
+                        .filter((r) => r.changed && !r.fallback && String(r.after || '').trim())
+                        .map((r) => ({ index: r.index, text: r.after }));
+                } else {
+                    accepted = await promptReconstructReview(rows, {
+                        title: useSmart ? '智能翻译 · 结果对照'
+                            : (useOpus ? '机器翻译 · 结果对照' : '推理翻译 · 结果对照'),
+                        lead: reviewLead,
+                        beforeLabel: '原文',
+                        afterLabel: '译文',
+                        failedIndexes: rows.filter((r) => r.fallback).map((r) => r.index),
+                    });
+                }
+
+                if (!accepted) {
+                    return { status: 'cancelled', summary: '已放弃替换' };
+                }
+                if (!accepted.length) {
+                    return { status: 'skipped', summary: '未勾选任何变更' };
+                }
+
+                recordUndoBeforeChange();
+                let changed = 0;
+                let wrotePair = false;
+                let effectiveMode = writeMode;
+
+                // Target-named monolingual file with no pair → fall back to in-place.
+                // Unsaved buffer cannot create a sibling .zh track — ask user to save first.
+                if (effectiveMode === 'promote-dual') {
+                    const targetPath = deriveTargetPairPath(state.path, state.videoPath);
+                    if (!targetPath) {
+                        if (!String(state.path || '').trim()) {
+                            return {
+                                status: 'failed',
+                                summary: '请先保存字幕文件，再翻译以生成译文对照轨（避免覆盖原文）',
+                            };
+                        }
+                        effectiveMode = 'current';
+                    }
+                }
+
+                if (effectiveMode === 'current') {
+                    for (const u of accepted) {
+                        const idx = Number(u.index);
+                        if (!Number.isInteger(idx) || !state.cues[idx]) continue;
+                        const nextText = String(u.text ?? '').trim();
+                        if (!nextText) continue;
+                        const original = readOriginalTextForCue(idx, dualApi);
+                        if (isBadTranslation(nextText, original)) continue;
+                        if (nextText !== state.cues[idx].text) {
+                            state.cues[idx].text = nextText;
+                            changed += 1;
+                        }
+                    }
+                } else {
+                    // Write ZH into pair track; keep primary (source) texts intact
+                    if (effectiveMode === 'promote-dual') {
+                        const targetPath = deriveTargetPairPath(state.path, state.videoPath);
+                        if (!targetPath) {
+                            return { status: 'failed', summary: '无法推导译文对照轨路径' };
+                        }
+                        let seeded = null;
+                        if (electron?.transubReadSubtitle) {
+                            try {
+                                const existing = await electron.transubReadSubtitle({ path: targetPath });
+                                if (existing?.ok && Array.isArray(existing.cues) && existing.cues.length) {
+                                    seeded = existing.cues;
+                                }
+                            } catch (_) { /* create fresh */ }
+                        }
+                        if (seeded) {
+                            state.pairCues = seeded.map(cloneCueShell);
+                        } else {
+                            state.pairCues = state.cues.map((c) => {
+                                const shell = cloneCueShell(c);
+                                shell.text = '';
+                                return shell;
+                            });
+                        }
+                        state.pairPath = targetPath;
+                        state.pairFormat = state.format || 'srt';
+                        state.pairHeader = Array.isArray(state.header) ? [...state.header] : [];
+                        state.dualRole = 'source';
+                        syncDualUiAfterMount();
+                    }
+
+                    if (!state.pairCues?.length) {
+                        return { status: 'failed', summary: '译文对照轨不可用' };
+                    }
+
+                    for (const u of accepted) {
+                        const idx = Number(u.index);
+                        const srcCue = state.cues[idx];
+                        if (!Number.isInteger(idx) || !srcCue) continue;
+                        const nextText = String(u.text ?? '').trim();
+                        if (!nextText) continue;
+                        const original = readOriginalTextForCue(idx, dualApi)
+                            || String(srcCue.text || '');
+                        if (isBadTranslation(nextText, original)) continue;
+                        let dest = null;
+                        if (dualApi?.findBestOverlapCue) {
+                            const hit = dualApi.findBestOverlapCue(
+                                state.pairCues,
+                                srcCue.startMs,
+                                srcCue.endMs ?? srcCue.startMs,
+                            );
+                            if (hit?.match === 'overlap' && hit.cue) dest = hit.cue;
+                            else if (hit?.index >= 0 && state.pairCues[hit.index]) {
+                                dest = state.pairCues[hit.index];
+                            }
+                        }
+                        if (!dest && state.pairCues[idx]) dest = state.pairCues[idx];
+                        if (!dest) {
+                            dest = cloneCueShell(srcCue);
+                            dest.text = '';
+                            state.pairCues.push(dest);
+                        }
+                        if (nextText !== String(dest.text ?? '')) {
+                            dest.text = nextText;
+                            changed += 1;
+                        }
+                    }
+                    state.pairDirty = true;
+                    wrotePair = true;
+                    if (typeof invalidatePairOverlapIndex === 'function') {
+                        invalidatePairOverlapIndex();
+                    } else {
+                        state._pairOverlapIndex = null;
+                    }
+                    if (typeof savePairDocument === 'function') {
+                        try { await savePairDocument(); } catch (_) { /* keep dirty */ }
+                    } else if (electron?.transubWriteSubtitle && state.pairPath) {
+                        try {
+                            const written = await electron.transubWriteSubtitle({
+                                path: state.pairPath,
+                                format: state.pairFormat || state.format || 'srt',
+                                cues: state.pairCues,
+                                header: state.pairHeader,
+                                backupMode: 'off',
+                            });
+                            if (written?.ok) state.pairDirty = false;
+                        } catch (_) { /* keep dirty */ }
+                    }
+                }
+
+                if (!changed) return { status: 'skipped', summary: '无文本变更' };
+                if (effectiveMode === 'current') setDirty(true);
+                else if (!wrotePair) setDirty(true);
+                if (changed > 80 || typeof refreshListRow !== 'function' || wrotePair) {
+                    renderCueList();
+                } else {
+                    for (const u of accepted) {
+                        const idx = Number(u.index);
+                        if (Number.isInteger(idx)) refreshListRow(idx);
+                    }
+                }
+                renderDetailPane();
+                const summary = effectiveMode === 'current'
+                    ? `已翻译替换 ${changed} 条（${via}）`
+                    : `已翻译 ${changed} 条并写入译文对照轨（${via}，原文已保留）`;
+                return {
+                    status: 'done',
+                    summary,
+                    changed: true,
+                };
+            } finally {
+                if (typeof offSmartProgress === 'function') offSmartProgress();
+                if (typeof offOpusProgress === 'function') offOpusProgress();
+                if (typeof offSakuraProgress === 'function') offSakuraProgress();
+                state.reconstructBusy = false;
+                state.translateEngine = '';
+                hideProgress();
+            }
         }
 
         function buildAllHandlers() {
@@ -650,6 +2201,86 @@
                         summary: issues.length ? `发现 ${issues.length} 处不一致` : '术语一致',
                     };
                 },
+                'text.sakuraTranslate': async (_c, step) => {
+                    const scope = String(step.params?.scope || 'all');
+                    return runTextTranslateOnce({
+                        scope,
+                        engine: 'llm',
+                        modelId: String(step.params?.modelId || '').trim(),
+                        skipReview: step.params?.skipReview === true,
+                    });
+                },
+                'text.smartTranslate': async (_c, step) => {
+                    const scope = String(step.params?.scope || 'all');
+                    let faithfulTone = null;
+                    if (step.params?.faithfulTone === true
+                        || step.params?.smartTranslateFaithfulTone === true) {
+                        faithfulTone = true;
+                    } else if (step.params?.faithfulTone === false
+                        || step.params?.smartTranslateFaithfulTone === false) {
+                        faithfulTone = false;
+                    }
+                    return runTextTranslateOnce({
+                        scope,
+                        engine: 'smart',
+                        faithfulTone,
+                        skipReview: step.params?.skipReview === true,
+                    });
+                },
+                'text.contextReconstruct': async (_c, step) => {
+                    const scope = String(step.params?.scope || 'all');
+                    return runContextReconstructOnce({
+                        scope,
+                        windowCues: Number(step.params?.windowCues) || 30,
+                        preserveTiming: step.params?.preserveTiming !== false,
+                        mode: 'basic',
+                        intensity: step.params?.intensity || 'balanced',
+                    });
+                },
+                'text.filmContextReconstruct': async (_c, step) => {
+                    const scope = String(step.params?.scope || 'all');
+                    const filmCore = global.TransubAdvancedFilmReconstruct;
+                    const title = String(step.params?.filmTitle || step.params?.title || '').trim();
+                    const synopsis = String(step.params?.filmSynopsis || step.params?.synopsis || '').trim();
+                    const terms = String(step.params?.filmTerms || step.params?.terms || '').trim();
+                    let userNote = String(step.params?.userNote || step.params?.note || '').trim();
+                    if (!userNote && (title || synopsis || terms)) {
+                        userNote = filmCore?.composeFilmUserNote
+                            ? filmCore.composeFilmUserNote({ title, synopsis, terms })
+                            : [title && `片名：${title}`, synopsis && `简介：${synopsis}`, terms && `译名与补充：${terms}`]
+                                .filter(Boolean)
+                                .join('\n');
+                    }
+                    if (!userNote && !title && typeof loadFilmHints === 'function') {
+                        const saved = loadFilmHints(state.path);
+                        return runContextReconstructOnce({
+                            scope,
+                            preserveTiming: step.params?.preserveTiming !== false,
+                            mode: 'film',
+                            sceneMaxCues: Number(step.params?.sceneMaxCues) || 36,
+                            sceneGapMs: Number(step.params?.sceneGapMs) || 2500,
+                            filmTitle: saved.title || '',
+                            filmSynopsis: saved.synopsis || '',
+                            filmTerms: saved.terms || '',
+                            intensity: saved.intensity || 'balanced',
+                            userNote: filmCore?.composeFilmUserNote
+                                ? filmCore.composeFilmUserNote(saved)
+                                : '',
+                        });
+                    }
+                    return runContextReconstructOnce({
+                        scope,
+                        preserveTiming: step.params?.preserveTiming !== false,
+                        mode: 'film',
+                        sceneMaxCues: Number(step.params?.sceneMaxCues) || 36,
+                        sceneGapMs: Number(step.params?.sceneGapMs) || 2500,
+                        filmTitle: title,
+                        filmSynopsis: synopsis,
+                        filmTerms: terms,
+                        intensity: step.params?.intensity || 'balanced',
+                        userNote,
+                    });
+                },
                 'presets.insertGroup': async (_c, step) => {
                     const groupId = String(step.params?.groupId || '');
                     const groupName = String(step.params?.groupName || '').trim();
@@ -684,7 +2315,8 @@
                     if (!state.videoPath) return { status: 'skipped', summary: '未关联视频' };
                     const prefs = loadRetranscribeDurPrefs?.() || {};
                     const durationSec = Number(step.params?.durationSec) || prefs.durationSec || 10;
-                    const padMs = Number(step.params?.padMs) ?? prefs.padMs ?? 350;
+                    const padRaw = step.params?.padMs != null ? Number(step.params.padMs) : Number(prefs.padMs);
+                    const padMs = Number.isFinite(padRaw) ? padRaw : 350;
                     const snapAfter = step.params?.snapAfter !== false;
                     const startMode = step.params?.startMode || 'selected';
                     let startMs = 0;
@@ -713,7 +2345,8 @@
                     });
                     if (!indexes.length) return { status: 'skipped', summary: '无低置信条目' };
                     const prefs = loadRetranscribeDurPrefs?.() || {};
-                    const padMs = Number(step.params?.padMs) ?? prefs.padMs ?? 350;
+                    const padRaw = step.params?.padMs != null ? Number(step.params.padMs) : Number(prefs.padMs);
+                    const padMs = Number.isFinite(padRaw) ? padRaw : 350;
                     const snapAfter = step.params?.snapAfter !== false;
                     let done = 0;
                     for (let i = 0; i < indexes.length; i += 1) {
@@ -1132,6 +2765,15 @@
             if (els.silenceProgressDetail) {
                 els.silenceProgressDetail.textContent = '正在取消工作流…';
             }
+            // Stop in-flight engine / LLM / FFmpeg work started by workflow steps.
+            void Promise.allSettled([
+                electron?.transubEngineCancel?.(),
+                electron?.transubSakuraCancelTranslate?.(),
+                electron?.transubAdvancedCancelContextReconstruct?.(),
+                electron?.transubAdvancedCancelBatchContextReconstruct?.(),
+                electron?.transWithAiCancel?.(),
+                electron?.ffmpegCancel?.(),
+            ]);
         }
 
         function bindWorkflowEvents() {
@@ -1263,6 +2905,8 @@
             bindWorkflowEvents,
             runActiveWorkflow,
             cancelWorkflowRun,
+            runContextReconstructOnce,
+            runTextTranslateOnce,
         };
     }
 

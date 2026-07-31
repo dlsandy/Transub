@@ -3,32 +3,53 @@ const path = require('path');
 const { resolveHtmlPath } = require('./app-paths');
 const { getWindowIconOption, applyWindowIcon } = require('./icons');
 const { asString } = require('./ipc-validate');
+const { attachUiZoom } = require('./ui-zoom');
 
 /** @type {import('electron').BrowserWindow|null} */
 let settingsWindow = null;
 
-/** @type {string|null} */
-let pendingSettingsTab = null;
+/** @type {{ tab: string|null, wizard: boolean, forceWizard: boolean }} */
+let pendingSettingsOpen = {
+    tab: null,
+    wizard: false,
+    forceWizard: false,
+};
 
 function resolveTab(tab) {
     return asString(tab, 64).trim() || 'runtime';
 }
 
-function sendOpenTab(win, tab) {
-    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
-    win.webContents.send('transub-open-params', { tab });
+function setPendingOpen({ tab, wizard, forceWizard } = {}) {
+    pendingSettingsOpen = {
+        tab: resolveTab(tab),
+        wizard: !!wizard,
+        forceWizard: !!forceWizard,
+    };
 }
 
-function focusSettingsWindow(tab) {
+function sendOpenParams(win, { tab, wizard, forceWizard } = {}) {
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+    win.webContents.send('transub-open-params', {
+        tab: resolveTab(tab),
+        wizard: !!wizard,
+        forceWizard: !!forceWizard,
+    });
+}
+
+function focusSettingsWindow({ tab, wizard, forceWizard } = {}) {
     const win = settingsWindow;
     if (!win || win.isDestroyed()) return null;
-    const resolved = resolveTab(tab);
-    pendingSettingsTab = resolved;
+    setPendingOpen({ tab, wizard, forceWizard });
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
     applyWindowIcon(win);
-    const send = () => sendOpenTab(win, resolved);
+    const payload = {
+        tab: pendingSettingsOpen.tab,
+        wizard: pendingSettingsOpen.wizard,
+        forceWizard: pendingSettingsOpen.forceWizard,
+    };
+    const send = () => sendOpenParams(win, payload);
     if (win.webContents.isLoading()) {
         win.webContents.once('did-finish-load', () => setTimeout(send, 80));
     } else {
@@ -41,34 +62,38 @@ function focusSettingsWindow(tab) {
 /**
  * Open (or focus) the standalone settings window without showing the main task window.
  * @param {import('electron').App} app
- * @param {{ tab?: string, parent?: import('electron').BrowserWindow|null, checkUpdate?: boolean }} [options]
+ * @param {{ tab?: string, parent?: import('electron').BrowserWindow|null, checkUpdate?: boolean, wizard?: boolean, forceWizard?: boolean }} [options]
  */
-function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
+function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, forceWizard } = {}) {
     if (checkUpdate) {
         const { openUpdateWindow } = require('./update-window');
-        return openUpdateWindow(app, { parent, autoCheck: true });
+        return openUpdateWindow(app, { parent: _parent, autoCheck: true });
     }
 
     const resolved = resolveTab(tab);
-    pendingSettingsTab = resolved;
+    setPendingOpen({ tab: resolved, wizard, forceWizard });
 
-    const existing = focusSettingsWindow(resolved);
+    const existing = focusSettingsWindow({
+        tab: resolved,
+        wizard,
+        forceWizard,
+    });
     if (existing) {
         return { ok: true };
     }
 
-    const parentWin = parent && !parent.isDestroyed() ? parent : undefined;
+    // Intentionally no `parent`: on Windows, closing an owned child often minimizes
+    // the owner, and the main window treats minimize as hide-to-tray.
     const win = new BrowserWindow({
-        width: 720,
-        height: 640,
-        minWidth: 560,
-        minHeight: 420,
-        title: 'Transub 设置',
+        width: 1120,
+        height: 820,
+        minWidth: 800,
+        minHeight: 600,
+        title: wizard ? 'Transub 设置向导' : 'Transub 设置',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor: '#f9fafb',
         show: false,
-        parent: parentWin,
         modal: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -79,6 +104,7 @@ function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
     });
 
     settingsWindow = win;
+    attachUiZoom(win);
     win.setMenuBarVisibility(false);
     win.removeMenu();
     applyWindowIcon(win);
@@ -91,6 +117,8 @@ function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
         standaloneSettings: '1',
         tab: resolved,
     });
+    if (wizard) query.set('wizard', '1');
+    if (forceWizard) query.set('forceWizard', '1');
 
     win.loadFile(resolveHtmlPath(app, 'index.html'), { search: query.toString() });
 
@@ -99,17 +127,37 @@ function openSettingsWindow(app, { tab, parent, checkUpdate } = {}) {
         applyWindowIcon(win);
         win.show();
         win.focus();
-        sendOpenTab(win, resolved);
-        setTimeout(() => sendOpenTab(win, resolved), 150);
+        sendOpenParams(win, {
+            tab: resolved,
+            wizard: !!wizard,
+            forceWizard: !!forceWizard,
+        });
+        setTimeout(() => sendOpenParams(win, {
+            tab: resolved,
+            wizard: !!wizard,
+            forceWizard: !!forceWizard,
+        }), 150);
     });
 
     return { ok: true };
 }
 
 function consumePendingSettingsTab() {
-    const tab = pendingSettingsTab;
-    pendingSettingsTab = null;
+    const tab = pendingSettingsOpen.tab;
+    const wizard = pendingSettingsOpen.wizard;
+    const forceWizard = pendingSettingsOpen.forceWizard;
+    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false };
     return tab || null;
+}
+
+function consumePendingSettingsOpen() {
+    const pending = { ...pendingSettingsOpen };
+    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false };
+    return {
+        tab: pending.tab || null,
+        wizard: !!pending.wizard,
+        forceWizard: !!pending.forceWizard,
+    };
 }
 
 function getSettingsWindow() {
@@ -120,5 +168,6 @@ function getSettingsWindow() {
 module.exports = {
     openSettingsWindow,
     consumePendingSettingsTab,
+    consumePendingSettingsOpen,
     getSettingsWindow,
 };

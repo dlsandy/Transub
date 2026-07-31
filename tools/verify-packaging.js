@@ -55,10 +55,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/content-profile-core.js',
     'js/advanced-entitlement-core.js',
     'js/advanced-license-crypto-core.js',
-    'js/advanced-context-reconstruct-core.js',
-    'js/advanced-film-reconstruct-core.js',
     'js/advanced-managed-llm-catalog-core.js',
-    'js/advanced-smart-translate-core.js',
     'js/sakura-mt-catalog-core.js',
     'js/sakura-translate-core.js',
     'js/dual-subtitle-core.js',
@@ -70,6 +67,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-qc-core.js',
     'js/subtitle-glossary-core.js',
     'js/subtitle-fluency-core.js',
+    'js/mt-sanitize-core.js',
     'js/subtitle-meta-core.js',
     'js/subtitle-split-core.js',
     'js/transcript-compare-core.js',
@@ -82,6 +80,8 @@ const REQUIRED_RENDERER_FILES = [
     'js/bilingual-review-core.js',
     'js/find-replace-core.js',
     'js/speaker-suggest-core.js',
+    'js/env-check.js',
+    'js/manual-whl-install.js',
     // Loaded via new Worker(), not <script src> — easy to miss in packaging audits
     'js/subtitle-qc-worker.js',
     'js/subtitle-find-worker.js',
@@ -129,41 +129,24 @@ function listJsFiles(dir, acc = []) {
     return acc;
 }
 
-function collectSrcJsRequiresFromElectron() {
-    const electronDir = path.join(root, 'electron');
-    const required = new Set();
-    const re = /require\(\s*['"](\.\.\/src\/js\/[^'"]+)['"]\s*\)/g;
-    for (const file of listJsFiles(electronDir)) {
-        const text = fs.readFileSync(file, 'utf8');
-        let m;
-        while ((m = re.exec(text))) {
-            let rel = path.normalize(m[1].replace(/^\.\.\//, ''));
-            if (!rel.endsWith('.js')) rel = `${rel}.js`;
-            required.add(rel);
-        }
-    }
-    // Cores may also require sibling cores / dict
-    const srcJs = path.join(root, 'src', 'js');
-    for (const file of listJsFiles(srcJs)) {
-        if (!/[-]core\.js$/.test(file) && !file.endsWith('subtitle-chinese-dict.js')) continue;
-        const text = fs.readFileSync(file, 'utf8');
-        const localRe = /require\(\s*['"](\.\/[^'"]+)['"]\s*\)/g;
-        let m;
-        while ((m = localRe.exec(text))) {
-            let rel = path.normalize(path.join('src', 'js', m[1].replace(/^\.\//, '')));
-            if (!rel.endsWith('.js')) rel = `${rel}.js`;
-            if (fs.existsSync(path.join(root, rel))) required.add(rel);
-        }
-    }
-    return [...required].sort();
-}
-
 function packageFilesCover(relPosix) {
     const files = pkg.build?.files || [];
     const normalized = relPosix.replace(/\\/g, '/');
+    // Explicit exclusions win (closed-source Pro algorithm sources)
+    for (const f of files) {
+        if (typeof f !== 'string' || !f.startsWith('!')) continue;
+        const neg = f.slice(1).replace(/\\/g, '/');
+        if (neg === normalized) return false;
+        if (neg.endsWith('/**/*') && normalized.startsWith(neg.slice(0, -4))) return false;
+        if (neg.includes('*')) {
+            // simple basename / prefix globs used in package.json
+            const re = new RegExp(`^${neg.replace(/\./g, '\\.').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')}$`);
+            if (re.test(normalized)) return false;
+        }
+    }
     // electron/**/* covers electron only; src/js must match explicit patterns
     if (normalized.startsWith('electron/')) {
-        return files.some((f) => f === 'electron/**/*' || f.startsWith('electron/'));
+        return files.some((f) => f === 'electron/**/*' || (typeof f === 'string' && f.startsWith('electron/') && !f.startsWith('!')));
     }
     if (normalized.startsWith('renderer-dist/')) {
         return files.some((f) => f === 'renderer-dist/**/*' || f.startsWith('renderer-dist/'));
@@ -173,7 +156,10 @@ function packageFilesCover(relPosix) {
     }
     if (normalized.startsWith('src/js/')) {
         const base = path.posix.basename(normalized);
-        if (files.includes('src/js/*-core.js') && /-core\.js$/.test(base)) return true;
+        if (files.includes('src/js/*-core.js') && /-core\.js$/.test(base)) {
+            // still respect !src/js/... exclusions above
+            return true;
+        }
         if (files.includes('src/js/subtitle-chinese-dict.js') && base === 'subtitle-chinese-dict.js') {
             return true;
         }
@@ -192,7 +178,78 @@ function packageFilesCover(relPosix) {
             return false;
         });
     }
+    if (normalized.startsWith('shared/')) {
+        return files.some((f) => {
+            if (f === normalized) return true;
+            if (f === 'shared/**/*') return true;
+            if (typeof f === 'string' && f.startsWith('shared/') && !f.startsWith('!')) return true;
+            return false;
+        });
+    }
     return false;
+}
+
+/** Pro algorithm sources: shipped only via minified `_advanced`, not app.asar */
+const PROPRIETARY_ASAR_FORBIDDEN = [
+    'electron/advanced-context-reconstruct.js',
+    'electron/advanced-film-reconstruct.js',
+    'electron/advanced-bilingual-semantic.js',
+    'electron/advanced-reconstruct-runtime.js',
+    'electron/advanced-smart-translate.js',
+    'src/js/advanced-film-reconstruct-core.js',
+    'src/js/advanced-smart-translate-core.js',
+];
+
+/** Same closed cores must not leak through renderer-dist/** → asar */
+const PROPRIETARY_RENDERER_DIST_FORBIDDEN = [
+    'renderer-dist/js/advanced-film-reconstruct-core.js',
+    'renderer-dist/js/advanced-smart-translate-core.js',
+];
+
+function isProprietaryAsarPath(rel) {
+    const norm = String(rel || '').replace(/\\/g, '/');
+    return PROPRIETARY_ASAR_FORBIDDEN.includes(norm);
+}
+
+function collectSrcJsRequiresFromElectron() {
+    const electronDir = path.join(root, 'electron');
+    const required = new Set();
+    const re = /require\(\s*['"](\.\.\/src\/js\/[^'"]+)['"]\s*\)/g;
+    const skipProprietary = new Set(
+        PROPRIETARY_ASAR_FORBIDDEN
+            .filter((p) => p.startsWith('electron/'))
+            .map((p) => path.normalize(p)),
+    );
+    for (const file of listJsFiles(electronDir)) {
+        const relElectron = path.relative(root, file).split(path.sep).join('/');
+        if (skipProprietary.has(path.normalize(relElectron))) continue;
+        const text = fs.readFileSync(file, 'utf8');
+        let m;
+        while ((m = re.exec(text))) {
+            let rel = path.normalize(m[1].replace(/^\.\.\//, ''));
+            if (!rel.endsWith('.js')) rel = `${rel}.js`;
+            // Closed sources ship via `_advanced`, not app.asar
+            if (isProprietaryAsarPath(rel)) continue;
+            required.add(rel);
+        }
+    }
+    // Cores may also require sibling cores / dict
+    const srcJs = path.join(root, 'src', 'js');
+    for (const file of listJsFiles(srcJs)) {
+        if (!/[-]core\.js$/.test(file) && !file.endsWith('subtitle-chinese-dict.js')) continue;
+        const relCore = path.relative(root, file).split(path.sep).join('/');
+        if (isProprietaryAsarPath(relCore)) continue;
+        const text = fs.readFileSync(file, 'utf8');
+        const localRe = /require\(\s*['"](\.\/[^'"]+)['"]\s*\)/g;
+        let m;
+        while ((m = localRe.exec(text))) {
+            let rel = path.normalize(path.join('src', 'js', m[1].replace(/^\.\//, '')));
+            if (!rel.endsWith('.js')) rel = `${rel}.js`;
+            if (isProprietaryAsarPath(rel)) continue;
+            if (fs.existsSync(path.join(root, rel))) required.add(rel);
+        }
+    }
+    return [...required].sort();
 }
 
 function extractHtmlLocalAssets(htmlPath) {
@@ -382,6 +439,52 @@ function main() {
         const to = String(entry.to || '').replace(/\\/g, '/');
         return from === 'transub-engine' || to === 'transub-engine';
     });
+    const advancedExtra = extraFiles.find((entry) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const from = String(entry.from || '').replace(/\\/g, '/');
+        const to = String(entry.to || '').replace(/\\/g, '/');
+        return from === '_advanced' || to === '_advanced';
+    });
+    if (!advancedExtra) {
+        errors.push('package.json build.extraFiles 未包含闭源 _advanced 模块');
+    }
+    const advancedIndex = path.join(root, '_advanced', 'index.js');
+    if (!fs.existsSync(advancedIndex)) {
+        errors.push('缺少 _advanced/index.js（请先 npm run build:advanced）');
+    } else if (fs.statSync(advancedIndex).size < 500) {
+        errors.push('_advanced/index.js 过小，疑似未正确打包 Pro 算法');
+    }
+    for (const rel of PROPRIETARY_ASAR_FORBIDDEN) {
+        if (packageFilesCover(rel.replace(/\\/g, '/'))) {
+            errors.push(`闭源源码不应进入 asar files 白名单: ${rel}`);
+        }
+    }
+    for (const rel of PROPRIETARY_RENDERER_DIST_FORBIDDEN) {
+        if (fs.existsSync(path.join(root, rel))) {
+            errors.push(`renderer-dist 仍含闭源算法（应在 build-renderer 删除）: ${rel}`);
+        }
+        if (packageFilesCover(rel.replace(/\\/g, '/'))) {
+            errors.push(`闭源源码不应经 renderer-dist 进入 asar: ${rel}`);
+        }
+    }
+
+    // JA ASR domain fix SSOT (mt-sanitize Node + engine Python)
+    const jaAsrFixesRel = 'shared/ja-asr-domain-fixes.json';
+    if (!fs.existsSync(path.join(root, jaAsrFixesRel))) {
+        errors.push(`缺少 ASR 领域纠错 SSOT: ${jaAsrFixesRel}`);
+    } else if (!packageFilesCover(jaAsrFixesRel)) {
+        errors.push(`package.json build.files 可能未打包: ${jaAsrFixesRel}`);
+    }
+    const sharedExtra = extraFiles.find((entry) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const from = String(entry.from || '').replace(/\\/g, '/');
+        const to = String(entry.to || '').replace(/\\/g, '/');
+        return from === jaAsrFixesRel || to === jaAsrFixesRel || from === 'shared' || to === 'shared';
+    });
+    if (!sharedExtra) {
+        errors.push('package.json build.extraFiles 未包含 shared/ja-asr-domain-fixes.json（引擎侧需 exe 旁可读）');
+    }
+
     if (!engineExtra) {
         errors.push('package.json build.extraFiles 未包含 transub-engine');
     } else {
@@ -558,11 +661,40 @@ function main() {
                     || [...set].some((x) => x === norm || x.endsWith(`/${norm}`));
                 if (!found) errors.push(`asar 缺少: ${rel}`);
             }
+            for (const rel of PROPRIETARY_ASAR_FORBIDDEN) {
+                const norm = rel.replace(/\\/g, '/');
+                if (set.has(norm)) {
+                    errors.push(`asar 误含闭源源码: ${rel}`);
+                }
+            }
+            for (const rel of PROPRIETARY_RENDERER_DIST_FORBIDDEN) {
+                const norm = rel.replace(/\\/g, '/');
+                if (set.has(norm) || [...set].some((x) => x.endsWith(`/${path.posix.basename(norm)}`) && x.includes('renderer-dist/'))) {
+                    errors.push(`asar 误含闭源源码: ${rel}`);
+                }
+            }
+            if (!set.has('shared/ja-asr-domain-fixes.json')
+                && ![...set].some((x) => x === 'shared/ja-asr-domain-fixes.json' || x.endsWith('/shared/ja-asr-domain-fixes.json'))) {
+                errors.push('asar 缺少: shared/ja-asr-domain-fixes.json');
+            }
         } else if (fs.existsSync(asarRoot) && fs.statSync(asarRoot).isDirectory()) {
             for (const rel of mustInAsar) {
                 if (!fs.existsSync(path.join(asarRoot, rel))) {
                     errors.push(`解包目录缺少: ${rel}`);
                 }
+            }
+            for (const rel of PROPRIETARY_ASAR_FORBIDDEN) {
+                if (fs.existsSync(path.join(asarRoot, rel))) {
+                    errors.push(`解包 asar 目录误含闭源源码: ${rel}`);
+                }
+            }
+            for (const rel of PROPRIETARY_RENDERER_DIST_FORBIDDEN) {
+                if (fs.existsSync(path.join(asarRoot, rel))) {
+                    errors.push(`解包 asar 目录误含闭源源码: ${rel}`);
+                }
+            }
+            if (!fs.existsSync(path.join(asarRoot, 'shared', 'ja-asr-domain-fixes.json'))) {
+                errors.push('解包目录缺少: shared/ja-asr-domain-fixes.json');
             }
         } else {
             warnings.push(`无法校验 asar: ${asarRoot}`);
@@ -570,6 +702,14 @@ function main() {
 
         // Editor shortcut lives next to exe (outside asar)
         const unpackedRoot = path.dirname(path.dirname(path.resolve(asarRoot)));
+        const advancedPacked = path.join(unpackedRoot, '_advanced', 'index.js');
+        if (!fs.existsSync(advancedPacked)) {
+            errors.push(`解包目录缺少闭源模块: ${advancedPacked}`);
+        }
+        const sharedPacked = path.join(unpackedRoot, 'shared', 'ja-asr-domain-fixes.json');
+        if (!fs.existsSync(sharedPacked)) {
+            errors.push(`解包目录缺少 ASR SSOT: ${sharedPacked}`);
+        }
         const editorLnk = path.join(unpackedRoot, 'Transub Editor.lnk');
         if (!fs.existsSync(editorLnk)) {
             errors.push(`解包目录缺少 Transub Editor.lnk（期望: ${editorLnk}）`);

@@ -8,6 +8,7 @@ const {
     upsertEntry,
     replaceTerm,
     mergeGlossaries,
+    buildJaAvAsrPromptHints,
 } = require('../src/js/subtitle-glossary-core');
 
 function testParseAliasesInput() {
@@ -93,6 +94,15 @@ function testMergeGlossariesProjectOverridesGlobal() {
     assert.ok(merged.entries[0].aliases.includes('TS'));
 }
 
+function testJaAvAsrPromptHints() {
+    const hints = buildJaAvAsrPromptHints();
+    assert.ok(hints.initial_prompt.includes('メンズエステ'));
+    assert.ok(hints.hotwords.includes('オイル'));
+    assert.ok(hints.hotwords.includes('指圧'));
+    assert.ok(!hints.hotwords.includes('ギリギリ'));
+    assert.ok(!/人名です|用語：/.test(hints.initial_prompt));
+}
+
 describe("subtitle-glossary", () => {
     it("parse aliases input", () => {
         testParseAliasesInput();
@@ -114,5 +124,8 @@ describe("subtitle-glossary", () => {
     });
     it("merge glossaries with project override", () => {
         testMergeGlossariesProjectOverridesGlobal();
+    });
+    it("JA AV ASR prompt hints", () => {
+        testJaAvAsrPromptHints();
     });
 });

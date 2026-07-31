@@ -1,10 +1,8 @@
 const path = require('path');
+const { MEDIA_EXTENSIONS } = require('../src/js/media-extensions-core');
 
 const EDITABLE_SUBTITLE_EXTS = new Set(['.srt', '.vtt', '.lrc']);
-const VIDEO_FILE_EXTS = new Set([
-    '.mp4', '.m4v', '.webm', '.mkv', '.avi', '.mov', '.wmv', '.flv',
-    '.ts', '.mpeg', '.mpg', '.3gp',
-]);
+const VIDEO_FILE_EXTS = new Set(MEDIA_EXTENSIONS.map((ext) => `.${ext}`));
 
 function asString(value, maxLen = 8192) {
     if (value == null) return '';
@@ -82,7 +80,7 @@ function assertSubtitleMetaPath(inputPath) {
 function assertVideoFilePath(inputPath) {
     return assertUserFilePath(inputPath, {
         allowedExts: VIDEO_FILE_EXTS,
-        label: '视频',
+        label: '媒体',
     });
 }
 

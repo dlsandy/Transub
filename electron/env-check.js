@@ -167,8 +167,8 @@ function checkAsrModel(engineRoot, engineAsrModel = '') {
         label: 'ASR 模型',
         status: 'fail',
         detail: preferred
-            ? `未找到 ${preferred}。请运行「设置向导」或在「环境」下载模型`
-            : '未找到可用 ASR 模型。请运行「设置向导」或在「环境」下载 SenseVoice / Whisper',
+            ? `未找到 ${preferred}。请运行「设置向导」或在「处理模型」下载模型`
+            : '未找到可用 ASR 模型。请运行「设置向导」或在「处理模型」下载 SenseVoice / Whisper',
         blocking: true,
     };
 }
@@ -198,7 +198,7 @@ function checkVadModel(engineRoot, engineAsrModel = '') {
         id: 'vadModel',
         label: 'VAD 模型（FSMN）',
         status: 'fail',
-        detail: 'SenseVoice 默认 VAD 未找到。请重新安装或在「环境」下载 fsmn-vad',
+        detail: 'SenseVoice 默认 VAD 未找到。请重新安装或在「处理模型」下载 fsmn-vad',
         blocking: true,
     };
 }
@@ -329,7 +329,7 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err) || low.includes('torch_python')) {
         detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
     } else if (modelInstalled && missingPkg) {
-        detail = `模型权重已安装，但缺少运行库 ${missingPkg}（与「已安装」不是同一项）。在「环境」对 SenseVoice Small 点重新下载可补齐`;
+        detail = `模型权重已安装，但缺少运行库 ${missingPkg}（与「已安装」不是同一项）。在「处理模型」对 SenseVoice Small 点重新下载可补齐`;
     } else if (missingPkg) {
         detail = `缺少运行库 ${missingPkg}；下载 SenseVoice 模型时会自动安装`;
     } else {
@@ -361,7 +361,7 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
         engineRoot,
         [
             'import json,sys',
-            'out={"numpy":"","fw":"","av":"","missing":[],"errors":[],"policy":False,"dll":False}',
+            'out={"numpy":"","fw":"","av":"","ct2":"","ort":"","missing":[],"errors":[],"policy":False,"dll":False}',
             'try:',
             ' import numpy as np',
             ' out["numpy"]=str(getattr(np,"__version__","") or "")',
@@ -373,10 +373,24 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
             'except Exception as e:',
             ' out["missing"].append("av"); out["errors"].append(str(e))',
             'try:',
+            ' import ctranslate2 as ct2',
+            ' out["ct2"]=str(getattr(ct2,"__version__","") or "ok")',
+            'except Exception as e:',
+            ' out["missing"].append("ctranslate2"); out["errors"].append(str(e))',
+            'try:',
+            ' import onnxruntime as ort',
+            ' out["ort"]=str(getattr(ort,"__version__","") or "ok")',
+            'except Exception as e:',
+            ' out["missing"].append("onnxruntime"); out["errors"].append(str(e))',
+            'try:',
             ' import faster_whisper as fw',
             ' out["fw"]=str(getattr(fw,"__version__","") or "ok")',
             'except Exception as e:',
-            ' out["missing"].append("faster-whisper"); out["errors"].append(str(e))',
+            ' err=str(e)',
+            ' if "ctranslate2" in err.lower() and "ctranslate2" in out["missing"]:',
+            '  out["errors"].append(err)',
+            ' else:',
+            '  out["missing"].append("faster-whisper"); out["errors"].append(err)',
             'err=" ".join(out["errors"])',
             'out["policy"]=("应用程序控制策略" in err) or ("智能应用控制" in err) or ("4551" in err) or ("smart app" in err.lower())',
             'out["dll"]=(not out["policy"]) and (("dll load failed" in err.lower()) or ("找不到指定的模块" in err) or ("winerror 126" in err.lower()))',
@@ -395,17 +409,19 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     if (probe.ok && !missing.length) {
         const bits = [];
         if (data?.numpy) bits.push(`numpy ${data.numpy}`);
+        if (data?.ct2) bits.push(`ctranslate2 ${data.ct2}`);
+        if (data?.ort) bits.push(`onnxruntime ${data.ort}`);
         if (data?.fw) bits.push(`faster-whisper ${data.fw}`);
         if (data?.av) bits.push(`av ${data.av}`);
         return {
             id: 'whisperRuntime',
             label: 'Whisper 运行库',
             status: 'ok',
-            detail: bits.length ? bits.join(' · ') : 'numpy / faster-whisper 就绪',
+            detail: bits.length ? bits.join(' · ') : 'numpy / ctranslate2 / onnxruntime / faster-whisper 就绪',
             blocking: false,
         };
     }
-    const missLabel = missing.length ? missing.join(' / ') : 'numpy / faster-whisper / av';
+    const missLabel = missing.length ? missing.join(' / ') : 'numpy / ctranslate2 / onnxruntime / faster-whisper / av';
     let detail;
     if (data?.policy) {
         detail = 'Windows 应用程序控制策略/智能应用控制拦截了 Whisper 依赖 DLL（多为 av）。请关闭该策略或将引擎目录加入排除；仅重装 pip 无法修复';
@@ -639,7 +655,7 @@ function checkGpuRuntime(gpuInfo, engineRoot) {
             id: 'gpuRuntime',
             label: 'GPU 运行时',
             status: 'warn',
-            detail: '驱动支持 CUDA 12+；首次使用 Whisper GPU 时可在「环境」下载 GPU 支持组件',
+            detail: '驱动支持 CUDA 12+；首次使用 Whisper GPU 时可在「运行环境」下载 GPU 支持组件',
             blocking: false,
         };
     }
@@ -647,7 +663,7 @@ function checkGpuRuntime(gpuInfo, engineRoot) {
         id: 'gpuRuntime',
         label: 'GPU 运行时',
         status: 'warn',
-        detail: '未找到 cublas64_12.dll；可先用 CPU，或稍后在「环境」下载 GPU 支持',
+        detail: '未找到 cublas64_12.dll；可先用 CPU，或稍后在「运行环境」下载 GPU 支持',
         blocking: false,
     };
 }
@@ -815,11 +831,13 @@ function planEnvFixes(items, opts = {}) {
         const dllBlocked = !!wr.dllBlocked
             || (!policyBlocked && /dll load failed|找不到指定的模块|winerror 126/i.test(wrDetail));
         if (policyBlocked) {
-            // Pip reinstall cannot unblock Smart App Control.
+            // Still offer one-click retry (user may have just disabled SAC) + manual download.
+            // Do not hide the fix button — otherwise a failing Whisper item looks "stuck".
+            modelIds.add('whisper-tiny');
+            forceIds.add('whisper-tiny');
             steps.push({
                 id: 'whisperRuntime',
-                label: 'Whisper 运行库（需关闭应用程序控制策略，无法自动修复）',
-                manual: true,
+                label: '重试补齐 Whisper 运行库（若仍被策略拦截需先关闭智能应用控制）',
             });
         } else if (dllBlocked && statusOf('vcRedist') !== 'ok') {
             openVcRedist = true;
@@ -828,11 +846,11 @@ function planEnvFixes(items, opts = {}) {
             }
             modelIds.add('whisper-tiny');
             forceIds.add('whisper-tiny');
-            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / faster-whisper / av）' });
+            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
         } else {
             modelIds.add('whisper-tiny');
             forceIds.add('whisper-tiny');
-            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / faster-whisper / av）' });
+            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
         }
     }
 

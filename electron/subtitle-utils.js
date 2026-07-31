@@ -1,10 +1,14 @@
 const fs = require('fs');
 const path = require('path');
+const {
+    VIDEO_EXTENSIONS,
+    AUDIO_EXTENSIONS,
+    MEDIA_EXTENSIONS,
+} = require('../src/js/media-extensions-core');
 
 const SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc', '.ass', '.ssa', '.sub', '.sup', '.idx'];
 const PREFERRED_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc'];
 const EDITABLE_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc'];
-const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp'];
 
 function extRank(filePath) {
     const ext = path.extname(String(filePath || '')).toLowerCase();
@@ -13,15 +17,17 @@ function extRank(filePath) {
 }
 
 /**
- * Prefer bilingual target (*.zh.*) over unsuffixed / source-language sidecars
- * so "编辑字幕" opens the Chinese track when dual files exist.
+ * Prefer unsuffixed sidecars (same name as media / merged bilingual) over *.zh.*,
+ * then other language tags, then source-language sidecars — so "编辑字幕" opens
+ * the playable track when both exist.
  */
 function trackRank(filePath) {
     const base = path.basename(String(filePath || ''), path.extname(filePath)).toLowerCase();
     const parts = base.split('.');
-    if (parts.length < 2) return 1;
+    if (parts.length < 2) return 0;
     const tag = parts[parts.length - 1];
-    if (tag === 'zh') return 0;
+    if (tag === 'bilingual') return 0;
+    if (tag === 'zh') return 1;
     if (tag === 'source' || tag === 'ja' || tag === 'en') return 3;
     if (/^[a-z]{2,8}$/.test(tag)) return 2;
     return 1;
@@ -162,19 +168,63 @@ function isEditableSubtitleFile(fileName) {
     return EDITABLE_SUBTITLE_EXTS.some((ext) => lower.endsWith(ext));
 }
 
+/** Trailing basename tags commonly used for subtitle tracks (not part of the media stem). */
+const SUBTITLE_STEM_TAGS = new Set([
+    'src', 'source', 'orig', 'original',
+    'zh', 'chs', 'cht', 'cn', 'tw',
+    'ja', 'jp', 'en', 'ko', 'kr',
+    'bilingual', 'dual', 'cc', 'sdh', 'forced',
+]);
+
+/**
+ * Candidate media basenames for a subtitle stem, longest-first.
+ * e.g. Show.Name.S01E01.zh → [Show.Name.S01E01.zh, Show.Name.S01E01]
+ *      movie.src → [movie.src, movie]
+ */
+function mediaStemCandidatesFromSubtitle(subStem) {
+    const raw = String(subStem || '').trim();
+    const out = [];
+    const seen = new Set();
+    const add = (value) => {
+        const v = String(value || '').trim();
+        if (!v || seen.has(v)) return;
+        seen.add(v);
+        out.push(v);
+    };
+    add(raw);
+    let cur = raw;
+    while (true) {
+        const dot = cur.lastIndexOf('.');
+        if (dot <= 0) break;
+        const tag = cur.slice(dot + 1);
+        const base = cur.slice(0, dot);
+        if (!base) break;
+        const tagLower = tag.toLowerCase();
+        const stripTag = SUBTITLE_STEM_TAGS.has(tagLower)
+            || /^[a-z]{2,3}$/i.test(tag)
+            || /^[a-z]{2,3}([-_][a-z0-9]{2,8})?$/i.test(tag);
+        if (!stripTag) break;
+        add(base);
+        cur = base;
+    }
+    return out;
+}
+
 function guessVideoPathForSubtitle(subtitlePath) {
     const subPath = path.resolve(String(subtitlePath || ''));
     if (!fs.existsSync(subPath)) return null;
     const dir = path.dirname(subPath);
     const subExt = path.extname(subPath);
     const subStem = path.basename(subPath, subExt);
-    const stemCandidates = [subStem];
-    const dotIdx = subStem.indexOf('.');
-    if (dotIdx > 0) stemCandidates.push(subStem.slice(0, dotIdx));
+    const stemCandidates = mediaStemCandidatesFromSubtitle(subStem);
 
+    // Prefer video sidecars, then audio (podcasts / audio-only jobs).
+    const mediaExts = [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS];
+    const mediaExtSet = new Set(mediaExts.map((e) => String(e).toLowerCase()));
     const seen = new Set();
+
     for (const stem of stemCandidates) {
-        for (const ext of VIDEO_EXTENSIONS) {
+        for (const ext of mediaExts) {
             const candidate = path.join(dir, `${stem}.${ext}`);
             const key = process.platform === 'win32' ? candidate.toLowerCase() : candidate;
             if (seen.has(key)) continue;
@@ -182,6 +232,30 @@ function guessVideoPathForSubtitle(subtitlePath) {
             if (fs.existsSync(candidate)) return candidate;
         }
     }
+
+    // Directory scan: match exact stem, or subtitle stem = mediaStem + track tag
+    // (handles odd casing / unexpected extensions already in MEDIA list).
+    try {
+        let best = null;
+        let bestStemLen = -1;
+        for (const name of fs.readdirSync(dir)) {
+            const extWithDot = path.extname(name);
+            const ext = extWithDot.slice(1).toLowerCase();
+            if (!mediaExtSet.has(ext)) continue;
+            const mediaStem = name.slice(0, name.length - extWithDot.length);
+            if (!mediaStem) continue;
+            const matched = stemCandidates.some((stem) => (
+                stem === mediaStem || stem.startsWith(`${mediaStem}.`)
+            ));
+            if (!matched) continue;
+            if (mediaStem.length > bestStemLen) {
+                bestStemLen = mediaStem.length;
+                best = path.join(dir, name);
+            }
+        }
+        if (best) return best;
+    } catch (_) { /* ignore unreadable dirs */ }
+
     return null;
 }
 
@@ -190,6 +264,8 @@ module.exports = {
     PREFERRED_SUBTITLE_EXTS,
     EDITABLE_SUBTITLE_EXTS,
     VIDEO_EXTENSIONS,
+    AUDIO_EXTENSIONS,
+    MEDIA_EXTENSIONS,
     isSubtitleFile,
     isEditableSubtitleFile,
     collectSubtitleSidecars,
@@ -198,4 +274,5 @@ module.exports = {
     resolveLocalSubtitleBatch,
     resolveDualSubtitlePaths,
     guessVideoPathForSubtitle,
+    mediaStemCandidatesFromSubtitle,
 };

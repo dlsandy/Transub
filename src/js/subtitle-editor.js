@@ -1,154 +1,142 @@
-/**
- * Transub 字幕编辑器（独立窗口）— 列表 + 详情分栏
- */
-(function (global) {
-    const electron = global.__ELECTRON__;
-    const splitCore = global.TransubSubtitleSplit;
-    const qcCore = global.TransubSubtitleQc;
-    const metaCore = global.TransubSubtitleMeta;
-    const glossaryCore = global.TransubSubtitleGlossary;
-    const textPresetsCore = global.TransubSubtitleTextPresets;
-    const workflowsCore = global.TransubSubtitleWorkflows;
-    const fluencyCore = global.TransubSubtitleFluency;
-    const chineseCore = global.TransubSubtitleChinese;
-    if (!splitCore) {
-        throw new Error('subtitle-split-core.js must load before subtitle-editor.js');
-    }
-    if (!qcCore) {
-        throw new Error('subtitle-qc-core.js must load before subtitle-editor.js');
-    }
-    if (!metaCore) {
-        throw new Error('subtitle-meta-core.js must load before subtitle-editor.js');
-    }
-    if (!glossaryCore) {
-        throw new Error('subtitle-glossary-core.js must load before subtitle-editor.js');
-    }
-    if (!textPresetsCore) {
-        throw new Error('subtitle-text-presets-core.js must load before subtitle-editor.js');
-    }
-    if (!workflowsCore) {
-        throw new Error('subtitle-workflows-core.js must load before subtitle-editor.js');
-    }
-    if (!fluencyCore) {
-        throw new Error('subtitle-fluency-core.js must load before subtitle-editor.js');
-    }
-    if (!chineseCore) {
-        throw new Error('subtitle-chinese-core.js must load before subtitle-editor.js');
-    }
-    const editorParts = global.TransubEditorParts;
-    if (!editorParts?.utils) {
-        throw new Error('subtitle-editor/utils.js must load before subtitle-editor.js');
-    }
-    if (!editorParts?.installUndo) {
-        throw new Error('subtitle-editor/undo.js must load before subtitle-editor.js');
-    }
-    if (!editorParts?.installModals) {
-        throw new Error('subtitle-editor/modals.js must load before subtitle-editor.js');
-    }
-    if (!editorParts?.installBootProgress) {
-        throw new Error('subtitle-editor/boot.js must load before subtitle-editor.js');
-    }
-    if (!editorParts?.installPrefs) {
-        throw new Error('subtitle-editor/prefs.js must load before subtitle-editor.js');
-    }
-    if (!editorParts?.installWorkflows) {
-        throw new Error('subtitle-editor/workflows.js must load before subtitle-editor.js');
-    }
+(function(T) {
+    const p = T.__ELECTRON__,
+        D = T.TransubSubtitleSplit,
+        oe = T.TransubSubtitleQc,
+        z = T.TransubSubtitleMeta,
+        se = T.TransubSubtitleGlossary,
+        _ = T.TransubSubtitleTextPresets,
+        Xr = T.TransubSubtitleWorkflows,
+        Ne = T.TransubSubtitleFluency,
+        Gn = T.TransubSubtitleChinese;
+    if (!D) throw new Error("subtitle-split-core.js must load before subtitle-editor.js");
+    if (!oe) throw new Error("subtitle-qc-core.js must load before subtitle-editor.js");
+    if (!z) throw new Error("subtitle-meta-core.js must load before subtitle-editor.js");
+    if (!se) throw new Error("subtitle-glossary-core.js must load before subtitle-editor.js");
+    if (!_) throw new Error("subtitle-text-presets-core.js must load before subtitle-editor.js");
+    if (!Xr) throw new Error("subtitle-workflows-core.js must load before subtitle-editor.js");
+    if (!Ne) throw new Error("subtitle-fluency-core.js must load before subtitle-editor.js");
+    if (!Gn) throw new Error("subtitle-chinese-core.js must load before subtitle-editor.js");
+    const j = T.TransubEditorParts;
+    if (!j?.utils) throw new Error("subtitle-editor/utils.js must load before subtitle-editor.js");
+    if (!j?.installUndo) throw new Error("subtitle-editor/undo.js must load before subtitle-editor.js");
+    if (!j?.installModals) throw new Error("subtitle-editor/modals.js must load before subtitle-editor.js");
+    if (!j?.installBootProgress) throw new Error("subtitle-editor/boot.js must load before subtitle-editor.js");
+    if (!j?.installPrefs) throw new Error("subtitle-editor/prefs.js must load before subtitle-editor.js");
+    if (!j?.installLayout) throw new Error("subtitle-editor/layout.js must load before subtitle-editor.js");
+    if (!j?.installWorkflows) throw new Error("subtitle-editor/workflows.js must load before subtitle-editor.js");
+    if (!j?.installKeptAndMarkers) throw new Error("subtitle-editor/kept-and-markers.js must load before subtitle-editor.js");
     const {
-        esc,
-        basename,
-        formatDisplayTime,
-        parseInputTime,
-        cloneCues,
-        cuesEqual,
-        cueEndMs,
-        cueDurationMs,
-        formatDurationSec,
-        textCharCount,
-        lineCharCount,
-        computeCps,
-        getCueWarnings,
-        findPlaybackIndex: findPlaybackIndexInCues,
-        clampTargetCps,
-        describeVideoCodec,
-        buildFindRegex,
-    } = editorParts.utils;
-
-    const CONNECTED_TEXT_SPLIT_MSG = '文本为连续书写（无空格与换行），无法自动分割。请使用光标或播放头手动分割。';
-
-    const state = {
-        ready: false,
-        dirty: false,
-        path: '',
-        videoPath: '',
-        videoCodec: '',
+        esc: b,
+        basename: G,
+        formatDisplayTime: Z,
+        parseInputTime: Yr,
+        cloneCues: Jr,
+        cuesEqual: Tl,
+        cueEndMs: I,
+        cueDurationMs: V,
+        formatDurationSec: xt,
+        textCharCount: qe,
+        lineCharCount: es,
+        computeCps: Mt,
+        getCueWarnings: Zt,
+        findPlaybackIndex: ua,
+        clampTargetCps: ma,
+        describeVideoCodec: ts,
+        buildFindRegex: Kn
+    } = j.utils, fa = "\u6587\u672C\u4E3A\u8FDE\u7EED\u4E66\u5199\uFF08\u65E0\u7A7A\u683C\u4E0E\u6362\u884C\uFF09\uFF0C\u65E0\u6CD5\u81EA\u52A8\u5206\u5272\u3002\u8BF7\u4F7F\u7528\u5149\u6807\u6216\u64AD\u653E\u5934\u624B\u52A8\u5206\u5272\u3002", t = {
+        ready: !1,
+        dirty: !1,
+        path: "",
+        videoPath: "",
+        videoCodec: "",
         videoWidth: 0,
         videoHeight: 0,
-        format: 'srt',
+        format: "srt",
         header: [],
         cues: [],
         selectedIndex: -1,
         playbackIndex: -1,
         previewTextTrack: null,
         textTrackRefreshTimer: null,
-        overlayText: '',
-        overlaySourceText: '',
-        overlayVisible: false,
-        pairPath: '',
+        overlayText: "",
+        overlaySourceText: "",
+        overlayVisible: !1,
+        pairPath: "",
         pairCues: [],
-        pairFormat: 'srt',
+        pairFormat: "srt",
         pairHeader: [],
-        pairDirty: false,
+        pairDirty: !1,
         dualRole: null,
-        dualDisplayMode: 'both',
-        dualLineOrder: 'source-first',
+        dualDisplayMode: "both",
+        dualLineOrder: "source-first",
         cueBoundaryTimer: null,
         playheadTimer: null,
-        /** Last wall-clock sync from video timeupdate / boundary (ms). */
         lastPlaybackSyncAt: 0,
         timelineFollowRaf: 0,
-        lastPlayheadLabel: '',
-        detailSyncing: false,
+        lastPlayheadLabel: "",
+        detailSyncing: !1,
         detailRenderedDurSec: null,
-        detailUndoGrouped: false,
-        undoRecording: false,
+        detailUndoGrouped: !1,
+        undoRecording: !1,
         undoStack: [],
         redoStack: [],
         find: {
-            active: false,
+            active: !1,
             matches: [],
-            currentIndex: -1,
+            currentIndex: -1
         },
         initialSnapshot: null,
         savedSnapshot: null,
-        silenceSplitBusy: false,
-        retranscribeBusy: false,
-        jobAbortRequested: false,
-        selectedIndices: new Set(),
+        silenceSplitBusy: !1,
+        retranscribeBusy: !1,
+        reconstructBusy: !1,
+        inferenceKind: "",
+        computeBusy: !1,
+        computeBusyLabel: "",
+        translateEngine: "",
+        jobAbortRequested: !1,
+        selectedIndices: new Set,
         selectionAnchor: -1,
         sidecarMeta: null,
         cueMeta: [],
-        glossary: { version: 1, entries: [] },
-        globalGlossary: { version: 1, entries: [] },
-        projectGlossary: { version: 1, entries: [] },
-        glossaryScope: 'global',
-        glossaryEditingId: '',
+        markers: null,
+        keptTranscript: null,
+        lastQcResult: null,
+        glossary: {
+            version: 1,
+            entries: []
+        },
+        globalGlossary: {
+            version: 1,
+            entries: []
+        },
+        projectGlossary: {
+            version: 1,
+            entries: []
+        },
+        glossaryScope: "global",
+        glossaryEditingId: "",
         glossaryIssues: [],
-        textPresetsDoc: { version: 2, updatedAt: null, groups: [] },
-        textPresetEditingId: '',
-        textPresetsQuery: '',
+        textPresetsDoc: {
+            version: 2,
+            updatedAt: null,
+            groups: []
+        },
+        textPresetEditingId: "",
+        textPresetsQuery: "",
         breakWords: null,
-        listFilter: 'all',
-        qcIssueIndexSet: new Set(),
+        listFilter: "all",
+        listFilterSpeakerId: "",
+        qcIssueIndexSet: new Set,
         qcTypeFilter: null,
-        autoFocus: false,
-        waveformEnabled: true,
+        autoFocus: !1,
+        waveformEnabled: !0,
         waveform: {
             peaks: null,
             durationSec: 0,
-            videoPath: '',
-            loading: false,
-            cacheKey: '',
+            videoPath: "",
+            loading: !1,
+            cacheKey: ""
         },
         timeline: {
             dragging: null,
@@ -156,8547 +144,7878 @@
             durationMs: 0,
             viewStartMs: 0,
             viewEndMs: 0,
-            /** Minimum visible window when zoomed in (ms). */
-            minViewMs: 2000,
-            /** Zoom ratio: duration / visibleSpan. Default 5×. */
+            minViewMs: 2e3,
             zoom: 5,
-            /** True when the view currently covers the full duration (zoom ≈ 1). */
-            fitted: false,
-        },
+            fitted: !1
+        }
     };
+    let e = {},
+        H = null,
+        Bt = null,
+        Xt = null,
+        Yt = null,
+        st = null,
+        Vn = !1,
+        Jt = !1,
+        Ue = "",
+        en = null;
+    const pa = 45e3;
+    let tn = null;
+    const ga = 180;
+    let Le = 0,
+        it = 0,
+        ns = 0;
+    const O = T.TransubDualSubtitle || null,
+        rs = "transub-editor-dual-display",
+        ss = "transub-editor-dual-line-order";
 
-    let els = {};
-    let pendingEditorInit = null;
-    let editorBootstrapped = false;
-    let documentLoadInFlight = false;
-    let cachedFfmpegPath = '';
-    let draftAutosaveTimer = null;
-    const DRAFT_AUTOSAVE_MS = 45000;
-
-    const dualCore = global.TransubDualSubtitle || null;
-    const DUAL_DISPLAY_KEY = 'transub-editor-dual-display';
-    const DUAL_LINE_ORDER_KEY = 'transub-editor-dual-line-order';
-
-    function loadDualDisplayMode() {
+    function zn() {
         try {
-            const raw = localStorage.getItem(DUAL_DISPLAY_KEY);
-            if (dualCore) return dualCore.normalizeDualDisplayMode(raw || 'both');
-            if (raw === 'source' || raw === 'target' || raw === 'both') return raw;
-        } catch (_) { /* ignore */ }
-        return 'both';
+            const n = localStorage.getItem(rs);
+            if (O) return O.normalizeDualDisplayMode(n || "both");
+            if (n === "source" || n === "target" || n === "both") return n
+        } catch {}
+        return "both"
     }
 
-    function saveDualDisplayMode(mode) {
-        const normalized = dualCore
-            ? dualCore.normalizeDualDisplayMode(mode)
-            : (mode === 'source' || mode === 'target' ? mode : 'both');
-        state.dualDisplayMode = normalized;
+    function ha(n) {
+        const r = O ? O.normalizeDualDisplayMode(n) : n === "source" || n === "target" ? n : "both";
+        t.dualDisplayMode = r;
         try {
-            localStorage.setItem(DUAL_DISPLAY_KEY, normalized);
-        } catch (_) { /* ignore */ }
-        if (els.dualDisplaySelect) els.dualDisplaySelect.value = normalized;
-        updateVideoSubtitleOverlay(true);
+            localStorage.setItem(rs, r)
+        } catch {}
+        e.dualDisplaySelect && (e.dualDisplaySelect.value = r), It(!0)
     }
 
-    function loadDualLineOrder() {
+    function nn() {
         try {
-            const raw = localStorage.getItem(DUAL_LINE_ORDER_KEY);
-            if (dualCore) return dualCore.normalizeDualLineOrder(raw || 'source-first');
-            if (raw === 'target-first') return 'target-first';
-        } catch (_) { /* ignore */ }
-        return 'source-first';
+            const n = localStorage.getItem(ss);
+            if (O) return O.normalizeDualLineOrder(n || "source-first");
+            if (n === "target-first") return "target-first"
+        } catch {}
+        return "source-first"
     }
 
-    function saveDualLineOrder(order) {
-        const normalized = dualCore
-            ? dualCore.normalizeDualLineOrder(order)
-            : (order === 'target-first' ? 'target-first' : 'source-first');
-        state.dualLineOrder = normalized;
+    function ya(n) {
+        const r = O ? O.normalizeDualLineOrder(n) : n === "target-first" ? "target-first" : "source-first";
+        t.dualLineOrder = r;
         try {
-            localStorage.setItem(DUAL_LINE_ORDER_KEY, normalized);
-        } catch (_) { /* ignore */ }
-        if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = normalized;
-        updateVideoSubtitleOverlay(true);
+            localStorage.setItem(ss, r)
+        } catch {}
+        e.dualLineOrderSelect && (e.dualLineOrderSelect.value = r), It(!0)
     }
 
-    function syncDualDisplaySelectVisibility() {
-        if (!els.dualDisplaySelect) return;
-        const hasPair = hasDualPair();
-        els.dualDisplaySelect.classList.toggle('hidden', !hasPair);
-        els.dualLineOrderSelect?.classList.toggle('hidden', !hasPair);
-        els.exportDualBtn?.classList.toggle('hidden', !hasPair);
-        els.exportDualMenuBtn?.classList.toggle('hidden', !hasPair);
-        els.cueTable?.classList.toggle('has-dual-pair', hasPair);
-        document.querySelectorAll('.ctx-dual-only').forEach((el) => {
-            el.classList.toggle('hidden', !hasPair);
-        });
+    function kt() {
+        if (!e.dualDisplaySelect) return;
+        const n = U();
+        e.dualDisplaySelect.classList.toggle("hidden", !n), e.dualLineOrderSelect?.classList.toggle("hidden", !n), e.exportDualBtn?.classList.toggle("hidden", !n), e.exportDualMenuBtn?.classList.toggle("hidden", !n), e.cueTable?.classList.toggle("has-dual-pair", n), document.querySelectorAll(".ctx-dual-only").forEach(r => {
+            r.classList.toggle("hidden", !n)
+        })
     }
 
-    function hasDualPair() {
-        return !!state.pairPath && Array.isArray(state.pairCues) && state.pairCues.length > 0;
+    function U() {
+        return !!t.pairPath && Array.isArray(t.pairCues) && t.pairCues.length > 0
     }
 
-    function cueListColspan() {
-        return hasDualPair() ? 7 : 6;
+    function va() {
+        return U() ? 7 : 6
     }
 
-    function clearPairTrack() {
-        state.pairPath = '';
-        state.pairCues = [];
-        state.pairFormat = 'srt';
-        state.pairHeader = [];
-        state.pairDirty = false;
-        state.dualRole = null;
-        syncDualDisplaySelectVisibility();
+    function rn() {
+        t.pairPath = "", t.pairCues = [], t.pairFormat = "srt", t.pairHeader = [], t.pairDirty = !1, t.dualRole = null, as(), kt()
     }
 
-    function basenameNoExt(filePath) {
-        const base = basename(filePath);
-        const idx = base.lastIndexOf('.');
-        return idx > 0 ? base.slice(0, idx) : base;
+    function sn(n) {
+        const r = G(n),
+            i = r.lastIndexOf(".");
+        return i > 0 ? r.slice(0, i) : r
     }
 
-    function videoStemFromPath(videoPath) {
-        if (!videoPath) return '';
-        return basenameNoExt(videoPath);
+    function is(n) {
+        return n ? sn(n) : ""
     }
-
-    async function loadPairTrack(primaryPath, videoPath, { preferTargetPrimary = true } = {}) {
-        clearPairTrack();
-        if (!dualCore || !primaryPath || !electron?.transubReadSubtitle) return null;
-        const stem = videoStemFromPath(videoPath)
-            || dualCore.parseSubtitleStemParts(basenameNoExt(primaryPath), '').videoStem;
-        const inferred = dualCore.inferDualRole(basenameNoExt(primaryPath), stem);
-        if (!inferred.role || !(inferred.videoStem || stem)) return null;
-
-        const extMatch = String(primaryPath).match(/(\.[^.]+)$/);
-        const ext = extMatch ? extMatch[1] : '.srt';
-        const dir = String(primaryPath).replace(/[/\\][^/\\]+$/, '');
-        const sep = primaryPath.includes('\\') ? '\\' : '/';
-        const videoStem = inferred.videoStem || stem;
-
-        const suffixCandidates = dualCore.listPairSuffixCandidates(
-            inferred.role,
-            inferred.pairSuffix,
-        );
-
-        let pairPath = '';
-        let editable = [];
-
-        if (videoPath && electron.transubListSubtitleSidecars) {
-            try {
-                const res = await electron.transubListSubtitleSidecars({ videoPath });
-                editable = (res?.sidecars || []).filter((s) => s.editable);
-                pairPath = dualCore.findComplementarySidecarPath(
-                    primaryPath,
-                    videoStem,
-                    editable,
-                    {
-                        primaryRole: inferred.role,
-                        preferredPairSuffix: inferred.pairSuffix,
-                    },
-                ) || '';
-            } catch (_) { /* fall back to sibling paths */ }
-        }
-
-        if (!pairPath) {
-            for (const suffix of suffixCandidates) {
-                const candidate = `${dir}${sep}${videoStem}.${suffix}${ext}`;
-                if (candidate === primaryPath) continue;
-                try {
-                    const probe = await electron.transubReadSubtitle({ path: candidate });
-                    if (probe?.ok && Array.isArray(probe.cues) && probe.cues.length) {
-                        pairPath = candidate;
-                        break;
+    async function Sa(n, r, {
+        preferTargetPrimary: i = !0
+    } = {}) {
+        if (rn(), !O || !n || !p?.transubReadSubtitle) return null;
+        const s = is(r) || O.parseSubtitleStemParts(sn(n), "").videoStem,
+            a = O.inferDualRole(sn(n), s);
+        if (!a.role || !(a.videoStem || s)) return null;
+        const o = String(n).match(/(\.[^.]+)$/),
+            l = o ? o[1] : ".srt",
+            c = String(n).replace(/[/\\][^/\\]+$/, ""),
+            u = n.includes("\\") ? "\\" : "/",
+            m = a.videoStem || s,
+            f = O.listPairSuffixCandidates(a.role, a.pairSuffix);
+        let g = "",
+            h = [];
+        if (r && p.transubListSubtitleSidecars) try {
+            h = ((await p.transubListSubtitleSidecars({
+                videoPath: r
+            }))?.sidecars || []).filter(y => y.editable), g = O.findComplementarySidecarPath(n, m, h, {
+                primaryRole: a.role,
+                preferredPairSuffix: a.pairSuffix
+            }) || ""
+        } catch {}
+        if (!g)
+            for (const v of f) {
+                const y = `${c}${u}${m}.${v}${l}`;
+                if (y !== n) try {
+                    const k = await p.transubReadSubtitle({
+                        path: y
+                    });
+                    if (k?.ok && Array.isArray(k.cues) && k.cues.length) {
+                        g = y;
+                        break
                     }
-                } catch (_) { /* try next */ }
+                } catch {}
             }
-        }
-
-        if (!pairPath || pairPath === primaryPath) return null;
-
+        if (!g || g === n) return null;
         try {
-            const doc = await electron.transubReadSubtitle({ path: pairPath });
-            if (!doc?.ok) return null;
-
-            // 打开原文轨时，默认切到译文轨作主编辑（文本=译文，对照=原文）
-            if (preferTargetPrimary && inferred.role === 'source') {
-                return {
-                    swapToTarget: true,
-                    targetPath: pairPath,
-                    sourcePath: primaryPath,
-                };
-            }
-
-            state.pairPath = pairPath;
-            state.pairCues = Array.isArray(doc.cues) ? doc.cues : [];
-            state.pairFormat = doc.format || state.format || 'srt';
-            state.pairHeader = Array.isArray(doc.header) ? doc.header : [];
-            state.pairDirty = false;
-            state.dualRole = inferred.role;
-            state.dualDisplayMode = loadDualDisplayMode();
-            state.dualLineOrder = loadDualLineOrder();
-            if (els.dualDisplaySelect) els.dualDisplaySelect.value = state.dualDisplayMode;
-            if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = state.dualLineOrder;
-            syncDualDisplaySelectVisibility();
-            return { swapToTarget: false, pairPath, role: inferred.role };
-        } catch (_) {
-            clearPairTrack();
-            return null;
-        }
-    }
-
-    function resolvePairedTextForCue(cue) {
-        if (!cue || !state.pairCues?.length || !dualCore) return '';
-        const end = Number(cue.endMs);
-        const start = Number(cue.startMs) || 0;
-        const endMs = Number.isFinite(end) ? end : start;
-        const hit = dualCore.findBestOverlapCue(state.pairCues, start, endMs);
-        return String(hit.cue?.text || '').trim();
-    }
-
-    async function savePairDocument() {
-        if (!state.pairPath || !electron?.transubWriteSubtitle) return { ok: false };
-        const res = await electron.transubWriteSubtitle({
-            path: state.pairPath,
-            format: state.pairFormat || state.format || 'srt',
-            cues: state.pairCues,
-            header: state.pairHeader,
-            backupMode: 'off',
-        });
-        if (res?.ok) state.pairDirty = false;
-        return res;
-    }
-
-    async function exportMergedDualSubtitle() {
-        if (!hasDualPair() || !dualCore) {
-            setStatus('当前没有配对的双语字幕', 'err');
-            return;
-        }
-        if (!electron?.transubExportSubtitle) {
-            setStatus('当前环境不支持导出', 'err');
-            return;
-        }
-        syncDetailToCue();
-        const lineOrder = state.dualLineOrder || loadDualLineOrder();
-        const merged = dualCore.buildMergedDualCues(state.cues, state.pairCues, {
-            primaryRole: state.dualRole || 'target',
-            order: lineOrder,
-        });
-        if (!merged.length) {
-            setStatus('合并结果为空', 'err');
-            return;
-        }
-        const suggested = dualCore.suggestMergedExportName(state.path || 'subtitle.srt');
-        let defaultPath = suggested;
-        if (state.path) {
-            const dir = String(state.path).replace(/[/\\][^/\\]+$/, '');
-            const sep = state.path.includes('\\') ? '\\' : '/';
-            defaultPath = `${dir}${sep}${suggested}`;
-        }
-        const res = await electron.transubExportSubtitle({
-            title: '导出合并双语字幕',
-            defaultName: defaultPath,
-            format: state.format || 'srt',
-            cues: merged,
-            header: state.header,
-        });
-        if (res?.canceled) return;
-        if (!res?.ok) {
-            setStatus(res?.error || '导出失败', 'err');
-            return;
-        }
-
-        const sourcePath = state.path;
-        const pairPath = state.pairPath;
-        const exportedPath = res.path;
-        const deleteSources = await editorConfirm(
-            '合并后是否删除源字幕文件？',
-            {
-                title: '删除源字幕',
-                detail: `已导出：${basename(exportedPath)}\n将删除：\n· ${basename(sourcePath)}\n· ${basename(pairPath)}\n\n选择「删除」后不可恢复（将打开合并后的双语文件）。`,
-                okLabel: '删除',
-                cancelLabel: '保留',
-                type: 'warning',
-            },
-        );
-
-        if (deleteSources && electron?.transubDeleteSubtitleFiles) {
-            const del = await electron.transubDeleteSubtitleFiles({
-                paths: [sourcePath, pairPath].filter(Boolean),
+            const v = await p.transubReadSubtitle({
+                path: g
             });
-            if (!del?.ok) {
-                setStatus(`已导出双语，但删除源文件失败：${del?.error || '未知错误'}`, 'err');
-                return;
-            }
-            clearPairTrack();
-            state.dirty = false;
-            state.pairDirty = false;
-            if (exportedPath && exportedPath !== sourcePath) {
-                await loadDocument(exportedPath, state.videoPath);
-                setStatus(`已导出并删除源文件：${basename(exportedPath)}`, 'ok');
-            } else {
-                setStatus(`已导出双语并删除源文件：${basename(exportedPath)}`, 'ok');
-            }
-            return;
-        }
-
-        setStatus(`已导出双语：${basename(res.path)}`, 'ok');
-    }
-
-    function stopDraftAutosave() {
-        if (draftAutosaveTimer) {
-            clearInterval(draftAutosaveTimer);
-            draftAutosaveTimer = null;
-        }
-    }
-
-    function startDraftAutosave() {
-        stopDraftAutosave();
-        draftAutosaveTimer = setInterval(() => {
-            flushDraftAutosave().catch(() => {});
-        }, DRAFT_AUTOSAVE_MS);
-    }
-
-    async function flushDraftAutosave() {
-        if (!state.dirty || !state.path || !electron?.transubWriteSubtitleDraft) return;
-        try {
-            syncDetailToCue();
-            await electron.transubWriteSubtitleDraft({
-                path: state.path,
-                format: state.format,
-                header: state.header,
-                cues: state.cues,
-            });
-        } catch (_) { /* ignore */ }
-    }
-
-    async function clearDocumentDraft() {
-        if (!state.path || !electron?.transubClearSubtitleDraft) return;
-        try {
-            await electron.transubClearSubtitleDraft({ path: state.path });
-        } catch (_) { /* ignore */ }
-    }
-
-    async function maybeRestoreDraft(subPath) {
-        if (!subPath || !electron?.transubCheckSubtitleDraft) return null;
-        const check = await electron.transubCheckSubtitleDraft({ path: subPath });
-        if (!check?.ok || !check.offer || !check.draft) return null;
-        const when = check.savedAt
-            ? new Date(check.savedAt).toLocaleString()
-            : '未知时间';
-        const yes = await editorConfirm(
-            `发现未保存草稿（${when}，约 ${check.cueCount || 0} 条）。是否恢复？\n选「取消」则丢弃草稿并打开文件内容。`,
-        );
-        if (!yes) {
-            try { await electron.transubClearSubtitleDraft({ path: subPath }); } catch (_) { /* ignore */ }
-            return null;
-        }
-        return check.draft;
-    }
-
-    async function loadAppFfmpegPath() {
-        try {
-            const res = await electron?.transWithAiGetOptions?.({});
-            cachedFfmpegPath = String(res?.options?.ffmpegPath || '').trim();
-        } catch (_) {
-            cachedFfmpegPath = '';
-        }
-    }
-
-    function buildFfmpegRequest(payload = {}) {
-        const req = { ...payload };
-        if (cachedFfmpegPath) req.ffmpegPath = cachedFfmpegPath;
-        return req;
-    }
-
-    function bootstrapEditorDocument(payload) {
-        if (!payload) return;
-        if (payload.welcome && !payload.subPath) {
-            if (!editorBootstrapped) {
-                pendingEditorInit = payload;
-                return;
-            }
-            showWelcomeScreen();
-            return;
-        }
-        if (!payload.subPath) return;
-        if (!editorBootstrapped) {
-            pendingEditorInit = payload;
-            return;
-        }
-        hideWelcomeScreen();
-        openDocument(payload.subPath, payload.videoPath || '');
-    }
-
-    electron?.onSubtitleEditorInit?.(bootstrapEditorDocument);
-
-    function setStatus(msg, type) {
-        if (!els.statusLine) return;
-        els.statusLine.textContent = msg || '';
-        els.statusLine.className = `status-msg${
-            type === 'err' ? ' err' : type === 'ok' ? ' ok' : type === 'warn' ? ' warn' : ''
-        }`;
-    }
-
-    function formatRelativeOpenedAt(iso) {
-        const t = Date.parse(String(iso || ''));
-        if (!Number.isFinite(t)) return '';
-        const diffSec = Math.round((Date.now() - t) / 1000);
-        if (diffSec < 60) return '刚刚';
-        if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
-        if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
-        if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`;
-        try {
-            return new Date(t).toLocaleString();
+            return v?.ok ? i && a.role === "source" ? {
+                swapToTarget: !0,
+                targetPath: g,
+                sourcePath: n
+            } : (t.pairPath = g, t.pairCues = Array.isArray(v.cues) ? v.cues : [], as(), t.pairFormat = v.format || t.format || "srt", t.pairHeader = Array.isArray(v.header) ? v.header : [], t.pairDirty = !1, t.dualRole = a.role, t.dualDisplayMode = zn(), t.dualLineOrder = nn(), e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode), e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder), kt(), {
+                swapToTarget: !1,
+                pairPath: g,
+                role: a.role
+            }) : null
         } catch {
-            return '';
+            return rn(), null
         }
     }
 
-    function showWelcomeScreen() {
-        if (!els.welcome) return;
-        els.welcome.classList.remove('hidden');
-        hideBootProgress();
-        setStatus('就绪', '');
-        void refreshWelcomeHistory();
+    function as() {
+        t._pairOverlapIndex = null
     }
 
-    function hideWelcomeScreen() {
-        if (!els.welcome) return;
-        els.welcome.classList.add('hidden');
-        els.welcomeIconWrap?.classList.remove('is-dragover');
+    function ba() {
+        return !t.pairCues?.length || !O?.buildOverlapIndex ? null : ((!t._pairOverlapIndex || t._pairOverlapIndex.cues !== t.pairCues) && (t._pairOverlapIndex = O.buildOverlapIndex(t.pairCues)), t._pairOverlapIndex)
     }
 
-    async function refreshWelcomeHistory() {
-        if (!els.welcomeHistoryList) return;
-        let entries = [];
-        try {
-            const res = await electron?.transubGetEditorHistory?.();
-            if (res?.ok && Array.isArray(res.entries)) entries = res.entries;
-        } catch (_) { /* ignore */ }
-        if (!entries.length) {
-            els.welcomeHistoryList.innerHTML = '<div class="editor-welcome-history-empty">暂无最近编辑记录</div>';
-            if (els.welcomeClearBtn) els.welcomeClearBtn.disabled = true;
-            return;
-        }
-        if (els.welcomeClearBtn) els.welcomeClearBtn.disabled = false;
-        els.welcomeHistoryList.innerHTML = entries.map((entry) => {
-            const missing = entry.exists === false;
-            const when = formatRelativeOpenedAt(entry.openedAt);
-            const meta = missing
-                ? (when ? `${when} · 文件不存在` : '文件不存在')
-                : when;
-            return `<button type="button" class="editor-welcome-history-item${missing ? ' is-missing' : ''}" role="listitem" data-path="${esc(entry.path)}" data-video="${esc(entry.videoPath || '')}" title="${esc(entry.path)}">
-                <span class="editor-welcome-history-name">${esc(entry.basename || basename(entry.path))}</span>
-                <span class="editor-welcome-history-path">${esc(entry.path)}</span>
-                ${meta ? `<span class="editor-welcome-history-meta">${esc(meta)}</span>` : ''}
-            </button>`;
-        }).join('');
-    }
-
-    async function recordEditorHistory(subPath, videoPath) {
-        if (!subPath || !electron?.transubAppendEditorHistory) return;
-        try {
-            await electron.transubAppendEditorHistory({
-                path: subPath,
-                videoPath: videoPath || '',
-                basename: basename(subPath),
+    function an(n) {
+        if (!n || !t.pairCues?.length || !O) return "";
+        const r = Number(n.endMs),
+            i = Number(n.startMs) || 0,
+            s = Number.isFinite(r) ? r : i,
+            a = O.findBestOverlapCue(t.pairCues, i, s, {
+                index: ba()
             });
-        } catch (_) { /* ignore */ }
+        return String(a.cue?.text || "").trim()
     }
-
-    async function clearWelcomeHistory() {
-        const yes = await editorConfirm('确定清除全部字幕编辑历史？', {
-            title: '清除历史记录',
-            okLabel: '清除',
-            detail: '此操作不可撤销。',
-        });
-        if (!yes) return;
-        try {
-            await electron?.transubClearEditorHistory?.();
-        } catch (_) { /* ignore */ }
-        await refreshWelcomeHistory();
-        setStatus('已清除编辑历史', 'ok');
-    }
-
-    function pathFromDroppedFile(file) {
-        if (!file) return '';
-        const legacy = file.path || '';
-        if (legacy) return legacy;
-        return electron?.getPathForFile?.(file) || '';
-    }
-
-    function isSubtitleDropPath(filePath) {
-        const lower = String(filePath || '').toLowerCase();
-        return ['.srt', '.vtt', '.lrc'].some((ext) => lower.endsWith(ext));
-    }
-
-    async function openDroppedSubtitle(dataTransfer) {
-        const files = dataTransfer?.files;
-        if (!files?.length) {
-            setStatus('未识别到可打开的字幕文件', 'err');
-            return;
-        }
-        let subPath = '';
-        for (const file of files) {
-            const p = pathFromDroppedFile(file);
-            if (p && isSubtitleDropPath(p)) {
-                subPath = p;
-                break;
-            }
-            if (!p && isSubtitleDropPath(file.name || '')) {
-                setStatus('无法获取拖放文件路径', 'err');
-                return;
-            }
-        }
-        if (!subPath) {
-            setStatus('请拖放 SRT / VTT / LRC 字幕文件', 'err');
-            return;
-        }
-        await openDocument(subPath, '');
-    }
-
-    function bindWelcomeEvents() {
-        els.welcomeOpenBtn?.addEventListener('click', () => { void pickAndOpenInWindow(); });
-        els.welcomeClearBtn?.addEventListener('click', () => { void clearWelcomeHistory(); });
-        els.welcomeHistoryList?.addEventListener('click', (e) => {
-            const btn = e.target.closest?.('[data-path]');
-            if (!btn) return;
-            const subPath = btn.getAttribute('data-path') || '';
-            const videoPath = btn.getAttribute('data-video') || '';
-            if (!subPath) return;
-            void openDocument(subPath, videoPath);
-        });
-
-        const dropTarget = els.welcomeIconWrap || els.welcomeIcon || els.welcome;
-        if (!dropTarget) return;
-        let dragDepth = 0;
-        const setDragOver = (on) => {
-            els.welcomeIconWrap?.classList.toggle('is-dragover', !!on);
+    async function os() {
+        if (!t.pairPath || !p?.transubWriteSubtitle) return {
+            ok: !1
         };
-        dropTarget.addEventListener('dragenter', (e) => {
-            e.preventDefault();
-            dragDepth += 1;
-            setDragOver(true);
+        const n = await p.transubWriteSubtitle({
+            path: t.pairPath,
+            format: t.pairFormat || t.format || "srt",
+            cues: t.pairCues,
+            header: t.pairHeader,
+            backupMode: "off"
         });
-        dropTarget.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-            setDragOver(true);
-        });
-        dropTarget.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            dragDepth = Math.max(0, dragDepth - 1);
-            if (dragDepth === 0) setDragOver(false);
-        });
-        dropTarget.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dragDepth = 0;
-            setDragOver(false);
-            void openDroppedSubtitle(e.dataTransfer);
-        });
-        // 防止拖到启动页其它区域时浏览器导航离开
-        els.welcome?.addEventListener('dragover', (e) => e.preventDefault());
-        els.welcome?.addEventListener('drop', (e) => e.preventDefault());
+        return n?.ok && (t.pairDirty = !1), n
     }
-
-    function updateWindowTitle() {
-        document.title = state.path
-            ? `${state.dirty ? '* ' : ''}Transub Editor — ${basename(state.path)}`
-            : 'Transub Editor';
-    }
-
-    function setDirty(v) {
-        state.dirty = !!v;
-        if (els.dirtyBadge) els.dirtyBadge.classList.toggle('hidden', !state.dirty);
-        updateWindowTitle();
-    }
-
-    function findPlaybackIndex(tMs) {
-        return findPlaybackIndexInCues(state.cues, tMs, state.playbackIndex);
-    }
-
-    function syncDetailToCue() {
-        if (state.detailSyncing || state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) return;
-        const cue = state.cues[state.selectedIndex];
-        const startMs = parseInputTime(els.detailStart?.value, state.format);
-        if (startMs != null) cue.startMs = startMs;
-        const durSec = Number(els.detailDuration?.value);
-        const cueDurSec = cueDurationMs(cue) / 1000;
-        if (Number.isFinite(durSec) && durSec > 0) {
-            const uiStale = Math.abs(durSec - cueDurSec) > 0.05
-                && state.detailRenderedDurSec != null
-                && Math.abs(durSec - state.detailRenderedDurSec) < 0.001;
-            if (!uiStale) {
-                cue.endMs = cue.startMs + Math.round(durSec * 1000);
-            }
+    async function on() {
+        if (!U() || !O) {
+            d("\u5F53\u524D\u6CA1\u6709\u914D\u5BF9\u7684\u53CC\u8BED\u5B57\u5E55", "err");
+            return
         }
-        if (els.detailText) cue.text = els.detailText.value;
-    }
-
-    function resyncPlaybackAfterCueTimingChange() {
-        state.overlayText = '';
-        state.overlayVisible = false;
-        scheduleVideoTextTrackRefresh();
-        if (!state.ready || !els.video) return;
-
-        const wasPlaying = !els.video.paused && !els.video.ended;
-        if (state.cueBoundaryTimer) {
-            clearTimeout(state.cueBoundaryTimer);
-            state.cueBoundaryTimer = null;
+        if (!p?.transubExportSubtitle) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5BFC\u51FA", "err");
+            return
         }
-
-        const prevPlayback = state.playbackIndex;
-        syncFromExternalTime(els.video.currentTime || 0, true);
-        if (state.playbackIndex === prevPlayback) {
-            updateListRowClasses();
-        }
-
-        if (wasPlaying) scheduleCueBoundarySync();
-    }
-
-    function updateDetailMeta() {
-        if (state.selectedIndex < 0) return;
-        const cue = state.cues[state.selectedIndex];
-        const text = els.detailText?.value ?? cue.text ?? '';
-        const durMs = cueDurationMs(cue);
-        const cps = computeCps(text, durMs);
-        const targetCps = getTargetCps();
-        if (els.detailCps) {
-            if (!cps) {
-                els.detailCps.textContent = 'CPS —';
-                els.detailCps.style.color = 'var(--ed-accent)';
-                els.detailCps.style.fontWeight = '500';
-            } else {
-                const cpsNum = Number(cps);
-                els.detailCps.textContent = `当前 CPS ${cps}（目标 ${targetCps}）`;
-                if (cpsNum > targetCps * 1.05) {
-                    els.detailCps.style.color = 'var(--ed-warn-text)';
-                    els.detailCps.style.fontWeight = '600';
-                } else {
-                    els.detailCps.style.color = 'var(--ed-accent)';
-                    els.detailCps.style.fontWeight = '500';
-                }
-            }
-        }
-        if (els.lineLen) els.lineLen.textContent = String(lineCharCount(text));
-        if (els.textLen) els.textLen.textContent = String(textCharCount(text));
-        if (els.detailEnd) els.detailEnd.value = formatDisplayTime(cueEndMs(cue), state.format);
-
-        const prev = state.selectedIndex > 0 ? state.cues[state.selectedIndex - 1] : null;
-        const next = state.selectedIndex < state.cues.length - 1 ? state.cues[state.selectedIndex + 1] : null;
-        const w = getCueWarnings(cue, prev, next);
-        if (els.detailWarn) {
-            const meta = state.cueMeta[state.selectedIndex];
-            const metaHint = meta?.low
-                ? `低置信 ${(meta.confidence * 100).toFixed(0)}%（${(meta.flags || []).map((f) => metaCore.flagLabel(f)).join(' · ') || '启发式'}）`
-                : '';
-            if (w.msg.length) {
-                els.detailWarn.textContent = [w.msg.join(' · '), metaHint].filter(Boolean).join(' · ');
-                els.detailWarn.classList.remove('hidden');
-            } else if (metaHint) {
-                els.detailWarn.textContent = `${metaHint}，可右键重转写或标记为可信`;
-                els.detailWarn.classList.remove('hidden');
-            } else {
-                const cpsNum = cps ? Number(cps) : null;
-                if (cpsNum != null && cpsNum > targetCps * 1.2 && textCharCount(text) >= 8
-                    && !splitCore.isConnectedText(text)) {
-                    els.detailWarn.textContent = '读速过快，建议使用智能分割';
-                    els.detailWarn.classList.remove('hidden');
-                } else {
-                    els.detailWarn.textContent = '';
-                    els.detailWarn.classList.add('hidden');
-                }
-            }
-        }
-    }
-
-    function getLiveSelectedCue() {
-        const idx = state.selectedIndex;
-        if (idx < 0 || idx >= state.cues.length) return null;
-        const cue = state.cues[idx];
-        const live = { startMs: cue.startMs, endMs: cue.endMs, text: cue.text };
-        if (els.detailText != null) live.text = els.detailText.value;
-        const startMs = parseInputTime(els.detailStart?.value, state.format);
-        if (startMs != null) live.startMs = startMs;
-        const durSec = Number(els.detailDuration?.value);
-        if (Number.isFinite(durSec) && durSec > 0) {
-            live.endMs = live.startMs + Math.round(durSec * 1000);
-        }
-        return live;
-    }
-
-    function updateDetailActionButtons() {
-        const idx = state.selectedIndex;
-        const hasCue = idx >= 0 && idx < state.cues.length;
-        if (!hasCue) {
-            if (els.prevCueBtn) els.prevCueBtn.disabled = true;
-            if (els.nextCueBtn) els.nextCueBtn.disabled = true;
-            if (els.deleteCueBtn) els.deleteCueBtn.disabled = true;
-            if (els.splitCueBtn) els.splitCueBtn.disabled = true;
-            if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = true;
-            if (els.silenceSplitCueBtn) els.silenceSplitCueBtn.disabled = true;
-            if (els.compressRepCueBtn) els.compressRepCueBtn.disabled = true;
-            if (els.splitLinesBtn) els.splitLinesBtn.disabled = true;
-            if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = true;
-            if (els.charDurBtn) els.charDurBtn.disabled = true;
-            if (els.smartDurBtn) els.smartDurBtn.disabled = true;
-            if (els.audioSnapBtn) els.audioSnapBtn.disabled = true;
-            updateRetranscribeTransportBtn();
-            return;
-        }
-
-        const cue = getLiveSelectedCue() || state.cues[idx];
-        const rawText = String(cue.text || '');
-        const text = rawText.trim();
-        const canSplit = !!text;
-        const canSplitLines = canSplit && rawText.includes('\n');
-        const canSplitSpaces = canSplit && /\s/.test(rawText);
-
-        if (els.prevCueBtn) els.prevCueBtn.disabled = idx <= 0;
-        if (els.nextCueBtn) els.nextCueBtn.disabled = idx >= state.cues.length - 1;
-        if (els.deleteCueBtn) els.deleteCueBtn.disabled = false;
-        if (els.splitCueBtn) els.splitCueBtn.disabled = false;
-        if (els.smartSplitCueBtn) els.smartSplitCueBtn.disabled = !canSplit;
-        if (els.silenceSplitCueBtn) {
-            els.silenceSplitCueBtn.disabled = state.silenceSplitBusy || !canSilenceSplitCue(cue)
-                || !state.videoPath || !electron?.ffmpegDetectSilence;
-        }
-        if (els.compressRepCueBtn) {
-            const canCompress = !!text && !!fluencyCore.compressRepetitionInText(text)?.changed;
-            els.compressRepCueBtn.disabled = !canCompress;
-        }
-        if (els.splitLinesBtn) els.splitLinesBtn.disabled = !canSplitLines;
-        if (els.splitSpacesBtn) els.splitSpacesBtn.disabled = !canSplitSpaces;
-        if (els.charDurBtn) {
-            els.charDurBtn.disabled = !textCharCount(rawText);
-        }
-        if (els.smartDurBtn) {
-            els.smartDurBtn.disabled = state.silenceSplitBusy || !canSilenceAdjustDurationCue(cue)
-                || !state.videoPath || !electron?.ffmpegDetectSilence;
-        }
-        if (els.audioSnapBtn) {
-            els.audioSnapBtn.disabled = state.silenceSplitBusy || state.retranscribeBusy
-                || !canAudioSnapCue(cue)
-                || !state.videoPath || !electron?.ffmpegDetectSilence;
-        }
-        updateRetranscribeTransportBtn();
-    }
-
-    function renderDetailPane() {
-        state.detailSyncing = true;
-        const idx = state.selectedIndex;
-        const hasCue = idx >= 0 && idx < state.cues.length;
-        if (els.detailPane) els.detailPane.style.opacity = hasCue ? '1' : '0.5';
-
-        if (!hasCue) {
-            if (els.detailStart) els.detailStart.value = '';
-            if (els.detailDuration) els.detailDuration.value = '';
-            if (els.detailEnd) els.detailEnd.value = '';
-            if (els.detailText) els.detailText.value = '';
-            if (els.detailCps) els.detailCps.textContent = 'CPS —';
-            if (els.lineLen) els.lineLen.textContent = '0';
-            if (els.textLen) els.textLen.textContent = '0';
-            if (els.detailWarn) els.detailWarn.classList.add('hidden');
-            if (els.detailPairWrap) els.detailPairWrap.classList.add('hidden');
-            if (els.detailPairText) els.detailPairText.textContent = '';
-            updateDetailActionButtons();
-            state.detailRenderedDurSec = null;
-            state.detailSyncing = false;
-            return;
-        }
-
-        const cue = state.cues[idx];
-        if (els.detailStart) els.detailStart.value = formatDisplayTime(cue.startMs, state.format);
-        if (els.detailDuration) els.detailDuration.value = formatDurationSec(cueDurationMs(cue));
-        if (els.detailEnd) els.detailEnd.value = formatDisplayTime(cueEndMs(cue), state.format);
-        if (els.detailText) els.detailText.value = cue.text || '';
-        if (els.detailPairWrap && els.detailPairText) {
-            if (hasDualPair()) {
-                const pairText = resolvePairedTextForCue(cue);
-                els.detailPairText.textContent = pairText || '（无时间重叠的对照）';
-                els.detailPairWrap.classList.remove('hidden');
-            } else {
-                els.detailPairText.textContent = '';
-                els.detailPairWrap.classList.add('hidden');
-            }
-        }
-        updateDetailActionButtons();
-        updateDetailMeta();
-        state.detailRenderedDurSec = cueDurationMs(cue) / 1000;
-        state.detailSyncing = false;
-    }
-
-    function updateRetranscribeTransportBtn() {
-        if (!els.retranscribeCueBtn) return;
-        els.retranscribeCueBtn.disabled = state.retranscribeBusy || state.silenceSplitBusy
-            || !state.videoPath || !electron?.transubTranscribeRange;
-    }
-
-    function syncSelectionSetToFocus() {
-        if (!(state.selectedIndices instanceof Set)) {
-            state.selectedIndices = new Set();
-        }
-        if (state.selectedIndex >= 0 && state.selectedIndex < state.cues.length) {
-            if (!state.selectedIndices.size) state.selectedIndices.add(state.selectedIndex);
-        } else if (!state.selectedIndices.size) {
-            /* empty */
-        } else if (![...state.selectedIndices].some((i) => i >= 0 && i < state.cues.length)) {
-            state.selectedIndices.clear();
-        }
-    }
-
-    function getSelectedCueIndexes() {
-        syncSelectionSetToFocus();
-        return [...state.selectedIndices]
-            .filter((i) => Number.isInteger(i) && i >= 0 && i < state.cues.length)
-            .sort((a, b) => a - b);
-    }
-
-    function setSelectionIndexes(indexes, focusIdx) {
-        const next = new Set();
-        for (const raw of indexes || []) {
-            const i = Number(raw);
-            if (Number.isInteger(i) && i >= 0 && i < state.cues.length) next.add(i);
-        }
-        state.selectedIndices = next;
-        let focus = Number(focusIdx);
-        if (!Number.isInteger(focus) || focus < 0 || focus >= state.cues.length) {
-            focus = next.size ? Math.max(...next) : -1;
-        }
-        if (focus !== state.selectedIndex) {
-            syncDetailToCue();
-            state.selectedIndex = focus;
-            if (focus >= 0) renderDetailPane();
-        }
-        state.selectionAnchor = focus;
-        updateListRowClasses();
-        if (els.timelineCues) {
-            els.timelineCues.querySelectorAll('.editor-timeline-cue').forEach((el) => {
-                const i = Number(el.getAttribute('data-tl-idx'));
-                el.classList.toggle('selected', next.has(i) || i === state.selectedIndex);
+        x();
+        const n = t.dualLineOrder || nn(),
+            r = O.buildMergedDualCues(t.cues, t.pairCues, {
+                primaryRole: t.dualRole || "target",
+                order: n
             });
+        if (!r.length) {
+            d("\u5408\u5E76\u7ED3\u679C\u4E3A\u7A7A", "err");
+            return
         }
-    }
-
-    function updateListRowClasses() {
-        if (!els.cueBody) return;
-        syncSelectionSetToFocus();
-        const currentCueIdx = state.find.active && state.find.currentIndex >= 0
-            ? state.find.matches[state.find.currentIndex]?.cueIdx
-            : -1;
-        const hitCueSet = new Set(
-            state.find.active ? state.find.matches.map((m) => m.cueIdx) : []
-        );
-        els.cueBody.querySelectorAll('tr[data-cue-idx]').forEach((row) => {
-            const idx = Number(row.dataset.cueIdx);
-            const selected = state.selectedIndices.has(idx) || idx === state.selectedIndex;
-            row.classList.toggle('cue-row-selected', selected);
-            row.classList.toggle('cue-row-playing', idx === state.playbackIndex);
-            row.classList.toggle('cue-row-find-hit', hitCueSet.has(idx));
-            row.classList.toggle('cue-row-find-current', idx === currentCueIdx);
-            row.classList.toggle('cue-row-low-conf', !!state.cueMeta[idx]?.low);
+        const i = O.suggestMergedExportName(t.path || "subtitle.srt");
+        let s = i;
+        if (t.path) {
+            const m = String(t.path).replace(/[/\\][^/\\]+$/, ""),
+                f = t.path.includes("\\") ? "\\" : "/";
+            s = `${m}${f}${i}`
+        }
+        const a = await p.transubExportSubtitle({
+            title: "\u5BFC\u51FA\u5408\u5E76\u53CC\u8BED\u5B57\u5E55",
+            defaultName: s,
+            format: t.format || "srt",
+            cues: r,
+            header: t.header
         });
-    }
+        if (a?.canceled) return;
+        if (!a?.ok) {
+            d(a?.error || "\u5BFC\u51FA\u5931\u8D25", "err");
+            return
+        }
+        const o = t.path,
+            l = t.pairPath,
+            c = a.path;
+        if (await ie("\u5408\u5E76\u540E\u662F\u5426\u5220\u9664\u6E90\u5B57\u5E55\u6587\u4EF6\uFF1F", {
+                title: "\u5220\u9664\u6E90\u5B57\u5E55",
+                detail: `\u5DF2\u5BFC\u51FA\uFF1A${G(c)}
+\u5C06\u5220\u9664\uFF1A
+\xB7 ${G(o)}
+\xB7 ${G(l)}
 
-    function getMetaScanOptions() {
-        return {
-            maxCps: Number(els.qcMaxCps?.value) || Number(els.smartMaxCps?.value) || 18,
-            minSec: Number(els.qcMinSec?.value) || 0.5,
-            maxSec: Number(els.qcMaxSec?.value) || 10,
-            lowThreshold: metaCore.DEFAULT_LOW_THRESHOLD,
-        };
-    }
-
-    function refreshCueMeta() {
-        state.cueMeta = metaCore.mergeConfidenceAnnotations(
-            state.cues,
-            state.sidecarMeta,
-            getMetaScanOptions(),
-        );
-        const summary = metaCore.summarizeLowConfidence(state.cueMeta);
-        if (els.lowConfBadge) {
-            if (summary.low > 0) {
-                els.lowConfBadge.textContent = `低置信 ${summary.low > 99 ? '99+' : summary.low}`;
-                els.lowConfBadge.classList.remove('hidden');
-                els.lowConfBadge.title = summary.summary;
-            } else {
-                els.lowConfBadge.textContent = '0';
-                els.lowConfBadge.classList.add('hidden');
-                els.lowConfBadge.title = '无可疑条目';
-            }
-        }
-    }
-
-    async function loadSidecarMeta(subPath) {
-        state.sidecarMeta = null;
-        if (!subPath || !electron?.transubReadSubtitleMeta) {
-            refreshCueMeta();
-            return;
-        }
-        try {
-            const res = await electron.transubReadSubtitleMeta({ path: subPath });
-            if (res?.ok && res.meta) state.sidecarMeta = res.meta;
-        } catch (_) {
-            state.sidecarMeta = null;
-        }
-        refreshCueMeta();
-    }
-
-    async function persistCueMeta() {
-        if (!state.path || !electron?.transubWriteSubtitleMeta) return;
-        const doc = metaCore.buildSidecarDocument(state.cues, state.cueMeta, {
-            sourceSub: basename(state.path),
-        });
-        state.sidecarMeta = doc;
-        try {
-            await electron.transubWriteSubtitleMeta({ path: state.path, meta: doc });
-        } catch (_) { /* ignore meta write errors */ }
-    }
-
-    function renderCueList() {
-        if (!els.cueBody) return;
-        const colspan = cueListColspan();
-        syncDualDisplaySelectVisibility();
-        if (!state.cues.length) {
-            els.cueBody.innerHTML = `<tr><td colspan="${colspan}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">无字幕条目</td></tr>`;
-            if (els.filterCount) els.filterCount.textContent = '';
-            renderTimeline();
-            state.selectedIndex = -1;
-            state.cueMeta = [];
-            renderDetailPane();
-            resyncPlaybackAfterCueTimingChange();
-            refreshQcBadge();
-            refreshGlossaryBadge();
-            refreshCueMeta();
-            return;
-        }
-
-        refreshCueMeta();
-        refreshQcIssueIndexSet();
-        const visibleIdxs = getVisibleCueIndexes();
-        if (els.filterCount) {
-            els.filterCount.textContent = state.listFilter === 'all'
-                ? ''
-                : `显示 ${visibleIdxs.length} / ${state.cues.length}`;
-        }
-        if (!visibleIdxs.length) {
-            const emptyMsg = state.listFilter === 'all' ? '无字幕条目' : '当前筛选无匹配条目';
-            els.cueBody.innerHTML = `<tr><td colspan="${colspan}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">${emptyMsg}</td></tr>`;
-        } else {
-            const showPair = hasDualPair();
-            const pairHead = els.cueTable?.querySelector('.col-pair-head');
-            if (pairHead) {
-                pairHead.textContent = state.dualRole === 'source' ? '译文对照' : '原文对照';
-            }
-            els.cueBody.innerHTML = visibleIdxs.map((idx) => {
-                const cue = state.cues[idx];
-                const prev = idx > 0 ? state.cues[idx - 1] : null;
-                const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-                const w = getCueWarnings(cue, prev, next);
-                const preview = String(cue.text || '').replace(/\s+/g, ' ').trim();
-                const pairPreview = showPair
-                    ? String(resolvePairedTextForCue(cue) || '').replace(/\s+/g, ' ').trim()
-                    : '';
-                const low = !!state.cueMeta[idx]?.low;
-                const cps = computeCps(cue.text, cueDurationMs(cue));
-                const cpsNum = cps != null ? Number(cps) : null;
-                const cpsHot = cpsNum != null && cpsNum > 18;
-                const titleAttr = low ? '低置信：建议检查或重转写' : esc(preview || '');
-                return `
-            <tr class="${low ? 'cue-row-low-conf' : ''}" data-cue-idx="${idx}" title="${titleAttr}">
-                <td class="text-xs tabular-nums align-middle col-idx" style="color:var(--ed-muted)">${idx + 1}${low ? '<span class="low-conf-dot" aria-label="低置信">!</span>' : ''}</td>
-                <td class="font-mono text-[11px] tabular-nums align-middle ${w.start ? 'cell-warn' : ''}">${esc(formatDisplayTime(cue.startMs, state.format))}</td>
-                <td class="font-mono text-[11px] tabular-nums align-middle ${w.end ? 'cell-warn' : ''}">${esc(formatDisplayTime(cueEndMs(cue), state.format))}</td>
-                <td class="text-[11px] tabular-nums align-middle ${w.dur ? 'cell-warn' : ''}">${esc(formatDurationSec(cueDurationMs(cue)))}</td>
-                <td class="cue-cps-cell align-middle ${cpsHot ? 'hot' : ''}">${cps != null ? esc(cps) : '—'}</td>
-                <td class="cell-text align-middle">${esc(preview || '—')}</td>
-                ${showPair ? `<td class="cell-pair align-middle" title="${esc(pairPreview || '')}">${esc(pairPreview || '—')}</td>` : ''}
-            </tr>`;
-            }).join('');
-        }
-
-        if (state.selectedIndex >= state.cues.length) state.selectedIndex = state.cues.length - 1;
-        if (state.selectedIndex < 0 && state.cues.length) state.selectedIndex = 0;
-        updateListRowClasses();
-        renderDetailPane();
-        scheduleVideoTextTrackRefresh();
-        resyncPlaybackAfterCueTimingChange();
-        refreshQcBadge();
-        refreshGlossaryBadge();
-        renderTimeline();
-        updateNeedsVideoUi();
-    }
-
-    function refreshListRow(idx) {
-        if (!els.cueBody || idx < 0 || idx >= state.cues.length) return;
-        const row = els.cueBody.querySelector(`tr[data-cue-idx="${idx}"]`);
-        if (!row) {
-            renderCueList();
-            return;
-        }
-        const cue = state.cues[idx];
-        const prev = idx > 0 ? state.cues[idx - 1] : null;
-        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-        const w = getCueWarnings(cue, prev, next);
-        const cells = row.querySelectorAll('td');
-        if (cells[1]) {
-            cells[1].textContent = formatDisplayTime(cue.startMs, state.format);
-            cells[1].classList.toggle('cell-warn', w.start);
-        }
-        if (cells[2]) {
-            cells[2].textContent = formatDisplayTime(cueEndMs(cue), state.format);
-            cells[2].classList.toggle('cell-warn', w.end);
-        }
-        if (cells[3]) {
-            cells[3].textContent = formatDurationSec(cueDurationMs(cue));
-            cells[3].classList.toggle('cell-warn', w.dur);
-        }
-        if (cells[4]) {
-            const cps = computeCps(cue.text, cueDurationMs(cue));
-            const cpsNum = cps != null ? Number(cps) : null;
-            cells[4].textContent = cps != null ? cps : '—';
-            cells[4].className = `cue-cps-cell align-middle${cpsNum != null && cpsNum > 18 ? ' hot' : ''}`;
-        }
-        if (cells[5]) {
-            cells[5].textContent = String(cue.text || '').replace(/\s+/g, ' ').trim() || '—';
-        }
-        if (hasDualPair() && cells[6]) {
-            cells[6].textContent = String(resolvePairedTextForCue(cue) || '').replace(/\s+/g, ' ').trim() || '—';
-            cells[6].title = cells[6].textContent === '—' ? '' : cells[6].textContent;
-        }
-        if (idx > 0) refreshListRowWarningsOnly(idx - 1);
-        if (idx < state.cues.length - 1) refreshListRowWarningsOnly(idx + 1);
-    }
-
-    function refreshListRowWarningsOnly(idx) {
-        const row = els.cueBody?.querySelector(`tr[data-cue-idx="${idx}"]`);
-        if (!row || idx < 0 || idx >= state.cues.length) return;
-        const cue = state.cues[idx];
-        const prev = idx > 0 ? state.cues[idx - 1] : null;
-        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-        const w = getCueWarnings(cue, prev, next);
-        const cells = row.querySelectorAll('td');
-        cells[1]?.classList.toggle('cell-warn', w.start);
-        cells[2]?.classList.toggle('cell-warn', w.end);
-        cells[3]?.classList.toggle('cell-warn', w.dur);
-    }
-
-    function selectCue(idx, opts = {}) {
-        if (idx < 0 || idx >= state.cues.length) return;
-        // 播放路径的选中必须经过自动焦点开关；避免误调仍改焦点
-        if (opts.fromPlayback && !isAutoFocusEnabled()) return;
-
-        const additive = !!opts.additive;
-        const range = !!opts.range;
-        if (range && state.selectionAnchor >= 0) {
-            const a = Math.min(state.selectionAnchor, idx);
-            const b = Math.max(state.selectionAnchor, idx);
-            const indexes = [];
-            for (let i = a; i <= b; i += 1) indexes.push(i);
-            if (additive) {
-                const merged = new Set(getSelectedCueIndexes());
-                indexes.forEach((i) => merged.add(i));
-                setSelectionIndexes(merged, idx);
-            } else {
-                setSelectionIndexes(indexes, idx);
-            }
-            state.selectionAnchor = state.selectionAnchor;
-        } else if (additive) {
-            syncSelectionSetToFocus();
-            if (state.selectedIndices.has(idx) && state.selectedIndices.size > 1) {
-                state.selectedIndices.delete(idx);
-                const nextFocus = state.selectedIndices.has(state.selectedIndex)
-                    ? state.selectedIndex
-                    : Math.max(...state.selectedIndices);
-                setSelectionIndexes(state.selectedIndices, nextFocus);
-            } else {
-                state.selectedIndices.add(idx);
-                setSelectionIndexes(state.selectedIndices, idx);
-            }
-            state.selectionAnchor = idx;
-        } else {
-            setSelectionIndexes([idx], idx);
-        }
-
-        if (opts.seek && els.video) {
-            const sec = Math.max(0, state.cues[idx].startMs / 1000);
-            els.video.currentTime = sec;
-            if (opts.play) els.video.play().catch(() => {});
-        }
-        if (opts.scroll) {
-            const row = els.cueBody?.querySelector(`tr[data-cue-idx="${idx}"]`);
-            row?.scrollIntoView({
-                block: 'nearest',
-                behavior: opts.fromPlayback ? 'auto' : 'smooth',
+\u9009\u62E9\u300C\u5220\u9664\u300D\u540E\u4E0D\u53EF\u6062\u590D\uFF08\u5C06\u6253\u5F00\u5408\u5E76\u540E\u7684\u53CC\u8BED\u6587\u4EF6\uFF09\u3002`,
+                okLabel: "\u5220\u9664",
+                cancelLabel: "\u4FDD\u7559",
+                type: "warning"
+            }) && p?.transubDeleteSubtitleFiles) {
+            const m = await p.transubDeleteSubtitleFiles({
+                paths: [o, l].filter(Boolean)
             });
-            if (!opts.fromPlayback) {
-                const cue = state.cues[idx];
-                if (cue && isTimelineZoomed()) {
-                    const mid = Math.round((cue.startMs + cueEndMs(cue)) / 2);
-                    if (ensurePlayheadInView(mid, { marginRatio: 0.08 })) {
-                        refreshTimelineView();
-                    }
-                }
+            if (!m?.ok) {
+                d(`\u5DF2\u5BFC\u51FA\u53CC\u8BED\uFF0C\u4F46\u5220\u9664\u6E90\u6587\u4EF6\u5931\u8D25\uFF1A${m?.error||"\u672A\u77E5\u9519\u8BEF"}`, "err");
+                return
             }
+            rn(), t.dirty = !1, t.pairDirty = !1, c && c !== o ? (await mn(c, t.videoPath), d(`\u5DF2\u5BFC\u51FA\u5E76\u5220\u9664\u6E90\u6587\u4EF6\uFF1A${G(c)}`, "ok")) : d(`\u5DF2\u5BFC\u51FA\u53CC\u8BED\u5E76\u5220\u9664\u6E90\u6587\u4EF6\uFF1A${G(c)}`, "ok");
+            return
         }
+        d(`\u5DF2\u5BFC\u51FA\u53CC\u8BED\uFF1A${G(a.path)}`, "ok")
     }
 
-    function selectAllVisibleCues() {
-        const indexes = [];
-        els.cueBody?.querySelectorAll('tr[data-cue-idx]').forEach((row) => {
-            if (row.classList.contains('hidden')) return;
-            const idx = Number(row.dataset.cueIdx);
-            if (Number.isInteger(idx) && idx >= 0 && idx < state.cues.length) indexes.push(idx);
-        });
-        if (!indexes.length) {
-            for (let i = 0; i < state.cues.length; i += 1) indexes.push(i);
-        }
-        if (!indexes.length) return;
-        setSelectionIndexes(indexes, indexes[indexes.length - 1]);
-        setStatus(`已选中 ${indexes.length} 条`, 'ok');
-    }
-
-    async function mergeSelectedCues() {
-        const indexes = getSelectedCueIndexes();
-        if (indexes.length < 2) {
-            setStatus('请至少选中两条相邻字幕以合并', 'err');
-            return;
-        }
-        for (let i = 1; i < indexes.length; i += 1) {
-            if (indexes[i] !== indexes[i - 1] + 1) {
-                setStatus('只能合并连续相邻的选中条目', 'err');
-                return;
-            }
-        }
-        if (!(await editorConfirm(`合并选中的 ${indexes.length} 条字幕？`))) return;
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const first = indexes[0];
-        const last = indexes[indexes.length - 1];
-        const startMs = state.cues[first].startMs;
-        const endMs = cueEndMs(state.cues[last]);
-        const text = indexes.map((i) => String(state.cues[i].text || '').trim()).filter(Boolean).join('\n');
-        state.cues.splice(first, last - first + 1, { startMs, endMs, text });
-        setSelectionIndexes([first], first);
-        setDirty(true);
-        renderCueList();
-        setStatus(`已合并为第 ${first + 1} 条`, 'ok');
-    }
-
-    function onDetailChanged(opts = {}) {
-        if (state.detailSyncing || state.selectedIndex < 0) return;
-        if (!opts.skipUndo) beginDetailUndoGroup();
-        syncDetailToCue();
-        setDirty(true);
-        refreshListRow(state.selectedIndex);
-        updateDetailMeta();
-        updateDetailActionButtons();
-        state.detailRenderedDurSec = cueDurationMs(state.cues[state.selectedIndex]) / 1000;
-        if (state.selectedIndex === state.playbackIndex) {
-            state.overlayText = '';
-            updateVideoSubtitleOverlay();
-        }
-        resyncPlaybackAfterCueTimingChange();
-    }
-
-    function applyDurationDelta(deltaSec) {
-        if (state.selectedIndex < 0) return;
-        recordUndoBeforeChange();
-        const cur = Number(els.detailDuration?.value);
-        const base = Number.isFinite(cur) ? cur : cueDurationMs(state.cues[state.selectedIndex]) / 1000;
-        const next = Math.max(0.1, Math.round((base + deltaSec) * 100) / 100);
-        if (els.detailDuration) els.detailDuration.value = next.toFixed(3);
-        onDetailChanged({ skipUndo: true });
-        renderTimeline();
-    }
-
-    function applyStartDelta(deltaMs) {
-        if (state.selectedIndex < 0) return;
-        recordUndoBeforeChange();
-        const cue = state.cues[state.selectedIndex];
-        const dur = cueDurationMs(cue);
-        cue.startMs = Math.max(0, cue.startMs + deltaMs);
-        cue.endMs = cue.startMs + dur;
-        renderDetailPane();
-        onDetailChanged({ skipUndo: true });
-        renderTimeline();
-    }
-
-    function setStartToPlayhead() {
-        if (state.selectedIndex < 0 || !els.video) return;
-        recordUndoBeforeChange();
-        const cue = state.cues[state.selectedIndex];
-        const dur = cueDurationMs(cue);
-        cue.startMs = getPlaybackTimeMs();
-        cue.endMs = cue.startMs + dur;
-        renderDetailPane();
-        onDetailChanged({ skipUndo: true });
-        renderTimeline();
-    }
-
-    function setEndToPlayhead() {
-        if (state.selectedIndex < 0 || !els.video) return;
-        const cue = state.cues[state.selectedIndex];
-        const endMs = getPlaybackTimeMs();
-        if (endMs <= cue.startMs) {
-            setStatus('结束时间必须晚于起始时间', 'err');
-            return;
-        }
-        recordUndoBeforeChange();
-        cue.endMs = endMs;
-        renderDetailPane();
-        onDetailChanged({ skipUndo: true });
-        renderTimeline();
-    }
-
-    function isListFocused() {
-        const active = document.activeElement;
-        if (!active || !els.listWrap) return false;
-        return active === els.listWrap || els.listWrap.contains(active);
-    }
-
-    function isPlayerFocused() {
-        const active = document.activeElement;
-        if (!active || !els.videoWrap) return false;
-        return active === els.videoWrap || els.videoWrap.contains(active);
-    }
-
-    function isTypingTarget(el) {
-        if (!el || !el.matches) return false;
-        if (el.matches('textarea, [contenteditable="true"]')) return true;
-        if (!el.matches('input')) return false;
-        const type = String(el.type || 'text').toLowerCase();
-        return !['button', 'checkbox', 'radio', 'range', 'file', 'reset', 'submit', 'color', 'image'].includes(type);
-    }
-
-    function focusCueList() {
-        if (!els.listWrap) return;
-        try {
-            els.listWrap.focus({ preventScroll: true });
-        } catch (_) {
-            els.listWrap.focus();
-        }
-    }
-
-    function focusPlayerArea() {
-        if (!els.videoWrap) return;
-        try {
-            els.videoWrap.focus({ preventScroll: true });
-        } catch (_) {
-            els.videoWrap.focus();
-        }
-    }
-
-    function toggleVideoPlayback() {
-        if (!els.video) return;
-        if (els.video.paused || els.video.ended) {
-            els.video.play().catch(() => {});
-        } else {
-            els.video.pause();
-        }
-    }
-
-    function getPlaybackTimeMs() {
-        return Math.round((els.video?.currentTime || 0) * 1000);
-    }
-
-    function isAutoFocusEnabled() {
-        return state.autoFocus === true;
-    }
-
-    function syncFromExternalTime(timeSec, updatePlayhead = true) {
-        if (!state.ready) return;
-        const t = Math.round((Number(timeSec) || 0) * 1000);
-        const active = findPlaybackIndex(t);
-        if (active !== state.playbackIndex) {
-            const prev = state.playbackIndex;
-            state.playbackIndex = active;
-            updatePlayingRowHighlight(prev, active);
-            // 仅自动焦点开启时才选中/滚动；关闭时绝不能改 selectedIndex
-            if (isAutoFocusEnabled()) followPlaybackFocus(active);
-        }
-        if (updatePlayhead) {
-            state.lastPlayheadLabel = '';
-            if (els.playheadTime) {
-                els.playheadTime.textContent = formatDisplayTime(t, state.format);
-                state.lastPlayheadLabel = els.playheadTime.textContent;
-            }
-            updateTimelinePlayhead(t);
-        }
-        updateVideoSubtitleOverlay();
-    }
-
-    function hidePlaybackSubtitleOverlay() {
-        state.overlayText = '';
-        state.overlaySourceText = '';
-        state.overlayVisible = false;
-        if (els.videoSubtitle) els.videoSubtitle.classList.add('hidden');
-        if (els.videoSubtitleText) els.videoSubtitleText.textContent = '';
-        if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = '';
-        if (state.previewTextTrack) {
-            try { state.previewTextTrack.mode = 'hidden'; } catch (_) { /* noop */ }
-        }
-    }
-
-    function updateVideoSubtitleOverlay(force = false) {
-        if (!els.videoSubtitle || !els.videoSubtitleText) return;
-        const idx = state.playbackIndex;
-        let primaryText = '';
-        let pairedText = '';
-        if (idx >= 0 && idx < state.cues.length) {
-            const cue = state.cues[idx];
-            primaryText = String(cue.text || '').trim();
-            if (state.pairPath && state.pairCues.length) {
-                pairedText = resolvePairedTextForCue(cue);
-            }
-        }
-
-        let sourceText = '';
-        let targetText = '';
-        let visible = false;
-        if (dualCore && state.dualRole && (primaryText || pairedText)) {
-            const composed = dualCore.composeDualOverlayText({
-                primaryText,
-                pairedText,
-                primaryRole: state.dualRole,
-                displayMode: state.dualDisplayMode || 'both',
-                lineOrder: state.dualLineOrder || 'source-first',
-            });
-            sourceText = composed.sourceText;
-            targetText = composed.targetText;
-            visible = composed.visible;
-        } else {
-            targetText = primaryText;
-            visible = !!primaryText;
-        }
-
-        const key = `${sourceText}\n${targetText}\n${state.dualLineOrder || ''}`;
-        if (!force && key === state.overlayText && sourceText === state.overlaySourceText && visible === state.overlayVisible) {
-            return;
-        }
-        state.overlayText = key;
-        state.overlaySourceText = sourceText;
-        state.overlayVisible = visible;
-        if (!visible) {
-            els.videoSubtitle.classList.add('hidden');
-            els.videoSubtitleText.textContent = '';
-            if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = '';
-            els.videoSubtitle.classList.remove('line-order-target-first');
-            return;
-        }
-        if (els.videoSubtitleSource) els.videoSubtitleSource.textContent = sourceText;
-        els.videoSubtitleText.textContent = targetText;
-        els.videoSubtitle.classList.toggle(
-            'line-order-target-first',
-            (state.dualLineOrder || 'source-first') === 'target-first'
-                && !!(sourceText && targetText),
-        );
-        els.videoSubtitle.classList.remove('hidden');
-    }
-
-    function isRowVisibleInList(row) {
-        const wrap = els.listWrap;
-        if (!wrap || !row) return false;
-        const wrapRect = wrap.getBoundingClientRect();
-        const rowRect = row.getBoundingClientRect();
-        return rowRect.top >= wrapRect.top - 2 && rowRect.bottom <= wrapRect.bottom + 2;
-    }
-
-    function scheduleVideoTextTrackRefresh() {
-        if (state.textTrackRefreshTimer) clearTimeout(state.textTrackRefreshTimer);
-        state.textTrackRefreshTimer = setTimeout(() => {
-            state.textTrackRefreshTimer = null;
-            refreshVideoTextTrack();
-        }, 300);
-    }
-
-    function refreshVideoTextTrack() {
-        if (state.previewTextTrack) {
-            try { state.previewTextTrack.mode = 'hidden'; } catch (_) { /* noop */ }
-        }
-    }
-
-    function findNextBoundaryMs(tMs, currentIdx) {
-        const candidates = [];
-        if (currentIdx >= 0 && currentIdx < state.cues.length) {
-            const end = cueEndMs(state.cues[currentIdx]);
-            if (end > tMs + 5) candidates.push(end);
-        }
-        if (currentIdx >= 0 && currentIdx + 1 < state.cues.length) {
-            const start = state.cues[currentIdx + 1].startMs;
-            if (start > tMs + 5) candidates.push(start);
-        }
-        if (currentIdx < 0 && state.cues.length) {
-            let lo = 0;
-            let hi = state.cues.length - 1;
-            let found = -1;
-            while (lo <= hi) {
-                const mid = (lo + hi) >> 1;
-                if (state.cues[mid].startMs > tMs + 5) {
-                    found = mid;
-                    hi = mid - 1;
-                } else {
-                    lo = mid + 1;
-                }
-            }
-            if (found >= 0) candidates.push(state.cues[found].startMs);
-        }
-        return candidates.length ? Math.min(...candidates) : null;
-    }
-
-    function stopPlaybackTimers() {
-        if (state.cueBoundaryTimer) {
-            clearTimeout(state.cueBoundaryTimer);
-            state.cueBoundaryTimer = null;
-        }
-        if (state.playheadTimer) {
-            clearInterval(state.playheadTimer);
-            state.playheadTimer = null;
-        }
-        if (state.timelineFollowRaf) {
-            cancelAnimationFrame(state.timelineFollowRaf);
-            state.timelineFollowRaf = 0;
-        }
-    }
-
-    function scheduleCueBoundarySync() {
-        if (state.cueBoundaryTimer) {
-            clearTimeout(state.cueBoundaryTimer);
-            state.cueBoundaryTimer = null;
-        }
-        if (!els.video || els.video.paused || els.video.ended) return;
-
-        const tMs = (els.video.currentTime || 0) * 1000;
-        const rate = Math.max(0.05, els.video.playbackRate || 1);
-        let nextMs = findNextBoundaryMs(tMs, state.playbackIndex);
-        if (nextMs == null) {
-            const durMs = (els.video.duration || 0) * 1000;
-            if (durMs > tMs + 50) nextMs = durMs;
-            else return;
-        }
-
-        // Cap delay so a stalled/buffered clock or busy main thread cannot leave
-        // overlay / playing-row stuck until the user seeks the waveform.
-        const delay = Math.min(250, Math.max(20, (nextMs - tMs) / rate));
-        state.cueBoundaryTimer = setTimeout(() => {
-            state.cueBoundaryTimer = null;
-            if (!els.video || els.video.paused) return;
-            syncPlaybackFromVideo(false);
-            scheduleCueBoundarySync();
-        }, delay);
-    }
-
-    function startPlayheadTimer() {
-        if (state.playheadTimer) clearInterval(state.playheadTimer);
-        state.playheadTimer = setInterval(() => {
-            if (els.video && !els.video.paused) updatePlayheadTimeLabel(false);
-        }, 1000);
-    }
-
-    function onVideoPlay() {
-        document.body.classList.add('editor-video-playing');
-        syncPlaybackFromVideo(true);
-        scheduleCueBoundarySync();
-        startPlayheadTimer();
-        updatePlayPauseButton();
-    }
-
-    function onVideoPause() {
-        document.body.classList.remove('editor-video-playing');
-        stopPlaybackTimers();
-        syncPlaybackFromVideo(true);
-        updatePlayPauseButton();
-    }
-
-    function updatePlayingRowHighlight(prevIdx, nextIdx) {
-        if (prevIdx === nextIdx) return;
-        // Apply immediately — idle deferral made the playing row lag behind video,
-        // which felt like the cue list stuttering during preview.
-        if (prevIdx >= 0) {
-            els.cueBody?.querySelector(`tr[data-cue-idx="${prevIdx}"]`)
-                ?.classList.remove('cue-row-playing');
-        }
-        if (nextIdx >= 0) {
-            const row = els.cueBody?.querySelector(`tr[data-cue-idx="${nextIdx}"]`);
-            if (row) row.classList.add('cue-row-playing');
-        }
-        // 播放指示绝不主动滚动列表；列表跟随只由 followPlaybackFocus / selectCue 负责
-    }
-
-    function syncPlaybackFromVideo(updatePlayhead = true) {
-        if (!state.ready || !els.video) return;
-        syncFromExternalTime(els.video.currentTime || 0, updatePlayhead);
-    }
-
-    function updateVideoHint() {
-        if (!els.videoHint) return;
-        if (state.videoPath) {
-            const codecInfo = describeVideoCodec(state.videoCodec, state.videoWidth, state.videoHeight);
-            const suffix = codecInfo ? ` · ${codecInfo}` : '';
-            els.videoHint.textContent = `${basename(state.videoPath)}${suffix} · Space 播放 · Ctrl+S 保存`;
-        } else {
-            els.videoHint.textContent = '未关联视频，可点击「关联视频」；亦可仅编辑文本与时间轴';
-        }
-        if (els.videoEmpty) {
-            els.videoEmpty.classList.toggle('visible', !state.videoPath);
-        }
-        updateNeedsVideoUi();
-        updateTimelineDuration();
-        renderTimeline();
-    }
-
-    async function probeVideoCodec(videoPath) {
-        state.videoCodec = '';
-        state.videoWidth = 0;
-        state.videoHeight = 0;
-        if (!videoPath) return;
-        try {
-            const probe = await electron?.ffmpegProbe?.(buildFfmpegRequest({ path: videoPath }));
-            if (probe?.ok) {
-                state.videoCodec = probe.codec || '';
-                state.videoWidth = probe.width || 0;
-                state.videoHeight = probe.height || 0;
-            }
-        } catch (_) { /* ffprobe optional */ }
-    }
-
-    async function loadVideo(videoPath) {
-        if (!els.video) return;
-        els.video.pause();
-        els.video.removeAttribute('src');
-        els.video.load();
-        state.videoPath = videoPath || '';
-        state.waveform.peaks = null;
-        state.waveform.cacheKey = '';
-        state.waveform.videoPath = '';
-        if (!videoPath) {
-            updateVideoHint();
-            drawTimelineWaveform();
-            return;
-        }
-
-        const res = await electron?.transubResolveMediaUrl?.({ path: videoPath });
-        if (!res?.ok) {
-            setStatus(res?.error || `视频加载失败：${basename(videoPath)}`, 'err');
-            updateVideoHint();
-            return;
-        }
-
-        state.videoPath = res.path || videoPath;
-        const candidates = [res.fileUrl, res.url].filter(Boolean);
-        let loaded = false;
-
-        for (const url of candidates) {
-            loaded = await new Promise((resolve) => {
-                const onMeta = () => { cleanup(); resolve(true); };
-                const onErr = () => { cleanup(); resolve(false); };
-                const cleanup = () => {
-                    els.video.removeEventListener('loadedmetadata', onMeta);
-                    els.video.removeEventListener('error', onErr);
-                };
-                els.video.addEventListener('loadedmetadata', onMeta, { once: true });
-                els.video.addEventListener('error', onErr, { once: true });
-                els.video.src = url;
-                els.video.load();
-            });
-            if (loaded) break;
-        }
-
-        if (!loaded) {
-            setStatus(`视频无法播放：${basename(state.videoPath)}（格式或编码可能不受支持）`, 'err');
-        } else {
-            els.video.classList.remove('hidden');
-            await probeVideoCodec(state.videoPath);
-            updateVideoHint();
-            resyncPlaybackAfterCueTimingChange();
-            if (state.waveformEnabled) ensureWaveformLoaded();
-            const softDecode = new Set(['hevc', 'h265', 'av1']).has(String(state.videoCodec || '').toLowerCase());
-            if (softDecode) {
-                setStatus(
-                    `已加载视频（${describeVideoCodec(state.videoCodec, state.videoWidth, state.videoHeight)}）。`
-                    + ' 若播放卡顿，可尝试用 H.264 编码版本，或在 Microsoft Store 安装「HEVC 视频扩展」。',
-                    'ok',
-                );
-            }
-        }
-    }
-
-    async function populateSidecarSelect(videoPath, currentPath) {
-        if (!els.sidecarSelect || !videoPath) {
-            els.sidecarSelect?.classList.add('hidden');
-            return;
-        }
-        const res = await electron?.transubListSubtitleSidecars?.({ videoPath });
-        const editable = (res?.sidecars || []).filter((s) => s.editable);
-        if (editable.length <= 1) {
-            els.sidecarSelect.classList.add('hidden');
-            return;
-        }
-        els.sidecarSelect.classList.remove('hidden');
-        els.sidecarSelect.innerHTML = editable.map((s) => {
-            let label = `${s.basename} (${s.format.toUpperCase()})`;
-            if (dualCore && state.videoPath) {
-                const stem = videoStemFromPath(state.videoPath);
-                const role = dualCore.inferDualRole(basenameNoExt(s.path), stem).role;
-                if (role === 'source') label = `${s.basename}（原文）`;
-                else if (role === 'target') label = `${s.basename}（译文）`;
-            }
-            return `<option value="${esc(s.path)}" ${s.path === currentPath ? 'selected' : ''}>${esc(label)}</option>`;
-        }).join('');
-    }
-
-    async function loadDocument(subPath, videoPath, options = {}) {
-        const allowRoleSwap = options.allowRoleSwap !== false;
-        const fileLabel = basename(subPath);
-        documentLoadInFlight = true;
-        showBootProgress({
-            title: '正在加载字幕',
-            detail: fileLabel ? `正在读取 ${fileLabel}…` : '正在读取字幕…',
-            statusMessage: fileLabel ? `正在加载 ${fileLabel}…` : '正在加载字幕…',
-        });
-        try {
-            stopPlaybackTimers();
-            document.body.classList.remove('editor-video-playing');
-            if (state.textTrackRefreshTimer) {
-                clearTimeout(state.textTrackRefreshTimer);
-                state.textTrackRefreshTimer = null;
-            }
-            await flushBootProgressPaint();
-            const res = await electron?.transubReadSubtitle?.({ path: subPath });
-            if (!res?.ok) {
-                setStatus(res?.error || '加载字幕失败', 'err');
-                return false;
-            }
-            const draft = await maybeRestoreDraft(res.path);
-            syncDetailToCue();
-            state.path = res.path;
-            state.videoPath = videoPath || '';
-            state.format = draft?.format || res.format;
-            state.header = Array.isArray(draft?.header) ? draft.header : (res.header || []);
-            state.cues = Array.isArray(draft?.cues) ? draft.cues : (res.cues || []);
-            state.selectedIndex = state.cues.length ? 0 : -1;
-            state.selectedIndices = state.selectedIndex >= 0 ? new Set([state.selectedIndex]) : new Set();
-            state.selectionAnchor = state.selectedIndex;
-            state.playbackIndex = -1;
-            state.previewTextTrack = null;
-            state.overlayText = '';
-            state.overlaySourceText = '';
-            state.overlayVisible = false;
-            state.detailRenderedDurSec = null;
-            state.lastPlayheadLabel = '';
-            state.sidecarMeta = null;
-            state.cueMeta = [];
-            clearPairTrack();
-            setDirty(!!draft);
-            clearUndoHistory();
-            startDraftAutosave();
-
-            updateWindowTitle();
-            if (els.formatBadge) els.formatBadge.textContent = String(state.format || res.format).toUpperCase();
-            if (els.cueCount) els.cueCount.textContent = `${state.cues.length} 条`;
-            updateNeedsVideoUi();
-
-            saveInitialSnapshot();
-            updateBootProgress({
-                detail: `已读取 ${state.cues.length} 条，正在准备编辑区…`,
-                statusMessage: `正在渲染 ${state.cues.length} 条字幕…`,
-            });
-            await loadSidecarMeta(res.path);
-            await loadGlossaries(res.path);
-            await flushBootProgressPaint();
-            renderCueList();
-            updateBootProgress({
-                detail: state.videoPath ? `正在关联视频 ${basename(state.videoPath)}…` : '字幕已就绪，正在完成收尾…',
-                statusMessage: state.videoPath ? '正在加载关联视频…' : '正在完成加载…',
-            });
-            await flushBootProgressPaint();
-            await loadVideo(state.videoPath);
-            const pairInfo = await loadPairTrack(res.path, state.videoPath);
-            // 打开原文轨时切到译文作主编辑（文本=译文，对照=原文）
-            if (allowRoleSwap && pairInfo?.swapToTarget && pairInfo.targetPath) {
-                documentLoadInFlight = false;
-                return loadDocument(pairInfo.targetPath, state.videoPath, { allowRoleSwap: false });
-            }
-            // 配对在首次 render 之后完成，必须重绘列表才有对照列单元格
-            if (hasDualPair()) renderCueList();
-            refreshVideoTextTrack();
-            updateVideoSubtitleOverlay(true);
-            await populateSidecarSelect(state.videoPath, res.path);
-            const low = metaCore.summarizeLowConfidence(state.cueMeta).low;
-            const draftHint = draft ? '（已恢复草稿）' : '';
-            const dualHint = hasDualPair() ? `，已配对对照轨 ${basename(state.pairPath)}` : '';
-            setStatus(
-                low
-                    ? `已加载 ${state.cues.length} 条字幕，其中 ${low} 条低置信${draftHint}${dualHint}`
-                    : `已加载 ${state.cues.length} 条字幕${draftHint}${dualHint}`,
-                'ok',
-            );
-            hideWelcomeScreen();
-            try {
-                await electron?.transubEditorRegisterPath?.({ path: res.path });
-            } catch (_) { /* ignore */ }
-            void recordEditorHistory(res.path, state.videoPath || '');
-            return true;
-        } finally {
-            documentLoadInFlight = false;
-            hideBootProgress();
-        }
-    }
-
-    async function openDocument(subPath, videoPath) {
-        if (state.ready && state.dirty) {
-            const yes = await editorConfirm('当前字幕未保存，打开新文件将丢失修改，继续？');
-            if (!yes) return;
-        }
-        hideWelcomeScreen();
-        let linkedVideo = videoPath || '';
-        try {
-            if (!linkedVideo && subPath) {
-                showBootProgress({
-                    title: '正在打开字幕',
-                    detail: '正在查找关联视频…',
-                    statusMessage: `正在加载 ${basename(subPath)}…`,
-                });
-                const guess = await electron?.transubGuessVideoForSubtitle?.({ path: subPath });
-                if (guess?.ok && guess.videoPath) linkedVideo = guess.videoPath;
-            }
-            const ok = await loadDocument(subPath, linkedVideo);
-            if (!ok) {
-                if (!state.path) showWelcomeScreen();
-                return;
-            }
-            state.ready = true;
-        } catch (err) {
-            hideBootProgress();
-            if (!state.path) showWelcomeScreen();
-            setStatus(err?.message || '打开字幕失败', 'err');
-        }
-    }
-
-    async function pickAndOpenInWindow() {
-        const res = await electron?.transubSelectSubtitle?.({ title: '选择要编辑的字幕文件' });
-        if (typeof requestOsRefocus === 'function') requestOsRefocus();
-        else restoreEditorFocus();
-        if (!res?.ok) {
-            setStatus(res?.error || '打开字幕失败', 'err');
-            return;
-        }
-        if (res.canceled || !res.path) return;
-        await openDocument(res.path, res.videoPath || '');
-    }
-
-    async function linkVideo() {
-        const res = await electron?.transubSelectEditorVideo?.({
-            defaultPath: state.videoPath || state.path,
-            title: '选择关联视频',
-        });
-        if (typeof requestOsRefocus === 'function') requestOsRefocus();
-        else restoreEditorFocus();
-        if (!res?.ok) {
-            setStatus(res?.error || '选择视频失败', 'err');
-            return;
-        }
-        if (res.canceled || !res.path) return;
-        await loadVideo(res.path);
-        await populateSidecarSelect(res.path, state.path);
-        if (els.splitModal && !els.splitModal.classList.contains('hidden')) {
-            updateSplitModalState();
-        }
-        if (els.silenceSplitModal && !els.silenceSplitModal.classList.contains('hidden')) {
-            updateSilenceSplitModalState();
-        }
-        setStatus(`已关联视频：${basename(res.path)}`, 'ok');
-    }
-
-    async function saveDocument() {
-        syncDetailToCue();
-        if (!state.cues.length) {
-            setStatus('无法保存：字幕为空', 'err');
-            return;
-        }
-        const res = await electron?.transubWriteSubtitle?.({
-            path: state.path,
-            format: state.format,
-            cues: state.cues,
-            header: state.header,
-        });
-        if (!res?.ok) {
-            setStatus(res?.error || '保存失败', 'err');
-            return;
-        }
-        setDirty(false);
-        state.savedSnapshot = cloneCues(state.cues);
-        refreshCueMeta();
-        await persistCueMeta();
-        await clearDocumentDraft();
-        setStatus(res.backupPath ? '已保存（并写入 .bak）' : '已保存', 'ok');
-        if (els.saveStatus) {
-            els.saveStatus.textContent = '已保存';
-            setTimeout(() => { if (els.saveStatus) els.saveStatus.textContent = ''; }, 2000);
-        }
-    }
-
-    function insertCueAtPlayhead() {
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const startMs = getPlaybackTimeMs();
-        let endMs = startMs + 2000;
-
-        for (const c of state.cues) {
-            if (c.startMs > startMs) {
-                endMs = Math.min(endMs, c.startMs - 1);
-                break;
-            }
-        }
-        if (endMs <= startMs) endMs = startMs + 500;
-
-        const newCue = { index: state.cues.length + 1, startMs, endMs, text: '' };
-        state.cues.push(newCue);
-        state.cues.sort((a, b) => a.startMs - b.startMs);
-        const newIdx = state.cues.indexOf(newCue);
-
-        setDirty(true);
-        state.selectedIndex = newIdx >= 0 ? newIdx : 0;
-        renderCueList();
-        selectCue(state.selectedIndex, { scroll: true, seek: true });
-        els.detailText?.focus();
-        setStatus(`已在 ${formatDisplayTime(startMs, state.format)} 插入新字幕`, 'ok');
-    }
-
-    async function deleteSelectedCue() {
-        const indexes = getSelectedCueIndexes();
-        if (!indexes.length && state.selectedIndex < 0) return;
-        const targets = indexes.length ? indexes : [state.selectedIndex];
-        const label = targets.length === 1
-            ? `删除第 ${targets[0] + 1} 条字幕？`
-            : `删除选中的 ${targets.length} 条字幕？`;
-        if (!(await editorConfirm(label))) return;
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const removeSet = new Set(targets);
-        const nextCues = state.cues.filter((_, i) => !removeSet.has(i));
-        const focusBefore = Math.min(...targets);
-        let keptBefore = 0;
-        for (let i = 0; i < focusBefore; i += 1) {
-            if (!removeSet.has(i)) keptBefore += 1;
-        }
-        state.cues.splice(0, state.cues.length, ...nextCues);
-        const nextFocus = nextCues.length
-            ? Math.min(keptBefore, nextCues.length - 1)
-            : -1;
-        setSelectionIndexes(nextFocus >= 0 ? [nextFocus] : [], nextFocus);
-        setDirty(true);
-        renderCueList();
-        setStatus(targets.length === 1
-            ? `已删除第 ${targets[0] + 1} 条`
-            : `已删除 ${targets.length} 条字幕`, 'ok');
-    }
-
-    function quickSplitSelectedCue(mode, extraOpts = {}) {
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const result = computeSplitParts(mode, cue, extraOpts);
-        if (result.error) {
-            setStatus(result.error, 'err');
-            return;
-        }
-        applySplitResult(idx, result.cues, extraOpts);
-    }
-
-    function charCountAdjustSelectedCueDuration() {
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const chars = textCharCount(cue.text);
-        if (!chars) {
-            setStatus('当前字幕无文本，无法按字数调节时长', 'err');
-            return;
-        }
-
-        const targetCps = getTargetCps();
-        const minDurMs = 500;
-        const maxDurMs = 10000;
-        const gapMs = 1;
-        let needMs = Math.ceil((chars / targetCps) * 1000);
-        needMs = Math.max(minDurMs, Math.min(maxDurMs, needMs));
-
-        let newEnd = cue.startMs + needMs;
-        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-        if (next) newEnd = Math.min(newEnd, next.startMs - gapMs);
-        newEnd = Math.max(cue.startMs + minDurMs, newEnd);
-
-        const oldEnd = cueEndMs(cue);
-        if (newEnd === oldEnd) {
-            setStatus(`第 ${idx + 1} 条时长已合适（CPS ${computeCps(cue.text, cueDurationMs(cue))}）`, 'ok');
-            return;
-        }
-
-        recordUndoBeforeChange();
-        cue.endMs = newEnd;
-        setDirty(true);
-        refreshListRow(idx);
-        if (state.selectedIndex === idx) renderDetailPane();
-        resyncPlaybackAfterCueTimingChange();
-        const newCps = computeCps(cue.text, cueDurationMs(cue));
-        setStatus(
-            `已按字数调节第 ${idx + 1} 条时长为 ${formatDurationSec(cueDurationMs(cue))} 秒`
-            + (newCps ? `（CPS ${newCps}）` : ''),
-            'ok',
-        );
-    }
-
-    function canSilenceAdjustDurationCue(cue) {
-        if (!cue) return false;
-        if (cueDurationMs(cue) < 600) return false;
-        return true;
-    }
-
-    function canAudioSnapCue(cue) {
-        if (!cue) return false;
-        if (cueDurationMs(cue) < 300) return false;
-        return true;
-    }
-
-    async function computeSilenceAdjustedEndMs(cue, opts = {}) {
-        if (!state.videoPath) {
-            return { error: '请先关联视频后再使用智能调节时长' };
-        }
-        const start = Math.round(Number(cue.startMs) || 0);
-        const end = cueEndMs(cue);
-        const minDurMs = 500;
-        const tailPadMs = Math.max(0, Math.round(Number(opts.tailPadMs ?? 80)));
-        const minShiftMs = Math.max(40, Math.round(Number(opts.minShiftMs ?? 80)));
-        const padMs = Math.max(400, Math.min(4000, Math.round(Number(opts.padMs ?? 1500))));
-        const gapMs = 1;
-
-        let cueIndex = Number(opts.cueIndex);
-        if (!Number.isInteger(cueIndex) || cueIndex < 0) {
-            cueIndex = state.cues.indexOf(cue);
-        }
-        const next = cueIndex >= 0 && cueIndex < state.cues.length - 1
-            ? state.cues[cueIndex + 1]
-            : null;
-        const nextLimit = next ? next.startMs - gapMs : Number.POSITIVE_INFINITY;
-        const analysisEnd = Math.max(
-            end,
-            Math.min(
-                Number.isFinite(nextLimit) ? nextLimit : Number.POSITIVE_INFINITY,
-                end + padMs,
-            ),
-        );
-        if (analysisEnd - start < 250) {
-            return { error: '可分析时间窗过短（可能与下一条字幕过紧）' };
-        }
-
-        const analysis = await electron?.ffmpegDetectSilence?.(buildFfmpegRequest({
-            path: state.videoPath,
-            startMs: start,
-            endMs: analysisEnd,
-            noiseDb: opts.silenceDb ?? -35,
-            minSilenceSec: opts.silenceDur ?? 0.25,
-            minSegmentMs: 400,
-        }));
-        if (analysis?.cancelled || isJobAbortRequested()) {
-            return { cancelled: true, error: '已取消' };
-        }
-        if (!analysis?.ok) {
-            return { error: analysis?.error || '静音分析失败' };
-        }
-
-        // Prefer speech-region end (supports shorten + extend); fall back to trailing-silence shrink.
-        let newEnd = null;
-        if (typeof splitCore.snapCueTimingFromSilenceIntervals === 'function') {
-            const snapped = splitCore.snapCueTimingFromSilenceIntervals(
-                start,
-                end,
-                analysis.intervals,
-                {
-                    windowStartMs: start,
-                    windowEndMs: analysisEnd,
-                    prevLimitMs: start,
-                    nextLimitMs: Number.isFinite(nextLimit) ? nextLimit : analysisEnd,
-                    allowExtend: true,
-                    minDurMs,
-                    headPadMs: 0,
-                    tailPadMs,
-                    minSpeechMs: 200,
-                    minShiftMs,
-                },
-            );
-            if (snapped?.region) {
-                newEnd = Math.round(snapped.region.endMs + tailPadMs);
-            } else if (snapped?.changed) {
-                newEnd = Math.round(snapped.endMs);
-            }
-        }
-        if (newEnd == null) {
-            newEnd = splitCore.inferSpeechEndFromSilence(
-                start,
-                end,
-                analysis.intervals,
-                {
-                    minDurMs,
-                    minTrailingSilenceMs: Math.max(250, Math.round((opts.silenceDur ?? 0.25) * 1000)),
-                    tailPadMs,
-                },
-            );
-        }
-        if (newEnd == null) {
-            return { error: '未检测到可用语音边界，当前时长可能已接近实际语音长度', unchanged: true };
-        }
-
-        newEnd = Math.max(start + minDurMs, Math.round(newEnd));
-        if (Number.isFinite(nextLimit)) {
-            newEnd = Math.min(newEnd, nextLimit);
-        }
-        newEnd = Math.max(start + minDurMs, newEnd);
-        const deltaMs = newEnd - end;
-        if (Math.abs(deltaMs) < minShiftMs) {
-            return { error: '当前时长已接近实际语音，无需调整', unchanged: true };
-        }
-        return {
-            newEndMs: newEnd,
-            meta: {
-                oldEndMs: end,
-                deltaMs,
-                silenceCount: analysis.intervals?.length || 0,
-            },
-        };
-    }
-
-    async function computeAudioSnappedCueTiming(cue, idx, opts = {}) {
-        if (!state.videoPath) {
-            return { error: '请先关联视频后再使用按音频贴边' };
-        }
-        const end = cueEndMs(cue);
-        const padMs = Math.max(0, Math.min(2000, Math.round(Number(opts.padMs ?? 400))));
-        const gapMs = 1;
-        const prev = idx > 0 ? state.cues[idx - 1] : null;
-        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-        const prevLimit = prev ? cueEndMs(prev) + gapMs : 0;
-        const nextLimit = next ? next.startMs - gapMs : Number.POSITIVE_INFINITY;
-        const windowStart = Math.max(0, Math.max(prevLimit, cue.startMs - padMs));
-        const windowEnd = Math.min(
-            Number.isFinite(nextLimit) ? nextLimit : Number.POSITIVE_INFINITY,
-            end + padMs,
-        );
-        const analysisEnd = Number.isFinite(windowEnd) ? windowEnd : end + padMs;
-        if (analysisEnd - windowStart < 250) {
-            return { error: '可分析时间窗过短（可能与相邻字幕过紧）' };
-        }
-
-        const analysis = await electron?.ffmpegDetectSilence?.(buildFfmpegRequest({
-            path: state.videoPath,
-            startMs: windowStart,
-            endMs: analysisEnd,
-            noiseDb: opts.silenceDb ?? -35,
-            minSilenceSec: opts.silenceDur ?? 0.25,
-            minSegmentMs: 400,
-        }));
-        if (analysis?.cancelled || isJobAbortRequested()) {
-            return { cancelled: true, error: '已取消' };
-        }
-        if (!analysis?.ok) {
-            return { error: analysis?.error || '静音分析失败' };
-        }
-
-        const snapped = splitCore.snapCueTimingFromSilenceIntervals(
-            cue.startMs,
-            end,
-            analysis.intervals,
-            {
-                windowStartMs: windowStart,
-                windowEndMs: analysisEnd,
-                prevLimitMs: prevLimit,
-                nextLimitMs: Number.isFinite(nextLimit) ? nextLimit : analysisEnd,
-                minDurMs: 500,
-                headPadMs: Math.max(0, Math.round(Number(opts.headPadMs ?? 80))),
-                tailPadMs: Math.max(0, Math.round(Number(opts.tailPadMs ?? 80))),
-                minSpeechMs: 200,
-                minShiftMs: 80,
-                allowExtend: opts.allowExtend !== false,
-            },
-        );
-
-        if (!snapped.changed) {
-            const reasonMap = {
-                no_speech: '未检测到可用语音段',
-                no_region: '未匹配到语音段',
-                too_short: '贴边后时长过短，已保持原时间',
-                unchanged: '时间轴已贴近语音，无需调整',
-            };
-            return {
-                error: reasonMap[snapped.reason] || '无需调整',
-                unchanged: true,
-                snapped,
-            };
-        }
-
-        return {
-            startMs: snapped.startMs,
-            endMs: snapped.endMs,
-            startDelta: snapped.startDelta,
-            endDelta: snapped.endDelta,
-            silenceCount: analysis.intervals?.length || 0,
-            windowStartMs: windowStart,
-            windowEndMs: analysisEnd,
-        };
-    }
-
-    async function silenceSnapSelectedCueTiming(extraOpts = {}) {
-        if (state.silenceSplitBusy || state.retranscribeBusy) {
-            setStatus('已有分析任务进行中，请稍候', 'err');
-            return;
-        }
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        if (!canAudioSnapCue(cue)) {
-            setStatus('当前字幕时长过短，无法贴边', 'err');
-            return;
-        }
-        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-            setStatus('请先关联视频后再使用按音频贴边', 'err');
-            return;
-        }
-
-        const opts = {
-            ...getSilenceSplitOpts(extraOpts),
-            padMs: extraOpts.padMs ?? 400,
-            allowExtend: extraOpts.allowExtend !== false,
-        };
-        setSilenceSplitBusy(true);
-        showSilenceSplitProgress({
-            title: '正在按音频贴边',
-            detail: `正在分析第 ${idx + 1} 条字幕的语音边界…`,
-            indeterminate: true,
-            statusMessage: '正在分析视频静音…',
-        });
-        if (els.silenceProgressHint) {
-            els.silenceProgressHint.textContent = '根据静音检测将字幕起止贴到语音边界，文本保持不变';
-        }
-        await flushSilenceProgressPaint();
-
-        try {
-            const result = await computeAudioSnappedCueTiming(cue, idx, opts);
-            if (result.error) {
-                setStatus(result.error, result.unchanged ? 'ok' : 'err');
-                return;
-            }
-
-            recordUndoBeforeChange();
-            cue.startMs = result.startMs;
-            cue.endMs = result.endMs;
-            setDirty(true);
-            refreshListRow(idx);
-            if (state.selectedIndex === idx) renderDetailPane();
-            resyncPlaybackAfterCueTimingChange();
-            const startPart = result.startDelta
-                ? `起始 ${result.startDelta > 0 ? '+' : ''}${(result.startDelta / 1000).toFixed(2)}s`
-                : '起始不变';
-            const endPart = result.endDelta
-                ? `结束 ${result.endDelta > 0 ? '+' : ''}${(result.endDelta / 1000).toFixed(2)}s`
-                : '结束不变';
-            setStatus(`已按音频贴边第 ${idx + 1} 条：${startPart} · ${endPart}`, 'ok');
-        } finally {
-            setSilenceSplitBusy(false);
-            hideSilenceSplitProgress();
-            if (els.silenceProgressHint) {
-                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
-            }
-        }
-    }
-
-    async function silenceAdjustSelectedCueDuration(extraOpts = {}) {
-        if (state.silenceSplitBusy) return;
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        if (!canSilenceAdjustDurationCue(cue)) {
-            setStatus('当前字幕时长过短，无法智能调节', 'err');
-            return;
-        }
-        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-            setStatus('请先关联视频后再使用智能调节时长', 'err');
-            return;
-        }
-
-        const opts = getSilenceSplitOpts(extraOpts);
-        showSilenceSplitProgress({
-            title: '正在分析静音',
-            detail: `正在分析第 ${idx + 1} 条字幕的实际语音时长…`,
-            indeterminate: true,
-            statusMessage: '正在分析视频静音…',
-        });
-        await flushSilenceProgressPaint();
-
-        try {
-            const analysis = await computeSilenceAdjustedEndMs(cue, { ...opts, cueIndex: idx });
-            if (analysis.error) {
-                setStatus(analysis.error, analysis.unchanged ? 'ok' : 'err');
-                return;
-            }
-            const newEnd = clampSilenceAdjustedEnd(cue, idx, analysis.newEndMs, true);
-            const oldEnd = cueEndMs(cue);
-            const deltaMs = newEnd - oldEnd;
-            if (Math.abs(deltaMs) < 80) {
-                setStatus(`第 ${idx + 1} 条时长已接近实际语音，无需调整`, 'ok');
-                return;
-            }
-
-            recordUndoBeforeChange();
-            cue.endMs = newEnd;
-            setDirty(true);
-            refreshListRow(idx);
-            if (state.selectedIndex === idx) renderDetailPane();
-            resyncPlaybackAfterCueTimingChange();
-            const deltaSec = (Math.abs(deltaMs) / 1000).toFixed(3);
-            const verb = deltaMs < 0 ? '缩短' : '延长';
-            setStatus(
-                `已智能调节第 ${idx + 1} 条时长：${formatDurationSec(cueDurationMs(cue))} 秒（${verb} ${deltaSec} 秒）`,
-                'ok',
-            );
-        } finally {
-            hideSilenceSplitProgress();
-        }
-    }
-
-    function canSilenceSplitCue(cue) {
-        const text = String(cue?.text || '').trim();
-        if (!text) return false;
-        if (cueDurationMs(cue) < 600) return false;
-        if (!splitCore.isConnectedText(text)) return true;
-        if (typeof splitCore.getSilenceTextBreakIndices !== 'function') return false;
-        const breaks = splitCore.getSilenceTextBreakIndices(text, {
-            breakWords: getSmartSplitBreakWords(),
-            includePunctuation: true,
-        });
-        return breaks.length > 0;
-    }
-
-    function setSilenceSplitBusy(busy) {
-        state.silenceSplitBusy = !!busy;
-        if (!busy) state.jobAbortRequested = false;
-        if (els.silenceSplitBtn) els.silenceSplitBtn.disabled = state.silenceSplitBusy;
-        if (els.silenceSplitConfirm) els.silenceSplitConfirm.disabled = state.silenceSplitBusy;
-        if (els.batchDurConfirm) els.batchDurConfirm.disabled = state.silenceSplitBusy;
-        if (els.splitConfirm && getSelectedSplitMode() === 'silence') {
-            els.splitConfirm.disabled = state.silenceSplitBusy;
-        }
-        if (els.silenceProgressCancel) {
-            els.silenceProgressCancel.disabled = !(state.silenceSplitBusy || state.retranscribeBusy);
-        }
-        if (state.selectedIndex >= 0) renderDetailPane();
-    }
-
-    function isJobAbortRequested() {
-        return !!state.jobAbortRequested;
-    }
-
-    async function requestEditorJobAbort() {
-        if (!state.silenceSplitBusy && !state.retranscribeBusy) return;
-        if (state.jobAbortRequested) return;
-        state.jobAbortRequested = true;
-        if (els.silenceProgressDetail) {
-            els.silenceProgressDetail.textContent = '正在取消…';
-        }
-        if (els.silenceProgressCancel) els.silenceProgressCancel.disabled = true;
-        try {
-            if (state.retranscribeBusy) {
-                await electron?.transWithAiCancel?.();
-            }
-            await electron?.ffmpegCancel?.();
-        } catch (_) { /* ignore */ }
-        setStatus('正在取消…', 'warn');
-    }
-
-    async function flushSilenceProgressPaint() {
-        await new Promise((resolve) => {
-            requestAnimationFrame(() => setTimeout(resolve, 0));
-        });
-    }
-
-    function showSilenceSplitProgress(opts = {}) {
-        if (!els.silenceProgress) return;
-        const total = Math.max(0, Math.floor(Number(opts.total) || 0));
-        const current = Math.max(0, Math.floor(Number(opts.current) || 0));
-        const indeterminate = opts.indeterminate != null ? !!opts.indeterminate : total <= 1;
-
-        els.silenceProgress.classList.remove('hidden');
-        els.silenceProgress.setAttribute('aria-busy', 'true');
-        els.silenceProgress.classList.toggle('indeterminate', indeterminate);
-
-        if (els.silenceProgressTitle) {
-            els.silenceProgressTitle.textContent = opts.title || '正在分析静音';
-        }
-        if (els.silenceProgressDetail) {
-            els.silenceProgressDetail.textContent = opts.detail || '请稍候，FFmpeg 正在分析音频…';
-        }
-        if (els.silenceProgressHint) {
-            els.silenceProgressHint.textContent = opts.hint
-                || 'FFmpeg 正在分析关联视频的音频静音点，处理时间较长时请耐心等待';
-        }
-
-        if (els.silenceProgressCount) {
-            if (total > 1) {
-                els.silenceProgressCount.textContent = `${Math.min(current, total)} / ${total}`;
-                els.silenceProgressCount.classList.remove('hidden');
-            } else {
-                els.silenceProgressCount.classList.add('hidden');
-            }
-        }
-
-        if (els.silenceProgressTrack) {
-            els.silenceProgressTrack.classList.remove('hidden');
-        }
-
-        updateSilenceSplitProgress({ current, total, indeterminate });
-        if (opts.statusMessage) setStatus(opts.statusMessage, '');
-        state.jobAbortRequested = false;
-        setSilenceSplitBusy(true);
-        if (els.silenceProgressCancel) els.silenceProgressCancel.disabled = false;
-    }
-
-    function updateSilenceSplitProgress(opts = {}) {
-        if (!els.silenceProgress || els.silenceProgress.classList.contains('hidden')) return;
-
-        const total = Math.max(0, Math.floor(Number(opts.total) || 0));
-        const current = Math.max(0, Math.floor(Number(opts.current) || 0));
-        const indeterminate = opts.indeterminate != null
-            ? !!opts.indeterminate
-            : els.silenceProgress.classList.contains('indeterminate');
-
-        if (opts.detail && els.silenceProgressDetail) {
-            els.silenceProgressDetail.textContent = opts.detail;
-        }
-        if (opts.title && els.silenceProgressTitle) {
-            els.silenceProgressTitle.textContent = opts.title;
-        }
-
-        if (total > 1) {
-            els.silenceProgress.classList.remove('indeterminate');
-            if (els.silenceProgressTrack) els.silenceProgressTrack.classList.remove('hidden');
-            if (els.silenceProgressCount) {
-                els.silenceProgressCount.textContent = `${Math.min(current, total)} / ${total}`;
-                els.silenceProgressCount.classList.remove('hidden');
-            }
-            if (els.silenceProgressBar) {
-                const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-                els.silenceProgressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-            }
-        } else if (indeterminate && els.silenceProgressBar) {
-            els.silenceProgressBar.style.width = '';
-        }
-
-        if (opts.statusMessage) {
-            setStatus(opts.statusMessage, '');
-        }
-    }
-
-    function hideSilenceSplitProgress() {
-        if (!els.silenceProgress) return;
-        els.silenceProgress.classList.add('hidden');
-        els.silenceProgress.classList.remove('indeterminate');
-        els.silenceProgress.setAttribute('aria-busy', 'false');
-        if (els.silenceProgressBar) els.silenceProgressBar.style.width = '0%';
-        if (els.silenceProgressCount) els.silenceProgressCount.classList.add('hidden');
-        setSilenceSplitBusy(false);
-        if (state.selectedIndex >= 0) renderDetailPane();
+    function ls() {
+        en && (clearInterval(en), en = null)
     }
-
-    function getSilenceSplitOpts(extra = {}, mode = 'batch') {
-        const prefs = loadSplitPrefs();
-        let silenceDb = extra.silenceDb ?? prefs.silenceDb;
-        let silenceDur = extra.silenceDur ?? prefs.silenceDur;
-        // Single-cue splits default to more sensitive floors than batch prefs
-        if (mode === 'cue') {
-            silenceDb = Math.max(Number(silenceDb) || -30, -30);
-            silenceDur = Math.min(Math.max(0.05, Number(silenceDur) || 0.12), 0.12);
-        }
-        return {
-            silenceDb,
-            silenceDur,
-            fixOverlap: extra.fixOverlap ?? prefs.fixOverlap,
-        };
-    }
-
-    async function quickSilenceSplitSelectedCue(extraOpts = {}) {
-        if (state.silenceSplitBusy) return { ok: false, error: '静音分析正在进行中' };
-        if (state.selectedIndex < 0) return { ok: false, error: '未选中字幕' };
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = getLiveSelectedCue() || state.cues[idx];
-        const opts = getSilenceSplitOpts(extraOpts, 'cue');
-
-        showSilenceSplitProgress({
-            title: '正在分析静音',
-            detail: `正在分析第 ${idx + 1} 条字幕的音频静音点…`,
-            indeterminate: true,
-            statusMessage: '正在分析视频静音…',
-        });
-        await flushSilenceProgressPaint();
-
-        try {
-            const result = await computeSilenceSplitParts(cue, opts);
-            if (result.error) {
-                setStatus(result.error, 'err');
-                return { ok: false, error: result.error };
-            }
-            applySplitResult(idx, result.cues, opts);
-            if (result.meta?.silenceCount) {
-                setStatus(`已按 ${result.meta.silenceCount} 处静音分割为 ${result.cues.length} 条`, 'ok');
-            }
-            return { ok: true, cues: result.cues, meta: result.meta };
-        } finally {
-            hideSilenceSplitProgress();
-        }
-    }
-
-    function updateContextMenuState() {
-        if (!els.cueContextMenu) return;
-        const hasCue = state.selectedIndex >= 0 && state.selectedIndex < state.cues.length;
-        const text = hasCue ? String(state.cues[state.selectedIndex].text || '').trim() : '';
-        const canSplit = hasCue && !!text;
-        const canSplitLines = canSplit && String(state.cues[state.selectedIndex].text || '').includes('\n');
-        const canSplitSpaces = canSplit && /\s/.test(String(state.cues[state.selectedIndex].text || ''));
-        const canSilenceSplit = hasCue && canSilenceSplitCue(state.cues[state.selectedIndex])
-            && !!state.videoPath && !!electron?.ffmpegDetectSilence && !state.silenceSplitBusy;
-
-        const canAlignStart = hasCue && !!els.video;
-        const canAlignEnd = hasCue && !!els.video;
-        const canCharDur = hasCue && textCharCount(state.cues[state.selectedIndex].text) > 0;
-        const canSmartDur = hasCue && canSilenceAdjustDurationCue(state.cues[state.selectedIndex])
-            && !!state.videoPath && !!electron?.ffmpegDetectSilence && !state.silenceSplitBusy;
-        const canAudioSnap = hasCue && canAudioSnapCue(state.cues[state.selectedIndex])
-            && !!state.videoPath && !!electron?.ffmpegDetectSilence
-            && !state.silenceSplitBusy && !state.retranscribeBusy;
-
-        els.cueContextMenu.querySelectorAll('[data-ctx-action]').forEach((btn) => {
-            const action = btn.dataset.ctxAction;
-            if (action === 'split-modal' || action === 'split-smart' || action === 'split-silence'
-                || action === 'split-lines' || action === 'split-spaces') {
-                if (action === 'split-lines') btn.disabled = !canSplitLines;
-                else if (action === 'split-spaces') btn.disabled = !canSplitSpaces;
-                else if (action === 'split-silence') btn.disabled = !canSilenceSplit;
-                else btn.disabled = !canSplit;
-            } else if (action === 'split-silence-all') {
-                btn.disabled = state.silenceSplitBusy || !state.videoPath || !electron?.ffmpegDetectSilence
-                    || !state.cues.some((cue) => canSilenceSplitCue(cue));
-            } else if (action === 'align-start') {
-                btn.disabled = !canAlignStart;
-            } else if (action === 'align-end') {
-                btn.disabled = !canAlignEnd;
-            } else if (action === 'char-dur') {
-                btn.disabled = !canCharDur;
-            } else if (action === 'smart-dur') {
-                btn.disabled = !canSmartDur;
-            } else if (action === 'audio-snap') {
-                btn.disabled = !canAudioSnap;
-            } else if (action === 'audio-snap-batch') {
-                btn.disabled = !state.videoPath || !electron?.ffmpegDetectSilence
-                    || state.silenceSplitBusy || state.retranscribeBusy || !state.cues.length;
-            } else if (action === 'retranscribe') {
-                btn.disabled = !hasCue || state.retranscribeBusy || state.silenceSplitBusy
-                    || !state.videoPath || !electron?.transubTranscribeRange;
-            } else if (action === 'retranslate' || action === 'retranscribe-dual') {
-                btn.disabled = !hasCue || !hasDualPair() || state.retranscribeBusy || state.silenceSplitBusy
-                    || !state.videoPath || !electron?.transubTranscribeRange;
-            } else if (action === 'retranscribe-dur') {
-                btn.disabled = state.retranscribeBusy || state.silenceSplitBusy
-                    || !state.videoPath || !electron?.transubTranscribeRange;
-            } else if (action === 'confirm-meta') {
-                btn.disabled = !hasCue;
-            } else if (action === 'delete') {
-                btn.disabled = !hasCue;
-            } else if (action === 'insert') {
-                btn.disabled = false;
-            }
-        });
-    }
-
-    function hideCueContextMenu() {
-        if (!els.cueContextMenu) return;
-        els.cueContextMenu.classList.add('hidden');
-    }
-
-    function showCueContextMenu(clientX, clientY) {
-        if (!els.cueContextMenu) return;
-        syncDualDisplaySelectVisibility();
-        updateContextMenuState();
-        const menu = els.cueContextMenu;
-        menu.classList.remove('hidden');
-        menu.style.visibility = 'hidden';
-        menu.style.left = '0';
-        menu.style.top = '0';
-        const rect = menu.getBoundingClientRect();
-        menu.style.visibility = '';
-        const pad = 8;
-        let x = clientX;
-        let y = clientY;
-        if (x + rect.width > window.innerWidth - pad) x = window.innerWidth - rect.width - pad;
-        if (y + rect.height > window.innerHeight - pad) y = window.innerHeight - rect.height - pad;
-        menu.style.left = `${Math.max(pad, x)}px`;
-        menu.style.top = `${Math.max(pad, y)}px`;
-    }
-
-    function openCueContextMenuAt(idx, clientX, clientY, { scroll = false } = {}) {
-        if (!Number.isFinite(idx) || idx < 0 || idx >= state.cues.length) return;
-        if (!getSelectedCueIndexes().includes(idx)) {
-            selectCue(idx, { scroll });
-        } else {
-            state.selectedIndex = idx;
-            renderDetailPane();
-        }
-        showCueContextMenu(clientX, clientY);
-    }
-
-    function handleContextMenuAction(action) {
-        hideCueContextMenu();
-        switch (action) {
-            case 'split-modal':
-                openSplitModal();
-                break;
-            case 'split-smart': {
-                const prefs = loadSplitPrefs();
-                quickSplitSelectedCue('smart', {
-                    smartMaxChars: prefs.smartMaxChars,
-                    smartLineChars: prefs.smartLineChars,
-                    useCps: prefs.useCps,
-                    fixOverlap: prefs.fixOverlap,
-                });
-                break;
-            }
-            case 'split-silence':
-                quickSilenceSplitSelectedCue();
-                break;
-            case 'split-silence-all':
-                openSilenceSplitModal('all');
-                break;
-            case 'split-lines':
-                quickSplitSelectedCue('lines');
-                break;
-            case 'split-spaces':
-                quickSplitSelectedCue('spaces');
-                break;
-            case 'align-start':
-                setStartToPlayhead();
-                break;
-            case 'align-end':
-                setEndToPlayhead();
-                break;
-            case 'char-dur':
-                charCountAdjustSelectedCueDuration();
-                break;
-            case 'smart-dur':
-                silenceAdjustSelectedCueDuration();
-                break;
-            case 'audio-snap':
-                silenceSnapSelectedCueTiming();
-                break;
-            case 'audio-snap-batch':
-                openBatchAudioSnapModal();
-                break;
-            case 'retranscribe':
-                retranscribeSelectedCue();
-                break;
-            case 'retranslate':
-                retranslateSelectedCue();
-                break;
-            case 'retranscribe-dual':
-                retranscribeDualSelectedCue();
-                break;
-            case 'retranscribe-dur':
-                openRetranscribeDurModal();
-                break;
-            case 'confirm-meta':
-                markSelectedCueTrusted();
-                break;
-            case 'insert':
-                insertCueAtPlayhead();
-                break;
-            case 'delete':
-                deleteSelectedCue();
-                break;
-            default:
-                break;
-        }
-    }
-
-    function readSingleSplitOptions() {
-        return {
-            charCount: Number(els.splitCharCount?.value) || 20,
-            count: Number(els.splitCount?.value) || 2,
-            smartMaxChars: Number(els.splitSmartMaxChars?.value) || 20,
-            smartLineChars: Number(els.splitSmartLineChars?.value) || 18,
-            silenceDb: Number(els.splitSilenceDb?.value) || -35,
-            silenceDur: Number(els.splitSilenceDur?.value) || 0.25,
-            useCps: els.splitUseCps?.checked !== false,
-            fixOverlap: els.splitFixOverlap?.checked !== false,
-        };
-    }
-
-    function getSplitTimeMode(useCps) {
-        return useCps ? 'cps' : 'proportional';
-    }
-
-    function getSplitTimeOpts(useCps) {
-        return {
-            targetCps: getTargetCps(),
-            minDurMs: 500,
-        };
-    }
-
-    function splitTextByLines(text) {
-        return splitCore.splitTextByLines(text);
-    }
-
-    function splitTextBySpaces(text) {
-        return splitCore.splitTextBySpaces(text);
-    }
-
-    function splitTextByCharCount(text, maxChars) {
-        return splitCore.splitTextByCharCount(text, maxChars);
-    }
-
-    function splitTextIntoNParts(text, n) {
-        return splitCore.splitTextIntoNParts(text, n);
-    }
-
-    function splitTextAtIndex(text, index) {
-        return splitCore.splitTextAtIndex(text, index);
-    }
-
-    function buildCuesFromTexts(startMs, endMs, texts, timeMode = 'proportional', timeOpts = {}) {
-        return splitCore.buildCuesFromTexts(startMs, endMs, texts, timeMode, timeOpts);
-    }
-
-    function buildTwoPartSplitByTime(cue, splitMs, textBefore, textAfter) {
-        const end = cueEndMs(cue);
-        if (splitMs <= cue.startMs || splitMs >= end) return null;
-        return [
-            { startMs: cue.startMs, endMs: splitMs, text: textBefore },
-            { startMs: splitMs, endMs: end, text: textAfter },
-        ];
-    }
-
-    function blocksConnectedTextSplit(mode) {
-        return mode === 'chars' || mode === 'count' || mode === 'silence';
-    }
-
-    function parseBreakWordsInput(raw) {
-        return splitCore.normalizeBreakWords(
-            String(raw || '')
-                .split(/[,，;；|／/\n\r\t]+/)
-                .map((s) => s.trim()),
-        );
-    }
-
-    function getSmartSplitBreakWords() {
-        return loadBreakWords();
-    }
-
-    function connectedTextSplitError(mode, text) {
-        if (!blocksConnectedTextSplit(mode) || !splitCore.isConnectedText(text)) return null;
-        if (mode === 'silence' && typeof splitCore.getSilenceTextBreakIndices === 'function') {
-            const breaks = splitCore.getSilenceTextBreakIndices(text, {
-                breakWords: getSmartSplitBreakWords(),
-                includePunctuation: true,
-            });
-            if (breaks.length) return null;
-            return '文本为连续书写且未匹配断句词/标点，无法静音分割。请在「断句词」中添加，或使用光标/播放头手动分割。';
-        }
-        return CONNECTED_TEXT_SPLIT_MSG;
-    }
-
-    function computeSplitParts(mode, cue, opts = {}) {
-        const text = String(cue.text || '').trim();
-        const end = cueEndMs(cue);
-        if (!text) return { error: '当前字幕文本为空，无法分割' };
-
-        const connectedErr = connectedTextSplitError(mode, text);
-        if (connectedErr) return { error: connectedErr };
-
-        const useCps = opts.useCps !== false;
-        const timeMode = getSplitTimeMode(useCps);
-        const timeOpts = getSplitTimeOpts(useCps);
-
-        if (mode === 'smart') {
-            const texts = splitCore.splitTextSmart(text, {
-                maxChars: opts.smartMaxChars ?? opts.charCount ?? 20,
-                maxLineChars: opts.smartLineChars ?? 18,
-                breakWords: opts.breakWords || getSmartSplitBreakWords(),
-            });
-            if (texts.length < 2) return { error: '当前文本无需智能分割（已足够短或缺少标点/断句词）' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, texts, timeMode, timeOpts) };
-        }
-
-        if (mode === 'lines') {
-            const texts = splitTextByLines(text);
-            if (texts.length < 2) return { error: '文本中没有多个换行，无法按行分割' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, texts, timeMode, timeOpts) };
-        }
-
-        if (mode === 'spaces') {
-            const texts = splitTextBySpaces(text);
-            if (texts.length < 2) return { error: '文本中没有空格，无法按空格分割' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, texts, timeMode, timeOpts) };
-        }
-
-        if (mode === 'chars') {
-            const texts = splitTextByCharCount(text, opts.charCount);
-            if (texts.length < 2) return { error: '按该字符数无法拆成多条' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, texts, timeMode, timeOpts) };
-        }
-
-        if (mode === 'count') {
-            const texts = splitTextIntoNParts(text, opts.count);
-            if (texts === null) return { error: `文本过短，无法均分为 ${opts.count} 段` };
-            if (texts.length < 2) return { error: '均分后不足两条，请减少段数' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, texts, 'equal', timeOpts) };
-        }
-
-        if (mode === 'cursor') {
-            const ta = els.detailText;
-            const pos = ta ? ta.selectionStart : text.length;
-            const parts = splitTextAtIndex(text, pos);
-            if (!parts) return { error: '请将光标置于文本中间再分割' };
-            return { cues: buildCuesFromTexts(cue.startMs, end, parts, timeMode, timeOpts) };
-        }
-
-        if (mode === 'playhead') {
-            if (!els.video) return { error: '未加载视频，无法在播放头处分割' };
-            const splitMs = getPlaybackTimeMs();
-            if (splitMs <= cue.startMs || splitMs >= end) {
-                return { error: '播放头不在当前字幕时间范围内' };
-            }
-            const ratio = (splitMs - cue.startMs) / (end - cue.startMs);
-            const roughIdx = Math.min(text.length - 1, Math.max(1, Math.round(text.length * ratio)));
-            const splitIdx = splitCore.snapSplitIndexNearPunctuation(text, roughIdx, 12);
-            let parts = splitTextAtIndex(text, splitIdx);
-            if (!parts) {
-                parts = splitTextAtIndex(text, Math.floor(text.length / 2));
-            }
-            if (!parts) return { error: '文本过短，无法在播放头处分割' };
-            const cues = buildTwoPartSplitByTime(cue, splitMs, parts[0], parts[1]);
-            return cues ? { cues } : { error: '播放头位置无效' };
-        }
-
-        return { error: '未知的分割方式' };
-    }
-
-    async function computeSilenceSplitParts(cue, opts = {}) {
-        if (!state.videoPath) {
-            return { error: '请先关联视频后再使用静音切分' };
-        }
-        const cueStart = Math.round(Number(cue.startMs) || 0);
-        let end = Math.round(Number(cueEndMs(cue)) || 0);
-        if (!(end > cueStart)) {
-            const durSec = Number(els.detailDuration?.value);
-            if (Number.isFinite(durSec) && durSec > 0) {
-                end = cueStart + Math.round(durSec * 1000);
-            }
-        }
-        const text = String(cue.text || '').trim();
-        if (!text) return { error: '当前字幕文本为空，无法分割' };
-
-        const connectedErr = connectedTextSplitError('silence', text);
-        if (connectedErr) return { error: connectedErr };
-
-        const cueDur = end - cueStart;
-        if (!Number.isFinite(cueDur) || cueDur < 250) {
-            return { error: `当前字幕时长过短（${Number.isFinite(cueDur) ? (cueDur / 1000).toFixed(3) : '?'}s），无法分析静音` };
-        }
-
-        const padMs = Math.max(0, Math.min(1200, Math.round(Number(opts.padMs ?? 600))));
-        const analysisStart = Math.max(0, cueStart - padMs);
-        const analysisEnd = end + padMs;
-        if (!(analysisEnd > analysisStart + 200) || !Number.isFinite(analysisStart) || !Number.isFinite(analysisEnd)) {
-            return {
-                error: `静音分析时间窗无效（${cueStart}–${end} ms），请检查字幕起止时间`,
-            };
-        }
-        // Prefer slightly more sensitive defaults than batch prefs for single-cue splits
-        const noiseDb = opts.silenceDb != null ? opts.silenceDb : -30;
-        const silenceDur = opts.silenceDur != null ? opts.silenceDur : 0.12;
-        const minSegmentMs = Math.max(120, Math.min(280, Math.round(cueDur * 0.1)));
-        const breakWords = opts.breakWords || getSmartSplitBreakWords();
 
-        const textBreaks = typeof splitCore.getSilenceTextBreakIndices === 'function'
-            ? splitCore.getSilenceTextBreakIndices(text, {
-                breakWords,
-                includePunctuation: true,
+    function xa() {
+        ls(), en = setInterval(() => {
+            cs().catch(n => {
+                d(`\u8349\u7A3F\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25\uFF1A${n?.message||n}`, "err")
             })
-            : (typeof splitCore.getWhitespaceBreakIndices === 'function'
-                ? splitCore.getWhitespaceBreakIndices(text)
-                : []);
-        const idealBreakMs = textBreaks.map((idx) => {
-            const ratio = Math.max(0, Math.min(1, idx / Math.max(1, text.length)));
-            return Math.round(cueStart + ratio * cueDur);
+        }, pa)
+    }
+    async function cs() {
+        if (!(!t.dirty || !t.path || !p?.transubWriteSubtitleDraft)) try {
+            x(), await p.transubWriteSubtitleDraft({
+                path: t.path,
+                format: t.format,
+                header: t.header,
+                cues: t.cues
+            })
+        } catch (n) {
+            throw d(`\u8349\u7A3F\u81EA\u52A8\u4FDD\u5B58\u5931\u8D25\uFF1A${n?.message||n}`, "err"), n
+        }
+    }
+    async function Ma() {
+        if (!(!t.path || !p?.transubClearSubtitleDraft)) try {
+            await p.transubClearSubtitleDraft({
+                path: t.path
+            })
+        } catch {}
+    }
+    async function Ba(n) {
+        if (!n || !p?.transubCheckSubtitleDraft) return null;
+        const r = await p.transubCheckSubtitleDraft({
+            path: n
         });
+        if (!r?.ok || !r.offer || !r.draft) return null;
+        const i = r.savedAt ? new Date(r.savedAt).toLocaleString() : "\u672A\u77E5\u65F6\u95F4";
+        if (!await ie(`\u53D1\u73B0\u672A\u4FDD\u5B58\u8349\u7A3F\uFF08${i}\uFF0C\u7EA6 ${r.cueCount||0} \u6761\uFF09\u3002\u662F\u5426\u6062\u590D\uFF1F
+\u9009\u300C\u53D6\u6D88\u300D\u5219\u4E22\u5F03\u8349\u7A3F\u5E76\u6253\u5F00\u6587\u4EF6\u5185\u5BB9\u3002`)) {
+            try {
+                await p.transubClearSubtitleDraft({
+                    path: n
+                })
+            } catch {}
+            return null
+        }
+        return r.draft
+    }
+    async function ka() {
+        try {
+            const n = await p?.transWithAiGetOptions?.({});
+            Ue = String(n?.options?.ffmpegPath || "").trim()
+        } catch {
+            Ue = ""
+        }
+    }
 
-        const runDetect = (noise, minSilence, minSeg) => electron?.ffmpegDetectSilence?.({
-            path: state.videoPath,
-            startMs: analysisStart,
-            endMs: analysisEnd,
-            durationMs: analysisEnd - analysisStart,
-            noiseDb: noise,
-            minSilenceSec: minSilence,
-            minSegmentMs: minSeg,
-            ...(cachedFfmpegPath ? { ffmpegPath: cachedFfmpegPath } : {}),
-        });
+    function ln(n = {}) {
+        const r = {
+            ...n
+        };
+        return Ue && (r.ffmpegPath = Ue), r
+    }
 
-        const pickSplitPoints = (analysis, minSeg, minSilenceMs) => {
-            if (!analysis?.ok) return [];
-            const edge = Math.max(100, Math.min(minSeg, Math.floor(cueDur * 0.12)));
-            if (typeof splitCore.pickScoredSilenceSplitPoints === 'function') {
-                return splitCore.pickScoredSilenceSplitPoints(
-                    analysis.intervals,
-                    cueStart,
-                    end,
-                    {
-                        edgeMs: edge,
-                        minSilenceMs,
-                        minSpeechMs: 120,
-                        idealBreakMs,
-                        minGapMs: edge,
-                    },
-                );
+    function ds(n) {
+        if (n) {
+            if (n.welcome && !n.subPath) {
+                if (!Vn) {
+                    st = n;
+                    return
+                }
+                cn();
+                return
             }
+            if (n.subPath) {
+                if (!Vn) {
+                    st = n;
+                    return
+                }
+                Un(), fn(n.subPath, n.videoPath || "")
+            }
+        }
+    }
+    p?.onSubtitleEditorInit?.(ds);
 
-            // Fallback for older split-core builds
-            const interiorLo = cueStart + edge;
-            const interiorHi = end - edge;
-            if (interiorHi <= interiorLo) return [];
-            const points = [];
-            const pushIfInterior = (ms) => {
-                const v = Math.round(Number(ms) || 0);
-                if (v > interiorLo && v < interiorHi) points.push(v);
+    function d(n, r) {
+        e.statusLine && (e.statusLine.textContent = n || "", e.statusLine.className = `status-msg${r==="err"?" err":r==="ok"?" ok":r==="warn"?" warn":""}`)
+    }
+
+    function wa(n) {
+        const r = Date.parse(String(n || ""));
+        if (!Number.isFinite(r)) return "";
+        const i = Math.round((Date.now() - r) / 1e3);
+        if (i < 60) return "\u521A\u521A";
+        if (i < 3600) return `${Math.floor(i/60)} \u5206\u949F\u524D`;
+        if (i < 86400) return `${Math.floor(i/3600)} \u5C0F\u65F6\u524D`;
+        if (i < 86400 * 7) return `${Math.floor(i/86400)} \u5929\u524D`;
+        try {
+            return new Date(r).toLocaleString()
+        } catch {
+            return ""
+        }
+    }
+
+    function cn() {
+        e.welcome && (e.welcome.classList.remove("hidden"), Gr(), d("\u5C31\u7EEA", ""), us())
+    }
+
+    function Un() {
+        e.welcome && (e.welcome.classList.add("hidden"), e.welcomeIconWrap?.classList.remove("is-dragover"))
+    }
+    async function us() {
+        if (!e.welcomeHistoryList) return;
+        let n = [];
+        try {
+            const r = await p?.transubGetEditorHistory?.();
+            r?.ok && Array.isArray(r.entries) && (n = r.entries)
+        } catch {}
+        if (!n.length) {
+            e.welcomeHistoryList.innerHTML = '<div class="editor-welcome-history-empty">\u6682\u65E0\u6700\u8FD1\u7F16\u8F91\u8BB0\u5F55</div>', e.welcomeClearBtn && (e.welcomeClearBtn.disabled = !0);
+            return
+        }
+        e.welcomeClearBtn && (e.welcomeClearBtn.disabled = !1), e.welcomeHistoryList.innerHTML = n.map(r => {
+            const i = r.exists === !1,
+                s = wa(r.openedAt),
+                a = i ? s ? `${s} \xB7 \u6587\u4EF6\u4E0D\u5B58\u5728` : "\u6587\u4EF6\u4E0D\u5B58\u5728" : s;
+            return `<button type="button" class="editor-welcome-history-item${i?" is-missing":""}" role="listitem" data-path="${b(r.path)}" data-video="${b(r.videoPath||"")}" title="${b(r.path)}">
+                <span class="editor-welcome-history-name">${b(r.basename||G(r.path))}</span>
+                <span class="editor-welcome-history-path">${b(r.path)}</span>
+                ${a?`<span class="editor-welcome-history-meta">${b(a)}</span>`:""}
+            </button>`
+        }).join("")
+    }
+    async function Ca(n, r) {
+        if (!(!n || !p?.transubAppendEditorHistory)) try {
+            await p.transubAppendEditorHistory({
+                path: n,
+                videoPath: r || "",
+                basename: G(n)
+            })
+        } catch {}
+    }
+    async function Ea() {
+        if (await ie("\u786E\u5B9A\u6E05\u9664\u5168\u90E8\u5B57\u5E55\u7F16\u8F91\u5386\u53F2\uFF1F", {
+                title: "\u6E05\u9664\u5386\u53F2\u8BB0\u5F55",
+                okLabel: "\u6E05\u9664",
+                detail: "\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\u3002"
+            })) {
+            try {
+                await p?.transubClearEditorHistory?.()
+            } catch {}
+            await us(), d("\u5DF2\u6E05\u9664\u7F16\u8F91\u5386\u53F2", "ok")
+        }
+    }
+
+    function Ia(n) {
+        if (!n) return "";
+        const r = n.path || "";
+        return r || p?.getPathForFile?.(n) || ""
+    }
+
+    function ms(n) {
+        const r = String(n || "").toLowerCase();
+        return [".srt", ".vtt", ".lrc"].some(i => r.endsWith(i))
+    }
+    async function Pa(n) {
+        const r = n?.files;
+        if (!r?.length) {
+            d("\u672A\u8BC6\u522B\u5230\u53EF\u6253\u5F00\u7684\u5B57\u5E55\u6587\u4EF6", "err");
+            return
+        }
+        let i = "";
+        for (const s of r) {
+            const a = Ia(s);
+            if (a && ms(a)) {
+                i = a;
+                break
+            }
+            if (!a && ms(s.name || "")) {
+                d("\u65E0\u6CD5\u83B7\u53D6\u62D6\u653E\u6587\u4EF6\u8DEF\u5F84", "err");
+                return
+            }
+        }
+        if (!i) {
+            d("\u8BF7\u62D6\u653E SRT / VTT / LRC \u5B57\u5E55\u6587\u4EF6", "err");
+            return
+        }
+        await fn(i, "")
+    }
+
+    function La() {
+        e.welcomeOpenBtn?.addEventListener("click", () => {
+            rr()
+        }), e.welcomeOpenGeneratorBtn?.addEventListener("click", () => {
+            Ai()
+        }), e.welcomeClearBtn?.addEventListener("click", () => {
+            Ea()
+        }), e.welcomeHistoryList?.addEventListener("click", s => {
+            const a = s.target.closest?.("[data-path]");
+            if (!a) return;
+            const o = a.getAttribute("data-path") || "",
+                l = a.getAttribute("data-video") || "";
+            o && fn(o, l)
+        });
+        const n = e.welcomeIconWrap || e.welcomeIcon || e.welcome;
+        if (!n) return;
+        let r = 0;
+        const i = s => {
+            e.welcomeIconWrap?.classList.toggle("is-dragover", !!s)
+        };
+        n.addEventListener("dragenter", s => {
+            s.preventDefault(), r += 1, i(!0)
+        }), n.addEventListener("dragover", s => {
+            s.preventDefault(), s.dataTransfer && (s.dataTransfer.dropEffect = "copy"), i(!0)
+        }), n.addEventListener("dragleave", s => {
+            s.preventDefault(), r = Math.max(0, r - 1), r === 0 && i(!1)
+        }), n.addEventListener("drop", s => {
+            s.preventDefault(), r = 0, i(!1), Pa(s.dataTransfer)
+        }), e.welcome?.addEventListener("dragover", s => s.preventDefault()), e.welcome?.addEventListener("drop", s => s.preventDefault())
+    }
+
+    function fs() {
+        document.title = t.path ? `${t.dirty?"* ":""}Transub Editor \u2014 ${G(t.path)}` : "Transub Editor"
+    }
+
+    function P(n) {
+        const r = !!n,
+            i = t.dirty !== r;
+        t.dirty = r, e.dirtyBadge && e.dirtyBadge.classList.toggle("hidden", !t.dirty), i && fs()
+    }
+
+    function ps(n) {
+        return ua(t.cues, n, t.playbackIndex)
+    }
+
+    function x() {
+        if (t.detailSyncing || t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) return;
+        const n = t.cues[t.selectedIndex],
+            r = Yr(e.detailStart?.value, t.format);
+        r != null && (n.startMs = r);
+        const i = Number(e.detailDuration?.value),
+            s = V(n) / 1e3;
+        Number.isFinite(i) && i > 0 && (Math.abs(i - s) > .05 && t.detailRenderedDurSec != null && Math.abs(i - t.detailRenderedDurSec) < .001 || (n.endMs = n.startMs + Math.round(i * 1e3))), e.detailText && (n.text = e.detailText.value)
+    }
+
+    function ye() {
+        if (t.overlayText = "", t.overlayVisible = !1, tr(), !t.ready || !e.video) return;
+        const n = !e.video.paused && !e.video.ended;
+        t.cueBoundaryTimer && (clearTimeout(t.cueBoundaryTimer), t.cueBoundaryTimer = null), ks(e.video.currentTime || 0, !0), n && ot()
+    }
+
+    function wt() {
+        if (t.selectedIndex < 0) return;
+        const n = t.cues[t.selectedIndex],
+            r = e.detailText?.value ?? n.text ?? "",
+            i = V(n),
+            s = Mt(r, i),
+            a = yt();
+        if (e.detailCps)
+            if (!s) e.detailCps.textContent = "CPS \u2014", e.detailCps.style.color = "var(--ed-accent)", e.detailCps.style.fontWeight = "500";
+            else {
+                const u = Number(s);
+                e.detailCps.textContent = `\u5F53\u524D CPS ${s}\uFF08\u76EE\u6807 ${a}\uFF09`, u > a * 1.05 ? (e.detailCps.style.color = "var(--ed-warn-text)", e.detailCps.style.fontWeight = "600") : (e.detailCps.style.color = "var(--ed-accent)", e.detailCps.style.fontWeight = "500")
+            } e.lineLen && (e.lineLen.textContent = String(es(r))), e.textLen && (e.textLen.textContent = String(qe(r))), e.detailEnd && (e.detailEnd.value = Z(I(n), t.format));
+        const o = t.selectedIndex > 0 ? t.cues[t.selectedIndex - 1] : null,
+            l = t.selectedIndex < t.cues.length - 1 ? t.cues[t.selectedIndex + 1] : null,
+            c = Zt(n, o, l);
+        if (e.detailWarn) {
+            const u = t.cueMeta[t.selectedIndex],
+                m = u?.source === "asr" ? "ASR" : u?.source === "heuristic" ? "\u542F\u53D1\u5F0F\u4F30\u8BA1" : "",
+                f = u?.low ? `\u4F4E\u7F6E\u4FE1 ${(u.confidence*100).toFixed(0)}%\uFF08${m||(u.flags||[]).map(g=>z.flagLabel(g)).join(" \xB7 ")||"\u4F30\u8BA1"}\uFF09` : u?.source === "asr" && u.confidence != null ? `ASR \u7F6E\u4FE1 ${(u.confidence*100).toFixed(0)}%` : "";
+            if (c.msg.length) e.detailWarn.textContent = [c.msg.join(" \xB7 "), f].filter(Boolean).join(" \xB7 "), e.detailWarn.classList.remove("hidden");
+            else if (f) e.detailWarn.textContent = `${f}\uFF0C\u53EF\u53F3\u952E\u91CD\u8F6C\u5199\u6216\u6807\u8BB0\u4E3A\u53EF\u4FE1`, e.detailWarn.classList.remove("hidden");
+            else {
+                const g = s ? Number(s) : null;
+                g != null && g > a * 1.2 && qe(r) >= 8 && !D.isConnectedText(r) ? (e.detailWarn.textContent = "\u8BFB\u901F\u8FC7\u5FEB\uFF0C\u5EFA\u8BAE\u4F7F\u7528\u667A\u80FD\u5206\u5272", e.detailWarn.classList.remove("hidden")) : (e.detailWarn.textContent = "", e.detailWarn.classList.add("hidden"))
+            }
+        }
+    }
+
+    function gs() {
+        const n = t.selectedIndex;
+        if (n < 0 || n >= t.cues.length) return null;
+        const r = t.cues[n],
+            i = {
+                startMs: r.startMs,
+                endMs: r.endMs,
+                text: r.text
             };
-            for (const ms of analysis.splitPointsMs || []) pushIfInterior(ms);
-            for (const iv of analysis.intervals || []) {
-                const s = Math.max(cueStart, Math.round(Number(iv.startMs) || 0));
-                const e = Math.min(end, Math.round(Number(iv.endMs) || 0));
-                if (e - s >= minSilenceMs) pushIfInterior(Math.round((s + e) / 2));
-            }
-            const sorted = [...points].sort((a, b) => a - b);
-            const out = [];
-            for (const ms of sorted) {
-                if (!out.length || ms - out[out.length - 1] >= edge) out.push(ms);
-            }
-            return out;
-        };
+        e.detailText != null && (i.text = e.detailText.value);
+        const s = Yr(e.detailStart?.value, t.format);
+        s != null && (i.startMs = s);
+        const a = Number(e.detailDuration?.value);
+        return Number.isFinite(a) && a > 0 && (i.endMs = i.startMs + Math.round(a * 1e3)), i
+    }
 
-        // Escalate sensitivity only when the previous pass finds no usable split;
-        // keep the first successful pass to avoid treating breath noise as pauses.
-        const passes = [
-            { noise: noiseDb, minSilence: silenceDur, minSeg: minSegmentMs },
-            { noise: Math.min(-26, noiseDb + 5), minSilence: Math.min(0.1, silenceDur), minSeg: Math.max(100, minSegmentMs - 40) },
-            { noise: -24, minSilence: 0.08, minSeg: Math.max(100, minSegmentMs - 60) },
-            { noise: -22, minSilence: 0.06, minSeg: 100 },
-        ];
-
-        let analysis = null;
-        let splitPoints = [];
-        let lastError = '';
-
-        for (const pass of passes) {
-            if (isJobAbortRequested()) {
-                return { cancelled: true, error: '已取消' };
-            }
-            const result = await runDetect(pass.noise, pass.minSilence, pass.minSeg);
-            if (result?.cancelled || isJobAbortRequested()) {
-                return { cancelled: true, error: '已取消' };
-            }
-            if (!result?.ok) {
-                lastError = result?.error || lastError;
-                continue;
-            }
-            analysis = result;
-            const minSilenceMs = Math.max(50, Math.round(pass.minSilence * 850));
-            splitPoints = pickSplitPoints(result, pass.minSeg, minSilenceMs);
-            if (splitPoints.length) break;
+    function at() {
+        const n = t.selectedIndex;
+        if (!(n >= 0 && n < t.cues.length)) {
+            e.prevCueBtn && (e.prevCueBtn.disabled = !0), e.nextCueBtn && (e.nextCueBtn.disabled = !0), e.deleteCueBtn && (e.deleteCueBtn.disabled = !0), e.splitCueBtn && (e.splitCueBtn.disabled = !0), e.smartSplitCueBtn && (e.smartSplitCueBtn.disabled = !0), e.silenceSplitCueBtn && (e.silenceSplitCueBtn.disabled = !0), e.compressRepCueBtn && (e.compressRepCueBtn.disabled = !0), e.splitLinesBtn && (e.splitLinesBtn.disabled = !0), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !0), e.charDurBtn && (e.charDurBtn.disabled = !0), e.smartDurBtn && (e.smartDurBtn.disabled = !0), e.audioSnapBtn && (e.audioSnapBtn.disabled = !0), Qe();
+            return
         }
-
-        if (!analysis?.ok && lastError) {
-            return { error: lastError };
+        const i = gs() || t.cues[n],
+            s = String(i.text || ""),
+            a = s.trim(),
+            o = !!a,
+            l = o && s.includes(`
+`),
+            c = o && /\s/.test(s);
+        if (e.prevCueBtn && (e.prevCueBtn.disabled = n <= 0), e.nextCueBtn && (e.nextCueBtn.disabled = n >= t.cues.length - 1), e.deleteCueBtn && (e.deleteCueBtn.disabled = !1), e.splitCueBtn && (e.splitCueBtn.disabled = !1), e.smartSplitCueBtn && (e.smartSplitCueBtn.disabled = !o), e.silenceSplitCueBtn && (e.silenceSplitCueBtn.disabled = t.silenceSplitBusy || !$t(i) || !t.videoPath || !p?.ffmpegDetectSilence), e.compressRepCueBtn) {
+            const m = !!a && a.length >= 3 && (/(.)\1{2,}/.test(a) || /(.{2,6})\1{1,}/.test(a)) && !!Ne.compressRepetitionInText(a)?.changed;
+            e.compressRepCueBtn.disabled = !m
         }
-        if (!splitPoints.length) {
-            return { error: '该时间段内未检测到足够长的静音，请调低阈值或改用智能断句' };
-        }
+        e.splitLinesBtn && (e.splitLinesBtn.disabled = !l), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !c), e.charDurBtn && (e.charDurBtn.disabled = !qe(s)), e.smartDurBtn && (e.smartDurBtn.disabled = t.silenceSplitBusy || !Dt(i) || !t.videoPath || !p?.ffmpegDetectSilence), e.audioSnapBtn && (e.audioSnapBtn.disabled = t.silenceSplitBusy || t.retranscribeBusy || !Tt(i) || !t.videoPath || !p?.ffmpegDetectSilence), Qe()
+    }
 
-        const cues = splitCore.buildCuesFromSilenceSplits(
-            text,
-            cueStart,
-            end,
-            splitPoints,
-            20,
-            analysis.intervals,
-            {
-                minDurMs: 400,
-                minTrailingSilenceMs: Math.max(100, Math.round((opts.silenceDur ?? silenceDur) * 700)),
-                minLeadingSilenceMs: Math.max(100, Math.round((opts.silenceDur ?? silenceDur) * 700)),
-                headPadMs: 60,
-                tailPadMs: 60,
-                gapMs: 1,
-                breakWords,
-                includePunctuation: true,
-            },
-        );
-        if (!cues || cues.length < 2) {
-            return { error: '静音切分后文本不足两条，请调整阈值或手动分割' };
+    function R(n = {}) {
+        t.detailSyncing = !0;
+        const r = t.selectedIndex,
+            i = r >= 0 && r < t.cues.length,
+            s = !!n.fromPlayback;
+        if (e.detailPane && (e.detailPane.style.opacity = i ? "1" : "0.5"), !i) {
+            e.detailStart && (e.detailStart.value = ""), e.detailDuration && (e.detailDuration.value = ""), e.detailEnd && (e.detailEnd.value = ""), e.detailText && (e.detailText.value = ""), e.detailCps && (e.detailCps.textContent = "CPS \u2014"), e.lineLen && (e.lineLen.textContent = "0"), e.textLen && (e.textLen.textContent = "0"), e.detailWarn && e.detailWarn.classList.add("hidden"), e.detailPairWrap && e.detailPairWrap.classList.add("hidden"), e.detailPairText && (e.detailPairText.textContent = ""), s || at(), t.detailRenderedDurSec = null, t.detailSyncing = !1;
+            return
         }
+        const a = t.cues[r];
+        if (e.detailStart && (e.detailStart.value = Z(a.startMs, t.format)), e.detailDuration && (e.detailDuration.value = xt(V(a))), e.detailEnd && (e.detailEnd.value = Z(I(a), t.format)), e.detailText && (e.detailText.value = a.text || ""), e.detailPairWrap && e.detailPairText)
+            if (U()) {
+                const o = an(a);
+                e.detailPairText.textContent = o || "\uFF08\u65E0\u65F6\u95F4\u91CD\u53E0\u7684\u5BF9\u7167\uFF09", e.detailPairWrap.classList.remove("hidden")
+            } else e.detailPairText.textContent = "", e.detailPairWrap.classList.add("hidden");
+        s || at(), wt(), t.detailRenderedDurSec = V(a) / 1e3, t.detailSyncing = !1
+    }
 
+    function Qe() {
+        const n = e.retranscribeDurBtn || e.retranscribeCueBtn;
+        n && (n.disabled = t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange)
+    }
+
+    function Qn() {
+        t.selectedIndices instanceof Set || (t.selectedIndices = new Set), t.selectedIndex >= 0 && t.selectedIndex < t.cues.length ? t.selectedIndices.size || t.selectedIndices.add(t.selectedIndex) : t.selectedIndices.size && ([...t.selectedIndices].some(n => n >= 0 && n < t.cues.length) || t.selectedIndices.clear())
+    }
+
+    function J() {
+        return Qn(), [...t.selectedIndices].filter(n => Number.isInteger(n) && n >= 0 && n < t.cues.length).sort((n, r) => n - r)
+    }
+
+    function We(n, r, i = {}) {
+        const s = t.selectedIndex,
+            a = new Set;
+        for (const c of n || []) {
+            const u = Number(c);
+            Number.isInteger(u) && u >= 0 && u < t.cues.length && a.add(u)
+        }
+        t.selectedIndices = a;
+        let o = Number(r);
+        (!Number.isInteger(o) || o < 0 || o >= t.cues.length) && (o = a.size ? Math.max(...a) : -1);
+        const l = !!i.fromPlayback;
+        o !== t.selectedIndex && ((!l || !Nr()) && x(), t.selectedIndex = o, o >= 0 && R({
+            fromPlayback: l
+        })), t.selectionAnchor = o, l ? Da(s, o) : ve(), !l && e.timelineCues && e.timelineCues.querySelectorAll(".editor-timeline-cue").forEach(c => {
+            const u = Number(c.getAttribute("data-tl-idx"));
+            c.classList.toggle("selected", a.has(u) || u === t.selectedIndex)
+        })
+    }
+
+    function Da(n, r) {
+        if (n !== r) {
+            if (n >= 0) {
+                const i = e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`);
+                if (i) {
+                    const s = t.selectedIndices.has(n);
+                    i.classList.toggle("cue-row-selected", s)
+                }
+            }
+            if (r >= 0) {
+                const i = e.cueBody?.querySelector(`tr[data-cue-idx="${r}"]`);
+                i && i.classList.add("cue-row-selected")
+            }
+        }
+    }
+
+    function ve() {
+        if (!e.cueBody) return;
+        Qn();
+        const n = t.find.active && t.find.currentIndex >= 0 ? t.find.matches[t.find.currentIndex]?.cueIdx : -1,
+            r = new Set(t.find.active ? t.find.matches.map(i => i.cueIdx) : []);
+        e.cueBody.querySelectorAll("tr[data-cue-idx]").forEach(i => {
+            const s = Number(i.dataset.cueIdx),
+                a = t.selectedIndices.has(s) || s === t.selectedIndex;
+            i.classList.toggle("cue-row-selected", a), i.classList.toggle("cue-row-playing", s === t.playbackIndex), i.classList.toggle("cue-row-find-hit", r.has(s)), i.classList.toggle("cue-row-find-current", s === n), i.classList.toggle("cue-row-low-conf", !!t.cueMeta[s]?.low), i.classList.toggle("cue-row-qc", !!t.qcIssueIndexSet?.has(s))
+        })
+    }
+
+    function Zn() {
         return {
-            cues,
-            meta: {
-                silenceCount: analysis.intervals?.length || 0,
-                splitCount: splitPoints.length,
-            },
-        };
+            maxCps: Number(e.qcMaxCps?.value) || Number(e.smartMaxCps?.value) || 18,
+            minSec: Number(e.qcMinSec?.value) || .5,
+            maxSec: Number(e.qcMaxSec?.value) || 10,
+            lowThreshold: z.DEFAULT_LOW_THRESHOLD
+        }
     }
 
-    function maybeFixOverlapAfterSplit() {
-        applySmartAdjustToCues(state.cues, {
-            fixOverlap: true,
-            fixCps: false,
-            enforceMinDur: false,
-            enforceMaxDur: false,
-            gapMs: 1,
+    function He() {
+        t.cueMeta = z.mergeConfidenceAnnotations(t.cues, t.sidecarMeta, Zn());
+        const n = z.summarizeLowConfidence(t.cueMeta);
+        e.lowConfBadge && (n.low > 0 ? (e.lowConfBadge.textContent = `\u4F4E\u7F6E\u4FE1 ${n.low>99?"99+":n.low}`, e.lowConfBadge.classList.remove("hidden"), e.lowConfBadge.title = n.summary) : (e.lowConfBadge.textContent = "0", e.lowConfBadge.classList.add("hidden"), e.lowConfBadge.title = "\u65E0\u53EF\u7591\u6761\u76EE"))
+    }
+    async function Ta(n) {
+        if (t.sidecarMeta = null, !n || !p?.transubReadSubtitleMeta) {
+            He();
+            return
+        }
+        try {
+            const r = await p.transubReadSubtitleMeta({
+                path: n
+            });
+            r?.ok && r.meta && (t.sidecarMeta = r.meta)
+        } catch {
+            t.sidecarMeta = null
+        }
+        He()
+    }
+    async function dn() {
+        if (!t.path || !p?.transubWriteSubtitleMeta) return;
+        const n = z.buildSidecarDocument(t.cues, t.cueMeta, {
+            sourceSub: G(t.path),
+            markers: t.markers || void 0
         });
+        t.sidecarMeta = n;
+        try {
+            await p.transubWriteSubtitleMeta({
+                path: t.path,
+                meta: n
+            })
+        } catch {}
     }
 
-    async function markSelectedCueTrusted() {
-        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) return;
-        syncDetailToCue();
-        refreshCueMeta();
-        const idx = state.selectedIndex;
-        state.cueMeta[idx] = {
+    function C(n = {}) {
+        if (!e.cueBody) return;
+        const r = !!n.listOnly,
+            i = !!n.reuseMeta,
+            s = va();
+        if (kt(), !t.cues.length) {
+            e.cueBody.innerHTML = `<tr><td colspan="${s}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">\u65E0\u5B57\u5E55\u6761\u76EE</td></tr>`, e.filterCount && (e.filterCount.textContent = ""), r || me(), t.selectedIndex = -1, t.cueMeta = [], r || (R(), ye(), je(null), _t()), i || He();
+            return
+        }
+        i || (He(), Ii()), Pi();
+        const a = Vt();
+        if (e.filterCount && (e.filterCount.textContent = t.listFilter === "all" ? "" : `\u663E\u793A ${a.length} / ${t.cues.length}`), a.length) {
+            const o = U(),
+                l = e.cueTable?.querySelector(".col-pair-head");
+            l && (l.textContent = t.dualRole === "source" ? "\u8BD1\u6587\u5BF9\u7167" : "\u539F\u6587\u5BF9\u7167");
+            const c = T.TransubCueListWindow,
+                u = e.listWrap || e.cueBody?.closest?.(".editor-list-wrap"),
+                m = c?.shouldVirtualize?.(a.length);
+            let f = a,
+                g = 0,
+                h = 0;
+            if (m && u) {
+                const k = c.computeWindow({
+                    scrollTop: u.scrollTop || 0,
+                    viewportHeight: u.clientHeight || 400,
+                    total: a.length
+                });
+                if (f = a.slice(k.start, k.end), g = k.topPad, h = k.bottomPad, !t._listScrollBound) {
+                    t._listScrollBound = !0;
+                    let q = 0;
+                    u.addEventListener("scroll", () => {
+                        q || (q = requestAnimationFrame(() => {
+                            q = 0, !(!e.video?.paused && Et()) && C({
+                                listOnly: !0,
+                                reuseMeta: !0
+                            })
+                        }))
+                    }, {
+                        passive: !0
+                    })
+                }
+            }
+            const v = (k, q) => k > 0 ? `<tr class="cue-pad-row" data-pad="${q}"><td colspan="${s}" style="height:${k}px;padding:0;border:0;line-height:0"></td></tr>` : "",
+                y = f.map(k => $a(k, o)).join("");
+            e.cueBody.innerHTML = `${v(g,"top")}${y}${v(h,"bottom")}`
+        } else {
+            const o = t.listFilter === "all" ? "\u65E0\u5B57\u5E55\u6761\u76EE" : "\u5F53\u524D\u7B5B\u9009\u65E0\u5339\u914D\u6761\u76EE";
+            e.cueBody.innerHTML = `<tr><td colspan="${s}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">${o}</td></tr>`
+        }
+        t.selectedIndex >= t.cues.length && (t.selectedIndex = t.cues.length - 1), t.selectedIndex < 0 && t.cues.length && (t.selectedIndex = 0), ve(), !r && (R(), tr(), ye(), i && xr(), _t(), me(), qr())
+    }
+
+    function hs(n) {
+        const r = H?.getCueMarkerForIndex?.(n),
+            i = r?.speakerId ? (t.markers?.speakers || []).find(l => l.id === r.speakerId) : null,
+            s = r?.reviewStatus,
+            a = [];
+        return i && a.push(`<span class="cue-marker-dot" style="background:${b(i.color||"#e11d48")}" title="${b(i.name)}"></span>`), s === "approved" ? a.push('<span title="\u5DF2\u901A\u8FC7">\u2713</span>') : s === "edited" && a.push('<span title="\u5DF2\u6539">\u270E</span>'), !!H?.cueCoversBookmark?.(n) && (t.listFilter === "bookmarks" ? a.push(`<button type="button" class="cue-bm-remove" data-remove-bm="${n}" title="\u79FB\u9664\u8BE5\u4E66\u7B7E" aria-label="\u79FB\u9664\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i><span class="cue-bm-remove-x">\xD7</span></button>`) : a.push('<span class="cue-bm-mark" title="\u8986\u76D6\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i></span>')), a.join("")
+    }
+
+    function ys(n, r) {
+        const i = t.cueMeta[n],
+            s = !!i?.low,
+            a = i?.confidence != null && Number.isFinite(Number(i.confidence)) ? Math.round(Number(i.confidence) * 100) : null,
+            o = i?.source === "asr" ? "ASR" : i?.source === "heuristic" ? "\u4F30\u8BA1" : i?.source === "sidecar" ? "\u5143\u6570\u636E" : "";
+        return s ? `\u4F4E\u7F6E\u4FE1${a!=null?` ${a}%`:""}${o?` \xB7 ${o}`:""}\uFF1A\u5EFA\u8BAE\u68C0\u67E5\u6216\u91CD\u8F6C\u5199` : i?.source === "asr" && a != null ? `ASR \u7F6E\u4FE1 ${a}% \xB7 ${r||""}` : r || ""
+    }
+
+    function $a(n, r) {
+        const i = t.cues[n],
+            s = n > 0 ? t.cues[n - 1] : null,
+            a = n < t.cues.length - 1 ? t.cues[n + 1] : null,
+            o = Zt(i, s, a),
+            l = String(i.text || "").replace(/\s+/g, " ").trim(),
+            c = r ? String(an(i) || "").replace(/\s+/g, " ").trim() : "",
+            u = !!t.cueMeta[n]?.low,
+            m = Mt(i.text, V(i)),
+            f = m != null ? Number(m) : null,
+            g = f != null && f > 18,
+            h = hs(n),
+            v = b(ys(n, l));
+        return `
+            <tr class="${u?"cue-row-low-conf":""}" data-cue-idx="${n}" title="${v}">
+                <td class="text-xs tabular-nums align-middle col-idx" style="color:var(--ed-muted)">${h}${n+1}${u?'<span class="low-conf-dot" aria-label="\u4F4E\u7F6E\u4FE1">!</span>':""}</td>
+                <td class="font-mono text-[11px] tabular-nums align-middle ${o.start?"cell-warn":""}">${b(Z(i.startMs,t.format))}</td>
+                <td class="font-mono text-[11px] tabular-nums align-middle ${o.end?"cell-warn":""}">${b(Z(I(i),t.format))}</td>
+                <td class="text-[11px] tabular-nums align-middle ${o.dur?"cell-warn":""}">${b(xt(V(i)))}</td>
+                <td class="cue-cps-cell align-middle ${g?"hot":""}">${m!=null?b(m):"\u2014"}</td>
+                <td class="cell-text align-middle">${b(l||"\u2014")}</td>
+                ${r?`<td class="cell-pair align-middle" title="${b(c||"")}">${b(c||"\u2014")}</td>`:""}
+            </tr>`
+    }
+
+    function Se(n) {
+        if (!e.cueBody || n < 0 || n >= t.cues.length) return;
+        const r = e.cueBody.querySelector(`tr[data-cue-idx="${n}"]`);
+        if (!r) {
+            if (Nr() && t.selectedIndex === n) return;
+            C({
+                listOnly: !0,
+                reuseMeta: !0
+            });
+            return
+        }
+        const i = t.cues[n],
+            s = n > 0 ? t.cues[n - 1] : null,
+            a = n < t.cues.length - 1 ? t.cues[n + 1] : null,
+            o = Zt(i, s, a),
+            l = r.querySelectorAll("td"),
+            c = String(i.text || "").replace(/\s+/g, " ").trim(),
+            m = !!t.cueMeta[n]?.low;
+        if (r.classList.toggle("cue-row-low-conf", m), r.classList.toggle("cue-row-qc", !!t.qcIssueIndexSet?.has(n)), r.title = ys(n, c), l[0]) {
+            const f = hs(n);
+            l[0].innerHTML = `${f}${n+1}${m?'<span class="low-conf-dot" aria-label="\u4F4E\u7F6E\u4FE1">!</span>':""}`
+        }
+        if (l[1] && (l[1].textContent = Z(i.startMs, t.format), l[1].classList.toggle("cell-warn", o.start)), l[2] && (l[2].textContent = Z(I(i), t.format), l[2].classList.toggle("cell-warn", o.end)), l[3] && (l[3].textContent = xt(V(i)), l[3].classList.toggle("cell-warn", o.dur)), l[4]) {
+            const f = Mt(i.text, V(i)),
+                g = f != null ? Number(f) : null;
+            l[4].textContent = f ?? "\u2014", l[4].className = `cue-cps-cell align-middle${g!=null&&g>18?" hot":""}`
+        }
+        l[5] && (l[5].textContent = c || "\u2014"), U() && l[6] && (l[6].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[6].title = l[6].textContent === "\u2014" ? "" : l[6].textContent), n > 0 && vs(n - 1), n < t.cues.length - 1 && vs(n + 1)
+    }
+
+    function Aa(n) {
+        if (n < 0 || n >= t.cues.length || !z?.scoreCueConfidence) return;
+        Array.isArray(t.cueMeta) || (t.cueMeta = []);
+        const r = t.cues[n],
+            i = Zn(),
+            s = z.scoreCueConfidence(r, n, t.cues, i),
+            a = typeof z.findSidecarEntry == "function" ? z.findSidecarEntry(t.sidecarMeta?.entries, r, n) : null;
+        let o = {
+            ...s,
+            fingerprint: z.cueFingerprint?.(r)
+        };
+        if (a?.confirmed === !0) o = {
             confidence: 1,
-            flags: ['confirmed'],
-            low: false,
-            source: 'confirmed',
-            fingerprint: metaCore.cueFingerprint(state.cues[idx]),
-            confirmed: true,
+            flags: ["confirmed"],
+            low: !1,
+            source: "confirmed",
+            fingerprint: o.fingerprint
         };
-        await persistCueMeta();
-        renderCueList();
-        setStatus(`已将第 ${idx + 1} 条标记为可信`, 'ok');
-    }
-
-    function canRetranscribeNow() {
-        if (state.retranscribeBusy || state.silenceSplitBusy) {
-            setStatus('已有分析任务进行中，请稍候', 'err');
-            return false;
+        else if (a?.confidence != null && Number.isFinite(Number(a.confidence))) {
+            const l = Math.max(.05, Math.min(.95, Number(i.lowThreshold) || .55)),
+                c = Math.max(0, Math.min(1, Number(a.confidence))),
+                u = String(a.source || "sidecar");
+            (u === "asr" || u === "sidecar" || u === "retranscribe") && (o = {
+                confidence: c,
+                flags: Array.isArray(a.flags) ? a.flags.slice() : [],
+                low: c < l,
+                source: u,
+                fingerprint: o.fingerprint,
+                avgLogprob: a.avgLogprob,
+                noSpeechProb: a.noSpeechProb
+            })
         }
-        if (!state.videoPath) {
-            setStatus('请先关联视频后再重转写', 'err');
-            return false;
-        }
-        if (!electron?.transubTranscribeRange) {
-            setStatus('当前环境不支持区间重转写', 'err');
-            return false;
-        }
-        return true;
-    }
-
-    function markRetranscribedMeta(startIndex, count) {
-        state.cueMeta = metaCore.annotateCuesConfidence(state.cues, getMetaScanOptions());
-        for (let i = 0; i < count; i += 1) {
-            const at = startIndex + i;
-            if (!state.cues[at]) continue;
-            state.cueMeta[at] = {
-                confidence: 0.88,
-                flags: ['retranscribe'],
-                low: false,
-                source: 'retranscribe',
-                fingerprint: metaCore.cueFingerprint(state.cues[at]),
-            };
+        if (t.cueMeta[n] = o, e.lowConfBadge && z.summarizeLowConfidence) {
+            const l = z.summarizeLowConfidence(t.cueMeta);
+            l.low > 0 ? (e.lowConfBadge.textContent = `\u4F4E\u7F6E\u4FE1 ${l.low>99?"99+":l.low}`, e.lowConfBadge.classList.remove("hidden"), e.lowConfBadge.title = l.summary) : e.lowConfBadge.classList.add("hidden")
         }
     }
 
-    /**
-     * @param {{ startMs: number, endMs: number, padMs?: number, mode?: 'cue'|'range', detail?: string, snapAfter?: boolean, task?: 'transcribe'|'translate', dualPass?: boolean }} opts
-     */
-    async function runRetranscribeRange(opts) {
-        if (!canRetranscribeNow()) return { ok: false };
-        const startMs = Math.max(0, Math.round(Number(opts.startMs) || 0));
-        const endMs = Math.max(startMs + 200, Math.round(Number(opts.endMs) || 0));
-        const padMs = Math.max(0, Math.min(2000, Math.round(Number(opts.padMs ?? 350))));
-        const mode = opts.mode === 'cue' ? 'cue' : 'range';
-        const snapAfter = opts.snapAfter === true;
-        const dualPass = opts.dualPass === true && hasDualPair();
-        const task = dualPass
-            ? 'transcribe'
-            : (opts.task === 'translate' ? 'translate' : 'transcribe');
+    function Fa() {
+        t._qcBadgeTimer && clearTimeout(t._qcBadgeTimer), t._qcBadgeTimer = setTimeout(() => {
+            t._qcBadgeTimer = null, xr({
+                updateRows: !0
+            })
+        }, 420)
+    }
 
-        if (endMs - startMs < 200) {
-            setStatus('重转写时间范围过短', 'err');
-            return { ok: false };
-        }
+    function vs(n) {
+        const r = e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`);
+        if (!r || n < 0 || n >= t.cues.length) return;
+        const i = t.cues[n],
+            s = n > 0 ? t.cues[n - 1] : null,
+            a = n < t.cues.length - 1 ? t.cues[n + 1] : null,
+            o = Zt(i, s, a),
+            l = r.querySelectorAll("td");
+        l[1]?.classList.toggle("cell-warn", o.start), l[2]?.classList.toggle("cell-warn", o.end), l[3]?.classList.toggle("cell-warn", o.dur)
+    }
 
-        state.retranscribeBusy = true;
-        state.jobAbortRequested = false;
-        updateRetranscribeTransportBtn();
-        const titleBase = dualPass
-            ? '双语重跑'
-            : (task === 'translate' ? '重译' : '重转写');
-        let activeRangeTask = task;
-        let activePhaseTitle = titleBase;
-        showSilenceSplitProgress({
-            title: titleBase,
-            detail: opts.detail || `截取并处理 ${((endMs - startMs) / 1000).toFixed(1)}s…`,
-            indeterminate: true,
-            statusMessage: `${titleBase}进行中…`,
-        });
-        if (els.silenceProgressHint) {
-            els.silenceProgressHint.textContent = dualPass
-                ? '将依次生成原文与译文；加载模型时请稍候。可点取消或按 Esc 中止。'
-                : (task === 'translate'
-                    ? '将对选定时间段重新翻译；加载模型时请稍候。'
-                    : '将对选定时间段重新转写；加载模型时请稍候。可点取消或按 Esc 中止。');
-        }
-        await flushSilenceProgressPaint();
-
-        const applyCuesToList = (listRef, newCues, selectedIdxForCueMode) => {
-            let selectAt = 0;
-            let replacedCount = 0;
-            if (mode === 'cue' && selectedIdxForCueMode >= 0 && selectedIdxForCueMode < listRef.length) {
-                listRef.splice(selectedIdxForCueMode, 1, ...newCues);
-                selectAt = selectedIdxForCueMode;
-                replacedCount = 1;
-            } else {
-                const result = metaCore.replaceCuesInTimeRange(listRef, startMs, endMs, newCues);
-                listRef.splice(0, listRef.length, ...result.cues);
-                selectAt = result.insertAt;
-                replacedCount = result.replaced;
-            }
-            return { selectAt, replacedCount };
-        };
-
-        const invokeRange = async (rangeTask, phaseLabel) => {
-            activeRangeTask = rangeTask;
-            activePhaseTitle = phaseLabel || titleBase;
-            if (els.silenceProgressTitle) {
-                els.silenceProgressTitle.textContent = activePhaseTitle;
-            }
-            const res = await electron.transubTranscribeRange({
-                mediaPath: state.videoPath,
-                startMs,
-                endMs,
-                padMs,
-                ffmpegPath: cachedFfmpegPath,
-                options: {
-                    task: rangeTask,
-                    mergeSegments: false,
-                    subFormats: 'srt',
-                },
+    function X(n, r = {}) {
+        if (n < 0 || n >= t.cues.length || r.fromPlayback && !Et()) return;
+        const i = !!r.additive;
+        if (!!r.range && t.selectionAnchor >= 0) {
+            const a = t.selectionAnchor,
+                o = Math.min(a, n),
+                l = Math.max(a, n),
+                c = [];
+            for (let u = o; u <= l; u += 1) c.push(u);
+            if (i) {
+                const u = new Set(J());
+                c.forEach(m => u.add(m)), We(u, n, {
+                    fromPlayback: !!r.fromPlayback
+                })
+            } else We(c, n, {
+                fromPlayback: !!r.fromPlayback
             });
-            if (isJobAbortRequested() || res?.cancelled) {
-                return { ok: false, cancelled: true };
-            }
-            if (!res?.ok || !Array.isArray(res.cues) || !res.cues.length) {
-                return { ok: false, error: res?.error || `${phaseLabel || '处理'}失败` };
-            }
-            const newCues = res.cues.map((c) => ({
-                startMs: c.startMs,
-                endMs: c.endMs,
-                text: String(c.text || '').trim(),
-            })).filter((c) => c.text);
-            if (!newCues.length) {
-                return { ok: false, error: `${phaseLabel || '处理'}结果为空` };
-            }
-            return { ok: true, cues: newCues };
-        };
-
-        let unsubProgress = null;
-        try {
-            unsubProgress = electron.onTransubRetranscribeProgress?.((progress) => {
-                if (isJobAbortRequested()) return;
-                const message = String(progress?.message || progress?.detail || '').trim();
-                if (!message) return;
-                const stage = String(progress?.stage || '');
-                const isModel = stage === 'model' || /模型/.test(message);
-                updateSilenceSplitProgress({
-                    detail: message,
-                    statusMessage: message,
-                });
-                if (els.silenceProgressTitle) {
-                    if (isModel) els.silenceProgressTitle.textContent = '加载模型';
-                    else if (stage === 'vad') els.silenceProgressTitle.textContent = '语音检测';
-                    else if (stage === 'extract' || stage === 'warmup') els.silenceProgressTitle.textContent = '准备音频';
-                    else if (stage === 'transcribe') {
-                        els.silenceProgressTitle.textContent = dualPass
-                            ? (activeRangeTask === 'translate' ? '双语 · 生成译文' : '双语 · 生成原文')
-                            : (activeRangeTask === 'translate' ? '翻译中' : '识别中');
-                    }
-                    else if (stage === 'save' || stage === 'done') els.silenceProgressTitle.textContent = '整理结果';
-                    else els.silenceProgressTitle.textContent = progress?.warmLight
-                        ? `${activePhaseTitle}（轻量）`
-                        : activePhaseTitle;
-                }
-                if (els.silenceProgressHint) {
-                    if (isModel) {
-                        els.silenceProgressHint.textContent = progress?.warmLight
-                            ? '轻量模式：正在加载模型，首次或切换模型时较慢'
-                            : '正在加载模型到显存/内存，首次或切换模型时可能需要数十秒';
-                    } else if (stage === 'vad') {
-                        els.silenceProgressHint.textContent = '正在初始化语音检测…';
-                    } else if (stage === 'starting') {
-                        els.silenceProgressHint.textContent = '正在启动引擎…';
-                    } else if (progress?.warmLight) {
-                        els.silenceProgressHint.textContent = '轻量加速已开启（Beam=1）；如需更高精度请在设置中关闭「重转写加速」';
-                    }
-                }
-            }) || null;
-
-            let sourceCues = null;
-            let targetCues = null;
-
-            if (dualPass) {
-                const srcRes = await invokeRange('transcribe', '双语 · 原文');
-                if (!srcRes.ok) {
-                    if (srcRes.cancelled) setStatus('双语重跑已取消', 'warn');
-                    else setStatus(srcRes.error || '原文生成失败', 'err');
-                    return { ok: false, cancelled: !!srcRes.cancelled };
-                }
-                sourceCues = srcRes.cues;
-                const tgtRes = await invokeRange('translate', '双语 · 译文');
-                if (!tgtRes.ok) {
-                    if (tgtRes.cancelled) setStatus('双语重跑已取消（原文已更新；译文未完成）', 'warn');
-                    else setStatus(tgtRes.error || '译文生成失败', 'err');
-                    // Still apply source to pair/primary so work isn't lost
-                } else {
-                    targetCues = tgtRes.cues;
-                }
-            } else if (task === 'translate') {
-                const res = await invokeRange('translate', '重译');
-                if (!res.ok) {
-                    if (res.cancelled) setStatus('重译已取消', 'warn');
-                    else setStatus(res.error || '重译失败', 'err');
-                    return { ok: false, cancelled: !!res.cancelled };
-                }
-                targetCues = res.cues;
-            } else {
-                const res = await invokeRange('transcribe', '重转写');
-                if (!res.ok) {
-                    if (res.cancelled) setStatus('重转写已取消', 'warn');
-                    else setStatus(res.error || '重转写失败', 'err');
-                    return { ok: false, cancelled: !!res.cancelled };
-                }
-                sourceCues = res.cues;
-            }
-
-            recordUndoBeforeChange();
-            let selectAt = state.selectedIndex >= 0 ? state.selectedIndex : 0;
-            let replacedCount = 0;
-            let pairUpdated = false;
-
-            const applySource = (cues) => {
-                if (!cues?.length) return;
-                if (hasDualPair() && state.dualRole === 'target') {
-                    const r = applyCuesToList(state.pairCues, cues, -1);
-                    replacedCount = r.replacedCount;
-                    state.pairDirty = true;
-                    pairUpdated = true;
-                } else {
-                    const r = applyCuesToList(
-                        state.cues,
-                        cues,
-                        mode === 'cue' ? state.selectedIndex : -1,
-                    );
-                    selectAt = r.selectAt;
-                    replacedCount = r.replacedCount;
-                }
-            };
-
-            const applyTarget = (cues) => {
-                if (!cues?.length) return;
-                if (hasDualPair() && state.dualRole === 'source') {
-                    const r = applyCuesToList(state.pairCues, cues, -1);
-                    replacedCount = Math.max(replacedCount, r.replacedCount);
-                    state.pairDirty = true;
-                    pairUpdated = true;
-                } else if (hasDualPair() && state.dualRole === 'target') {
-                    const r = applyCuesToList(
-                        state.cues,
-                        cues,
-                        mode === 'cue' ? state.selectedIndex : -1,
-                    );
-                    selectAt = r.selectAt;
-                    replacedCount = Math.max(replacedCount, r.replacedCount);
-                } else {
-                    const r = applyCuesToList(
-                        state.cues,
-                        cues,
-                        mode === 'cue' ? state.selectedIndex : -1,
-                    );
-                    selectAt = r.selectAt;
-                    replacedCount = r.replacedCount;
-                }
-            };
-
-            if (dualPass) {
-                applySource(sourceCues);
-                applyTarget(targetCues);
-                if (!targetCues?.length && sourceCues?.length && pairUpdated) {
-                    await savePairDocument();
-                    setDirty(true);
-                    renderCueList();
-                    setStatus('翻译失败，但原文对照轨已更新并保存', 'warn');
-                    return { ok: false };
-                }
-                if (!targetCues?.length) {
-                    setStatus('双语重跑失败', 'err');
-                    return { ok: false };
-                }
-            } else if (task === 'translate') {
-                applyTarget(targetCues);
-            } else {
-                // Plain retranscribe: keep updating the active document (backward compatible)
-                // When viewing target with pair, still prefer updating primary unless dualPass
-                if (hasDualPair() && state.dualRole === 'target' && opts.applyToPair === true) {
-                    applySource(sourceCues);
-                } else {
-                    const r = applyCuesToList(
-                        state.cues,
-                        sourceCues,
-                        mode === 'cue' ? state.selectedIndex : -1,
-                    );
-                    selectAt = r.selectAt;
-                    replacedCount = r.replacedCount;
-                }
-            }
-
-            maybeFixOverlapAfterSplit();
-
-            const newCount = (targetCues || sourceCues || []).length;
-            let snappedCount = 0;
-            if (snapAfter && electron?.ffmpegDetectSilence && !pairUpdated) {
-                const indices = [];
-                for (let i = 0; i < newCount; i += 1) {
-                    const at = selectAt + i;
-                    if (at >= 0 && at < state.cues.length) indices.push(at);
-                }
-                const silencePrefs = getSilenceSplitOpts({});
-                showSilenceSplitProgress({
-                    title: '正在按音频贴边',
-                    detail: `处理完成，正在贴边 ${indices.length} 条…`,
-                    current: 0,
-                    total: indices.length,
-                    statusMessage: `贴边 0/${indices.length}…`,
-                });
-                if (els.silenceProgressHint) {
-                    els.silenceProgressHint.textContent = '根据静音微调起止时间，文本保持不变';
-                }
-                await flushSilenceProgressPaint();
-                for (let i = 0; i < indices.length; i += 1) {
-                    updateSilenceSplitProgress({
-                        current: i,
-                        total: indices.length,
-                        detail: `正在贴边第 ${i + 1}/${indices.length} 条…`,
-                        statusMessage: `贴边 ${i + 1}/${indices.length}…`,
-                    });
-                    await flushSilenceProgressPaint();
-                    const snapResult = await audioSnapCueAtIndex(indices[i], {
-                        ...silencePrefs,
-                        padMs: 400,
-                        allowExtend: true,
-                    });
-                    if (snapResult.status === 'adjusted') snappedCount += 1;
-                }
-            }
-
-            if (pairUpdated) {
-                const pairSave = await savePairDocument();
-                if (!pairSave?.ok) {
-                    setStatus(pairSave?.error || '对照轨保存失败', 'err');
-                }
-            }
-
-            markRetranscribedMeta(selectAt, newCount);
-            await persistCueMeta();
-
-            state.selectedIndex = Math.min(Math.max(selectAt, 0), state.cues.length - 1);
-            setDirty(true);
-            renderCueList();
-            const durSec = ((endMs - startMs) / 1000).toFixed(1);
-            const snapHint = snapAfter && snappedCount
-                ? `，贴边 ${snappedCount}/${newCount}`
-                : '';
-            const actionLabel = dualPass ? '双语重跑' : (task === 'translate' ? '重译' : '重转写');
-            setStatus(
-                `已${actionLabel} ${durSec}s：替换 ${replacedCount} 条 → ${newCount} 条${snapHint}`,
-                'ok',
-            );
-            return { ok: true, newCount, replacedCount, snappedCount };
-        } catch (err) {
-            setStatus(err?.message || '处理失败', 'err');
-            return { ok: false };
-        } finally {
-            if (typeof unsubProgress === 'function') {
-                try { unsubProgress(); } catch (_) { /* ignore */ }
-            }
-            state.retranscribeBusy = false;
-            hideSilenceSplitProgress();
-            if (els.silenceProgressHint) {
-                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
-            }
-            updateRetranscribeTransportBtn();
-        }
-    }
-
-    async function retranslateSelectedCue() {
-        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
-            setStatus('请先选中一条字幕', 'err');
-            return;
-        }
-        if (!hasDualPair()) {
-            setStatus('当前没有配对双语轨，无法单独重译', 'err');
-            return;
-        }
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const prefs = loadRetranscribeDurPrefs();
-        await runRetranscribeRange({
-            startMs: cue.startMs,
-            endMs: cueEndMs(cue),
-            padMs: prefs.padMs ?? 350,
-            mode: 'cue',
-            task: 'translate',
-            snapAfter: false,
-            detail: `正在重译第 ${idx + 1} 条…`,
-        });
-    }
-
-    async function retranscribeDualSelectedCue() {
-        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
-            setStatus('请先选中一条字幕', 'err');
-            return;
-        }
-        if (!hasDualPair()) {
-            setStatus('当前没有配对双语轨', 'err');
-            return;
-        }
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const prefs = loadRetranscribeDurPrefs();
-        await runRetranscribeRange({
-            startMs: cue.startMs,
-            endMs: cueEndMs(cue),
-            padMs: prefs.padMs ?? 350,
-            mode: 'cue',
-            dualPass: true,
-            snapAfter: prefs.snapAfter !== false,
-            detail: `正在双语重跑第 ${idx + 1} 条…`,
-        });
-    }
-
-    async function retranscribeSelectedCue() {
-        if (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length) {
-            setStatus('请先选中一条字幕', 'err');
-            return;
-        }
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const prefs = loadRetranscribeDurPrefs();
-        await runRetranscribeRange({
-            startMs: cue.startMs,
-            endMs: cueEndMs(cue),
-            padMs: prefs.padMs ?? 350,
-            mode: 'cue',
-            snapAfter: prefs.snapAfter !== false,
-            detail: `正在截取并转写第 ${idx + 1} 条字幕…`,
-        });
-    }
-
-    function getSelectedRetranscribeDurStartMode() {
-        return document.querySelector('input[name="editorRetranscribeDurStart"]:checked')?.value || 'selected';
-    }
-
-    function resolveRetranscribeDurWindow() {
-        const durationSec = clampRetranscribeDurSec(els.retranscribeDurSec?.value);
-        const padMs = Math.max(0, Math.min(2000, Math.round(Number(els.retranscribeDurPadMs?.value) || 350)));
-        const startMode = getSelectedRetranscribeDurStartMode();
-        let startMs = 0;
-        if (startMode === 'playhead') {
-            startMs = getPlaybackTimeMs();
-        } else if (state.selectedIndex >= 0 && state.selectedIndex < state.cues.length) {
-            startMs = state.cues[state.selectedIndex].startMs;
-        } else {
-            startMs = getPlaybackTimeMs();
-        }
-        const endMs = startMs + Math.round(durationSec * 1000);
-        return { startMs, endMs, durationSec, padMs, startMode };
-    }
-
-    function updateRetranscribeDurModalState() {
-        if (!els.retranscribeDurPreview) return;
-        syncDetailToCue();
-        if (!state.videoPath) {
-            els.retranscribeDurPreview.textContent = '请先关联视频';
-            els.retranscribeDurPreview.classList.add('err');
-            return;
-        }
-        const startMode = getSelectedRetranscribeDurStartMode();
-        if (startMode === 'selected'
-            && (state.selectedIndex < 0 || state.selectedIndex >= state.cues.length)) {
-            els.retranscribeDurPreview.textContent = '未选中字幕，将改用播放头作为起始';
-            els.retranscribeDurPreview.classList.remove('err');
-        }
-
-        const win = resolveRetranscribeDurWindow();
-        const overlap = metaCore.collectOverlappingCueIndices(state.cues, win.startMs, win.endMs);
-        const startLabel = formatDisplayTime(win.startMs, state.format);
-        const endLabel = formatDisplayTime(win.endMs, state.format);
-        els.retranscribeDurPreview.textContent = overlap.length
-            ? `${startLabel} → ${endLabel}（${win.durationSec}s），将替换重叠的 ${overlap.length} 条`
-            : `${startLabel} → ${endLabel}（${win.durationSec}s），该区间暂无字幕，将插入新结果`;
-        els.retranscribeDurPreview.classList.remove('err');
-
-        document.querySelectorAll('[data-retranscribe-dur-preset]').forEach((btn) => {
-            const v = Number(btn.getAttribute('data-retranscribe-dur-preset'));
-            btn.classList.toggle('active', Math.abs(v - win.durationSec) < 0.01);
-        });
-    }
-
-    function openRetranscribeDurModal() {
-        if (!els.retranscribeDurModal) return;
-        if (!state.videoPath) {
-            setStatus('请先关联视频后再重转写', 'err');
-            return;
-        }
-        syncDetailToCue();
-        const prefs = loadRetranscribeDurPrefs();
-        if (els.retranscribeDurSec) els.retranscribeDurSec.value = String(prefs.durationSec);
-        if (els.retranscribeDurPadMs) els.retranscribeDurPadMs.value = String(prefs.padMs);
-        if (els.retranscribeDurSnapAfter) els.retranscribeDurSnapAfter.checked = prefs.snapAfter !== false;
-        const radio = document.querySelector(
-            `input[name="editorRetranscribeDurStart"][value="${prefs.startMode}"]`,
-        );
-        if (radio) radio.checked = true;
-        else {
-            const fallback = document.querySelector('input[name="editorRetranscribeDurStart"][value="selected"]');
-            if (fallback) fallback.checked = true;
-        }
-        showEditorModal(els.retranscribeDurModal, els.retranscribeDurConfirm);
-        updateRetranscribeDurModalState();
-    }
-
-    function closeRetranscribeDurModal() {
-        hideEditorModal(els.retranscribeDurModal);
-    }
-
-    async function confirmRetranscribeDur() {
-        syncDetailToCue();
-        const win = resolveRetranscribeDurWindow();
-        if (!state.videoPath) {
-            updateRetranscribeDurModalState();
-            return;
-        }
-        const snapAfter = els.retranscribeDurSnapAfter?.checked !== false;
-        saveRetranscribeDurPrefs({
-            durationSec: win.durationSec,
-            padMs: win.padMs,
-            startMode: win.startMode,
-            snapAfter,
-        });
-        closeRetranscribeDurModal();
-        await runRetranscribeRange({
-            startMs: win.startMs,
-            endMs: win.endMs,
-            padMs: win.padMs,
-            mode: 'range',
-            snapAfter,
-            detail: `正在重转写 ${win.durationSec}s（${formatDisplayTime(win.startMs, state.format)} → ${formatDisplayTime(win.endMs, state.format)}）…`,
-        });
-    }
-
-    function resolveRetranscribeAllWindow() {
-        updateTimelineDuration();
-        const padMs = Math.max(0, Math.min(2000, Math.round(Number(els.retranscribeDurPadMs?.value) || 350)));
-        const startMs = 0;
-        let endMs = state.timeline.durationMs;
-        if (els.video && Number.isFinite(els.video.duration) && els.video.duration > 0) {
-            endMs = Math.round(els.video.duration * 1000);
-        } else if (state.cues.length) {
-            endMs = Math.max(...state.cues.map((c) => cueEndMs(c)), startMs + 1000);
-        }
-        endMs = Math.max(endMs, startMs + 200);
-        const durationSec = Math.round(((endMs - startMs) / 1000) * 10) / 10;
-        return { startMs, endMs, durationSec, padMs };
-    }
-
-    async function confirmRetranscribeAll() {
-        syncDetailToCue();
-        if (!state.videoPath) {
-            updateRetranscribeDurModalState();
-            return;
-        }
-        const win = resolveRetranscribeAllWindow();
-        if (win.endMs - win.startMs < 200) {
-            setStatus('无法确定整段时长，请先加载视频', 'err');
-            return;
-        }
-        const overlap = metaCore.collectOverlappingCueIndices(state.cues, win.startMs, win.endMs);
-        const durLabel = win.durationSec >= 60
-            ? `${Math.floor(win.durationSec / 60)}分${Math.round(win.durationSec % 60)}秒`
-            : `${win.durationSec}s`;
-        const ok = await editorConfirm(
-            `确定全部重转写（约 ${durLabel}）？将替换时间窗内 ${overlap.length} 条重叠字幕，此操作可撤销。`,
-        );
-        if (!ok) return;
-
-        const snapAfter = els.retranscribeDurSnapAfter?.checked !== false;
-        const prefs = loadRetranscribeDurPrefs();
-        saveRetranscribeDurPrefs({
-            durationSec: prefs.durationSec,
-            padMs: win.padMs,
-            startMode: prefs.startMode,
-            snapAfter,
-        });
-        closeRetranscribeDurModal();
-        await runRetranscribeRange({
-            startMs: win.startMs,
-            endMs: win.endMs,
-            padMs: win.padMs,
-            mode: 'range',
-            snapAfter,
-            detail: `正在全部重转写 ${win.durationSec}s（${formatDisplayTime(win.startMs, state.format)} → ${formatDisplayTime(win.endMs, state.format)}）…`,
-        });
-    }
-
-    function applySplitResult(idx, newCues, opts = {}) {
-        if (!newCues?.length) return;
-        recordUndoBeforeChange();
-        state.cues.splice(idx, 1, ...newCues);
-        const fixOverlap = typeof opts.fixOverlap === 'boolean'
-            ? opts.fixOverlap
-            : (els.splitFixOverlap?.checked !== false);
-        if (fixOverlap) {
-            maybeFixOverlapAfterSplit();
-        }
-        state.selectedIndex = idx;
-        setDirty(true);
-        renderCueList();
-        selectCue(idx, { scroll: true });
-        const stats = splitCore.summarizeSplitCues(newCues);
-        const cpsHint = stats.cpsMin != null
-            ? ` · CPS ${stats.cpsMin.toFixed(1)}–${stats.cpsMax.toFixed(1)}`
-            : '';
-        setStatus(`已分割为 ${newCues.length} 条字幕${cpsHint}`, 'ok');
-    }
-
-    function getSelectedSplitMode() {
-        return document.querySelector('input[name="editorSplitMode"]:checked')?.value || 'smart';
-    }
-
-    function formatSplitPreview(result) {
-        if (result.error) return { text: result.error, isErr: true };
-        const stats = splitCore.summarizeSplitCues(result.cues);
-        if (stats.count < 2) return { text: '无法拆成多条', isErr: true };
-        const cpsPart = stats.cpsMin != null
-            ? ` · 预估 CPS ${stats.cpsMin.toFixed(1)}–${stats.cpsMax.toFixed(1)}`
-            : '';
-        return {
-            text: `将拆成 ${stats.count} 条${cpsPart}`,
-            isErr: false,
-        };
-    }
-
-    function updateSplitModalState() {
-        const mode = getSelectedSplitMode();
-        if (els.splitCharCount) els.splitCharCount.disabled = mode !== 'chars';
-        if (els.splitCount) els.splitCount.disabled = mode !== 'count';
-        document.querySelectorAll('.split-smart-extra input').forEach((el) => {
-            el.disabled = mode !== 'smart';
-        });
-        document.querySelectorAll('.split-silence-extra input').forEach((el) => {
-            el.disabled = mode !== 'silence';
-        });
-        if (els.splitUseCps) {
-            els.splitUseCps.disabled = mode === 'silence' || mode === 'playhead' || mode === 'count';
-        }
-
-        if (state.selectedIndex < 0) {
-            if (els.splitPreview) {
-                els.splitPreview.textContent = '—';
-                els.splitPreview.classList.remove('err');
-            }
-            return;
-        }
-
-        syncDetailToCue();
-        const cue = state.cues[state.selectedIndex];
-        const end = cueEndMs(cue);
-        let hint = '';
-
-        if (els.splitHint) {
-            if (mode === 'cursor' && els.detailText) {
-                const pos = els.detailText.selectionStart;
-                const text = cue.text || '';
-                if (pos <= 0 || pos >= text.length) hint = '提示：在文本框中将光标置于要分割的位置';
-            } else if (mode === 'playhead' && els.video) {
-                const t = getPlaybackTimeMs();
-                if (t <= cue.startMs || t >= end) hint = '提示：播放头需位于当前字幕的起止时间之间';
-            } else if (mode === 'lines' && !String(cue.text || '').includes('\n')) {
-                hint = '提示：当前文本无换行，建议选择其他方式';
-            } else if (mode === 'spaces' && !/\s/.test(String(cue.text || ''))) {
-                hint = '提示：当前文本无空格，建议选择其他方式';
-            } else if (mode === 'smart') {
-                const preview = computeSplitParts('smart', cue, {
-                    ...readSingleSplitOptions(),
-                    fixOverlap: false,
-                });
-                if (preview.error) hint = preview.error;
-            } else if (mode === 'silence') {
-                if (!state.videoPath) {
-                    hint = '提示：请先点击顶栏「关联视频」';
-                } else if (!electron?.ffmpegDetectSilence) {
-                    hint = '提示：当前环境不支持静音分析';
-                } else {
-                    const silenceConnectedErr = connectedTextSplitError('silence', cue.text || '');
-                    if (silenceConnectedErr) hint = silenceConnectedErr;
-                }
-            }
-
-            if (hint) {
-                els.splitHint.textContent = hint;
-                els.splitHint.classList.remove('hidden');
-            } else {
-                els.splitHint.textContent = '';
-                els.splitHint.classList.add('hidden');
-            }
-        }
-
-        if (els.splitPreview && state.selectedIndex >= 0) {
-            if (mode === 'silence') {
-                if (!state.videoPath) {
-                    els.splitPreview.textContent = '需关联视频后才能按静音切分';
-                    els.splitPreview.classList.add('err');
-                } else {
-                    const silenceConnectedErr = connectedTextSplitError('silence', cue.text || '');
-                    if (silenceConnectedErr) {
-                        els.splitPreview.textContent = silenceConnectedErr;
-                        els.splitPreview.classList.add('err');
-                    } else {
-                        els.splitPreview.textContent = '执行时将分析该时间段内的静音点，并结合空格/断句词/标点分配文本';
-                        els.splitPreview.classList.remove('err');
-                    }
-                }
-            } else {
-                const preview = computeSplitParts(mode, cue, readSingleSplitOptions());
-                const formatted = formatSplitPreview(preview);
-                els.splitPreview.textContent = formatted.text;
-                els.splitPreview.classList.toggle('err', formatted.isErr);
-            }
-        }
-    }
-
-    function openSplitModal() {
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const cue = state.cues[state.selectedIndex];
-        if (!String(cue.text || '').trim()) {
-            setStatus('当前字幕无文本，无法分割', 'err');
-            return;
-        }
-        if (els.splitModal) {
-            applySplitPrefsToModal();
-            showEditorModal(els.splitModal, els.splitConfirm);
-            updateSplitModalState();
-        }
-    }
-
-    function closeSplitModal() {
-        hideEditorModal(els.splitModal);
-    }
-
-    async function confirmSplit() {
-        if (state.selectedIndex < 0) return;
-        syncDetailToCue();
-        const idx = state.selectedIndex;
-        const cue = state.cues[idx];
-        const mode = getSelectedSplitMode();
-        const splitOpts = {
-            ...readSingleSplitOptions(),
-            charCount: Number(els.splitCharCount?.value) || 20,
-            count: Number(els.splitCount?.value) || 2,
-        };
-
-        if (mode === 'silence') {
-            try {
-                const outcome = await quickSilenceSplitSelectedCue(splitOpts);
-                if (!outcome?.ok) {
-                    if (els.splitHint && outcome?.error) {
-                        els.splitHint.textContent = outcome.error;
-                        els.splitHint.classList.remove('hidden');
-                    }
-                    return;
-                }
-                saveSplitPrefs();
-                closeSplitModal();
-            } finally {
-                if (els.splitConfirm) els.splitConfirm.disabled = false;
-            }
-            return;
-        }
-
-        const result = computeSplitParts(mode, cue, splitOpts);
-        if (result.error) {
-            if (els.splitHint) {
-                els.splitHint.textContent = result.error;
-                els.splitHint.classList.remove('hidden');
-            } else {
-                setStatus(result.error, 'err');
-            }
-            return;
-        }
-        saveSplitPrefs();
-        closeSplitModal();
-        applySplitResult(idx, result.cues, splitOpts);
-    }
-
-    function collectFindMatches() {
-        syncDetailToCue();
-        const query = String(els.findInput?.value ?? '');
-        if (!query) {
-            state.find.active = false;
-            state.find.matches = [];
-            state.find.currentIndex = -1;
-            return;
-        }
-        state.find.active = true;
-        const caseSensitive = !!els.findCase?.checked;
-        const re = buildFindRegex(query, caseSensitive);
-        const matches = [];
-        state.cues.forEach((cue, cueIdx) => {
-            const text = cue.text ?? '';
-            let m;
-            while ((m = re.exec(text)) !== null) {
-                matches.push({ cueIdx, start: m.index, end: m.index + m[0].length });
-                if (m[0].length === 0) re.lastIndex += 1;
-            }
-        });
-        state.find.matches = matches;
-        if (!matches.length) state.find.currentIndex = -1;
-        else if (state.find.currentIndex < 0 || state.find.currentIndex >= matches.length) {
-            state.find.currentIndex = 0;
-        }
-    }
-
-    function updateFindStatus(message) {
-        if (!els.findStatus) return;
-        if (message) {
-            els.findStatus.textContent = message;
-            els.findStatus.classList.toggle('err', message.includes('未找到') || message.includes('请输入'));
-            return;
-        }
-        const total = state.find.matches.length;
-        if (!String(els.findInput?.value ?? '').trim()) {
-            els.findStatus.textContent = '—';
-            els.findStatus.classList.remove('err');
-            return;
-        }
-        if (!total) {
-            els.findStatus.textContent = '未找到匹配项';
-            els.findStatus.classList.add('err');
-            return;
-        }
-        els.findStatus.textContent = `第 ${state.find.currentIndex + 1} / ${total} 处 · 涉及 ${new Set(state.find.matches.map((m) => m.cueIdx)).size} 条字幕`;
-        els.findStatus.classList.remove('err');
-    }
-
-    function goToFindMatch(index) {
-        if (!state.find.matches.length) return;
-        const total = state.find.matches.length;
-        const idx = ((index % total) + total) % total;
-        state.find.currentIndex = idx;
-        const m = state.find.matches[idx];
-        selectCue(m.cueIdx, { scroll: true });
-        requestAnimationFrame(() => {
-            if (!els.detailText) return;
-            els.detailText.focus();
-            els.detailText.setSelectionRange(m.start, m.end);
-        });
-        updateListRowClasses();
-        updateFindStatus();
-    }
-
-    function runFindSearch(options = {}) {
-        const query = String(els.findInput?.value ?? '').trim();
-        if (!query) {
-            state.find.active = false;
-            state.find.matches = [];
-            state.find.currentIndex = -1;
-            if (state.listFilter === 'find') renderCueList();
-            else updateListRowClasses();
-            updateFindStatus('请输入要查找的内容');
-            return false;
-        }
-        const prevQuery = state.find._lastQuery;
-        const prevCase = state.find._lastCase;
-        const caseSensitive = !!els.findCase?.checked;
-        collectFindMatches();
-        state.find._lastQuery = query;
-        state.find._lastCase = caseSensitive;
-
-        if (!state.find.matches.length) {
-            if (state.listFilter === 'find') renderCueList();
-            else updateListRowClasses();
-            updateFindStatus('未找到匹配项');
-            return false;
-        }
-
-        if (options.keepIndex && prevQuery === query && prevCase === caseSensitive && state.find.currentIndex >= 0) {
-            // keep current index
-        } else if (options.startIndex != null) {
-            state.find.currentIndex = Math.max(0, Math.min(options.startIndex, state.find.matches.length - 1));
-        } else {
-            state.find.currentIndex = 0;
-        }
-
-        if (state.listFilter === 'find') renderCueList();
-        if (options.navigate !== false) goToFindMatch(state.find.currentIndex);
-        else {
-            updateListRowClasses();
-            updateFindStatus();
-        }
-        return true;
-    }
-
-    function findNextMatch() {
-        if (!String(els.findInput?.value ?? '').trim()) {
-            updateFindStatus('请输入要查找的内容');
-            return;
-        }
-        if (!state.find.matches.length) {
-            if (!runFindSearch({ navigate: false })) return;
-        }
-        goToFindMatch(state.find.currentIndex + 1);
-    }
-
-    function findPrevMatch() {
-        if (!String(els.findInput?.value ?? '').trim()) {
-            updateFindStatus('请输入要查找的内容');
-            return;
-        }
-        if (!state.find.matches.length) {
-            if (!runFindSearch({ navigate: false })) return;
-        }
-        goToFindMatch(state.find.currentIndex - 1);
-    }
-
-    function replaceCurrentMatch() {
-        if (!state.find.matches.length) {
-            if (!runFindSearch()) return;
-            if (!state.find.matches.length) return;
-        }
-        const m = state.find.matches[state.find.currentIndex];
-        if (!m) return;
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const cue = state.cues[m.cueIdx];
-        const text = cue.text ?? '';
-        const replacement = els.replaceInput?.value ?? '';
-        cue.text = text.slice(0, m.start) + replacement + text.slice(m.end);
-        setDirty(true);
-        refreshListRow(m.cueIdx);
-        if (state.selectedIndex === m.cueIdx && els.detailText) {
-            els.detailText.value = cue.text;
-        }
-        const nextIndex = state.find.currentIndex;
-        collectFindMatches();
-        if (state.find.matches.length) {
-            goToFindMatch(Math.min(nextIndex, state.find.matches.length - 1));
-        } else {
-            updateListRowClasses();
-            updateFindStatus('已成功替换 1 处');
-        }
-        setStatus('已成功替换 1 处', 'ok');
-    }
-
-    function replaceAllMatches() {
-        const query = String(els.findInput?.value ?? '').trim();
-        if (!query) {
-            updateFindStatus('请输入要查找的内容');
-            return;
-        }
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const caseSensitive = !!els.findCase?.checked;
-        const re = buildFindRegex(query, caseSensitive);
-        const replacement = els.replaceInput?.value ?? '';
-        let count = 0;
-        for (const cue of state.cues) {
-            const text = cue.text ?? '';
-            const newText = text.replace(re, () => {
-                count += 1;
-                return replacement;
+            t.selectionAnchor = a
+        } else if (i) {
+            if (Qn(), t.selectedIndices.has(n) && t.selectedIndices.size > 1) {
+                t.selectedIndices.delete(n);
+                const a = t.selectedIndices.has(t.selectedIndex) ? t.selectedIndex : Math.max(...t.selectedIndices);
+                We(t.selectedIndices, a, {
+                    fromPlayback: !!r.fromPlayback
+                })
+            } else t.selectedIndices.add(n), We(t.selectedIndices, n, {
+                fromPlayback: !!r.fromPlayback
             });
-            if (newText !== text) cue.text = newText;
+            t.selectionAnchor = n
+        } else We([n], n, {
+            fromPlayback: !!r.fromPlayback
+        });
+        if (r.seek && e.video) {
+            const a = Math.max(0, t.cues[n].startMs / 1e3);
+            e.video.currentTime = a, r.play && e.video.play().catch(() => {})
         }
-        if (!count) {
-            updateFindStatus('未找到匹配项');
-            return;
+        if (r.scroll && (e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`)?.scrollIntoView({
+                block: "nearest",
+                behavior: r.fromPlayback ? "auto" : "smooth"
+            }), !r.fromPlayback)) {
+            const o = t.cues[n];
+            if (o && he()) {
+                const l = Math.round((o.startMs + I(o)) / 2);
+                Wi(l, {
+                    marginRatio: .08
+                }) && Be()
+            }
         }
-        setDirty(true);
-        renderCueList();
-        // Refresh match list after replace, but don't treat "0 remaining" as a failed search
-        collectFindMatches();
-        state.find.currentIndex = state.find.matches.length ? 0 : -1;
-        if (state.listFilter === 'find') renderCueList();
-        else updateListRowClasses();
-        const msg = `已成功替换 ${count} 处`;
-        updateFindStatus(msg);
-        setStatus(msg, 'ok');
+        r.fromPlayback || H?.refreshContextActionBar?.()
     }
 
-    function openFindReplaceModal(focusReplace = false) {
-        if (els.findReplaceModal) {
-            showEditorModal(
-                els.findReplaceModal,
-                focusReplace ? els.replaceInput : els.findInput
-            );
-            const sel = els.detailText
-                && document.activeElement === els.detailText
-                && els.detailText.selectionStart !== els.detailText.selectionEnd
-                ? els.detailText.value.slice(els.detailText.selectionStart, els.detailText.selectionEnd)
-                : '';
-            if (sel && els.findInput && !els.findInput.value) els.findInput.value = sel;
-            requestAnimationFrame(() => {
-                const input = focusReplace ? els.replaceInput : els.findInput;
-                input?.focus();
-                input?.select?.();
+    function Ss() {
+        const n = Vt();
+        if (!n.length) {
+            d("\u5F53\u524D\u7B5B\u9009\u4E0B\u6CA1\u6709\u53EF\u9009\u9879", "warn");
+            return
+        }
+        We(n, n[n.length - 1]), H?.refreshContextActionBar?.(), d(`\u5DF2\u9009\u4E2D ${n.length} \u6761`, "ok")
+    }
+    async function Xn() {
+        const n = J();
+        if (n.length < 2) {
+            d("\u8BF7\u81F3\u5C11\u9009\u4E2D\u4E24\u6761\u76F8\u90BB\u5B57\u5E55\u4EE5\u5408\u5E76", "err");
+            return
+        }
+        for (let l = 1; l < n.length; l += 1)
+            if (n[l] !== n[l - 1] + 1) {
+                d("\u53EA\u80FD\u5408\u5E76\u8FDE\u7EED\u76F8\u90BB\u7684\u9009\u4E2D\u6761\u76EE", "err");
+                return
+            } if (!await ie(`\u5408\u5E76\u9009\u4E2D\u7684 ${n.length} \u6761\u5B57\u5E55\uFF1F`)) return;
+        x(), $();
+        const r = n[0],
+            i = n[n.length - 1],
+            s = t.cues[r].startMs,
+            a = I(t.cues[i]),
+            o = n.map(l => String(t.cues[l].text || "").trim()).filter(Boolean).join(`
+`);
+        t.cues.splice(r, i - r + 1, {
+            startMs: s,
+            endMs: a,
+            text: o
+        }), We([r], r), P(!0), C(), d(`\u5DF2\u5408\u5E76\u4E3A\u7B2C ${r+1} \u6761`, "ok")
+    }
+
+    function Ra() {
+        tn && clearTimeout(tn), tn = setTimeout(() => {
+            tn = null, at()
+        }, ga)
+    }
+
+    function Ze(n = {}) {
+        if (t.detailSyncing || t.selectedIndex < 0) return;
+        n.skipUndo || bl();
+        const r = t.cues[t.selectedIndex],
+            i = r ? r.startMs : null,
+            s = r ? I(r) : null;
+        x(), P(!0), Aa(t.selectedIndex), Se(t.selectedIndex), wt(), n.immediateButtons ? at() : Ra(), Fa(), t.detailRenderedDurSec = V(t.cues[t.selectedIndex]) / 1e3, t.selectedIndex === t.playbackIndex && (t.overlayText = "", It());
+        const a = t.cues[t.selectedIndex];
+        (!a || a.startMs !== i || I(a) !== s || n.forceResync) && ye(), t.selectedIndex >= 0 && Ut(t.selectedIndex)
+    }
+
+    function bs(n) {
+        if (t.selectedIndex < 0) return;
+        $();
+        const r = Number(e.detailDuration?.value),
+            i = Number.isFinite(r) ? r : V(t.cues[t.selectedIndex]) / 1e3,
+            s = Math.max(.1, Math.round((i + n) * 100) / 100);
+        e.detailDuration && (e.detailDuration.value = s.toFixed(3)), Ze({
+            skipUndo: !0
+        }), me()
+    }
+
+    function xs(n) {
+        if (t.selectedIndex < 0) return;
+        $();
+        const r = t.cues[t.selectedIndex],
+            i = V(r);
+        r.startMs = Math.max(0, r.startMs + n), r.endMs = r.startMs + i, R(), Ze({
+            skipUndo: !0
+        }), me()
+    }
+
+    function Yn() {
+        if (t.selectedIndex < 0 || !e.video) return;
+        $();
+        const n = t.cues[t.selectedIndex],
+            r = V(n);
+        n.startMs = De(), n.endMs = n.startMs + r, R(), Ze({
+            skipUndo: !0
+        }), me()
+    }
+
+    function Jn() {
+        if (t.selectedIndex < 0 || !e.video) return;
+        const n = t.cues[t.selectedIndex],
+            r = De();
+        if (r <= n.startMs) {
+            d("\u7ED3\u675F\u65F6\u95F4\u5FC5\u987B\u665A\u4E8E\u8D77\u59CB\u65F6\u95F4", "err");
+            return
+        }
+        $(), n.endMs = r, R(), Ze({
+            skipUndo: !0
+        }), me()
+    }
+
+    function Xe() {
+        const n = document.activeElement;
+        return !n || !e.listWrap ? !1 : n === e.listWrap || e.listWrap.contains(n)
+    }
+
+    function un() {
+        const n = document.activeElement;
+        return n ? !!(e.videoWrap && (n === e.videoWrap || e.videoWrap.contains(n)) || e.timelinePanel && (n === e.timelinePanel || e.timelinePanel.contains(n))) : !1
+    }
+
+    function Ct(n) {
+        if (!n || !n.matches) return !1;
+        if (n.matches('textarea, [contenteditable="true"]')) return !0;
+        if (!n.matches("input")) return !1;
+        const r = String(n.type || "text").toLowerCase();
+        return !["button", "checkbox", "radio", "range", "file", "reset", "submit", "color", "image"].includes(r)
+    }
+
+    function er() {
+        if (e.listWrap) try {
+            e.listWrap.focus({
+                preventScroll: !0
+            })
+        } catch {
+            e.listWrap.focus()
+        }
+    }
+
+    function Ms() {
+        if (e.videoWrap) try {
+            e.videoWrap.focus({
+                preventScroll: !0
+            })
+        } catch {
+            e.videoWrap.focus()
+        }
+    }
+
+    function Bs() {
+        e.video && (e.video.paused || e.video.ended ? e.video.play().catch(() => {}) : e.video.pause())
+    }
+
+    function De() {
+        return Math.round((e.video?.currentTime || 0) * 1e3)
+    }
+
+    function Et() {
+        return t.autoFocus === !0
+    }
+
+    function ks(n, r = !0) {
+        if (!t.ready) return;
+        const i = Math.round((Number(n) || 0) * 1e3),
+            s = ps(i);
+        if (s !== t.playbackIndex) {
+            const a = t.playbackIndex;
+            t.playbackIndex = s, Oa(a, s), Et() && Ei(s)
+        }
+        r && (t.lastPlayheadLabel = "", e.playheadTime && (e.playheadTime.textContent = Z(i, t.format), t.lastPlayheadLabel = e.playheadTime.textContent), tt(i)), It()
+    }
+
+    function $l() {
+        if (t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, e.videoSubtitle && e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText && (e.videoSubtitleText.textContent = ""), e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), t.previewTextTrack) try {
+            t.previewTextTrack.mode = "hidden"
+        } catch {}
+    }
+
+    function It(n = !1) {
+        if (!e.videoSubtitle || !e.videoSubtitleText) return;
+        const r = t.playbackIndex;
+        let i = "",
+            s = "";
+        if (r >= 0 && r < t.cues.length) {
+            const u = t.cues[r];
+            i = String(u.text || "").trim(), t.pairPath && t.pairCues.length && (s = an(u))
+        }
+        let a = "",
+            o = "",
+            l = !1;
+        if (O && t.dualRole && (i || s)) {
+            const u = O.composeDualOverlayText({
+                primaryText: i,
+                pairedText: s,
+                primaryRole: t.dualRole,
+                displayMode: t.dualDisplayMode || "both",
+                lineOrder: t.dualLineOrder || "source-first"
             });
-            if (String(els.findInput?.value ?? '').trim()) runFindSearch({ navigate: false });
-            else updateFindStatus();
-        }
-    }
-
-    function closeFindReplaceModal() {
-        hideEditorModal(els.findReplaceModal);
-        state.find.active = false;
-        state.find.matches = [];
-        state.find.currentIndex = -1;
-        updateListRowClasses();
-    }
-
-    function getSelectedBatchDurMode() {
-        return document.querySelector('input[name="editorBatchDurMode"]:checked')?.value || 'fixed';
-    }
-
-    function getSelectedBatchDurCondition() {
-        return document.querySelector('input[name="editorBatchDurCond"]:checked')?.value || 'all';
-    }
-
-    function readBatchDurOptions() {
-        const condition = getSelectedBatchDurCondition();
-        const mode = getSelectedBatchDurMode();
-        return {
-            mode,
-            condition,
-            targetSec: Number(els.batchDurTarget?.value) || 2,
-            silenceDb: Number(els.batchDurSilenceDb?.value) || -35,
-            silenceDur: Number(els.batchDurSilenceDur?.value) || 0.25,
-            snapPadMs: Math.max(0, Math.min(2000, Math.round(Number(els.batchDurSnapPadMs?.value) || 400))),
-            shorterSec: Number(els.batchDurShorter?.value) || 1,
-            longerSec: Number(els.batchDurLonger?.value) || 5,
-            minSec: Number(els.batchDurMin?.value) || 0.5,
-            maxSec: Number(els.batchDurMax?.value) || 10,
-            cpsAbove: Number(els.batchDurCpsAbove?.value) || 20,
-            cpsBelow: Number(els.batchDurCpsBelow?.value) || 8,
-            textKeyword: String(els.batchDurText?.value ?? '').trim(),
-            avoidOverlap: !!els.batchDurAvoidOverlap?.checked,
-        };
-    }
-
-    function getCueCpsValue(cue) {
-        const durSec = cueDurationMs(cue) / 1000;
-        if (durSec <= 0) return null;
-        const chars = textCharCount(cue.text);
-        if (!chars) return null;
-        return chars / durSec;
-    }
-
-    function cueHasTimingOverlap(idx) {
-        const cue = state.cues[idx];
-        if (!cue) return false;
-        const prev = idx > 0 ? state.cues[idx - 1] : null;
-        const next = idx < state.cues.length - 1 ? state.cues[idx + 1] : null;
-        const end = cueEndMs(cue);
-        if (prev && cue.startMs < cueEndMs(prev)) return true;
-        if (next && end > next.startMs) return true;
-        return false;
-    }
-
-    function matchesBatchDurCondition(cue, idx, opts) {
-        const durSec = cueDurationMs(cue) / 1000;
-        switch (opts.condition) {
-            case 'all':
-                return true;
-            case 'shorter':
-                return durSec < opts.shorterSec;
-            case 'longer':
-                return durSec > opts.longerSec;
-            case 'between':
-                return durSec >= Math.min(opts.minSec, opts.maxSec)
-                    && durSec <= Math.max(opts.minSec, opts.maxSec);
-            case 'cps_above': {
-                const cps = getCueCpsValue(cue);
-                return cps != null && cps > opts.cpsAbove;
+            a = u.sourceText, o = u.targetText, l = u.visible
+        } else o = i, l = !!i;
+        const c = `${a}
+${o}
+${t.dualLineOrder||""}`;
+        if (!(!n && c === t.overlayText && a === t.overlaySourceText && l === t.overlayVisible)) {
+            if (t.overlayText = c, t.overlaySourceText = a, t.overlayVisible = l, !l) {
+                e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText.textContent = "", e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), e.videoSubtitle.classList.remove("line-order-target-first");
+                return
             }
-            case 'cps_below': {
-                const cps = getCueCpsValue(cue);
-                return cps != null && cps < opts.cpsBelow;
+            e.videoSubtitleSource && (e.videoSubtitleSource.textContent = a), e.videoSubtitleText.textContent = o, e.videoSubtitle.classList.toggle("line-order-target-first", (t.dualLineOrder || "source-first") === "target-first" && !!(a && o)), e.videoSubtitle.classList.remove("hidden")
+        }
+    }
+
+    function Na(n) {
+        const r = e.listWrap;
+        if (!r || !n) return !1;
+        const i = r.getBoundingClientRect(),
+            s = n.getBoundingClientRect();
+        return s.top >= i.top - 2 && s.bottom <= i.bottom + 2
+    }
+
+    function tr() {
+        t.textTrackRefreshTimer && clearTimeout(t.textTrackRefreshTimer), t.textTrackRefreshTimer = setTimeout(() => {
+            t.textTrackRefreshTimer = null, ws()
+        }, 300)
+    }
+
+    function ws() {
+        if (t.previewTextTrack) try {
+            t.previewTextTrack.mode = "hidden"
+        } catch {}
+    }
+
+    function qa(n, r) {
+        const i = [];
+        if (r >= 0 && r < t.cues.length) {
+            const s = I(t.cues[r]);
+            s > n + 5 && i.push(s)
+        }
+        if (r >= 0 && r + 1 < t.cues.length) {
+            const s = t.cues[r + 1].startMs;
+            s > n + 5 && i.push(s)
+        }
+        if (r < 0 && t.cues.length) {
+            let s = 0,
+                a = t.cues.length - 1,
+                o = -1;
+            for (; s <= a;) {
+                const l = s + a >> 1;
+                t.cues[l].startMs > n + 5 ? (o = l, a = l - 1) : s = l + 1
             }
-            case 'text_contains':
-                return opts.textKeyword
-                    ? String(cue.text ?? '').includes(opts.textKeyword)
-                    : false;
-            case 'overlap':
-                return cueHasTimingOverlap(idx);
-            case 'selected':
-                return getSelectedCueIndexes().includes(idx)
-                    || idx === state.selectedIndex;
-            default:
-                return false;
+            o >= 0 && i.push(t.cues[o].startMs)
         }
+        return i.length ? Math.min(...i) : null
     }
 
-    function clampSilenceAdjustedEnd(cue, idx, newEndMs, avoidOverlap = true) {
-        const gapMs = 1;
-        const minDurMs = 500;
-        let newEnd = Math.round(Number(newEndMs) || 0);
-        if (avoidOverlap && idx < state.cues.length - 1) {
-            newEnd = Math.min(newEnd, state.cues[idx + 1].startMs - gapMs);
-        }
-        return Math.max(cue.startMs + minDurMs, newEnd);
-    }
-
-    async function silenceAdjustCueAtIndex(idx, opts = {}) {
-        const cue = state.cues[idx];
-        if (!cue || !canSilenceAdjustDurationCue(cue)) {
-            return { status: 'skipped', reason: '时长过短' };
-        }
-        const result = await computeSilenceAdjustedEndMs(cue, { ...opts, cueIndex: idx });
-        if (result.cancelled || isJobAbortRequested()) {
-            return { status: 'skipped', cancelled: true, reason: '已取消' };
-        }
-        if (result.error) {
-            return {
-                status: result.unchanged ? 'unchanged' : 'skipped',
-                reason: result.error,
-            };
-        }
-        const newEnd = clampSilenceAdjustedEnd(cue, idx, result.newEndMs, opts.avoidOverlap);
-        const oldEnd = cueEndMs(cue);
-        const deltaMs = newEnd - oldEnd;
-        if (Math.abs(deltaMs) < 80) {
-            return { status: 'unchanged' };
-        }
-        cue.endMs = newEnd;
-        return {
-            status: 'adjusted',
-            deltaMs,
-            savedMs: oldEnd - newEnd,
-            extendedMs: deltaMs > 0 ? deltaMs : 0,
-        };
-    }
-
-    async function audioSnapCueAtIndex(idx, opts = {}) {
-        const cue = state.cues[idx];
-        if (!cue || !canAudioSnapCue(cue)) {
-            return { status: 'skipped', reason: '时长过短' };
-        }
-        const result = await computeAudioSnappedCueTiming(cue, idx, opts);
-        if (result.cancelled || isJobAbortRequested()) {
-            return { status: 'skipped', cancelled: true, reason: '已取消' };
-        }
-        if (result.error) {
-            return {
-                status: result.unchanged ? 'unchanged' : 'skipped',
-                reason: result.error,
-            };
-        }
-        cue.startMs = result.startMs;
-        cue.endMs = result.endMs;
-        return {
-            status: 'adjusted',
-            startDelta: result.startDelta || 0,
-            endDelta: result.endDelta || 0,
-        };
-    }
-
-    function collectBatchDurMatches(opts) {
-        syncDetailToCue();
-        const indices = [];
-        state.cues.forEach((cue, idx) => {
-            if (!matchesBatchDurCondition(cue, idx, opts)) return;
-            if (opts.mode === 'silence' && !canSilenceAdjustDurationCue(cue)) return;
-            if (opts.mode === 'audio_snap' && !canAudioSnapCue(cue)) return;
-            indices.push(idx);
-        });
-        return indices;
-    }
-
-    function updateBatchDurModalState() {
-        const cond = getSelectedBatchDurCondition();
-        const mode = getSelectedBatchDurMode();
-        const isSilence = mode === 'silence';
-        const isAudioSnap = mode === 'audio_snap';
-        const usesSilenceUi = isSilence || isAudioSnap;
-
-        if (els.batchDurHint) {
-            if (isAudioSnap) {
-                els.batchDurHint.textContent = '按条件筛选后，将起止时间贴到语音边界（保留原文）。';
-            } else if (isSilence) {
-                els.batchDurHint.textContent = '按条件筛选后，按实际语音边界缩短或延长结束时间（保持起始不变）。';
-            } else {
-                els.batchDurHint.textContent = '按条件筛选字幕后批量调整结束时间（保持起始时间不变）。';
-            }
-        }
-        if (els.batchDurFixedWrap) {
-            els.batchDurFixedWrap.classList.toggle('hidden', usesSilenceUi);
-        }
-        if (els.batchDurSilenceWrap) {
-            els.batchDurSilenceWrap.classList.toggle('hidden', !usesSilenceUi);
-        }
-        if (els.batchDurSnapPadWrap) {
-            els.batchDurSnapPadWrap.classList.toggle('hidden', !isAudioSnap);
-        }
-        if (els.batchDurAvoidOverlapRow) {
-            els.batchDurAvoidOverlapRow.classList.toggle('hidden', isAudioSnap);
-        }
-        if (els.batchDurTarget) els.batchDurTarget.disabled = usesSilenceUi;
-        if (els.batchDurSilenceDb) els.batchDurSilenceDb.disabled = !usesSilenceUi;
-        if (els.batchDurSilenceDur) els.batchDurSilenceDur.disabled = !usesSilenceUi;
-        if (els.batchDurSnapPadMs) els.batchDurSnapPadMs.disabled = !isAudioSnap;
-
-        if (els.batchDurShorter) els.batchDurShorter.disabled = cond !== 'shorter';
-        if (els.batchDurLonger) els.batchDurLonger.disabled = cond !== 'longer';
-        if (els.batchDurMin) els.batchDurMin.disabled = cond !== 'between';
-        if (els.batchDurMax) els.batchDurMax.disabled = cond !== 'between';
-        if (els.batchDurCpsAbove) els.batchDurCpsAbove.disabled = cond !== 'cps_above';
-        if (els.batchDurCpsBelow) els.batchDurCpsBelow.disabled = cond !== 'cps_below';
-        if (els.batchDurText) els.batchDurText.disabled = cond !== 'text_contains';
-
-        if (!els.batchDurPreview) return;
-        const opts = readBatchDurOptions();
-
-        if (opts.mode === 'silence' || opts.mode === 'audio_snap') {
-            if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-                els.batchDurPreview.textContent = opts.mode === 'audio_snap'
-                    ? '请先关联视频后再使用按音频贴边'
-                    : '请先关联视频后再使用按静音智能时长';
-                els.batchDurPreview.classList.add('err');
-                return;
-            }
-            if (opts.condition === 'text_contains' && !opts.textKeyword) {
-                els.batchDurPreview.textContent = '请输入文本关键词';
-                els.batchDurPreview.classList.add('err');
-                return;
-            }
-            if (opts.condition === 'selected' && state.selectedIndex < 0) {
-                els.batchDurPreview.textContent = '当前没有选中的字幕条目';
-                els.batchDurPreview.classList.add('err');
-                return;
-            }
-            const matches = collectBatchDurMatches(opts);
-            if (!matches.length) {
-                els.batchDurPreview.textContent = '没有符合条件的字幕';
-                els.batchDurPreview.classList.add('err');
-                return;
-            }
-            els.batchDurPreview.textContent = opts.mode === 'audio_snap'
-                ? `将对 ${matches.length} 条字幕逐条分析静音并贴边起止（执行时将显示进度）`
-                : `将对 ${matches.length} 条字幕逐条分析静音并缩短/延长时长（执行时将显示进度）`;
-            els.batchDurPreview.classList.remove('err');
-            return;
-        }
-
-        if (opts.targetSec <= 0 || !Number.isFinite(opts.targetSec)) {
-            els.batchDurPreview.textContent = '请输入有效的目标时长';
-            els.batchDurPreview.classList.add('err');
-            return;
-        }
-        if (opts.condition === 'text_contains' && !opts.textKeyword) {
-            els.batchDurPreview.textContent = '请输入文本关键词';
-            els.batchDurPreview.classList.add('err');
-            return;
-        }
-        if (opts.condition === 'selected' && state.selectedIndex < 0) {
-            els.batchDurPreview.textContent = '当前没有选中的字幕条目';
-            els.batchDurPreview.classList.add('err');
-            return;
-        }
-        const matches = collectBatchDurMatches(opts);
-        if (!matches.length) {
-            els.batchDurPreview.textContent = '没有符合条件的字幕';
-            els.batchDurPreview.classList.add('err');
-            return;
-        }
-        els.batchDurPreview.textContent = `将调整 ${matches.length} 条字幕为 ${opts.targetSec.toFixed(2)} 秒`;
-        els.batchDurPreview.classList.remove('err');
-    }
-
-    function applyBatchDurSplitPrefs() {
-        const prefs = loadSplitPrefs();
-        if (els.batchDurSilenceDb) els.batchDurSilenceDb.value = String(prefs.silenceDb);
-        if (els.batchDurSilenceDur) els.batchDurSilenceDur.value = String(prefs.silenceDur);
-    }
-
-    function openBatchDurModal() {
-        if (!els.batchDurModal) return;
-        syncDetailToCue();
-        applyBatchDurSplitPrefs();
-        showEditorModal(els.batchDurModal, els.batchDurTarget);
-        updateBatchDurModalState();
-    }
-
-    function openBatchAudioSnapModal() {
-        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-            setStatus('请先关联视频后再使用按音频贴边', 'err');
-            return;
-        }
-        const radio = document.querySelector('input[name="editorBatchDurMode"][value="audio_snap"]');
-        if (radio) radio.checked = true;
-        openBatchDurModal();
-    }
-
-    function closeBatchDurModal() {
-        hideEditorModal(els.batchDurModal);
-    }
-
-    function confirmBatchDurAdjust() {
-        const opts = readBatchDurOptions();
-        if (opts.mode === 'silence') {
-            confirmBatchSilenceDurAdjust(opts);
-            return;
-        }
-        if (opts.mode === 'audio_snap') {
-            void confirmBatchAudioSnapAdjust(opts);
-            return;
-        }
-        if (opts.targetSec <= 0 || !Number.isFinite(opts.targetSec)) {
-            updateBatchDurModalState();
-            return;
-        }
-        if (opts.condition === 'text_contains' && !opts.textKeyword) {
-            updateBatchDurModalState();
-            return;
-        }
-        const indices = collectBatchDurMatches(opts);
-        if (!indices.length) {
-            updateBatchDurModalState();
-            return;
-        }
-        recordUndoBeforeChange();
-        const targetMs = Math.round(opts.targetSec * 1000);
-        let adjusted = 0;
-        for (const idx of indices) {
-            const cue = state.cues[idx];
-            let endMs = cue.startMs + targetMs;
-            if (opts.avoidOverlap && idx < state.cues.length - 1) {
-                endMs = Math.min(endMs, state.cues[idx + 1].startMs - 1);
-            }
-            endMs = Math.max(cue.startMs + 100, endMs);
-            if (endMs !== cueEndMs(cue)) adjusted += 1;
-            cue.endMs = endMs;
-        }
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeBatchDurModal();
-        setStatus(`已批量调整 ${adjusted || indices.length} 条字幕时长为 ${opts.targetSec.toFixed(2)} 秒`, 'ok');
-    }
-
-    async function confirmBatchSilenceDurAdjust(opts) {
-        if (state.silenceSplitBusy) return;
-        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-            updateBatchDurModalState();
-            return;
-        }
-        if (opts.condition === 'text_contains' && !opts.textKeyword) {
-            updateBatchDurModalState();
-            return;
-        }
-        const indices = collectBatchDurMatches(opts);
-        if (!indices.length) {
-            updateBatchDurModalState();
-            return;
-        }
-
-        const silenceOpts = {
-            silenceDb: opts.silenceDb,
-            silenceDur: opts.silenceDur,
-            avoidOverlap: opts.avoidOverlap,
-        };
-        const total = indices.length;
-
-        recordUndoBeforeChange();
-        let adjusted = 0;
-        let skipped = 0;
-        let unchanged = 0;
-
-        setSilenceSplitBusy(true);
-        showSilenceSplitProgress({
-            title: '正在批量调节时长',
-            detail: `准备分析 ${total} 条字幕的实际语音时长…`,
-            current: 0,
-            total,
-            statusMessage: `正在批量分析静音（0/${total}）…`,
-        });
-        await flushSilenceProgressPaint();
-
-        let aborted = false;
-        try {
-            for (let i = 0; i < indices.length; i += 1) {
-                if (isJobAbortRequested()) {
-                    aborted = true;
-                    break;
-                }
-                const idx = indices[i];
-                updateSilenceSplitProgress({
-                    current: i,
-                    total,
-                    detail: `正在分析第 ${i + 1}/${total} 条（原序号 ${idx + 1}）…`,
-                    statusMessage: `正在分析静音 ${i + 1}/${total}…`,
-                });
-                await flushSilenceProgressPaint();
-
-                const result = await silenceAdjustCueAtIndex(idx, silenceOpts);
-                if (isJobAbortRequested() || result?.cancelled) {
-                    aborted = true;
-                    break;
-                }
-                if (result.status === 'adjusted') {
-                    adjusted += 1;
-                    refreshListRow(idx);
-                } else if (result.status === 'unchanged') {
-                    unchanged += 1;
-                } else {
-                    skipped += 1;
-                }
-
-                let detailLine = `第 ${i + 1}/${total} 条${result.status === 'unchanged' ? '无需调整' : '已跳过'}`;
-                if (result.status === 'adjusted') {
-                    const delta = Number(result.deltaMs) || -Number(result.savedMs) || 0;
-                    const verb = delta < 0 ? '缩短' : '延长';
-                    detailLine = `第 ${i + 1}/${total} 条已${verb} ${(Math.abs(delta) / 1000).toFixed(2)} 秒`;
-                }
-                updateSilenceSplitProgress({
-                    current: i + 1,
-                    total,
-                    detail: detailLine,
-                    statusMessage: `正在分析静音 ${i + 1}/${total}…`,
-                });
-            }
-        } finally {
-            setSilenceSplitBusy(false);
-            hideSilenceSplitProgress();
-        }
-
-        if (aborted) {
-            if (adjusted) {
-                setDirty(true);
-                renderCueList();
-                if (state.selectedIndex >= 0) renderDetailPane();
-            }
-            closeBatchDurModal();
-            setStatus(`已取消批量调节（已处理 ${adjusted} 条）`, 'warn');
-            return;
-        }
-
-        if (!adjusted) {
-            updateBatchDurModalState();
-            const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
-            const unchangedHint = unchanged ? `，${unchanged} 条已接近实际语音` : '';
-            setStatus(`已分析 ${total} 条，均无需调整时长${unchangedHint}${skipHint}`, 'err');
-            resyncPlaybackAfterCueTimingChange();
-            return;
-        }
-
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeBatchDurModal();
-        const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
-        const unchangedHint = unchanged ? `，${unchanged} 条无需调整` : '';
-        setStatus(`已按静音批量调节 ${adjusted} 条字幕时长${unchangedHint}${skipHint}`, 'ok');
-    }
-
-    async function confirmBatchAudioSnapAdjust(opts) {
-        if (state.silenceSplitBusy || state.retranscribeBusy) return;
-        if (!state.videoPath || !electron?.ffmpegDetectSilence) {
-            updateBatchDurModalState();
-            return;
-        }
-        if (opts.condition === 'text_contains' && !opts.textKeyword) {
-            updateBatchDurModalState();
-            return;
-        }
-        const indices = collectBatchDurMatches(opts);
-        if (!indices.length) {
-            updateBatchDurModalState();
-            return;
-        }
-
-        const snapOpts = {
-            silenceDb: opts.silenceDb,
-            silenceDur: opts.silenceDur,
-            padMs: opts.snapPadMs ?? 400,
-            allowExtend: true,
-        };
-        const total = indices.length;
-
-        recordUndoBeforeChange();
-        let adjusted = 0;
-        let skipped = 0;
-        let unchanged = 0;
-
-        setSilenceSplitBusy(true);
-        showSilenceSplitProgress({
-            title: '正在批量按音频贴边',
-            detail: `准备分析 ${total} 条字幕的语音边界…`,
-            current: 0,
-            total,
-            statusMessage: `正在批量贴边（0/${total}）…`,
-        });
-        if (els.silenceProgressHint) {
-            els.silenceProgressHint.textContent = '根据静音检测将字幕起止贴到语音边界，文本保持不变';
-        }
-        await flushSilenceProgressPaint();
-
-        let aborted = false;
-        try {
-            for (let i = 0; i < indices.length; i += 1) {
-                if (isJobAbortRequested()) {
-                    aborted = true;
-                    break;
-                }
-                const idx = indices[i];
-                updateSilenceSplitProgress({
-                    current: i,
-                    total,
-                    detail: `正在贴边第 ${i + 1}/${total} 条（原序号 ${idx + 1}）…`,
-                    statusMessage: `正在贴边 ${i + 1}/${total}…`,
-                });
-                await flushSilenceProgressPaint();
-
-                const result = await audioSnapCueAtIndex(idx, snapOpts);
-                if (isJobAbortRequested() || result?.cancelled) {
-                    aborted = true;
-                    break;
-                }
-                if (result.status === 'adjusted') {
-                    adjusted += 1;
-                    refreshListRow(idx);
-                } else if (result.status === 'unchanged') {
-                    unchanged += 1;
-                } else {
-                    skipped += 1;
-                }
-
-                updateSilenceSplitProgress({
-                    current: i + 1,
-                    total,
-                    detail: result.status === 'adjusted'
-                        ? `第 ${i + 1}/${total} 条已贴边`
-                        : `第 ${i + 1}/${total} 条${result.status === 'unchanged' ? '无需调整' : '已跳过'}`,
-                    statusMessage: `正在贴边 ${i + 1}/${total}…`,
-                });
-            }
-        } finally {
-            setSilenceSplitBusy(false);
-            hideSilenceSplitProgress();
-            if (els.silenceProgressHint) {
-                els.silenceProgressHint.textContent = 'FFmpeg 正在分析关联视频的音频静音点，请勿关闭窗口';
-            }
-        }
-
-        if (aborted) {
-            if (adjusted) {
-                setDirty(true);
-                renderCueList();
-                if (state.selectedIndex >= 0) renderDetailPane();
-            }
-            closeBatchDurModal();
-            setStatus(`已取消批量贴边（已处理 ${adjusted} 条）`, 'warn');
-            return;
-        }
-
-        if (!adjusted) {
-            updateBatchDurModalState();
-            const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
-            const unchangedHint = unchanged ? `，${unchanged} 条已贴近语音` : '';
-            setStatus(`已分析 ${total} 条，均未调整时间轴${unchangedHint}${skipHint}`, 'err');
-            resyncPlaybackAfterCueTimingChange();
-            return;
-        }
-
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeBatchDurModal();
-        const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
-        const unchangedHint = unchanged ? `，${unchanged} 条无需调整` : '';
-        setStatus(`已按音频贴边 ${adjusted} 条字幕${unchangedHint}${skipHint}`, 'ok');
-        resyncPlaybackAfterCueTimingChange();
-    }
-
-    function getSelectedSmartSplitCondition() {
-        return document.querySelector('input[name="editorSmartSplitCond"]:checked')?.value || 'cps_above';
-    }
-
-    function readSmartSplitOptions() {
-        return {
-            condition: getSelectedSmartSplitCondition(),
-            smartMaxChars: Number(els.smartSplitMaxChars?.value) || 20,
-            smartLineChars: Number(els.smartSplitLineChars?.value) || 18,
-            cpsAbove: Number(els.smartSplitCpsAbove?.value) || 18,
-            lineLen: Number(els.smartSplitLineLen?.value) || 18,
-            durLongSec: Number(els.smartSplitDurLong?.value) || 6,
-            charsLong: Number(els.smartSplitCharsLong?.value) || 24,
-            useCps: els.smartSplitUseCps?.checked !== false,
-            fixOverlap: els.smartSplitFixOverlap?.checked !== false,
-        };
-    }
-
-    function matchesSmartSplitCondition(cue, idx, opts) {
-        const text = String(cue.text || '').trim();
-        if (!text) return false;
-        switch (opts.condition) {
-            case 'selected':
-                return idx === state.selectedIndex;
-            case 'cps_above': {
-                const cps = getCueCpsValue(cue);
-                return cps != null && cps > opts.cpsAbove;
-            }
-            case 'line_long':
-                return lineCharCount(text) > opts.lineLen;
-            case 'dur_long':
-                return cueDurationMs(cue) > Math.round(opts.durLongSec * 1000);
-            case 'chars_long':
-                return textCharCount(text) > opts.charsLong;
-            default:
-                return false;
-        }
-    }
-
-    function collectSmartSplitMatches(opts) {
-        syncDetailToCue();
-        const indices = [];
-        state.cues.forEach((cue, idx) => {
-            if (matchesSmartSplitCondition(cue, idx, opts)) indices.push(idx);
-        });
-        return indices;
-    }
-
-    function previewBatchSmartSplit(opts) {
-        const indices = collectSmartSplitMatches(opts);
-        if (!indices.length) {
-            return { matched: 0, splitCount: 0, added: 0, summary: '没有符合条件的字幕' };
-        }
-
-        let splitCount = 0;
-        let added = 0;
-        const splitOpts = {
-            smartMaxChars: opts.smartMaxChars,
-            smartLineChars: opts.smartLineChars,
-            useCps: opts.useCps,
-        };
-        for (const idx of indices) {
-            const result = computeSplitParts('smart', state.cues[idx], splitOpts);
-            if (result.cues && result.cues.length >= 2) {
-                splitCount += 1;
-                added += result.cues.length - 1;
-            }
-        }
-
-        if (!splitCount) {
-            return { matched: indices.length, splitCount: 0, added: 0, summary: `${indices.length} 条符合筛选，但均无需再分割` };
-        }
-
-        const afterTotal = state.cues.length + added;
-        return {
-            matched: indices.length,
-            splitCount,
-            added,
-            summary: `将分割 ${splitCount} 条（共匹配 ${indices.length} 条）→ ${state.cues.length} 条变为 ${afterTotal} 条`,
-        };
-    }
-
-    function updateSmartSplitModalState() {
-        const cond = getSelectedSmartSplitCondition();
-        if (els.smartSplitCpsAbove) els.smartSplitCpsAbove.disabled = cond !== 'cps_above';
-        if (els.smartSplitLineLen) els.smartSplitLineLen.disabled = cond !== 'line_long';
-        if (els.smartSplitDurLong) els.smartSplitDurLong.disabled = cond !== 'dur_long';
-        if (els.smartSplitCharsLong) els.smartSplitCharsLong.disabled = cond !== 'chars_long';
-
-        if (!els.smartSplitPreview) return;
-        syncDetailToCue();
-        if (!state.cues.length) {
-            els.smartSplitPreview.textContent = '没有字幕条目';
-            els.smartSplitPreview.classList.add('err');
-            return;
-        }
-        if (cond === 'selected' && state.selectedIndex < 0) {
-            els.smartSplitPreview.textContent = '当前没有选中的字幕条目';
-            els.smartSplitPreview.classList.add('err');
-            return;
-        }
-        const opts = readSmartSplitOptions();
-        const preview = previewBatchSmartSplit(opts);
-        els.smartSplitPreview.textContent = preview.summary;
-        els.smartSplitPreview.classList.toggle('err', preview.splitCount === 0);
-    }
-
-    function openSmartSplitModal() {
-        if (!els.smartSplitModal) return;
-        syncDetailToCue();
-        showEditorModal(els.smartSplitModal, els.smartSplitConfirm);
-        updateSmartSplitModalState();
-    }
-
-    function closeSmartSplitModal() {
-        hideEditorModal(els.smartSplitModal);
-    }
-
-    function confirmBatchSmartSplit() {
-        const opts = readSmartSplitOptions();
-        if (opts.condition === 'selected' && state.selectedIndex < 0) {
-            updateSmartSplitModalState();
-            return;
-        }
-        const indices = collectSmartSplitMatches(opts).sort((a, b) => b - a);
-        if (!indices.length) {
-            updateSmartSplitModalState();
-            return;
-        }
-
-        const splitOpts = {
-            smartMaxChars: opts.smartMaxChars,
-            smartLineChars: opts.smartLineChars,
-            useCps: opts.useCps,
-            fixOverlap: false,
-        };
-
-        recordUndoBeforeChange();
-        let splitCount = 0;
-        let added = 0;
-        for (const idx of indices) {
-            const result = computeSplitParts('smart', state.cues[idx], splitOpts);
-            if (!result.cues || result.cues.length < 2) continue;
-            state.cues.splice(idx, 1, ...result.cues);
-            splitCount += 1;
-            added += result.cues.length - 1;
-        }
-
-        if (!splitCount) {
-            updateSmartSplitModalState();
-            return;
-        }
-
-        if (opts.fixOverlap) {
-            maybeFixOverlapAfterSplit();
-        }
-
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeSmartSplitModal();
-        setStatus(`已智能分割 ${splitCount} 条字幕，新增 ${added} 条`, 'ok');
-    }
-
-    function getSelectedSilenceSplitCondition() {
-        return document.querySelector('input[name="editorSilenceSplitCond"]:checked')?.value || 'all';
-    }
-
-    function readSilenceSplitBatchOptions() {
-        return {
-            condition: getSelectedSilenceSplitCondition(),
-            silenceDb: Number(els.silenceSplitDb?.value) || -35,
-            silenceDur: Number(els.silenceSplitDur?.value) || 0.25,
-            durLongSec: Number(els.silenceSplitDurLong?.value) || 3,
-            cpsAbove: Number(els.silenceSplitCpsAbove?.value) || 18,
-            charsLong: Number(els.silenceSplitCharsLong?.value) || 16,
-            fixOverlap: els.silenceSplitFixOverlap?.checked !== false,
-        };
-    }
-
-    function matchesSilenceSplitCondition(cue, idx, opts) {
-        if (!canSilenceSplitCue(cue)) return false;
-        const text = String(cue.text || '').trim();
-        switch (opts.condition) {
-            case 'all':
-                return true;
-            case 'selected':
-                return idx === state.selectedIndex;
-            case 'dur_long':
-                return cueDurationMs(cue) > Math.round(opts.durLongSec * 1000);
-            case 'cps_above': {
-                const cps = getCueCpsValue(cue);
-                return cps != null && cps > opts.cpsAbove;
-            }
-            case 'chars_long':
-                return textCharCount(text) > opts.charsLong;
-            default:
-                return false;
-        }
-    }
-
-    function collectSilenceSplitMatches(opts) {
-        syncDetailToCue();
-        const indices = [];
-        state.cues.forEach((cue, idx) => {
-            if (matchesSilenceSplitCondition(cue, idx, opts)) indices.push(idx);
-        });
-        return indices;
-    }
-
-    function previewBatchSilenceSplit(opts) {
-        if (!state.videoPath) {
-            return { matched: 0, summary: '请先关联视频', isErr: true };
-        }
-        if (!electron?.ffmpegDetectSilence) {
-            return { matched: 0, summary: '当前环境不支持静音分析', isErr: true };
-        }
-        const indices = collectSilenceSplitMatches(opts);
-        if (!indices.length) {
-            return { matched: 0, summary: '没有可分析的字幕（需有文本、含空格/换行且时长足够）', isErr: true };
-        }
-        if (opts.condition === 'selected' && state.selectedIndex < 0) {
-            return { matched: 0, summary: '当前没有选中的字幕条目', isErr: true };
-        }
-        return {
-            matched: indices.length,
-            summary: `将对 ${indices.length} 条字幕逐条分析静音（需 FFmpeg，执行时将显示进度）`,
-            isErr: false,
-        };
-    }
-
-    function applySilenceSplitPrefsToBatchModal() {
-        const prefs = loadSplitPrefs();
-        if (els.silenceSplitDb) els.silenceSplitDb.value = String(prefs.silenceDb);
-        if (els.silenceSplitDur) els.silenceSplitDur.value = String(prefs.silenceDur);
-        if (els.silenceSplitFixOverlap) els.silenceSplitFixOverlap.checked = prefs.fixOverlap;
-    }
-
-    function updateSilenceSplitModalState() {
-        const cond = getSelectedSilenceSplitCondition();
-        if (els.silenceSplitDurLong) els.silenceSplitDurLong.disabled = cond !== 'dur_long';
-        if (els.silenceSplitCpsAbove) els.silenceSplitCpsAbove.disabled = cond !== 'cps_above';
-        if (els.silenceSplitCharsLong) els.silenceSplitCharsLong.disabled = cond !== 'chars_long';
-
-        if (!els.silenceSplitPreview) return;
-        syncDetailToCue();
-        if (!state.cues.length) {
-            els.silenceSplitPreview.textContent = '没有字幕条目';
-            els.silenceSplitPreview.classList.add('err');
-            return;
-        }
-        const opts = readSilenceSplitBatchOptions();
-        const preview = previewBatchSilenceSplit(opts);
-        els.silenceSplitPreview.textContent = preview.summary;
-        els.silenceSplitPreview.classList.toggle('err', !!preview.isErr);
-    }
-
-    function openSilenceSplitModal(defaultCondition) {
-        if (!els.silenceSplitModal) return;
-        syncDetailToCue();
-        applySilenceSplitPrefsToBatchModal();
-        if (defaultCondition) {
-            const radio = document.querySelector(`input[name="editorSilenceSplitCond"][value="${defaultCondition}"]`);
-            if (radio) radio.checked = true;
-        }
-        showEditorModal(els.silenceSplitModal, els.silenceSplitConfirm);
-        updateSilenceSplitModalState();
-    }
-
-    function closeSilenceSplitModal() {
-        hideEditorModal(els.silenceSplitModal);
-    }
-
-    async function confirmBatchSilenceSplit() {
-        if (state.silenceSplitBusy) return;
-        const opts = readSilenceSplitBatchOptions();
-        const preview = previewBatchSilenceSplit(opts);
-        if (preview.isErr || !preview.matched) {
-            updateSilenceSplitModalState();
-            return;
-        }
-
-        const indices = collectSilenceSplitMatches(opts).sort((a, b) => b - a);
-        const splitOpts = {
-            silenceDb: opts.silenceDb,
-            silenceDur: opts.silenceDur,
-            fixOverlap: false,
-        };
-
-        recordUndoBeforeChange();
-        let splitCount = 0;
-        let added = 0;
-        let skipped = 0;
-        const total = indices.length;
-
-        showSilenceSplitProgress({
-            title: '正在批量分析静音',
-            detail: `准备处理 ${total} 条字幕…`,
-            current: 0,
-            total,
-            statusMessage: `正在批量分析静音（0/${total}）…`,
-        });
-        await flushSilenceProgressPaint();
-
-        let aborted = false;
-        try {
-            for (let i = 0; i < indices.length; i += 1) {
-                if (isJobAbortRequested()) {
-                    aborted = true;
-                    break;
-                }
-                const idx = indices[i];
-                updateSilenceSplitProgress({
-                    current: i,
-                    total,
-                    detail: `正在分析第 ${i + 1}/${total} 条（原序号 ${idx + 1}）…`,
-                    statusMessage: `正在分析静音 ${i + 1}/${total}…`,
-                });
-                await flushSilenceProgressPaint();
-
-                const result = await computeSilenceSplitParts(state.cues[idx], splitOpts);
-                if (isJobAbortRequested() || result?.cancelled) {
-                    aborted = true;
-                    break;
-                }
-                if (!result.cues || result.cues.length < 2) {
-                    skipped += 1;
-                    updateSilenceSplitProgress({
-                        current: i + 1,
-                        total,
-                        detail: `第 ${i + 1}/${total} 条未检测到可分割静音，已跳过`,
-                    });
-                    continue;
-                }
-                state.cues.splice(idx, 1, ...result.cues);
-                splitCount += 1;
-                added += result.cues.length - 1;
-                updateSilenceSplitProgress({
-                    current: i + 1,
-                    total,
-                    detail: `第 ${i + 1}/${total} 条已分割为 ${result.cues.length} 条`,
-                    statusMessage: `正在分析静音 ${i + 1}/${total}…`,
-                });
-            }
-        } finally {
-            hideSilenceSplitProgress();
-        }
-
-        if (aborted) {
-            if (splitCount) {
-                setDirty(true);
-                renderCueList();
-                if (state.selectedIndex >= 0) renderDetailPane();
-            }
-            closeSilenceSplitModal();
-            setStatus(`已取消批量静音分割（已分割 ${splitCount} 条）`, 'warn');
-            return;
-        }
-
-        if (!splitCount) {
-            updateSilenceSplitModalState();
-            setStatus(`已分析 ${indices.length} 条，均未检测到可分割的静音`, 'err');
-            return;
-        }
-
-        if (opts.fixOverlap) {
-            showSilenceSplitProgress({
-                title: '正在整理时间轴',
-                detail: '分割完成，正在修复重叠…',
-                indeterminate: true,
-                statusMessage: '正在修复分割后的时间重叠…',
-            });
-            await flushSilenceProgressPaint();
-            maybeFixOverlapAfterSplit();
-            hideSilenceSplitProgress();
-        }
-
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeSilenceSplitModal();
-        const skipHint = skipped ? `，跳过 ${skipped} 条` : '';
-        setStatus(`已按静音分割 ${splitCount} 条字幕，新增 ${added} 条${skipHint}`, 'ok');
-    }
-
-    function readSmartAdjustOptions() {
-        return {
-            fixOverlap: !!els.smartFixOverlap?.checked,
-            fixCps: !!els.smartFixCps?.checked,
-            enforceMinDur: !!els.smartEnforceMin?.checked,
-            enforceMaxDur: !!els.smartEnforceMax?.checked,
-            maxCps: Number(els.smartMaxCps?.value) || 18,
-            minSec: Number(els.smartMinSec?.value) || 0.5,
-            maxSec: Number(els.smartMaxSec?.value) || 10,
-            gapMs: Math.max(0, Math.round(Number(els.smartGapMs?.value) || 1)),
-        };
-    }
-
-    function updateSmartAdjustModalState() {
-        const opts = readSmartAdjustOptions();
-        if (els.smartMaxCps) els.smartMaxCps.disabled = !opts.fixCps;
-        if (els.smartMinSec) els.smartMinSec.disabled = !opts.enforceMinDur;
-        if (els.smartMaxSec) els.smartMaxSec.disabled = !opts.enforceMaxDur;
-
-        if (!els.smartPreview) return;
-        syncDetailToCue();
-        if (!state.cues.length) {
-            els.smartPreview.textContent = '没有字幕条目';
-            els.smartPreview.classList.add('err');
-            return;
-        }
-        if (!opts.fixOverlap && !opts.fixCps && !opts.enforceMinDur && !opts.enforceMaxDur) {
-            els.smartPreview.textContent = '请至少选择一项调整规则';
-            els.smartPreview.classList.add('err');
-            return;
-        }
-        const preview = previewSmartAdjust(opts);
-        els.smartPreview.textContent = preview.summary;
-        els.smartPreview.classList.toggle('err', preview.affected === 0);
-    }
-
-    function previewSmartAdjust(options) {
-        const working = cloneCues(state.cues);
-        const result = applySmartAdjustToCues(working, options);
-        if (!result.affected) {
-            return { affected: 0, summary: '当前字幕无需调整' };
-        }
-        const parts = [];
-        if (result.overlapFixed) parts.push(`重叠 ${result.overlapFixed} 处`);
-        if (result.cpsFixed) parts.push(`CPS ${result.cpsFixed} 条`);
-        if (result.minDurFixed) parts.push(`过短 ${result.minDurFixed} 条`);
-        if (result.maxDurFixed) parts.push(`过长 ${result.maxDurFixed} 条`);
-        return {
-            affected: result.affected,
-            summary: `预计影响 ${result.affected} 条：${parts.join(' · ') || '将更新时长'}`,
-        };
-    }
-
-    function applySmartAdjustToCues(cues, options) {
-        return qcCore.applySmartAdjustToCues(cues, options);
-    }
-
-    function getDefaultQcScanOptions() {
-        const prefs = loadSplitPrefs();
-        return {
-            maxCps: Number(els.qcMaxCps?.value) || Number(els.smartMaxCps?.value) || 18,
-            minSec: Number(els.qcMinSec?.value) || 0.5,
-            maxSec: Number(els.qcMaxSec?.value) || 10,
-            gapMs: Math.max(0, Math.round(Number(els.qcGapMs?.value) || 1)),
-            smartMaxChars: prefs.smartMaxChars,
-            smartLineChars: prefs.smartLineChars,
-            targetCps: getTargetCps(),
-        };
-    }
-
-    function refreshQcBadge() {
-        if (!els.qcBtn || !els.qcBadge) return;
-        if (!state.cues.length) {
-            els.qcBtn.classList.remove('has-issues');
-            els.qcBadge.textContent = '0';
-            return;
-        }
-        const { summary } = qcCore.scanCueIssues(state.cues, getDefaultQcScanOptions());
-        const n = summary.total || 0;
-        els.qcBadge.textContent = String(n > 99 ? '99+' : n);
-        els.qcBtn.classList.toggle('has-issues', n > 0);
-        els.qcBtn.title = n > 0
-            ? `${qcCore.summarizeScan(summary)}（点击打开质量检查）`
-            : '扫描时间轴 / 通顺度问题并一键修复';
-    }
-
-    function getEffectiveGlossary() {
-        return glossaryCore.mergeGlossaries(state.globalGlossary, state.projectGlossary);
-    }
-
-    function syncGlossaryFromScope() {
-        const source = state.glossaryScope === 'project'
-            ? state.projectGlossary
-            : state.globalGlossary;
-        state.glossary = glossaryCore.normalizeGlossary(source);
-    }
-
-    function syncScopeFromGlossary() {
-        const normalized = glossaryCore.normalizeGlossary(state.glossary);
-        state.glossary = normalized;
-        if (state.glossaryScope === 'project') {
-            state.projectGlossary = normalized;
-        } else {
-            state.globalGlossary = normalized;
-        }
-    }
-
-    function readGlossaryScopeFromUi() {
-        if (els.glossaryScopeProject?.checked) return 'project';
-        return 'global';
-    }
-
-    function renderGlossaryScopeUi() {
-        if (els.glossaryScopeGlobal) {
-            els.glossaryScopeGlobal.checked = state.glossaryScope !== 'project';
-        }
-        if (els.glossaryScopeProject) {
-            els.glossaryScopeProject.checked = state.glossaryScope === 'project';
-            const disabled = !state.path;
-            els.glossaryScopeProject.disabled = disabled;
-            if (els.glossaryScopeProjectLabel) {
-                els.glossaryScopeProjectLabel.classList.toggle('opacity-50', disabled);
-                els.glossaryScopeProjectLabel.title = disabled
-                    ? '请先保存字幕文件后再编辑项目术语表'
-                    : '仅作用于当前字幕文件旁的项目术语表';
-            }
-        }
-    }
-
-    async function loadGlossaries(subtitlePath = state.path) {
-        if (!electron?.transubGetGlossary) {
-            state.globalGlossary = { version: 1, entries: [] };
-            state.projectGlossary = { version: 1, entries: [] };
-            syncGlossaryFromScope();
-            refreshGlossaryBadge();
-            return;
-        }
-        try {
-            const globalRes = await electron.transubGetGlossary({ scope: 'global' });
-            state.globalGlossary = globalRes?.ok && globalRes.glossary
-                ? glossaryCore.normalizeGlossary(globalRes.glossary)
-                : { version: 1, entries: [] };
-        } catch (_) {
-            state.globalGlossary = { version: 1, entries: [] };
-        }
-        state.projectGlossary = { version: 1, entries: [] };
-        if (subtitlePath) {
-            try {
-                const projectRes = await electron.transubGetGlossary({
-                    scope: 'project',
-                    subtitlePath,
-                });
-                if (projectRes?.ok && projectRes.glossary) {
-                    state.projectGlossary = glossaryCore.normalizeGlossary(projectRes.glossary);
-                }
-            } catch (_) {
-                state.projectGlossary = { version: 1, entries: [] };
-            }
-        }
-        syncGlossaryFromScope();
-        refreshGlossaryBadge();
-    }
-
-    async function loadGlossary() {
-        await loadGlossaries(state.path);
-    }
-
-    async function persistGlossary() {
-        syncScopeFromGlossary();
-        if (!electron?.transubSaveGlossary) return false;
-        try {
-            const payload = {
-                glossary: state.glossary,
-                scope: state.glossaryScope,
-            };
-            if (state.glossaryScope === 'project') {
-                if (!state.path) {
-                    setStatus('请先保存字幕文件后再写入项目术语表', 'err');
-                    return false;
-                }
-                payload.subtitlePath = state.path;
-            }
-            const res = await electron.transubSaveGlossary(payload);
-            if (res?.ok && res.glossary) {
-                const normalized = glossaryCore.normalizeGlossary(res.glossary);
-                state.glossary = normalized;
-                if (state.glossaryScope === 'project') {
-                    state.projectGlossary = normalized;
-                } else {
-                    state.globalGlossary = normalized;
-                }
-            }
-            return !!res?.ok;
-        } catch (_) {
-            return false;
-        }
-    }
-
-    async function switchGlossaryScope(nextScope) {
-        const scope = nextScope === 'project' ? 'project' : 'global';
-        if (scope === state.glossaryScope) {
-            renderGlossaryScopeUi();
-            return;
-        }
-        if (scope === 'project' && !state.path) {
-            setStatus('请先保存字幕文件后再编辑项目术语表', 'err');
-            renderGlossaryScopeUi();
-            return;
-        }
-        syncScopeFromGlossary();
-        state.glossaryScope = scope;
-        syncGlossaryFromScope();
-        clearGlossaryForm();
-        renderGlossaryScopeUi();
-        updateGlossaryModalState();
-    }
-
-    function refreshGlossaryBadge() {
-        if (!els.glossaryBtn || !els.glossaryBadge) return;
-        const effective = getEffectiveGlossary();
-        if (!state.cues.length || !effective?.entries?.length) {
-            els.glossaryBtn.classList.remove('has-issues');
-            els.glossaryBadge.textContent = '0';
-            state.glossaryIssues = [];
-            return;
-        }
-        const scan = glossaryCore.scanGlossaryIssues(state.cues, effective);
-        state.glossaryIssues = scan.issues;
-        const n = scan.summary.total || 0;
-        els.glossaryBadge.textContent = String(n > 99 ? '99+' : n);
-        els.glossaryBtn.classList.toggle('has-issues', n > 0);
-        els.glossaryBtn.title = n > 0
-            ? `${glossaryCore.summarizeGlossaryScan(scan.summary)}（点击打开术语表）`
-            : '术语表与专名一致性';
-    }
-
-    function clearGlossaryForm() {
-        state.glossaryEditingId = '';
-        if (els.glossaryCanonical) els.glossaryCanonical.value = '';
-        if (els.glossaryAliases) els.glossaryAliases.value = '';
-        if (els.glossaryCaseSensitive) els.glossaryCaseSensitive.checked = false;
-        if (els.glossaryEnabled) els.glossaryEnabled.checked = true;
-        renderGlossaryEntryList();
-    }
-
-    function fillGlossaryForm(entry) {
-        if (!entry) {
-            clearGlossaryForm();
-            return;
-        }
-        state.glossaryEditingId = entry.id;
-        if (els.glossaryCanonical) els.glossaryCanonical.value = entry.canonical || '';
-        if (els.glossaryAliases) els.glossaryAliases.value = (entry.aliases || []).join(', ');
-        if (els.glossaryCaseSensitive) els.glossaryCaseSensitive.checked = !!entry.caseSensitive;
-        if (els.glossaryEnabled) els.glossaryEnabled.checked = entry.enabled !== false;
-        renderGlossaryEntryList();
-    }
-
-    function renderGlossaryEntryList() {
-        if (!els.glossaryEntryList) return;
-        const entries = state.glossary?.entries || [];
-        if (!entries.length) {
-            els.glossaryEntryList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:rgb(156 163 175);">暂无术语，请新建或导入</div>';
-            return;
-        }
-        els.glossaryEntryList.innerHTML = entries.map((entry) => {
-            const active = entry.id === state.glossaryEditingId ? ' active' : '';
-            const aliases = (entry.aliases || []).join(' · ') || '（无别名）';
-            const off = entry.enabled === false ? '（已停用）' : '';
-            return `<button type="button" class="glossary-entry-item${active}" data-glossary-id="${esc(entry.id)}" role="listitem">`
-                + `<span class="g-can">${esc(entry.canonical)}${esc(off)}</span>`
-                + `<span class="g-alias">${esc(aliases)}</span>`
-                + `</button>`;
-        }).join('');
-    }
-
-    function renderGlossaryIssueList(issues) {
-        if (!els.glossaryIssueList) return;
-        if (!issues?.length) {
-            els.glossaryIssueList.innerHTML = '<div class="glossary-issue-item" style="cursor:default;color:rgb(156 163 175);">暂无一致性问题</div>';
-            return;
-        }
-        els.glossaryIssueList.innerHTML = issues.slice(0, 40).map((issue) => {
-            const idxHint = issue.cueIndices?.length
-                ? ` · 字幕 #${issue.cueIndices.slice(0, 5).map((i) => i + 1).join(',')}${issue.cueIndices.length > 5 ? '…' : ''}`
-                : '';
-            const jumpIdx = issue.cueIndices?.[0];
-            return `<button type="button" class="glossary-issue-item" data-glossary-issue-idx="${jumpIdx != null ? jumpIdx : ''}" data-glossary-entry-id="${esc(issue.entryId)}" role="listitem" title="点击定位并选中术语">`
-                + `${esc(issue.message)}${esc(idxHint)}`
-                + `</button>`;
-        }).join('');
-    }
-
-    function selectGlossaryEntry(entryId) {
-        const entry = (state.glossary?.entries || []).find((e) => e.id === String(entryId));
-        fillGlossaryForm(entry || null);
-    }
-
-    function beginNewGlossaryEntry() {
-        clearGlossaryForm();
-        els.glossaryCanonical?.focus();
-    }
-
-    function renderBreakWordsChips() {
-        if (!els.breakWordsChips) return;
-        const words = loadBreakWords();
-        if (!words.length) {
-            els.breakWordsChips.innerHTML = '<span style="font-size:0.72rem;color:var(--ed-faint)">暂无断句词。添加后，智能断句与静音分割会优先在这些词之后切开。</span>';
-        } else {
-            els.breakWordsChips.innerHTML = words.map((word) => (
-                `<span class="break-words-chip" data-break-word="${esc(word)}">`
-                + `<span>${esc(word)}</span>`
-                + `<button type="button" data-break-word-remove="${esc(word)}" title="移除「${esc(word)}」" aria-label="移除 ${esc(word)}">&times;</button>`
-                + '</span>'
-            )).join('');
-        }
-        if (els.breakWordsStatus) {
-            els.breakWordsStatus.textContent = words.length
-                ? `当前 ${words.length} 个断句词，已用于智能断句与静音分割`
-                : '未设置断句词时，智能断句/静音分割只按标点与空白对齐';
-            els.breakWordsStatus.classList.remove('err');
-        }
-    }
-
-    function openBreakWordsModal() {
-        if (!els.breakWordsModal) return;
-        loadBreakWords();
-        renderBreakWordsChips();
-        showEditorModal(els.breakWordsModal, els.breakWordsInput);
-    }
-
-    function closeBreakWordsModal() {
-        hideEditorModal(els.breakWordsModal);
-    }
-
-    function addBreakWordsFromInput() {
-        const incoming = parseBreakWordsInput(els.breakWordsInput?.value);
-        if (!incoming.length) {
-            setStatus('请输入要添加的断句词', 'err');
-            els.breakWordsInput?.focus();
-            return;
-        }
-        const merged = splitCore.normalizeBreakWords([...(loadBreakWords()), ...incoming]);
-        saveBreakWords(merged);
-        if (els.breakWordsInput) els.breakWordsInput.value = '';
-        renderBreakWordsChips();
-        setStatus(`已更新断句词（共 ${merged.length} 个）`, 'ok');
-        els.breakWordsInput?.focus();
-    }
-
-    function removeBreakWord(word) {
-        const next = loadBreakWords().filter((w) => w.toLowerCase() !== String(word || '').toLowerCase());
-        saveBreakWords(next);
-        renderBreakWordsChips();
-        setStatus(`已移除断句词「${word}」`, 'ok');
-    }
-
-    function resetBreakWordsToDefault() {
-        const defaults = getDefaultBreakWords();
-        saveBreakWords(defaults);
-        renderBreakWordsChips();
-        setStatus(`已恢复默认断句词（${defaults.length} 个）`, 'ok');
-    }
-
-    function clearBreakWords() {
-        saveBreakWords([]);
-        renderBreakWordsChips();
-        setStatus('已清空断句词', 'ok');
-    }
-
-    async function importGlossaryFile() {
-        if (!electron?.transubImportGlossary) {
-            setStatus('当前环境不支持导入术语表', 'err');
-            return;
-        }
-        const res = await electron.transubImportGlossary();
-        restoreEditorFocus();
-        if (!res || res.canceled) return;
-        if (!res.ok) {
-            setStatus(res.error || '导入术语表失败', 'err');
-            return;
-        }
-        state.glossary = glossaryCore.normalizeGlossary(res.glossary);
-        if (state.glossaryScope === 'project') {
-            state.projectGlossary = state.glossary;
-        } else {
-            state.globalGlossary = state.glossary;
-        }
-        clearGlossaryForm();
-        updateGlossaryModalState();
-        setStatus(`已导入 ${state.glossary.entries.length} 条术语`, 'ok');
-    }
-
-    async function exportGlossaryFile() {
-        if (!electron?.transubExportGlossary) {
-            setStatus('当前环境不支持导出术语表', 'err');
-            return;
-        }
-        await persistGlossary();
-        const res = await electron.transubExportGlossary();
-        restoreEditorFocus();
-        if (!res || res.canceled) return;
-        if (!res.ok) {
-            setStatus(res.error || '导出术语表失败', 'err');
-            return;
-        }
-        setStatus(`术语表已导出：${basename(res.path || '')}`, 'ok');
-    }
-
-    function updateGlossaryModalState() {
-        syncDetailToCue();
-        renderGlossaryEntryList();
-        renderGlossaryScopeUi();
-        const effective = getEffectiveGlossary();
-        const scan = glossaryCore.scanGlossaryIssues(state.cues, effective);
-        state.glossaryIssues = scan.issues;
-        renderGlossaryIssueList(scan.issues);
-        if (els.glossaryPreview) {
-            const scopeLabel = state.glossaryScope === 'project' ? '项目' : '全局';
-            if (!state.glossary.entries.length) {
-                els.glossaryPreview.textContent = `当前为${scopeLabel}术语表，请先添加术语条目`;
-                els.glossaryPreview.classList.add('err');
-            } else if (!state.cues.length) {
-                els.glossaryPreview.textContent = '没有字幕条目';
-                els.glossaryPreview.classList.add('err');
-            } else {
-                const mergedHint = state.glossaryScope === 'project' && state.globalGlossary?.entries?.length
-                    ? `（扫描/统一使用合并后的 ${effective.entries.length} 条有效术语）`
-                    : '';
-                els.glossaryPreview.textContent = `${glossaryCore.summarizeGlossaryScan(scan.summary)}${mergedHint}`;
-                els.glossaryPreview.classList.toggle('err', scan.summary.total > 0);
-            }
-        }
-        refreshGlossaryBadge();
-    }
-
-    async function openGlossaryModal() {
-        if (!els.glossaryModal) return;
-        await loadGlossaries(state.path);
-        renderGlossaryScopeUi();
-        clearGlossaryForm();
-        showEditorModal(els.glossaryModal, els.glossaryCanonical);
-        updateGlossaryModalState();
-    }
-
-    function closeGlossaryModal() {
-        hideEditorModal(els.glossaryModal);
-    }
-
-    async function saveGlossaryEntryFromForm() {
-        const canonical = String(els.glossaryCanonical?.value || '').trim();
-        if (!canonical) {
-            setStatus('标准写法不能为空', 'err');
-            return;
-        }
-        const result = glossaryCore.upsertEntry(state.glossary, {
-            id: state.glossaryEditingId || undefined,
-            canonical,
-            aliases: els.glossaryAliases?.value || '',
-            caseSensitive: !!els.glossaryCaseSensitive?.checked,
-            enabled: els.glossaryEnabled?.checked !== false,
-        });
-        if (!result.ok) {
-            setStatus(result.error || '保存条目失败', 'err');
-            return;
-        }
-        state.glossary = result.glossary;
-        const ok = await persistGlossary();
-        if (!ok) {
-            setStatus('术语表保存失败', 'err');
-            return;
-        }
-        fillGlossaryForm(result.entry);
-        updateGlossaryModalState();
-        setStatus(`已保存术语「${canonical}」`, 'ok');
-    }
-
-    async function deleteGlossaryEntryFromForm() {
-        if (!state.glossaryEditingId) {
-            clearGlossaryForm();
-            return;
-        }
-        if (!(await editorConfirm('确定删除当前术语条目？'))) return;
-        state.glossary = glossaryCore.removeEntry(state.glossary, state.glossaryEditingId);
-        await persistGlossary();
-        clearGlossaryForm();
-        updateGlossaryModalState();
-        setStatus('已删除术语条目', 'ok');
-    }
-
-    async function applyGlossaryUnification(entryIds = null) {
-        syncDetailToCue();
-        if (!state.cues.length) {
-            updateGlossaryModalState();
-            return;
-        }
-        const result = glossaryCore.applyGlossaryToCues(state.cues, getEffectiveGlossary(), {
-            entryIds: entryIds || undefined,
-        });
-        if (!result.stats.replaceCount) {
-            updateGlossaryModalState();
-            setStatus(result.summary, 'ok');
-            return;
-        }
-        recordUndoBeforeChange();
-        state.cues.splice(0, state.cues.length, ...result.cues);
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        updateGlossaryModalState();
-        setStatus(result.summary, 'ok');
-    }
-
-    function refreshTextPresetsBadge() {
-        if (!els.textPresetsBadge) return;
-        const n = state.textPresetsDoc?.groups?.length || 0;
-        els.textPresetsBadge.textContent = String(n);
-        els.textPresetsBtn?.classList.toggle('has-presets', n > 0);
-    }
-
-    async function loadTextPresets() {
-        if (!electron?.transubGetTextPresets) {
-            state.textPresetsDoc = textPresetsCore.emptyPresetsDoc();
-            refreshTextPresetsBadge();
-            return;
-        }
-        try {
-            const res = await electron.transubGetTextPresets();
-            if (res?.ok && res.presetsDoc) {
-                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
-            } else if (!state.textPresetsDoc?.groups?.length) {
-                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc({
-                    groups: textPresetsCore.defaultStarterGroups(),
-                });
-            }
-        } catch (_) {
-            if (!state.textPresetsDoc?.groups?.length) {
-                state.textPresetsDoc = textPresetsCore.emptyPresetsDoc();
-            }
-        }
-        refreshTextPresetsBadge();
-        renderTextPresetQuickMenu();
+    function Cs() {
+        t.cueBoundaryTimer && (clearTimeout(t.cueBoundaryTimer), t.cueBoundaryTimer = null), t.playheadTimer && (clearInterval(t.playheadTimer), t.playheadTimer = null), t.timelineFollowRaf && (cancelAnimationFrame(t.timelineFollowRaf), t.timelineFollowRaf = 0)
     }
 
-    async function persistTextPresets() {
-        if (!electron?.transubSaveTextPresets) return false;
-        try {
-            const res = await electron.transubSaveTextPresets({
-                presetsDoc: state.textPresetsDoc,
-            });
-            if (res?.ok && res.presetsDoc) {
-                state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
-            }
-            refreshTextPresetsBadge();
-            renderTextPresetQuickMenu();
-            return !!res?.ok;
-        } catch (_) {
-            return false;
+    function ot() {
+        if (t.cueBoundaryTimer && (clearTimeout(t.cueBoundaryTimer), t.cueBoundaryTimer = null), !e.video || e.video.paused || e.video.ended) return;
+        const n = (e.video.currentTime || 0) * 1e3,
+            r = Math.max(.05, e.video.playbackRate || 1);
+        let i = qa(n, t.playbackIndex);
+        if (i == null) {
+            const a = (e.video.duration || 0) * 1e3;
+            if (a > n + 50) i = a;
+            else return
         }
+        const s = Math.min(250, Math.max(20, (i - n) / r));
+        t.cueBoundaryTimer = setTimeout(() => {
+            t.cueBoundaryTimer = null, !(!e.video || e.video.paused) && (Ce(!1), ot())
+        }, s)
     }
 
-    function defaultDraftItems() {
-        return [
-            { id: textPresetsCore.makeItemId(), label: '片名', text: '《影片名称》', startSec: 0, endSec: 0.5 },
-            { id: textPresetsCore.makeItemId(), label: '演员', text: '主演\n演员甲', startSec: 0.6, endSec: 1.5 },
-        ];
+    function Wa() {
+        t.playheadTimer && clearInterval(t.playheadTimer), t.playheadTimer = setInterval(() => {
+            e.video && !e.video.paused && Yo(!1)
+        }, 1e3)
     }
 
-    function textPresetItemDurationSec(it) {
-        const start = Number(it?.startSec) || 0;
-        const end = Number(it?.endSec);
-        if (Number.isFinite(end) && end > start) {
-            return Math.round((end - start) * 1000) / 1000;
-        }
-        return 0.5;
-    }
-
-    function renderTextPresetItemRows(items) {
-        if (!els.textPresetItemsHost) return;
-        const list = Array.isArray(items) && items.length ? items : defaultDraftItems();
-        els.textPresetItemsHost.innerHTML = list.map((it) => {
-            const startSec = Number(it.startSec) || 0;
-            const durationSec = textPresetItemDurationSec(it);
-            return `
-            <div class="text-preset-item-row" data-item-id="${esc(it.id || '')}">
-                <input type="text" data-tp-field="label" spellcheck="false" placeholder="标签" value="${esc(it.label || '')}" title="条目标签，如：片名">
-                <input type="number" data-tp-field="startSec" min="0" max="36000" step="0.1" value="${esc(String(startSec))}" title="起始秒（相对时间基准）">
-                <input type="number" data-tp-field="durationSec" min="0.1" max="36000" step="0.1" value="${esc(String(durationSec))}" title="时长（秒）">
-                <textarea data-tp-field="text" spellcheck="false" placeholder="字幕文本" title="字幕文本">${esc(it.text || '')}</textarea>
-                <button type="button" class="tp-remove" data-tp-remove title="删除条目">删</button>
-            </div>`;
-        }).join('');
-    }
-
-    function readTextPresetItemsFromForm() {
-        if (!els.textPresetItemsHost) return [];
-        return Array.from(els.textPresetItemsHost.querySelectorAll('.text-preset-item-row')).map((row) => {
-            const startSec = Number(row.querySelector('[data-tp-field="startSec"]')?.value) || 0;
-            const durationSec = Number(row.querySelector('[data-tp-field="durationSec"]')?.value) || 0.5;
-            return {
-                id: row.getAttribute('data-item-id') || textPresetsCore.makeItemId(),
-                label: row.querySelector('[data-tp-field="label"]')?.value || '',
-                text: row.querySelector('[data-tp-field="text"]')?.value || '',
-                startSec,
-                endSec: startSec + Math.max(0.1, durationSec),
-            };
-        });
-    }
-
-    function clearTextPresetForm() {
-        state.textPresetEditingId = '';
-        if (els.textPresetName) els.textPresetName.value = '';
-        if (els.textPresetAnchor) els.textPresetAnchor.value = 'playhead';
-        renderTextPresetItemRows(defaultDraftItems());
-        if (els.textPresetsStatus) {
-            els.textPresetsStatus.textContent = '新建组：设置组名与条目时间轴后保存';
-        }
-        renderTextPresetsList();
-    }
-
-    function fillTextPresetForm(group) {
-        if (!group) {
-            clearTextPresetForm();
-            return;
-        }
-        state.textPresetEditingId = group.id;
-        if (els.textPresetName) els.textPresetName.value = group.name || '';
-        if (els.textPresetAnchor) els.textPresetAnchor.value = group.anchor || 'playhead';
-        renderTextPresetItemRows(group.items || []);
-        if (els.textPresetsStatus) {
-            const anchor = textPresetsCore.ANCHOR_LABELS[group.anchor] || group.anchor;
-            els.textPresetsStatus.textContent = `编辑「${group.name}」· ${group.items.length} 条 · ${anchor}`;
-        }
-        renderTextPresetsList();
-    }
-
-    function renderTextPresetsList() {
-        if (!els.textPresetsList) return;
-        const list = textPresetsCore.filterGroups(state.textPresetsDoc, {
-            query: state.textPresetsQuery,
-        });
-        if (!list.length) {
-            els.textPresetsList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:var(--ed-muted)">暂无预设组。可点「示例」写入「常规预设1」，或新建组。</div>';
-            return;
-        }
-        els.textPresetsList.innerHTML = list.map((g) => {
-            const active = g.id === state.textPresetEditingId ? ' active' : '';
-            const summary = textPresetsCore.summarizeGroup(g);
-            return `<button type="button" class="glossary-entry-item${active}" data-text-preset-id="${esc(g.id)}" role="listitem">
-                <span class="g-can">${esc(g.name)} <span style="font-weight:400;color:var(--ed-muted)">· ${g.items.length} 条</span></span>
-                <span class="g-alias">${esc(summary)}</span>
-            </button>`;
-        }).join('');
-    }
-
-    function renderTextPresetQuickMenu() {
-        if (!els.textPresetQuickSelect) return;
-        const list = state.textPresetsDoc?.groups || [];
-        const opts = ['<option value="">插入预设组…</option>'];
-        list.forEach((g) => {
-            opts.push(`<option value="${esc(g.id)}">${esc(g.name)}（${g.items.length}）</option>`);
-        });
-        opts.push('<option value="__manage__">管理预设组…</option>');
-        els.textPresetQuickSelect.innerHTML = opts.join('');
-        els.textPresetQuickSelect.value = '';
-    }
-
-    async function openTextPresetsModal() {
-        if (!els.textPresetsModal) return;
-        await loadTextPresets();
-        if (els.textPresetsSearch) els.textPresetsSearch.value = state.textPresetsQuery || '';
-        clearTextPresetForm();
-        showEditorModal(els.textPresetsModal, els.textPresetName);
-    }
-
-    function closeTextPresetsModal() {
-        hideEditorModal(els.textPresetsModal);
-    }
-
-    async function saveTextPresetFromForm() {
-        const result = textPresetsCore.upsertGroup(state.textPresetsDoc, {
-            id: state.textPresetEditingId || undefined,
-            name: els.textPresetName?.value || '',
-            anchor: els.textPresetAnchor?.value || 'playhead',
-            items: readTextPresetItemsFromForm(),
-        });
-        if (!result.ok) {
-            setStatus(result.error || '保存预设组失败', 'err');
-            if (els.textPresetsStatus) els.textPresetsStatus.textContent = result.error || '保存失败';
-            return;
-        }
-        state.textPresetsDoc = result.doc;
-        const ok = await persistTextPresets();
-        if (!ok) {
-            setStatus('预设组保存失败', 'err');
-            return;
-        }
-        fillTextPresetForm(result.group);
-        setStatus(`已保存预设组「${result.group.name}」`, 'ok');
-    }
-
-    async function deleteTextPresetFromForm() {
-        if (!state.textPresetEditingId) {
-            clearTextPresetForm();
-            return;
-        }
-        if (!(await editorConfirm('确定删除当前预设组？'))) return;
-        state.textPresetsDoc = textPresetsCore.removeGroup(state.textPresetsDoc, state.textPresetEditingId);
-        await persistTextPresets();
-        clearTextPresetForm();
-        setStatus('已删除预设组', 'ok');
-    }
-
-    async function seedTextPresetExamples() {
-        const starters = textPresetsCore.defaultStarterGroups();
-        let doc = textPresetsCore.normalizePresetsDoc(state.textPresetsDoc);
-        const names = new Set(doc.groups.map((g) => g.name));
-        let added = 0;
-        for (const g of starters) {
-            if (names.has(g.name)) continue;
-            const r = textPresetsCore.upsertGroup(doc, { ...g, id: undefined });
-            if (r.ok) {
-                doc = r.doc;
-                added += 1;
-            }
-        }
-        state.textPresetsDoc = doc;
-        await persistTextPresets();
-        renderTextPresetsList();
-        setStatus(added ? `已添加 ${added} 个示例预设组` : '示例预设组已存在', 'ok');
-        if (els.textPresetsStatus) {
-            els.textPresetsStatus.textContent = added ? `已添加 ${added} 个示例组` : '示例已存在，未重复添加';
-        }
-    }
-
-    function insertPresetGroup(group) {
-        if (!group?.items?.length) {
-            setStatus('预设组为空', 'err');
-            return false;
-        }
-        syncDetailToCue();
-        const baseMs = group.anchor === 'absolute' ? 0 : getPlaybackTimeMs();
-        const built = textPresetsCore.buildCuesFromGroup(group, { baseMs });
-        if (!built.length) {
-            setStatus('预设组没有可插入的条目', 'err');
-            return false;
-        }
-        recordUndoBeforeChange();
-        const created = built.map((c) => ({
-            index: state.cues.length + 1,
-            startMs: c.startMs,
-            endMs: c.endMs,
-            text: c.text,
-        }));
-        state.cues.push(...created);
-        state.cues.sort((a, b) => a.startMs - b.startMs);
-        const focus = state.cues.indexOf(created[0]);
-        setDirty(true);
-        state.selectedIndex = focus >= 0 ? focus : 0;
-        renderCueList();
-        selectCue(state.selectedIndex, { scroll: true, seek: true });
-        els.detailText?.focus();
-        const where = group.anchor === 'absolute' ? '视频起点' : '播放位置';
-        setStatus(`已插入预设组「${group.name}」共 ${created.length} 条（相对${where}）`, 'ok');
-        return true;
-    }
-
-    function insertTextPresetById(id) {
-        const group = textPresetsCore.findGroup(state.textPresetsDoc, id);
-        if (!group) {
-            setStatus('未找到该预设组', 'err');
-            return;
-        }
-        insertPresetGroup(group);
-    }
-
-    async function exportTextPresets() {
-        const res = await electron?.transubExportTextPresets?.();
-        if (res?.canceled) return;
-        if (!res?.ok) {
-            setStatus(res?.error || '导出失败', 'err');
-            return;
-        }
-        setStatus(`已导出预设：${basename(res.path)}`, 'ok');
-    }
-
-    async function importTextPresets() {
-        const res = await electron?.transubImportTextPresets?.();
-        if (res?.canceled) return;
-        if (!res?.ok) {
-            setStatus(res?.error || '导入失败', 'err');
-            return;
-        }
-        if (res.presetsDoc) {
-            state.textPresetsDoc = textPresetsCore.normalizePresetsDoc(res.presetsDoc);
-        } else {
-            await loadTextPresets();
-        }
-        clearTextPresetForm();
-        refreshTextPresetsBadge();
-        renderTextPresetQuickMenu();
-        setStatus(`已导入 ${state.textPresetsDoc.groups.length} 个预设组`, 'ok');
-    }
-
-    function readQcOptions() {
-        const prefs = loadSplitPrefs();
-        return {
-            fixOverlap: !!els.qcFixOverlap?.checked,
-            fixCpsBySplit: !!els.qcFixCpsSplit?.checked,
-            fixCpsByExtend: !!els.qcFixCpsExtend?.checked,
-            enforceMinDur: !!els.qcEnforceMin?.checked,
-            enforceMaxDur: !!els.qcEnforceMax?.checked,
-            compressRepetition: !!els.qcCompressRep?.checked,
-            maxCps: Number(els.qcMaxCps?.value) || 18,
-            minSec: Number(els.qcMinSec?.value) || 0.5,
-            maxSec: Number(els.qcMaxSec?.value) || 10,
-            gapMs: Math.max(0, Math.round(Number(els.qcGapMs?.value) || 1)),
-            smartMaxChars: prefs.smartMaxChars,
-            smartLineChars: prefs.smartLineChars,
-            targetCps: getTargetCps(),
-            useCpsTime: prefs.useCps !== false,
-        };
-    }
-
-    const QC_TYPE_CHIPS = [
-        { type: 'overlap', countKey: 'overlap', label: '重叠' },
-        { type: 'high_cps', countKey: 'highCps', label: '读速' },
-        { type: 'splittable', countKey: 'splittable', label: '可分割' },
-        { type: 'connected', countKey: 'connected', label: '连续文本' },
-        { type: 'repetition', countKey: 'repetition', label: '叠词' },
-        { type: 'fluency', countKey: 'fluency', label: '通顺度', warn: true },
-        { type: 'short', countKey: 'short', label: '过短' },
-        { type: 'long', countKey: 'long', label: '过长' },
-        { type: 'invalid', countKey: 'invalid', label: '无效' },
-    ];
-
-    function filterQcIssuesByType(issues, typeFilter) {
-        if (!typeFilter) return issues || [];
-        return (issues || []).filter((issue) => (issue.types || []).includes(typeFilter));
-    }
-
-    function setQcTypeFilter(type) {
-        const next = type || null;
-        if (next == null) {
-            state.qcTypeFilter = null;
-        } else {
-            state.qcTypeFilter = state.qcTypeFilter === next ? null : next;
-        }
-        updateQcModalState();
-    }
-
-    function renderQcIssueList(issues, { emptyHint } = {}) {
-        if (!els.qcIssueList) return;
-        if (!issues?.length) {
-            els.qcIssueList.innerHTML = emptyHint
-                ? `<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">${esc(emptyHint)}</div>`
-                : '';
-            return;
-        }
-        const maxShow = 40;
-        const rows = issues.slice(0, maxShow).map((issue) => {
-            const msg = esc(issue.messages.join(' · '));
-            const text = esc(issue.textPreview || '—');
-            return `<button type="button" class="qc-issue-item" data-qc-idx="${issue.index}" role="listitem">`
-                + `<span class="qc-issue-idx">#${issue.index + 1}</span>`
-                + `<span class="qc-issue-msg">${msg}</span>`
-                + `<span class="qc-issue-text">${text}</span>`
-                + `</button>`;
-        });
-        if (issues.length > maxShow) {
-            rows.push(`<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">还有 ${issues.length - maxShow} 条未列出</div>`);
-        }
-        els.qcIssueList.innerHTML = rows.join('');
-    }
-
-    function qcChipClass(base, active) {
-        return `qc-chip${base ? ` ${base}` : ''}${active ? ' active' : ''}`;
-    }
-
-    function renderQcSummaryBar(summary) {
-        if (!els.qcSummaryBar) return;
-        if (!summary?.total) {
-            state.qcTypeFilter = null;
-            els.qcSummaryBar.innerHTML = '<span class="qc-chip ok">未发现问题</span>';
-            return;
-        }
-        const activeType = state.qcTypeFilter;
-        if (activeType && !QC_TYPE_CHIPS.some((c) => c.type === activeType && summary[c.countKey] > 0)) {
-            state.qcTypeFilter = null;
-        }
-        const selected = state.qcTypeFilter;
-        const chips = [
-            `<button type="button" class="${qcChipClass('warn', selected == null)}" data-qc-type="" title="显示全部问题">问题 ${summary.total}</button>`,
-        ];
-        for (const chip of QC_TYPE_CHIPS) {
-            const count = summary[chip.countKey] || 0;
-            if (!count) continue;
-            const active = selected === chip.type;
-            chips.push(
-                `<button type="button" class="${qcChipClass(chip.warn ? 'warn' : '', active)}" data-qc-type="${chip.type}" title="只看${chip.label}">${chip.label} ${count}</button>`,
-            );
-        }
-        els.qcSummaryBar.innerHTML = chips.join('');
-    }
-
-    function resolveQcFixOptions({ filtered = false } = {}) {
-        const base = readQcOptions();
-        if (!filtered) return { ok: true, opts: base, label: null };
-        const type = state.qcTypeFilter;
-        if (!type) {
-            return { ok: false, opts: null, label: null, reason: '请先点击上方标签筛选问题类型' };
-        }
-        const chip = QC_TYPE_CHIPS.find((c) => c.type === type);
-        const label = chip?.label || type;
-        const opts = qcCore.buildQcOptionsForIssueType(base, type);
-        if (!opts) {
-            return {
-                ok: false,
-                opts: null,
-                label,
-                reason: `「${label}」无法自动修复，请手工修改或重转写`,
-            };
-        }
-        return { ok: true, opts: { ...opts, issueTypeFilter: type }, label };
-    }
-
-    function updateQcModalState() {
-        const opts = readQcOptions();
-        const needCps = opts.fixCpsBySplit || opts.fixCpsByExtend;
-        if (els.qcMaxCps) els.qcMaxCps.disabled = !needCps;
-        if (els.qcMinSec) els.qcMinSec.disabled = !opts.enforceMinDur;
-        if (els.qcMaxSec) els.qcMaxSec.disabled = !opts.enforceMaxDur;
-
-        syncDetailToCue();
-        if (!els.qcPreview) return;
-        if (!state.cues.length) {
-            state.qcTypeFilter = null;
-            renderQcSummaryBar({ total: 0 });
-            renderQcIssueList([]);
-            els.qcPreview.textContent = '没有字幕条目';
-            els.qcPreview.classList.add('err');
-            if (els.qcFixFiltered) els.qcFixFiltered.disabled = true;
-            return;
-        }
-
-        const scan = qcCore.scanCueIssues(state.cues, opts);
-        renderQcSummaryBar(scan.summary);
-        const filtered = filterQcIssuesByType(scan.issues, state.qcTypeFilter);
-        const chip = QC_TYPE_CHIPS.find((c) => c.type === state.qcTypeFilter);
-        renderQcIssueList(filtered, {
-            emptyHint: state.qcTypeFilter && scan.issues.length
-                ? `当前类型「${chip?.label || state.qcTypeFilter}」无匹配问题`
-                : '',
-        });
-
-        const filteredResolve = resolveQcFixOptions({ filtered: true });
-        if (els.qcFixFiltered) {
-            els.qcFixFiltered.disabled = !filteredResolve.ok;
-            els.qcFixFiltered.title = filteredResolve.ok
-                ? `仅修复「${filteredResolve.label}」相关问题`
-                : (filteredResolve.reason || '请先筛选可自动修复的问题类型');
-        }
-
-        if (state.qcTypeFilter) {
-            if (!filteredResolve.ok) {
-                els.qcPreview.textContent = filteredResolve.reason;
-                els.qcPreview.classList.add('err');
-            } else {
-                const plan = qcCore.buildQcFixPlan(state.cues, filteredResolve.opts);
-                els.qcPreview.textContent = `筛选修复（${filteredResolve.label}）：${plan.summary}`;
-                els.qcPreview.classList.toggle('err', !plan.ok);
-            }
-            return;
-        }
-
-        const plan = qcCore.buildQcFixPlan(state.cues, opts);
-        els.qcPreview.textContent = plan.summary;
-        els.qcPreview.classList.toggle('err', !plan.ok);
-    }
-
-    function openQcModal() {
-        if (!els.qcModal) return;
-        state.qcTypeFilter = null;
-        syncDetailToCue();
-        if (els.qcMaxCps && els.smartMaxCps) els.qcMaxCps.value = els.smartMaxCps.value;
-        showEditorModal(els.qcModal, els.qcConfirm);
-        updateQcModalState();
-    }
-
-    function closeQcModal() {
-        hideEditorModal(els.qcModal);
-    }
-
-    function confirmQcFix({ filtered = false } = {}) {
-        const resolved = resolveQcFixOptions({ filtered });
-        if (!resolved.ok) {
-            if (els.qcPreview && resolved.reason) {
-                els.qcPreview.textContent = resolved.reason;
-                els.qcPreview.classList.add('err');
-            }
-            updateQcModalState();
-            return;
-        }
-        const opts = resolved.opts;
-        syncDetailToCue();
-        const plan = qcCore.buildQcFixPlan(state.cues, opts);
-        if (!plan.ok) {
-            updateQcModalState();
-            return;
-        }
-        recordUndoBeforeChange();
-        const result = qcCore.applyQcFixes(state.cues, opts);
-        state.cues.splice(0, state.cues.length, ...result.cues);
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeQcModal();
-        const remain = result.remaining?.total
-            ? `，仍有 ${result.remaining.total} 条待处理`
-            : '';
-        const scope = filtered && resolved.label ? `（${resolved.label}）` : '';
-        setStatus(`质量修复完成${scope}${remain}`, 'ok');
-    }
-
-    function openSmartAdjustModal() {
-        if (!els.smartAdjustModal) return;
-        syncDetailToCue();
-        showEditorModal(els.smartAdjustModal, els.smartAdjustConfirm);
-        updateSmartAdjustModalState();
-    }
-
-    function closeSmartAdjustModal() {
-        hideEditorModal(els.smartAdjustModal);
-    }
-
-    function confirmSmartAdjust() {
-        const opts = readSmartAdjustOptions();
-        if (!opts.fixOverlap && !opts.fixCps && !opts.enforceMinDur && !opts.enforceMaxDur) {
-            updateSmartAdjustModalState();
-            return;
-        }
-        syncDetailToCue();
-        const preview = previewSmartAdjust(opts);
-        if (!preview.affected) {
-            updateSmartAdjustModalState();
-            return;
-        }
-        recordUndoBeforeChange();
-        const stats = applySmartAdjustToCues(state.cues, opts);
-        setDirty(true);
-        renderCueList();
-        closeSmartAdjustModal();
-        setStatus(`智能调整完成，已更新 ${stats.affected} 条字幕`, 'ok');
-    }
-
-    function readRemoveNoiseOptions() {
-        return {
-            removeEmpty: !!els.noiseRemoveEmpty?.checked,
-            removeFragments: !!els.noiseRemoveFragments?.checked,
-            removeSoundEffects: !!els.noiseRemoveSoundEffects?.checked,
-            removeSymbolOnly: !!els.noiseRemoveSymbolOnly?.checked,
-            removeDuplicates: !!els.noiseRemoveDuplicates?.checked,
-            removeHallucinations: !!els.noiseRemoveHallucinations?.checked,
-        };
-    }
-
-    function updateRemoveNoiseModalState() {
-        if (!els.removeNoisePreview) return;
-        const opts = readRemoveNoiseOptions();
-        if (!opts.removeEmpty && !opts.removeFragments && !opts.removeSoundEffects
-            && !opts.removeSymbolOnly && !opts.removeDuplicates && !opts.removeHallucinations) {
-            els.removeNoisePreview.textContent = '请至少勾选一项清理规则';
-            els.removeNoisePreview.classList.add('err');
-            if (els.removeNoiseConfirm) els.removeNoiseConfirm.disabled = true;
-            return;
-        }
-        const { stats } = fluencyCore.removeNoiseFromCues(state.cues, opts);
-        els.removeNoisePreview.classList.remove('err');
-        els.removeNoisePreview.textContent = fluencyCore.summarizeNoiseRemoval(stats);
-        if (els.removeNoiseConfirm) els.removeNoiseConfirm.disabled = stats.removed <= 0;
-    }
-
-    function openRemoveNoiseModal() {
-        if (!els.removeNoiseModal) return;
-        syncDetailToCue();
-        showEditorModal(els.removeNoiseModal, els.removeNoiseConfirm);
-        updateRemoveNoiseModalState();
-    }
-
-    function closeRemoveNoiseModal() {
-        hideEditorModal(els.removeNoiseModal);
-    }
-
-    function readChineseConvertOptions() {
-        const direction = els.chineseDirT2S?.checked ? 't2s' : 's2t';
-        const scope = els.chineseScopeSelected?.checked ? 'selected' : 'all';
-        let indexes = null;
-        if (scope === 'selected') {
-            indexes = getSelectedCueIndexes();
-            if (!indexes.length && state.selectedIndex >= 0) indexes = [state.selectedIndex];
-        }
-        const protectTerms = els.chineseProtectGlossary?.checked !== false
-            ? glossaryCore.collectProtectTerms(getEffectiveGlossary())
-            : [];
-        return { direction, scope, indexes, protectTerms };
-    }
-
-    function previewChineseConvert() {
-        const opts = readChineseConvertOptions();
-        if (opts.scope === 'selected' && (!opts.indexes || !opts.indexes.length)) {
-            return {
-                cues: state.cues.slice(),
-                stats: {
-                    direction: opts.direction,
-                    cueTotal: state.cues.length,
-                    cueTouched: 0,
-                    charChanged: 0,
-                    cueSkipped: 0,
-                },
-                summary: '请先选中一条或多条字幕',
-            };
-        }
-        return chineseCore.convertCues(state.cues, {
-            direction: opts.direction,
-            indexes: opts.indexes,
-            protectTerms: opts.protectTerms,
-        });
-    }
-
-    function updateChineseConvertModalState() {
-        if (!els.chineseConvertPreview) return;
-        if (!state.cues.length) {
-            els.chineseConvertPreview.textContent = '没有字幕条目';
-            els.chineseConvertPreview.classList.add('err');
-            if (els.chineseConvertConfirm) els.chineseConvertConfirm.disabled = true;
-            return;
-        }
-        const preview = previewChineseConvert();
-        const noSelection = els.chineseScopeSelected?.checked
-            && !getSelectedCueIndexes().length
-            && state.selectedIndex < 0;
-        const noop = !preview.stats.cueTouched;
-        els.chineseConvertPreview.textContent = preview.summary;
-        els.chineseConvertPreview.classList.toggle('err', noSelection || noop);
-        if (els.chineseConvertConfirm) els.chineseConvertConfirm.disabled = noSelection || noop;
-    }
-
-    function openChineseConvertModal() {
-        if (!els.chineseConvertModal) return;
-        syncDetailToCue();
-        showEditorModal(els.chineseConvertModal, els.chineseConvertConfirm);
-        updateChineseConvertModalState();
-    }
-
-    function closeChineseConvertModal() {
-        hideEditorModal(els.chineseConvertModal);
-    }
-
-    function confirmChineseConvert() {
-        syncDetailToCue();
-        const preview = previewChineseConvert();
-        if (!preview.stats.cueTouched) {
-            updateChineseConvertModalState();
-            setStatus(preview.summary || '无需转换', 'ok');
-            return;
-        }
-        recordUndoBeforeChange();
-        state.cues.splice(0, state.cues.length, ...preview.cues);
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeChineseConvertModal();
-        setStatus(preview.summary, 'ok');
-    }
-
-    function readCompressRepOptions() {
-        const scope = els.compressRepScopeSelected?.checked ? 'selected' : 'all';
-        let indexes = null;
-        if (scope === 'selected') {
-            indexes = getSelectedCueIndexes();
-            if (!indexes.length && state.selectedIndex >= 0) indexes = [state.selectedIndex];
-        }
-        return {
-            scope,
-            indexes,
-            compressSingleChar: els.compressRepSingleChar?.checked !== false,
-            addExclaim: els.compressRepExclaim?.checked !== false,
-            minRepeats: 3,
-        };
-    }
-
-    function previewCompressRep() {
-        const opts = readCompressRepOptions();
-        if (opts.scope === 'selected' && (!opts.indexes || !opts.indexes.length)) {
-            return {
-                cues: state.cues.slice(),
-                stats: { cueTotal: state.cues.length, cueTouched: 0, runs: 0, charSaved: 0 },
-                summary: '请先选中一条或多条字幕',
-            };
-        }
-        return fluencyCore.compressRepetitionInCues(state.cues, {
-            indexes: opts.indexes,
-            compressSingleChar: opts.compressSingleChar,
-            addExclaim: opts.addExclaim,
-            minRepeats: opts.minRepeats,
-        });
-    }
-
-    function updateCompressRepModalState() {
-        if (!els.compressRepPreview) return;
-        if (!state.cues.length) {
-            els.compressRepPreview.textContent = '没有字幕条目';
-            els.compressRepPreview.classList.add('err');
-            if (els.compressRepConfirm) els.compressRepConfirm.disabled = true;
-            return;
-        }
-        const preview = previewCompressRep();
-        const noSelection = els.compressRepScopeSelected?.checked
-            && !getSelectedCueIndexes().length
-            && state.selectedIndex < 0;
-        const noop = !preview.stats.cueTouched;
-        els.compressRepPreview.textContent = preview.summary;
-        els.compressRepPreview.classList.toggle('err', noSelection || noop);
-        if (els.compressRepConfirm) els.compressRepConfirm.disabled = noSelection || noop;
-    }
-
-    function openCompressRepModal() {
-        if (!els.compressRepModal) return;
-        syncDetailToCue();
-        showEditorModal(els.compressRepModal, els.compressRepConfirm);
-        updateCompressRepModalState();
-    }
-
-    function closeCompressRepModal() {
-        hideEditorModal(els.compressRepModal);
-    }
-
-    function confirmCompressRep() {
-        syncDetailToCue();
-        const preview = previewCompressRep();
-        if (!preview.stats.cueTouched) {
-            updateCompressRepModalState();
-            setStatus(preview.summary || '无需压缩', 'ok');
-            return;
-        }
-        recordUndoBeforeChange();
-        state.cues.splice(0, state.cues.length, ...preview.cues);
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        closeCompressRepModal();
-        setStatus(preview.summary.replace(/^将/, '已'), 'ok');
-    }
-
-    function quickCompressRepSelectedCue() {
-        syncDetailToCue();
-        let indexes = getSelectedCueIndexes();
-        if (!indexes.length && state.selectedIndex >= 0) indexes = [state.selectedIndex];
-        if (!indexes.length) {
-            setStatus('请先选择一条字幕', 'err');
-            return;
-        }
-        const preview = fluencyCore.compressRepetitionInCues(state.cues, {
-            indexes,
-            compressSingleChar: true,
-            addExclaim: true,
-            minRepeats: 3,
-        });
-        if (!preview.stats.cueTouched) {
-            setStatus('当前条目无需压缩叠词', 'ok');
-            updateDetailActionButtons();
-            return;
-        }
-        recordUndoBeforeChange();
-        state.cues.splice(0, state.cues.length, ...preview.cues);
-        setDirty(true);
-        renderCueList();
-        if (state.selectedIndex >= 0) renderDetailPane();
-        setStatus(preview.summary.replace(/^将/, '已'), 'ok');
-    }
-
-    async function confirmRemoveNoise() {
-        const opts = readRemoveNoiseOptions();
-        if (!opts.removeEmpty && !opts.removeFragments && !opts.removeSoundEffects
-            && !opts.removeSymbolOnly && !opts.removeDuplicates) {
-            updateRemoveNoiseModalState();
-            return;
-        }
-        syncDetailToCue();
-        const preview = fluencyCore.removeNoiseFromCues(state.cues, opts);
-        if (!preview.stats.removed) {
-            updateRemoveNoiseModalState();
-            setStatus('没有可删除的杂音条目', 'ok');
-            return;
-        }
-        if (!(await editorConfirm(`确定删除 ${preview.stats.removed} 条杂音字幕？此操作可撤销。`))) return;
-
-        recordUndoBeforeChange();
-        const removedSet = new Set(preview.removedIndexes || []);
-        let newSelected = -1;
-        if (state.selectedIndex >= 0 && !removedSet.has(state.selectedIndex)) {
-            let keptBefore = 0;
-            for (let i = 0; i < state.selectedIndex; i += 1) {
-                if (!removedSet.has(i)) keptBefore += 1;
-            }
-            newSelected = keptBefore;
-        } else if (preview.cues.length) {
-            newSelected = Math.min(Math.max(state.selectedIndex, 0), preview.cues.length - 1);
-        }
-
-        state.cues.splice(0, state.cues.length, ...preview.cues.map((c) => ({
-            startMs: c.startMs,
-            endMs: c.endMs,
-            text: c.text,
-        })));
-        state.selectedIndex = newSelected;
-
-        setDirty(true);
-        renderCueList();
-        closeRemoveNoiseModal();
-        setStatus(`已删除 ${preview.stats.removed} 条杂音字幕，剩余 ${preview.stats.kept} 条`, 'ok');
-    }
-
-    function updatePlayheadTimeLabel(exact) {
-        if (!els.playheadTime) return;
-        const t = els.video ? (els.video.currentTime || 0) * 1000 : 0;
-        const displayMs = exact ? Math.round(t) : Math.floor(t / 1000) * 1000;
-        const label = formatDisplayTime(displayMs, state.format);
-        if (label !== state.lastPlayheadLabel) {
-            state.lastPlayheadLabel = label;
-            els.playheadTime.textContent = label;
-        }
-        updateTimelinePlayhead(Math.round(t));
-    }
-
-    function shiftAllCues(deltaMs) {
-        syncDetailToCue();
-        recordUndoBeforeChange();
-        const selected = getSelectedCueIndexes();
-        const targets = selected.length >= 1 ? selected : state.cues.map((_, i) => i);
-        for (const idx of targets) {
-            const c = state.cues[idx];
-            if (!c) continue;
-            c.startMs = Math.max(0, c.startMs + deltaMs);
-            if (c.endMs != null) c.endMs = Math.max(c.startMs + 100, c.endMs + deltaMs);
-        }
-        setDirty(true);
-        renderCueList();
-        setStatus(
-            selected.length >= 1
-                ? `已偏移选中 ${selected.length} 条 ${deltaMs > 0 ? '+' : ''}${deltaMs}ms`
-                : `已全体偏移 ${deltaMs > 0 ? '+' : ''}${deltaMs}ms`,
-            'ok',
-        );
-    }
-
-    /** 供主进程关闭窗口前调用 */
-    global.__transubEditorConfirmClose = async () => {
-        if (!state.dirty) return { allow: true };
-        const ok = await editorConfirm('字幕已修改但未保存，确定要关闭窗口吗？');
-        return { allow: ok };
-    };
-
-    global.__transubEditorGetDirty = () => state.dirty;
-
-    global.__transubEditorSaveBeforeClose = async () => {
-        await saveDocument();
-        return !state.dirty;
-    };
-
-
-    function isEditingDetailField() {
-        const ae = document.activeElement;
-        if (!ae) return false;
-        if (ae === els.detailText || ae === els.detailStart || ae === els.detailDuration) return true;
-        if (ae.closest?.('.editor-modal:not(.hidden)')) return true;
-        return false;
-    }
-
-    /**
-     * 自动焦点：播放时把「选中焦点」切到当前字幕并滚动列表。
-     * 关闭时不得改 selectedIndex，也不得 scrollIntoView。
-     */
-    function followPlaybackFocus(idx) {
-        if (!isAutoFocusEnabled()) return;
-        if (!Number.isFinite(idx) || idx < 0 || idx >= state.cues.length) return;
-        if (!els.video || els.video.paused || els.video.ended) return;
-        if (isEditingDetailField()) return;
-        if (idx === state.selectedIndex) {
-            const row = els.cueBody?.querySelector(`tr[data-cue-idx="${idx}"]`);
-            if (row && !isRowVisibleInList(row)) {
-                row.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-            }
-            return;
-        }
-        selectCue(idx, { scroll: true, fromPlayback: true });
-    }
-
-    function refreshQcIssueIndexSet() {
-        try {
-            const { issues } = qcCore.scanCueIssues(state.cues, getDefaultQcScanOptions());
-            state.qcIssueIndexSet = new Set((issues || []).map((i) => i.index));
-        } catch (_) {
-            state.qcIssueIndexSet = new Set();
-        }
-    }
-
-    function getVisibleCueIndexes() {
-        const n = state.cues.length;
-        const all = Array.from({ length: n }, (_, i) => i);
-        if (state.listFilter === 'low') {
-            return all.filter((i) => !!state.cueMeta[i]?.low);
-        }
-        if (state.listFilter === 'qc') {
-            return all.filter((i) => state.qcIssueIndexSet.has(i));
-        }
-        if (state.listFilter === 'find') {
-            if (!state.find.active || !state.find.matches.length) return [];
-            return [...new Set(state.find.matches.map((m) => m.cueIdx))].sort((a, b) => a - b);
-        }
-        return all;
-    }
-
-    function setListFilter(filter) {
-        state.listFilter = filter || 'all';
-        document.querySelectorAll('[data-list-filter]').forEach((btn) => {
-            btn.classList.toggle('active', btn.getAttribute('data-list-filter') === state.listFilter);
-        });
-        renderCueList();
-    }
-
-    function jumpToNextIssue() {
-        refreshCueMeta();
-        refreshQcIssueIndexSet();
-        const issues = [];
-        for (let i = 0; i < state.cues.length; i += 1) {
-            if (state.cueMeta[i]?.low || state.qcIssueIndexSet.has(i)) issues.push(i);
-        }
-        if (!issues.length) {
-            setStatus('没有更多问题条目', 'ok');
-            return;
-        }
-        const cur = state.selectedIndex;
-        const next = issues.find((i) => i > cur) ?? issues[0];
-        selectCue(next, { scroll: true, seek: true });
-        setStatus(`问题条目 ${issues.indexOf(next) + 1}/${issues.length}`, 'warn');
-    }
-
-    function updateNeedsVideoUi() {
-        const hasVideo = !!state.videoPath;
-        document.querySelectorAll('.needs-video').forEach((btn) => {
-            btn.classList.toggle('is-no-video', !hasVideo);
-            if (!hasVideo) {
-                if (!btn.dataset.titleFull) btn.dataset.titleFull = btn.title || '';
-                btn.title = `${btn.dataset.titleFull || btn.title || ''}（需先关联视频）`;
-            } else if (btn.dataset.titleFull) {
-                btn.title = btn.dataset.titleFull;
-            }
-        });
-        [els.playPauseBtn, els.seekBackBtn, els.seekFwdBtn, els.rateSelect, els.volumeSlider].forEach((el) => {
-            if (!el) return;
-            el.disabled = !hasVideo;
-        });
-        updateRetranscribeTransportBtn();
-    }
-
-    async function openEditorSettings() {
-        try {
-            const res = await electron?.transubOpenSettings?.({ tab: 'editor' });
-            if (res?.ok === false) {
-                setStatus(res?.error || '无法打开设置', 'err');
-            }
-        } catch (err) {
-            setStatus(err?.message || '无法打开设置', 'err');
-        }
-    }
-
-    async function openSubtitleGenerator() {
-        try {
-            const res = await electron?.transubShowMainWindow?.();
-            if (res?.ok === false) {
-                setStatus(res?.error || '无法打开字幕生成器', 'err');
-            }
-        } catch (err) {
-            setStatus(err?.message || '无法打开字幕生成器', 'err');
-        }
-    }
-
-    function closeToolsMenu() {
-        if (!els.toolsMenu) return;
-        els.toolsMenu.classList.add('hidden');
-        if (els.toolsMenuBtn) els.toolsMenuBtn.setAttribute('aria-expanded', 'false');
-    }
-
-    function toggleToolsMenu() {
-        if (!els.toolsMenu) return;
-        const open = els.toolsMenu.classList.toggle('hidden') === false;
-        // classList.toggle returns false if class was removed... actually returns boolean whether class is now present
-        const isHidden = els.toolsMenu.classList.contains('hidden');
-        if (els.toolsMenuBtn) els.toolsMenuBtn.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
-    }
-
-    function bindPanelSplitter() {
-        const splitter = els.splitter;
-        const panel = els.cuesPanel;
-        if (!splitter || !panel || !els.main) return;
-        let dragging = false;
-        splitter.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            dragging = true;
-            splitter.classList.add('is-dragging');
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-        });
-        window.addEventListener('mousemove', (e) => {
-            if (!dragging) return;
-            const rect = els.main.getBoundingClientRect();
-            if (!rect.width) return;
-            const pct = ((e.clientX - rect.left) / rect.width) * 100;
-            applyPanelWidth(pct);
-        });
-        window.addEventListener('mouseup', () => {
-            if (!dragging) return;
-            dragging = false;
-            splitter.classList.remove('is-dragging');
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        });
-    }
-
-    function updatePlayPauseButton() {
-        if (!els.playPauseBtn || !els.video) return;
-        const playing = !els.video.paused && !els.video.ended;
-        els.playPauseBtn.innerHTML = playing ? '<i class="fa fa-pause"></i>' : '<i class="fa fa-play"></i>';
-        els.playPauseBtn.title = playing ? '暂停 (Space)' : '播放 (Space)';
-    }
-
-    function seekVideoBy(deltaSec) {
-        if (!els.video || !state.videoPath) return;
-        const dur = Number.isFinite(els.video.duration) ? els.video.duration : Infinity;
-        els.video.currentTime = Math.max(0, Math.min(dur, (els.video.currentTime || 0) + deltaSec));
-        syncPlaybackFromVideo(true);
-    }
-
-    function getTimelineMinViewMs() {
-        return Math.max(500, Number(state.timeline.minViewMs) || 2000);
-    }
-
-    function getTimelineViewSpan() {
-        return Math.max(1, state.timeline.viewEndMs - state.timeline.viewStartMs);
-    }
-
-    function isTimelineZoomed() {
-        const dur = Math.max(1, state.timeline.durationMs);
-        return getTimelineViewSpan() < dur - 1;
-    }
-
-    function getTimelineMaxZoom(durMs) {
-        const dur = Math.max(1, durMs || state.timeline.durationMs || 1);
-        const minView = Math.min(getTimelineMinViewMs(), dur);
-        return Math.max(1, dur / minView);
-    }
-
-    function clampTimelineZoom(zoom, durMs) {
-        const z = Number(zoom);
-        const fallback = Number(state.timeline.zoom) || 5;
-        const maxZoom = getTimelineMaxZoom(durMs);
-        if (!Number.isFinite(z) || z < 1) return Math.min(fallback, maxZoom);
-        return Math.max(1, Math.min(maxZoom, z));
-    }
-
-    function syncTimelineZoomFromView() {
-        const dur = Math.max(1, state.timeline.durationMs);
-        const span = getTimelineViewSpan();
-        state.timeline.zoom = clampTimelineZoom(dur / span, dur);
-        state.timeline.fitted = span >= dur - 1;
-    }
-
-    function clampTimelineView() {
-        const dur = Math.max(1, state.timeline.durationMs);
-        const minView = Math.min(getTimelineMinViewMs(), dur);
-        let span = Math.max(minView, state.timeline.viewEndMs - state.timeline.viewStartMs);
-        span = Math.min(span, dur);
-        let start = Number(state.timeline.viewStartMs) || 0;
-        if (!Number.isFinite(start)) start = 0;
-        start = Math.max(0, Math.min(start, dur - span));
-        state.timeline.viewStartMs = start;
-        state.timeline.viewEndMs = start + span;
-        syncTimelineZoomFromView();
-        updateTimelineZoomUi();
-    }
-
-    function applyTimelineZoom(zoom, anchorMs, { save = true, preserveStart = false } = {}) {
-        const dur = Math.max(1, state.timeline.durationMs);
-        const z = clampTimelineZoom(zoom, dur);
-        const span = dur / z;
-        const oldStart = state.timeline.viewStartMs;
-        const oldSpan = getTimelineViewSpan();
-        let start;
-        if (preserveStart && oldSpan > 0 && state.timeline.viewEndMs > state.timeline.viewStartMs) {
-            start = oldStart;
-        } else {
-            const anchor = Number.isFinite(anchorMs)
-                ? Math.max(0, Math.min(dur, anchorMs))
-                : (oldSpan > 0 ? oldStart + oldSpan / 2 : 0);
-            const ratio = oldSpan > 0
-                ? Math.max(0, Math.min(1, (anchor - oldStart) / oldSpan))
-                : 0.35;
-            start = anchor - ratio * span;
-        }
-        state.timeline.viewStartMs = start;
-        state.timeline.viewEndMs = start + span;
-        clampTimelineView();
-        if (save) {
-            state.timeline.zoom = saveTimelineZoomPref(state.timeline.zoom);
-        }
-    }
-
-    function fitTimelineView() {
-        applyTimelineZoom(1, 0, { save: true, preserveStart: false });
-    }
-
-    function setTimelineView(startMs, endMs) {
-        state.timeline.viewStartMs = startMs;
-        state.timeline.viewEndMs = endMs;
-        clampTimelineView();
-    }
-
-    function zoomTimelineAt(factor, anchorMs) {
-        const nextZoom = (Number(state.timeline.zoom) || 1) / Math.max(0.01, factor);
-        applyTimelineZoom(nextZoom, anchorMs, { save: true });
-    }
-
-    function panTimelineByMs(deltaMs) {
-        if (!deltaMs || !isTimelineZoomed()) return false;
-        setTimelineView(state.timeline.viewStartMs + deltaMs, state.timeline.viewEndMs + deltaMs);
-        return true;
-    }
-
-    function ensurePlayheadInView(ms, { marginRatio = 0.12, forceCenter = false } = {}) {
-        if (!isTimelineZoomed()) return false;
-        const span = getTimelineViewSpan();
-        const margin = span * Math.max(0, Math.min(0.4, marginRatio));
-        const start = state.timeline.viewStartMs;
-        const end = state.timeline.viewEndMs;
-        if (!forceCenter && ms >= start + margin && ms <= end - margin) return false;
-        const targetStart = ms - span * 0.35;
-        setTimelineView(targetStart, targetStart + span);
-        return true;
-    }
-
-    function updateTimelineZoomUi() {
-        const zoomed = isTimelineZoomed();
-        const dur = Math.max(1, state.timeline.durationMs);
-        const span = getTimelineViewSpan();
-        const zoom = Number(state.timeline.zoom) || (dur / span);
-        if (els.timelineZoomFit) {
-            els.timelineZoomFit.disabled = !zoomed;
-        }
-        if (els.timelineHScrollWrap) {
-            els.timelineHScrollWrap.classList.toggle('hidden', !zoomed);
-            els.timelineHScrollWrap.setAttribute('aria-hidden', zoomed ? 'false' : 'true');
-        }
-        if (els.timelineHScroll && zoomed) {
-            const maxScroll = Math.max(1, dur - span);
-            const pos = Math.max(0, Math.min(1, state.timeline.viewStartMs / maxScroll));
-            const sliderMax = Number(els.timelineHScroll.max) || 1000;
-            const nextVal = Math.round(pos * sliderMax);
-            if (Number(els.timelineHScroll.value) !== nextVal) {
-                els.timelineHScroll.value = String(nextVal);
-            }
-        }
-        if (els.timelineStack) {
-            const zoomLabel = zoomed
-                ? ` · 已放大 ${zoom.toFixed(1)}×`
-                : '';
-            els.timelineStack.title = `点击定位 · 拖拽字幕块调整时间 · 滚轮平移 · Ctrl+滚轮缩放${zoomLabel}`;
-        }
-    }
-
-    function updateTimelineDuration() {
-        let durMs = 0;
-        if (els.video && Number.isFinite(els.video.duration) && els.video.duration > 0) {
-            durMs = Math.round(els.video.duration * 1000);
-        } else if (state.cues.length) {
-            durMs = Math.max(...state.cues.map((c) => cueEndMs(c)), 1000);
-        }
-        const nextDur = Math.max(durMs, 1000);
-        const prevDur = state.timeline.durationMs;
-        const hadView = prevDur > 0
-            && state.timeline.viewEndMs > state.timeline.viewStartMs;
-        state.timeline.durationMs = nextDur;
-
-        const zoom = clampTimelineZoom(
-            state.timeline.zoom || loadTimelineZoomPref(),
-            nextDur,
-        );
-        state.timeline.zoom = zoom;
-
-        if (!hadView) {
-            const anchor = els.video
-                ? Math.round((els.video.currentTime || 0) * 1000)
-                : 0;
-            applyTimelineZoom(zoom, anchor, { save: false, preserveStart: false });
-        } else {
-            applyTimelineZoom(zoom, null, { save: false, preserveStart: true });
-        }
-    }
-
-    function timelineMsToX(ms) {
-        const track = els.timelineTrack;
-        if (!track) return 0;
-        const w = track.clientWidth || 1;
-        const span = getTimelineViewSpan();
-        return ((ms - state.timeline.viewStartMs) / span) * w;
-    }
-
-    function timelineXToMs(x, trackEl) {
-        const track = trackEl || els.timelineTrack;
-        if (!track) return 0;
-        const w = track.clientWidth || 1;
-        const span = getTimelineViewSpan();
-        return state.timeline.viewStartMs + (x / w) * span;
-    }
-
-    /**
-     * After a view-window pan, update cue block geometry without rebuilding
-     * innerHTML when the same cues stay on-screen (avoids stutter while playing).
-     * Returns false if a full renderTimeline is required.
-     */
-    function syncTimelineCuePositions() {
-        if (!els.timelineCues) return false;
-        const trackW = els.timelineTrack?.clientWidth || 0;
-        const nodes = els.timelineCues.querySelectorAll('.editor-timeline-cue');
-        if (!nodes.length && state.cues.length) return false;
-
-        const byIdx = new Map();
-        nodes.forEach((el) => {
-            const idx = Number(el.getAttribute('data-tl-idx'));
-            if (Number.isInteger(idx)) byIdx.set(idx, el);
-        });
-
-        for (let idx = 0; idx < state.cues.length; idx += 1) {
-            const cue = state.cues[idx];
-            const left = timelineMsToX(cue.startMs);
-            const right = timelineMsToX(cueEndMs(cue));
-            const onScreen = !(trackW > 0 && (right < -4 || left > trackW + 4));
-            const el = byIdx.get(idx);
-            if (onScreen && !el) return false;
-            if (!el) continue;
-            if (!onScreen) {
-                el.style.display = 'none';
-                continue;
-            }
-            el.style.display = '';
-            el.style.left = `${left}px`;
-            el.style.width = `${Math.max(3, right - left)}px`;
-        }
-        return true;
+    function Ha() {
+        document.body.classList.add("editor-video-playing"), Ce(!0), ot(), Wa(), Wr()
     }
 
-    function scheduleTimelineFollowRender() {
-        if (state.timelineFollowRaf) return;
-        state.timelineFollowRaf = requestAnimationFrame(() => {
-            state.timelineFollowRaf = 0;
-            if (!els.video || els.video.paused) return;
-            const t = Math.round((els.video.currentTime || 0) * 1000);
-            if (!ensurePlayheadInView(t)) {
-                updateTimelinePlayhead(t);
-                return;
-            }
-            if (!syncTimelineCuePositions()) {
-                renderTimeline({ skipDuration: true });
-                return;
-            }
-            updateTimelineZoomUi();
-            updateTimelinePlayhead(t);
-            if (state.waveformEnabled) drawTimelineWaveform();
-        });
+    function Es() {
+        document.body.classList.remove("editor-video-playing"), Cs(), Ce(!0), Wr()
     }
 
-    function updateTimelinePlayhead(ms, { follow = false } = {}) {
-        if (follow && els.video && !els.video.paused) {
-            if (isTimelineZoomed()) {
-                const span = getTimelineViewSpan();
-                const margin = span * 0.12;
-                const start = state.timeline.viewStartMs;
-                const end = state.timeline.viewEndMs;
-                if (ms < start + margin || ms > end - margin) {
-                    scheduleTimelineFollowRender();
-                    // Keep playhead painted even before the coalesced pan lands.
-                }
-            }
+    function Oa(n, r) {
+        if (n !== r && (n >= 0 && e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`)?.classList.remove("cue-row-playing"), r >= 0)) {
+            const i = e.cueBody?.querySelector(`tr[data-cue-idx="${r}"]`);
+            i && i.classList.add("cue-row-playing")
         }
-        const x = timelineMsToX(ms);
-        if (els.timelinePlayhead) els.timelinePlayhead.style.left = `${x}px`;
-        if (els.waveformPlayhead && state.waveformEnabled) {
-            els.waveformPlayhead.style.left = `${x}px`;
-        }
     }
 
-    function setWaveformLoadingUi(loading, message) {
-        const on = !!loading && state.waveformEnabled;
-        const text = message || '正在加载波形…';
-        if (els.waveformLoading) {
-            els.waveformLoading.classList.toggle('hidden', !on);
-            els.waveformLoading.setAttribute('aria-hidden', on ? 'false' : 'true');
-        }
-        if (els.waveformLoadingText) {
-            els.waveformLoadingText.textContent = text;
-        }
-        if (els.waveformToggle) {
-            els.waveformToggle.classList.toggle('is-loading', on);
-            if (on) {
-                els.waveformToggle.title = text;
-            } else if (state.waveformEnabled) {
-                els.waveformToggle.title = '波形时间轴：开启（默认）';
-            }
-        }
-        if (els.waveformRow) {
-            els.waveformRow.classList.toggle('is-loading', on);
-        }
+    function Ce(n = !0) {
+        !t.ready || !e.video || ks(e.video.currentTime || 0, n)
     }
-
-    function drawTimelineWaveform() {
-        const canvas = els.timelineWaveform;
-        if (!canvas || !state.waveformEnabled) return;
-        const peaks = state.waveform.peaks;
-        const track = els.waveformTrack || els.timelineTrack;
-        if (!track || !Array.isArray(peaks) || !peaks.length) {
-            const ctxEmpty = canvas.getContext?.('2d');
-            if (ctxEmpty) {
-                ctxEmpty.clearRect(0, 0, canvas.width || 1, canvas.height || 1);
-            }
-            return;
-        }
-        const rect = track.getBoundingClientRect();
-        const cssW = Math.max(1, Math.floor(rect.width));
-        const cssH = Math.max(1, Math.floor(rect.height));
-        const dpr = Math.min(2, window.devicePixelRatio || 1);
-        canvas.width = Math.floor(cssW * dpr);
-        canvas.height = Math.floor(cssH * dpr);
-        canvas.style.width = `${cssW}px`;
-        canvas.style.height = `${cssH}px`;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, cssW, cssH);
-        const mid = cssH / 2;
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
 
-        const peakDurMs = Math.max(
-            1,
-            (Number(state.waveform.durationSec) > 0
-                ? state.waveform.durationSec * 1000
-                : state.timeline.durationMs) || 1,
-        );
-        const i0 = Math.max(0, Math.floor((state.timeline.viewStartMs / peakDurMs) * peaks.length));
-        const i1 = Math.min(
-            peaks.length,
-            Math.ceil((state.timeline.viewEndMs / peakDurMs) * peaks.length),
-        );
-        const viewPeaks = Math.max(1, i1 - i0);
-        const step = Math.max(1, Math.floor(viewPeaks / cssW));
-        for (let x = 0; x < cssW; x += 1) {
-            const i = Math.min(peaks.length - 1, i0 + Math.floor((x / cssW) * viewPeaks));
-            let peak = peaks[i] || 0;
-            for (let j = 1; j < step && i + j < peaks.length; j += 1) {
-                peak = Math.max(peak, peaks[i + j] || 0);
-            }
-            const h = Math.max(1, peak * (cssH * 0.45));
-            ctx.fillRect(x, mid - h, 1, h * 2);
+    function nr() {
+        if (e.videoHint) {
+            if (t.videoPath) {
+                const n = ts(t.videoCodec, t.videoWidth, t.videoHeight),
+                    r = n ? ` \xB7 ${n}` : "";
+                e.videoHint.textContent = `${G(t.videoPath)}${r} \xB7 Space \u64AD\u653E \xB7 Ctrl+S \u4FDD\u5B58`
+            } else e.videoHint.textContent = "\u672A\u5173\u8054\u5A92\u4F53\uFF0C\u53EF\u70B9\u51FB\u300C\u5173\u8054\u5A92\u4F53\u300D\uFF1B\u4EA6\u53EF\u4EC5\u7F16\u8F91\u6587\u672C\u4E0E\u65F6\u95F4\u8F74";
+            e.videoEmpty && e.videoEmpty.classList.toggle("visible", !t.videoPath), qr(), Nn(), me()
         }
     }
-
-    async function ensureWaveformLoaded(opts = {}) {
-        const announce = opts.announce === true;
-        if (!state.waveformEnabled) {
-            setWaveformLoadingUi(false);
-            return;
-        }
-        if (!state.videoPath) {
-            setWaveformLoadingUi(false);
-            if (announce) setStatus('请先关联视频后再显示波形', 'warn');
-            return;
-        }
-        if (!electron?.ffmpegExtractWaveform) {
-            setWaveformLoadingUi(false);
-            if (announce) setStatus('当前环境不支持波形提取', 'err');
-            return;
-        }
-        const key = `${state.videoPath}|${state.timeline.durationMs || 0}`;
-        if (state.waveform.cacheKey === key && Array.isArray(state.waveform.peaks)) {
-            setWaveformLoadingUi(false);
-            drawTimelineWaveform();
-            if (announce) setStatus('波形已就绪', 'ok');
-            return;
-        }
-        if (state.waveform.loading) {
-            setWaveformLoadingUi(true, '正在加载波形…');
-            return;
-        }
-        state.waveform.loading = true;
-        setWaveformLoadingUi(true, '正在加载波形…');
-        setStatus('正在从视频提取波形，请稍候…', '');
-        try {
-            const res = await electron.ffmpegExtractWaveform(buildFfmpegRequest({
-                path: state.videoPath,
-                peaksPerSec: 40,
-                maxPeaks: 24000,
+    async function _a(n) {
+        if (t.videoCodec = "", t.videoWidth = 0, t.videoHeight = 0, !!n) try {
+            const r = await p?.ffmpegProbe?.(ln({
+                path: n
             }));
-            if (!state.waveformEnabled) {
-                setWaveformLoadingUi(false);
-                return;
+            r?.ok && (t.videoCodec = r.codec || "", t.videoWidth = r.width || 0, t.videoHeight = r.height || 0)
+        } catch {}
+    }
+    async function Is(n) {
+        if (!e.video) return;
+        if (e.video.pause(), e.video.removeAttribute("src"), e.video.load(), t.videoPath = n || "", t.waveform.peaks = null, t.waveform.cacheKey = "", t.waveform.videoPath = "", !n) {
+            nr(), Ge();
+            return
+        }
+        const r = await p?.transubResolveMediaUrl?.({
+            path: n
+        });
+        if (!r?.ok) {
+            d(r?.error || `\u89C6\u9891\u52A0\u8F7D\u5931\u8D25\uFF1A${G(n)}`, "err"), nr();
+            return
+        }
+        t.videoPath = r.path || n;
+        const i = [r.fileUrl, r.url].filter(Boolean);
+        let s = !1;
+        for (const a of i)
+            if (s = await new Promise(o => {
+                    const l = () => {
+                            u(), o(!0)
+                        },
+                        c = () => {
+                            u(), o(!1)
+                        },
+                        u = () => {
+                            e.video.removeEventListener("loadedmetadata", l), e.video.removeEventListener("error", c)
+                        };
+                    e.video.addEventListener("loadedmetadata", l, {
+                        once: !0
+                    }), e.video.addEventListener("error", c, {
+                        once: !0
+                    }), e.video.src = a, e.video.load()
+                }), s) break;
+        s ? (e.video.classList.remove("hidden"), await _a(t.videoPath), nr(), ye(), t.waveformEnabled && Wn(), new Set(["hevc", "h265", "av1"]).has(String(t.videoCodec || "").toLowerCase()) && d(`\u5DF2\u52A0\u8F7D\u89C6\u9891\uFF08${ts(t.videoCodec,t.videoWidth,t.videoHeight)}\uFF09\u3002 \u82E5\u64AD\u653E\u5361\u987F\uFF0C\u53EF\u5C1D\u8BD5\u7528 H.264 \u7F16\u7801\u7248\u672C\uFF0C\u6216\u5728 Microsoft Store \u5B89\u88C5\u300CHEVC \u89C6\u9891\u6269\u5C55\u300D\u3002`, "ok")) : d(`\u89C6\u9891\u65E0\u6CD5\u64AD\u653E\uFF1A${G(t.videoPath)}\uFF08\u683C\u5F0F\u6216\u7F16\u7801\u53EF\u80FD\u4E0D\u53D7\u652F\u6301\uFF09`, "err")
+    }
+    async function Ps(n, r) {
+        if (!e.sidecarSelect || !n) {
+            e.sidecarSelect?.classList.add("hidden");
+            return
+        }
+        const s = ((await p?.transubListSubtitleSidecars?.({
+            videoPath: n
+        }))?.sidecars || []).filter(a => a.editable);
+        if (s.length <= 1) {
+            e.sidecarSelect.classList.add("hidden");
+            return
+        }
+        e.sidecarSelect.classList.remove("hidden"), e.sidecarSelect.innerHTML = s.map(a => {
+            let o = `${a.basename} (${a.format.toUpperCase()})`;
+            if (O && t.videoPath) {
+                const l = is(t.videoPath),
+                    c = O.inferDualRole(sn(a.path), l).role;
+                c === "source" ? o = `${a.basename}\uFF08\u539F\u6587\uFF09` : c === "target" && (o = `${a.basename}\uFF08\u8BD1\u6587\uFF09`)
             }
-            if (res?.cancelled || isJobAbortRequested()) {
-                setWaveformLoadingUi(false);
-                setStatus('波形加载已取消', 'warn');
-                return;
-            }
-            if (!res?.ok || !Array.isArray(res.peaks)) {
-                setWaveformLoadingUi(false);
-                if (res?.error) setStatus(res.error, 'err');
-                else setStatus('波形加载失败', 'err');
-                return;
-            }
-            state.waveform.peaks = res.peaks;
-            state.waveform.durationSec = Number(res.durationSec) || 0;
-            state.waveform.videoPath = state.videoPath;
-            state.waveform.cacheKey = key;
-            drawTimelineWaveform();
-            setWaveformLoadingUi(false);
-            setStatus('波形已就绪', 'ok');
-        } catch (err) {
-            setWaveformLoadingUi(false);
-            setStatus(err?.message || '波形加载失败', 'err');
+            return `<option value="${b(a.path)}" ${a.path===r?"selected":""}>${b(o)}</option>`
+        }).join("")
+    }
+    async function mn(n, r, i = {}) {
+        const s = i.allowRoleSwap !== !1,
+            a = G(n);
+        Jt = !0, Vi({
+            title: "\u6B63\u5728\u52A0\u8F7D\u5B57\u5E55",
+            detail: a ? `\u6B63\u5728\u8BFB\u53D6 ${a}\u2026` : "\u6B63\u5728\u8BFB\u53D6\u5B57\u5E55\u2026",
+            statusMessage: a ? `\u6B63\u5728\u52A0\u8F7D ${a}\u2026` : "\u6B63\u5728\u52A0\u8F7D\u5B57\u5E55\u2026"
+        });
+        try {
+            Cs(), document.body.classList.remove("editor-video-playing"), t.textTrackRefreshTimer && (clearTimeout(t.textTrackRefreshTimer), t.textTrackRefreshTimer = null), await _r();
+            const o = await p?.transubReadSubtitle?.({
+                path: n
+            });
+            if (!o?.ok) return d(o?.error || "\u52A0\u8F7D\u5B57\u5E55\u5931\u8D25", "err"), !1;
+            const l = await Ba(o.path);
+            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), qr(), Ml(), jr({
+                detail: `\u5DF2\u8BFB\u53D6 ${t.cues.length} \u6761\uFF0C\u6B63\u5728\u51C6\u5907\u7F16\u8F91\u533A\u2026`,
+                statusMessage: `\u6B63\u5728\u6E32\u67D3 ${t.cues.length} \u6761\u5B57\u5E55\u2026`
+            }), await Ta(o.path), H?.loadMarkersFromSidecar?.(), Jo(), await Br(o.path), await _r(), C(), jr({
+                detail: t.videoPath ? `\u6B63\u5728\u5173\u8054\u89C6\u9891 ${G(t.videoPath)}\u2026` : "\u5B57\u5E55\u5DF2\u5C31\u7EEA\uFF0C\u6B63\u5728\u5B8C\u6210\u6536\u5C3E\u2026",
+                statusMessage: t.videoPath ? "\u6B63\u5728\u52A0\u8F7D\u5173\u8054\u89C6\u9891\u2026" : "\u6B63\u5728\u5B8C\u6210\u52A0\u8F7D\u2026"
+            }), await _r(), await Is(t.videoPath);
+            const c = await Sa(o.path, t.videoPath);
+            if (s && c?.swapToTarget && c.targetPath) return Jt = !1, mn(c.targetPath, t.videoPath, {
+                allowRoleSwap: !1
+            });
+            U() && C(), await H?.refreshKeptTranscript?.(), ws(), It(!0), await Ps(t.videoPath, o.path);
+            const u = z.summarizeLowConfidence(t.cueMeta).low,
+                m = l ? "\uFF08\u5DF2\u6062\u590D\u8349\u7A3F\uFF09" : "",
+                f = U() ? `\uFF0C\u5DF2\u914D\u5BF9\u5BF9\u7167\u8F68 ${G(t.pairPath)}` : "",
+                g = t.keptTranscript?.found ? "\uFF0C\u539F\u6587\u7F13\u5B58\u53EF\u7528" : "";
+            d(u ? `\u5DF2\u52A0\u8F7D ${t.cues.length} \u6761\u5B57\u5E55\uFF0C\u5176\u4E2D ${u} \u6761\u4F4E\u7F6E\u4FE1${m}${f}${g}` : `\u5DF2\u52A0\u8F7D ${t.cues.length} \u6761\u5B57\u5E55${m}${f}${g}`, "ok"), Un();
+            try {
+                await p?.transubEditorRegisterPath?.({
+                    path: o.path
+                })
+            } catch {}
+            return Ca(o.path, t.videoPath || ""), setTimeout(() => {
+                Bt?.startTour?.({
+                    force: !1
+                })
+            }, 600), !0
         } finally {
-            state.waveform.loading = false;
-            if (!state.waveformEnabled || Array.isArray(state.waveform.peaks)) {
-                setWaveformLoadingUi(false);
+            Jt = !1, Gr()
+        }
+    }
+    async function fn(n, r) {
+        if (t.ready && t.dirty && !await ie("\u5F53\u524D\u5B57\u5E55\u672A\u4FDD\u5B58\uFF0C\u6253\u5F00\u65B0\u6587\u4EF6\u5C06\u4E22\u5931\u4FEE\u6539\uFF0C\u7EE7\u7EED\uFF1F")) return;
+        Un();
+        let i = String(r || "").trim();
+        try {
+            if (n) {
+                Vi({
+                    title: "\u6B63\u5728\u6253\u5F00\u5B57\u5E55",
+                    detail: i ? "\u6B63\u5728\u786E\u8BA4\u5173\u8054\u5A92\u4F53\u2026" : "\u6B63\u5728\u67E5\u627E\u540C\u76EE\u5F55\u540C\u540D\u5A92\u4F53\u2026",
+                    statusMessage: `\u6B63\u5728\u52A0\u8F7D ${G(n)}\u2026`
+                });
+                const a = await p?.transubGuessVideoForSubtitle?.({
+                    path: n,
+                    preferPath: i
+                });
+                a?.ok && a.videoPath ? i = a.videoPath : i && a?.ok && !a.videoPath && (i = "")
             }
+            if (!await mn(n, i)) {
+                t.path || cn();
+                return
+            }
+            t.ready = !0
+        } catch (s) {
+            Gr(), t.path || cn(), d(s?.message || "\u6253\u5F00\u5B57\u5E55\u5931\u8D25", "err")
         }
     }
-
-    function onWaveformPrefChanged(enabled) {
-        if (!enabled) {
-            setWaveformLoadingUi(false);
-            drawTimelineWaveform();
-            return;
+    async function rr() {
+        const n = await p?.transubSelectSubtitle?.({
+            title: "\u9009\u62E9\u8981\u7F16\u8F91\u7684\u5B57\u5E55\u6587\u4EF6"
+        });
+        if (typeof On == "function" ? On() : ht(), !n?.ok) {
+            d(n?.error || "\u6253\u5F00\u5B57\u5E55\u5931\u8D25", "err");
+            return
         }
-        ensureWaveformLoaded({ announce: true });
-        drawTimelineWaveform();
+        n.canceled || !n.path || await fn(n.path, n.videoPath || "")
     }
-
-    function renderTimeline(opts = {}) {
-        if (!els.timelineCues) return;
-        if (!opts.skipDuration) updateTimelineDuration();
-        else updateTimelineZoomUi();
-        const selectedSet = state.selectedIndices instanceof Set
-            ? state.selectedIndices
-            : new Set(state.selectedIndex >= 0 ? [state.selectedIndex] : []);
-        const trackW = els.timelineTrack?.clientWidth || 0;
-        els.timelineCues.innerHTML = state.cues.map((cue, idx) => {
-            const start = cue.startMs;
-            const end = cueEndMs(cue);
-            const left = timelineMsToX(start);
-            const right = timelineMsToX(end);
-            if (trackW > 0 && (right < -4 || left > trackW + 4)) return '';
-            const width = Math.max(3, right - left);
-            const label = String(cue.text || '').replace(/\s+/g, ' ').trim();
-            const selected = selectedSet.has(idx) || idx === state.selectedIndex;
-            return `<div class="editor-timeline-cue${selected ? ' selected' : ''}" data-tl-idx="${idx}" style="left:${left}px;width:${width}px" title="${esc(label)}">
-                <div class="tl-handle tl-handle-l" data-tl-handle="l"></div>
-                <div class="tl-label">${esc(label.slice(0, 24))}</div>
-                <div class="tl-handle tl-handle-r" data-tl-handle="r"></div>
-            </div>`;
-        }).join('');
-        const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : 0;
-        updateTimelinePlayhead(t);
-        if (state.waveformEnabled) {
-            drawTimelineWaveform();
-            ensureWaveformLoaded();
+    async function Ls() {
+        const n = await p?.transubSelectEditorVideo?.({
+            defaultPath: t.videoPath || t.path,
+            title: "\u9009\u62E9\u5173\u8054\u5A92\u4F53"
+        });
+        if (typeof On == "function" ? On() : ht(), !n?.ok) {
+            d(n?.error || "\u9009\u62E9\u5A92\u4F53\u5931\u8D25", "err");
+            return
         }
+        n.canceled || !n.path || (await Is(n.path), await Ps(n.path, t.path), e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden") && Je(), d(`\u5DF2\u5173\u8054\u5A92\u4F53\uFF1A${G(n.path)}`, "ok"))
+    }
+    async function Pt() {
+        if (x(), !t.cues.length) {
+            d("\u65E0\u6CD5\u4FDD\u5B58\uFF1A\u5B57\u5E55\u4E3A\u7A7A", "err");
+            return
+        }
+        const n = await p?.transubWriteSubtitle?.({
+            path: t.path,
+            format: t.format,
+            cues: t.cues,
+            header: t.header
+        });
+        if (!n?.ok) {
+            d(n?.error || "\u4FDD\u5B58\u5931\u8D25", "err");
+            return
+        }
+        P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma(), d(n.backupPath ? "\u5DF2\u4FDD\u5B58\uFF08\u5E76\u5199\u5165 .bak\uFF09" : "\u5DF2\u4FDD\u5B58", "ok"), e.saveStatus && (e.saveStatus.textContent = "\u5DF2\u4FDD\u5B58", setTimeout(() => {
+            e.saveStatus && (e.saveStatus.textContent = "")
+        }, 2e3))
     }
 
-    function refreshTimelineView() {
-        renderTimeline({ skipDuration: true });
-    }
-
-    function bindTimelineInteractions() {
-        const track = els.timelineTrack;
-        if (!track || track.dataset.bound === '1') return;
-        track.dataset.bound = '1';
-
-        const startPan = (e, trackEl) => {
-            hideCueContextMenu();
-            const originX = e.clientX;
-            const originStart = state.timeline.viewStartMs;
-            const originEnd = state.timeline.viewEndMs;
-            const span = Math.max(1, originEnd - originStart);
-            const trackW = trackEl.clientWidth || 1;
-            state.timeline.panning = true;
-            e.preventDefault();
-            const onMove = (ev) => {
-                if (!state.timeline.panning) return;
-                const dx = ev.clientX - originX;
-                const dMs = -Math.round((dx / trackW) * span);
-                setTimelineView(originStart + dMs, originEnd + dMs);
-                refreshTimelineView();
-            };
-            const onUp = () => {
-                state.timeline.panning = null;
-                window.removeEventListener('mousemove', onMove);
-                window.removeEventListener('mouseup', onUp);
-                refreshTimelineView();
-            };
-            window.addEventListener('mousemove', onMove);
-            window.addEventListener('mouseup', onUp);
+    function Lt() {
+        x(), $();
+        const n = De();
+        let r = n + 2e3;
+        for (const a of t.cues)
+            if (a.startMs > n) {
+                r = Math.min(r, a.startMs - 1);
+                break
+            } r <= n && (r = n + 500);
+        const i = {
+            index: t.cues.length + 1,
+            startMs: n,
+            endMs: r,
+            text: ""
         };
+        t.cues.push(i), t.cues.sort((a, o) => a.startMs - o.startMs);
+        const s = t.cues.indexOf(i);
+        P(!0), t.selectedIndex = s >= 0 ? s : 0, C(), X(t.selectedIndex, {
+            scroll: !0,
+            seek: !0
+        }), e.detailText?.focus(), d(`\u5DF2\u5728 ${Z(n,t.format)} \u63D2\u5165\u65B0\u5B57\u5E55`, "ok")
+    }
+    async function pn() {
+        const n = J();
+        if (!n.length && t.selectedIndex < 0) return;
+        const r = n.length ? n : [t.selectedIndex],
+            i = r.length === 1 ? `\u5220\u9664\u7B2C ${r[0]+1} \u6761\u5B57\u5E55\uFF1F` : `\u5220\u9664\u9009\u4E2D\u7684 ${r.length} \u6761\u5B57\u5E55\uFF1F`;
+        if (!await ie(i)) return;
+        x(), $();
+        const s = new Set(r),
+            a = t.cues.filter((u, m) => !s.has(m)),
+            o = Math.min(...r);
+        let l = 0;
+        for (let u = 0; u < o; u += 1) s.has(u) || (l += 1);
+        t.cues.splice(0, t.cues.length, ...a);
+        const c = a.length ? Math.min(l, a.length - 1) : -1;
+        We(c >= 0 ? [c] : [], c), P(!0), C(), d(r.length === 1 ? `\u5DF2\u5220\u9664\u7B2C ${r[0]+1} \u6761` : `\u5DF2\u5220\u9664 ${r.length} \u6761\u5B57\u5E55`, "ok")
+    }
 
-        const suppressMiddleClick = (el) => {
-            el?.addEventListener('auxclick', (e) => {
-                if (e.button === 1) e.preventDefault();
-            });
-            el?.addEventListener('mousedown', (e) => {
-                if (e.button === 1) e.preventDefault();
-            });
+    function lt(n, r = {}) {
+        if (t.selectedIndex < 0) return;
+        x();
+        const i = t.selectedIndex,
+            s = t.cues[i],
+            a = Ye(n, s, r);
+        if (a.error) {
+            d(a.error, "err");
+            return
+        }
+        mr(i, a.cues, r)
+    }
+
+    function Ds() {
+        if (t.selectedIndex < 0) return;
+        x();
+        const n = t.selectedIndex,
+            r = t.cues[n],
+            i = qe(r.text);
+        if (!i) {
+            d("\u5F53\u524D\u5B57\u5E55\u65E0\u6587\u672C\uFF0C\u65E0\u6CD5\u6309\u5B57\u6570\u8C03\u8282\u65F6\u957F", "err");
+            return
+        }
+        const s = yt(),
+            a = 500,
+            o = 1e4,
+            l = 1;
+        let c = Math.ceil(i / s * 1e3);
+        c = Math.max(a, Math.min(o, c));
+        let u = r.startMs + c;
+        const m = n < t.cues.length - 1 ? t.cues[n + 1] : null;
+        m && (u = Math.min(u, m.startMs - l)), u = Math.max(r.startMs + a, u);
+        const f = I(r);
+        if (u === f) {
+            d(`\u7B2C ${n+1} \u6761\u65F6\u957F\u5DF2\u5408\u9002\uFF08CPS ${Mt(r.text,V(r))}\uFF09`, "ok");
+            return
+        }
+        $(), r.endMs = u, P(!0), Se(n), t.selectedIndex === n && R(), ye();
+        const g = Mt(r.text, V(r));
+        d(`\u5DF2\u6309\u5B57\u6570\u8C03\u8282\u7B2C ${n+1} \u6761\u65F6\u957F\u4E3A ${xt(V(r))} \u79D2` + (g ? `\uFF08CPS ${g}\uFF09` : ""), "ok")
+    }
+
+    function Dt(n) {
+        return !(!n || V(n) < 600)
+    }
+
+    function Tt(n) {
+        return !(!n || V(n) < 300)
+    }
+    async function Ts(n, r = {}) {
+        if (!t.videoPath) return {
+            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u667A\u80FD\u8C03\u8282\u65F6\u957F"
         };
-        suppressMiddleClick(track);
-        suppressMiddleClick(els.waveformTrack);
-
-        track.addEventListener('mousedown', (e) => {
-            const cueEl = e.target.closest?.('.editor-timeline-cue');
-            const handle = e.target.closest?.('[data-tl-handle]')?.getAttribute('data-tl-handle');
-            const rect = track.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-
-            if (e.button === 1 || (e.button === 0 && (e.altKey || e.shiftKey) && !cueEl)) {
-                if (!isTimelineZoomed()) return;
-                startPan(e, track);
-                return;
+        const i = Math.round(Number(n.startMs) || 0),
+            s = I(n),
+            a = 500,
+            o = Math.max(0, Math.round(Number(r.tailPadMs ?? 80))),
+            l = Math.max(40, Math.round(Number(r.minShiftMs ?? 80))),
+            c = Math.max(400, Math.min(4e3, Math.round(Number(r.padMs ?? 1500)))),
+            u = 1;
+        let m = Number(r.cueIndex);
+        (!Number.isInteger(m) || m < 0) && (m = t.cues.indexOf(n));
+        const f = m >= 0 && m < t.cues.length - 1 ? t.cues[m + 1] : null,
+            g = f ? f.startMs - u : Number.POSITIVE_INFINITY,
+            h = Math.max(s, Math.min(Number.isFinite(g) ? g : Number.POSITIVE_INFINITY, s + c));
+        if (h - i < 250) return {
+            error: "\u53EF\u5206\u6790\u65F6\u95F4\u7A97\u8FC7\u77ED\uFF08\u53EF\u80FD\u4E0E\u4E0B\u4E00\u6761\u5B57\u5E55\u8FC7\u7D27\uFF09"
+        };
+        const v = await p?.ffmpegDetectSilence?.(ln({
+            path: t.videoPath,
+            startMs: i,
+            endMs: h,
+            noiseDb: r.silenceDb ?? -35,
+            minSilenceSec: r.silenceDur ?? .25,
+            minSegmentMs: 400
+        }));
+        if (v?.cancelled || ne()) return {
+            cancelled: !0,
+            error: "\u5DF2\u53D6\u6D88"
+        };
+        if (!v?.ok) return {
+            error: v?.error || "\u9759\u97F3\u5206\u6790\u5931\u8D25"
+        };
+        let y = null;
+        if (typeof D.snapCueTimingFromSilenceIntervals == "function") {
+            const q = D.snapCueTimingFromSilenceIntervals(i, s, v.intervals, {
+                windowStartMs: i,
+                windowEndMs: h,
+                prevLimitMs: i,
+                nextLimitMs: Number.isFinite(g) ? g : h,
+                allowExtend: !0,
+                minDurMs: a,
+                headPadMs: 0,
+                tailPadMs: o,
+                minSpeechMs: 200,
+                minShiftMs: l
+            });
+            q?.region ? y = Math.round(q.region.endMs + o) : q?.changed && (y = Math.round(q.endMs))
+        }
+        if (y == null && (y = D.inferSpeechEndFromSilence(i, s, v.intervals, {
+                minDurMs: a,
+                minTrailingSilenceMs: Math.max(250, Math.round((r.silenceDur ?? .25) * 1e3)),
+                tailPadMs: o
+            })), y == null) return {
+            error: "\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u8BED\u97F3\u8FB9\u754C\uFF0C\u5F53\u524D\u65F6\u957F\u53EF\u80FD\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3\u957F\u5EA6",
+            unchanged: !0
+        };
+        y = Math.max(i + a, Math.round(y)), Number.isFinite(g) && (y = Math.min(y, g)), y = Math.max(i + a, y);
+        const k = y - s;
+        return Math.abs(k) < l ? {
+            error: "\u5F53\u524D\u65F6\u957F\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3\uFF0C\u65E0\u9700\u8C03\u6574",
+            unchanged: !0
+        } : {
+            newEndMs: y,
+            meta: {
+                oldEndMs: s,
+                deltaMs: k,
+                silenceCount: v.intervals?.length || 0
             }
-
-            if (!cueEl) {
-                if (!els.video || !state.videoPath) return;
-                if (e.button !== 0) return;
-                const ms = Math.max(0, timelineXToMs(x));
-                els.video.currentTime = ms / 1000;
-                syncPlaybackFromVideo(true);
-                return;
+        }
+    }
+    async function $s(n, r, i = {}) {
+        if (!t.videoPath) return {
+            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u97F3\u9891\u8D34\u8FB9"
+        };
+        const s = I(n),
+            a = Math.max(0, Math.min(2e3, Math.round(Number(i.padMs ?? 400)))),
+            o = 1,
+            l = r > 0 ? t.cues[r - 1] : null,
+            c = r < t.cues.length - 1 ? t.cues[r + 1] : null,
+            u = l ? I(l) + o : 0,
+            m = c ? c.startMs - o : Number.POSITIVE_INFINITY,
+            f = Math.max(0, Math.max(u, n.startMs - a)),
+            g = Math.min(Number.isFinite(m) ? m : Number.POSITIVE_INFINITY, s + a),
+            h = Number.isFinite(g) ? g : s + a;
+        if (h - f < 250) return {
+            error: "\u53EF\u5206\u6790\u65F6\u95F4\u7A97\u8FC7\u77ED\uFF08\u53EF\u80FD\u4E0E\u76F8\u90BB\u5B57\u5E55\u8FC7\u7D27\uFF09"
+        };
+        const v = await p?.ffmpegDetectSilence?.(ln({
+            path: t.videoPath,
+            startMs: f,
+            endMs: h,
+            noiseDb: i.silenceDb ?? -35,
+            minSilenceSec: i.silenceDur ?? .25,
+            minSegmentMs: 400
+        }));
+        if (v?.cancelled || ne()) return {
+            cancelled: !0,
+            error: "\u5DF2\u53D6\u6D88"
+        };
+        if (!v?.ok) return {
+            error: v?.error || "\u9759\u97F3\u5206\u6790\u5931\u8D25"
+        };
+        const y = D.snapCueTimingFromSilenceIntervals(n.startMs, s, v.intervals, {
+            windowStartMs: f,
+            windowEndMs: h,
+            prevLimitMs: u,
+            nextLimitMs: Number.isFinite(m) ? m : h,
+            minDurMs: 500,
+            headPadMs: Math.max(0, Math.round(Number(i.headPadMs ?? 80))),
+            tailPadMs: Math.max(0, Math.round(Number(i.tailPadMs ?? 80))),
+            minSpeechMs: 200,
+            minShiftMs: 80,
+            allowExtend: i.allowExtend !== !1
+        });
+        return y.changed ? {
+            startMs: y.startMs,
+            endMs: y.endMs,
+            startDelta: y.startDelta,
+            endDelta: y.endDelta,
+            silenceCount: v.intervals?.length || 0,
+            windowStartMs: f,
+            windowEndMs: h
+        } : {
+            error: {
+                no_speech: "\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u8BED\u97F3\u6BB5",
+                no_region: "\u672A\u5339\u914D\u5230\u8BED\u97F3\u6BB5",
+                too_short: "\u8D34\u8FB9\u540E\u65F6\u957F\u8FC7\u77ED\uFF0C\u5DF2\u4FDD\u6301\u539F\u65F6\u95F4",
+                unchanged: "\u65F6\u95F4\u8F74\u5DF2\u8D34\u8FD1\u8BED\u97F3\uFF0C\u65E0\u9700\u8C03\u6574"
+            } [y.reason] || "\u65E0\u9700\u8C03\u6574",
+            unchanged: !0,
+            snapped: y
+        }
+    }
+    async function As(n = {}) {
+        if (t.silenceSplitBusy || t.retranscribeBusy) {
+            d("\u5DF2\u6709\u5206\u6790\u4EFB\u52A1\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019", "err");
+            return
+        }
+        if (t.selectedIndex < 0) return;
+        x();
+        const r = t.selectedIndex,
+            i = t.cues[r];
+        if (!Tt(i)) {
+            d("\u5F53\u524D\u5B57\u5E55\u65F6\u957F\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u8D34\u8FB9", "err");
+            return
+        }
+        if (!t.videoPath || !p?.ffmpegDetectSilence) {
+            d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u97F3\u9891\u8D34\u8FB9", "err");
+            return
+        }
+        const s = {
+            ...gn(n),
+            padMs: n.padMs ?? 400,
+            allowExtend: n.allowExtend !== !1
+        };
+        Te(!0), Ee({
+            title: "\u6B63\u5728\u6309\u97F3\u9891\u8D34\u8FB9",
+            detail: `\u6B63\u5728\u5206\u6790\u7B2C ${r+1} \u6761\u5B57\u5E55\u7684\u8BED\u97F3\u8FB9\u754C\u2026`,
+            indeterminate: !0,
+            statusMessage: "\u6B63\u5728\u5206\u6790\u89C6\u9891\u9759\u97F3\u2026"
+        }), e.silenceProgressHint && (e.silenceProgressHint.textContent = "\u6839\u636E\u9759\u97F3\u68C0\u6D4B\u5C06\u5B57\u5E55\u8D77\u6B62\u8D34\u5230\u8BED\u97F3\u8FB9\u754C\uFF0C\u6587\u672C\u4FDD\u6301\u4E0D\u53D8"), await ce();
+        try {
+            const a = await $s(i, r, s);
+            if (a.error) {
+                d(a.error, a.unchanged ? "ok" : "err");
+                return
             }
+            $(), i.startMs = a.startMs, i.endMs = a.endMs, P(!0), Se(r), t.selectedIndex === r && R(), ye();
+            const o = a.startDelta ? `\u8D77\u59CB ${a.startDelta>0?"+":""}${(a.startDelta/1e3).toFixed(2)}s` : "\u8D77\u59CB\u4E0D\u53D8",
+                l = a.endDelta ? `\u7ED3\u675F ${a.endDelta>0?"+":""}${(a.endDelta/1e3).toFixed(2)}s` : "\u7ED3\u675F\u4E0D\u53D8";
+            d(`\u5DF2\u6309\u97F3\u9891\u8D34\u8FB9\u7B2C ${r+1} \u6761\uFF1A${o} \xB7 ${l}`, "ok")
+        } finally {
+            Te(!1), Ie(), e.silenceProgressHint && (e.silenceProgressHint.textContent = "FFmpeg \u6B63\u5728\u5206\u6790\u5173\u8054\u89C6\u9891\u7684\u97F3\u9891\u9759\u97F3\u70B9\uFF0C\u8BF7\u52FF\u5173\u95ED\u7A97\u53E3")
+        }
+    }
+    async function Fs(n = {}) {
+        if (t.silenceSplitBusy || t.selectedIndex < 0) return;
+        x();
+        const r = t.selectedIndex,
+            i = t.cues[r];
+        if (!Dt(i)) {
+            d("\u5F53\u524D\u5B57\u5E55\u65F6\u957F\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u667A\u80FD\u8C03\u8282", "err");
+            return
+        }
+        if (!t.videoPath || !p?.ffmpegDetectSilence) {
+            d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u667A\u80FD\u8C03\u8282\u65F6\u957F", "err");
+            return
+        }
+        const s = gn(n);
+        Ee({
+            title: "\u6B63\u5728\u5206\u6790\u9759\u97F3",
+            detail: `\u6B63\u5728\u5206\u6790\u7B2C ${r+1} \u6761\u5B57\u5E55\u7684\u5B9E\u9645\u8BED\u97F3\u65F6\u957F\u2026`,
+            indeterminate: !0,
+            statusMessage: "\u6B63\u5728\u5206\u6790\u89C6\u9891\u9759\u97F3\u2026"
+        }), await ce();
+        try {
+            const a = await Ts(i, {
+                ...s,
+                cueIndex: r
+            });
+            if (a.error) {
+                d(a.error, a.unchanged ? "ok" : "err");
+                return
+            }
+            const o = Qs(i, r, a.newEndMs, !0),
+                l = I(i),
+                c = o - l;
+            if (Math.abs(c) < 80) {
+                d(`\u7B2C ${r+1} \u6761\u65F6\u957F\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3\uFF0C\u65E0\u9700\u8C03\u6574`, "ok");
+                return
+            }
+            $(), i.endMs = o, P(!0), Se(r), t.selectedIndex === r && R(), ye();
+            const u = (Math.abs(c) / 1e3).toFixed(3),
+                m = c < 0 ? "\u7F29\u77ED" : "\u5EF6\u957F";
+            d(`\u5DF2\u667A\u80FD\u8C03\u8282\u7B2C ${r+1} \u6761\u65F6\u957F\uFF1A${xt(V(i))} \u79D2\uFF08${m} ${u} \u79D2\uFF09`, "ok")
+        } finally {
+            Ie()
+        }
+    }
 
-            if (e.button !== 0) return;
-            const idx = Number(cueEl.getAttribute('data-tl-idx'));
-            if (!Number.isFinite(idx) || idx < 0) return;
-            selectCue(idx, { scroll: true, seek: false });
-            const cue = state.cues[idx];
-            if (!cue) return;
+    function $t(n) {
+        const r = String(n?.text || "").trim();
+        return !r || V(n) < 600 ? !1 : D.isConnectedText(r) ? typeof D.getSilenceTextBreakIndices != "function" ? !1 : D.getSilenceTextBreakIndices(r, {
+            breakWords: hn(),
+            includePunctuation: !0
+        }).length > 0 : !0
+    }
 
-            const mode = handle === 'l' ? 'start' : handle === 'r' ? 'end' : 'move';
-            const originX = e.clientX;
-            const originStart = cue.startMs;
-            const originEnd = cueEndMs(cue);
-            state.timeline.dragging = { idx, mode, originX, originStart, originEnd };
-            e.preventDefault();
-            recordUndoBeforeChange();
+    function Te(n) {
+        t.silenceSplitBusy = !!n, n || (t.jobAbortRequested = !1), e.silenceSplitBtn && (e.silenceSplitBtn.disabled = t.silenceSplitBusy), e.silenceSplitConfirm && (e.silenceSplitConfirm.disabled = t.silenceSplitBusy), e.batchDurConfirm && (e.batchDurConfirm.disabled = t.silenceSplitBusy), e.splitConfirm && vn() === "silence" && (e.splitConfirm.disabled = t.silenceSplitBusy), e.silenceProgressCancel && (e.silenceProgressCancel.disabled = !(t.silenceSplitBusy || t.retranscribeBusy)), t.selectedIndex >= 0 && R()
+    }
 
-            const onMove = (ev) => {
-                const drag = state.timeline.dragging;
-                if (!drag) return;
-                const dx = ev.clientX - drag.originX;
-                const trackW = track.clientWidth || 1;
-                const span = getTimelineViewSpan();
-                const dMs = Math.round((dx / trackW) * span);
-                const c = state.cues[drag.idx];
-                if (!c) return;
-                if (drag.mode === 'move') {
-                    let start = Math.max(0, drag.originStart + dMs);
-                    let end = Math.max(start + 100, drag.originEnd + dMs);
-                    c.startMs = start;
-                    c.endMs = end;
-                } else if (drag.mode === 'start') {
-                    c.startMs = Math.max(0, Math.min(drag.originEnd - 100, drag.originStart + dMs));
-                    c.endMs = drag.originEnd;
-                } else {
-                    c.endMs = Math.max(c.startMs + 100, drag.originEnd + dMs);
+    function ne() {
+        return !!t.jobAbortRequested
+    }
+    async function sr() {
+        if (!(!t.silenceSplitBusy && !t.retranscribeBusy) && !t.jobAbortRequested) {
+            t.jobAbortRequested = !0, e.silenceProgressDetail && (e.silenceProgressDetail.textContent = "\u6B63\u5728\u53D6\u6D88\u2026"), e.silenceProgressCancel && (e.silenceProgressCancel.disabled = !0);
+            try {
+                // Match reconstruct cancel: engine / Sakura / Advanced / TWAI / FFmpeg
+                // (dual-pass may be mid ASR or mid text-MT when Esc is pressed).
+                if (t.retranscribeBusy) {
+                    await Promise.allSettled([
+                        p?.transubEngineCancel?.(),
+                        p?.transubSakuraCancelTranslate?.(),
+                        p?.transubAdvancedCancelContextReconstruct?.(),
+                        p?.transWithAiCancel?.(),
+                    ])
                 }
-                setDirty(true);
-                refreshListRow(drag.idx);
-                renderDetailPane();
-                refreshTimelineView();
-                if (els.video && state.videoPath) {
-                    const seekMs = drag.mode === 'end' ? cueEndMs(c) - 1 : c.startMs;
-                    els.video.currentTime = Math.max(0, seekMs) / 1000;
+                await p?.ffmpegCancel?.()
+            } catch {}
+            d("\u6B63\u5728\u53D6\u6D88\u2026", "warn")
+        }
+    }
+    async function ce() {
+        await new Promise(n => {
+            requestAnimationFrame(() => setTimeout(n, 0))
+        })
+    }
+
+    function Ee(n = {}) {
+        if (!e.silenceProgress) return;
+        const r = Math.max(0, Math.floor(Number(n.total) || 0)),
+            i = Math.max(0, Math.floor(Number(n.current) || 0)),
+            s = n.indeterminate != null ? !!n.indeterminate : r <= 1;
+        e.silenceProgress.classList.remove("hidden"), e.silenceProgress.setAttribute("aria-busy", "true"), e.silenceProgress.classList.toggle("indeterminate", s), e.silenceProgressTitle && (e.silenceProgressTitle.textContent = n.title || "\u6B63\u5728\u5206\u6790\u9759\u97F3"), e.silenceProgressDetail && (e.silenceProgressDetail.textContent = n.detail || "\u8BF7\u7A0D\u5019\uFF0CFFmpeg \u6B63\u5728\u5206\u6790\u97F3\u9891\u2026"), e.silenceProgressHint && (e.silenceProgressHint.textContent = n.hint || "FFmpeg \u6B63\u5728\u5206\u6790\u5173\u8054\u89C6\u9891\u7684\u97F3\u9891\u9759\u97F3\u70B9\uFF0C\u5904\u7406\u65F6\u95F4\u8F83\u957F\u65F6\u8BF7\u8010\u5FC3\u7B49\u5F85"), e.silenceProgressCount && (r > 1 ? (e.silenceProgressCount.textContent = `${Math.min(i,r)} / ${r}`, e.silenceProgressCount.classList.remove("hidden")) : e.silenceProgressCount.classList.add("hidden")), e.silenceProgressTrack && e.silenceProgressTrack.classList.remove("hidden"), de({
+            current: i,
+            total: r,
+            indeterminate: s
+        }), n.statusMessage && d(n.statusMessage, ""), t.jobAbortRequested = !1, Te(!0), e.silenceProgressCancel && (e.silenceProgressCancel.disabled = !1)
+    }
+
+    function de(n = {}) {
+        if (!e.silenceProgress || e.silenceProgress.classList.contains("hidden")) return;
+        const r = Math.max(0, Math.floor(Number(n.total) || 0)),
+            i = Math.max(0, Math.floor(Number(n.current) || 0)),
+            s = n.indeterminate != null ? !!n.indeterminate : e.silenceProgress.classList.contains("indeterminate");
+        if (n.detail && e.silenceProgressDetail && (e.silenceProgressDetail.textContent = n.detail), n.title && e.silenceProgressTitle && (e.silenceProgressTitle.textContent = n.title), r > 1) {
+            if (e.silenceProgress.classList.remove("indeterminate"), e.silenceProgressTrack && e.silenceProgressTrack.classList.remove("hidden"), e.silenceProgressCount && (e.silenceProgressCount.textContent = `${Math.min(i,r)} / ${r}`, e.silenceProgressCount.classList.remove("hidden")), e.silenceProgressBar) {
+                const a = r > 0 ? Math.round(i / r * 100) : 0;
+                e.silenceProgressBar.style.width = `${Math.max(0,Math.min(100,a))}%`
+            }
+        } else s && e.silenceProgressBar && (e.silenceProgressBar.style.width = "");
+        n.statusMessage && d(n.statusMessage, "")
+    }
+
+    function Ie() {
+        e.silenceProgress && (e.silenceProgress.classList.add("hidden"), e.silenceProgress.classList.remove("indeterminate"), e.silenceProgress.setAttribute("aria-busy", "false"), e.silenceProgressBar && (e.silenceProgressBar.style.width = "0%"), e.silenceProgressCount && e.silenceProgressCount.classList.add("hidden"), Te(!1), t.selectedIndex >= 0 && R())
+    }
+
+    function gn(n = {}, r = "batch") {
+        const i = Ke();
+        let s = n.silenceDb ?? i.silenceDb,
+            a = n.silenceDur ?? i.silenceDur;
+        return r === "cue" && (s = Math.max(Number(s) || -30, -30), a = Math.min(Math.max(.05, Number(a) || .12), .12)), {
+            silenceDb: s,
+            silenceDur: a,
+            fixOverlap: n.fixOverlap ?? i.fixOverlap
+        }
+    }
+    async function ir(n = {}) {
+        if (t.silenceSplitBusy) return {
+            ok: !1,
+            error: "\u9759\u97F3\u5206\u6790\u6B63\u5728\u8FDB\u884C\u4E2D"
+        };
+        if (t.selectedIndex < 0) return {
+            ok: !1,
+            error: "\u672A\u9009\u4E2D\u5B57\u5E55"
+        };
+        x();
+        const r = t.selectedIndex,
+            i = gs() || t.cues[r],
+            s = gn(n, "cue");
+        Ee({
+            title: "\u6B63\u5728\u5206\u6790\u9759\u97F3",
+            detail: `\u6B63\u5728\u5206\u6790\u7B2C ${r+1} \u6761\u5B57\u5E55\u7684\u97F3\u9891\u9759\u97F3\u70B9\u2026`,
+            indeterminate: !0,
+            statusMessage: "\u6B63\u5728\u5206\u6790\u89C6\u9891\u9759\u97F3\u2026"
+        }), await ce();
+        try {
+            const a = await Rs(i, s);
+            return a.error ? (d(a.error, "err"), {
+                ok: !1,
+                error: a.error
+            }) : (mr(r, a.cues, s), a.meta?.silenceCount && d(`\u5DF2\u6309 ${a.meta.silenceCount} \u5904\u9759\u97F3\u5206\u5272\u4E3A ${a.cues.length} \u6761`, "ok"), {
+                ok: !0,
+                cues: a.cues,
+                meta: a.meta
+            })
+        } finally {
+            Ie()
+        }
+    }
+
+    function ar() {
+        if (!e.cueContextMenu) return;
+        const n = t.selectedIndex >= 0 && t.selectedIndex < t.cues.length,
+            r = n ? String(t.cues[t.selectedIndex].text || "").trim() : "",
+            i = n && !!r,
+            s = i && String(t.cues[t.selectedIndex].text || "").includes(`
+`),
+            a = i && /\s/.test(String(t.cues[t.selectedIndex].text || "")),
+            o = n && $t(t.cues[t.selectedIndex]) && !!t.videoPath && !!p?.ffmpegDetectSilence && !t.silenceSplitBusy,
+            l = n && !!e.video,
+            c = n && !!e.video,
+            u = n && qe(t.cues[t.selectedIndex].text) > 0,
+            m = n && Dt(t.cues[t.selectedIndex]) && !!t.videoPath && !!p?.ffmpegDetectSilence && !t.silenceSplitBusy,
+            f = n && Tt(t.cues[t.selectedIndex]) && !!t.videoPath && !!p?.ffmpegDetectSilence && !t.silenceSplitBusy && !t.retranscribeBusy;
+        e.cueContextMenu.querySelectorAll("[data-ctx-action]").forEach(g => {
+            const h = g.dataset.ctxAction;
+            h === "split-modal" || h === "split-smart" || h === "split-silence" || h === "split-lines" || h === "split-spaces" ? h === "split-lines" ? g.disabled = !s : h === "split-spaces" ? g.disabled = !a : h === "split-silence" ? g.disabled = !o : g.disabled = !i : h === "split-silence-all" ? g.disabled = t.silenceSplitBusy || !t.videoPath || !p?.ffmpegDetectSilence || !t.cues.some(v => $t(v)) : h === "align-start" ? g.disabled = !l : h === "align-end" ? g.disabled = !c : h === "char-dur" ? g.disabled = !u : h === "smart-dur" ? g.disabled = !m : h === "audio-snap" ? g.disabled = !f : h === "audio-snap-batch" ? g.disabled = !t.videoPath || !p?.ffmpegDetectSilence || t.silenceSplitBusy || t.retranscribeBusy || !t.cues.length : h === "retranscribe" ? (g.disabled = !n || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange, g.textContent = "\u91CD\u8F6C\u5199\u672C\u6761\u2026") : h === "sakura-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !(p?.transubSakuraTranslate || p?.transubAdvancedSmartTranslate) : h === "smart-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !p?.transubAdvancedSmartTranslate : h === "retranslate" || h === "retranscribe-dual" ? g.disabled = !n || !U() || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "retranscribe-dur" ? g.disabled = t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "confirm-meta" || h === "delete" ? g.disabled = !n : h === "insert" && (g.disabled = !1)
+        })
+    }
+
+    function ct() {
+        e.cueContextMenu && e.cueContextMenu.classList.add("hidden")
+    }
+
+    function ja(n, r) {
+        if (!e.cueContextMenu) return;
+        kt(), ar();
+        const i = e.cueContextMenu;
+        i.classList.remove("hidden"), i.style.visibility = "hidden", i.style.left = "0", i.style.top = "0";
+        const s = i.getBoundingClientRect();
+        i.style.visibility = "";
+        const a = 8;
+        let o = n,
+            l = r;
+        o + s.width > window.innerWidth - a && (o = window.innerWidth - s.width - a), l + s.height > window.innerHeight - a && (l = window.innerHeight - s.height - a), i.style.left = `${Math.max(a,o)}px`, i.style.top = `${Math.max(a,l)}px`
+    }
+
+    function or(n, r, i, {
+        scroll: s = !1
+    } = {}) {
+        !Number.isFinite(n) || n < 0 || n >= t.cues.length || (J().includes(n) ? (t.selectedIndex = n, R()) : X(n, {
+            scroll: s
+        }), ja(r, i))
+    }
+
+    function Ga(n) {
+        switch (ct(), n) {
+            case "split-modal":
+                Os();
+                break;
+            case "split-smart": {
+                const r = Ke();
+                lt("smart", {
+                    smartMaxChars: r.smartMaxChars,
+                    smartLineChars: r.smartLineChars,
+                    useCps: r.useCps,
+                    fixOverlap: r.fixOverlap
+                });
+                break
+            }
+            case "split-silence":
+                ir();
+                break;
+            case "split-silence-all":
+                vr("all");
+                break;
+            case "split-lines":
+                lt("lines");
+                break;
+            case "split-spaces":
+                lt("spaces");
+                break;
+            case "align-start":
+                Yn();
+                break;
+            case "align-end":
+                Jn();
+                break;
+            case "char-dur":
+                Ds();
+                break;
+            case "smart-dur":
+                Fs();
+                break;
+            case "audio-snap":
+                As();
+                break;
+            case "audio-snap-batch":
+                yo();
+                break;
+            case "retranscribe":
+                io();
+                break;
+            case "sakura-translate":
+                we({
+                    engine: "auto",
+                    forceSelected: !0
+                });
+                break;
+            case "smart-translate":
+                we({
+                    engine: "smart",
+                    forceSelected: !0
+                });
+                break;
+            case "retranslate":
+                Ns();
+                break;
+            case "retranscribe-dual":
+                qs();
+                break;
+            case "retranscribe-dur":
+                ur();
+                break;
+            case "confirm-meta":
+                eo();
+                break;
+            case "insert":
+                Lt();
+                break;
+            case "delete":
+                pn();
+                break;
+            default:
+                break
+        }
+    }
+
+    function lr() {
+        return {
+            charCount: Number(e.splitCharCount?.value) || 20,
+            count: Number(e.splitCount?.value) || 2,
+            smartMaxChars: Number(e.splitSmartMaxChars?.value) || 20,
+            smartLineChars: Number(e.splitSmartLineChars?.value) || 18,
+            silenceDb: Number(e.splitSilenceDb?.value) || -35,
+            silenceDur: Number(e.splitSilenceDur?.value) || .25,
+            useCps: e.splitUseCps?.checked !== !1,
+            fixOverlap: e.splitFixOverlap?.checked !== !1
+        }
+    }
+
+    function Ka(n) {
+        return n ? "cps" : "proportional"
+    }
+
+    function Va(n) {
+        return {
+            targetCps: yt(),
+            minDurMs: 500
+        }
+    }
+
+    function za(n) {
+        return D.splitTextByLines(n)
+    }
+
+    function Ua(n) {
+        return D.splitTextBySpaces(n)
+    }
+
+    function Qa(n, r) {
+        return D.splitTextByCharCount(n, r)
+    }
+
+    function Za(n, r) {
+        return D.splitTextIntoNParts(n, r)
+    }
+
+    function cr(n, r) {
+        return D.splitTextAtIndex(n, r)
+    }
+
+    function dt(n, r, i, s = "proportional", a = {}) {
+        return D.buildCuesFromTexts(n, r, i, s, a)
+    }
+
+    function Xa(n, r, i, s) {
+        const a = I(n);
+        return r <= n.startMs || r >= a ? null : [{
+            startMs: n.startMs,
+            endMs: r,
+            text: i
+        }, {
+            startMs: r,
+            endMs: a,
+            text: s
+        }]
+    }
+
+    function Ya(n) {
+        return n === "chars" || n === "count" || n === "silence"
+    }
+
+    function Ja(n) {
+        return D.normalizeBreakWords(String(n || "").split(/[,，;；|／/\n\r\t]+/).map(r => r.trim()))
+    }
+
+    function hn() {
+        return vt()
+    }
+
+    function yn(n, r) {
+        return !Ya(n) || !D.isConnectedText(r) ? null : n === "silence" && typeof D.getSilenceTextBreakIndices == "function" ? D.getSilenceTextBreakIndices(r, {
+            breakWords: hn(),
+            includePunctuation: !0
+        }).length ? null : "\u6587\u672C\u4E3A\u8FDE\u7EED\u4E66\u5199\u4E14\u672A\u5339\u914D\u65AD\u53E5\u8BCD/\u6807\u70B9\uFF0C\u65E0\u6CD5\u9759\u97F3\u5206\u5272\u3002\u8BF7\u5728\u300C\u65AD\u53E5\u8BCD\u300D\u4E2D\u6DFB\u52A0\uFF0C\u6216\u4F7F\u7528\u5149\u6807/\u64AD\u653E\u5934\u624B\u52A8\u5206\u5272\u3002" : fa
+    }
+
+    function Ye(n, r, i = {}) {
+        const s = String(r.text || "").trim(),
+            a = I(r);
+        if (!s) return {
+            error: "\u5F53\u524D\u5B57\u5E55\u6587\u672C\u4E3A\u7A7A\uFF0C\u65E0\u6CD5\u5206\u5272"
+        };
+        const o = yn(n, s);
+        if (o) return {
+            error: o
+        };
+        const l = i.useCps !== !1,
+            c = Ka(l),
+            u = Va(l);
+        if (n === "smart") {
+            const m = D.splitTextSmart(s, {
+                maxChars: i.smartMaxChars ?? i.charCount ?? 20,
+                maxLineChars: i.smartLineChars ?? 18,
+                breakWords: i.breakWords || hn()
+            });
+            return m.length < 2 ? {
+                error: "\u5F53\u524D\u6587\u672C\u65E0\u9700\u667A\u80FD\u5206\u5272\uFF08\u5DF2\u8DB3\u591F\u77ED\u6216\u7F3A\u5C11\u6807\u70B9/\u65AD\u53E5\u8BCD\uFF09"
+            } : {
+                cues: dt(r.startMs, a, m, c, u)
+            }
+        }
+        if (n === "lines") {
+            const m = za(s);
+            return m.length < 2 ? {
+                error: "\u6587\u672C\u4E2D\u6CA1\u6709\u591A\u4E2A\u6362\u884C\uFF0C\u65E0\u6CD5\u6309\u884C\u5206\u5272"
+            } : {
+                cues: dt(r.startMs, a, m, c, u)
+            }
+        }
+        if (n === "spaces") {
+            const m = Ua(s);
+            return m.length < 2 ? {
+                error: "\u6587\u672C\u4E2D\u6CA1\u6709\u7A7A\u683C\uFF0C\u65E0\u6CD5\u6309\u7A7A\u683C\u5206\u5272"
+            } : {
+                cues: dt(r.startMs, a, m, c, u)
+            }
+        }
+        if (n === "chars") {
+            const m = Qa(s, i.charCount);
+            return m.length < 2 ? {
+                error: "\u6309\u8BE5\u5B57\u7B26\u6570\u65E0\u6CD5\u62C6\u6210\u591A\u6761"
+            } : {
+                cues: dt(r.startMs, a, m, c, u)
+            }
+        }
+        if (n === "count") {
+            const m = Za(s, i.count);
+            return m === null ? {
+                error: `\u6587\u672C\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u5747\u5206\u4E3A ${i.count} \u6BB5`
+            } : m.length < 2 ? {
+                error: "\u5747\u5206\u540E\u4E0D\u8DB3\u4E24\u6761\uFF0C\u8BF7\u51CF\u5C11\u6BB5\u6570"
+            } : {
+                cues: dt(r.startMs, a, m, "equal", u)
+            }
+        }
+        if (n === "cursor") {
+            const m = e.detailText,
+                f = m ? m.selectionStart : s.length,
+                g = cr(s, f);
+            return g ? {
+                cues: dt(r.startMs, a, g, c, u)
+            } : {
+                error: "\u8BF7\u5C06\u5149\u6807\u7F6E\u4E8E\u6587\u672C\u4E2D\u95F4\u518D\u5206\u5272"
+            }
+        }
+        if (n === "playhead") {
+            if (!e.video) return {
+                error: "\u672A\u52A0\u8F7D\u89C6\u9891\uFF0C\u65E0\u6CD5\u5728\u64AD\u653E\u5934\u5904\u5206\u5272"
+            };
+            const m = De();
+            if (m <= r.startMs || m >= a) return {
+                error: "\u64AD\u653E\u5934\u4E0D\u5728\u5F53\u524D\u5B57\u5E55\u65F6\u95F4\u8303\u56F4\u5185"
+            };
+            const f = (m - r.startMs) / (a - r.startMs),
+                g = Math.min(s.length - 1, Math.max(1, Math.round(s.length * f))),
+                h = D.snapSplitIndexNearPunctuation(s, g, 12);
+            let v = cr(s, h);
+            if (v || (v = cr(s, Math.floor(s.length / 2))), !v) return {
+                error: "\u6587\u672C\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u5728\u64AD\u653E\u5934\u5904\u5206\u5272"
+            };
+            const y = Xa(r, m, v[0], v[1]);
+            return y ? {
+                cues: y
+            } : {
+                error: "\u64AD\u653E\u5934\u4F4D\u7F6E\u65E0\u6548"
+            }
+        }
+        return {
+            error: "\u672A\u77E5\u7684\u5206\u5272\u65B9\u5F0F"
+        }
+    }
+    async function Rs(n, r = {}) {
+        if (!t.videoPath) return {
+            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u9759\u97F3\u5207\u5206"
+        };
+        const i = Math.round(Number(n.startMs) || 0);
+        let s = Math.round(Number(I(n)) || 0);
+        if (!(s > i)) {
+            const w = Number(e.detailDuration?.value);
+            Number.isFinite(w) && w > 0 && (s = i + Math.round(w * 1e3))
+        }
+        const a = String(n.text || "").trim();
+        if (!a) return {
+            error: "\u5F53\u524D\u5B57\u5E55\u6587\u672C\u4E3A\u7A7A\uFF0C\u65E0\u6CD5\u5206\u5272"
+        };
+        const o = yn("silence", a);
+        if (o) return {
+            error: o
+        };
+        const l = s - i;
+        if (!Number.isFinite(l) || l < 250) return {
+            error: `\u5F53\u524D\u5B57\u5E55\u65F6\u957F\u8FC7\u77ED\uFF08${Number.isFinite(l)?(l/1e3).toFixed(3):"?"}s\uFF09\uFF0C\u65E0\u6CD5\u5206\u6790\u9759\u97F3`
+        };
+        const c = Math.max(0, Math.min(1200, Math.round(Number(r.padMs ?? 600)))),
+            u = Math.max(0, i - c),
+            m = s + c;
+        if (!(m > u + 200) || !Number.isFinite(u) || !Number.isFinite(m)) return {
+            error: `\u9759\u97F3\u5206\u6790\u65F6\u95F4\u7A97\u65E0\u6548\uFF08${i}\u2013${s} ms\uFF09\uFF0C\u8BF7\u68C0\u67E5\u5B57\u5E55\u8D77\u6B62\u65F6\u95F4`
+        };
+        const f = r.silenceDb != null ? r.silenceDb : -30,
+            g = r.silenceDur != null ? r.silenceDur : .12,
+            h = Math.max(120, Math.min(280, Math.round(l * .1))),
+            v = r.breakWords || hn(),
+            k = (typeof D.getSilenceTextBreakIndices == "function" ? D.getSilenceTextBreakIndices(a, {
+                breakWords: v,
+                includePunctuation: !0
+            }) : typeof D.getWhitespaceBreakIndices == "function" ? D.getWhitespaceBreakIndices(a) : []).map(w => {
+                const A = Math.max(0, Math.min(1, w / Math.max(1, a.length)));
+                return Math.round(i + A * l)
+            }),
+            q = (w, A, F) => p?.ffmpegDetectSilence?.({
+                path: t.videoPath,
+                startMs: u,
+                endMs: m,
+                durationMs: m - u,
+                noiseDb: w,
+                minSilenceSec: A,
+                minSegmentMs: F,
+                ...Ue ? {
+                    ffmpegPath: Ue
+                } : {}
+            }),
+            te = (w, A, F) => {
+                if (!w?.ok) return [];
+                const re = Math.max(100, Math.min(A, Math.floor(l * .12)));
+                if (typeof D.pickScoredSilenceSplitPoints == "function") return D.pickScoredSilenceSplitPoints(w.intervals, i, s, {
+                    edgeMs: re,
+                    minSilenceMs: F,
+                    minSpeechMs: 120,
+                    idealBreakMs: k,
+                    minGapMs: re
+                });
+                const pe = i + re,
+                    le = s - re;
+                if (le <= pe) return [];
+                const ge = [],
+                    bt = fe => {
+                        const S = Math.round(Number(fe) || 0);
+                        S > pe && S < le && ge.push(S)
+                    };
+                for (const fe of w.splitPointsMs || []) bt(fe);
+                for (const fe of w.intervals || []) {
+                    const S = Math.max(i, Math.round(Number(fe.startMs) || 0)),
+                        E = Math.min(s, Math.round(Number(fe.endMs) || 0));
+                    E - S >= F && bt(Math.round((S + E) / 2))
+                }
+                const Qt = [...ge].sort((fe, S) => fe - S),
+                    ze = [];
+                for (const fe of Qt)(!ze.length || fe - ze[ze.length - 1] >= re) && ze.push(fe);
+                return ze
+            },
+            N = [{
+                noise: f,
+                minSilence: g,
+                minSeg: h
+            }, {
+                noise: Math.min(-26, f + 5),
+                minSilence: Math.min(.1, g),
+                minSeg: Math.max(100, h - 40)
+            }, {
+                noise: -24,
+                minSilence: .08,
+                minSeg: Math.max(100, h - 60)
+            }, {
+                noise: -22,
+                minSilence: .06,
+                minSeg: 100
+            }];
+        let W = null,
+            B = [],
+            M = "";
+        for (const w of N) {
+            if (ne()) return {
+                cancelled: !0,
+                error: "\u5DF2\u53D6\u6D88"
+            };
+            const A = await q(w.noise, w.minSilence, w.minSeg);
+            if (A?.cancelled || ne()) return {
+                cancelled: !0,
+                error: "\u5DF2\u53D6\u6D88"
+            };
+            if (!A?.ok) {
+                M = A?.error || M;
+                continue
+            }
+            W = A;
+            const F = Math.max(50, Math.round(w.minSilence * 850));
+            if (B = te(A, w.minSeg, F), B.length) break
+        }
+        if (!W?.ok && M) return {
+            error: M
+        };
+        if (!B.length) return {
+            error: "\u8BE5\u65F6\u95F4\u6BB5\u5185\u672A\u68C0\u6D4B\u5230\u8DB3\u591F\u957F\u7684\u9759\u97F3\uFF0C\u8BF7\u8C03\u4F4E\u9608\u503C\u6216\u6539\u7528\u667A\u80FD\u65AD\u53E5"
+        };
+        const L = D.buildCuesFromSilenceSplits(a, i, s, B, 20, W.intervals, {
+            minDurMs: 400,
+            minTrailingSilenceMs: Math.max(100, Math.round((r.silenceDur ?? g) * 700)),
+            minLeadingSilenceMs: Math.max(100, Math.round((r.silenceDur ?? g) * 700)),
+            headPadMs: 60,
+            tailPadMs: 60,
+            gapMs: 1,
+            breakWords: v,
+            includePunctuation: !0
+        });
+        return !L || L.length < 2 ? {
+            error: "\u9759\u97F3\u5207\u5206\u540E\u6587\u672C\u4E0D\u8DB3\u4E24\u6761\uFF0C\u8BF7\u8C03\u6574\u9608\u503C\u6216\u624B\u52A8\u5206\u5272"
+        } : {
+            cues: L,
+            meta: {
+                silenceCount: W.intervals?.length || 0,
+                splitCount: B.length
+            }
+        }
+    }
+
+    function At() {
+        Sr(t.cues, {
+            fixOverlap: !0,
+            fixCps: !1,
+            enforceMinDur: !1,
+            enforceMaxDur: !1,
+            gapMs: 1
+        })
+    }
+    async function eo() {
+        if (t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) return;
+        x(), He();
+        const n = t.selectedIndex;
+        t.cueMeta[n] = {
+            confidence: 1,
+            flags: ["confirmed"],
+            low: !1,
+            source: "confirmed",
+            fingerprint: z.cueFingerprint(t.cues[n]),
+            confirmed: !0
+        }, await dn(), C(), d(`\u5DF2\u5C06\u7B2C ${n+1} \u6761\u6807\u8BB0\u4E3A\u53EF\u4FE1`, "ok")
+    }
+
+    function to({
+        requireVideo: n = !0
+    } = {}) {
+        if (t.retranscribeBusy || t.silenceSplitBusy) return d("\u5DF2\u6709\u5206\u6790\u4EFB\u52A1\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019", "err"), !1;
+        if (t.computeBusy) return d(t.computeBusyLabel ? `\u5DF2\u6709${t.computeBusyLabel}\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u540E\u518D\u8BD5` : "\u5176\u5B83\u7A97\u53E3\u6709\u5F15\u64CE\u6216 LLM \u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "err"), !1;
+        if (n) {
+            if (!t.videoPath) return d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u91CD\u8F6C\u5199", "err"), !1;
+            if (!p?.transubTranscribeRange) return d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u533A\u95F4\u91CD\u8F6C\u5199", "err"), !1
+        }
+        return !0
+    }
+
+    function no(n, r) {
+        t.cueMeta = z.annotateCuesConfidence(t.cues, Zn());
+        for (let i = 0; i < r; i += 1) {
+            const s = n + i;
+            t.cues[s] && (t.cueMeta[s] = {
+                confidence: .88,
+                flags: ["retranscribe"],
+                low: !1,
+                source: "retranscribe",
+                fingerprint: z.cueFingerprint(t.cues[s])
+            })
+        }
+    }
+    function friendlyJobAbortMessage(n) {
+        const r = String(n || "").trim();
+        if (!r) return "\u5904\u7406\u5931\u8D25";
+        const i = r.toLowerCase();
+        return i === "aborted" || i === "cancelled" || i.includes("operation was aborted") || i.includes("user aborted") || i.includes("aborterror") || i.includes("the operation was aborted") ? "\u64CD\u4F5C\u5DF2\u4E2D\u6B62\u6216\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5" : r
+    }
+
+    function isJobAbortResult(n) {
+        if (!n) return !1;
+        if (n.cancelled || n.code === "cancelled" || n.code === "aborted") return !0;
+        return /已取消|已中止|aborted|user aborted/i.test(String(n.error || ""))
+    }
+    async function ut(n) {
+        const r = Math.max(0, Math.round(Number(n.startMs) || 0)),
+            i = Math.max(r + 200, Math.round(Number(n.endMs) || 0)),
+            s = Math.max(0, Math.min(2e3, Math.round(Number(n.padMs ?? 350)))),
+            a = n.mode === "cue" ? "cue" : "range",
+            o = n.snapAfter === !0,
+            l = n.dualPass === !0 && U();
+        let c = n.writeAs === "target" ? "target" : n.writeAs === "source" ? "source" : null;
+        c || (c = n.task === "translate" ? "target" : "source");
+        const u = l ? "transcribe" : c === "target" ? "translate" : "transcribe";
+        let m = null;
+        c === "target" && !l && (m = await jn());
+        const f = l || c === "source" || !m?.textMt;
+        if (!to({
+                requireVideo: f
+            })) return {
+            ok: !1
+        };
+        if (i - r < 200) return d("\u91CD\u8F6C\u5199\u65F6\u95F4\u8303\u56F4\u8FC7\u77ED", "err"), {
+            ok: !1
+        };
+        t.retranscribeBusy = !0, t.jobAbortRequested = !1, Qe();
+        const g = l ? "\u53CC\u8BED\u91CD\u8DD1" : c === "target" ? "\u91CD\u8F6C\u5199 \xB7 \u8BD1\u6587" : "\u91CD\u8F6C\u5199 \xB7 \u539F\u6587";
+        let h = u,
+            v = g;
+        Ee({
+            title: g,
+            detail: n.detail || `\u622A\u53D6\u5E76\u5904\u7406 ${((i-r)/1e3).toFixed(1)}s\u2026`,
+            indeterminate: !0,
+            statusMessage: `${g}\u8FDB\u884C\u4E2D\u2026`
+        }), e.silenceProgressHint && (e.silenceProgressHint.textContent = l ? "\u5C06\u4F9D\u6B21\uFF1A\u8BED\u97F3\u8BC6\u522B\u539F\u6587 \u2192 \u6309\u8BBE\u7F6E\u7FFB\u8BD1\u8BD1\u6587\uFF1B\u52A0\u8F7D\u6A21\u578B\u65F6\u8BF7\u7A0D\u5019\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : c === "target" ? U() ? "\u5C06\u6309\u8BBE\u7F6E\u4E2D\u7684\u7FFB\u8BD1\u65B9\u5F0F\u751F\u6210\u8BD1\u6587\u5E76\u5199\u5165\u8BD1\u6587\u8F68\uFF1B\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : "\u5C06\u6309\u8BBE\u7F6E\u4E2D\u7684\u7FFB\u8BD1\u65B9\u5F0F\u8986\u76D6\u5F53\u524D\u5B57\u5E55\u8BD1\u6587\uFF1B\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : U() && t.dualRole === "target" ? "\u5C06\u8BED\u97F3\u8BC6\u522B\u7ED3\u679C\u5199\u5165\u539F\u6587\u5BF9\u7167\u8F68\uFF0C\u4E0D\u4F1A\u8986\u76D6\u8BD1\u6587\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : "\u5C06\u5BF9\u9009\u5B9A\u65F6\u95F4\u6BB5\u505A\u8BED\u97F3\u8BC6\u522B\uFF1B\u52A0\u8F7D\u6A21\u578B\u65F6\u8BF7\u7A0D\u5019\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002"), await ce();
+        const y = (N, W, B) => {
+                let M = 0,
+                    L = 0;
+                if (a === "cue" && B >= 0 && B < N.length) N.splice(B, 1, ...W), M = B, L = 1;
+                else {
+                    const w = z.replaceCuesInTimeRange(N, r, i, W);
+                    N.splice(0, N.length, ...w.cues), M = w.insertAt, L = w.replaced
+                }
+                return {
+                    selectAt: M,
+                    replacedCount: L
+                }
+            },
+            k = async (N, W) => {
+                h = N, v = W || g, e.silenceProgressTitle && (e.silenceProgressTitle.textContent = v);
+                const B = await p.transubTranscribeRange({
+                    mediaPath: t.videoPath,
+                    startMs: r,
+                    endMs: i,
+                    padMs: s,
+                    ffmpegPath: Ue,
+                    options: {
+                        task: N,
+                        mergeSegments: !1,
+                        subFormats: "srt"
+                    }
+                });
+                if (ne() || isJobAbortResult(B)) return {
+                    ok: !1,
+                    cancelled: !0
+                };
+                if (!B?.ok || !Array.isArray(B.cues) || !B.cues.length) return {
+                    ok: !1,
+                    error: friendlyJobAbortMessage(B?.error || `${W||"\u5904\u7406"}\u5931\u8D25`),
+                    cancelled: isJobAbortResult(B)
+                };
+                const M = B.cues.map(L => ({
+                    startMs: L.startMs,
+                    endMs: L.endMs,
+                    text: String(L.text || "").trim()
+                })).filter(L => L.text);
+                return M.length ? {
+                    ok: !0,
+                    cues: M
+                } : {
+                    ok: !1,
+                    error: `${W||"\u5904\u7406"}\u7ED3\u679C\u4E3A\u7A7A`
+                }
+            }, q = async (N, W) => {
+                h = "translate", v = W || g, e.silenceProgressTitle && (e.silenceProgressTitle.textContent = v);
+                const B = await jn();
+                if (!B.textMt) return k("translate", W);
+                de({
+                    detail: `\u6B63\u5728\u7528${B.label}\u7FFB\u8BD1 ${N.length} \u6761\u2026`,
+                    statusMessage: `${B.label}\u4E2D\u2026`
+                }), e.silenceProgressHint && (e.silenceProgressHint.textContent = B.faithfulTone ? `\u8BBE\u7F6E\uFF1A${B.label}\uFF08\u5FE0\u5B9E\u8BED\u6C14\uFF09\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002` : `\u8BBE\u7F6E\uFF1A${B.label}\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002`);
+                const M = N.map((F, re) => ({
+                        index: re,
+                        startMs: F.startMs,
+                        endMs: F.endMs,
+                        text: F.text
+                    })),
+                    L = await El(M, {
+                        engine: B.engine,
+                        faithfulTone: B.faithfulTone
+                    });
+                if (ne() || isJobAbortResult(L)) return {
+                    ok: !1,
+                    cancelled: !0
+                };
+                if (!L?.ok) return {
+                    ok: !1,
+                    error: friendlyJobAbortMessage(L?.error || `${W||"\u7FFB\u8BD1"}\u5931\u8D25`),
+                    cancelled: isJobAbortResult(L)
+                };
+                const w = new Map((L.cues || []).map(F => [Number(F.index), String(F.text ?? "").trim()])),
+                    A = N.map((F, re) => ({
+                        startMs: F.startMs,
+                        endMs: F.endMs,
+                        text: w.get(re) || ""
+                    })).filter(F => F.text);
+                return A.length ? {
+                    ok: !0,
+                    cues: A,
+                    via: L.label || B.label
+                } : {
+                    ok: !1,
+                    error: `${W||"\u7FFB\u8BD1"}\u7ED3\u679C\u4E3A\u7A7A`
                 }
             };
-            const onUp = () => {
-                state.timeline.dragging = null;
-                window.removeEventListener('mousemove', onMove);
-                window.removeEventListener('mouseup', onUp);
-                scheduleVideoTextTrackRefresh();
-                resyncPlaybackAfterCueTimingChange();
-                refreshTimelineView();
+        let te = null;
+        try {
+            te = p.onTransubRetranscribeProgress?.(S => {
+                if (ne()) return;
+                const E = String(S?.message || S?.detail || "").trim();
+                if (!E) return;
+                const Y = String(S?.stage || ""),
+                    rt = Y === "model" || /模型/.test(E);
+                de({
+                    detail: E,
+                    statusMessage: E
+                }), e.silenceProgressTitle && (rt ? e.silenceProgressTitle.textContent = "\u52A0\u8F7D\u6A21\u578B" : Y === "vad" ? e.silenceProgressTitle.textContent = "\u8BED\u97F3\u68C0\u6D4B" : Y === "extract" || Y === "warmup" ? e.silenceProgressTitle.textContent = "\u51C6\u5907\u97F3\u9891" : Y === "transcribe" ? e.silenceProgressTitle.textContent = l ? h === "translate" ? "\u53CC\u8BED \xB7 \u751F\u6210\u8BD1\u6587" : "\u53CC\u8BED \xB7 \u751F\u6210\u539F\u6587" : h === "translate" ? "\u7FFB\u8BD1\u4E2D" : "\u8BC6\u522B\u4E2D" : Y === "save" || Y === "done" ? e.silenceProgressTitle.textContent = "\u6574\u7406\u7ED3\u679C" : e.silenceProgressTitle.textContent = S?.warmLight ? `${v}\uFF08\u8F7B\u91CF\uFF09` : v), e.silenceProgressHint && (rt ? e.silenceProgressHint.textContent = S?.warmLight ? "\u8F7B\u91CF\u6A21\u5F0F\uFF1A\u6B63\u5728\u52A0\u8F7D\u6A21\u578B\uFF0C\u9996\u6B21\u6216\u5207\u6362\u6A21\u578B\u65F6\u8F83\u6162" : "\u6B63\u5728\u52A0\u8F7D\u6A21\u578B\u5230\u663E\u5B58/\u5185\u5B58\uFF0C\u9996\u6B21\u6216\u5207\u6362\u6A21\u578B\u65F6\u53EF\u80FD\u9700\u8981\u6570\u5341\u79D2" : Y === "vad" ? e.silenceProgressHint.textContent = "\u6B63\u5728\u521D\u59CB\u5316\u8BED\u97F3\u68C0\u6D4B\u2026" : Y === "starting" ? e.silenceProgressHint.textContent = "\u6B63\u5728\u542F\u52A8\u5F15\u64CE\u2026" : S?.warmLight && (e.silenceProgressHint.textContent = "\u8F7B\u91CF\u52A0\u901F\u5DF2\u5F00\u542F\uFF08Beam=1\uFF09\uFF1B\u5982\u9700\u66F4\u9AD8\u7CBE\u5EA6\u8BF7\u5728\u8BBE\u7F6E\u4E2D\u5173\u95ED\u300C\u91CD\u8F6C\u5199\u52A0\u901F\u300D"))
+            }) || null;
+            const N = p.onSakuraTranslateProgress?.(S => {
+                    if (ne() || h !== "translate") return;
+                    const E = String(S?.message || S?.detail || "").trim();
+                    E && de({
+                        detail: E,
+                        statusMessage: E
+                    })
+                }) || null,
+                W = p.onAdvancedReconstructProgress?.(S => {
+                    if (ne() || h !== "translate" || S?.feature && S.feature !== "smartTranslate") return;
+                    const E = String(S?.message || S?.detail || "").trim();
+                    E && de({
+                        detail: E,
+                        statusMessage: E
+                    })
+                }) || null,
+                B = te;
+            te = () => {
+                try {
+                    B?.()
+                } catch {}
+                try {
+                    N?.()
+                } catch {}
+                try {
+                    W?.()
+                } catch {}
             };
-            window.addEventListener('mousemove', onMove);
-            window.addEventListener('mouseup', onUp);
-        });
-
-        track.addEventListener('contextmenu', (e) => {
-            const cueEl = e.target.closest?.('.editor-timeline-cue');
-            if (!cueEl) return;
-            e.preventDefault();
-            const idx = Number(cueEl.getAttribute('data-tl-idx'));
-            openCueContextMenuAt(idx, e.clientX, e.clientY, { scroll: true });
-        });
-
-        const waveTrack = els.waveformTrack;
-        if (waveTrack && waveTrack.dataset.bound !== '1') {
-            waveTrack.dataset.bound = '1';
-            waveTrack.addEventListener('mousedown', (e) => {
-                if (!state.waveformEnabled) return;
-                if (e.button === 1 || (e.button === 0 && (e.altKey || e.shiftKey))) {
-                    if (!isTimelineZoomed()) return;
-                    startPan(e, waveTrack);
-                    return;
-                }
-                if (e.button !== 0) return;
-                if (!els.video || !state.videoPath) return;
-                const rect = waveTrack.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const ms = Math.max(0, timelineXToMs(x, waveTrack));
-                els.video.currentTime = ms / 1000;
-                syncPlaybackFromVideo(true);
-            });
-            waveTrack.addEventListener('contextmenu', (e) => {
-                if (!state.waveformEnabled) return;
-                const rect = waveTrack.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const ms = Math.max(0, timelineXToMs(x, waveTrack));
-                const idx = findPlaybackIndex(ms);
-                if (idx < 0) return;
-                e.preventDefault();
-                openCueContextMenuAt(idx, e.clientX, e.clientY, { scroll: true });
-            });
-        }
-
-        const stack = els.timelineStack;
-        if (stack && stack.dataset.zoomBound !== '1') {
-            stack.dataset.zoomBound = '1';
-            stack.addEventListener('wheel', (e) => {
-                if (!state.timeline.durationMs) return;
-                const rect = (els.timelineTrack || stack).getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const anchorMs = timelineXToMs(x);
-                if (e.ctrlKey || e.metaKey) {
-                    e.preventDefault();
-                    const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
-                    zoomTimelineAt(factor, anchorMs);
-                    refreshTimelineView();
-                    return;
-                }
-                if (!isTimelineZoomed()) return;
-                e.preventDefault();
-                const span = getTimelineViewSpan();
-                const trackW = Math.max(1, rect.width || 1);
-                const deltaPx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-                const dMs = Math.round((deltaPx / trackW) * span);
-                if (panTimelineByMs(dMs)) refreshTimelineView();
-            }, { passive: false });
-        }
-
-        els.timelineZoomIn?.addEventListener('click', () => {
-            const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : null;
-            zoomTimelineAt(1 / 1.5, t);
-            refreshTimelineView();
-        });
-        els.timelineZoomOut?.addEventListener('click', () => {
-            const t = els.video ? Math.round((els.video.currentTime || 0) * 1000) : null;
-            zoomTimelineAt(1.5, t);
-            refreshTimelineView();
-        });
-        els.timelineZoomFit?.addEventListener('click', () => {
-            fitTimelineView();
-            refreshTimelineView();
-        });
-        els.timelineHScroll?.addEventListener('input', () => {
-            if (!isTimelineZoomed()) return;
-            const sliderMax = Number(els.timelineHScroll.max) || 1000;
-            const pos = Math.max(0, Math.min(1, Number(els.timelineHScroll.value) / sliderMax));
-            const span = getTimelineViewSpan();
-            const maxStart = Math.max(0, state.timeline.durationMs - span);
-            const start = pos * maxStart;
-            setTimelineView(start, start + span);
-            refreshTimelineView();
-        });
-
-        window.addEventListener('resize', () => {
-            if (state.ready) refreshTimelineView();
-        });
-    }
-
-    function openShortcutsModal() {
-        if (!els.shortcutsModal) return;
-        showEditorModal(els.shortcutsModal, els.shortcutsClose);
-    }
-
-    function closeShortcutsModal() {
-        hideEditorModal(els.shortcutsModal);
-    }
-
-    const modalCtx = { state, els };
-    editorParts.installModals(modalCtx);
-    const {
-        isElementFocusable,
-        clearStaleFocus,
-        pickEditorFocusTarget,
-        restoreEditorFocus,
-        requestOsRefocus,
-        releaseFocusFromModal,
-        editorConfirm,
-        showEditorModal,
-        hideEditorModal,
-    } = modalCtx;
-
-    const bootCtx = { els, setStatus };
-    editorParts.installBootProgress(bootCtx);
-    const {
-        flushBootProgressPaint,
-        showBootProgress,
-        updateBootProgress,
-        hideBootProgress,
-    } = bootCtx;
-
-    const prefsCtx = {
-        state,
-        els,
-        splitCore,
-        clampTargetCps,
-        setStatus,
-        isAutoFocusEnabled,
-        followPlaybackFocus,
-        getSelectedSplitMode,
-        onWaveformPrefChanged,
-    };
-    editorParts.installPrefs(prefsCtx);
-    const {
-        loadTargetCpsPrefs,
-        saveTargetCpsPrefs,
-        getTargetCps,
-        applyTargetCpsPrefs,
-        getDefaultBreakWords,
-        loadBreakWords,
-        saveBreakWords,
-        clampRetranscribeDurSec,
-        loadRetranscribeDurPrefs,
-        saveRetranscribeDurPrefs,
-        loadSplitPrefs,
-        saveSplitPrefs,
-        applySplitPrefsToModal,
-        applyAutoFocusUi,
-        loadAutoFocusPref,
-        toggleAutoFocus,
-        applyTheme,
-        loadTheme,
-        toggleTheme,
-        applyPanelWidth,
-        loadPanelWidth,
-        loadDetailToolsPref,
-        loadWaveformPref,
-        toggleWaveform,
-        loadTimelineZoomPref,
-        saveTimelineZoomPref,
-    } = prefsCtx;
-
-    const undoCtx = {
-        state,
-        els,
-        utils: editorParts.utils,
-        setDirty,
-        renderCueList,
-        setStatus,
-        syncDetailToCue,
-        editorConfirm,
-        closeFindReplaceModal,
-    };
-    editorParts.installUndo(undoCtx);
-    const {
-        recordUndoBeforeChange,
-        beginDetailUndoGroup,
-        clearUndoHistory,
-        undo,
-        redo,
-        saveInitialSnapshot,
-        restoreInitialSnapshot,
-    } = undoCtx;
-
-    const workflowApi = editorParts.installWorkflows({
-        workflowsCore,
-        state,
-        els,
-        electron,
-        showEditorModal,
-        hideEditorModal,
-        setStatus,
-        recordUndoBeforeChange,
-        syncDetailToCue,
-        setDirty,
-        renderCueList,
-        renderDetailPane,
-        refreshQcBadge,
-        getDefaultQcScanOptions,
-        getTargetCps,
-        loadSplitPrefs,
-        getEffectiveGlossary,
-        getSelectedCueIndexes,
-        qcCore,
-        fluencyCore,
-        chineseCore,
-        glossaryCore,
-        textPresetsCore,
-        metaCore,
-        insertPresetGroup,
-        exportMergedDualSubtitle,
-        saveDocument,
-        flushDraftAutosave,
-        shiftAllCues,
-        applyGlossaryUnification,
-        openGlossaryModal,
-        openBreakWordsModal,
-        openTextPresetsModal,
-        openFindReplaceModal,
-        openQcModal,
-        restoreInitialSnapshot,
-        mergeSelectedCues,
-        confirmBatchSilenceSplit,
-        confirmBatchSilenceDurAdjust,
-        confirmBatchAudioSnapAdjust,
-        collectBatchDurMatches,
-        collectSmartSplitMatches,
-        collectSilenceSplitMatches,
-        computeSplitParts,
-        maybeFixOverlapAfterSplit,
-        cueEndMs,
-        runRetranscribeRange,
-        retranslateSelectedCue,
-        retranscribeDualSelectedCue,
-        selectCue,
-        showSilenceSplitProgress,
-        updateSilenceSplitProgress,
-        hideSilenceSplitProgress,
-        flushSilenceProgressPaint,
-        setSilenceSplitBusy,
-        canSilenceSplitCue,
-        loadRetranscribeDurPrefs,
-        getPlaybackTimeMs,
-        buildFindRegex,
-        esc,
-    });
-
-    function bindEvents() {
-        loadTheme();
-        loadPanelWidth();
-        loadDetailToolsPref();
-        loadAutoFocusPref();
-        loadWaveformPref();
-        state.timeline.zoom = loadTimelineZoomPref();
-        bindPanelSplitter();
-        bindTimelineInteractions();
-
-        els.themeToggle?.addEventListener('click', toggleTheme);
-        els.settingsBtn?.addEventListener('click', () => {
-            void openEditorSettings();
-        });
-        els.openGeneratorBtn?.addEventListener('click', () => {
-            void openSubtitleGenerator();
-        });
-        els.autoFocusBtn?.addEventListener('click', toggleAutoFocus);
-        els.waveformToggle?.addEventListener('click', toggleWaveform);
-        els.toolsMenuBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const wasHidden = els.toolsMenu?.classList.contains('hidden');
-            closeToolsMenu();
-            if (wasHidden) {
-                els.toolsMenu?.classList.remove('hidden');
-                els.toolsMenuBtn?.setAttribute('aria-expanded', 'true');
-            }
-        });
-        document.addEventListener('click', (e) => {
-            if (els.toolsMenu && !els.toolsMenu.classList.contains('hidden')
-                && !els.toolsMenu.contains(e.target)
-                && e.target !== els.toolsMenuBtn
-                && !els.toolsMenuBtn?.contains(e.target)) {
-                closeToolsMenu();
-            }
-        });
-        els.toolsMenu?.addEventListener('click', () => {
-            // keep menu open for non-modal actions? close after any click
-            setTimeout(closeToolsMenu, 0);
-        });
-
-        document.querySelectorAll('[data-list-filter]').forEach((btn) => {
-            btn.addEventListener('click', () => setListFilter(btn.getAttribute('data-list-filter')));
-        });
-        els.nextIssueBtn?.addEventListener('click', jumpToNextIssue);
-
-        els.playPauseBtn?.addEventListener('click', toggleVideoPlayback);
-        els.seekBackBtn?.addEventListener('click', () => seekVideoBy(-1));
-        els.seekFwdBtn?.addEventListener('click', () => seekVideoBy(1));
-        els.rateSelect?.addEventListener('change', () => {
-            if (els.video) els.video.playbackRate = Number(els.rateSelect.value) || 1;
-        });
-        els.volumeSlider?.addEventListener('input', () => {
-            if (els.video) els.video.volume = Number(els.volumeSlider.value) || 0;
-        });
-
-        els.exportDualBtn?.addEventListener('click', () => { void exportMergedDualSubtitle(); });
-        els.exportDualMenuBtn?.addEventListener('click', () => { void exportMergedDualSubtitle(); });
-        els.saveBtn?.addEventListener('click', saveDocument);
-        els.addCueBtn?.addEventListener('click', insertCueAtPlayhead);
-        els.insertCueBtn?.addEventListener('click', insertCueAtPlayhead);
-        els.detailInsertCueBtn?.addEventListener('click', insertCueAtPlayhead);
-        els.retranscribeCueBtn?.addEventListener('click', openRetranscribeDurModal);
-        els.openFileBtn?.addEventListener('click', pickAndOpenInWindow);
-        bindWelcomeEvents();
-        els.shiftBackBtn?.addEventListener('click', () => shiftAllCues(-500));
-        els.shiftFwdBtn?.addEventListener('click', () => shiftAllCues(500));
-        els.linkVideoBtn?.addEventListener('click', linkVideo);
-        els.findReplaceBtn?.addEventListener('click', () => openFindReplaceModal(false));
-        els.glossaryBtn?.addEventListener('click', () => { void openGlossaryModal(); });
-        els.textPresetsBtn?.addEventListener('click', () => { void openTextPresetsModal(); });
-        workflowApi.bindWorkflowEvents();
-        els.breakWordsBtn?.addEventListener('click', openBreakWordsModal);
-        els.splitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
-        els.smartSplitOpenBreakWordsBtn?.addEventListener('click', openBreakWordsModal);
-        els.breakWordsClose?.addEventListener('click', closeBreakWordsModal);
-        els.breakWordsModal?.querySelectorAll('[data-break-words-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeBreakWordsModal();
-            });
-        });
-        els.breakWordsAddBtn?.addEventListener('click', addBreakWordsFromInput);
-        els.breakWordsResetBtn?.addEventListener('click', resetBreakWordsToDefault);
-        els.breakWordsClearBtn?.addEventListener('click', clearBreakWords);
-        els.breakWordsInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                addBreakWordsFromInput();
-            }
-        });
-        els.breakWordsChips?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-break-word-remove]');
-            if (!btn) return;
-            removeBreakWord(btn.getAttribute('data-break-word-remove') || '');
-        });
-        els.findReplaceClose?.addEventListener('click', closeFindReplaceModal);
-        els.findReplaceModal?.querySelectorAll('[data-find-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeFindReplaceModal();
-            });
-        });
-        els.glossaryCancel?.addEventListener('click', closeGlossaryModal);
-        els.glossaryModal?.querySelectorAll('[data-glossary-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeGlossaryModal();
-            });
-        });
-        els.glossaryEntryList?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-glossary-id]');
-            if (!btn) return;
-            selectGlossaryEntry(btn.getAttribute('data-glossary-id'));
-        });
-        els.glossaryIssueList?.addEventListener('click', (e) => {
-            const item = e.target.closest('[data-glossary-entry-id]');
-            if (!item) return;
-            const entryId = item.getAttribute('data-glossary-entry-id');
-            if (entryId) selectGlossaryEntry(entryId);
-            const idx = Number(item.getAttribute('data-glossary-issue-idx'));
-            if (Number.isFinite(idx) && idx >= 0) selectCue(idx);
-        });
-        els.glossaryAddBtn?.addEventListener('click', beginNewGlossaryEntry);
-        els.glossarySaveEntryBtn?.addEventListener('click', () => { void saveGlossaryEntryFromForm(); });
-        els.glossaryDeleteEntryBtn?.addEventListener('click', () => { void deleteGlossaryEntryFromForm(); });
-        els.glossaryImportBtn?.addEventListener('click', () => { void importGlossaryFile(); });
-        els.glossaryExportBtn?.addEventListener('click', () => { void exportGlossaryFile(); });
-        els.glossaryModal?.querySelectorAll('input[name="editorGlossaryScope"]').forEach((el) => {
-            el.addEventListener('change', () => {
-                void switchGlossaryScope(readGlossaryScopeFromUi());
-            });
-        });
-        els.glossaryScanBtn?.addEventListener('click', () => {
-            updateGlossaryModalState();
-            setStatus(
-                state.glossaryIssues.length
-                    ? `发现 ${state.glossaryIssues.length} 处术语不一致`
-                    : '未发现术语不一致',
-                state.glossaryIssues.length ? 'warn' : 'ok',
-            );
-        });
-        els.glossaryConfirm?.addEventListener('click', () => { void applyGlossaryUnification(); });
-
-        els.textPresetsClose?.addEventListener('click', closeTextPresetsModal);
-        els.textPresetsModal?.querySelectorAll('[data-text-presets-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeTextPresetsModal();
-            });
-        });
-        els.textPresetsAddBtn?.addEventListener('click', clearTextPresetForm);
-        els.textPresetSaveBtn?.addEventListener('click', () => { void saveTextPresetFromForm(); });
-        els.textPresetDeleteBtn?.addEventListener('click', () => { void deleteTextPresetFromForm(); });
-        els.textPresetsImportBtn?.addEventListener('click', () => { void importTextPresets(); });
-        els.textPresetsExportBtn?.addEventListener('click', () => { void exportTextPresets(); });
-        els.textPresetsSeedBtn?.addEventListener('click', () => { void seedTextPresetExamples(); });
-        els.textPresetsSearch?.addEventListener('input', () => {
-            state.textPresetsQuery = els.textPresetsSearch.value || '';
-            renderTextPresetsList();
-        });
-        els.textPresetsList?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-text-preset-id]');
-            if (!btn) return;
-            const group = textPresetsCore.findGroup(state.textPresetsDoc, btn.getAttribute('data-text-preset-id'));
-            fillTextPresetForm(group);
-        });
-        els.textPresetAddItemBtn?.addEventListener('click', () => {
-            const items = readTextPresetItemsFromForm();
-            const last = items[items.length - 1];
-            const start = last ? Number(last.endSec) + 0.1 : 0;
-            items.push({
-                id: textPresetsCore.makeItemId(),
-                label: '',
-                text: '',
-                startSec: Math.round(start * 10) / 10,
-                endSec: Math.round((start + 0.5) * 10) / 10,
-            });
-            renderTextPresetItemRows(items);
-        });
-        els.textPresetItemsHost?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-tp-remove]');
-            if (!btn) return;
-            const row = btn.closest('.text-preset-item-row');
-            row?.remove();
-            if (!els.textPresetItemsHost.querySelector('.text-preset-item-row')) {
-                renderTextPresetItemRows(defaultDraftItems());
-            }
-        });
-        els.textPresetInsertNewBtn?.addEventListener('click', () => {
-            const draft = textPresetsCore.normalizeGroup({
-                id: state.textPresetEditingId || undefined,
-                name: els.textPresetName?.value || '未命名组',
-                anchor: els.textPresetAnchor?.value || 'playhead',
-                items: readTextPresetItemsFromForm(),
-            });
-            if (!draft.items.length) {
-                setStatus('请先填写组内条目（标签+文本）', 'warn');
-                return;
-            }
-            insertPresetGroup(draft);
-        });
-        els.textPresetQuickSelect?.addEventListener('change', () => {
-            const value = els.textPresetQuickSelect.value;
-            els.textPresetQuickSelect.value = '';
-            if (!value) return;
-            if (value === '__manage__') {
-                void openTextPresetsModal();
-                return;
-            }
-            insertTextPresetById(value);
-        });
-
-        els.findInput?.addEventListener('input', () => runFindSearch({ navigate: false }));
-        els.findCase?.addEventListener('change', () => runFindSearch({ navigate: false }));
-        els.findNextBtn?.addEventListener('click', findNextMatch);
-        els.findPrevBtn?.addEventListener('click', findPrevMatch);
-        els.replaceOneBtn?.addEventListener('click', replaceCurrentMatch);
-        els.replaceAllBtn?.addEventListener('click', replaceAllMatches);
-        els.batchDurBtn?.addEventListener('click', openBatchDurModal);
-        els.batchDurConfirm?.addEventListener('click', confirmBatchDurAdjust);
-        els.batchDurCancel?.addEventListener('click', closeBatchDurModal);
-        els.batchDurModal?.querySelectorAll('[data-batch-dur-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeBatchDurModal();
-            });
-        });
-        document.querySelectorAll('input[name="editorBatchDurCond"]').forEach((el) => {
-            el.addEventListener('change', updateBatchDurModalState);
-        });
-        document.querySelectorAll('input[name="editorBatchDurMode"]').forEach((el) => {
-            el.addEventListener('change', updateBatchDurModalState);
-        });
-        [
-            els.batchDurTarget,
-            els.batchDurSilenceDb,
-            els.batchDurSilenceDur,
-            els.batchDurSnapPadMs,
-            els.batchDurShorter,
-            els.batchDurLonger,
-            els.batchDurMin,
-            els.batchDurMax,
-            els.batchDurCpsAbove,
-            els.batchDurCpsBelow,
-            els.batchDurText,
-            els.batchDurAvoidOverlap,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateBatchDurModalState);
-            el?.addEventListener('change', updateBatchDurModalState);
-        });
-        els.smartAdjustBtn?.addEventListener('click', openSmartAdjustModal);
-        els.removeNoiseBtn?.addEventListener('click', openRemoveNoiseModal);
-        els.chineseConvertBtn?.addEventListener('click', openChineseConvertModal);
-        els.chineseConvertConfirm?.addEventListener('click', confirmChineseConvert);
-        els.chineseConvertCancel?.addEventListener('click', closeChineseConvertModal);
-        els.chineseConvertModal?.querySelectorAll('[data-chinese-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeChineseConvertModal);
-        });
-        els.chineseConvertModal?.querySelectorAll('input[type="radio"]').forEach((el) => {
-            el.addEventListener('change', updateChineseConvertModalState);
-        });
-        els.chineseProtectGlossary?.addEventListener('change', updateChineseConvertModalState);
-        els.compressRepBtn?.addEventListener('click', openCompressRepModal);
-        els.compressRepConfirm?.addEventListener('click', confirmCompressRep);
-        els.compressRepCancel?.addEventListener('click', closeCompressRepModal);
-        els.compressRepModal?.querySelectorAll('[data-compress-rep-dismiss]').forEach((el) => {
-            el.addEventListener('click', closeCompressRepModal);
-        });
-        els.compressRepModal?.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach((el) => {
-            el.addEventListener('change', updateCompressRepModalState);
-        });
-        els.qcBtn?.addEventListener('click', openQcModal);
-        els.retranscribeDurBtn?.addEventListener('click', openRetranscribeDurModal);
-        els.smartSplitBtn?.addEventListener('click', openSmartSplitModal);
-        els.silenceSplitBtn?.addEventListener('click', () => openSilenceSplitModal());
-        els.smartSplitCueBtn?.addEventListener('click', () => {
-            const prefs = loadSplitPrefs();
-            quickSplitSelectedCue('smart', {
-                smartMaxChars: prefs.smartMaxChars,
-                smartLineChars: prefs.smartLineChars,
-                useCps: prefs.useCps,
-                fixOverlap: prefs.fixOverlap,
-            });
-        });
-        els.silenceSplitCueBtn?.addEventListener('click', () => quickSilenceSplitSelectedCue());
-        els.compressRepCueBtn?.addEventListener('click', () => quickCompressRepSelectedCue());
-        els.splitLinesBtn?.addEventListener('click', () => quickSplitSelectedCue('lines'));
-        els.splitSpacesBtn?.addEventListener('click', () => quickSplitSelectedCue('spaces'));
-        els.charDurBtn?.addEventListener('click', () => charCountAdjustSelectedCueDuration());
-        els.smartDurBtn?.addEventListener('click', () => silenceAdjustSelectedCueDuration());
-        els.audioSnapBtn?.addEventListener('click', () => { void silenceSnapSelectedCueTiming(); });
-        els.silenceSplitConfirm?.addEventListener('click', confirmBatchSilenceSplit);
-        els.silenceProgressCancel?.addEventListener('click', () => {
-            if (state.workflowBusy) {
-                workflowApi.cancelWorkflowRun();
-                requestEditorJobAbort();
-                return;
-            }
-            // 完成摘要阶段：点「关闭」立即收起
-            if (els.silenceProgress && !els.silenceProgress.classList.contains('hidden')
-                && els.silenceProgressCancel?.textContent === '关闭') {
-                hideSilenceSplitProgress();
-                if (els.silenceProgressCancel) els.silenceProgressCancel.textContent = '取消';
-                return;
-            }
-            requestEditorJobAbort();
-        });
-        els.silenceSplitCancel?.addEventListener('click', closeSilenceSplitModal);
-        els.silenceSplitModal?.querySelectorAll('[data-silence-split-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeSilenceSplitModal();
-            });
-        });
-        document.querySelectorAll('input[name="editorSilenceSplitCond"]').forEach((el) => {
-            el.addEventListener('change', updateSilenceSplitModalState);
-        });
-        [
-            els.silenceSplitDb,
-            els.silenceSplitDur,
-            els.silenceSplitDurLong,
-            els.silenceSplitCpsAbove,
-            els.silenceSplitCharsLong,
-            els.silenceSplitFixOverlap,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateSilenceSplitModalState);
-            el?.addEventListener('change', updateSilenceSplitModalState);
-        });
-        els.smartSplitConfirm?.addEventListener('click', confirmBatchSmartSplit);
-        els.smartSplitCancel?.addEventListener('click', closeSmartSplitModal);
-        els.smartSplitModal?.querySelectorAll('[data-smart-split-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeSmartSplitModal();
-            });
-        });
-        document.querySelectorAll('input[name="editorSmartSplitCond"]').forEach((el) => {
-            el.addEventListener('change', updateSmartSplitModalState);
-        });
-        [
-            els.smartSplitMaxChars,
-            els.smartSplitLineChars,
-            els.smartSplitCpsAbove,
-            els.smartSplitLineLen,
-            els.smartSplitDurLong,
-            els.smartSplitCharsLong,
-            els.smartSplitUseCps,
-            els.smartSplitFixOverlap,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateSmartSplitModalState);
-            el?.addEventListener('change', updateSmartSplitModalState);
-        });
-        els.smartAdjustConfirm?.addEventListener('click', confirmSmartAdjust);
-        els.smartAdjustCancel?.addEventListener('click', closeSmartAdjustModal);
-        els.smartAdjustModal?.querySelectorAll('[data-smart-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeSmartAdjustModal();
-            });
-        });
-        els.removeNoiseConfirm?.addEventListener('click', confirmRemoveNoise);
-        els.removeNoiseCancel?.addEventListener('click', closeRemoveNoiseModal);
-        els.removeNoiseModal?.querySelectorAll('[data-remove-noise-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeRemoveNoiseModal();
-            });
-        });
-        [
-            els.noiseRemoveEmpty,
-            els.noiseRemoveFragments,
-            els.noiseRemoveSoundEffects,
-            els.noiseRemoveSymbolOnly,
-            els.noiseRemoveDuplicates,
-            els.noiseRemoveHallucinations,
-        ].forEach((el) => {
-            el?.addEventListener('change', updateRemoveNoiseModalState);
-        });
-        els.qcConfirm?.addEventListener('click', () => confirmQcFix());
-        els.qcFixFiltered?.addEventListener('click', () => confirmQcFix({ filtered: true }));
-        els.qcCancel?.addEventListener('click', closeQcModal);
-        els.qcModal?.querySelectorAll('[data-qc-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeQcModal();
-            });
-        });
-        els.qcSummaryBar?.addEventListener('click', (e) => {
-            const chip = e.target.closest?.('[data-qc-type]');
-            if (!chip || !els.qcSummaryBar.contains(chip)) return;
-            const raw = chip.getAttribute('data-qc-type');
-            setQcTypeFilter(raw || null);
-        });
-        els.qcIssueList?.addEventListener('click', (e) => {
-            const btn = e.target.closest?.('[data-qc-idx]');
-            if (!btn) return;
-            const idx = Number(btn.getAttribute('data-qc-idx'));
-            if (!Number.isFinite(idx) || idx < 0) return;
-            selectCue(idx, { scroll: true, seek: true });
-        });
-        [
-            els.qcFixOverlap,
-            els.qcFixCpsSplit,
-            els.qcFixCpsExtend,
-            els.qcEnforceMin,
-            els.qcEnforceMax,
-            els.qcCompressRep,
-            els.qcMaxCps,
-            els.qcMinSec,
-            els.qcMaxSec,
-            els.qcGapMs,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateQcModalState);
-            el?.addEventListener('change', updateQcModalState);
-        });
-        els.retranscribeDurConfirm?.addEventListener('click', () => { void confirmRetranscribeDur(); });
-        els.retranscribeDurAll?.addEventListener('click', () => { void confirmRetranscribeAll(); });
-        els.retranscribeDurCancel?.addEventListener('click', closeRetranscribeDurModal);
-        els.retranscribeDurModal?.querySelectorAll('[data-retranscribe-dur-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeRetranscribeDurModal();
-            });
-        });
-        document.querySelectorAll('input[name="editorRetranscribeDurStart"]').forEach((el) => {
-            el.addEventListener('change', updateRetranscribeDurModalState);
-        });
-        [els.retranscribeDurSec, els.retranscribeDurPadMs].forEach((el) => {
-            el?.addEventListener('input', updateRetranscribeDurModalState);
-            el?.addEventListener('change', updateRetranscribeDurModalState);
-        });
-        document.querySelectorAll('[data-retranscribe-dur-preset]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                const sec = Number(btn.getAttribute('data-retranscribe-dur-preset'));
-                if (!Number.isFinite(sec) || !els.retranscribeDurSec) return;
-                els.retranscribeDurSec.value = String(sec);
-                updateRetranscribeDurModalState();
-            });
-        });
-        [
-            els.smartFixOverlap,
-            els.smartFixCps,
-            els.smartEnforceMin,
-            els.smartEnforceMax,
-            els.smartMaxCps,
-            els.smartMinSec,
-            els.smartMaxSec,
-            els.smartGapMs,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateSmartAdjustModalState);
-            el?.addEventListener('change', updateSmartAdjustModalState);
-        });
-        els.restoreBtn?.addEventListener('click', restoreInitialSnapshot);
-        els.findInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                findNextMatch();
-            } else if (e.key === 'Enter' && e.shiftKey) {
-                e.preventDefault();
-                findPrevMatch();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                closeFindReplaceModal();
-            }
-        });
-        els.replaceInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                replaceCurrentMatch();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                closeFindReplaceModal();
-            }
-        });
-
-        els.prevCueBtn?.addEventListener('click', () => selectCue(state.selectedIndex - 1, { scroll: true }));
-        els.nextCueBtn?.addEventListener('click', () => selectCue(state.selectedIndex + 1, { scroll: true }));
-        els.deleteCueBtn?.addEventListener('click', deleteSelectedCue);
-        els.splitCueBtn?.addEventListener('click', openSplitModal);
-        els.splitConfirm?.addEventListener('click', confirmSplit);
-        els.splitCancel?.addEventListener('click', closeSplitModal);
-        els.splitModal?.querySelectorAll('[data-split-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeSplitModal();
-            });
-        });
-        document.querySelectorAll('input[name="editorSplitMode"]').forEach((el) => {
-            el.addEventListener('change', updateSplitModalState);
-        });
-        [
-            els.splitCharCount,
-            els.splitCount,
-            els.splitSmartMaxChars,
-            els.splitSmartLineChars,
-            els.splitSilenceDb,
-            els.splitSilenceDur,
-            els.splitUseCps,
-            els.splitFixOverlap,
-        ].forEach((el) => {
-            el?.addEventListener('input', updateSplitModalState);
-            el?.addEventListener('change', updateSplitModalState);
-        });
-        els.splitRemember?.addEventListener('change', saveSplitPrefs);
-        els.detailText?.addEventListener('click', () => {
-            if (!els.splitModal?.classList.contains('hidden')) updateSplitModalState();
-        });
-        els.detailText?.addEventListener('keyup', () => {
-            if (!els.splitModal?.classList.contains('hidden')) updateSplitModalState();
-        });
-        els.detailText?.addEventListener('keydown', (e) => {
-            if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-            const delta = e.key === 'ArrowUp' ? -1 : 1;
-            const next = state.selectedIndex + delta;
-            if (next < 0 || next >= state.cues.length) return;
-            e.preventDefault();
-            e.stopPropagation();
-            selectCue(next, { scroll: true });
-            requestAnimationFrame(() => {
-                if (!els.detailText) return;
-                els.detailText.focus();
-                const len = els.detailText.value.length;
-                els.detailText.setSelectionRange(len, len);
-            });
-        });
-
-        els.startNudgeBack?.addEventListener('click', () => applyStartDelta(-100));
-        els.startNudgeFwd?.addEventListener('click', () => applyStartDelta(100));
-        els.durNudgeDown?.addEventListener('click', () => applyDurationDelta(-0.1));
-        els.durNudgeUp?.addEventListener('click', () => applyDurationDelta(0.1));
-        els.setStartToPlayhead?.addEventListener('click', setStartToPlayhead);
-        els.setEndToPlayhead?.addEventListener('click', setEndToPlayhead);
-        els.undoBtn?.addEventListener('click', undo);
-        els.redoBtn?.addEventListener('click', redo);
-        els.shortcutsBtn?.addEventListener('click', openShortcutsModal);
-        els.shortcutsClose?.addEventListener('click', closeShortcutsModal);
-        els.shortcutsModal?.querySelectorAll('[data-shortcuts-dismiss]').forEach((el) => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeShortcutsModal();
-            });
-        });
-
-        els.detailStart?.addEventListener('change', () => {
-            onDetailChanged();
-            renderTimeline();
-        });
-        els.detailDuration?.addEventListener('change', () => {
-            onDetailChanged();
-            renderTimeline();
-        });
-        els.detailDuration?.addEventListener('input', () => {
-            if (els.detailEnd && state.selectedIndex >= 0) {
-                const cue = state.cues[state.selectedIndex];
-                const durSec = Number(els.detailDuration.value);
-                if (Number.isFinite(durSec)) {
-                    els.detailEnd.value = formatDisplayTime(cue.startMs + Math.round(durSec * 1000), state.format);
-                }
-            }
-            updateDetailMeta();
-            updateDetailActionButtons();
-        });
-        els.detailText?.addEventListener('input', onDetailChanged);
-        els.targetCps?.addEventListener('input', () => {
-            saveTargetCpsPrefs();
-            updateDetailMeta();
-            if (els.splitModal && !els.splitModal.classList.contains('hidden')) updateSplitModalState();
-            if (els.smartSplitModal && !els.smartSplitModal.classList.contains('hidden')) updateSmartSplitModalState();
-        });
-        els.targetCps?.addEventListener('change', () => {
-            saveTargetCpsPrefs();
-            updateDetailMeta();
-            if (els.splitModal && !els.splitModal.classList.contains('hidden')) updateSplitModalState();
-            if (els.smartSplitModal && !els.smartSplitModal.classList.contains('hidden')) updateSmartSplitModalState();
-        });
-
-        els.sidecarSelect?.addEventListener('change', async (e) => {
-            if (!state.dirty || await editorConfirm('切换字幕后当前修改将丢失，继续？')) {
-                await loadDocument(e.target.value, state.videoPath);
+            let M = null,
+                L = null;
+            if (l) {
+                const S = await k("transcribe", "\u53CC\u8BED \xB7 \u539F\u6587");
+                if (!S.ok) return S.cancelled ? d("\u53CC\u8BED\u91CD\u8DD1\u5DF2\u53D6\u6D88", "warn") : d(S.error || "\u539F\u6587\u751F\u6210\u5931\u8D25", "err"), {
+                    ok: !1,
+                    cancelled: !!S.cancelled
+                };
+                M = S.cues;
+                const E = await q(M, "\u53CC\u8BED \xB7 \u8BD1\u6587");
+                E.ok ? L = E.cues : E.cancelled ? d("\u53CC\u8BED\u91CD\u8DD1\u5DF2\u53D6\u6D88\uFF08\u539F\u6587\u5DF2\u66F4\u65B0\uFF1B\u8BD1\u6587\u672A\u5B8C\u6210\uFF09", "warn") : d(E.error || "\u8BD1\u6587\u751F\u6210\u5931\u8D25", "err")
+            } else if (c === "target") {
+                const S = Il(r, i, a);
+                if (!S.length) return d("\u6240\u9009\u8303\u56F4\u5185\u6CA1\u6709\u53EF\u7FFB\u8BD1\u7684\u539F\u6587", "err"), {
+                    ok: !1
+                };
+                const E = await q(S, "\u91CD\u8F6C\u5199 \xB7 \u8BD1\u6587");
+                if (!E.ok) return E.cancelled ? d("\u91CD\u8F6C\u5199\u5DF2\u53D6\u6D88", "warn") : d(E.error || "\u8BD1\u6587\u751F\u6210\u5931\u8D25", "err"), {
+                    ok: !1,
+                    cancelled: !!E.cancelled
+                };
+                L = E.cues
             } else {
-                e.target.value = state.path;
+                const S = await k("transcribe", "\u91CD\u8F6C\u5199 \xB7 \u539F\u6587");
+                if (!S.ok) return S.cancelled ? d("\u91CD\u8F6C\u5199\u5DF2\u53D6\u6D88", "warn") : d(S.error || "\u91CD\u8F6C\u5199\u5931\u8D25", "err"), {
+                    ok: !1,
+                    cancelled: !!S.cancelled
+                };
+                M = S.cues
             }
-        });
-
-        els.dualDisplaySelect?.addEventListener('change', () => {
-            saveDualDisplayMode(els.dualDisplaySelect.value);
-        });
-        els.dualLineOrderSelect?.addEventListener('change', () => {
-            saveDualLineOrder(els.dualLineOrderSelect.value);
-        });
-        state.dualDisplayMode = loadDualDisplayMode();
-        state.dualLineOrder = loadDualLineOrder();
-        if (els.dualDisplaySelect) els.dualDisplaySelect.value = state.dualDisplayMode;
-        if (els.dualLineOrderSelect) els.dualLineOrderSelect.value = state.dualLineOrder;
-        els.cueBody?.addEventListener('click', (e) => {
-            const row = e.target.closest('tr[data-cue-idx]');
-            if (!row) return;
-            const idx = Number(row.dataset.cueIdx);
-            selectCue(idx, {
-                scroll: true,
-                additive: e.ctrlKey || e.metaKey,
-                range: e.shiftKey,
+            $();
+            let w = t.selectedIndex >= 0 ? t.selectedIndex : 0,
+                A = 0,
+                F = !1;
+            const re = S => {
+                    if (S?.length)
+                        if (U() && t.dualRole === "target") A = y(t.pairCues, S, -1).replacedCount, t.pairDirty = !0, F = !0;
+                        else {
+                            const E = y(t.cues, S, a === "cue" ? t.selectedIndex : -1);
+                            w = E.selectAt, A = E.replacedCount
+                        }
+                },
+                pe = S => {
+                    if (S?.length)
+                        if (U() && t.dualRole === "source") {
+                            const E = y(t.pairCues, S, -1);
+                            A = Math.max(A, E.replacedCount), t.pairDirty = !0, F = !0
+                        } else if (U() && t.dualRole === "target") {
+                        const E = y(t.cues, S, a === "cue" ? t.selectedIndex : -1);
+                        w = E.selectAt, A = Math.max(A, E.replacedCount)
+                    } else {
+                        const E = y(t.cues, S, a === "cue" ? t.selectedIndex : -1);
+                        w = E.selectAt, A = E.replacedCount
+                    }
+                };
+            if (l) {
+                if (re(M), pe(L), !L?.length && M?.length && F) return await os(), P(!0), C(), d("\u7FFB\u8BD1\u5931\u8D25\uFF0C\u4F46\u539F\u6587\u5BF9\u7167\u8F68\u5DF2\u66F4\u65B0\u5E76\u4FDD\u5B58", "warn"), {
+                    ok: !1
+                };
+                if (!L?.length) return d("\u53CC\u8BED\u91CD\u8DD1\u5931\u8D25", "err"), {
+                    ok: !1
+                }
+            } else c === "target" ? pe(L) : re(M);
+            At();
+            const le = (L || M || []).length;
+            let ge = 0;
+            if (o && t.videoPath && p?.ffmpegDetectSilence && !F) {
+                const S = [];
+                for (let Y = 0; Y < le; Y += 1) {
+                    const rt = w + Y;
+                    rt >= 0 && rt < t.cues.length && S.push(rt)
+                }
+                const E = gn({});
+                Ee({
+                    title: "\u6B63\u5728\u6309\u97F3\u9891\u8D34\u8FB9",
+                    detail: `\u5904\u7406\u5B8C\u6210\uFF0C\u6B63\u5728\u8D34\u8FB9 ${S.length} \u6761\u2026`,
+                    current: 0,
+                    total: S.length,
+                    statusMessage: `\u8D34\u8FB9 0/${S.length}\u2026`
+                }), e.silenceProgressHint && (e.silenceProgressHint.textContent = "\u6839\u636E\u9759\u97F3\u5FAE\u8C03\u8D77\u6B62\u65F6\u95F4\uFF0C\u6587\u672C\u4FDD\u6301\u4E0D\u53D8"), await ce();
+                for (let Y = 0; Y < S.length; Y += 1) de({
+                    current: Y,
+                    total: S.length,
+                    detail: `\u6B63\u5728\u8D34\u8FB9\u7B2C ${Y+1}/${S.length} \u6761\u2026`,
+                    statusMessage: `\u8D34\u8FB9 ${Y+1}/${S.length}\u2026`
+                }), await ce(), (await Zs(S[Y], {
+                    ...E,
+                    padMs: 400,
+                    allowExtend: !0
+                })).status === "adjusted" && (ge += 1)
+            }
+            if (F) {
+                const S = await os();
+                S?.ok || d(S?.error || "\u5BF9\u7167\u8F68\u4FDD\u5B58\u5931\u8D25", "err")
+            }
+            no(w, le), await dn(), t.selectedIndex = Math.min(Math.max(w, 0), t.cues.length - 1), P(!0), C();
+            const bt = ((i - r) / 1e3).toFixed(1),
+                Qt = o && ge ? `\uFF0C\u8D34\u8FB9 ${ge}/${le}` : "";
+            return d(`\u5DF2${l?"\u53CC\u8BED\u91CD\u8DD1":c==="target"?"\u91CD\u8F6C\u5199\u4E3A\u8BD1\u6587":"\u91CD\u8F6C\u5199\u4E3A\u539F\u6587"} ${bt}s\uFF1A\u66FF\u6362 ${A} \u6761 \u2192 ${le} \u6761${Qt}${!l&&c==="source"&&F?"\uFF08\u5DF2\u5199\u5165\u539F\u6587\u5BF9\u7167\u8F68\uFF0C\u8BD1\u6587\u672A\u6539\uFF09":!l&&c==="target"&&F?"\uFF08\u5DF2\u5199\u5165\u8BD1\u6587\u5BF9\u7167\u8F68\uFF0C\u539F\u6587\u672A\u6539\uFF09":""}`, "ok"), {
+                ok: !0,
+                newCount: le,
+                replacedCount: A,
+                snappedCount: ge
+            }
+        } catch (N) {
+            const W = N?.name === "AbortError" || N?.code === "cancelled" || N?.code === "aborted";
+            return d(W ? "\u64CD\u4F5C\u5DF2\u4E2D\u6B62\u6216\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5" : friendlyJobAbortMessage(N?.message || "\u5904\u7406\u5931\u8D25"), W ? "warn" : "err"), {
+                ok: !1,
+                cancelled: !!W
+            }
+        } finally {
+            if (typeof te == "function") try {
+                te()
+            } catch {}
+            t.retranscribeBusy = !1, Ie(), e.silenceProgressHint && (e.silenceProgressHint.textContent = "FFmpeg \u6B63\u5728\u5206\u6790\u5173\u8054\u89C6\u9891\u7684\u97F3\u9891\u9759\u97F3\u70B9\uFF0C\u8BF7\u52FF\u5173\u95ED\u7A97\u53E3"), Qe()
+        }
+    }
+    async function ro({
+        title: n = "\u91CD\u8F6C\u5199"
+    } = {}) {
+        const i = nt().writeAs !== "target",
+            s = await ll("\u8BF7\u9009\u62E9\u8F6C\u5F55\u76EE\u6807", {
+                title: n,
+                detail: `\u539F\u6587\uFF1A\u8BED\u97F3\u8BC6\u522B\uFF08\u6E90\u8BED\u8A00\uFF09
+\u8BD1\u6587\uFF1A\u6309\u8BBE\u7F6E\u4E2D\u7684\u7FFB\u8BD1\u65B9\u5F0F\uFF08\u63A8\u7406\u7FFB\u8BD1 / \u667A\u80FD / \u673A\u5668\u7FFB\u8BD1\uFF09`,
+                buttons: ["\u539F\u6587", "\u8BD1\u6587", "\u53D6\u6D88"],
+                defaultId: i ? 0 : 1,
+                cancelId: 2
             });
-            focusCueList();
-        });
-
-        els.cueBody?.addEventListener('dblclick', (e) => {
-            const row = e.target.closest('tr[data-cue-idx]');
-            if (!row) return;
-            const idx = Number(row.dataset.cueIdx);
-            selectCue(idx, { seek: true, scroll: true });
-            focusCueList();
-        });
-
-        els.cueBody?.addEventListener('contextmenu', (e) => {
-            const row = e.target.closest('tr[data-cue-idx]');
-            if (!row) return;
-            e.preventDefault();
-            openCueContextMenuAt(Number(row.dataset.cueIdx), e.clientX, e.clientY, { scroll: false });
-        });
-
-        els.cueContextMenu?.querySelectorAll('[data-ctx-action]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                if (btn.disabled) return;
-                handleContextMenuAction(btn.dataset.ctxAction);
-            });
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!els.cueContextMenu?.classList.contains('hidden')
-                && !els.cueContextMenu?.contains(e.target)) {
-                hideCueContextMenu();
-            }
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && els.cueContextMenu && !els.cueContextMenu.classList.contains('hidden')) {
-                hideCueContextMenu();
-            }
-        });
-        els.cueBody?.closest('.editor-list-wrap')?.addEventListener('scroll', hideCueContextMenu);
-        window.addEventListener('resize', hideCueContextMenu);
-
-        els.listWrap?.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-            if (e.target.closest('tr[data-cue-idx]')) return;
-            focusCueList();
-        });
-
-        els.videoWrap?.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-            if (e.target.closest('button, select, input, textarea, a, [contenteditable="true"]')) return;
-            focusPlayerArea();
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                if (state.silenceSplitBusy || state.retranscribeBusy) {
-                    e.preventDefault();
-                    requestEditorJobAbort();
-                    return;
-                }
-                if (els.shortcutsModal && !els.shortcutsModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeShortcutsModal();
-                    return;
-                }
-                if (els.silenceSplitModal && !els.silenceSplitModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeSilenceSplitModal();
-                    return;
-                }
-                if (els.smartSplitModal && !els.smartSplitModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeSmartSplitModal();
-                    return;
-                }
-                if (els.smartAdjustModal && !els.smartAdjustModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeSmartAdjustModal();
-                    return;
-                }
-                if (els.removeNoiseModal && !els.removeNoiseModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeRemoveNoiseModal();
-                    return;
-                }
-                if (els.chineseConvertModal && !els.chineseConvertModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeChineseConvertModal();
-                    return;
-                }
-                if (els.compressRepModal && !els.compressRepModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeCompressRepModal();
-                    return;
-                }
-                if (els.qcModal && !els.qcModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeQcModal();
-                    return;
-                }
-                if (els.retranscribeDurModal && !els.retranscribeDurModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeRetranscribeDurModal();
-                    return;
-                }
-                if (els.batchDurModal && !els.batchDurModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeBatchDurModal();
-                    return;
-                }
-                if (els.findReplaceModal && !els.findReplaceModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeFindReplaceModal();
-                    return;
-                }
-                if (els.glossaryModal && !els.glossaryModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeGlossaryModal();
-                    return;
-                }
-                if (els.breakWordsModal && !els.breakWordsModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeBreakWordsModal();
-                    return;
-                }
-                if (els.splitModal && !els.splitModal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    closeSplitModal();
-                    return;
-                }
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault();
-                undo();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-                e.preventDefault();
-                redo();
-                return;
-            }
-            if (e.key === 'F11') {
-                e.preventDefault();
-                setStartToPlayhead();
-                return;
-            }
-            if (e.key === 'F12') {
-                e.preventDefault();
-                setEndToPlayhead();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
-                e.preventDefault();
-                openFindReplaceModal(false);
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && (e.key === 'h' || e.key === 'H')) {
-                e.preventDefault();
-                openFindReplaceModal(true);
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault();
-                saveDocument();
-                return;
-            }
-            if (e.key === 'Delete' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                if (e.target.matches('input, textarea')) return;
-                const modalOpen = [
-                    els.splitModal,
-                    els.findReplaceModal,
-                    els.glossaryModal,
-                    els.breakWordsModal,
-                    els.batchDurModal,
-                    els.smartSplitModal,
-                    els.silenceSplitModal,
-                    els.smartAdjustModal,
-                    els.removeNoiseModal,
-                    els.chineseConvertModal,
-                    els.compressRepModal,
-                    els.qcModal,
-                    els.retranscribeDurModal,
-                    els.shortcutsModal,
-                ].some((m) => m && !m.classList.contains('hidden'));
-                if (modalOpen) return;
-                if (state.selectedIndex < 0 && !getSelectedCueIndexes().length) return;
-                e.preventDefault();
-                deleteSelectedCue();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'a') {
-                if (isTypingTarget(e.target)) return;
-                if (isListFocused() || e.target === document.body || e.target === document.documentElement) {
-                    e.preventDefault();
-                    selectAllVisibleCues();
-                    return;
-                }
-            }
-            if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'm') {
-                if (isTypingTarget(e.target)) return;
-                if (isListFocused()) {
-                    e.preventDefault();
-                    mergeSelectedCues();
-                    return;
-                }
-            }
-            if (e.key === ' ' || e.code === 'Space') {
-                if (isTypingTarget(e.target)) return;
-                if (isListFocused() || isPlayerFocused()) {
-                    e.preventDefault();
-                    toggleVideoPlayback();
-                    return;
-                }
-            }
-            if (isListFocused()) {
-                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-                    e.preventDefault();
-                    insertCueAtPlayhead();
-                    return;
-                }
-            }
-            // 文字编辑框内的 Ctrl+↑/↓ 由 detailText 自身处理；此处跳过以免重复
-            if (e.target === els.detailText && (e.ctrlKey || e.metaKey)
-                && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-                return;
-            }
-            if (e.target.matches('input, textarea') && !e.ctrlKey && !e.metaKey) return;
-            if (e.key === 'ArrowUp' && state.selectedIndex > 0) {
-                e.preventDefault();
-                selectCue(state.selectedIndex - 1, { scroll: true });
-            } else if (e.key === 'ArrowDown' && state.selectedIndex < state.cues.length - 1) {
-                e.preventDefault();
-                selectCue(state.selectedIndex + 1, { scroll: true });
-            }
-        });
-
-        els.video?.addEventListener('play', onVideoPlay);
-        els.video?.addEventListener('pause', onVideoPause);
-        els.video?.addEventListener('ended', onVideoPause);
-        els.video?.addEventListener('playing', () => {
-            // Resume after buffer stall: re-arm cue sync so overlay cannot freeze.
-            if (els.video && !els.video.paused) {
-                syncPlaybackFromVideo(true);
-                scheduleCueBoundarySync();
-            }
-            requestAnimationFrame(() => {
-                const v = els.video;
-                if (!v || v.paused) return;
-                if (v.videoWidth > 0 && v.videoHeight > 0) return;
-                const codec = String(state.videoCodec || '').toLowerCase();
-                const soft = ['hevc', 'h265', 'av1', 'vp9'].includes(codec);
-                setStatus(
-                    soft
-                        ? '内置播放器无法解码该视频编码（黑屏仅有声音），可尝试 H.264 版本或安装 HEVC 视频扩展'
-                        : '视频正在播放但无画面，请检查视频文件',
-                    'err',
-                );
-            });
-        });
-        els.video?.addEventListener('seeked', () => {
-            syncPlaybackFromVideo(true);
-            if (els.video && !els.video.paused) scheduleCueBoundarySync();
-        });
-        els.video?.addEventListener('ratechange', () => {
-            if (els.video && !els.video.paused) scheduleCueBoundarySync();
-        });
-        els.video?.addEventListener('loadedmetadata', () => {
-            updateTimelineDuration();
-            renderTimeline();
-            updatePlayPauseButton();
-        });
-        els.video?.addEventListener('timeupdate', () => {
-            if (!els.video || els.video.paused) return;
-            // timeupdate is the reliable clock. Boundary timers alone can drift when
-            // the main thread is busy (timeline redraw) or the media pipeline stalls,
-            // leaving the on-video subtitle preview stuck until a waveform seek.
-            const now = performance.now();
-            if (now - (state.lastPlaybackSyncAt || 0) >= 50) {
-                state.lastPlaybackSyncAt = now;
-                syncPlaybackFromVideo(false);
-            }
-            updateTimelinePlayhead(Math.round((els.video.currentTime || 0) * 1000), { follow: true });
-        });
+        return s === 0 ? "source" : s === 1 ? "target" : null
     }
 
-    function cacheElements() {
-        Object.assign(els, {
-            formatBadge: document.getElementById('editorFormatBadge'),
-            autoFocusBtn: document.getElementById('editorAutoFocusBtn'),
-            waveformToggle: document.getElementById('editorWaveformToggle'),
-            cueCount: document.getElementById('editorCueCount'),
-            lowConfBadge: document.getElementById('editorLowConfBadge'),
-            dirtyBadge: document.getElementById('editorDirtyBadge'),
-            saveStatus: document.getElementById('editorSaveStatus'),
-            saveBtn: document.getElementById('editorSaveBtn'),
-            exportDualBtn: document.getElementById('editorExportDualBtn'),
-            exportDualMenuBtn: document.getElementById('editorExportDualMenuBtn'),
-            addCueBtn: document.getElementById('editorAddCueBtn'),
-            insertCueBtn: document.getElementById('editorInsertCueBtn'),
-            detailInsertCueBtn: document.getElementById('editorDetailInsertCueBtn'),
-            retranscribeCueBtn: document.getElementById('editorRetranscribeCueBtn'),
-            playheadTime: document.getElementById('editorPlayheadTime'),
-            openFileBtn: document.getElementById('editorOpenFileBtn'),
-            undoBtn: document.getElementById('editorUndoBtn'),
-            redoBtn: document.getElementById('editorRedoBtn'),
-            toolsMenuBtn: document.getElementById('editorToolsMenuBtn'),
-            toolsMenu: document.getElementById('editorToolsMenu'),
-            themeToggle: document.getElementById('editorThemeToggle'),
-            openGeneratorBtn: document.getElementById('editorOpenGeneratorBtn'),
-            settingsBtn: document.getElementById('editorSettingsBtn'),
-            splitter: document.getElementById('editorSplitter'),
-            cuesPanel: document.getElementById('editorCuesPanel'),
-            main: document.querySelector('.editor-main'),
-            filterCount: document.getElementById('editorFilterCount'),
-            nextIssueBtn: document.getElementById('editorNextIssueBtn'),
-            detailTools: document.getElementById('editorDetailTools'),
-            playPauseBtn: document.getElementById('editorPlayPauseBtn'),
-            seekBackBtn: document.getElementById('editorSeekBackBtn'),
-            seekFwdBtn: document.getElementById('editorSeekFwdBtn'),
-            rateSelect: document.getElementById('editorRateSelect'),
-            dualDisplaySelect: document.getElementById('editorDualDisplaySelect'),
-            dualLineOrderSelect: document.getElementById('editorDualLineOrderSelect'),
-            volumeSlider: document.getElementById('editorVolumeSlider'),
-            videoEmpty: document.getElementById('editorVideoEmpty'),
-            timelineStack: document.getElementById('editorTimelineStack'),
-            timeline: document.getElementById('editorTimeline'),
-            timelineTrack: document.getElementById('editorTimelineTrack'),
-            waveformRow: document.getElementById('editorWaveformRow'),
-            waveformTrack: document.getElementById('editorWaveformTrack'),
-            timelineWaveform: document.getElementById('editorTimelineWaveform'),
-            waveformPlayhead: document.getElementById('editorWaveformPlayhead'),
-            waveformLoading: document.getElementById('editorWaveformLoading'),
-            waveformLoadingText: document.getElementById('editorWaveformLoadingText'),
-            timelineCues: document.getElementById('editorTimelineCues'),
-            timelinePlayhead: document.getElementById('editorTimelinePlayhead'),
-            timelineHScrollWrap: document.getElementById('editorTimelineHScrollWrap'),
-            timelineHScroll: document.getElementById('editorTimelineHScroll'),
-            timelineZoomIn: document.getElementById('editorTimelineZoomIn'),
-            timelineZoomOut: document.getElementById('editorTimelineZoomOut'),
-            timelineZoomFit: document.getElementById('editorTimelineZoomFit'),
-            shortcutsBtn: document.getElementById('editorShortcutsBtn'),
-            shortcutsModal: document.getElementById('editorShortcutsModal'),
-            shortcutsClose: document.getElementById('editorShortcutsClose'),
-            shiftBackBtn: document.getElementById('editorShiftBackBtn'),
-            shiftFwdBtn: document.getElementById('editorShiftFwdBtn'),
-            linkVideoBtn: document.getElementById('editorLinkVideoBtn'),
-            findReplaceBtn: document.getElementById('editorFindReplaceBtn'),
-            findReplaceModal: document.getElementById('editorFindReplaceModal'),
-            findReplaceClose: document.getElementById('editorFindReplaceClose'),
-            glossaryBtn: document.getElementById('editorGlossaryBtn'),
-            glossaryBadge: document.getElementById('editorGlossaryBadge'),
-            glossaryModal: document.getElementById('editorGlossaryModal'),
-            glossaryScopeGlobal: document.getElementById('editorGlossaryScopeGlobal'),
-            glossaryScopeProject: document.getElementById('editorGlossaryScopeProject'),
-            glossaryScopeProjectLabel: document.getElementById('editorGlossaryScopeProjectLabel'),
-            glossaryEntryList: document.getElementById('editorGlossaryEntryList'),
-            glossaryIssueList: document.getElementById('editorGlossaryIssueList'),
-            textPresetsBtn: document.getElementById('editorTextPresetsBtn'),
-            textPresetsBadge: document.getElementById('editorTextPresetsBadge'),
-            textPresetsModal: document.getElementById('editorTextPresetsModal'),
-            workflowBtn: document.getElementById('editorWorkflowBtn'),
-            workflowModal: document.getElementById('editorWorkflowModal'),
-            workflowSelect: document.getElementById('editorWorkflowSelect'),
-            workflowNote: document.getElementById('editorWorkflowNote'),
-            workflowStepList: document.getElementById('editorWorkflowStepList'),
-            workflowStatus: document.getElementById('editorWorkflowStatus'),
-            workflowRunBtn: document.getElementById('editorWorkflowRunBtn'),
-            workflowCancelRunBtn: document.getElementById('editorWorkflowCancelRunBtn'),
-            workflowClose: document.getElementById('editorWorkflowClose'),
-            workflowDupBtn: document.getElementById('editorWorkflowDupBtn'),
-            workflowNewBtn: document.getElementById('editorWorkflowNewBtn'),
-            workflowDeleteBtn: document.getElementById('editorWorkflowDeleteBtn'),
-            workflowImportBtn: document.getElementById('editorWorkflowImportBtn'),
-            workflowExportBtn: document.getElementById('editorWorkflowExportBtn'),
-            workflowAddRow: document.getElementById('editorWorkflowAddRow'),
-            workflowAddStepSelect: document.getElementById('editorWorkflowAddStepSelect'),
-            workflowAddStepBtn: document.getElementById('editorWorkflowAddStepBtn'),
-            workflowPauseBanner: document.getElementById('editorWorkflowPauseBanner'),
-            workflowPauseMessage: document.getElementById('editorWorkflowPauseMessage'),
-            workflowContinueBtn: document.getElementById('editorWorkflowContinueBtn'),
-            workflowSkipStepBtn: document.getElementById('editorWorkflowSkipStepBtn'),
-            workflowAbortBtn: document.getElementById('editorWorkflowAbortBtn'),
-            workflowPauseOverlay: document.getElementById('editorWorkflowPauseOverlay'),
-            workflowPauseOverlayMessage: document.getElementById('editorWorkflowPauseOverlayMessage'),
-            workflowOverlayContinueBtn: document.getElementById('editorWorkflowOverlayContinueBtn'),
-            workflowOverlaySkipBtn: document.getElementById('editorWorkflowOverlaySkipBtn'),
-            workflowOverlayAbortBtn: document.getElementById('editorWorkflowOverlayAbortBtn'),
-            textPresetsList: document.getElementById('editorTextPresetsList'),
-            textPresetsSearch: document.getElementById('editorTextPresetsSearch'),
-            textPresetsStatus: document.getElementById('editorTextPresetsStatus'),
-            textPresetsAddBtn: document.getElementById('editorTextPresetsAddBtn'),
-            textPresetsImportBtn: document.getElementById('editorTextPresetsImportBtn'),
-            textPresetsExportBtn: document.getElementById('editorTextPresetsExportBtn'),
-            textPresetsSeedBtn: document.getElementById('editorTextPresetsSeedBtn'),
-            textPresetsClose: document.getElementById('editorTextPresetsClose'),
-            textPresetName: document.getElementById('editorTextPresetName'),
-            textPresetAnchor: document.getElementById('editorTextPresetAnchor'),
-            textPresetItemsHost: document.getElementById('editorTextPresetItemsHost'),
-            textPresetAddItemBtn: document.getElementById('editorTextPresetAddItemBtn'),
-            textPresetSaveBtn: document.getElementById('editorTextPresetSaveBtn'),
-            textPresetDeleteBtn: document.getElementById('editorTextPresetDeleteBtn'),
-            textPresetInsertNewBtn: document.getElementById('editorTextPresetInsertNewBtn'),
-            textPresetQuickSelect: document.getElementById('editorTextPresetQuickSelect'),
-            glossaryCanonical: document.getElementById('editorGlossaryCanonical'),
-            glossaryAliases: document.getElementById('editorGlossaryAliases'),
-            glossaryCaseSensitive: document.getElementById('editorGlossaryCaseSensitive'),
-            glossaryEnabled: document.getElementById('editorGlossaryEnabled'),
-            glossaryAddBtn: document.getElementById('editorGlossaryAddBtn'),
-            glossarySaveEntryBtn: document.getElementById('editorGlossarySaveEntryBtn'),
-            glossaryDeleteEntryBtn: document.getElementById('editorGlossaryDeleteEntryBtn'),
-            glossaryImportBtn: document.getElementById('editorGlossaryImportBtn'),
-            glossaryExportBtn: document.getElementById('editorGlossaryExportBtn'),
-            glossaryScanBtn: document.getElementById('editorGlossaryScanBtn'),
-            breakWordsBtn: document.getElementById('editorBreakWordsBtn'),
-            splitOpenBreakWordsBtn: document.getElementById('editorSplitOpenBreakWordsBtn'),
-            smartSplitOpenBreakWordsBtn: document.getElementById('editorSmartSplitOpenBreakWordsBtn'),
-            breakWordsModal: document.getElementById('editorBreakWordsModal'),
-            breakWordsChips: document.getElementById('editorBreakWordsChips'),
-            breakWordsInput: document.getElementById('editorBreakWordsInput'),
-            breakWordsAddBtn: document.getElementById('editorBreakWordsAddBtn'),
-            breakWordsResetBtn: document.getElementById('editorBreakWordsResetBtn'),
-            breakWordsClearBtn: document.getElementById('editorBreakWordsClearBtn'),
-            breakWordsClose: document.getElementById('editorBreakWordsClose'),
-            breakWordsStatus: document.getElementById('editorBreakWordsStatus'),
-            glossaryPreview: document.getElementById('editorGlossaryPreview'),
-            glossaryConfirm: document.getElementById('editorGlossaryConfirm'),
-            glossaryCancel: document.getElementById('editorGlossaryCancel'),
-            findInput: document.getElementById('editorFindInput'),
-            replaceInput: document.getElementById('editorReplaceInput'),
-            findCase: document.getElementById('editorFindCase'),
-            findStatus: document.getElementById('editorFindStatus'),
-            findPrevBtn: document.getElementById('editorFindPrevBtn'),
-            findNextBtn: document.getElementById('editorFindNextBtn'),
-            replaceOneBtn: document.getElementById('editorReplaceOneBtn'),
-            replaceAllBtn: document.getElementById('editorReplaceAllBtn'),
-            batchDurBtn: document.getElementById('editorBatchDurBtn'),
-            batchDurModal: document.getElementById('editorBatchDurModal'),
-            batchDurFixedWrap: document.getElementById('editorBatchDurFixedWrap'),
-            batchDurSilenceWrap: document.getElementById('editorBatchDurSilenceWrap'),
-            batchDurTarget: document.getElementById('editorBatchDurTarget'),
-            batchDurHint: document.getElementById('editorBatchDurHint'),
-            batchDurSilenceDb: document.getElementById('editorBatchDurSilenceDb'),
-            batchDurSilenceDur: document.getElementById('editorBatchDurSilenceDur'),
-            batchDurSnapPadWrap: document.getElementById('editorBatchDurSnapPadWrap'),
-            batchDurSnapPadMs: document.getElementById('editorBatchDurSnapPadMs'),
-            batchDurAvoidOverlapRow: document.getElementById('editorBatchDurAvoidOverlapRow'),
-            batchDurShorter: document.getElementById('editorBatchDurShorter'),
-            batchDurLonger: document.getElementById('editorBatchDurLonger'),
-            batchDurMin: document.getElementById('editorBatchDurMin'),
-            batchDurMax: document.getElementById('editorBatchDurMax'),
-            batchDurCpsAbove: document.getElementById('editorBatchDurCpsAbove'),
-            batchDurCpsBelow: document.getElementById('editorBatchDurCpsBelow'),
-            batchDurText: document.getElementById('editorBatchDurText'),
-            batchDurAvoidOverlap: document.getElementById('editorBatchDurAvoidOverlap'),
-            batchDurPreview: document.getElementById('editorBatchDurPreview'),
-            batchDurConfirm: document.getElementById('editorBatchDurConfirm'),
-            batchDurCancel: document.getElementById('editorBatchDurCancel'),
-            smartAdjustBtn: document.getElementById('editorSmartAdjustBtn'),
-            qcBtn: document.getElementById('editorQcBtn'),
-            qcBadge: document.getElementById('editorQcBadge'),
-            retranscribeDurBtn: document.getElementById('editorRetranscribeDurBtn'),
-            retranscribeDurModal: document.getElementById('editorRetranscribeDurModal'),
-            retranscribeDurSec: document.getElementById('editorRetranscribeDurSec'),
-            retranscribeDurPadMs: document.getElementById('editorRetranscribeDurPadMs'),
-            retranscribeDurSnapAfter: document.getElementById('editorRetranscribeDurSnapAfter'),
-            retranscribeDurPreview: document.getElementById('editorRetranscribeDurPreview'),
-            retranscribeDurConfirm: document.getElementById('editorRetranscribeDurConfirm'),
-            retranscribeDurAll: document.getElementById('editorRetranscribeDurAll'),
-            retranscribeDurCancel: document.getElementById('editorRetranscribeDurCancel'),
-            qcModal: document.getElementById('editorQcModal'),
-            qcSummaryBar: document.getElementById('editorQcSummaryBar'),
-            qcIssueList: document.getElementById('editorQcIssueList'),
-            qcFixOverlap: document.getElementById('editorQcFixOverlap'),
-            qcFixCpsSplit: document.getElementById('editorQcFixCpsSplit'),
-            qcFixCpsExtend: document.getElementById('editorQcFixCpsExtend'),
-            qcEnforceMin: document.getElementById('editorQcEnforceMin'),
-            qcEnforceMax: document.getElementById('editorQcEnforceMax'),
-            qcCompressRep: document.getElementById('editorQcCompressRep'),
-            qcMaxCps: document.getElementById('editorQcMaxCps'),
-            qcMinSec: document.getElementById('editorQcMinSec'),
-            qcMaxSec: document.getElementById('editorQcMaxSec'),
-            qcGapMs: document.getElementById('editorQcGapMs'),
-            qcPreview: document.getElementById('editorQcPreview'),
-            qcConfirm: document.getElementById('editorQcConfirm'),
-            qcFixFiltered: document.getElementById('editorQcFixFiltered'),
-            qcCancel: document.getElementById('editorQcCancel'),
-            smartSplitBtn: document.getElementById('editorSmartSplitBtn'),
-            silenceSplitBtn: document.getElementById('editorSilenceSplitBtn'),
-            smartSplitCueBtn: document.getElementById('editorSmartSplitCueBtn'),
-            silenceSplitCueBtn: document.getElementById('editorSilenceSplitCueBtn'),
-            compressRepCueBtn: document.getElementById('editorCompressRepCueBtn'),
-            splitLinesBtn: document.getElementById('editorSplitLinesBtn'),
-            splitSpacesBtn: document.getElementById('editorSplitSpacesBtn'),
-            charDurBtn: document.getElementById('editorCharDurBtn'),
-            smartDurBtn: document.getElementById('editorSmartDurBtn'),
-            audioSnapBtn: document.getElementById('editorAudioSnapBtn'),
-            silenceSplitModal: document.getElementById('editorSilenceSplitModal'),
-            silenceSplitDb: document.getElementById('editorSilenceSplitDb'),
-            silenceSplitDur: document.getElementById('editorSilenceSplitDur'),
-            silenceSplitDurLong: document.getElementById('editorSilenceSplitDurLong'),
-            silenceSplitCpsAbove: document.getElementById('editorSilenceSplitCpsAbove'),
-            silenceSplitCharsLong: document.getElementById('editorSilenceSplitCharsLong'),
-            silenceSplitFixOverlap: document.getElementById('editorSilenceSplitFixOverlap'),
-            silenceSplitPreview: document.getElementById('editorSilenceSplitPreview'),
-            silenceSplitConfirm: document.getElementById('editorSilenceSplitConfirm'),
-            silenceSplitCancel: document.getElementById('editorSilenceSplitCancel'),
-            smartSplitModal: document.getElementById('editorSmartSplitModal'),
-            smartSplitMaxChars: document.getElementById('editorSmartSplitMaxChars'),
-            smartSplitLineChars: document.getElementById('editorSmartSplitLineChars'),
-            smartSplitCpsAbove: document.getElementById('editorSmartSplitCpsAbove'),
-            smartSplitLineLen: document.getElementById('editorSmartSplitLineLen'),
-            smartSplitDurLong: document.getElementById('editorSmartSplitDurLong'),
-            smartSplitCharsLong: document.getElementById('editorSmartSplitCharsLong'),
-            smartSplitUseCps: document.getElementById('editorSmartSplitUseCps'),
-            smartSplitFixOverlap: document.getElementById('editorSmartSplitFixOverlap'),
-            smartSplitPreview: document.getElementById('editorSmartSplitPreview'),
-            smartSplitConfirm: document.getElementById('editorSmartSplitConfirm'),
-            smartSplitCancel: document.getElementById('editorSmartSplitCancel'),
-            smartAdjustModal: document.getElementById('editorSmartAdjustModal'),
-            smartFixOverlap: document.getElementById('editorSmartFixOverlap'),
-            smartFixCps: document.getElementById('editorSmartFixCps'),
-            smartEnforceMin: document.getElementById('editorSmartEnforceMin'),
-            smartEnforceMax: document.getElementById('editorSmartEnforceMax'),
-            smartMaxCps: document.getElementById('editorSmartMaxCps'),
-            smartMinSec: document.getElementById('editorSmartMinSec'),
-            smartMaxSec: document.getElementById('editorSmartMaxSec'),
-            smartGapMs: document.getElementById('editorSmartGapMs'),
-            smartPreview: document.getElementById('editorSmartPreview'),
-            smartAdjustConfirm: document.getElementById('editorSmartAdjustConfirm'),
-            smartAdjustCancel: document.getElementById('editorSmartAdjustCancel'),
-            removeNoiseBtn: document.getElementById('editorRemoveNoiseBtn'),
-            removeNoiseModal: document.getElementById('editorRemoveNoiseModal'),
-            removeNoisePreview: document.getElementById('editorRemoveNoisePreview'),
-            removeNoiseConfirm: document.getElementById('editorRemoveNoiseConfirm'),
-            removeNoiseCancel: document.getElementById('editorRemoveNoiseCancel'),
-            noiseRemoveEmpty: document.getElementById('editorNoiseRemoveEmpty'),
-            noiseRemoveFragments: document.getElementById('editorNoiseRemoveFragments'),
-            noiseRemoveSoundEffects: document.getElementById('editorNoiseRemoveSoundEffects'),
-            noiseRemoveSymbolOnly: document.getElementById('editorNoiseRemoveSymbolOnly'),
-            noiseRemoveDuplicates: document.getElementById('editorNoiseRemoveDuplicates'),
-            noiseRemoveHallucinations: document.getElementById('editorNoiseRemoveHallucinations'),
-            chineseConvertBtn: document.getElementById('editorChineseConvertBtn'),
-            chineseConvertModal: document.getElementById('editorChineseConvertModal'),
-            chineseConvertPreview: document.getElementById('editorChineseConvertPreview'),
-            chineseConvertConfirm: document.getElementById('editorChineseConvertConfirm'),
-            chineseConvertCancel: document.getElementById('editorChineseConvertCancel'),
-            chineseDirS2T: document.getElementById('editorChineseDirS2T'),
-            chineseDirT2S: document.getElementById('editorChineseDirT2S'),
-            chineseScopeAll: document.getElementById('editorChineseScopeAll'),
-            chineseScopeSelected: document.getElementById('editorChineseScopeSelected'),
-            chineseProtectGlossary: document.getElementById('editorChineseProtectGlossary'),
-            compressRepBtn: document.getElementById('editorCompressRepBtn'),
-            compressRepModal: document.getElementById('editorCompressRepModal'),
-            compressRepPreview: document.getElementById('editorCompressRepPreview'),
-            compressRepConfirm: document.getElementById('editorCompressRepConfirm'),
-            compressRepCancel: document.getElementById('editorCompressRepCancel'),
-            compressRepScopeAll: document.getElementById('editorCompressRepScopeAll'),
-            compressRepScopeSelected: document.getElementById('editorCompressRepScopeSelected'),
-            compressRepSingleChar: document.getElementById('editorCompressRepSingleChar'),
-            compressRepExclaim: document.getElementById('editorCompressRepExclaim'),
-            restoreBtn: document.getElementById('editorRestoreBtn'),
-            sidecarSelect: document.getElementById('editorSidecarSelect'),
-            cueBody: document.getElementById('editorCueBody'),
-            cueTable: document.getElementById('editorCueTable'),
-            listWrap: document.getElementById('editorListWrap'),
-            cueContextMenu: document.getElementById('editorCueContextMenu'),
-            detailPane: document.getElementById('editorDetailPane'),
-            detailStart: document.getElementById('editorDetailStart'),
-            detailDuration: document.getElementById('editorDetailDuration'),
-            detailEnd: document.getElementById('editorDetailEnd'),
-            detailText: document.getElementById('editorDetailText'),
-            detailPairWrap: document.getElementById('editorDetailPairWrap'),
-            detailPairText: document.getElementById('editorDetailPairText'),
-            detailCps: document.getElementById('editorDetailCps'),
-            targetCps: document.getElementById('editorTargetCps'),
-            lineLen: document.getElementById('editorLineLen'),
-            textLen: document.getElementById('editorTextLen'),
-            detailWarn: document.getElementById('editorDetailWarn'),
-            prevCueBtn: document.getElementById('editorPrevCueBtn'),
-            nextCueBtn: document.getElementById('editorNextCueBtn'),
-            deleteCueBtn: document.getElementById('editorDeleteCueBtn'),
-            splitCueBtn: document.getElementById('editorSplitCueBtn'),
-            splitModal: document.getElementById('editorSplitModal'),
-            splitConfirm: document.getElementById('editorSplitConfirm'),
-            splitCancel: document.getElementById('editorSplitCancel'),
-            splitCharCount: document.getElementById('editorSplitCharCount'),
-            splitCount: document.getElementById('editorSplitCount'),
-            splitSmartMaxChars: document.getElementById('editorSplitSmartMaxChars'),
-            splitSmartLineChars: document.getElementById('editorSplitSmartLineChars'),
-            splitSilenceDb: document.getElementById('editorSplitSilenceDb'),
-            splitSilenceDur: document.getElementById('editorSplitSilenceDur'),
-            splitUseCps: document.getElementById('editorSplitUseCps'),
-            splitFixOverlap: document.getElementById('editorSplitFixOverlap'),
-            splitPreview: document.getElementById('editorSplitPreview'),
-            splitRemember: document.getElementById('editorSplitRemember'),
-            splitHint: document.getElementById('editorSplitHint'),
-            startNudgeBack: document.getElementById('editorStartNudgeBack'),
-            startNudgeFwd: document.getElementById('editorStartNudgeFwd'),
-            durNudgeDown: document.getElementById('editorDurNudgeDown'),
-            durNudgeUp: document.getElementById('editorDurNudgeUp'),
-            setStartToPlayhead: document.getElementById('editorSetStartToPlayhead'),
-            setEndToPlayhead: document.getElementById('editorSetEndToPlayhead'),
-            video: document.getElementById('editorVideo'),
-            videoFrame: document.getElementById('editorVideoFrame'),
-            videoWrap: document.getElementById('editorVideoWrap'),
-            videoHint: document.getElementById('editorVideoHint'),
-            videoSubtitle: document.getElementById('editorVideoSubtitle'),
-            videoSubtitleSource: document.getElementById('editorVideoSubtitleSource'),
-            videoSubtitleText: document.getElementById('editorVideoSubtitleText'),
-            statusLine: document.getElementById('editorStatusLine'),
-            bootProgress: document.getElementById('editorBootProgress'),
-            welcome: document.getElementById('editorWelcome'),
-            welcomeIconWrap: document.getElementById('editorWelcomeIconWrap'),
-            welcomeIcon: document.getElementById('editorWelcomeIcon'),
-            welcomeOpenBtn: document.getElementById('editorWelcomeOpenBtn'),
-            welcomeHistoryList: document.getElementById('editorWelcomeHistoryList'),
-            welcomeClearBtn: document.getElementById('editorWelcomeClearBtn'),
-            bootProgressTitle: document.getElementById('editorBootProgressTitle'),
-            bootProgressDetail: document.getElementById('editorBootProgressDetail'),
-            silenceProgress: document.getElementById('editorSilenceProgress'),
-            silenceProgressTitle: document.getElementById('editorSilenceProgressTitle'),
-            silenceProgressCount: document.getElementById('editorSilenceProgressCount'),
-            silenceProgressDetail: document.getElementById('editorSilenceProgressDetail'),
-            silenceProgressTrack: document.getElementById('editorSilenceProgressTrack'),
-            silenceProgressBar: document.getElementById('editorSilenceProgressBar'),
-            silenceProgressHint: document.getElementById('editorSilenceProgressHint'),
-            silenceProgressCancel: document.getElementById('editorSilenceProgressCancel'),
-        });
+    function dr() {
+        return document.querySelector('input[name="editorRetranscribeWriteAs"]:checked')?.value === "target" ? "target" : "source"
     }
 
-    function init() {
-        if (!electron?.isDesktop || !document.getElementById('editorCueBody')) return;
-        cacheElements();
-        applyTargetCpsPrefs();
-        [
-            els.splitModal,
-            els.findReplaceModal,
-            els.batchDurModal,
-            els.smartSplitModal,
-            els.silenceSplitModal,
-            els.smartAdjustModal,
-            els.removeNoiseModal,
-            els.chineseConvertModal,
-            els.compressRepModal,
-            els.qcModal,
-            els.glossaryModal,
-            els.textPresetsModal,
-            els.workflowModal,
-            els.breakWordsModal,
-            els.retranscribeDurModal,
-            els.shortcutsModal,
-        ].forEach((modal) => {
-            if (modal?.classList.contains('hidden')) modal.setAttribute('inert', '');
+    function so(n) {
+        const r = n === "target" ? "target" : "source",
+            i = document.querySelector(`input[name="editorRetranscribeWriteAs"][value="${r}"]`);
+        i && (i.checked = !0)
+    }
+    async function Ns() {
+        if (t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) {
+            d("\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u5B57\u5E55", "err");
+            return
+        }
+        if (!U()) {
+            d("\u5F53\u524D\u6CA1\u6709\u914D\u5BF9\u53CC\u8BED\u8F68\uFF0C\u65E0\u6CD5\u5355\u72EC\u91CD\u8BD1", "err");
+            return
+        }
+        x();
+        const n = t.selectedIndex,
+            r = t.cues[n],
+            i = nt();
+        await ut({
+            startMs: r.startMs,
+            endMs: I(r),
+            padMs: i.padMs ?? 350,
+            mode: "cue",
+            writeAs: "target",
+            snapAfter: !1,
+            detail: `\u6B63\u5728\u91CD\u8BD1\u7B2C ${n+1} \u6761\u2026`
+        })
+    }
+    async function qs() {
+        if (t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) {
+            d("\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u5B57\u5E55", "err");
+            return
+        }
+        if (!U()) {
+            d("\u5F53\u524D\u6CA1\u6709\u914D\u5BF9\u53CC\u8BED\u8F68", "err");
+            return
+        }
+        x();
+        const n = t.selectedIndex,
+            r = t.cues[n],
+            i = nt();
+        await ut({
+            startMs: r.startMs,
+            endMs: I(r),
+            padMs: i.padMs ?? 350,
+            mode: "cue",
+            dualPass: !0,
+            snapAfter: i.snapAfter !== !1,
+            detail: `\u6B63\u5728\u53CC\u8BED\u91CD\u8DD1\u7B2C ${n+1} \u6761\u2026`
+        })
+    }
+    async function io() {
+        if (t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) {
+            d("\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u5B57\u5E55", "err");
+            return
+        }
+        x();
+        const n = await ro({
+            title: "\u91CD\u8F6C\u5199\u672C\u6761"
         });
-        bindEvents();
-        loadBreakWords();
-        void loadGlossary();
-        void loadTextPresets();
-        void workflowApi.loadWorkflows();
-        // ffmpeg 路径仅供静音/探测等工具使用，不阻塞字幕文档打开
-        void loadAppFfmpegPath();
+        if (!n) return;
+        const r = t.selectedIndex,
+            i = t.cues[r],
+            s = nt();
+        Kr({
+            ...s,
+            writeAs: n
+        }), await ut({
+            startMs: i.startMs,
+            endMs: I(i),
+            padMs: s.padMs ?? 350,
+            mode: "cue",
+            writeAs: n,
+            snapAfter: s.snapAfter !== !1,
+            detail: n === "target" ? `\u6B63\u5728\u5C06\u7B2C ${r+1} \u6761\u91CD\u8F6C\u5199\u4E3A\u8BD1\u6587\u2026` : `\u6B63\u5728\u5C06\u7B2C ${r+1} \u6761\u91CD\u8F6C\u5199\u4E3A\u539F\u6587\u2026`
+        })
+    }
 
-        electron?.onSubtitleEditorRefocus?.(() => restoreEditorFocus());
-        window.addEventListener('focus', () => {
-            const active = document.activeElement;
-            const stale = !active
-                || active === document.body
-                || Boolean(active.closest?.('.editor-modal.hidden'));
-            if (stale) restoreEditorFocus();
-        });
+    function Ws() {
+        return document.querySelector('input[name="editorRetranscribeDurStart"]:checked')?.value || "selected"
+    }
 
-        editorBootstrapped = true;
-        if (pendingEditorInit) {
-            const payload = pendingEditorInit;
-            pendingEditorInit = null;
-            bootstrapEditorDocument(payload);
-        } else {
-            updateBootProgress({
-                title: '字幕编辑器已就绪',
-                detail: '等待打开字幕文件…',
-                statusMessage: '正在等待字幕文件…',
-            });
-            // 若短时间内仍无文档可开，展示启动页
-            setTimeout(() => {
-                if (!state.ready && !pendingEditorInit && !documentLoadInFlight && !state.path) {
-                    showWelcomeScreen();
-                }
-            }, 400);
+    function Hs() {
+        const n = ml(e.retranscribeDurSec?.value),
+            r = Math.max(0, Math.min(2e3, Math.round(Number(e.retranscribeDurPadMs?.value) || 350))),
+            i = Ws();
+        let s = 0;
+        i === "playhead" ? s = De() : t.selectedIndex >= 0 && t.selectedIndex < t.cues.length ? s = t.cues[t.selectedIndex].startMs : s = De();
+        const a = s + Math.round(n * 1e3);
+        return {
+            startMs: s,
+            endMs: a,
+            durationSec: n,
+            padMs: r,
+            startMode: i
         }
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => setTimeout(init, 0));
-    } else {
-        setTimeout(init, 0);
+    function Oe() {
+        if (!e.retranscribeDurPreview) return;
+        if (x(), !t.videoPath) {
+            e.retranscribeDurPreview.textContent = "\u8BF7\u5148\u5173\u8054\u89C6\u9891", e.retranscribeDurPreview.classList.add("err");
+            return
+        }
+        Ws() === "selected" && (t.selectedIndex < 0 || t.selectedIndex >= t.cues.length) && (e.retranscribeDurPreview.textContent = "\u672A\u9009\u4E2D\u5B57\u5E55\uFF0C\u5C06\u6539\u7528\u64AD\u653E\u5934\u4F5C\u4E3A\u8D77\u59CB", e.retranscribeDurPreview.classList.remove("err"));
+        const r = Hs(),
+            i = z.collectOverlappingCueIndices(t.cues, r.startMs, r.endMs),
+            s = Z(r.startMs, t.format),
+            a = Z(r.endMs, t.format),
+            l = dr() === "target" ? U() ? "\uFF1B\u5199\u5165\u8BD1\u6587\u8F68" : "\uFF1B\u5F15\u64CE\u7FFB\u8BD1\u8986\u76D6\u5F53\u524D\u5B57\u5E55" : U() && t.dualRole === "target" ? "\uFF1B\u5199\u5165\u539F\u6587\u5BF9\u7167\u8F68\uFF08\u4E0D\u8986\u76D6\u8BD1\u6587\uFF09" : "\uFF1B\u8BED\u97F3\u8BC6\u522B";
+        e.retranscribeDurPreview.textContent = i.length ? `${s} \u2192 ${a}\uFF08${r.durationSec}s\uFF09\uFF0C\u5C06\u66FF\u6362\u91CD\u53E0\u7684 ${i.length} \u6761${l}` : `${s} \u2192 ${a}\uFF08${r.durationSec}s\uFF09\uFF0C\u8BE5\u533A\u95F4\u6682\u65E0\u5B57\u5E55\uFF0C\u5C06\u63D2\u5165\u65B0\u7ED3\u679C${l}`, e.retranscribeDurPreview.classList.remove("err"), document.querySelectorAll("[data-retranscribe-dur-preset]").forEach(c => {
+            const u = Number(c.getAttribute("data-retranscribe-dur-preset"));
+            c.classList.toggle("active", Math.abs(u - r.durationSec) < .01)
+        })
     }
-}(window));
+
+    function ur() {
+        if (!e.retranscribeDurModal) return;
+        if (!t.videoPath) {
+            d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u91CD\u8F6C\u5199", "err");
+            return
+        }
+        x();
+        const n = nt();
+        e.retranscribeDurSec && (e.retranscribeDurSec.value = String(n.durationSec)), e.retranscribeDurPadMs && (e.retranscribeDurPadMs.value = String(n.padMs)), e.retranscribeDurSnapAfter && (e.retranscribeDurSnapAfter.checked = n.snapAfter !== !1), so(n.writeAs);
+        const r = document.querySelector(`input[name="editorRetranscribeDurStart"][value="${n.startMode}"]`);
+        if (r) r.checked = !0;
+        else {
+            const i = document.querySelector('input[name="editorRetranscribeDurStart"][value="selected"]');
+            i && (i.checked = !0)
+        }
+        Q(e.retranscribeDurModal, e.retranscribeDurConfirm), Oe()
+    }
+
+    function Ft() {
+        K(e.retranscribeDurModal)
+    }
+    async function ao() {
+        x();
+        const n = Hs();
+        if (!t.videoPath) {
+            Oe();
+            return
+        }
+        const r = e.retranscribeDurSnapAfter?.checked !== !1,
+            i = dr();
+        Kr({
+            durationSec: n.durationSec,
+            padMs: n.padMs,
+            startMode: n.startMode,
+            snapAfter: r,
+            writeAs: i
+        }), Ft(), await ut({
+            startMs: n.startMs,
+            endMs: n.endMs,
+            padMs: n.padMs,
+            mode: "range",
+            writeAs: i,
+            snapAfter: r,
+            detail: i === "target" ? `\u6B63\u5728\u91CD\u8F6C\u5199\u4E3A\u8BD1\u6587 ${n.durationSec}s\uFF08${Z(n.startMs,t.format)} \u2192 ${Z(n.endMs,t.format)}\uFF09\u2026` : `\u6B63\u5728\u91CD\u8F6C\u5199\u4E3A\u539F\u6587 ${n.durationSec}s\uFF08${Z(n.startMs,t.format)} \u2192 ${Z(n.endMs,t.format)}\uFF09\u2026`
+        })
+    }
+
+    function oo() {
+        Nn();
+        const n = Math.max(0, Math.min(2e3, Math.round(Number(e.retranscribeDurPadMs?.value) || 350))),
+            r = 0;
+        let i = t.timeline.durationMs;
+        e.video && Number.isFinite(e.video.duration) && e.video.duration > 0 ? i = Math.round(e.video.duration * 1e3) : t.cues.length && (i = Math.max(...t.cues.map(a => I(a)), r + 1e3)), i = Math.max(i, r + 200);
+        const s = Math.round((i - r) / 1e3 * 10) / 10;
+        return {
+            startMs: r,
+            endMs: i,
+            durationSec: s,
+            padMs: n
+        }
+    }
+    async function lo() {
+        if (x(), !t.videoPath) {
+            Oe();
+            return
+        }
+        const n = oo();
+        if (n.endMs - n.startMs < 200) {
+            d("\u65E0\u6CD5\u786E\u5B9A\u6574\u6BB5\u65F6\u957F\uFF0C\u8BF7\u5148\u52A0\u8F7D\u89C6\u9891", "err");
+            return
+        }
+        const r = z.collectOverlappingCueIndices(t.cues, n.startMs, n.endMs),
+            i = n.durationSec >= 60 ? `${Math.floor(n.durationSec/60)}\u5206${Math.round(n.durationSec%60)}\u79D2` : `${n.durationSec}s`,
+            s = dr(),
+            a = s === "target" ? "\u8BD1\u6587" : "\u539F\u6587";
+        if (!await ie(`\u786E\u5B9A\u5168\u90E8\u91CD\u8F6C\u5199\u4E3A${a}\uFF08\u7EA6 ${i}\uFF09\uFF1F\u5C06\u66FF\u6362\u65F6\u95F4\u7A97\u5185 ${r.length} \u6761\u91CD\u53E0\u5B57\u5E55\uFF0C\u6B64\u64CD\u4F5C\u53EF\u64A4\u9500\u3002`)) return;
+        const l = e.retranscribeDurSnapAfter?.checked !== !1,
+            c = nt();
+        Kr({
+            durationSec: c.durationSec,
+            padMs: n.padMs,
+            startMode: c.startMode,
+            snapAfter: l,
+            writeAs: s
+        }), Ft(), await ut({
+            startMs: n.startMs,
+            endMs: n.endMs,
+            padMs: n.padMs,
+            mode: "range",
+            writeAs: s,
+            snapAfter: l,
+            detail: `\u6B63\u5728\u5168\u90E8\u91CD\u8F6C\u5199\u4E3A${a} ${n.durationSec}s\uFF08${Z(n.startMs,t.format)} \u2192 ${Z(n.endMs,t.format)}\uFF09\u2026`
+        })
+    }
+
+    function mr(n, r, i = {}) {
+        if (!r?.length) return;
+        $(), t.cues.splice(n, 1, ...r), (typeof i.fixOverlap == "boolean" ? i.fixOverlap : e.splitFixOverlap?.checked !== !1) && At(), t.selectedIndex = n, P(!0), C(), X(n, {
+            scroll: !0
+        });
+        const a = D.summarizeSplitCues(r),
+            o = a.cpsMin != null ? ` \xB7 CPS ${a.cpsMin.toFixed(1)}\u2013${a.cpsMax.toFixed(1)}` : "";
+        d(`\u5DF2\u5206\u5272\u4E3A ${r.length} \u6761\u5B57\u5E55${o}`, "ok")
+    }
+
+    function vn() {
+        return document.querySelector('input[name="editorSplitMode"]:checked')?.value || "smart"
+    }
+
+    function co(n) {
+        if (n.error) return {
+            text: n.error,
+            isErr: !0
+        };
+        const r = D.summarizeSplitCues(n.cues);
+        if (r.count < 2) return {
+            text: "\u65E0\u6CD5\u62C6\u6210\u591A\u6761",
+            isErr: !0
+        };
+        const i = r.cpsMin != null ? ` \xB7 \u9884\u4F30 CPS ${r.cpsMin.toFixed(1)}\u2013${r.cpsMax.toFixed(1)}` : "";
+        return {
+            text: `\u5C06\u62C6\u6210 ${r.count} \u6761${i}`,
+            isErr: !1
+        }
+    }
+
+    function $e() {
+        const n = vn();
+        if (e.splitCharCount && (e.splitCharCount.disabled = n !== "chars"), e.splitCount && (e.splitCount.disabled = n !== "count"), document.querySelectorAll(".split-smart-extra input").forEach(a => {
+                a.disabled = n !== "smart"
+            }), document.querySelectorAll(".split-silence-extra input").forEach(a => {
+                a.disabled = n !== "silence"
+            }), e.splitUseCps && (e.splitUseCps.disabled = n === "silence" || n === "playhead" || n === "count"), t.selectedIndex < 0) {
+            e.splitPreview && (e.splitPreview.textContent = "\u2014", e.splitPreview.classList.remove("err"));
+            return
+        }
+        x();
+        const r = t.cues[t.selectedIndex],
+            i = I(r);
+        let s = "";
+        if (e.splitHint) {
+            if (n === "cursor" && e.detailText) {
+                const a = e.detailText.selectionStart,
+                    o = r.text || "";
+                (a <= 0 || a >= o.length) && (s = "\u63D0\u793A\uFF1A\u5728\u6587\u672C\u6846\u4E2D\u5C06\u5149\u6807\u7F6E\u4E8E\u8981\u5206\u5272\u7684\u4F4D\u7F6E")
+            } else if (n === "playhead" && e.video) {
+                const a = De();
+                (a <= r.startMs || a >= i) && (s = "\u63D0\u793A\uFF1A\u64AD\u653E\u5934\u9700\u4F4D\u4E8E\u5F53\u524D\u5B57\u5E55\u7684\u8D77\u6B62\u65F6\u95F4\u4E4B\u95F4")
+            } else if (n === "lines" && !String(r.text || "").includes(`
+`)) s = "\u63D0\u793A\uFF1A\u5F53\u524D\u6587\u672C\u65E0\u6362\u884C\uFF0C\u5EFA\u8BAE\u9009\u62E9\u5176\u4ED6\u65B9\u5F0F";
+            else if (n === "spaces" && !/\s/.test(String(r.text || ""))) s = "\u63D0\u793A\uFF1A\u5F53\u524D\u6587\u672C\u65E0\u7A7A\u683C\uFF0C\u5EFA\u8BAE\u9009\u62E9\u5176\u4ED6\u65B9\u5F0F";
+            else if (n === "smart") {
+                const a = Ye("smart", r, {
+                    ...lr(),
+                    fixOverlap: !1
+                });
+                a.error && (s = a.error)
+            } else if (n === "silence")
+                if (!t.videoPath) s = "\u63D0\u793A\uFF1A\u8BF7\u5148\u70B9\u51FB\u9876\u680F\u300C\u5173\u8054\u89C6\u9891\u300D";
+                else if (!p?.ffmpegDetectSilence) s = "\u63D0\u793A\uFF1A\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u9759\u97F3\u5206\u6790";
+            else {
+                const a = yn("silence", r.text || "");
+                a && (s = a)
+            }
+            s ? (e.splitHint.textContent = s, e.splitHint.classList.remove("hidden")) : (e.splitHint.textContent = "", e.splitHint.classList.add("hidden"))
+        }
+        if (e.splitPreview && t.selectedIndex >= 0)
+            if (n === "silence")
+                if (!t.videoPath) e.splitPreview.textContent = "\u9700\u5173\u8054\u89C6\u9891\u540E\u624D\u80FD\u6309\u9759\u97F3\u5207\u5206", e.splitPreview.classList.add("err");
+                else {
+                    const a = yn("silence", r.text || "");
+                    a ? (e.splitPreview.textContent = a, e.splitPreview.classList.add("err")) : (e.splitPreview.textContent = "\u6267\u884C\u65F6\u5C06\u5206\u6790\u8BE5\u65F6\u95F4\u6BB5\u5185\u7684\u9759\u97F3\u70B9\uFF0C\u5E76\u7ED3\u5408\u7A7A\u683C/\u65AD\u53E5\u8BCD/\u6807\u70B9\u5206\u914D\u6587\u672C", e.splitPreview.classList.remove("err"))
+                }
+        else {
+            const a = Ye(n, r, lr()),
+                o = co(a);
+            e.splitPreview.textContent = o.text, e.splitPreview.classList.toggle("err", o.isErr)
+        }
+    }
+
+    function Os() {
+        if (t.selectedIndex < 0) return;
+        x();
+        const n = t.cues[t.selectedIndex];
+        if (!String(n.text || "").trim()) {
+            d("\u5F53\u524D\u5B57\u5E55\u65E0\u6587\u672C\uFF0C\u65E0\u6CD5\u5206\u5272", "err");
+            return
+        }
+        e.splitModal && (fl(), Q(e.splitModal, e.splitConfirm), $e())
+    }
+
+    function Rt() {
+        K(e.splitModal)
+    }
+    async function uo() {
+        if (t.selectedIndex < 0) return;
+        x();
+        const n = t.selectedIndex,
+            r = t.cues[n],
+            i = vn(),
+            s = {
+                ...lr(),
+                charCount: Number(e.splitCharCount?.value) || 20,
+                count: Number(e.splitCount?.value) || 2
+            };
+        if (i === "silence") {
+            try {
+                const o = await ir(s);
+                if (!o?.ok) {
+                    e.splitHint && o?.error && (e.splitHint.textContent = o.error, e.splitHint.classList.remove("hidden"));
+                    return
+                }
+                Vr(), Rt()
+            } finally {
+                e.splitConfirm && (e.splitConfirm.disabled = !1)
+            }
+            return
+        }
+        const a = Ye(i, r, s);
+        if (a.error) {
+            e.splitHint ? (e.splitHint.textContent = a.error, e.splitHint.classList.remove("hidden")) : d(a.error, "err");
+            return
+        }
+        Vr(), Rt(), mr(n, a.cues, s)
+    }
+    async function fr() {
+        x();
+        const n = String(e.findInput?.value ?? ""),
+            r = t._findToken = (t._findToken || 0) + 1;
+        if (!n) return t.find.active = !1, t.find.matches = [], t.find.currentIndex = -1, r;
+        t.find.active = !0;
+        const i = !!e.findCase?.checked,
+            s = T.TransubFindReplace;
+        let a = [];
+        if (Yt?.collectFindMatchesAsync) a = await Yt.collectFindMatchesAsync(t.cues, n, i, {
+            abortId: r,
+            isAborted: () => r !== t._findToken
+        });
+        else if (s?.collectFindMatches) a = s.collectFindMatches(t.cues, n, i);
+        else {
+            const o = Kn(n, i);
+            t.cues.forEach((l, c) => {
+                const u = l.text ?? "";
+                let m;
+                for (;
+                    (m = o.exec(u)) !== null;) a.push({
+                    cueIdx: c,
+                    start: m.index,
+                    end: m.index + m[0].length
+                }), m[0].length === 0 && (o.lastIndex += 1)
+            })
+        }
+        return r !== t._findToken || (t.find.matches = a, a.length ? (t.find.currentIndex < 0 || t.find.currentIndex >= a.length) && (t.find.currentIndex = 0) : t.find.currentIndex = -1), r
+    }
+
+    function be(n) {
+        if (!e.findStatus) return;
+        if (n) {
+            e.findStatus.textContent = n, e.findStatus.classList.toggle("err", n.includes("\u672A\u627E\u5230") || n.includes("\u8BF7\u8F93\u5165"));
+            return
+        }
+        const r = t.find.matches.length;
+        if (!String(e.findInput?.value ?? "").trim()) {
+            e.findStatus.textContent = "\u2014", e.findStatus.classList.remove("err");
+            return
+        }
+        if (!r) {
+            e.findStatus.textContent = "\u672A\u627E\u5230\u5339\u914D\u9879", e.findStatus.classList.add("err");
+            return
+        }
+        e.findStatus.textContent = `\u7B2C ${t.find.currentIndex+1} / ${r} \u5904 \xB7 \u6D89\u53CA ${new Set(t.find.matches.map(i=>i.cueIdx)).size} \u6761\u5B57\u5E55`, e.findStatus.classList.remove("err")
+    }
+
+    function Sn(n) {
+        if (!t.find.matches.length) return;
+        const r = t.find.matches.length,
+            i = (n % r + r) % r;
+        t.find.currentIndex = i;
+        const s = t.find.matches[i];
+        X(s.cueIdx, {
+            scroll: !0
+        }), requestAnimationFrame(() => {
+            e.detailText && (e.detailText.focus(), e.detailText.setSelectionRange(s.start, s.end))
+        }), ve(), be()
+    }
+    async function Nt(n = {}) {
+        const r = String(e.findInput?.value ?? "").trim();
+        if (!r) return t._findToken = (t._findToken || 0) + 1, t.find.active = !1, t.find.matches = [], t.find.currentIndex = -1, t.listFilter === "find" ? C() : ve(), be("\u8BF7\u8F93\u5165\u8981\u67E5\u627E\u7684\u5185\u5BB9"), !1;
+        const i = t.find._lastQuery,
+            s = t.find._lastCase,
+            a = !!e.findCase?.checked;
+        return await fr() !== t._findToken ? !1 : (t.find._lastQuery = r, t.find._lastCase = a, t.find.matches.length ? (n.keepIndex && i === r && s === a && t.find.currentIndex >= 0 || (n.startIndex != null ? t.find.currentIndex = Math.max(0, Math.min(n.startIndex, t.find.matches.length - 1)) : t.find.currentIndex = 0), t.listFilter === "find" && C(), n.navigate !== !1 ? Sn(t.find.currentIndex) : (ve(), be()), !0) : (t.listFilter === "find" ? C() : ve(), be("\u672A\u627E\u5230\u5339\u914D\u9879"), !1))
+    }
+
+    function _s(n = {}) {
+        t._findDebounceTimer && clearTimeout(t._findDebounceTimer), t._findDebounceTimer = setTimeout(() => {
+            t._findDebounceTimer = null, Nt(n)
+        }, 200)
+    }
+    async function js() {
+        if (!String(e.findInput?.value ?? "").trim()) {
+            be("\u8BF7\u8F93\u5165\u8981\u67E5\u627E\u7684\u5185\u5BB9");
+            return
+        }!t.find.matches.length && !await Nt({
+            navigate: !1
+        }) || Sn(t.find.currentIndex + 1)
+    }
+    async function Gs() {
+        if (!String(e.findInput?.value ?? "").trim()) {
+            be("\u8BF7\u8F93\u5165\u8981\u67E5\u627E\u7684\u5185\u5BB9");
+            return
+        }!t.find.matches.length && !await Nt({
+            navigate: !1
+        }) || Sn(t.find.currentIndex - 1)
+    }
+    async function Ks() {
+        if (!t.find.matches.length && (!await Nt() || !t.find.matches.length)) return;
+        const n = t.find.matches[t.find.currentIndex];
+        if (!n) return;
+        x(), $();
+        const r = t.cues[n.cueIdx],
+            i = r.text ?? "",
+            s = e.replaceInput?.value ?? "";
+        r.text = i.slice(0, n.start) + s + i.slice(n.end), P(!0), Se(n.cueIdx), t.selectedIndex === n.cueIdx && e.detailText && (e.detailText.value = r.text);
+        const a = t.find.currentIndex;
+        await fr(), t.find.matches.length ? Sn(Math.min(a, t.find.matches.length - 1)) : (ve(), be("\u5DF2\u6210\u529F\u66FF\u6362 1 \u5904")), d("\u5DF2\u6210\u529F\u66FF\u6362 1 \u5904", "ok")
+    }
+    async function mo() {
+        const n = String(e.findInput?.value ?? "").trim();
+        if (!n) {
+            be("\u8BF7\u8F93\u5165\u8981\u67E5\u627E\u7684\u5185\u5BB9");
+            return
+        }
+        x(), $();
+        const r = !!e.findCase?.checked,
+            i = Kn(n, r),
+            s = e.replaceInput?.value ?? "";
+        let a = 0;
+        for (const l of t.cues) {
+            const c = l.text ?? "",
+                u = c.replace(i, () => (a += 1, s));
+            u !== c && (l.text = u)
+        }
+        if (!a) {
+            be("\u672A\u627E\u5230\u5339\u914D\u9879");
+            return
+        }
+        P(!0), C(), await fr(), t.find.currentIndex = t.find.matches.length ? 0 : -1, t.listFilter === "find" ? C() : ve();
+        const o = `\u5DF2\u6210\u529F\u66FF\u6362 ${a} \u5904`;
+        be(o), d(o, "ok")
+    }
+
+    function qt(n = !1) {
+        if (e.findReplaceModal) {
+            Q(e.findReplaceModal, n ? e.replaceInput : e.findInput);
+            const r = e.detailText && document.activeElement === e.detailText && e.detailText.selectionStart !== e.detailText.selectionEnd ? e.detailText.value.slice(e.detailText.selectionStart, e.detailText.selectionEnd) : "";
+            r && e.findInput && !e.findInput.value && (e.findInput.value = r), requestAnimationFrame(() => {
+                const i = n ? e.replaceInput : e.findInput;
+                i?.focus(), i?.select?.()
+            }), String(e.findInput?.value ?? "").trim() ? Nt({
+                navigate: !1
+            }) : be()
+        }
+    }
+
+    function mt() {
+        K(e.findReplaceModal), t.find.active = !1, t.find.matches = [], t.find.currentIndex = -1, ve()
+    }
+
+    function Vs() {
+        return document.querySelector('input[name="editorBatchDurMode"]:checked')?.value || "fixed"
+    }
+
+    function zs() {
+        return document.querySelector('input[name="editorBatchDurCond"]:checked')?.value || "all"
+    }
+
+    function Us() {
+        const n = zs();
+        return {
+            mode: Vs(),
+            condition: n,
+            targetSec: Number(e.batchDurTarget?.value) || 2,
+            silenceDb: Number(e.batchDurSilenceDb?.value) || -35,
+            silenceDur: Number(e.batchDurSilenceDur?.value) || .25,
+            snapPadMs: Math.max(0, Math.min(2e3, Math.round(Number(e.batchDurSnapPadMs?.value) || 400))),
+            shorterSec: Number(e.batchDurShorter?.value) || 1,
+            longerSec: Number(e.batchDurLonger?.value) || 5,
+            minSec: Number(e.batchDurMin?.value) || .5,
+            maxSec: Number(e.batchDurMax?.value) || 10,
+            cpsAbove: Number(e.batchDurCpsAbove?.value) || 20,
+            cpsBelow: Number(e.batchDurCpsBelow?.value) || 8,
+            textKeyword: String(e.batchDurText?.value ?? "").trim(),
+            avoidOverlap: !!e.batchDurAvoidOverlap?.checked
+        }
+    }
+
+    function bn(n) {
+        const r = V(n) / 1e3;
+        if (r <= 0) return null;
+        const i = qe(n.text);
+        return i ? i / r : null
+    }
+
+    function fo(n) {
+        const r = t.cues[n];
+        if (!r) return !1;
+        const i = n > 0 ? t.cues[n - 1] : null,
+            s = n < t.cues.length - 1 ? t.cues[n + 1] : null,
+            a = I(r);
+        return !!(i && r.startMs < I(i) || s && a > s.startMs)
+    }
+
+    function po(n, r, i) {
+        const s = V(n) / 1e3;
+        switch (i.condition) {
+            case "all":
+                return !0;
+            case "shorter":
+                return s < i.shorterSec;
+            case "longer":
+                return s > i.longerSec;
+            case "between":
+                return s >= Math.min(i.minSec, i.maxSec) && s <= Math.max(i.minSec, i.maxSec);
+            case "cps_above": {
+                const a = bn(n);
+                return a != null && a > i.cpsAbove
+            }
+            case "cps_below": {
+                const a = bn(n);
+                return a != null && a < i.cpsBelow
+            }
+            case "text_contains":
+                return i.textKeyword ? String(n.text ?? "").includes(i.textKeyword) : !1;
+            case "overlap":
+                return fo(r);
+            case "selected":
+                return J().includes(r) || r === t.selectedIndex;
+            default:
+                return !1
+        }
+    }
+
+    function Qs(n, r, i, s = !0) {
+        let l = Math.round(Number(i) || 0);
+        return s && r < t.cues.length - 1 && (l = Math.min(l, t.cues[r + 1].startMs - 1)), Math.max(n.startMs + 500, l)
+    }
+    async function go(n, r = {}) {
+        const i = t.cues[n];
+        if (!i || !Dt(i)) return {
+            status: "skipped",
+            reason: "\u65F6\u957F\u8FC7\u77ED"
+        };
+        const s = await Ts(i, {
+            ...r,
+            cueIndex: n
+        });
+        if (s.cancelled || ne()) return {
+            status: "skipped",
+            cancelled: !0,
+            reason: "\u5DF2\u53D6\u6D88"
+        };
+        if (s.error) return {
+            status: s.unchanged ? "unchanged" : "skipped",
+            reason: s.error
+        };
+        const a = Qs(i, n, s.newEndMs, r.avoidOverlap),
+            o = I(i),
+            l = a - o;
+        return Math.abs(l) < 80 ? {
+            status: "unchanged"
+        } : (i.endMs = a, {
+            status: "adjusted",
+            deltaMs: l,
+            savedMs: o - a,
+            extendedMs: l > 0 ? l : 0
+        })
+    }
+    async function Zs(n, r = {}) {
+        const i = t.cues[n];
+        if (!i || !Tt(i)) return {
+            status: "skipped",
+            reason: "\u65F6\u957F\u8FC7\u77ED"
+        };
+        const s = await $s(i, n, r);
+        return s.cancelled || ne() ? {
+            status: "skipped",
+            cancelled: !0,
+            reason: "\u5DF2\u53D6\u6D88"
+        } : s.error ? {
+            status: s.unchanged ? "unchanged" : "skipped",
+            reason: s.error
+        } : (i.startMs = s.startMs, i.endMs = s.endMs, {
+            status: "adjusted",
+            startDelta: s.startDelta || 0,
+            endDelta: s.endDelta || 0
+        })
+    }
+
+    function ft(n) {
+        x();
+        const r = [];
+        return t.cues.forEach((i, s) => {
+            po(i, s, n) && (n.mode === "silence" && !Dt(i) || n.mode === "audio_snap" && !Tt(i) || r.push(s))
+        }), r
+    }
+
+    function ae() {
+        const n = zs(),
+            r = Vs(),
+            i = r === "silence",
+            s = r === "audio_snap",
+            a = i || s;
+        if (e.batchDurHint && (s ? e.batchDurHint.textContent = "\u6309\u6761\u4EF6\u7B5B\u9009\u540E\uFF0C\u5C06\u8D77\u6B62\u65F6\u95F4\u8D34\u5230\u8BED\u97F3\u8FB9\u754C\uFF08\u4FDD\u7559\u539F\u6587\uFF09\u3002" : i ? e.batchDurHint.textContent = "\u6309\u6761\u4EF6\u7B5B\u9009\u540E\uFF0C\u6309\u5B9E\u9645\u8BED\u97F3\u8FB9\u754C\u7F29\u77ED\u6216\u5EF6\u957F\u7ED3\u675F\u65F6\u95F4\uFF08\u4FDD\u6301\u8D77\u59CB\u4E0D\u53D8\uFF09\u3002" : e.batchDurHint.textContent = "\u6309\u6761\u4EF6\u7B5B\u9009\u5B57\u5E55\u540E\u6279\u91CF\u8C03\u6574\u7ED3\u675F\u65F6\u95F4\uFF08\u4FDD\u6301\u8D77\u59CB\u65F6\u95F4\u4E0D\u53D8\uFF09\u3002"), e.batchDurFixedWrap && e.batchDurFixedWrap.classList.toggle("hidden", a), e.batchDurSilenceWrap && e.batchDurSilenceWrap.classList.toggle("hidden", !a), e.batchDurSnapPadWrap && e.batchDurSnapPadWrap.classList.toggle("hidden", !s), e.batchDurAvoidOverlapRow && e.batchDurAvoidOverlapRow.classList.toggle("hidden", s), e.batchDurTarget && (e.batchDurTarget.disabled = a), e.batchDurSilenceDb && (e.batchDurSilenceDb.disabled = !a), e.batchDurSilenceDur && (e.batchDurSilenceDur.disabled = !a), e.batchDurSnapPadMs && (e.batchDurSnapPadMs.disabled = !s), e.batchDurShorter && (e.batchDurShorter.disabled = n !== "shorter"), e.batchDurLonger && (e.batchDurLonger.disabled = n !== "longer"), e.batchDurMin && (e.batchDurMin.disabled = n !== "between"), e.batchDurMax && (e.batchDurMax.disabled = n !== "between"), e.batchDurCpsAbove && (e.batchDurCpsAbove.disabled = n !== "cps_above"), e.batchDurCpsBelow && (e.batchDurCpsBelow.disabled = n !== "cps_below"), e.batchDurText && (e.batchDurText.disabled = n !== "text_contains"), !e.batchDurPreview) return;
+        const o = Us();
+        if (o.mode === "silence" || o.mode === "audio_snap") {
+            if (!t.videoPath || !p?.ffmpegDetectSilence) {
+                e.batchDurPreview.textContent = o.mode === "audio_snap" ? "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u97F3\u9891\u8D34\u8FB9" : "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u9759\u97F3\u667A\u80FD\u65F6\u957F", e.batchDurPreview.classList.add("err");
+                return
+            }
+            if (o.condition === "text_contains" && !o.textKeyword) {
+                e.batchDurPreview.textContent = "\u8BF7\u8F93\u5165\u6587\u672C\u5173\u952E\u8BCD", e.batchDurPreview.classList.add("err");
+                return
+            }
+            if (o.condition === "selected" && t.selectedIndex < 0) {
+                e.batchDurPreview.textContent = "\u5F53\u524D\u6CA1\u6709\u9009\u4E2D\u7684\u5B57\u5E55\u6761\u76EE", e.batchDurPreview.classList.add("err");
+                return
+            }
+            const c = ft(o);
+            if (!c.length) {
+                e.batchDurPreview.textContent = "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5B57\u5E55", e.batchDurPreview.classList.add("err");
+                return
+            }
+            e.batchDurPreview.textContent = o.mode === "audio_snap" ? `\u5C06\u5BF9 ${c.length} \u6761\u5B57\u5E55\u9010\u6761\u5206\u6790\u9759\u97F3\u5E76\u8D34\u8FB9\u8D77\u6B62\uFF08\u6267\u884C\u65F6\u5C06\u663E\u793A\u8FDB\u5EA6\uFF09` : `\u5C06\u5BF9 ${c.length} \u6761\u5B57\u5E55\u9010\u6761\u5206\u6790\u9759\u97F3\u5E76\u7F29\u77ED/\u5EF6\u957F\u65F6\u957F\uFF08\u6267\u884C\u65F6\u5C06\u663E\u793A\u8FDB\u5EA6\uFF09`, e.batchDurPreview.classList.remove("err");
+            return
+        }
+        if (o.targetSec <= 0 || !Number.isFinite(o.targetSec)) {
+            e.batchDurPreview.textContent = "\u8BF7\u8F93\u5165\u6709\u6548\u7684\u76EE\u6807\u65F6\u957F", e.batchDurPreview.classList.add("err");
+            return
+        }
+        if (o.condition === "text_contains" && !o.textKeyword) {
+            e.batchDurPreview.textContent = "\u8BF7\u8F93\u5165\u6587\u672C\u5173\u952E\u8BCD", e.batchDurPreview.classList.add("err");
+            return
+        }
+        if (o.condition === "selected" && t.selectedIndex < 0) {
+            e.batchDurPreview.textContent = "\u5F53\u524D\u6CA1\u6709\u9009\u4E2D\u7684\u5B57\u5E55\u6761\u76EE", e.batchDurPreview.classList.add("err");
+            return
+        }
+        const l = ft(o);
+        if (!l.length) {
+            e.batchDurPreview.textContent = "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5B57\u5E55", e.batchDurPreview.classList.add("err");
+            return
+        }
+        e.batchDurPreview.textContent = `\u5C06\u8C03\u6574 ${l.length} \u6761\u5B57\u5E55\u4E3A ${o.targetSec.toFixed(2)} \u79D2`, e.batchDurPreview.classList.remove("err")
+    }
+
+    function ho() {
+        const n = Ke();
+        e.batchDurSilenceDb && (e.batchDurSilenceDb.value = String(n.silenceDb)), e.batchDurSilenceDur && (e.batchDurSilenceDur.value = String(n.silenceDur))
+    }
+
+    function pr() {
+        e.batchDurModal && (x(), ho(), Q(e.batchDurModal, e.batchDurTarget), ae())
+    }
+
+    function yo() {
+        if (!t.videoPath || !p?.ffmpegDetectSilence) {
+            d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u97F3\u9891\u8D34\u8FB9", "err");
+            return
+        }
+        const n = document.querySelector('input[name="editorBatchDurMode"][value="audio_snap"]');
+        n && (n.checked = !0), pr()
+    }
+
+    function _e() {
+        K(e.batchDurModal)
+    }
+
+    function vo() {
+        const n = Us();
+        if (n.mode === "silence") {
+            Xs(n);
+            return
+        }
+        if (n.mode === "audio_snap") {
+            Ys(n);
+            return
+        }
+        if (n.targetSec <= 0 || !Number.isFinite(n.targetSec)) {
+            ae();
+            return
+        }
+        if (n.condition === "text_contains" && !n.textKeyword) {
+            ae();
+            return
+        }
+        const r = ft(n);
+        if (!r.length) {
+            ae();
+            return
+        }
+        $();
+        const i = Math.round(n.targetSec * 1e3);
+        let s = 0;
+        for (const a of r) {
+            const o = t.cues[a];
+            let l = o.startMs + i;
+            n.avoidOverlap && a < t.cues.length - 1 && (l = Math.min(l, t.cues[a + 1].startMs - 1)), l = Math.max(o.startMs + 100, l), l !== I(o) && (s += 1), o.endMs = l
+        }
+        P(!0), C(), t.selectedIndex >= 0 && R(), _e(), d(`\u5DF2\u6279\u91CF\u8C03\u6574 ${s||r.length} \u6761\u5B57\u5E55\u65F6\u957F\u4E3A ${n.targetSec.toFixed(2)} \u79D2`, "ok")
+    }
+    async function Xs(n) {
+        if (t.silenceSplitBusy) return;
+        if (!t.videoPath || !p?.ffmpegDetectSilence) {
+            ae();
+            return
+        }
+        if (n.condition === "text_contains" && !n.textKeyword) {
+            ae();
+            return
+        }
+        const r = ft(n);
+        if (!r.length) {
+            ae();
+            return
+        }
+        const i = {
+                silenceDb: n.silenceDb,
+                silenceDur: n.silenceDur,
+                avoidOverlap: n.avoidOverlap
+            },
+            s = r.length;
+        $();
+        let a = 0,
+            o = 0,
+            l = 0;
+        Te(!0), Ee({
+            title: "\u6B63\u5728\u6279\u91CF\u8C03\u8282\u65F6\u957F",
+            detail: `\u51C6\u5907\u5206\u6790 ${s} \u6761\u5B57\u5E55\u7684\u5B9E\u9645\u8BED\u97F3\u65F6\u957F\u2026`,
+            current: 0,
+            total: s,
+            statusMessage: `\u6B63\u5728\u6279\u91CF\u5206\u6790\u9759\u97F3\uFF080/${s}\uFF09\u2026`
+        }), await ce();
+        let c = !1;
+        try {
+            for (let f = 0; f < r.length; f += 1) {
+                if (ne()) {
+                    c = !0;
+                    break
+                }
+                const g = r[f];
+                de({
+                    current: f,
+                    total: s,
+                    detail: `\u6B63\u5728\u5206\u6790\u7B2C ${f+1}/${s} \u6761\uFF08\u539F\u5E8F\u53F7 ${g+1}\uFF09\u2026`,
+                    statusMessage: `\u6B63\u5728\u5206\u6790\u9759\u97F3 ${f+1}/${s}\u2026`
+                }), await ce();
+                const h = await go(g, i);
+                if (ne() || h?.cancelled) {
+                    c = !0;
+                    break
+                }
+                h.status === "adjusted" ? (a += 1, Se(g)) : h.status === "unchanged" ? l += 1 : o += 1;
+                let v = `\u7B2C ${f+1}/${s} \u6761${h.status==="unchanged"?"\u65E0\u9700\u8C03\u6574":"\u5DF2\u8DF3\u8FC7"}`;
+                if (h.status === "adjusted") {
+                    const y = Number(h.deltaMs) || -Number(h.savedMs) || 0,
+                        k = y < 0 ? "\u7F29\u77ED" : "\u5EF6\u957F";
+                    v = `\u7B2C ${f+1}/${s} \u6761\u5DF2${k} ${(Math.abs(y)/1e3).toFixed(2)} \u79D2`
+                }
+                de({
+                    current: f + 1,
+                    total: s,
+                    detail: v,
+                    statusMessage: `\u6B63\u5728\u5206\u6790\u9759\u97F3 ${f+1}/${s}\u2026`
+                })
+            }
+        } finally {
+            Te(!1), Ie()
+        }
+        if (c) {
+            a && (P(!0), C(), t.selectedIndex >= 0 && R()), _e(), d(`\u5DF2\u53D6\u6D88\u6279\u91CF\u8C03\u8282\uFF08\u5DF2\u5904\u7406 ${a} \u6761\uFF09`, "warn");
+            return
+        }
+        if (!a) {
+            ae();
+            const f = o ? `\uFF0C\u8DF3\u8FC7 ${o} \u6761` : "",
+                g = l ? `\uFF0C${l} \u6761\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3` : "";
+            d(`\u5DF2\u5206\u6790 ${s} \u6761\uFF0C\u5747\u65E0\u9700\u8C03\u6574\u65F6\u957F${g}${f}`, "err"), ye();
+            return
+        }
+        P(!0), C(), t.selectedIndex >= 0 && R(), _e();
+        const u = o ? `\uFF0C\u8DF3\u8FC7 ${o} \u6761` : "",
+            m = l ? `\uFF0C${l} \u6761\u65E0\u9700\u8C03\u6574` : "";
+        d(`\u5DF2\u6309\u9759\u97F3\u6279\u91CF\u8C03\u8282 ${a} \u6761\u5B57\u5E55\u65F6\u957F${m}${u}`, "ok")
+    }
+    async function Ys(n) {
+        if (t.silenceSplitBusy || t.retranscribeBusy) return;
+        if (!t.videoPath || !p?.ffmpegDetectSilence) {
+            ae();
+            return
+        }
+        if (n.condition === "text_contains" && !n.textKeyword) {
+            ae();
+            return
+        }
+        const r = ft(n);
+        if (!r.length) {
+            ae();
+            return
+        }
+        const i = {
+                silenceDb: n.silenceDb,
+                silenceDur: n.silenceDur,
+                padMs: n.snapPadMs ?? 400,
+                allowExtend: !0
+            },
+            s = r.length;
+        $();
+        let a = 0,
+            o = 0,
+            l = 0;
+        Te(!0), Ee({
+            title: "\u6B63\u5728\u6279\u91CF\u6309\u97F3\u9891\u8D34\u8FB9",
+            detail: `\u51C6\u5907\u5206\u6790 ${s} \u6761\u5B57\u5E55\u7684\u8BED\u97F3\u8FB9\u754C\u2026`,
+            current: 0,
+            total: s,
+            statusMessage: `\u6B63\u5728\u6279\u91CF\u8D34\u8FB9\uFF080/${s}\uFF09\u2026`
+        }), e.silenceProgressHint && (e.silenceProgressHint.textContent = "\u6839\u636E\u9759\u97F3\u68C0\u6D4B\u5C06\u5B57\u5E55\u8D77\u6B62\u8D34\u5230\u8BED\u97F3\u8FB9\u754C\uFF0C\u6587\u672C\u4FDD\u6301\u4E0D\u53D8"), await ce();
+        let c = !1;
+        try {
+            for (let f = 0; f < r.length; f += 1) {
+                if (ne()) {
+                    c = !0;
+                    break
+                }
+                const g = r[f];
+                de({
+                    current: f,
+                    total: s,
+                    detail: `\u6B63\u5728\u8D34\u8FB9\u7B2C ${f+1}/${s} \u6761\uFF08\u539F\u5E8F\u53F7 ${g+1}\uFF09\u2026`,
+                    statusMessage: `\u6B63\u5728\u8D34\u8FB9 ${f+1}/${s}\u2026`
+                }), await ce();
+                const h = await Zs(g, i);
+                if (ne() || h?.cancelled) {
+                    c = !0;
+                    break
+                }
+                h.status === "adjusted" ? (a += 1, Se(g)) : h.status === "unchanged" ? l += 1 : o += 1, de({
+                    current: f + 1,
+                    total: s,
+                    detail: h.status === "adjusted" ? `\u7B2C ${f+1}/${s} \u6761\u5DF2\u8D34\u8FB9` : `\u7B2C ${f+1}/${s} \u6761${h.status==="unchanged"?"\u65E0\u9700\u8C03\u6574":"\u5DF2\u8DF3\u8FC7"}`,
+                    statusMessage: `\u6B63\u5728\u8D34\u8FB9 ${f+1}/${s}\u2026`
+                })
+            }
+        } finally {
+            Te(!1), Ie(), e.silenceProgressHint && (e.silenceProgressHint.textContent = "FFmpeg \u6B63\u5728\u5206\u6790\u5173\u8054\u89C6\u9891\u7684\u97F3\u9891\u9759\u97F3\u70B9\uFF0C\u8BF7\u52FF\u5173\u95ED\u7A97\u53E3")
+        }
+        if (c) {
+            a && (P(!0), C(), t.selectedIndex >= 0 && R()), _e(), d(`\u5DF2\u53D6\u6D88\u6279\u91CF\u8D34\u8FB9\uFF08\u5DF2\u5904\u7406 ${a} \u6761\uFF09`, "warn");
+            return
+        }
+        if (!a) {
+            ae();
+            const f = o ? `\uFF0C\u8DF3\u8FC7 ${o} \u6761` : "",
+                g = l ? `\uFF0C${l} \u6761\u5DF2\u8D34\u8FD1\u8BED\u97F3` : "";
+            d(`\u5DF2\u5206\u6790 ${s} \u6761\uFF0C\u5747\u672A\u8C03\u6574\u65F6\u95F4\u8F74${g}${f}`, "err"), ye();
+            return
+        }
+        P(!0), C(), t.selectedIndex >= 0 && R(), _e();
+        const u = o ? `\uFF0C\u8DF3\u8FC7 ${o} \u6761` : "",
+            m = l ? `\uFF0C${l} \u6761\u65E0\u9700\u8C03\u6574` : "";
+        d(`\u5DF2\u6309\u97F3\u9891\u8D34\u8FB9 ${a} \u6761\u5B57\u5E55${m}${u}`, "ok"), ye()
+    }
+
+    function Js() {
+        return document.querySelector('input[name="editorSmartSplitCond"]:checked')?.value || "cps_above"
+    }
+
+    function ei() {
+        return {
+            condition: Js(),
+            smartMaxChars: Number(e.smartSplitMaxChars?.value) || 20,
+            smartLineChars: Number(e.smartSplitLineChars?.value) || 18,
+            cpsAbove: Number(e.smartSplitCpsAbove?.value) || 18,
+            lineLen: Number(e.smartSplitLineLen?.value) || 18,
+            durLongSec: Number(e.smartSplitDurLong?.value) || 6,
+            charsLong: Number(e.smartSplitCharsLong?.value) || 24,
+            useCps: e.smartSplitUseCps?.checked !== !1,
+            fixOverlap: e.smartSplitFixOverlap?.checked !== !1
+        }
+    }
+
+    function So(n, r, i) {
+        const s = String(n.text || "").trim();
+        if (!s) return !1;
+        switch (i.condition) {
+            case "selected":
+                return r === t.selectedIndex;
+            case "cps_above": {
+                const a = bn(n);
+                return a != null && a > i.cpsAbove
+            }
+            case "line_long":
+                return es(s) > i.lineLen;
+            case "dur_long":
+                return V(n) > Math.round(i.durLongSec * 1e3);
+            case "chars_long":
+                return qe(s) > i.charsLong;
+            default:
+                return !1
+        }
+    }
+
+    function gr(n) {
+        x();
+        const r = [];
+        return t.cues.forEach((i, s) => {
+            So(i, s, n) && r.push(s)
+        }), r
+    }
+
+    function bo(n) {
+        const r = gr(n);
+        if (!r.length) return {
+            matched: 0,
+            splitCount: 0,
+            added: 0,
+            summary: "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5B57\u5E55"
+        };
+        let i = 0,
+            s = 0;
+        const a = {
+            smartMaxChars: n.smartMaxChars,
+            smartLineChars: n.smartLineChars,
+            useCps: n.useCps
+        };
+        for (const l of r) {
+            const c = Ye("smart", t.cues[l], a);
+            c.cues && c.cues.length >= 2 && (i += 1, s += c.cues.length - 1)
+        }
+        if (!i) return {
+            matched: r.length,
+            splitCount: 0,
+            added: 0,
+            summary: `${r.length} \u6761\u7B26\u5408\u7B5B\u9009\uFF0C\u4F46\u5747\u65E0\u9700\u518D\u5206\u5272`
+        };
+        const o = t.cues.length + s;
+        return {
+            matched: r.length,
+            splitCount: i,
+            added: s,
+            summary: `\u5C06\u5206\u5272 ${i} \u6761\uFF08\u5171\u5339\u914D ${r.length} \u6761\uFF09\u2192 ${t.cues.length} \u6761\u53D8\u4E3A ${o} \u6761`
+        }
+    }
+
+    function Ae() {
+        const n = Js();
+        if (e.smartSplitCpsAbove && (e.smartSplitCpsAbove.disabled = n !== "cps_above"), e.smartSplitLineLen && (e.smartSplitLineLen.disabled = n !== "line_long"), e.smartSplitDurLong && (e.smartSplitDurLong.disabled = n !== "dur_long"), e.smartSplitCharsLong && (e.smartSplitCharsLong.disabled = n !== "chars_long"), !e.smartSplitPreview) return;
+        if (x(), !t.cues.length) {
+            e.smartSplitPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.smartSplitPreview.classList.add("err");
+            return
+        }
+        if (n === "selected" && t.selectedIndex < 0) {
+            e.smartSplitPreview.textContent = "\u5F53\u524D\u6CA1\u6709\u9009\u4E2D\u7684\u5B57\u5E55\u6761\u76EE", e.smartSplitPreview.classList.add("err");
+            return
+        }
+        const r = ei(),
+            i = bo(r);
+        e.smartSplitPreview.textContent = i.summary, e.smartSplitPreview.classList.toggle("err", i.splitCount === 0)
+    }
+
+    function hr() {
+        e.smartSplitModal && (x(), Q(e.smartSplitModal, e.smartSplitConfirm), Ae())
+    }
+
+    function xn() {
+        K(e.smartSplitModal)
+    }
+
+    function xo() {
+        const n = ei();
+        if (n.condition === "selected" && t.selectedIndex < 0) {
+            Ae();
+            return
+        }
+        const r = gr(n).sort((o, l) => l - o);
+        if (!r.length) {
+            Ae();
+            return
+        }
+        const i = {
+            smartMaxChars: n.smartMaxChars,
+            smartLineChars: n.smartLineChars,
+            useCps: n.useCps,
+            fixOverlap: !1
+        };
+        $();
+        let s = 0,
+            a = 0;
+        for (const o of r) {
+            const l = Ye("smart", t.cues[o], i);
+            !l.cues || l.cues.length < 2 || (t.cues.splice(o, 1, ...l.cues), s += 1, a += l.cues.length - 1)
+        }
+        if (!s) {
+            Ae();
+            return
+        }
+        n.fixOverlap && At(), P(!0), C(), t.selectedIndex >= 0 && R(), xn(), d(`\u5DF2\u667A\u80FD\u5206\u5272 ${s} \u6761\u5B57\u5E55\uFF0C\u65B0\u589E ${a} \u6761`, "ok")
+    }
+
+    function ti() {
+        return document.querySelector('input[name="editorSilenceSplitCond"]:checked')?.value || "all"
+    }
+
+    function ni() {
+        return {
+            condition: ti(),
+            silenceDb: Number(e.silenceSplitDb?.value) || -35,
+            silenceDur: Number(e.silenceSplitDur?.value) || .25,
+            durLongSec: Number(e.silenceSplitDurLong?.value) || 3,
+            cpsAbove: Number(e.silenceSplitCpsAbove?.value) || 18,
+            charsLong: Number(e.silenceSplitCharsLong?.value) || 16,
+            fixOverlap: e.silenceSplitFixOverlap?.checked !== !1
+        }
+    }
+
+    function Mo(n, r, i) {
+        if (!$t(n)) return !1;
+        const s = String(n.text || "").trim();
+        switch (i.condition) {
+            case "all":
+                return !0;
+            case "selected":
+                return r === t.selectedIndex;
+            case "dur_long":
+                return V(n) > Math.round(i.durLongSec * 1e3);
+            case "cps_above": {
+                const a = bn(n);
+                return a != null && a > i.cpsAbove
+            }
+            case "chars_long":
+                return qe(s) > i.charsLong;
+            default:
+                return !1
+        }
+    }
+
+    function yr(n) {
+        x();
+        const r = [];
+        return t.cues.forEach((i, s) => {
+            Mo(i, s, n) && r.push(s)
+        }), r
+    }
+
+    function ri(n) {
+        if (!t.videoPath) return {
+            matched: 0,
+            summary: "\u8BF7\u5148\u5173\u8054\u89C6\u9891",
+            isErr: !0
+        };
+        if (!p?.ffmpegDetectSilence) return {
+            matched: 0,
+            summary: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u9759\u97F3\u5206\u6790",
+            isErr: !0
+        };
+        const r = yr(n);
+        return r.length ? n.condition === "selected" && t.selectedIndex < 0 ? {
+            matched: 0,
+            summary: "\u5F53\u524D\u6CA1\u6709\u9009\u4E2D\u7684\u5B57\u5E55\u6761\u76EE",
+            isErr: !0
+        } : {
+            matched: r.length,
+            summary: `\u5C06\u5BF9 ${r.length} \u6761\u5B57\u5E55\u9010\u6761\u5206\u6790\u9759\u97F3\uFF08\u9700 FFmpeg\uFF0C\u6267\u884C\u65F6\u5C06\u663E\u793A\u8FDB\u5EA6\uFF09`,
+            isErr: !1
+        } : {
+            matched: 0,
+            summary: "\u6CA1\u6709\u53EF\u5206\u6790\u7684\u5B57\u5E55\uFF08\u9700\u6709\u6587\u672C\u3001\u542B\u7A7A\u683C/\u6362\u884C\u4E14\u65F6\u957F\u8DB3\u591F\uFF09",
+            isErr: !0
+        }
+    }
+
+    function Bo() {
+        const n = Ke();
+        e.silenceSplitDb && (e.silenceSplitDb.value = String(n.silenceDb)), e.silenceSplitDur && (e.silenceSplitDur.value = String(n.silenceDur)), e.silenceSplitFixOverlap && (e.silenceSplitFixOverlap.checked = n.fixOverlap)
+    }
+
+    function Je() {
+        const n = ti();
+        if (e.silenceSplitDurLong && (e.silenceSplitDurLong.disabled = n !== "dur_long"), e.silenceSplitCpsAbove && (e.silenceSplitCpsAbove.disabled = n !== "cps_above"), e.silenceSplitCharsLong && (e.silenceSplitCharsLong.disabled = n !== "chars_long"), !e.silenceSplitPreview) return;
+        if (x(), !t.cues.length) {
+            e.silenceSplitPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.silenceSplitPreview.classList.add("err");
+            return
+        }
+        const r = ni(),
+            i = ri(r);
+        e.silenceSplitPreview.textContent = i.summary, e.silenceSplitPreview.classList.toggle("err", !!i.isErr)
+    }
+
+    function vr(n) {
+        if (e.silenceSplitModal) {
+            if (x(), Bo(), n) {
+                const r = document.querySelector(`input[name="editorSilenceSplitCond"][value="${n}"]`);
+                r && (r.checked = !0)
+            }
+            Q(e.silenceSplitModal, e.silenceSplitConfirm), Je()
+        }
+    }
+
+    function Wt() {
+        K(e.silenceSplitModal)
+    }
+    async function si() {
+        if (t.silenceSplitBusy) return;
+        const n = ni(),
+            r = ri(n);
+        if (r.isErr || !r.matched) {
+            Je();
+            return
+        }
+        const i = yr(n).sort((f, g) => g - f),
+            s = {
+                silenceDb: n.silenceDb,
+                silenceDur: n.silenceDur,
+                fixOverlap: !1
+            };
+        $();
+        let a = 0,
+            o = 0,
+            l = 0;
+        const c = i.length;
+        Ee({
+            title: "\u6B63\u5728\u6279\u91CF\u5206\u6790\u9759\u97F3",
+            detail: `\u51C6\u5907\u5904\u7406 ${c} \u6761\u5B57\u5E55\u2026`,
+            current: 0,
+            total: c,
+            statusMessage: `\u6B63\u5728\u6279\u91CF\u5206\u6790\u9759\u97F3\uFF080/${c}\uFF09\u2026`
+        }), await ce();
+        let u = !1;
+        try {
+            for (let f = 0; f < i.length; f += 1) {
+                if (ne()) {
+                    u = !0;
+                    break
+                }
+                const g = i[f];
+                de({
+                    current: f,
+                    total: c,
+                    detail: `\u6B63\u5728\u5206\u6790\u7B2C ${f+1}/${c} \u6761\uFF08\u539F\u5E8F\u53F7 ${g+1}\uFF09\u2026`,
+                    statusMessage: `\u6B63\u5728\u5206\u6790\u9759\u97F3 ${f+1}/${c}\u2026`
+                }), await ce();
+                const h = await Rs(t.cues[g], s);
+                if (ne() || h?.cancelled) {
+                    u = !0;
+                    break
+                }
+                if (!h.cues || h.cues.length < 2) {
+                    l += 1, de({
+                        current: f + 1,
+                        total: c,
+                        detail: `\u7B2C ${f+1}/${c} \u6761\u672A\u68C0\u6D4B\u5230\u53EF\u5206\u5272\u9759\u97F3\uFF0C\u5DF2\u8DF3\u8FC7`
+                    });
+                    continue
+                }
+                t.cues.splice(g, 1, ...h.cues), a += 1, o += h.cues.length - 1, de({
+                    current: f + 1,
+                    total: c,
+                    detail: `\u7B2C ${f+1}/${c} \u6761\u5DF2\u5206\u5272\u4E3A ${h.cues.length} \u6761`,
+                    statusMessage: `\u6B63\u5728\u5206\u6790\u9759\u97F3 ${f+1}/${c}\u2026`
+                })
+            }
+        } finally {
+            Ie()
+        }
+        if (u) {
+            a && (P(!0), C(), t.selectedIndex >= 0 && R()), Wt(), d(`\u5DF2\u53D6\u6D88\u6279\u91CF\u9759\u97F3\u5206\u5272\uFF08\u5DF2\u5206\u5272 ${a} \u6761\uFF09`, "warn");
+            return
+        }
+        if (!a) {
+            Je(), d(`\u5DF2\u5206\u6790 ${i.length} \u6761\uFF0C\u5747\u672A\u68C0\u6D4B\u5230\u53EF\u5206\u5272\u7684\u9759\u97F3`, "err");
+            return
+        }
+        n.fixOverlap && (Ee({
+            title: "\u6B63\u5728\u6574\u7406\u65F6\u95F4\u8F74",
+            detail: "\u5206\u5272\u5B8C\u6210\uFF0C\u6B63\u5728\u4FEE\u590D\u91CD\u53E0\u2026",
+            indeterminate: !0,
+            statusMessage: "\u6B63\u5728\u4FEE\u590D\u5206\u5272\u540E\u7684\u65F6\u95F4\u91CD\u53E0\u2026"
+        }), await ce(), At(), Ie()), P(!0), C(), t.selectedIndex >= 0 && R(), Wt();
+        const m = l ? `\uFF0C\u8DF3\u8FC7 ${l} \u6761` : "";
+        d(`\u5DF2\u6309\u9759\u97F3\u5206\u5272 ${a} \u6761\u5B57\u5E55\uFF0C\u65B0\u589E ${o} \u6761${m}`, "ok")
+    }
+
+    function ii() {
+        return {
+            fixOverlap: !!e.smartFixOverlap?.checked,
+            fixCps: !!e.smartFixCps?.checked,
+            enforceMinDur: !!e.smartEnforceMin?.checked,
+            enforceMaxDur: !!e.smartEnforceMax?.checked,
+            maxCps: Number(e.smartMaxCps?.value) || 18,
+            minSec: Number(e.smartMinSec?.value) || .5,
+            maxSec: Number(e.smartMaxSec?.value) || 10,
+            gapMs: Math.max(0, Math.round(Number(e.smartGapMs?.value) || 1))
+        }
+    }
+
+    function Ht() {
+        const n = ii();
+        if (e.smartMaxCps && (e.smartMaxCps.disabled = !n.fixCps), e.smartMinSec && (e.smartMinSec.disabled = !n.enforceMinDur), e.smartMaxSec && (e.smartMaxSec.disabled = !n.enforceMaxDur), !e.smartPreview) return;
+        if (x(), !t.cues.length) {
+            e.smartPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.smartPreview.classList.add("err");
+            return
+        }
+        if (!n.fixOverlap && !n.fixCps && !n.enforceMinDur && !n.enforceMaxDur) {
+            e.smartPreview.textContent = "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u9879\u8C03\u6574\u89C4\u5219", e.smartPreview.classList.add("err");
+            return
+        }
+        const r = ai(n);
+        e.smartPreview.textContent = r.summary, e.smartPreview.classList.toggle("err", r.affected === 0)
+    }
+
+    function ai(n) {
+        const r = Jr(t.cues),
+            i = Sr(r, n);
+        if (!i.affected) return {
+            affected: 0,
+            summary: "\u5F53\u524D\u5B57\u5E55\u65E0\u9700\u8C03\u6574"
+        };
+        const s = [];
+        return i.overlapFixed && s.push(`\u91CD\u53E0 ${i.overlapFixed} \u5904`), i.cpsFixed && s.push(`CPS ${i.cpsFixed} \u6761`), i.minDurFixed && s.push(`\u8FC7\u77ED ${i.minDurFixed} \u6761`), i.maxDurFixed && s.push(`\u8FC7\u957F ${i.maxDurFixed} \u6761`), {
+            affected: i.affected,
+            summary: `\u9884\u8BA1\u5F71\u54CD ${i.affected} \u6761\uFF1A${s.join(" \xB7 ")||"\u5C06\u66F4\u65B0\u65F6\u957F"}`
+        }
+    }
+
+    function Sr(n, r) {
+        return oe.applySmartAdjustToCues(n, r)
+    }
+
+    function br() {
+        const n = Ke();
+        return {
+            maxCps: Number(e.qcMaxCps?.value) || Number(e.smartMaxCps?.value) || 18,
+            minSec: Number(e.qcMinSec?.value) || .5,
+            maxSec: Number(e.qcMaxSec?.value) || 10,
+            gapMs: Math.max(0, Math.round(Number(e.qcGapMs?.value) || 1)),
+            smartMaxChars: n.smartMaxChars,
+            smartLineChars: n.smartLineChars,
+            targetCps: yt()
+        }
+    }
+
+    function je(n, r = {}) {
+        if (!n) {
+            t.lastQcResult = null, t.qcIssueIndexes = [], t.qcIssueIndexSet = new Set, e.qcBtn && e.qcBadge && (e.qcBtn.classList.remove("has-issues"), e.qcBadge.textContent = "0", e.qcBtn.title = "\u626B\u63CF\u65F6\u95F4\u8F74 / \u901A\u987A\u5EA6\u95EE\u9898\u5E76\u4E00\u952E\u4FEE\u590D"), H?.refreshContextActionBar?.(), r.updateRows && ve();
+            return
+        }
+        const {
+            summary: i
+        } = n;
+        if (t.lastQcResult = n, t.qcIssueIndexes = (n.issues || []).map(s => Number(s?.index)).filter(s => Number.isInteger(s)), t.qcIssueIndexSet = new Set(t.qcIssueIndexes), e.qcBtn && e.qcBadge) {
+            const s = i?.total || 0;
+            e.qcBadge.textContent = String(s > 99 ? "99+" : s), e.qcBtn.classList.toggle("has-issues", s > 0), e.qcBtn.title = s > 0 ? `${oe.summarizeScan(i)}\uFF08\u70B9\u51FB\u6253\u5F00\u8D28\u91CF\u68C0\u67E5\uFF09` : "\u626B\u63CF\u65F6\u95F4\u8F74 / \u901A\u987A\u5EA6\u95EE\u9898\u5E76\u4E00\u952E\u4FEE\u590D"
+        }
+        H?.refreshContextActionBar?.(), r.updateRows && ve()
+    }
+
+    function xr(n = {}) {
+        if (!t.cues.length) {
+            je(null, n);
+            return
+        }
+        const r = br();
+        if (Xt?.scanCueIssuesAsync && t.cues.length >= 120) {
+            const i = t._qcScanToken = (t._qcScanToken || 0) + 1;
+            Xt.scanCueIssuesAsync(t.cues, r, oe).then(s => {
+                i === t._qcScanToken && je(s, n)
+            }).catch(() => {
+                i === t._qcScanToken && je(oe.scanCueIssues(t.cues, r), n)
+            });
+            return
+        }
+        je(oe.scanCueIssues(t.cues, r), n)
+    }
+
+    function xe() {
+        return se.mergeGlossaries(t.globalGlossary, t.projectGlossary)
+    }
+
+    function Mr() {
+        const n = t.glossaryScope === "project" ? t.projectGlossary : t.globalGlossary;
+        t.glossary = se.normalizeGlossary(n)
+    }
+
+    function oi() {
+        const n = se.normalizeGlossary(t.glossary);
+        t.glossary = n, t.glossaryScope === "project" ? t.projectGlossary = n : t.globalGlossary = n
+    }
+
+    function ko() {
+        return e.glossaryScopeProject?.checked ? "project" : "global"
+    }
+
+    function Ot() {
+        if (e.glossaryScopeGlobal && (e.glossaryScopeGlobal.checked = t.glossaryScope !== "project"), e.glossaryScopeProject) {
+            e.glossaryScopeProject.checked = t.glossaryScope === "project";
+            const n = !t.path;
+            e.glossaryScopeProject.disabled = n, e.glossaryScopeProjectLabel && (e.glossaryScopeProjectLabel.classList.toggle("opacity-50", n), e.glossaryScopeProjectLabel.title = n ? "\u8BF7\u5148\u4FDD\u5B58\u5B57\u5E55\u6587\u4EF6\u540E\u518D\u7F16\u8F91\u9879\u76EE\u672F\u8BED\u8868" : "\u4EC5\u4F5C\u7528\u4E8E\u5F53\u524D\u5B57\u5E55\u6587\u4EF6\u65C1\u7684\u9879\u76EE\u672F\u8BED\u8868")
+        }
+    }
+    async function Br(n = t.path) {
+        if (!p?.transubGetGlossary) {
+            t.globalGlossary = {
+                version: 1,
+                entries: []
+            }, t.projectGlossary = {
+                version: 1,
+                entries: []
+            }, Mr(), _t();
+            return
+        }
+        try {
+            const r = await p.transubGetGlossary({
+                scope: "global"
+            });
+            t.globalGlossary = r?.ok && r.glossary ? se.normalizeGlossary(r.glossary) : {
+                version: 1,
+                entries: []
+            }
+        } catch {
+            t.globalGlossary = {
+                version: 1,
+                entries: []
+            }
+        }
+        if (t.projectGlossary = {
+                version: 1,
+                entries: []
+            }, n) try {
+            const r = await p.transubGetGlossary({
+                scope: "project",
+                subtitlePath: n
+            });
+            r?.ok && r.glossary && (t.projectGlossary = se.normalizeGlossary(r.glossary))
+        } catch {
+            t.projectGlossary = {
+                version: 1,
+                entries: []
+            }
+        }
+        Mr(), _t()
+    }
+    async function wo() {
+        await Br(t.path)
+    }
+    async function kr() {
+        if (oi(), !p?.transubSaveGlossary) return !1;
+        try {
+            const n = {
+                glossary: t.glossary,
+                scope: t.glossaryScope
+            };
+            if (t.glossaryScope === "project") {
+                if (!t.path) return d("\u8BF7\u5148\u4FDD\u5B58\u5B57\u5E55\u6587\u4EF6\u540E\u518D\u5199\u5165\u9879\u76EE\u672F\u8BED\u8868", "err"), !1;
+                n.subtitlePath = t.path
+            }
+            const r = await p.transubSaveGlossary(n);
+            if (r?.ok && r.glossary) {
+                const i = se.normalizeGlossary(r.glossary);
+                t.glossary = i, t.glossaryScope === "project" ? t.projectGlossary = i : t.globalGlossary = i
+            }
+            return !!r?.ok
+        } catch {
+            return !1
+        }
+    }
+    async function Co(n) {
+        const r = n === "project" ? "project" : "global";
+        if (r === t.glossaryScope) {
+            Ot();
+            return
+        }
+        if (r === "project" && !t.path) {
+            d("\u8BF7\u5148\u4FDD\u5B58\u5B57\u5E55\u6587\u4EF6\u540E\u518D\u7F16\u8F91\u9879\u76EE\u672F\u8BED\u8868", "err"), Ot();
+            return
+        }
+        oi(), t.glossaryScope = r, Mr(), et(), Ot(), Fe()
+    }
+
+    function _t() {
+        if (!e.glossaryBtn || !e.glossaryBadge) return;
+        const n = xe();
+        if (!t.cues.length || !n?.entries?.length) {
+            e.glossaryBtn.classList.remove("has-issues"), e.glossaryBadge.textContent = "0", t.glossaryIssues = [];
+            return
+        }
+        const r = se.scanGlossaryIssues(t.cues, n);
+        t.glossaryIssues = r.issues;
+        const i = r.summary.total || 0;
+        e.glossaryBadge.textContent = String(i > 99 ? "99+" : i), e.glossaryBtn.classList.toggle("has-issues", i > 0), e.glossaryBtn.title = i > 0 ? `${se.summarizeGlossaryScan(r.summary)}\uFF08\u70B9\u51FB\u6253\u5F00\u672F\u8BED\u8868\uFF09` : "\u672F\u8BED\u8868\u4E0E\u4E13\u540D\u4E00\u81F4\u6027"
+    }
+
+    function et() {
+        t.glossaryEditingId = "", e.glossaryCanonical && (e.glossaryCanonical.value = ""), e.glossaryAliases && (e.glossaryAliases.value = ""), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !1), e.glossaryEnabled && (e.glossaryEnabled.checked = !0), wr()
+    }
+
+    function li(n) {
+        if (!n) {
+            et();
+            return
+        }
+        t.glossaryEditingId = n.id, e.glossaryCanonical && (e.glossaryCanonical.value = n.canonical || ""), e.glossaryAliases && (e.glossaryAliases.value = (n.aliases || []).join(", ")), e.glossaryCaseSensitive && (e.glossaryCaseSensitive.checked = !!n.caseSensitive), e.glossaryEnabled && (e.glossaryEnabled.checked = n.enabled !== !1), wr()
+    }
+
+    function wr() {
+        if (!e.glossaryEntryList) return;
+        const n = t.glossary?.entries || [];
+        if (!n.length) {
+            e.glossaryEntryList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:rgb(156 163 175);">\u6682\u65E0\u672F\u8BED\uFF0C\u8BF7\u65B0\u5EFA\u6216\u5BFC\u5165</div>';
+            return
+        }
+        e.glossaryEntryList.innerHTML = n.map(r => {
+            const i = r.id === t.glossaryEditingId ? " active" : "",
+                s = (r.aliases || []).join(" \xB7 ") || "\uFF08\u65E0\u522B\u540D\uFF09",
+                a = r.enabled === !1 ? "\uFF08\u5DF2\u505C\u7528\uFF09" : "";
+            return `<button type="button" class="glossary-entry-item${i}" data-glossary-id="${b(r.id)}" role="listitem"><span class="g-can">${b(r.canonical)}${b(a)}</span><span class="g-alias">${b(s)}</span></button>`
+        }).join("")
+    }
+
+    function Eo(n) {
+        if (e.glossaryIssueList) {
+            if (!n?.length) {
+                e.glossaryIssueList.innerHTML = '<div class="glossary-issue-item" style="cursor:default;color:rgb(156 163 175);">\u6682\u65E0\u4E00\u81F4\u6027\u95EE\u9898</div>';
+                return
+            }
+            e.glossaryIssueList.innerHTML = n.slice(0, 40).map(r => {
+                const i = r.cueIndices?.length ? ` \xB7 \u5B57\u5E55 #${r.cueIndices.slice(0,5).map(a=>a+1).join(",")}${r.cueIndices.length>5?"\u2026":""}` : "",
+                    s = r.cueIndices?.[0];
+                return `<button type="button" class="glossary-issue-item" data-glossary-issue-idx="${s??""}" data-glossary-entry-id="${b(r.entryId)}" role="listitem" title="\u70B9\u51FB\u5B9A\u4F4D\u5E76\u9009\u4E2D\u672F\u8BED">${b(r.message)}${b(i)}</button>`
+            }).join("")
+        }
+    }
+
+    function ci(n) {
+        const r = (t.glossary?.entries || []).find(i => i.id === String(n));
+        li(r || null)
+    }
+
+    function Io() {
+        et(), e.glossaryCanonical?.focus()
+    }
+
+    function jt() {
+        if (!e.breakWordsChips) return;
+        const n = vt();
+        n.length ? e.breakWordsChips.innerHTML = n.map(r => `<span class="break-words-chip" data-break-word="${b(r)}"><span>${b(r)}</span><button type="button" data-break-word-remove="${b(r)}" title="\u79FB\u9664\u300C${b(r)}\u300D" aria-label="\u79FB\u9664 ${b(r)}">&times;</button></span>`).join("") : e.breakWordsChips.innerHTML = '<span style="font-size:0.72rem;color:var(--ed-faint)">\u6682\u65E0\u65AD\u53E5\u8BCD\u3002\u6DFB\u52A0\u540E\uFF0C\u667A\u80FD\u65AD\u53E5\u4E0E\u9759\u97F3\u5206\u5272\u4F1A\u4F18\u5148\u5728\u8FD9\u4E9B\u8BCD\u4E4B\u540E\u5207\u5F00\u3002</span>', e.breakWordsStatus && (e.breakWordsStatus.textContent = n.length ? `\u5F53\u524D ${n.length} \u4E2A\u65AD\u53E5\u8BCD\uFF0C\u5DF2\u7528\u4E8E\u667A\u80FD\u65AD\u53E5\u4E0E\u9759\u97F3\u5206\u5272` : "\u672A\u8BBE\u7F6E\u65AD\u53E5\u8BCD\u65F6\uFF0C\u667A\u80FD\u65AD\u53E5/\u9759\u97F3\u5206\u5272\u53EA\u6309\u6807\u70B9\u4E0E\u7A7A\u767D\u5BF9\u9F50", e.breakWordsStatus.classList.remove("err"))
+    }
+
+    function Gt() {
+        e.breakWordsModal && (vt(), jt(), Q(e.breakWordsModal, e.breakWordsInput))
+    }
+
+    function Cr() {
+        K(e.breakWordsModal)
+    }
+
+    function di() {
+        const n = Ja(e.breakWordsInput?.value);
+        if (!n.length) {
+            d("\u8BF7\u8F93\u5165\u8981\u6DFB\u52A0\u7684\u65AD\u53E5\u8BCD", "err"), e.breakWordsInput?.focus();
+            return
+        }
+        const r = D.normalizeBreakWords([...vt(), ...n]);
+        _n(r), e.breakWordsInput && (e.breakWordsInput.value = ""), jt(), d(`\u5DF2\u66F4\u65B0\u65AD\u53E5\u8BCD\uFF08\u5171 ${r.length} \u4E2A\uFF09`, "ok"), e.breakWordsInput?.focus()
+    }
+
+    function Po(n) {
+        const r = vt().filter(i => i.toLowerCase() !== String(n || "").toLowerCase());
+        _n(r), jt(), d(`\u5DF2\u79FB\u9664\u65AD\u53E5\u8BCD\u300C${n}\u300D`, "ok")
+    }
+
+    function Lo() {
+        const n = ul();
+        _n(n), jt(), d(`\u5DF2\u6062\u590D\u9ED8\u8BA4\u65AD\u53E5\u8BCD\uFF08${n.length} \u4E2A\uFF09`, "ok")
+    }
+
+    function Do() {
+        _n([]), jt(), d("\u5DF2\u6E05\u7A7A\u65AD\u53E5\u8BCD", "ok")
+    }
+    async function To() {
+        if (!p?.transubImportGlossary) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5BFC\u5165\u672F\u8BED\u8868", "err");
+            return
+        }
+        const n = await p.transubImportGlossary();
+        if (ht(), !(!n || n.canceled)) {
+            if (!n.ok) {
+                d(n.error || "\u5BFC\u5165\u672F\u8BED\u8868\u5931\u8D25", "err");
+                return
+            }
+            t.glossary = se.normalizeGlossary(n.glossary), t.glossaryScope === "project" ? t.projectGlossary = t.glossary : t.globalGlossary = t.glossary, et(), Fe(), d(`\u5DF2\u5BFC\u5165 ${t.glossary.entries.length} \u6761\u672F\u8BED`, "ok")
+        }
+    }
+    async function $o() {
+        if (!p?.transubExportGlossary) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5BFC\u51FA\u672F\u8BED\u8868", "err");
+            return
+        }
+        await kr();
+        const n = await p.transubExportGlossary();
+        if (ht(), !(!n || n.canceled)) {
+            if (!n.ok) {
+                d(n.error || "\u5BFC\u51FA\u672F\u8BED\u8868\u5931\u8D25", "err");
+                return
+            }
+            d(`\u672F\u8BED\u8868\u5DF2\u5BFC\u51FA\uFF1A${G(n.path||"")}`, "ok")
+        }
+    }
+
+    function Fe() {
+        x(), wr(), Ot();
+        const n = xe(),
+            r = se.scanGlossaryIssues(t.cues, n);
+        if (t.glossaryIssues = r.issues, Eo(r.issues), e.glossaryPreview) {
+            const i = t.glossaryScope === "project" ? "\u9879\u76EE" : "\u5168\u5C40";
+            if (!t.glossary.entries.length) e.glossaryPreview.textContent = `\u5F53\u524D\u4E3A${i}\u672F\u8BED\u8868\uFF0C\u8BF7\u5148\u6DFB\u52A0\u672F\u8BED\u6761\u76EE`, e.glossaryPreview.classList.add("err");
+            else if (!t.cues.length) e.glossaryPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.glossaryPreview.classList.add("err");
+            else {
+                const s = t.glossaryScope === "project" && t.globalGlossary?.entries?.length ? `\uFF08\u626B\u63CF/\u7EDF\u4E00\u4F7F\u7528\u5408\u5E76\u540E\u7684 ${n.entries.length} \u6761\u6709\u6548\u672F\u8BED\uFF09` : "";
+                e.glossaryPreview.textContent = `${se.summarizeGlossaryScan(r.summary)}${s}`, e.glossaryPreview.classList.toggle("err", r.summary.total > 0)
+            }
+        }
+        _t()
+    }
+    async function Er() {
+        e.glossaryModal && (await Br(t.path), Ot(), et(), Q(e.glossaryModal, e.glossaryCanonical), Fe())
+    }
+
+    function Ir() {
+        K(e.glossaryModal)
+    }
+    async function Ao() {
+        const n = String(e.glossaryCanonical?.value || "").trim();
+        if (!n) {
+            d("\u6807\u51C6\u5199\u6CD5\u4E0D\u80FD\u4E3A\u7A7A", "err");
+            return
+        }
+        const r = se.upsertEntry(t.glossary, {
+            id: t.glossaryEditingId || void 0,
+            canonical: n,
+            aliases: e.glossaryAliases?.value || "",
+            caseSensitive: !!e.glossaryCaseSensitive?.checked,
+            enabled: e.glossaryEnabled?.checked !== !1
+        });
+        if (!r.ok) {
+            d(r.error || "\u4FDD\u5B58\u6761\u76EE\u5931\u8D25", "err");
+            return
+        }
+        if (t.glossary = r.glossary, !await kr()) {
+            d("\u672F\u8BED\u8868\u4FDD\u5B58\u5931\u8D25", "err");
+            return
+        }
+        li(r.entry), Fe(), d(`\u5DF2\u4FDD\u5B58\u672F\u8BED\u300C${n}\u300D`, "ok")
+    }
+    async function Fo() {
+        if (!t.glossaryEditingId) {
+            et();
+            return
+        }
+        await ie("\u786E\u5B9A\u5220\u9664\u5F53\u524D\u672F\u8BED\u6761\u76EE\uFF1F") && (t.glossary = se.removeEntry(t.glossary, t.glossaryEditingId), await kr(), et(), Fe(), d("\u5DF2\u5220\u9664\u672F\u8BED\u6761\u76EE", "ok"))
+    }
+    async function ui(n = null) {
+        if (x(), !t.cues.length) {
+            Fe();
+            return
+        }
+        const r = se.applyGlossaryToCues(t.cues, xe(), {
+            entryIds: n || void 0
+        });
+        if (!r.stats.replaceCount) {
+            Fe(), d(r.summary, "ok");
+            return
+        }
+        $(), t.cues.splice(0, t.cues.length, ...r.cues), P(!0), C(), t.selectedIndex >= 0 && R(), Fe(), d(r.summary, "ok")
+    }
+
+    function Mn() {
+        if (!e.textPresetsBadge) return;
+        const n = t.textPresetsDoc?.groups?.length || 0;
+        e.textPresetsBadge.textContent = String(n), e.textPresetsBtn?.classList.toggle("has-presets", n > 0)
+    }
+    async function Pr() {
+        if (!p?.transubGetTextPresets) {
+            t.textPresetsDoc = _.emptyPresetsDoc(), Mn();
+            return
+        }
+        try {
+            const n = await p.transubGetTextPresets();
+            n?.ok && n.presetsDoc ? t.textPresetsDoc = _.normalizePresetsDoc(n.presetsDoc) : t.textPresetsDoc?.groups?.length || (t.textPresetsDoc = _.normalizePresetsDoc({
+                groups: _.defaultStarterGroups()
+            }))
+        } catch {
+            t.textPresetsDoc?.groups?.length || (t.textPresetsDoc = _.emptyPresetsDoc())
+        }
+        Mn(), $r()
+    }
+    async function Lr() {
+        if (!p?.transubSaveTextPresets) return !1;
+        try {
+            const n = await p.transubSaveTextPresets({
+                presetsDoc: t.textPresetsDoc
+            });
+            return n?.ok && n.presetsDoc && (t.textPresetsDoc = _.normalizePresetsDoc(n.presetsDoc)), Mn(), $r(), !!n?.ok
+        } catch {
+            return !1
+        }
+    }
+
+    function Dr() {
+        return [{
+            id: _.makeItemId(),
+            label: "\u7247\u540D",
+            text: "\u300A\u5F71\u7247\u540D\u79F0\u300B",
+            startSec: 0,
+            endSec: .5
+        }, {
+            id: _.makeItemId(),
+            label: "\u6F14\u5458",
+            text: `\u4E3B\u6F14
+\u6F14\u5458\u7532`,
+            startSec: .6,
+            endSec: 1.5
+        }]
+    }
+
+    function Ro(n) {
+        const r = Number(n?.startSec) || 0,
+            i = Number(n?.endSec);
+        return Number.isFinite(i) && i > r ? Math.round((i - r) * 1e3) / 1e3 : .5
+    }
+
+    function Bn(n) {
+        if (!e.textPresetItemsHost) return;
+        const r = Array.isArray(n) && n.length ? n : Dr();
+        e.textPresetItemsHost.innerHTML = r.map(i => {
+            const s = Number(i.startSec) || 0,
+                a = Ro(i);
+            return `
+            <div class="text-preset-item-row" data-item-id="${b(i.id||"")}">
+                <input type="text" data-tp-field="label" spellcheck="false" placeholder="\u6807\u7B7E" value="${b(i.label||"")}" title="\u6761\u76EE\u6807\u7B7E\uFF0C\u5982\uFF1A\u7247\u540D">
+                <input type="number" data-tp-field="startSec" min="0" max="36000" step="0.1" value="${b(String(s))}" title="\u8D77\u59CB\u79D2\uFF08\u76F8\u5BF9\u65F6\u95F4\u57FA\u51C6\uFF09">
+                <input type="number" data-tp-field="durationSec" min="0.1" max="36000" step="0.1" value="${b(String(a))}" title="\u65F6\u957F\uFF08\u79D2\uFF09">
+                <textarea data-tp-field="text" spellcheck="false" placeholder="\u5B57\u5E55\u6587\u672C" title="\u5B57\u5E55\u6587\u672C">${b(i.text||"")}</textarea>
+                <button type="button" class="tp-remove" data-tp-remove title="\u5220\u9664\u6761\u76EE">\u5220</button>
+            </div>`
+        }).join("")
+    }
+
+    function Tr() {
+        return e.textPresetItemsHost ? Array.from(e.textPresetItemsHost.querySelectorAll(".text-preset-item-row")).map(n => {
+            const r = Number(n.querySelector('[data-tp-field="startSec"]')?.value) || 0,
+                i = Number(n.querySelector('[data-tp-field="durationSec"]')?.value) || .5;
+            return {
+                id: n.getAttribute("data-item-id") || _.makeItemId(),
+                label: n.querySelector('[data-tp-field="label"]')?.value || "",
+                text: n.querySelector('[data-tp-field="text"]')?.value || "",
+                startSec: r,
+                endSec: r + Math.max(.1, i)
+            }
+        }) : []
+    }
+
+    function pt() {
+        t.textPresetEditingId = "", e.textPresetName && (e.textPresetName.value = ""), e.textPresetAnchor && (e.textPresetAnchor.value = "playhead"), Bn(Dr()), e.textPresetsStatus && (e.textPresetsStatus.textContent = "\u65B0\u5EFA\u7EC4\uFF1A\u8BBE\u7F6E\u7EC4\u540D\u4E0E\u6761\u76EE\u65F6\u95F4\u8F74\u540E\u4FDD\u5B58"), kn()
+    }
+
+    function mi(n) {
+        if (!n) {
+            pt();
+            return
+        }
+        if (t.textPresetEditingId = n.id, e.textPresetName && (e.textPresetName.value = n.name || ""), e.textPresetAnchor && (e.textPresetAnchor.value = n.anchor || "playhead"), Bn(n.items || []), e.textPresetsStatus) {
+            const r = _.ANCHOR_LABELS[n.anchor] || n.anchor;
+            e.textPresetsStatus.textContent = `\u7F16\u8F91\u300C${n.name}\u300D\xB7 ${n.items.length} \u6761 \xB7 ${r}`
+        }
+        kn()
+    }
+
+    function kn() {
+        if (!e.textPresetsList) return;
+        const n = _.filterGroups(t.textPresetsDoc, {
+            query: t.textPresetsQuery
+        });
+        if (!n.length) {
+            e.textPresetsList.innerHTML = '<div class="glossary-entry-item" style="cursor:default;color:var(--ed-muted)">\u6682\u65E0\u9884\u8BBE\u7EC4\u3002\u53EF\u70B9\u300C\u793A\u4F8B\u300D\u5199\u5165\u300C\u5E38\u89C4\u9884\u8BBE1\u300D\uFF0C\u6216\u65B0\u5EFA\u7EC4\u3002</div>';
+            return
+        }
+        e.textPresetsList.innerHTML = n.map(r => {
+            const i = r.id === t.textPresetEditingId ? " active" : "",
+                s = _.summarizeGroup(r);
+            return `<button type="button" class="glossary-entry-item${i}" data-text-preset-id="${b(r.id)}" role="listitem">
+                <span class="g-can">${b(r.name)} <span style="font-weight:400;color:var(--ed-muted)">\xB7 ${r.items.length} \u6761</span></span>
+                <span class="g-alias">${b(s)}</span>
+            </button>`
+        }).join("")
+    }
+
+    function $r() {
+        if (!e.textPresetQuickSelect) return;
+        const n = t.textPresetsDoc?.groups || [],
+            r = ['<option value="">\u63D2\u5165\u9884\u8BBE\u7EC4\u2026</option>'];
+        n.forEach(i => {
+            r.push(`<option value="${b(i.id)}">${b(i.name)}\uFF08${i.items.length}\uFF09</option>`)
+        }), r.push('<option value="__manage__">\u7BA1\u7406\u9884\u8BBE\u7EC4\u2026</option>'), e.textPresetQuickSelect.innerHTML = r.join(""), e.textPresetQuickSelect.value = ""
+    }
+    async function wn() {
+        e.textPresetsModal && (await Pr(), e.textPresetsSearch && (e.textPresetsSearch.value = t.textPresetsQuery || ""), pt(), Q(e.textPresetsModal, e.textPresetName))
+    }
+
+    function fi() {
+        K(e.textPresetsModal)
+    }
+    async function No() {
+        const n = _.upsertGroup(t.textPresetsDoc, {
+            id: t.textPresetEditingId || void 0,
+            name: e.textPresetName?.value || "",
+            anchor: e.textPresetAnchor?.value || "playhead",
+            items: Tr()
+        });
+        if (!n.ok) {
+            d(n.error || "\u4FDD\u5B58\u9884\u8BBE\u7EC4\u5931\u8D25", "err"), e.textPresetsStatus && (e.textPresetsStatus.textContent = n.error || "\u4FDD\u5B58\u5931\u8D25");
+            return
+        }
+        if (t.textPresetsDoc = n.doc, !await Lr()) {
+            d("\u9884\u8BBE\u7EC4\u4FDD\u5B58\u5931\u8D25", "err");
+            return
+        }
+        mi(n.group), d(`\u5DF2\u4FDD\u5B58\u9884\u8BBE\u7EC4\u300C${n.group.name}\u300D`, "ok")
+    }
+    async function qo() {
+        if (!t.textPresetEditingId) {
+            pt();
+            return
+        }
+        await ie("\u786E\u5B9A\u5220\u9664\u5F53\u524D\u9884\u8BBE\u7EC4\uFF1F") && (t.textPresetsDoc = _.removeGroup(t.textPresetsDoc, t.textPresetEditingId), await Lr(), pt(), d("\u5DF2\u5220\u9664\u9884\u8BBE\u7EC4", "ok"))
+    }
+    async function Wo() {
+        const n = _.defaultStarterGroups();
+        let r = _.normalizePresetsDoc(t.textPresetsDoc);
+        const i = new Set(r.groups.map(a => a.name));
+        let s = 0;
+        for (const a of n) {
+            if (i.has(a.name)) continue;
+            const o = _.upsertGroup(r, {
+                ...a,
+                id: void 0
+            });
+            o.ok && (r = o.doc, s += 1)
+        }
+        t.textPresetsDoc = r, await Lr(), kn(), d(s ? `\u5DF2\u6DFB\u52A0 ${s} \u4E2A\u793A\u4F8B\u9884\u8BBE\u7EC4` : "\u793A\u4F8B\u9884\u8BBE\u7EC4\u5DF2\u5B58\u5728", "ok"), e.textPresetsStatus && (e.textPresetsStatus.textContent = s ? `\u5DF2\u6DFB\u52A0 ${s} \u4E2A\u793A\u4F8B\u7EC4` : "\u793A\u4F8B\u5DF2\u5B58\u5728\uFF0C\u672A\u91CD\u590D\u6DFB\u52A0")
+    }
+
+    function Ar(n) {
+        if (!n?.items?.length) return d("\u9884\u8BBE\u7EC4\u4E3A\u7A7A", "err"), !1;
+        x();
+        const r = n.anchor === "absolute" ? 0 : De(),
+            i = _.buildCuesFromGroup(n, {
+                baseMs: r
+            });
+        if (!i.length) return d("\u9884\u8BBE\u7EC4\u6CA1\u6709\u53EF\u63D2\u5165\u7684\u6761\u76EE", "err"), !1;
+        $();
+        const s = i.map(l => ({
+            index: t.cues.length + 1,
+            startMs: l.startMs,
+            endMs: l.endMs,
+            text: l.text
+        }));
+        t.cues.push(...s), t.cues.sort((l, c) => l.startMs - c.startMs);
+        const a = t.cues.indexOf(s[0]);
+        P(!0), t.selectedIndex = a >= 0 ? a : 0, C(), X(t.selectedIndex, {
+            scroll: !0,
+            seek: !0
+        }), e.detailText?.focus();
+        const o = n.anchor === "absolute" ? "\u89C6\u9891\u8D77\u70B9" : "\u64AD\u653E\u4F4D\u7F6E";
+        return d(`\u5DF2\u63D2\u5165\u9884\u8BBE\u7EC4\u300C${n.name}\u300D\u5171 ${s.length} \u6761\uFF08\u76F8\u5BF9${o}\uFF09`, "ok"), !0
+    }
+
+    function Ho(n) {
+        const r = _.findGroup(t.textPresetsDoc, n);
+        if (!r) {
+            d("\u672A\u627E\u5230\u8BE5\u9884\u8BBE\u7EC4", "err");
+            return
+        }
+        Ar(r)
+    }
+    async function Oo() {
+        const n = await p?.transubExportTextPresets?.();
+        if (!n?.canceled) {
+            if (!n?.ok) {
+                d(n?.error || "\u5BFC\u51FA\u5931\u8D25", "err");
+                return
+            }
+            d(`\u5DF2\u5BFC\u51FA\u9884\u8BBE\uFF1A${G(n.path)}`, "ok")
+        }
+    }
+    async function _o() {
+        const n = await p?.transubImportTextPresets?.();
+        if (!n?.canceled) {
+            if (!n?.ok) {
+                d(n?.error || "\u5BFC\u5165\u5931\u8D25", "err");
+                return
+            }
+            n.presetsDoc ? t.textPresetsDoc = _.normalizePresetsDoc(n.presetsDoc) : await Pr(), pt(), Mn(), $r(), d(`\u5DF2\u5BFC\u5165 ${t.textPresetsDoc.groups.length} \u4E2A\u9884\u8BBE\u7EC4`, "ok")
+        }
+    }
+
+    function pi() {
+        const n = Ke();
+        return {
+            fixOverlap: !!e.qcFixOverlap?.checked,
+            fixCpsBySplit: !!e.qcFixCpsSplit?.checked,
+            fixCpsByExtend: !!e.qcFixCpsExtend?.checked,
+            enforceMinDur: !!e.qcEnforceMin?.checked,
+            enforceMaxDur: !!e.qcEnforceMax?.checked,
+            compressRepetition: !!e.qcCompressRep?.checked,
+            maxCps: Number(e.qcMaxCps?.value) || 18,
+            minSec: Number(e.qcMinSec?.value) || .5,
+            maxSec: Number(e.qcMaxSec?.value) || 10,
+            gapMs: Math.max(0, Math.round(Number(e.qcGapMs?.value) || 1)),
+            smartMaxChars: n.smartMaxChars,
+            smartLineChars: n.smartLineChars,
+            targetCps: yt(),
+            useCpsTime: n.useCps !== !1
+        }
+    }
+    const Cn = [{
+        type: "overlap",
+        countKey: "overlap",
+        label: "\u91CD\u53E0"
+    }, {
+        type: "high_cps",
+        countKey: "highCps",
+        label: "\u8BFB\u901F"
+    }, {
+        type: "splittable",
+        countKey: "splittable",
+        label: "\u53EF\u5206\u5272"
+    }, {
+        type: "connected",
+        countKey: "connected",
+        label: "\u8FDE\u7EED\u6587\u672C"
+    }, {
+        type: "repetition",
+        countKey: "repetition",
+        label: "\u53E0\u8BCD"
+    }, {
+        type: "fluency",
+        countKey: "fluency",
+        label: "\u901A\u987A\u5EA6",
+        warn: !0
+    }, {
+        type: "short",
+        countKey: "short",
+        label: "\u8FC7\u77ED"
+    }, {
+        type: "long",
+        countKey: "long",
+        label: "\u8FC7\u957F"
+    }, {
+        type: "invalid",
+        countKey: "invalid",
+        label: "\u65E0\u6548"
+    }];
+
+    function jo(n, r) {
+        return r ? (n || []).filter(i => (i.types || []).includes(r)) : n || []
+    }
+
+    function Go(n) {
+        const r = n || null;
+        r == null ? t.qcTypeFilter = null : t.qcTypeFilter = t.qcTypeFilter === r ? null : r, gt()
+    }
+
+    function gi(n, {
+        emptyHint: r
+    } = {}) {
+        if (!e.qcIssueList) return;
+        if (!n?.length) {
+            e.qcIssueList.innerHTML = r ? `<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">${b(r)}</div>` : "";
+            return
+        }
+        const i = 40,
+            s = n.slice(0, i).map(a => {
+                const o = b(a.messages.join(" \xB7 ")),
+                    l = b(a.textPreview || "\u2014");
+                return `<button type="button" class="qc-issue-item" data-qc-idx="${a.index}" role="listitem"><span class="qc-issue-idx">#${a.index+1}</span><span class="qc-issue-msg">${o}</span><span class="qc-issue-text">${l}</span></button>`
+            });
+        n.length > i && s.push(`<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">\u8FD8\u6709 ${n.length-i} \u6761\u672A\u5217\u51FA</div>`), e.qcIssueList.innerHTML = s.join("")
+    }
+
+    function hi(n, r) {
+        return `qc-chip${n?` ${n}`:""}${r?" active":""}`
+    }
+
+    function yi(n) {
+        if (!e.qcSummaryBar) return;
+        if (!n?.total) {
+            t.qcTypeFilter = null, e.qcSummaryBar.innerHTML = '<span class="qc-chip ok">\u672A\u53D1\u73B0\u95EE\u9898</span>';
+            return
+        }
+        const r = t.qcTypeFilter;
+        r && !Cn.some(a => a.type === r && n[a.countKey] > 0) && (t.qcTypeFilter = null);
+        const i = t.qcTypeFilter,
+            s = [`<button type="button" class="${hi("warn",i==null)}" data-qc-type="" title="\u663E\u793A\u5168\u90E8\u95EE\u9898">\u95EE\u9898 ${n.total}</button>`];
+        for (const a of Cn) {
+            const o = n[a.countKey] || 0;
+            if (!o) continue;
+            const l = i === a.type;
+            s.push(`<button type="button" class="${hi(a.warn?"warn":"",l)}" data-qc-type="${a.type}" title="\u53EA\u770B${a.label}">${a.label} ${o}</button>`)
+        }
+        e.qcSummaryBar.innerHTML = s.join("")
+    }
+
+    function vi({
+        filtered: n = !1
+    } = {}) {
+        const r = pi();
+        if (!n) return {
+            ok: !0,
+            opts: r,
+            label: null
+        };
+        const i = t.qcTypeFilter;
+        if (!i) return {
+            ok: !1,
+            opts: null,
+            label: null,
+            reason: "\u8BF7\u5148\u70B9\u51FB\u4E0A\u65B9\u6807\u7B7E\u7B5B\u9009\u95EE\u9898\u7C7B\u578B"
+        };
+        const a = Cn.find(l => l.type === i)?.label || i,
+            o = oe.buildQcOptionsForIssueType(r, i);
+        return o ? {
+            ok: !0,
+            opts: {
+                ...o,
+                issueTypeFilter: i
+            },
+            label: a
+        } : {
+            ok: !1,
+            opts: null,
+            label: a,
+            reason: `\u300C${a}\u300D\u65E0\u6CD5\u81EA\u52A8\u4FEE\u590D\uFF0C\u8BF7\u624B\u5DE5\u4FEE\u6539\u6216\u91CD\u8F6C\u5199`
+        }
+    }
+
+    function gt() {
+        const n = pi(),
+            r = n.fixCpsBySplit || n.fixCpsByExtend;
+        if (e.qcMaxCps && (e.qcMaxCps.disabled = !r), e.qcMinSec && (e.qcMinSec.disabled = !n.enforceMinDur), e.qcMaxSec && (e.qcMaxSec.disabled = !n.enforceMaxDur), x(), !e.qcPreview) return;
+        if (!t.cues.length) {
+            t.qcTypeFilter = null, yi({
+                total: 0
+            }), gi([]), e.qcPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.qcPreview.classList.add("err"), e.qcFixFiltered && (e.qcFixFiltered.disabled = !0);
+            return
+        }
+        const i = oe.scanCueIssues(t.cues, n);
+        yi(i.summary);
+        const s = jo(i.issues, t.qcTypeFilter),
+            a = Cn.find(c => c.type === t.qcTypeFilter);
+        gi(s, {
+            emptyHint: t.qcTypeFilter && i.issues.length ? `\u5F53\u524D\u7C7B\u578B\u300C${a?.label||t.qcTypeFilter}\u300D\u65E0\u5339\u914D\u95EE\u9898` : ""
+        });
+        const o = vi({
+            filtered: !0
+        });
+        if (e.qcFixFiltered && (e.qcFixFiltered.disabled = !o.ok, e.qcFixFiltered.title = o.ok ? `\u4EC5\u4FEE\u590D\u300C${o.label}\u300D\u76F8\u5173\u95EE\u9898` : o.reason || "\u8BF7\u5148\u7B5B\u9009\u53EF\u81EA\u52A8\u4FEE\u590D\u7684\u95EE\u9898\u7C7B\u578B"), t.qcTypeFilter) {
+            if (!o.ok) e.qcPreview.textContent = o.reason, e.qcPreview.classList.add("err");
+            else {
+                const c = oe.buildQcFixPlan(t.cues, o.opts);
+                e.qcPreview.textContent = `\u7B5B\u9009\u4FEE\u590D\uFF08${o.label}\uFF09\uFF1A${c.summary}`, e.qcPreview.classList.toggle("err", !c.ok)
+            }
+            return
+        }
+        const l = oe.buildQcFixPlan(t.cues, n);
+        e.qcPreview.textContent = l.summary, e.qcPreview.classList.toggle("err", !l.ok)
+    }
+
+    function Fr() {
+        e.qcModal && (t.qcTypeFilter = null, x(), e.qcMaxCps && e.smartMaxCps && (e.qcMaxCps.value = e.smartMaxCps.value), Q(e.qcModal, e.qcConfirm), gt())
+    }
+
+    function En() {
+        K(e.qcModal)
+    }
+
+    function Si({
+        filtered: n = !1
+    } = {}) {
+        const r = vi({
+            filtered: n
+        });
+        if (!r.ok) {
+            e.qcPreview && r.reason && (e.qcPreview.textContent = r.reason, e.qcPreview.classList.add("err")), gt();
+            return
+        }
+        const i = r.opts;
+        if (x(), !oe.buildQcFixPlan(t.cues, i).ok) {
+            gt();
+            return
+        }
+        $();
+        const a = oe.applyQcFixes(t.cues, i);
+        t.cues.splice(0, t.cues.length, ...a.cues), P(!0), C(), t.selectedIndex >= 0 && R(), En();
+        const o = a.remaining?.total ? `\uFF0C\u4ECD\u6709 ${a.remaining.total} \u6761\u5F85\u5904\u7406` : "",
+            l = n && r.label ? `\uFF08${r.label}\uFF09` : "";
+        d(`\u8D28\u91CF\u4FEE\u590D\u5B8C\u6210${l}${o}`, "ok")
+    }
+
+    function bi() {
+        e.smartAdjustModal && (x(), Q(e.smartAdjustModal, e.smartAdjustConfirm), Ht())
+    }
+
+    function In() {
+        K(e.smartAdjustModal)
+    }
+
+    function Ko() {
+        const n = ii();
+        if (!n.fixOverlap && !n.fixCps && !n.enforceMinDur && !n.enforceMaxDur) {
+            Ht();
+            return
+        }
+        if (x(), !ai(n).affected) {
+            Ht();
+            return
+        }
+        $();
+        const i = Sr(t.cues, n);
+        P(!0), C(), In(), d(`\u667A\u80FD\u8C03\u6574\u5B8C\u6210\uFF0C\u5DF2\u66F4\u65B0 ${i.affected} \u6761\u5B57\u5E55`, "ok")
+    }
+
+    function xi() {
+        return {
+            removeEmpty: !!e.noiseRemoveEmpty?.checked,
+            removeFragments: !!e.noiseRemoveFragments?.checked,
+            removeSoundEffects: !!e.noiseRemoveSoundEffects?.checked,
+            removeSymbolOnly: !!e.noiseRemoveSymbolOnly?.checked,
+            removeDuplicates: !!e.noiseRemoveDuplicates?.checked,
+            removeHallucinations: !!e.noiseRemoveHallucinations?.checked
+        }
+    }
+
+    function Pn() {
+        if (!e.removeNoisePreview) return;
+        const n = xi();
+        if (!n.removeEmpty && !n.removeFragments && !n.removeSoundEffects && !n.removeSymbolOnly && !n.removeDuplicates && !n.removeHallucinations) {
+            e.removeNoisePreview.textContent = "\u8BF7\u81F3\u5C11\u52FE\u9009\u4E00\u9879\u6E05\u7406\u89C4\u5219", e.removeNoisePreview.classList.add("err"), e.removeNoiseConfirm && (e.removeNoiseConfirm.disabled = !0);
+            return
+        }
+        const {
+            stats: r
+        } = Ne.removeNoiseFromCues(t.cues, n);
+        e.removeNoisePreview.classList.remove("err"), e.removeNoisePreview.textContent = Ne.summarizeNoiseRemoval(r), e.removeNoiseConfirm && (e.removeNoiseConfirm.disabled = r.removed <= 0)
+    }
+
+    function Mi() {
+        e.removeNoiseModal && (x(), Q(e.removeNoiseModal, e.removeNoiseConfirm), Pn())
+    }
+
+    function Ln() {
+        K(e.removeNoiseModal)
+    }
+
+    function Vo() {
+        const n = e.chineseDirT2S?.checked ? "t2s" : "s2t",
+            r = e.chineseScopeSelected?.checked ? "selected" : "all";
+        let i = null;
+        r === "selected" && (i = J(), !i.length && t.selectedIndex >= 0 && (i = [t.selectedIndex]));
+        const s = e.chineseProtectGlossary?.checked !== !1 ? se.collectProtectTerms(xe()) : [];
+        return {
+            direction: n,
+            scope: r,
+            indexes: i,
+            protectTerms: s
+        }
+    }
+
+    function Bi() {
+        const n = Vo();
+        return n.scope === "selected" && (!n.indexes || !n.indexes.length) ? {
+            cues: t.cues.slice(),
+            stats: {
+                direction: n.direction,
+                cueTotal: t.cues.length,
+                cueTouched: 0,
+                charChanged: 0,
+                cueSkipped: 0
+            },
+            summary: "\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u6216\u591A\u6761\u5B57\u5E55"
+        } : Gn.convertCues(t.cues, {
+            direction: n.direction,
+            indexes: n.indexes,
+            protectTerms: n.protectTerms
+        })
+    }
+
+    function Dn() {
+        if (!e.chineseConvertPreview) return;
+        if (!t.cues.length) {
+            e.chineseConvertPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.chineseConvertPreview.classList.add("err"), e.chineseConvertConfirm && (e.chineseConvertConfirm.disabled = !0);
+            return
+        }
+        const n = Bi(),
+            r = e.chineseScopeSelected?.checked && !J().length && t.selectedIndex < 0,
+            i = !n.stats.cueTouched;
+        e.chineseConvertPreview.textContent = n.summary, e.chineseConvertPreview.classList.toggle("err", r || i), e.chineseConvertConfirm && (e.chineseConvertConfirm.disabled = r || i)
+    }
+
+    function ki() {
+        e.chineseConvertModal && (x(), Q(e.chineseConvertModal, e.chineseConvertConfirm), Dn())
+    }
+
+    function Tn() {
+        K(e.chineseConvertModal)
+    }
+
+    function zo() {
+        x();
+        const n = Bi();
+        if (!n.stats.cueTouched) {
+            Dn(), d(n.summary || "\u65E0\u9700\u8F6C\u6362", "ok");
+            return
+        }
+        $(), t.cues.splice(0, t.cues.length, ...n.cues), P(!0), C(), t.selectedIndex >= 0 && R(), Tn(), d(n.summary, "ok")
+    }
+
+    function Uo() {
+        const n = e.compressRepScopeSelected?.checked ? "selected" : "all";
+        let r = null;
+        return n === "selected" && (r = J(), !r.length && t.selectedIndex >= 0 && (r = [t.selectedIndex])), {
+            scope: n,
+            indexes: r,
+            compressSingleChar: e.compressRepSingleChar?.checked !== !1,
+            addExclaim: e.compressRepExclaim?.checked !== !1,
+            minRepeats: 3
+        }
+    }
+
+    function wi() {
+        const n = Uo();
+        return n.scope === "selected" && (!n.indexes || !n.indexes.length) ? {
+            cues: t.cues.slice(),
+            stats: {
+                cueTotal: t.cues.length,
+                cueTouched: 0,
+                runs: 0,
+                charSaved: 0
+            },
+            summary: "\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u6216\u591A\u6761\u5B57\u5E55"
+        } : Ne.compressRepetitionInCues(t.cues, {
+            indexes: n.indexes,
+            compressSingleChar: n.compressSingleChar,
+            addExclaim: n.addExclaim,
+            minRepeats: n.minRepeats
+        })
+    }
+
+    function Rr() {
+        if (!e.compressRepPreview) return;
+        if (!t.cues.length) {
+            e.compressRepPreview.textContent = "\u6CA1\u6709\u5B57\u5E55\u6761\u76EE", e.compressRepPreview.classList.add("err"), e.compressRepConfirm && (e.compressRepConfirm.disabled = !0);
+            return
+        }
+        const n = wi(),
+            r = e.compressRepScopeSelected?.checked && !J().length && t.selectedIndex < 0,
+            i = !n.stats.cueTouched;
+        e.compressRepPreview.textContent = n.summary, e.compressRepPreview.classList.toggle("err", r || i), e.compressRepConfirm && (e.compressRepConfirm.disabled = r || i)
+    }
+
+    function Ci() {
+        e.compressRepModal && (x(), Q(e.compressRepModal, e.compressRepConfirm), Rr())
+    }
+
+    function $n() {
+        K(e.compressRepModal)
+    }
+
+    function Qo() {
+        x();
+        const n = wi();
+        if (!n.stats.cueTouched) {
+            Rr(), d(n.summary || "\u65E0\u9700\u538B\u7F29", "ok");
+            return
+        }
+        $(), t.cues.splice(0, t.cues.length, ...n.cues), P(!0), C(), t.selectedIndex >= 0 && R(), $n(), d(n.summary.replace(/^将/, "\u5DF2"), "ok")
+    }
+
+    function Zo() {
+        x();
+        let n = J();
+        if (!n.length && t.selectedIndex >= 0 && (n = [t.selectedIndex]), !n.length) {
+            d("\u8BF7\u5148\u9009\u62E9\u4E00\u6761\u5B57\u5E55", "err");
+            return
+        }
+        const r = Ne.compressRepetitionInCues(t.cues, {
+            indexes: n,
+            compressSingleChar: !0,
+            addExclaim: !0,
+            minRepeats: 3
+        });
+        if (!r.stats.cueTouched) {
+            d("\u5F53\u524D\u6761\u76EE\u65E0\u9700\u538B\u7F29\u53E0\u8BCD", "ok"), at();
+            return
+        }
+        $(), t.cues.splice(0, t.cues.length, ...r.cues), P(!0), C(), t.selectedIndex >= 0 && R(), d(r.summary.replace(/^将/, "\u5DF2"), "ok")
+    }
+    async function Xo() {
+        const n = xi();
+        if (!n.removeEmpty && !n.removeFragments && !n.removeSoundEffects && !n.removeSymbolOnly && !n.removeDuplicates) {
+            Pn();
+            return
+        }
+        x();
+        const r = Ne.removeNoiseFromCues(t.cues, n);
+        if (!r.stats.removed) {
+            Pn(), d("\u6CA1\u6709\u53EF\u5220\u9664\u7684\u6742\u97F3\u6761\u76EE", "ok");
+            return
+        }
+        if (!await ie(`\u786E\u5B9A\u5220\u9664 ${r.stats.removed} \u6761\u6742\u97F3\u5B57\u5E55\uFF1F\u6B64\u64CD\u4F5C\u53EF\u64A4\u9500\u3002`)) return;
+        $();
+        const i = new Set(r.removedIndexes || []);
+        let s = -1;
+        if (t.selectedIndex >= 0 && !i.has(t.selectedIndex)) {
+            let a = 0;
+            for (let o = 0; o < t.selectedIndex; o += 1) i.has(o) || (a += 1);
+            s = a
+        } else r.cues.length && (s = Math.min(Math.max(t.selectedIndex, 0), r.cues.length - 1));
+        t.cues.splice(0, t.cues.length, ...r.cues.map(a => ({
+            startMs: a.startMs,
+            endMs: a.endMs,
+            text: a.text
+        }))), t.selectedIndex = s, P(!0), C(), Ln(), d(`\u5DF2\u5220\u9664 ${r.stats.removed} \u6761\u6742\u97F3\u5B57\u5E55\uFF0C\u5269\u4F59 ${r.stats.kept} \u6761`, "ok")
+    }
+
+    function Yo(n) {
+        if (!e.playheadTime) return;
+        const r = e.video ? (e.video.currentTime || 0) * 1e3 : 0,
+            i = n ? Math.round(r) : Math.floor(r / 1e3) * 1e3,
+            s = Z(i, t.format);
+        s !== t.lastPlayheadLabel && (t.lastPlayheadLabel = s, e.playheadTime.textContent = s), tt(Math.round(r))
+    }
+
+    function Kt(n) {
+        x(), $();
+        const r = J(),
+            i = r.length >= 1 ? r : t.cues.map((s, a) => a);
+        for (const s of i) {
+            const a = t.cues[s];
+            a && (a.startMs = Math.max(0, a.startMs + n), a.endMs != null && (a.endMs = Math.max(a.startMs + 100, a.endMs + n)))
+        }
+        P(!0), C(), d(r.length >= 1 ? `\u5DF2\u504F\u79FB\u9009\u4E2D ${r.length} \u6761 ${n>0?"+":""}${n}ms` : `\u5DF2\u5168\u4F53\u504F\u79FB ${n>0?"+":""}${n}ms`, "ok")
+    }
+    T.__transubEditorConfirmClose = async () => t.dirty ? {
+        allow: await ie("\u5B57\u5E55\u5DF2\u4FEE\u6539\u4F46\u672A\u4FDD\u5B58\uFF0C\u786E\u5B9A\u8981\u5173\u95ED\u7A97\u53E3\u5417\uFF1F")
+    } : {
+        allow: !0
+    }, T.__transubEditorGetDirty = () => t.dirty, T.__transubEditorSaveBeforeClose = async () => (await Pt(), !t.dirty);
+
+    function Nr() {
+        const n = document.activeElement;
+        return n ? !!(n === e.detailText || n === e.detailStart || n === e.detailDuration || n.closest?.(".editor-modal:not(.hidden)")) : !1
+    }
+
+    function Ei(n) {
+        if (Et() && !(!Number.isFinite(n) || n < 0 || n >= t.cues.length) && !(!e.video || e.video.paused || e.video.ended) && !Nr()) {
+            if (n === t.selectedIndex) {
+                const r = e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`);
+                r && !Na(r) && r.scrollIntoView({
+                    block: "nearest",
+                    behavior: "auto"
+                });
+                return
+            }
+            X(n, {
+                scroll: !0,
+                fromPlayback: !0
+            })
+        }
+    }
+
+    function Ii() {
+        try {
+            if (!t.cues.length) {
+                je(null);
+                return
+            }
+            je(oe.scanCueIssues(t.cues, br()))
+        } catch {
+            je(null)
+        }
+    }
+
+    function Vt() {
+        const n = t.cues.length,
+            r = Array.from({
+                length: n
+            }, (i, s) => s);
+        if (t.listFilter === "low") return r.filter(i => !!t.cueMeta[i]?.low);
+        if (t.listFilter === "qc") return r.filter(i => t.qcIssueIndexSet.has(i));
+        if (t.listFilter === "find") return !t.find.active || !t.find.matches.length ? [] : [...new Set(t.find.matches.map(i => i.cueIdx))].sort((i, s) => i - s);
+        if (t.listFilter === "review-unseen" || t.listFilter === "review-edited" || t.listFilter === "review-approved") {
+            const i = t.listFilter.replace("review-", ""),
+                s = H?.markersCore || T.TransubEditorMarkers;
+            return s?.filterIndexesByReview ? s.filterIndexesByReview(t.cues, t.markers, i) : r
+        }
+        if (t.listFilter === "speaker") {
+            const i = String(t.listFilterSpeakerId || "").trim();
+            if (!i) return r;
+            const s = H?.markersCore || T.TransubEditorMarkers;
+            return s?.filterIndexesBySpeaker ? s.filterIndexesBySpeaker(t.cues, t.markers, i) : r
+        }
+        if (t.listFilter === "bookmarks") {
+            const i = H?.markersCore || T.TransubEditorMarkers;
+            return i?.filterIndexesByBookmarks ? i.filterIndexesByBookmarks(t.cues, t.markers, {
+                padMs: 80
+            }) : r
+        }
+        return r
+    }
+
+    function Pi() {
+        const n = e.speakerFilter;
+        if (!n) return;
+        const r = t.markers?.speakers || [],
+            i = String(t.listFilterSpeakerId || n.value || ""),
+            s = ['<option value="">\u8BF4\u8BDD\u4EBA</option>'].concat(r.map(a => `<option value="${b(a.id)}">${b(a.name)}</option>`));
+        n.innerHTML = s.join(""), i && r.some(a => a.id === i) ? (n.value = i, t.listFilterSpeakerId = i) : (n.value = "", t.listFilter === "speaker" && (t.listFilterSpeakerId = ""))
+    }
+
+    function Re(n, {
+        persist: r = !0
+    } = {}) {
+        t.listFilter = n || "all", t.listFilter !== "speaker" && (t.listFilterSpeakerId = "", e.speakerFilter && (e.speakerFilter.value = "")), document.querySelectorAll("[data-list-filter]").forEach(i => {
+            const s = i.getAttribute("data-list-filter") === t.listFilter;
+            i.classList.toggle("active", s), i.getAttribute("role") === "menuitemradio" && i.setAttribute("aria-checked", s ? "true" : "false")
+        }), e.speakerFilter && e.speakerFilter.classList.toggle("active", t.listFilter === "speaker"), Li(), r && ia?.(t.listFilter, t.listFilterSpeakerId), C({
+            listOnly: !0,
+            reuseMeta: !0
+        }), H?.refreshContextActionBar?.()
+    }
+
+    function Li() {
+        const n = e.reviewFilterBtn;
+        if (!n) return;
+        const r = {
+                "review-unseen": "\u672A\u770B",
+                "review-edited": "\u5DF2\u6539",
+                "review-approved": "\u5DF2\u901A\u8FC7"
+            },
+            i = Object.prototype.hasOwnProperty.call(r, t.listFilter);
+        n.classList.toggle("active", i);
+        const s = i ? r[t.listFilter] : "\u5BA1\u6821";
+        n.innerHTML = `${s} <i class="fa fa-caret-down" aria-hidden="true"></i>`
+    }
+
+    function Di(n, {
+        persist: r = !0
+    } = {}) {
+        const i = String(n || "").trim();
+        if (!i) {
+            Re("all", {
+                persist: r
+            });
+            return
+        }
+        t.listFilterSpeakerId = i, t.listFilter = "speaker", document.querySelectorAll("[data-list-filter]").forEach(s => {
+            s.classList.toggle("active", !1), s.getAttribute("role") === "menuitemradio" && s.setAttribute("aria-checked", "false")
+        }), e.speakerFilter && (e.speakerFilter.value = i, e.speakerFilter.classList.add("active")), Li(), r && ia?.(t.listFilter, t.listFilterSpeakerId), C({
+            listOnly: !0,
+            reuseMeta: !0
+        })
+    }
+
+    function Jo() {
+        const n = typeof sa == "function" ? sa() : {
+            filter: "all",
+            speakerId: ""
+        };
+        if (Pi(), n.filter === "speaker" && n.speakerId) {
+            if ((t.markers?.speakers || []).some(i => i?.id === n.speakerId)) {
+                Di(n.speakerId, {
+                    persist: !1
+                });
+                return
+            }
+            Re("all", {
+                persist: !0
+            });
+            return
+        }
+        if (n.filter && n.filter !== "all") {
+            Re(n.filter, {
+                persist: !1
+            });
+            return
+        }
+        Re("all", {
+            persist: !1
+        })
+    }
+
+    function Ti() {
+        He(), Ii();
+        const n = [];
+        for (let s = 0; s < t.cues.length; s += 1)(t.cueMeta[s]?.low || t.qcIssueIndexSet.has(s)) && n.push(s);
+        if (!n.length) {
+            d("\u6CA1\u6709\u66F4\u591A\u95EE\u9898\u6761\u76EE", "ok");
+            return
+        }
+        const r = t.selectedIndex,
+            i = n.find(s => s > r) ?? n[0];
+        X(i, {
+            scroll: !0,
+            seek: !0
+        }), d(`\u95EE\u9898\u6761\u76EE ${n.indexOf(i)+1}/${n.length}`, "warn")
+    }
+
+    function qr() {
+        const n = !!t.videoPath;
+        document.querySelectorAll(".needs-video").forEach(r => {
+            r.classList.toggle("is-no-video", !n), n ? r.dataset.titleFull && (r.title = r.dataset.titleFull) : (r.dataset.titleFull || (r.dataset.titleFull = r.title || ""), r.title = `${r.dataset.titleFull||r.title||""}\uFF08\u9700\u5148\u5173\u8054\u89C6\u9891\uFF09`)
+        }), [e.playPauseBtn, e.seekBackBtn, e.seekFwdBtn, e.rateSelect, e.volumeSlider].forEach(r => {
+            r && (r.disabled = !n)
+        }), Qe()
+    }
+    async function $i() {
+        try {
+            const n = await p?.transubOpenSettings?.({
+                tab: "editor"
+            });
+            n?.ok === !1 && d(n?.error || "\u65E0\u6CD5\u6253\u5F00\u8BBE\u7F6E", "err")
+        } catch (n) {
+            d(n?.message || "\u65E0\u6CD5\u6253\u5F00\u8BBE\u7F6E", "err")
+        }
+    }
+    async function Ai() {
+        try {
+            const n = await p?.transubShowMainWindow?.();
+            n?.ok === !1 && d(n?.error || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u751F\u6210\u5668", "err")
+        } catch (n) {
+            d(n?.message || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u751F\u6210\u5668", "err")
+        }
+    }
+
+    function Al() {}
+
+    function Fl() {}
+
+    function Rl() {}
+
+    function el() {
+        t.ready ? Be() : e.timelineCues && me({
+            skipDuration: !0
+        })
+    }
+
+    function Wr() {
+        if (!e.playPauseBtn || !e.video) return;
+        const n = !e.video.paused && !e.video.ended;
+        e.playPauseBtn.innerHTML = n ? '<i class="fa fa-pause"></i>' : '<i class="fa fa-play"></i>', e.playPauseBtn.title = n ? "\u6682\u505C (Space)" : "\u64AD\u653E (Space)"
+    }
+
+    function Fi(n) {
+        if (!e.video || !t.videoPath) return;
+        const r = Number.isFinite(e.video.duration) ? e.video.duration : 1 / 0;
+        e.video.currentTime = Math.max(0, Math.min(r, (e.video.currentTime || 0) + n)), Ce(!0)
+    }
+
+    function Ri() {
+        return Math.max(500, Number(t.timeline.minViewMs) || 2e3)
+    }
+
+    function Me() {
+        return Math.max(1, t.timeline.viewEndMs - t.timeline.viewStartMs)
+    }
+
+    function he() {
+        const n = Math.max(1, t.timeline.durationMs);
+        return Me() < n - 1
+    }
+
+    function tl(n) {
+        const r = Math.max(1, n || t.timeline.durationMs || 1),
+            i = Math.min(Ri(), r);
+        return Math.max(1, r / i)
+    }
+
+    function Hr(n, r) {
+        const i = Number(n),
+            s = Number(t.timeline.zoom) || 5,
+            a = tl(r);
+        return !Number.isFinite(i) || i < 1 ? Math.min(s, a) : Math.max(1, Math.min(a, i))
+    }
+
+    function nl() {
+        const n = Math.max(1, t.timeline.durationMs),
+            r = Me();
+        t.timeline.zoom = Hr(n / r, n), t.timeline.fitted = r >= n - 1
+    }
+
+    function Ni() {
+        const n = Math.max(1, t.timeline.durationMs),
+            r = Math.min(Ri(), n);
+        let i = Math.max(r, t.timeline.viewEndMs - t.timeline.viewStartMs);
+        i = Math.min(i, n);
+        let s = Number(t.timeline.viewStartMs) || 0;
+        Number.isFinite(s) || (s = 0), s = Math.max(0, Math.min(s, n - i)), t.timeline.viewStartMs = s, t.timeline.viewEndMs = s + i, nl(), Rn()
+    }
+
+    function An(n, r, {
+        save: i = !0,
+        preserveStart: s = !1
+    } = {}) {
+        const a = Math.max(1, t.timeline.durationMs),
+            o = Hr(n, a),
+            l = a / o,
+            c = t.timeline.viewStartMs,
+            u = Me();
+        let m;
+        if (s && u > 0 && t.timeline.viewEndMs > t.timeline.viewStartMs) m = c;
+        else {
+            const f = Number.isFinite(r) ? Math.max(0, Math.min(a, r)) : u > 0 ? c + u / 2 : 0,
+                g = u > 0 ? Math.max(0, Math.min(1, (f - c) / u)) : .35;
+            m = f - g * l
+        }
+        t.timeline.viewStartMs = m, t.timeline.viewEndMs = m + l, Ni(), i && (t.timeline.zoom = Sl(t.timeline.zoom))
+    }
+
+    function qi() {
+        An(1, 0, {
+            save: !0,
+            preserveStart: !1
+        })
+    }
+
+    function Fn(n, r) {
+        t.timeline.viewStartMs = n, t.timeline.viewEndMs = r, Ni()
+    }
+
+    function zt(n, r) {
+        const i = (Number(t.timeline.zoom) || 1) / Math.max(.01, n);
+        An(i, r, {
+            save: !0
+        })
+    }
+
+    function rl(n) {
+        return !n || !he() ? !1 : (Fn(t.timeline.viewStartMs + n, t.timeline.viewEndMs + n), !0)
+    }
+
+    function Wi(n, {
+        marginRatio: r = .12,
+        forceCenter: i = !1
+    } = {}) {
+        if (!he()) return !1;
+        const s = Me(),
+            a = s * Math.max(0, Math.min(.4, r)),
+            o = t.timeline.viewStartMs,
+            l = t.timeline.viewEndMs;
+        if (!i && n >= o + a && n <= l - a) return !1;
+        const c = n - s * .35;
+        return Fn(c, c + s), !0
+    }
+
+    function Rn() {
+        const n = he(),
+            r = t._menuTimelineZoomed === !0,
+            i = Math.max(1, t.timeline.durationMs),
+            s = Me(),
+            a = Number(t.timeline.zoom) || i / s;
+        if (e.timelineZoomFit && (e.timelineZoomFit.disabled = !n), e.timelineHScrollWrap && (e.timelineHScrollWrap.classList.toggle("hidden", !n), e.timelineHScrollWrap.setAttribute("aria-hidden", n ? "false" : "true")), e.timelineHScroll && n) {
+            const o = Math.max(1, i - s),
+                l = Math.max(0, Math.min(1, t.timeline.viewStartMs / o)),
+                c = Number(e.timelineHScroll.max) || 1e3,
+                u = Math.round(l * c);
+            Number(e.timelineHScroll.value) !== u && (e.timelineHScroll.value = String(u))
+        }
+        if (e.timelineStack) {
+            const o = n ? ` \xB7 \u5DF2\u653E\u5927 ${a.toFixed(1)}\xD7` : "";
+            e.timelineStack.title = `\u70B9\u51FB\u5B9A\u4F4D \xB7 \u62D6\u62FD\u5B57\u5E55\u5757\u8C03\u6574\u65F6\u95F4 \xB7 \u6EDA\u8F6E\u5E73\u79FB \xB7 Ctrl+\u6EDA\u8F6E\u7F29\u653E${o}`
+        }
+        r !== n && (t._menuTimelineZoomed = n, ee())
+    }
+
+    function sl() {
+        const n = ke?.getLayoutState?.()?.preset || "classic";
+        return {
+            autoFocus: t.autoFocus === !0,
+            waveform: t.waveformEnabled === !0,
+            darkTheme: document.body.classList.contains("editor-theme-dark"),
+            timelineZoomed: he(),
+            layoutPreset: n
+        }
+    }
+
+    function ee() {
+        p?.transubEditorSyncMenuState && (t._menuTimelineZoomed = he(), p.transubEditorSyncMenuState({
+            viewState: sl()
+        }))
+    }
+
+    function Nn() {
+        let n = 0;
+        e.video && Number.isFinite(e.video.duration) && e.video.duration > 0 ? n = Math.round(e.video.duration * 1e3) : t.cues.length && (n = Math.max(...t.cues.map(o => I(o)), 1e3));
+        const r = Math.max(n, 1e3),
+            s = t.timeline.durationMs > 0 && t.timeline.viewEndMs > t.timeline.viewStartMs;
+        t.timeline.durationMs = r;
+        const a = Hr(t.timeline.zoom || na(), r);
+        if (t.timeline.zoom = a, s) An(a, null, {
+            save: !1,
+            preserveStart: !0
+        });
+        else {
+            const o = e.video ? Math.round((e.video.currentTime || 0) * 1e3) : 0;
+            An(a, o, {
+                save: !1,
+                preserveStart: !1
+            })
+        }
+    }
+
+    function Pe(n) {
+        const r = e.timelineTrack;
+        if (!r) return 0;
+        const i = r.clientWidth || 1,
+            s = Me();
+        return (n - t.timeline.viewStartMs) / s * i
+    }
+
+    function qn(n, r) {
+        const i = r || e.timelineTrack;
+        if (!i) return 0;
+        const s = i.clientWidth || 1,
+            a = Me();
+        return t.timeline.viewStartMs + n / s * a
+    }
+
+    function Hi() {
+        if (!e.timelineCues) return !1;
+        const n = e.timelineTrack?.clientWidth || 0,
+            r = e.timelineCues.querySelectorAll(".editor-timeline-cue");
+        if (!r.length && t.cues.length) return !1;
+        const i = new Map;
+        r.forEach(s => {
+            const a = Number(s.getAttribute("data-tl-idx"));
+            Number.isInteger(a) && i.set(a, s)
+        });
+        for (let s = 0; s < t.cues.length; s += 1) {
+            const a = t.cues[s],
+                o = Pe(a.startMs),
+                l = Pe(I(a)),
+                c = !(n > 0 && (l < -4 || o > n + 4)),
+                u = i.get(s);
+            if (c && !u) return !1;
+            if (u) {
+                if (!c) {
+                    u.style.display = "none";
+                    continue
+                }
+                u.style.display = "", u.style.left = `${o}px`, u.style.width = `${Math.max(3,l-o)}px`
+            }
+        }
+        return !0
+    }
+
+    function il() {
+        t.timelineFollowRaf || (t.timelineFollowRaf = requestAnimationFrame(() => {
+            if (t.timelineFollowRaf = 0, !e.video || e.video.paused) return;
+            const n = Math.round((e.video.currentTime || 0) * 1e3);
+            if (!Wi(n)) {
+                tt(n);
+                return
+            }
+            if (!Hi()) {
+                me({
+                    skipDuration: !0
+                });
+                return
+            }
+            Rn(), tt(n), t.waveformEnabled && Ge()
+        }))
+    }
+
+    function tt(n, {
+        follow: r = !1
+    } = {}) {
+        if (r && e.video && !e.video.paused && he()) {
+            const a = Me() * .12,
+                o = t.timeline.viewStartMs,
+                l = t.timeline.viewEndMs;
+            (n < o + a || n > l - a) && il()
+        }
+        const i = Pe(n);
+        e.timelinePlayhead && (e.timelinePlayhead.style.left = `${i}px`), e.waveformPlayhead && t.waveformEnabled && (e.waveformPlayhead.style.left = `${i}px`)
+    }
+
+    function ue(n, r) {
+        const i = !!n && t.waveformEnabled,
+            s = r || "\u6B63\u5728\u52A0\u8F7D\u6CE2\u5F62\u2026";
+        e.waveformLoading && (e.waveformLoading.classList.toggle("hidden", !i), e.waveformLoading.setAttribute("aria-hidden", i ? "false" : "true")), e.waveformLoadingText && (e.waveformLoadingText.textContent = s), e.waveformToggle && (e.waveformToggle.classList.toggle("is-loading", i), i ? e.waveformToggle.title = s : t.waveformEnabled && (e.waveformToggle.title = "\u6CE2\u5F62\u65F6\u95F4\u8F74\uFF1A\u5F00\u542F\uFF08\u9ED8\u8BA4\uFF09")), e.waveformRow && e.waveformRow.classList.toggle("is-loading", i)
+    }
+
+    function Ge() {
+        const n = e.timelineWaveform;
+        if (!n || !t.waveformEnabled) return;
+        const r = t.waveform.peaks,
+            i = e.waveformTrack || e.timelineTrack;
+        if (!i || !Array.isArray(r) || !r.length) {
+            const te = n.getContext?.("2d");
+            te && te.clearRect(0, 0, n.width || 1, n.height || 1);
+            return
+        }
+        const s = i.getBoundingClientRect(),
+            a = Math.max(1, Math.floor(s.width)),
+            o = Math.max(1, Math.floor(s.height)),
+            l = Math.min(2, window.devicePixelRatio || 1),
+            c = Math.floor(a * l),
+            u = Math.floor(o * l),
+            m = n.width !== c || n.height !== u;
+        m && (n.width = c, n.height = u, n.style.width = `${a}px`, n.style.height = `${o}px`);
+        const f = n.getContext("2d");
+        if (!f) return;
+        m && f.setTransform(l, 0, 0, l, 0, 0), f.clearRect(0, 0, a, o);
+        const g = o / 2;
+        f.fillStyle = "rgba(148, 163, 184, 0.9)";
+        const h = Math.max(1, (Number(t.waveform.durationSec) > 0 ? t.waveform.durationSec * 1e3 : t.timeline.durationMs) || 1),
+            v = Math.max(0, Math.floor(t.timeline.viewStartMs / h * r.length)),
+            y = Math.min(r.length, Math.ceil(t.timeline.viewEndMs / h * r.length)),
+            k = Math.max(1, y - v),
+            q = Math.max(1, Math.floor(k / a));
+        for (let te = 0; te < a; te += 1) {
+            const N = Math.min(r.length - 1, v + Math.floor(te / a * k));
+            let W = r[N] || 0;
+            for (let M = 1; M < q && N + M < r.length; M += 1) W = Math.max(W, r[N + M] || 0);
+            const B = Math.max(1, W * (o * .45));
+            f.fillRect(te, g - B, 1, B * 2)
+        }
+    }
+    async function Wn(n = {}) {
+        const r = n.announce === !0;
+        if (!t.waveformEnabled) {
+            ue(!1);
+            return
+        }
+        if (!t.videoPath) {
+            ue(!1), r && d("\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u663E\u793A\u6CE2\u5F62", "warn");
+            return
+        }
+        if (!p?.ffmpegExtractWaveform) {
+            ue(!1), r && d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6CE2\u5F62\u63D0\u53D6", "err");
+            return
+        }
+        const i = t.videoPath,
+            s = `${i}|${t.timeline.durationMs||0}`;
+        if (t.waveform.cacheKey === s && Array.isArray(t.waveform.peaks)) {
+            ue(!1), Ge(), r && d("\u6CE2\u5F62\u5DF2\u5C31\u7EEA", "ok");
+            return
+        }
+        if (t.waveform.loading) {
+            t._waveformReloadPending = !0, ue(!0, "\u6B63\u5728\u52A0\u8F7D\u6CE2\u5F62\u2026");
+            return
+        }
+        const a = t.waveformLoadGen = (t.waveformLoadGen || 0) + 1;
+        t._waveformReloadPending = !1, t.waveform.loading = !0, ue(!0, "\u6B63\u5728\u52A0\u8F7D\u6CE2\u5F62\u2026"), d("\u6B63\u5728\u4ECE\u89C6\u9891\u63D0\u53D6\u6CE2\u5F62\uFF0C\u8BF7\u7A0D\u5019\u2026", "");
+        try {
+            const o = await p.ffmpegExtractWaveform(ln({
+                path: i,
+                peaksPerSec: 40,
+                maxPeaks: 24e3
+            }));
+            if (a !== t.waveformLoadGen || t.videoPath !== i) {
+                ue(!1);
+                return
+            }
+            if (!t.waveformEnabled) {
+                ue(!1);
+                return
+            }
+            if (o?.cancelled || ne()) {
+                ue(!1), d("\u6CE2\u5F62\u52A0\u8F7D\u5DF2\u53D6\u6D88", "warn");
+                return
+            }
+            if (!o?.ok || !Array.isArray(o.peaks)) {
+                ue(!1), o?.error ? d(o.error, "err") : d("\u6CE2\u5F62\u52A0\u8F7D\u5931\u8D25", "err");
+                return
+            }
+            t.waveform.peaks = o.peaks, t.waveform.durationSec = Number(o.durationSec) || 0, t.waveform.videoPath = i, t.waveform.cacheKey = s, Ge(), ue(!1), d("\u6CE2\u5F62\u5DF2\u5C31\u7EEA", "ok")
+        } catch (o) {
+            a === t.waveformLoadGen && t.videoPath === i && (ue(!1), d(o?.message || "\u6CE2\u5F62\u52A0\u8F7D\u5931\u8D25", "err"))
+        } finally {
+            a === t.waveformLoadGen && (t.waveform.loading = !1, (!t.waveformEnabled || Array.isArray(t.waveform.peaks)) && ue(!1), t._waveformReloadPending && t.videoPath && t.videoPath !== i && (t._waveformReloadPending = !1, Wn()))
+        }
+    }
+
+    function al(n) {
+        try {
+            ke?.refreshPaneMins?.();
+        } catch (_) { /* ignore */ }
+        if (!n) {
+            ue(!1), Ge();
+            return
+        }
+        Wn({
+            announce: !0
+        }), Ge()
+    }
+
+    function Oi() {
+        if (!e.timelineMarkers) return;
+        const n = e.timelineTrack?.clientWidth || 0,
+            r = [],
+            i = t.markers?.abLoop;
+        if (i && i.aMs != null && i.bMs != null && Number.isFinite(Number(i.aMs)) && Number.isFinite(Number(i.bMs))) {
+            const a = Math.min(Number(i.aMs), Number(i.bMs)),
+                o = Math.max(Number(i.aMs), Number(i.bMs)),
+                l = Pe(a),
+                c = Pe(o);
+            if (!(n > 0 && (c < -4 || l > n + 4))) {
+                const u = i.enabled === !1 ? " opacity:0.45;" : "";
+                r.push(`<div class="editor-timeline-ab" style="left:${l}px;width:${Math.max(2,c-l)}px;${u}" title="A-B \u5FAA\u73AF"></div>`)
+            }
+        }
+        const s = Array.isArray(t.markers?.bookmarks) ? t.markers.bookmarks : [];
+        for (const a of s) {
+            const o = Number(a?.timeMs);
+            if (!Number.isFinite(o)) continue;
+            const l = Pe(o);
+            if (n > 0 && (l < -4 || l > n + 4)) continue;
+            const c = String(a.label || "").trim() || Z(o, t.format),
+                u = b(String(a.id || ""));
+            r.push(`<div class="editor-timeline-bm" data-bm-id="${u}" data-bm-ms="${Math.round(o)}" style="left:${l}px" title="${b(c)}"></div>`)
+        }
+        e.timelineMarkers.innerHTML = r.join("")
+    }
+
+    function me(n = {}) {
+        if (!e.timelineCues) return;
+        n.skipDuration ? Rn() : Nn();
+        const r = t.selectedIndices instanceof Set ? t.selectedIndices : new Set(t.selectedIndex >= 0 ? [t.selectedIndex] : []),
+            i = e.timelineTrack?.clientWidth || 0;
+        e.timelineCues.innerHTML = t.cues.map((a, o) => {
+            const l = a.startMs,
+                c = I(a),
+                u = Pe(l),
+                m = Pe(c);
+            if (i > 0 && (m < -4 || u > i + 4)) return "";
+            const f = Math.max(3, m - u),
+                g = String(a.text || "").replace(/\s+/g, " ").trim();
+            return `<div class="editor-timeline-cue${r.has(o)||o===t.selectedIndex?" selected":""}" data-tl-idx="${o}" style="left:${u}px;width:${f}px" title="${b(g)}">
+                <div class="tl-handle tl-handle-l" data-tl-handle="l"></div>
+                <div class="tl-label">${b(g.slice(0,24))}</div>
+                <div class="tl-handle tl-handle-r" data-tl-handle="r"></div>
+            </div>`
+        }).join(""), Oi();
+        const s = e.video ? Math.round((e.video.currentTime || 0) * 1e3) : 0;
+        tt(s), t.waveformEnabled && (Ge(), Wn())
+    }
+
+    function Be() {
+        me({
+            skipDuration: !0
+        })
+    }
+
+    function _i() {
+        if (Rn(), !Hi()) {
+            Be();
+            return
+        }
+        Oi();
+        const n = e.video ? Math.round((e.video.currentTime || 0) * 1e3) : t.timeline.viewStartMs;
+        tt(n), t.waveformEnabled && Ge()
+    }
+
+    function Hn() {
+        Le || (Le = requestAnimationFrame(() => {
+            Le = 0, _i()
+        }))
+    }
+
+    function Ut(n) {
+        if (!e.timelineCues || n < 0 || n >= t.cues.length) return !1;
+        const r = t.cues[n],
+            i = e.timelineCues.querySelector(`.editor-timeline-cue[data-tl-idx="${n}"]`),
+            s = e.timelineTrack?.clientWidth || 0,
+            a = Pe(r.startMs),
+            o = Pe(I(r)),
+            l = !(s > 0 && (o < -4 || a > s + 4));
+        if (!i) return !l;
+        if (!l) return i.style.display = "none", !0;
+        i.style.display = "", i.style.left = `${a}px`, i.style.width = `${Math.max(3,o-a)}px`;
+        const c = String(r.text || "").replace(/\s+/g, " ").trim();
+        i.title = c;
+        const u = i.querySelector(".tl-label");
+        return u && (u.textContent = c.slice(0, 24)), !0
+    }
+
+    function ol() {
+        const n = e.timelineTrack;
+        if (!n || n.dataset.bound === "1") return;
+        n.dataset.bound = "1";
+        const r = (o, l) => {
+                ct();
+                const c = o.clientX,
+                    u = t.timeline.viewStartMs,
+                    m = t.timeline.viewEndMs,
+                    f = Math.max(1, m - u),
+                    g = l.clientWidth || 1;
+                t.timeline.panning = !0, o.preventDefault();
+                const h = y => {
+                        if (!t.timeline.panning) return;
+                        const k = y.clientX - c,
+                            q = -Math.round(k / g * f);
+                        Fn(u + q, m + q), Hn()
+                    },
+                    v = () => {
+                        t.timeline.panning = null, window.removeEventListener("mousemove", h), window.removeEventListener("mouseup", v), Le && (cancelAnimationFrame(Le), Le = 0), Be()
+                    };
+                window.addEventListener("mousemove", h), window.addEventListener("mouseup", v)
+            },
+            i = o => {
+                o?.addEventListener("auxclick", l => {
+                    l.button === 1 && l.preventDefault()
+                }), o?.addEventListener("mousedown", l => {
+                    l.button === 1 && l.preventDefault()
+                })
+            };
+        i(n), i(e.waveformTrack), n.addEventListener("mousedown", o => {
+            const l = o.target.closest?.(".editor-timeline-bm");
+            if (l) {
+                if (o.button !== 0) return;
+                o.preventDefault(), o.stopPropagation();
+                const B = Number(l.getAttribute("data-bm-ms"));
+                e.video && Number.isFinite(B) && B >= 0 && (e.video.currentTime = B / 1e3, Ce(!0));
+                return
+            }
+            const c = o.target.closest?.(".editor-timeline-cue"),
+                u = o.target.closest?.("[data-tl-handle]")?.getAttribute("data-tl-handle"),
+                m = n.getBoundingClientRect(),
+                f = o.clientX - m.left;
+            if (o.button === 1 || o.button === 0 && (o.altKey || o.shiftKey) && !c) {
+                if (!he()) return;
+                r(o, n);
+                return
+            }
+            if (!c) {
+                if (!e.video || !t.videoPath || o.button !== 0) return;
+                const B = Math.max(0, qn(f));
+                e.video.currentTime = B / 1e3, Ce(!0);
+                return
+            }
+            if (o.button !== 0) return;
+            const g = Number(c.getAttribute("data-tl-idx"));
+            if (!Number.isFinite(g) || g < 0) return;
+            X(g, {
+                scroll: !0,
+                seek: !1
+            });
+            const h = t.cues[g];
+            if (!h) return;
+            const v = u === "l" ? "start" : u === "r" ? "end" : "move",
+                y = o.clientX,
+                k = h.startMs,
+                q = I(h);
+            t.timeline.dragging = {
+                idx: g,
+                mode: v,
+                originX: y,
+                originStart: k,
+                originEnd: q
+            }, o.preventDefault(), $();
+            const te = (B = !1) => {
+                    const M = t.timeline.dragging;
+                    if (!M) return;
+                    const L = t.cues[M.idx];
+                    if (L && (Se(M.idx), R(), Ut(M.idx) || Be(), e.video && t.videoPath)) {
+                        const w = performance.now();
+                        if (B || w - ns >= 50) {
+                            ns = w;
+                            const A = M.mode === "end" ? I(L) - 1 : L.startMs;
+                            e.video.currentTime = Math.max(0, A) / 1e3
+                        }
+                    }
+                },
+                N = B => {
+                    const M = t.timeline.dragging;
+                    if (!M) return;
+                    const L = B.clientX - M.originX,
+                        w = n.clientWidth || 1,
+                        A = Me(),
+                        F = Math.round(L / w * A),
+                        re = t.cues[M.idx];
+                    if (!re) return;
+                    let pe, le;
+                    M.mode === "move" ? (pe = Math.max(0, M.originStart + F), le = Math.max(pe + 100, M.originEnd + F)) : M.mode === "start" ? (pe = Math.max(0, Math.min(M.originEnd - 100, M.originStart + F)), le = M.originEnd) : (pe = re.startMs, le = Math.max(re.startMs + 100, M.originEnd + F));
+                    const ge = T.TransubTimelineMagnet;
+                    if (ge && !B.altKey) {
+                        const bt = e.video && Number.isFinite(e.video.currentTime) ? Math.round(e.video.currentTime * 1e3) : null,
+                            Qt = ge.silenceIntervalsToEdges(t.timeline.silenceIntervals || t.waveform?.silenceIntervals || [], {
+                                viewStartMs: t.timeline.viewStartMs,
+                                viewEndMs: t.timeline.viewEndMs
+                            }),
+                            ze = ge.collectSnapTargets(t.cues, M.idx, {
+                                playheadMs: bt,
+                                silenceEdges: Qt
+                            }),
+                            fe = ge.thresholdForViewSpan(A, {
+                                trackWidthPx: w
+                            }),
+                            S = ge.snapDragTiming({
+                                mode: M.mode,
+                                startMs: pe,
+                                endMs: le,
+                                originStart: M.originStart,
+                                originEnd: M.originEnd,
+                                targets: ze,
+                                thresholdMs: fe
+                            });
+                        pe = S.startMs, le = S.endMs, M._magnet = S.snapped
+                    } else M._magnet = null;
+                    re.startMs = pe, re.endMs = le, P(!0), !it && (it = requestAnimationFrame(() => {
+                        it = 0, te(!1)
+                    }))
+                },
+                W = () => {
+                    const B = t.timeline.dragging,
+                        M = B?.idx ?? g,
+                        L = B?.mode || v;
+                    t.timeline.dragging = null, window.removeEventListener("mousemove", N), window.removeEventListener("mouseup", W), it && (cancelAnimationFrame(it), it = 0);
+                    const w = t.cues[M];
+                    if (w && e.video && t.videoPath) {
+                        const A = L === "end" ? I(w) - 1 : w.startMs;
+                        e.video.currentTime = Math.max(0, A) / 1e3
+                    }
+                    Se(M), R(), tr(), ye(), Be()
+                };
+            window.addEventListener("mousemove", N), window.addEventListener("mouseup", W)
+        }), n.addEventListener("contextmenu", o => {
+            const l = o.target.closest?.(".editor-timeline-cue");
+            if (!l) return;
+            o.preventDefault();
+            const c = Number(l.getAttribute("data-tl-idx"));
+            or(c, o.clientX, o.clientY, {
+                scroll: !0
+            })
+        });
+        const s = e.waveformTrack;
+        s && s.dataset.bound !== "1" && (s.dataset.bound = "1", s.addEventListener("mousedown", o => {
+            if (!t.waveformEnabled) return;
+            if (o.button === 1 || o.button === 0 && (o.altKey || o.shiftKey)) {
+                if (!he()) return;
+                r(o, s);
+                return
+            }
+            if (o.button !== 0 || !e.video || !t.videoPath) return;
+            const l = s.getBoundingClientRect(),
+                c = o.clientX - l.left,
+                u = Math.max(0, qn(c, s));
+            e.video.currentTime = u / 1e3, Ce(!0)
+        }), s.addEventListener("contextmenu", o => {
+            if (!t.waveformEnabled) return;
+            const l = s.getBoundingClientRect(),
+                c = o.clientX - l.left,
+                u = Math.max(0, qn(c, s)),
+                m = ps(u);
+            m < 0 || (o.preventDefault(), or(m, o.clientX, o.clientY, {
+                scroll: !0
+            }))
+        }));
+        const a = e.timelineStack;
+        a && a.dataset.zoomBound !== "1" && (a.dataset.zoomBound = "1", a.addEventListener("wheel", o => {
+            if (!t.timeline.durationMs) return;
+            const l = (e.timelineTrack || a).getBoundingClientRect(),
+                c = o.clientX - l.left,
+                u = qn(c);
+            if (o.ctrlKey || o.metaKey) {
+                o.preventDefault();
+                const v = o.deltaY > 0 ? 1.2 : 1 / 1.2;
+                zt(v, u), Hn();
+                return
+            }
+            if (!he()) return;
+            o.preventDefault();
+            const m = Me(),
+                f = Math.max(1, l.width || 1),
+                g = Math.abs(o.deltaX) > Math.abs(o.deltaY) ? o.deltaX : o.deltaY,
+                h = Math.round(g / f * m);
+            rl(h) && Hn()
+        }, {
+            passive: !1
+        })), e.timelineZoomIn?.addEventListener("click", () => {
+            const o = e.video ? Math.round((e.video.currentTime || 0) * 1e3) : null;
+            zt(1 / 1.5, o), Be()
+        }), e.timelineZoomOut?.addEventListener("click", () => {
+            const o = e.video ? Math.round((e.video.currentTime || 0) * 1e3) : null;
+            zt(1.5, o), Be()
+        }), e.timelineZoomFit?.addEventListener("click", () => {
+            qi(), Be()
+        }), e.timelineHScroll?.addEventListener("input", () => {
+            if (!he()) return;
+            const o = Number(e.timelineHScroll.max) || 1e3,
+                l = Math.max(0, Math.min(1, Number(e.timelineHScroll.value) / o)),
+                c = Me(),
+                u = Math.max(0, t.timeline.durationMs - c),
+                m = l * u;
+            Fn(m, m + c), Hn()
+        }), e.timelineHScroll?.addEventListener("change", () => {
+            he() && (Le && (cancelAnimationFrame(Le), Le = 0), Be())
+        }), window.addEventListener("resize", () => {
+            t.ready && (t._timelineResizeTimer && clearTimeout(t._timelineResizeTimer), t._timelineResizeTimer = setTimeout(() => {
+                t._timelineResizeTimer = null, _i() || Be()
+            }, 100))
+        })
+    }
+
+    function ji() {
+        e.shortcutsModal && Q(e.shortcutsModal, e.shortcutsClose)
+    }
+
+    function Or() {
+        K(e.shortcutsModal)
+    }
+    const Gi = {
+        state: t,
+        els: e
+    };
+    j.installModals(Gi);
+    const {
+        isElementFocusable: Nl,
+        clearStaleFocus: ql,
+        pickEditorFocusTarget: Wl,
+        restoreEditorFocus: ht,
+        requestOsRefocus: On,
+        releaseFocusFromModal: Hl,
+        editorConfirm: ie,
+        editorChoice: ll,
+        showEditorModal: Q,
+        hideEditorModal: K
+    } = Gi, Ki = {
+        els: e,
+        setStatus: d
+    };
+    j.installBootProgress(Ki);
+    const {
+        flushBootProgressPaint: _r,
+        showBootProgress: Vi,
+        updateBootProgress: jr,
+        hideBootProgress: Gr
+    } = Ki, zi = {
+        els: e,
+        state: t,
+        setStatus: d
+    };
+    j.installInferenceProgress(zi);
+    const {
+        showInferenceProgress: Ui,
+        updateInferenceProgress: Qi,
+        hideInferenceProgress: Zi,
+        getInferenceKind: Ol,
+        formatInferenceElapsed: cl
+    } = zi, Xi = {
+        state: t,
+        els: e,
+        splitCore: D,
+        clampTargetCps: ma,
+        setStatus: d,
+        isAutoFocusEnabled: Et,
+        followPlaybackFocus: Ei,
+        getSelectedSplitMode: vn,
+        onWaveformPrefChanged: al
+    };
+    j.installPrefs(Xi);
+    const {
+        loadTargetCpsPrefs: _l,
+        saveTargetCpsPrefs: Yi,
+        getTargetCps: yt,
+        applyTargetCpsPrefs: dl,
+        getDefaultBreakWords: ul,
+        loadBreakWords: vt,
+        saveBreakWords: _n,
+        clampRetranscribeDurSec: ml,
+        loadRetranscribeDurPrefs: nt,
+        saveRetranscribeDurPrefs: Kr,
+        loadSplitPrefs: Ke,
+        saveSplitPrefs: Vr,
+        applySplitPrefsToModal: fl,
+        applyAutoFocusUi: jl,
+        loadAutoFocusPref: pl,
+        toggleAutoFocus: Ji,
+        applyTheme: Gl,
+        loadTheme: gl,
+        toggleTheme: ea,
+        applyPanelWidth: Kl,
+        loadPanelWidth: hl,
+        loadDetailToolsPref: yl,
+        loadWaveformPref: vl,
+        toggleWaveform: ta,
+        loadTimelineZoomPref: na,
+        saveTimelineZoomPref: Sl,
+        loadFilmHints: zr,
+        saveFilmHints: ra,
+        loadListFilterPrefs: sa,
+        saveListFilterPrefs: ia
+    } = Xi;
+    let ke = null;
+    typeof j.installLayout == "function" && (ke = j.installLayout({
+        els: e,
+        setStatus: d,
+        onLayoutChanged: () => {
+            ee()
+        },
+        onLayoutResized: () => {
+            el()
+        }
+    }));
+    const aa = {
+        state: t,
+        els: e,
+        utils: j.utils,
+        setDirty: P,
+        renderCueList: C,
+        setStatus: d,
+        syncDetailToCue: x,
+        editorConfirm: ie,
+        closeFindReplaceModal: mt
+    };
+    j.installUndo(aa);
+    const {
+        recordUndoBeforeChange: $,
+        beginDetailUndoGroup: bl,
+        clearUndoHistory: xl,
+        undo: Ur,
+        redo: Qr,
+        saveInitialSnapshot: Ml,
+        restoreInitialSnapshot: Zr
+    } = aa, St = j.installWorkflows({
+        workflowsCore: Xr,
+        state: t,
+        els: e,
+        electron: p,
+        showEditorModal: Q,
+        hideEditorModal: K,
+        setStatus: d,
+        recordUndoBeforeChange: $,
+        syncDetailToCue: x,
+        setDirty: P,
+        renderCueList: C,
+        renderDetailPane: R,
+        refreshQcBadge: xr,
+        getDefaultQcScanOptions: br,
+        getTargetCps: yt,
+        loadSplitPrefs: Ke,
+        loadFilmHints: zr,
+        getEffectiveGlossary: xe,
+        getSelectedCueIndexes: J,
+        getVisibleCueIndexes: Vt,
+        qcCore: oe,
+        fluencyCore: Ne,
+        chineseCore: Gn,
+        glossaryCore: se,
+        textPresetsCore: _,
+        metaCore: z,
+        insertPresetGroup: Ar,
+        exportMergedDualSubtitle: on,
+        saveDocument: Pt,
+        flushDraftAutosave: cs,
+        shiftAllCues: Kt,
+        applyGlossaryUnification: ui,
+        openGlossaryModal: Er,
+        openBreakWordsModal: Gt,
+        openTextPresetsModal: wn,
+        openFindReplaceModal: qt,
+        openQcModal: Fr,
+        restoreInitialSnapshot: Zr,
+        mergeSelectedCues: Xn,
+        confirmBatchSilenceSplit: si,
+        confirmBatchSilenceDurAdjust: Xs,
+        confirmBatchAudioSnapAdjust: Ys,
+        collectBatchDurMatches: ft,
+        collectSmartSplitMatches: gr,
+        collectSilenceSplitMatches: yr,
+        computeSplitParts: Ye,
+        maybeFixOverlapAfterSplit: At,
+        cueEndMs: I,
+        runRetranscribeRange: ut,
+        retranslateSelectedCue: Ns,
+        retranscribeDualSelectedCue: qs,
+        selectCue: X,
+        refreshListRow: Se,
+        showSilenceSplitProgress: Ee,
+        updateSilenceSplitProgress: de,
+        hideSilenceSplitProgress: Ie,
+        flushSilenceProgressPaint: ce,
+        showInferenceProgress: Ui,
+        updateInferenceProgress: Qi,
+        hideInferenceProgress: Zi,
+        formatInferenceElapsed: cl,
+        setSilenceSplitBusy: Te,
+        canSilenceSplitCue: $t,
+        loadRetranscribeDurPrefs: nt,
+        getPlaybackTimeMs: De,
+        buildFindRegex: Kn,
+        esc: b,
+        syncDualDisplaySelectVisibility: kt,
+        invalidatePairOverlapIndex: as,
+        loadDualDisplayMode: zn,
+        loadDualLineOrder: nn,
+        savePairDocument: os,
+        basename: G
+    });
+    H = j.installKeptAndMarkers({
+        state: t,
+        els: e,
+        electron: p,
+        setStatus: d,
+        recordUndoBeforeChange: $,
+        setDirty: P,
+        renderCueList: C,
+        refreshListRow: Se,
+        renderDetailPane: R,
+        renderTimeline: me,
+        basename: G,
+        esc: b,
+        showEditorModal: Q,
+        hideEditorModal: K,
+        hasDualPair: U,
+        clearPairTrack: rn,
+        syncDualDisplaySelectVisibility: kt,
+        loadDualDisplayMode: zn,
+        loadDualLineOrder: nn,
+        cueEndMs: I,
+        getSelectedCueIndexes: J,
+        persistCueMeta: dn,
+        refreshCueMeta: He,
+        qcCore: oe,
+        metaCore: z,
+        dualCore: O,
+        editorConfirm: ie,
+        startContextReconstruct: Ve,
+        startTextTranslate: we,
+        openSmartSplitModal: hr,
+        runSemanticBilingualReview: oa,
+        exportAssWithSpeakerStyles: la,
+        selectCue: X
+    }), typeof j.createQcWorkerClient == "function" && (Xt = j.createQcWorkerClient({
+        workerUrl: "js/subtitle-qc-worker.js"
+    })), typeof j.createFindWorkerClient == "function" && (Yt = j.createFindWorkerClient({
+        workerUrl: "js/subtitle-find-worker.js",
+        findCore: T.TransubFindReplace
+    })), window.addEventListener("beforeunload", () => {
+        try {
+            Xt?.dispose?.()
+        } catch {}
+        try {
+            Yt?.dispose?.()
+        } catch {}
+        ls(), t._findDebounceTimer && clearTimeout(t._findDebounceTimer), t._qcBadgeTimer && clearTimeout(t._qcBadgeTimer), t._timelineResizeTimer && clearTimeout(t._timelineResizeTimer)
+    }), typeof j.installWorkspaceUi == "function" && (Bt = j.installWorkspaceUi({
+        state: t,
+        els: e,
+        setStatus: d,
+        showEditorModal: Q,
+        hideEditorModal: K
+    }));
+    async function Bl() {
+        const n = T.TransubBilingualReview;
+        if (!n?.reviewBilingualPair) {
+            d("\u53CC\u8BED\u5BA1\u9605\u6A21\u5757\u672A\u52A0\u8F7D", "err");
+            return
+        }
+        let r = t.pairCues?.length ? t.pairCues : null;
+        if (!r?.length && t.keptTranscript?.found && (r = await H?.loadKeptCues?.()), !r?.length) {
+            d("\u9700\u8981\u5BF9\u7167\u8F68\u6216\u539F\u6587\u7F13\u5B58\u624D\u80FD\u53CC\u8BED\u5BA1\u9605", "err");
+            return
+        }
+        const i = n.reviewBilingualPair(t.cues, r, {
+            glossary: typeof xe == "function" ? xe() : null,
+            dualApi: O
+        });
+        t.lastBilingualReview = i;
+        const s = (i.issues || []).slice(0, 14).map(a => {
+            const o = n.issueTypeLabel(a.type),
+                l = a.primaryIndex != null ? `#${a.primaryIndex+1}` : a.sourceIndex != null ? `\u539F\u6587#${a.sourceIndex+1}` : "";
+            return `<li><strong>${b(o)}</strong> ${b(l)} \u2014 ${b(a.message)}</li>`
+        }).join("");
+        e.genericModal && e.genericModalBody ? (e.genericModalTitle && (e.genericModalTitle.textContent = i.summary), e.genericModalBody.innerHTML = `
+                <ul class="text-sm space-y-1 mb-3 max-h-64 overflow-auto">${s||"<li>\u65E0\u95EE\u9898</li>"}</ul>
+                <p class="text-xs mb-2" style="color:var(--ed-muted)">\u89C4\u5219\u5BA1\u9605\u514D\u8D39\uFF1B\u8BED\u4E49\u5BA1\u9605\uFF08LLM\uFF09\u9700 Pro\u3002</p>
+                <div class="editor-modal-actions">
+                    <button type="button" data-kept-action="close">\u5173\u95ED</button>
+                    <button type="button" class="primary" data-kept-action="semantic">\u8BED\u4E49\u5BA1\u9605 (Pro)</button>
+                </div>
+            `, t._genericModalHandler = a => {
+            a === "close" && K(e.genericModal), a === "semantic" && (K(e.genericModal), oa(r))
+        }, Q(e.genericModal, e.genericModalBody.querySelector("button"))) : d(i.summary, i.issues?.length ? "warn" : "ok")
+    }
+
+    function kl(n) {
+        const r = O || T.TransubDualSubtitle,
+            i = [],
+            s = 40;
+        for (let a = 0; a < t.cues.length && i.length < s; a += 1) {
+            const o = t.cues[a],
+                l = Number(o?.startMs) || 0,
+                c = I(o),
+                u = String(o?.text || "").trim();
+            let m = "";
+            if (r?.findBestOverlapCue) {
+                const f = r.findBestOverlapCue(n, l, c);
+                m = String(f?.cue?.text || "").trim()
+            } else m = String(n[a]?.text || "").trim();
+            !m && !u || i.push({
+                index: a,
+                source: m,
+                target: u
+            })
+        }
+        return i
+    }
+    async function oa(n) {
+        if (!p?.transubAdvancedBilingualSemanticReview) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u8BED\u4E49\u5BA1\u9605", "err");
+            return
+        }
+        if (t.reconstructBusy) {
+            d("\u5DF2\u6709\u63A8\u7406\u4EFB\u52A1\u8FDB\u884C\u4E2D\u2026", "warn");
+            return
+        }
+        if (t.computeBusy) {
+            d(t.computeBusyLabel ? `\u5DF2\u6709${t.computeBusyLabel}\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u540E\u518D\u8BD5` : "\u5176\u5B83\u7A97\u53E3\u6709\u5F15\u64CE\u6216 LLM \u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "err");
+            return
+        }
+        const r = n?.length ? n : t.pairCues?.length ? t.pairCues : await H?.loadKeptCues?.();
+        if (!r?.length) {
+            d("\u9700\u8981\u5BF9\u7167\u8F68\u6216\u539F\u6587\u7F13\u5B58\u624D\u80FD\u8BED\u4E49\u5BA1\u9605", "err");
+            return
+        }
+        const i = kl(r);
+        if (!i.length) {
+            d("\u6CA1\u6709\u53EF\u5BA1\u6821\u7684\u53CC\u8BED\u6761\u76EE", "err");
+            return
+        }
+        Ui({
+            kind: "semantic",
+            badge: "\u5927\u6A21\u578B\u63A8\u7406",
+            title: "\u8BED\u4E49\u5BA1\u9605\u4E2D",
+            detail: `\u6B63\u5728\u5BF9\u6BD4 ${i.length} \u6761\u539F\u6587/\u8BD1\u6587\u2026`,
+            countText: `${i.length} \u6761`,
+            hint: "\u8BED\u4E49\u5BA1\u9605\u4F1A\u8C03\u7528\u5927\u6A21\u578B\u9010\u6BB5\u7406\u89E3\u542B\u4E49\u5DEE\u5F02\uFF0C\u901A\u5E38\u9700\u8981\u6570\u5341\u79D2\u5230\u6570\u5206\u949F\u3002\u8BF7\u52FF\u5173\u95ED\u7A97\u53E3\uFF1B\u53EF\u968F\u65F6\u53D6\u6D88\u3002",
+            indeterminate: !0,
+            pct: 5
+        });
+        const s = p.onAdvancedReconstructProgress?.(a => {
+            !a || a.mode !== "semantic-review" || Qi({
+                message: a.message || a.detail || "\u8BED\u4E49\u5BA1\u9605\u8FDB\u884C\u4E2D\u2026",
+                pct: a.pct ?? a.percent,
+                phase: a.phase,
+                indeterminate: !Number.isFinite(Number(a.pct ?? a.percent))
+            })
+        }) || null;
+        try {
+            const a = await p.transubAdvancedBilingualSemanticReview({
+                pairs: i
+            });
+            if (!a?.ok) {
+                d(a?.error || "\u8BED\u4E49\u5BA1\u9605\u5931\u8D25", "err");
+                return
+            }
+            const o = Array.isArray(a.issues) ? a.issues : [];
+            t.lastSemanticReview = a, H?.refreshContextActionBar?.();
+            const l = o.slice(0, 20).map(c => {
+                const u = Number(c.index),
+                    m = Number.isInteger(u) ? `#${u+1}` : "";
+                return `<li><button type="button" class="ed-btn-block"${Number.isInteger(u)?` data-kept-action="goto-semantic" data-cue-idx="${u}"`:""}><strong>${b(c.type||"issue")}</strong> ${b(m)} \u2014 ${b(c.message||"")}</button></li>`
+            }).join("");
+            e.genericModal && e.genericModalBody && (e.genericModalTitle && (e.genericModalTitle.textContent = a.summary || "\u8BED\u4E49\u5BA1\u9605"), e.genericModalBody.innerHTML = `
+                    <ul class="text-sm space-y-1 mb-3 max-h-64 overflow-auto">${l||"<li>\u65E0\u95EE\u9898</li>"}</ul>
+                    <div class="editor-modal-actions">
+                        ${o.length?'<button type="button" data-kept-action="semantic-reconstruct">\u8BED\u5883\u91CD\u6784\u9009\u4E2D \u25C6</button>':""}
+                        <button type="button" class="primary" data-kept-action="close">\u5173\u95ED</button>
+                    </div>
+                `, t._genericModalHandler = (c, u) => {
+                if (c === "close") {
+                    K(e.genericModal);
+                    return
+                }
+                if (c === "goto-semantic") {
+                    const m = Number(u?.target?.closest?.("[data-cue-idx]")?.getAttribute("data-cue-idx"));
+                    Number.isInteger(m) && m >= 0 && (X(m, {
+                        scroll: !0,
+                        seek: !0
+                    }), K(e.genericModal));
+                    return
+                }
+                if (c === "semantic-reconstruct") {
+                    const m = o.map(f => Number(f.index)).filter(f => Number.isInteger(f) && f >= 0);
+                    m.length && (t.selectedIndices = new Set(m), t.selectedIndex = m[0], C({
+                        listOnly: !0,
+                        reuseMeta: !0
+                    }), R()), K(e.genericModal), Ve({
+                        mode: "basic"
+                    })
+                }
+            }, Q(e.genericModal, e.genericModalBody.querySelector("button"))), d(a.summary || "\u8BED\u4E49\u5BA1\u9605\u5B8C\u6210", o.length ? "warn" : "ok")
+        } catch (a) {
+            d(a?.message || "\u8BED\u4E49\u5BA1\u9605\u5931\u8D25", "err")
+        } finally {
+            if (typeof s == "function") try {
+                s()
+            } catch {}
+            Zi()
+        }
+    }
+    async function la() {
+        if (!p?.transubExportSubtitle) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5BFC\u51FA", "err");
+            return
+        }
+        if (p.transubAdvancedRequireFeature) {
+            const o = await p.transubAdvancedRequireFeature({
+                    featureId: "assStyleExport"
+                }),
+                l = o?.ok ? o : await p.transubAdvancedRequireFeature({
+                    featureId: "contextReconstruct"
+                });
+            if (!l?.ok) {
+                d(l?.error || o?.error || "\u5BFC\u51FA ASS \u6837\u5F0F\u9700\u89E3\u9501 Pro", "err");
+                return
+            }
+        }
+        if (x(), !t.cues.length) {
+            d("\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u5B57\u5E55", "err");
+            return
+        }
+        const n = H?.markersCore || T.TransubEditorMarkers,
+            r = {};
+        n?.cueMarkerKey && t.cues.forEach((o, l) => {
+            const c = n.cueMarkerKey(o, l),
+                u = t.markers?.cueMarkers?.[c];
+            u && (r[c] = u)
+        });
+        const i = G(t.path || "subtitle.srt").replace(/\.[^.]+$/, "");
+        let s = `${i}.ass`;
+        if (t.path) {
+            const o = String(t.path).replace(/[/\\][^/\\]+$/, ""),
+                l = t.path.includes("\\") ? "\\" : "/";
+            s = `${o}${l}${i}.ass`
+        }
+        const a = await p.transubExportSubtitle({
+            title: "\u5BFC\u51FA ASS\uFF08\u8BF4\u8BDD\u4EBA\u6837\u5F0F\uFF09",
+            defaultName: s,
+            format: "ass",
+            cues: t.cues,
+            speakers: t.markers?.speakers || [],
+            cueMarkers: r
+        });
+        if (!a?.canceled) {
+            if (!a?.ok) {
+                d(a?.error || "ASS \u5BFC\u51FA\u5931\u8D25", "err");
+                return
+            }
+            d(`\u5DF2\u5BFC\u51FA ASS\uFF1A${G(a.path)}`, "ok")
+        }
+    }
+    async function wl() {
+        const n = T.TransubSpeakerSuggest,
+            r = H?.markersCore || T.TransubEditorMarkers;
+        if (!n?.suggestAlternatingSpeakers || !r) {
+            d("\u8BF4\u8BDD\u4EBA\u5EFA\u8BAE\u6A21\u5757\u672A\u52A0\u8F7D", "err");
+            return
+        }
+        if (!t.cues.length) {
+            d("\u6CA1\u6709\u53EF\u6807\u6CE8\u7684\u5B57\u5E55", "err");
+            return
+        }
+        if (!await ie("\u6309\u53E5\u95F4\u9759\u97F3\u542F\u53D1\u5F0F\u5EFA\u8BAE\u8BF4\u8BDD\u4EBA\uFF1F", {
+                title: "\u5EFA\u8BAE\u8BF4\u8BDD\u4EBA",
+                detail: "\u5C06\u6309\u95F4\u9699\u4EA4\u66FF\u6807\u6CE8\u300C\u8BF4\u8BDD\u4EBA 1/2\u300D\uFF08\u975E\u58F0\u7EB9\u5206\u79BB\uFF09\u3002\u5DF2\u6709\u624B\u52A8\u8BF4\u8BDD\u4EBA\u4F1A\u88AB\u8986\u76D6\u5EFA\u8BAE\u7ED3\u679C\u3002",
+                okLabel: "\u5E94\u7528\u5EFA\u8BAE",
+                cancelLabel: "\u53D6\u6D88"
+            })) return;
+        const s = n.suggestAlternatingSpeakers(t.cues, {
+                cueMarkerKey: r.cueMarkerKey,
+                speakerColor: r.speakerColor,
+                switchGapMs: 1400,
+                speakerCount: 2
+            }),
+            a = r.normalizeMarkersDoc(t.markers || {});
+        a.speakers = s.speakers, a.cueMarkers = {
+            ...a.cueMarkers || {},
+            ...s.cueMarkers
+        }, t.markers = a, H?.refreshMarkersUi?.(), C(), await H?.persistMarkers?.(), d(s.summary, "ok")
+    }
+
+    function ca() {
+        return Math.round((e.video?.currentTime || 0) * 1e3)
+    }
+
+    function Cl({
+        count: n,
+        scope: r
+    } = {}) {
+        const i = e.filmHintModal;
+        return !i || !Q || !K ? Promise.resolve({
+            title: "",
+            synopsis: "",
+            terms: "",
+            userNote: "",
+            intensity: "balanced"
+        }) : new Promise(s => {
+            const a = typeof zr == "function" ? zr(t.path) : {
+                    title: "",
+                    synopsis: "",
+                    terms: ""
+                },
+                o = t.path ? G(t.path).replace(/\.(srt|ass|ssa|vtt|json)$/i, "") : "";
+            e.filmHintTitleInput && (e.filmHintTitleInput.value = a.title || o || ""), e.filmHintSynopsisInput && (e.filmHintSynopsisInput.value = a.synopsis || "");
+            const c = ((typeof xe == "function" ? xe() : null)?.entries || []).filter(y => y?.enabled !== !1 && y?.canonical);
+            if (e.filmHintTermsInput) {
+                const y = a.terms || "";
+                !y.trim() && c.length ? e.filmHintTermsInput.value = c.map(k => String(k.canonical || "").trim()).filter(Boolean).join("\uFF1B") : e.filmHintTermsInput.value = y
+            }
+            e.filmHintGlossaryHint && (c.length ? (e.filmHintGlossaryHint.textContent = `\u672F\u8BED\u8868\u542B ${c.length} \u6761\uFF0C\u5DF2\u53EF\u586B\u5165\u8BD1\u540D\u533A\uFF08\u53EF\u7F16\u8F91\uFF09`, e.filmHintGlossaryHint.classList.remove("hidden")) : (e.filmHintGlossaryHint.textContent = "", e.filmHintGlossaryHint.classList.add("hidden")));
+            const u = a.intensity || "balanced";
+            i.querySelectorAll('input[name="editorFilmHintIntensity"]').forEach(y => {
+                y.checked = y.value === u || u !== "light" && u !== "strong" && y.value === "balanced"
+            }), e.filmHintScope && (e.filmHintScope.textContent = r === "selected" ? `\u5C06\u5904\u7406\u9009\u4E2D\u7684 ${n} \u6761\uFF08\u5148 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09` : `\u5C06\u5904\u7406\u5168\u90E8 ${n} \u6761\uFF08\u5148 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09`);
+            let m = !1;
+            const f = y => {
+                    m || (m = !0, i.querySelectorAll("[data-film-hint-dismiss]").forEach(k => {
+                        k.removeEventListener("click", g)
+                    }), e.filmHintConfirm?.removeEventListener("click", h), document.removeEventListener("keydown", v), K(i), s(y))
+                },
+                g = () => f(null),
+                h = () => {
+                    const y = String(e.filmHintTitleInput?.value || "").trim().slice(0, 120),
+                        k = String(e.filmHintSynopsisInput?.value || "").trim().slice(0, 800),
+                        q = String(e.filmHintTermsInput?.value || "").trim().slice(0, 800),
+                        te = i.querySelector('input[name="editorFilmHintIntensity"]:checked'),
+                        N = String(te?.value || "balanced");
+                    typeof ra == "function" && ra(t.path, {
+                        title: y,
+                        synopsis: k,
+                        terms: q,
+                        intensity: N
+                    });
+                    const W = T.TransubAdvancedFilmReconstruct,
+                        B = W?.composeFilmUserNote ? W.composeFilmUserNote({
+                            title: y,
+                            synopsis: k,
+                            terms: q
+                        }) : [y && `\u7247\u540D\uFF1A${y}`, k && `\u7B80\u4ECB\uFF1A${k}`, q && `\u8BD1\u540D\u4E0E\u8865\u5145\uFF1A${q}`].filter(Boolean).join(`
+`);
+                    f({
+                        title: y,
+                        synopsis: k,
+                        terms: q,
+                        userNote: B,
+                        intensity: N
+                    })
+                },
+                v = y => {
+                    y.key === "Escape" && (y.preventDefault(), g())
+                };
+            i.querySelectorAll("[data-film-hint-dismiss]").forEach(y => {
+                y.addEventListener("click", g)
+            }), e.filmHintConfirm?.addEventListener("click", h), document.addEventListener("keydown", v), Q(i, e.filmHintTitleInput || e.filmHintConfirm)
+        })
+    }
+    async function Ve({
+        mode: n = "basic",
+        forceAll: r = !1,
+        scope: i = null
+    } = {}) {
+        const s = n === "film";
+        if (!t.cues.length) {
+            d("\u6CA1\u6709\u5B57\u5E55\u53EF\u91CD\u6784");
+            return
+        }
+        if (t.reconstructBusy) {
+            d(s ? "\u91CD\u6784\u8FDB\u884C\u4E2D\u2026" : "\u8BED\u5883\u91CD\u6784\u8FDB\u884C\u4E2D\u2026", "warn");
+            return
+        }
+        if (t.computeBusy) {
+            d(t.computeBusyLabel ? `\u5DF2\u6709${t.computeBusyLabel}\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u540E\u518D\u8BD5` : "\u5176\u5B83\u7A97\u53E3\u6709\u5F15\u64CE\u6216 LLM \u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "err");
+            return
+        }
+        let a = "all";
+        i === "bookmarks" || i === "filtered" || i === "lowConfidence" || i === "selected" || i === "all" ? a = i : r || (a = J().length ? "selected" : "all");
+        let o = t.cues.length;
+        if (a === "selected") {
+            if (o = J().length, !o) {
+                d("\u8BF7\u5148\u9009\u4E2D\u8981\u91CD\u6784\u7684\u5B57\u5E55", "err");
+                return
+            }
+        } else if (a === "bookmarks") {
+            if (o = (H?.markersCore || T.TransubEditorMarkers)?.filterIndexesByBookmarks?.(t.cues, t.markers, {
+                    padMs: 80
+                })?.length || 0, !o) {
+                d("\u6CA1\u6709\u8986\u76D6\u4E66\u7B7E\u7684\u5B57\u5E55", "err");
+                return
+            }
+        } else if (a === "filtered") {
+            if (o = Vt().length, !o) {
+                d("\u5F53\u524D\u7B5B\u9009\u65E0\u5B57\u5E55", "err");
+                return
+            }
+        } else if (a === "lowConfidence" && (o = t.cues.map((m, f) => f).filter(m => t.cueMeta[m]?.low).length, !o)) {
+            d("\u6CA1\u6709\u4F4E\u7F6E\u4FE1\u5B57\u5E55", "err");
+            return
+        }
+        const l = a === "selected" ? `\u9009\u4E2D\u7684 ${o} \u6761` : a === "bookmarks" ? `\u4E66\u7B7E\u8986\u76D6\u7684 ${o} \u6761` : a === "filtered" ? `\u5F53\u524D\u7B5B\u9009\u7684 ${o} \u6761` : a === "lowConfidence" ? `\u4F4E\u7F6E\u4FE1 ${o} \u6761` : `\u5168\u90E8 ${o} \u6761`;
+        let c = null;
+        if (s) {
+            if (c = await Cl({
+                    count: o,
+                    scope: a
+                }), !c) {
+                d("\u5DF2\u53D6\u6D88\u5F71\u7247\u7406\u89E3\u91CD\u6784");
+                return
+            }
+        } else if (!await ie(`\u5BF9${l}\u505A\u8BED\u5883\u91CD\u6784\uFF1F`)) return;
+        e.toolsMenu?.classList.add("hidden");
+        const u = await St.runContextReconstructOnce({
+            scope: a,
+            mode: s ? "film" : "basic",
+            filmTitle: c?.title || "",
+            filmSynopsis: c?.synopsis || "",
+            filmTerms: c?.terms || "",
+            userNote: c?.userNote || "",
+            intensity: c?.intensity || "balanced"
+        });
+        d(u?.summary || (s ? "\u5F71\u7247\u7406\u89E3\u91CD\u6784\u7ED3\u675F" : "\u8BED\u5883\u91CD\u6784\u7ED3\u675F"), u?.status === "failed" ? "err" : u?.status === "cancelled" ? "warn" : "ok")
+    }
+    async function jn() {
+        let n = {};
+        try {
+            n = (await p?.transWithAiGetOptions?.({}))?.options || {}
+        } catch {
+            n = {}
+        }
+        const r = !!n.smartTranslateFaithfulTone,
+            i = T.TransubSakuraMtCatalog,
+            s = typeof i?.resolveTranslateModeFromOptions == "function" ? i.resolveTranslateModeFromOptions(n) : n.smartTranslate ? "smart" : i?.isLlmInferenceMtModel?.(String(n.engineMtModel || "").trim()) || i?.isSakuraMtModel?.(String(n.engineMtModel || "").trim()) || /^sakura-/i.test(String(n.engineMtModel || "").trim()) ? "llm" : "engine",
+            a = typeof i?.normalizeTranslateMode == "function" ? i.normalizeTranslateMode(s) : s === "sakura" ? "llm" : s,
+            o = typeof i?.translateModeLabel == "function" ? i.translateModeLabel(a) : a === "smart" ? "\u667A\u80FD\u7FFB\u8BD1" : a === "llm" ? "\u63A8\u7406\u7FFB\u8BD1" : "\u673A\u5668\u7FFB\u8BD1";
+        if (a === "smart") return {
+            engine: "smart",
+            mode: "smart",
+            label: o,
+            faithfulTone: r,
+            textMt: !0
+        };
+        if (a === "llm") {
+            const c = String(n.engineMtModel || n.engineLlmMtModel || "").trim();
+            return {
+                engine: "llm",
+                mode: "llm",
+                label: c ? `${o}\uFF08${c}\uFF09` : o,
+                faithfulTone: r,
+                textMt: !0
+            }
+        }
+        const l = String(n.engineMtModel || n.engineOpusMtModel || "").trim();
+        return {
+            engine: "opus",
+            mode: "engine",
+            label: l ? `${o}\uFF08${l}\uFF09` : `${o}\uFF08Opus\uFF09`,
+            faithfulTone: !1,
+            textMt: !0
+        }
+    }
+    async function El(n, r = {}) {
+        const i = (Array.isArray(n) ? n : []).map((m, f) => ({
+            index: Number.isInteger(Number(m?.index)) ? Number(m.index) : f,
+            startMs: m?.startMs,
+            endMs: m?.endMs,
+            text: String(m?.text ?? "").trim()
+        })).filter(m => m.text);
+        if (!i.length) return {
+            ok: !1,
+            error: "\u65E0\u53EF\u7FFB\u8BD1\u6587\u672C"
+        };
+        let s = r.engine === "smart" || r.engine === "llm" || r.engine === "sakura" || r.engine === "opus" ? r.engine === "sakura" ? "llm" : r.engine : null,
+            a = r.faithfulTone;
+        if (!s || a == null) {
+            const m = await jn();
+            if (!m.textMt) return {
+                ok: !1,
+                code: "unsupported",
+                error: m.message || "\u5F53\u524D\u8BBE\u7F6E\u4E0D\u53EF\u7528\u4E8E\u7EAF\u6587\u672C\u7FFB\u8BD1"
+            };
+            s = s || m.engine, a == null && (a = m.faithfulTone)
+        }
+        if (s === "opus") {
+            const m = p?.transubEngineTranslateCues;
+            if (!m) return {
+                ok: !1,
+                error: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u673A\u5668\u7FFB\u8BD1"
+            };
+            const f = await m({
+                cues: i,
+                glossary: xe(),
+                fileName: t.path || t.videoPath || ""
+            });
+            return f?.ok ? {
+                ok: !0,
+                cues: Array.isArray(f.cues) ? f.cues : [],
+                engine: "opus",
+                label: "\u673A\u5668\u7FFB\u8BD1",
+                summary: f.summary || f.message || ""
+            } : {
+                ok: !1,
+                error: friendlyJobAbortMessage(f?.error || "\u673A\u5668\u7FFB\u8BD1\u5931\u8D25"),
+                code: f?.code,
+                cancelled: isJobAbortResult(f)
+            }
+        }
+        const o = s === "smart",
+            l = o ? p?.transubAdvancedSmartTranslate : p?.transubSakuraTranslate;
+        if (!l) return {
+            ok: !1,
+            error: o ? "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u667A\u80FD\u7FFB\u8BD1" : "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u63A8\u7406\u7FFB\u8BD1"
+        };
+        const c = {
+            cues: i,
+            glossary: xe(),
+            fileName: t.path || t.videoPath || ""
+        };
+        o && (c.smartTranslateFaithfulTone = !!a);
+        const u = await l(c);
+        return u?.ok ? {
+            ok: !0,
+            cues: Array.isArray(u.cues) ? u.cues : [],
+            engine: s,
+            label: o ? "\u667A\u80FD\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1",
+            summary: u.summary || u.message || ""
+        } : {
+            ok: !1,
+            error: friendlyJobAbortMessage(u?.error || (o ? "\u667A\u80FD\u7FFB\u8BD1\u5931\u8D25" : "\u63A8\u7406\u7FFB\u8BD1\u5931\u8D25")),
+            code: u?.code,
+            cancelled: isJobAbortResult(u) || u?.code === "cancelled" || u?.code === "aborted"
+        }
+    }
+
+    function Il(n, r, i) {
+        const s = T.TransubDualSubtitle || null;
+        if (i === "cue" && t.selectedIndex >= 0 && t.selectedIndex < t.cues.length) {
+            const l = t.cues[t.selectedIndex];
+            let c = String(l?.text || "").trim();
+            if (U() && t.dualRole === "target" && s && t.pairCues?.length) {
+                const u = s.findBestOverlapCue(t.pairCues, l.startMs, I(l)),
+                    m = String(u?.cue?.text || "").trim();
+                m && (c = m)
+            }
+            return c ? [{
+                startMs: l.startMs,
+                endMs: I(l),
+                text: c
+            }] : []
+        }
+        let a = t.cues;
+        U() && t.dualRole === "target" && t.pairCues?.length && (a = t.pairCues);
+        const o = [];
+        for (const l of a || []) {
+            const c = Math.round(Number(l?.startMs) || 0),
+                u = Math.max(c + 1, Math.round(Number(I(l))));
+            if (u <= n || c >= r) continue;
+            const m = String(l?.text || "").trim();
+            m && o.push({
+                startMs: c,
+                endMs: u,
+                text: m
+            })
+        }
+        return o
+    }
+    async function we({
+        engine: n = "auto",
+        forceAll: r = !1,
+        forceSelected: i = !1,
+        scope: s = null
+    } = {}) {
+        let a = n === "advanced" ? "smart" : n === "sakura" ? "llm" : n,
+            o = "",
+            l = !1;
+        if (!a || a === "auto" || a === "settings") {
+            const y = await jn();
+            if (y.unsupportedText || !y.textMt) {
+                await ie(y.message || "\u5F53\u524D\u8BBE\u7F6E\u7684\u7FFB\u8BD1\u65B9\u5F0F\u4E0D\u53EF\u7528\u4E8E\u7F16\u8F91\u5668\u83DC\u5355\u7FFB\u8BD1", {
+                    title: `\u5F53\u524D\u8BBE\u7F6E\uFF1A${y.label||"\u673A\u5668\u7FFB\u8BD1"}`,
+                    okLabel: "\u77E5\u9053\u4E86",
+                    cancelLabel: "\u5173\u95ED",
+                    type: "warning"
+                }), d(y.message || "\u5F53\u524D\u8BBE\u7F6E\u7684\u7FFB\u8BD1\u65B9\u5F0F\u4E0D\u53EF\u7528\u4E8E\u83DC\u5355\u7FFB\u8BD1", "err");
+                return
+            }
+            a = y.engine, o = y.label, l = !!y.faithfulTone
+        } else {
+            try {
+                l = !!(await p?.transWithAiGetOptions?.({}))?.options?.smartTranslateFaithfulTone
+            } catch {
+                l = !1
+            }
+            o = a === "smart" || a === "advanced" ? "\u667A\u80FD\u7FFB\u8BD1" : a === "opus" ? "\u673A\u5668\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1"
+        }
+        const c = a === "smart" || a === "advanced",
+            u = a === "opus";
+        if (!t.cues.length) {
+            d("\u6CA1\u6709\u5B57\u5E55\u53EF\u7FFB\u8BD1");
+            return
+        }
+        if (t.reconstructBusy) {
+            d("\u7FFB\u8BD1\u6216\u91CD\u6784\u8FDB\u884C\u4E2D\u2026", "warn");
+            return
+        }
+        if (t.computeBusy) {
+            d(t.computeBusyLabel ? `\u5DF2\u6709${t.computeBusyLabel}\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u540E\u518D\u8BD5` : "\u5176\u5B83\u7A97\u53E3\u6709\u5F15\u64CE\u6216 LLM \u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "err");
+            return
+        }
+        if (c && !p?.transubAdvancedSmartTranslate) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u667A\u80FD\u7FFB\u8BD1", "err");
+            return
+        }
+        if (u && !p?.transubEngineTranslateCues) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u673A\u5668\u7FFB\u8BD1", "err");
+            return
+        }
+        if (!c && !u && !p?.transubSakuraTranslate) {
+            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u63A8\u7406\u7FFB\u8BD1", "err");
+            return
+        }
+        let m = "all";
+        if (s === "bookmarks" || s === "filtered" || s === "lowConfidence" || s === "selected" || s === "all") m = s;
+        else if (i) {
+            if (!J().length) {
+                d("\u8BF7\u5148\u9009\u4E2D\u8981\u7FFB\u8BD1\u7684\u5B57\u5E55", "err");
+                return
+            }
+            m = "selected"
+        } else r || (m = J().length ? "selected" : "all");
+        let f = t.cues.length;
+        if (m === "selected") f = J().length;
+        else if (m === "bookmarks") {
+            if (f = (H?.markersCore || T.TransubEditorMarkers)?.filterIndexesByBookmarks?.(t.cues, t.markers, {
+                    padMs: 80
+                })?.length || 0, !f) {
+                d("\u6CA1\u6709\u8986\u76D6\u4E66\u7B7E\u7684\u5B57\u5E55", "err");
+                return
+            }
+        } else if (m === "filtered" && (f = Vt().length, !f)) {
+            d("\u5F53\u524D\u7B5B\u9009\u65E0\u5B57\u5E55", "err");
+            return
+        }
+        o || (o = c ? "\u667A\u80FD\u7FFB\u8BD1" : u ? "\u673A\u5668\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1");
+        const g = m === "selected" ? f === 1 ? "\u672C\u6761" : `\u9009\u4E2D\u7684 ${f} \u6761` : m === "bookmarks" ? `\u4E66\u7B7E\u8986\u76D6\u7684 ${f} \u6761` : m === "filtered" ? `\u5F53\u524D\u7B5B\u9009\u7684 ${f} \u6761` : `\u5168\u90E8 ${f} \u6761`;
+        if (!await ie(`\u5BF9${g}\u505A\u7FFB\u8BD1\uFF1F\uFF08\u8BBE\u7F6E\uFF1A${o}\uFF09`)) return;
+        e.toolsMenu?.classList.add("hidden");
+        const v = await St.runTextTranslateOnce({
+            scope: m,
+            engine: c ? "smart" : u ? "opus" : "llm",
+            faithfulTone: l
+        });
+        d(v?.summary || `\u7FFB\u8BD1\u7ED3\u675F\uFF08${o}\uFF09`, v?.status === "failed" ? "err" : v?.status === "cancelled" ? "warn" : "ok")
+    }
+
+    function Pl(n) {
+        const r = String(n?.action || "").trim();
+        if (r) switch (r) {
+            case "open-subtitle":
+                rr();
+                break;
+            case "link-video":
+                Ls();
+                break;
+            case "save":
+                Pt();
+                break;
+            case "export-dual":
+                on();
+                break;
+            case "open-generator":
+                Ai();
+                break;
+            case "open-settings":
+                $i();
+                break;
+            case "restore-initial":
+                Zr();
+                break;
+            case "undo":
+                Ur();
+                break;
+            case "redo":
+                Qr();
+                break;
+            case "find-replace":
+                qt(!1);
+                break;
+            case "select-all":
+                Ss();
+                break;
+            case "merge-selected":
+                Xn();
+                break;
+            case "insert-cue":
+                Lt();
+                break;
+            case "delete-cue":
+                pn();
+                break;
+            case "glossary":
+                Er();
+                break;
+            case "break-words":
+                Gt();
+                break;
+            case "chinese-convert":
+                ki();
+                break;
+            case "compress-rep":
+                Ci();
+                break;
+            case "text-presets":
+                wn();
+                break;
+            case "sakura-translate":
+                we({
+                    engine: "auto"
+                });
+                break;
+            case "smart-translate":
+                we({
+                    engine: "smart"
+                });
+                break;
+            case "context-reconstruct":
+                Ve({
+                    mode: "basic"
+                });
+                break;
+            case "film-context-reconstruct":
+                Ve({
+                    mode: "film"
+                });
+                break;
+            case "batch-sakura-translate":
+                we({
+                    engine: "auto",
+                    forceSelected: !0
+                });
+                break;
+            case "batch-sakura-translate-all":
+                we({
+                    engine: "auto",
+                    forceAll: !0
+                });
+                break;
+            case "batch-smart-translate":
+                we({
+                    engine: "smart",
+                    forceSelected: !0
+                });
+                break;
+            case "batch-smart-translate-all":
+                we({
+                    engine: "smart",
+                    forceAll: !0
+                });
+                break;
+            case "batch-context-reconstruct":
+                Ve({
+                    mode: "basic",
+                    forceAll: !0
+                });
+                break;
+            case "batch-film-context-reconstruct":
+                Ve({
+                    mode: "film",
+                    forceAll: !0
+                });
+                break;
+            case "shift-back":
+                Kt(-500);
+                break;
+            case "shift-fwd":
+                Kt(500);
+                break;
+            case "batch-duration":
+                pr();
+                break;
+            case "smart-split":
+                hr();
+                break;
+            case "silence-split":
+                vr();
+                break;
+            case "smart-adjust":
+                bi();
+                break;
+            case "remove-noise":
+                Mi();
+                break;
+            case "retranscribe-duration":
+                ur();
+                break;
+            case "workflows":
+                St.openWorkflowModal?.();
+                break;
+            case "qc":
+                Fr();
+                break;
+            case "next-issue":
+                Ti();
+                break;
+            case "filter-all":
+                Re("all");
+                break;
+            case "filter-low":
+                Re("low");
+                break;
+            case "filter-qc":
+                Re("qc");
+                break;
+            case "filter-find":
+                Re("find");
+                break;
+            case "toggle-auto-focus":
+                Ji(), ee();
+                break;
+            case "toggle-waveform":
+                ta(), ee();
+                break;
+            case "toggle-theme":
+                ea(), ee();
+                break;
+            case "layout-classic":
+                ke?.applyPreset?.("classic"), ee();
+                break;
+            case "layout-immersive":
+                ke?.applyPreset?.("immersive"), ee();
+                break;
+            case "layout-focus":
+                ke?.applyPreset?.("focus"), ee();
+                break;
+            case "layout-widescreen":
+                ke?.applyPreset?.("widescreen"), ee();
+                break;
+            case "layout-reset":
+                ke?.resetLayout?.(), ee();
+                break;
+            case "timeline-zoom-in":
+                zt(1 / 1.5, ca()), ee();
+                break;
+            case "timeline-zoom-out":
+                zt(1.5, ca()), ee();
+                break;
+            case "timeline-zoom-fit":
+                qi(), ee();
+                break;
+            case "shortcuts":
+                ji();
+                break;
+            case "check-update":
+                (async () => {
+                    try {
+                        const i = await p?.transubOpenUpdateWindow?.({
+                            autoCheck: !0
+                        });
+                        i?.ok === !1 && d(i?.error || "\u65E0\u6CD5\u6253\u5F00\u66F4\u65B0\u7A97\u53E3", "err")
+                    } catch (i) {
+                        d(i?.message || "\u65E0\u6CD5\u6253\u5F00\u66F4\u65B0\u7A97\u53E3", "err")
+                    }
+                })();
+                break;
+            case "about":
+                (async () => {
+                    try {
+                        const i = await p?.transubOpenAboutWindow?.();
+                        i?.ok === !1 && d(i?.error || "\u65E0\u6CD5\u6253\u5F00\u5173\u4E8E\u7A97\u53E3", "err")
+                    } catch (i) {
+                        d(i?.message || "\u65E0\u6CD5\u6253\u5F00\u5173\u4E8E\u7A97\u53E3", "err")
+                    }
+                })();
+                break;
+            default:
+                break
+        }
+    }
+
+    function Ll() {
+        gl(), hl(), yl(), pl(), vl(), t.timeline.zoom = na(), ke?.initLayout?.(), ol(), ee(), e.themeToggle?.addEventListener("click", () => {
+            ea(), ee()
+        }), e.settingsBtn?.addEventListener("click", () => {
+            $i()
+        }), e.openGeneratorBtn?.addEventListener("click", () => {
+            Ai()
+        }), e.autoFocusBtn?.addEventListener("click", () => {
+            Ji(), ee()
+        }), e.waveformToggle?.addEventListener("click", () => {
+            ta(), ee()
+        });
+
+        function n(s = null) {
+            document.querySelectorAll(".editor-dropdown").forEach(a => {
+                if (s && a === s || a.classList.contains("hidden")) return;
+                a.classList.add("hidden"), a.closest(".editor-menu-wrap")?.querySelector('[aria-haspopup="true"], [data-dd-trigger]')?.setAttribute("aria-expanded", "false")
+            }), e.layoutMenuBtn && e.layoutMenuBtn.setAttribute("aria-expanded", "false"), e.viewMenuBtn && e.viewMenuBtn.setAttribute("aria-expanded", "false"), e.reviewFilterBtn && e.reviewFilterBtn.setAttribute("aria-expanded", "false")
+        }
+
+        function r(s, a) {
+            if (!s || !a) return;
+            const o = a.classList.contains("hidden");
+            n(), o && (a.classList.remove("hidden"), s.setAttribute("aria-expanded", "true"), (a === e.layoutMenu || a === e.viewMenu) && ke?.updateLayoutMenuUi?.())
+        }
+        const i = () => n();
+        e.viewMenuBtn?.addEventListener("click", s => {
+            s.stopPropagation(), r(e.viewMenuBtn, e.viewMenu || e.layoutMenu)
+        }), e.reviewFilterBtn?.addEventListener("click", s => {
+            s.stopPropagation(), r(e.reviewFilterBtn, e.reviewFilterMenu)
+        }), e.modeTools?.querySelectorAll("[data-dd-trigger]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.stopPropagation();
+                const l = s.closest(".editor-menu-wrap")?.querySelector(".editor-dropdown");
+                r(s, l)
+            })
+        }), e.modeTools?.addEventListener("click", s => {
+            const a = s.target.closest?.(".editor-dropdown button");
+            a && e.modeTools.contains(a) && setTimeout(() => n(), 0)
+        }), e.layoutMenu?.addEventListener("click", s => {
+            const a = s.target.closest?.("[data-layout-action]");
+            if (a) {
+                a.getAttribute("data-layout-action") === "reset" && (ke?.resetLayout?.(), ee()), setTimeout(i, 0);
+                return
+            }
+            const o = s.target.closest?.("[data-layout-preset]");
+            if (!o || o.disabled) return;
+            const l = o.getAttribute("data-layout-preset");
+            l && l !== "custom" && (ke?.applyPreset?.(l), ee()), setTimeout(i, 0)
+        }), document.addEventListener("click", s => {
+            s.target.closest?.(".editor-menu-wrap") || n()
+        }), document.querySelectorAll("[data-list-filter]").forEach(s => {
+            s.addEventListener("click", () => {
+                Re(s.getAttribute("data-list-filter")), s.closest("#editorReviewFilterMenu") && n()
+            })
+        }), e.speakerFilter?.addEventListener("change", () => {
+            Di(e.speakerFilter.value)
+        }), e.nextIssueBtn?.addEventListener("click", Ti), e.playPauseBtn?.addEventListener("click", Bs), e.seekBackBtn?.addEventListener("click", () => Fi(-1)), e.seekFwdBtn?.addEventListener("click", () => Fi(1)), e.rateSelect?.addEventListener("change", () => {
+            e.video && (e.video.playbackRate = Number(e.rateSelect.value) || 1)
+        }), e.volumeSlider?.addEventListener("input", () => {
+            e.video && (e.video.volume = Number(e.volumeSlider.value) || 0)
+        }), e.exportDualBtn?.addEventListener("click", () => {
+            on()
+        }), e.exportDualMenuBtn?.addEventListener("click", () => {
+            on()
+        }), e.saveBtn?.addEventListener("click", Pt), e.addCueBtn?.addEventListener("click", Lt), e.insertCueBtn?.addEventListener("click", Lt), e.openFileBtn?.addEventListener("click", rr), La(), e.shiftBackBtn?.addEventListener("click", () => Kt(-500)), e.shiftFwdBtn?.addEventListener("click", () => Kt(500)), e.linkVideoBtn?.addEventListener("click", Ls), e.findReplaceBtn?.addEventListener("click", () => qt(!1)), e.glossaryBtn?.addEventListener("click", () => {
+            Er()
+        }), e.contextReconstructBtn?.addEventListener("click", () => {
+            Ve({
+                mode: "basic"
+            })
+        }), e.filmContextReconstructBtn?.addEventListener("click", () => {
+            Ve({
+                mode: "film"
+            })
+        }), e.bilingualReviewBtn?.addEventListener("click", () => {
+            Bl()
+        }), e.exportAssBtn?.addEventListener("click", () => {
+            la()
+        }), e.proAssBtn?.addEventListener("click", () => {
+            la()
+        }), e.semanticReviewBtn?.addEventListener("click", () => {
+            oa()
+        }), e.suggestSpeakersBtn?.addEventListener("click", () => {
+            wl()
+        }), e.sakuraTranslateBtn?.addEventListener("click", () => {
+            we({
+                engine: "auto"
+            })
+        }), e.smartTranslateBtn?.addEventListener("click", () => {
+            we({
+                engine: "smart"
+            })
+        }), document.getElementById("editorReconstructProgressCancel")?.addEventListener("click", () => {
+            p?.transubAdvancedCancelContextReconstruct?.(), p?.transubSakuraCancelTranslate?.(), p?.transubEngineCancel?.();
+            const s = document.getElementById("editorReconstructProgressDetail"),
+                a = document.getElementById("editorReconstructProgressCancel");
+            s && (s.textContent = "\u6B63\u5728\u53D6\u6D88\u2026"), a && (a.disabled = !0);
+            const o = t.inferenceKind || t.translateEngine;
+            d(o === "llm" || o === "sakura" ? "\u6B63\u5728\u53D6\u6D88\u63A8\u7406\u7FFB\u8BD1\u2026" : o === "smart" ? "\u6B63\u5728\u53D6\u6D88\u667A\u80FD\u7FFB\u8BD1\u2026" : o === "opus" || o === "engine" ? "\u6B63\u5728\u53D6\u6D88\u673A\u5668\u7FFB\u8BD1\u2026" : o === "semantic" ? "\u6B63\u5728\u53D6\u6D88\u8BED\u4E49\u5BA1\u9605\u2026" : o === "film" ? "\u6B63\u5728\u53D6\u6D88\u5F71\u7247\u7406\u89E3\u91CD\u6784\u2026" : o === "reconstruct" ? "\u6B63\u5728\u53D6\u6D88\u8BED\u5883\u91CD\u6784\u2026" : "\u6B63\u5728\u53D6\u6D88\u63A8\u7406\u4EFB\u52A1\u2026", "warn")
+        }), e.textPresetsBtn?.addEventListener("click", () => {
+            wn()
+        }), St.bindWorkflowEvents(), e.breakWordsBtn?.addEventListener("click", Gt), e.splitOpenBreakWordsBtn?.addEventListener("click", Gt), e.smartSplitOpenBreakWordsBtn?.addEventListener("click", Gt), e.breakWordsClose?.addEventListener("click", Cr), e.breakWordsModal?.querySelectorAll("[data-break-words-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Cr()
+            })
+        }), e.breakWordsAddBtn?.addEventListener("click", di), e.breakWordsResetBtn?.addEventListener("click", Lo), e.breakWordsClearBtn?.addEventListener("click", Do), e.breakWordsInput?.addEventListener("keydown", s => {
+            s.key === "Enter" && (s.preventDefault(), di())
+        }), e.breakWordsChips?.addEventListener("click", s => {
+            const a = s.target.closest("[data-break-word-remove]");
+            a && Po(a.getAttribute("data-break-word-remove") || "")
+        }), e.findReplaceClose?.addEventListener("click", mt), e.findReplaceModal?.querySelectorAll("[data-find-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), mt()
+            })
+        }), e.glossaryCancel?.addEventListener("click", Ir), e.glossaryModal?.querySelectorAll("[data-glossary-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Ir()
+            })
+        }), e.glossaryEntryList?.addEventListener("click", s => {
+            const a = s.target.closest("[data-glossary-id]");
+            a && ci(a.getAttribute("data-glossary-id"))
+        }), e.glossaryIssueList?.addEventListener("click", s => {
+            const a = s.target.closest("[data-glossary-entry-id]");
+            if (!a) return;
+            const o = a.getAttribute("data-glossary-entry-id");
+            o && ci(o);
+            const l = Number(a.getAttribute("data-glossary-issue-idx"));
+            Number.isFinite(l) && l >= 0 && X(l)
+        }), e.glossaryAddBtn?.addEventListener("click", Io), e.glossarySaveEntryBtn?.addEventListener("click", () => {
+            Ao()
+        }), e.glossaryDeleteEntryBtn?.addEventListener("click", () => {
+            Fo()
+        }), e.glossaryImportBtn?.addEventListener("click", () => {
+            To()
+        }), e.glossaryExportBtn?.addEventListener("click", () => {
+            $o()
+        }), e.glossaryModal?.querySelectorAll('input[name="editorGlossaryScope"]').forEach(s => {
+            s.addEventListener("change", () => {
+                Co(ko())
+            })
+        }), e.glossaryScanBtn?.addEventListener("click", () => {
+            Fe(), d(t.glossaryIssues.length ? `\u53D1\u73B0 ${t.glossaryIssues.length} \u5904\u672F\u8BED\u4E0D\u4E00\u81F4` : "\u672A\u53D1\u73B0\u672F\u8BED\u4E0D\u4E00\u81F4", t.glossaryIssues.length ? "warn" : "ok")
+        }), e.glossaryConfirm?.addEventListener("click", () => {
+            ui()
+        }), e.textPresetsClose?.addEventListener("click", fi), e.textPresetsModal?.querySelectorAll("[data-text-presets-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), fi()
+            })
+        }), e.textPresetsAddBtn?.addEventListener("click", pt), e.textPresetSaveBtn?.addEventListener("click", () => {
+            No()
+        }), e.textPresetDeleteBtn?.addEventListener("click", () => {
+            qo()
+        }), e.textPresetsImportBtn?.addEventListener("click", () => {
+            _o()
+        }), e.textPresetsExportBtn?.addEventListener("click", () => {
+            Oo()
+        }), e.textPresetsSeedBtn?.addEventListener("click", () => {
+            Wo()
+        }), e.textPresetsSearch?.addEventListener("input", () => {
+            t.textPresetsQuery = e.textPresetsSearch.value || "", kn()
+        }), e.textPresetsList?.addEventListener("click", s => {
+            const a = s.target.closest("[data-text-preset-id]");
+            if (!a) return;
+            const o = _.findGroup(t.textPresetsDoc, a.getAttribute("data-text-preset-id"));
+            mi(o)
+        }), e.textPresetAddItemBtn?.addEventListener("click", () => {
+            const s = Tr(),
+                a = s[s.length - 1],
+                o = a ? Number(a.endSec) + .1 : 0;
+            s.push({
+                id: _.makeItemId(),
+                label: "",
+                text: "",
+                startSec: Math.round(o * 10) / 10,
+                endSec: Math.round((o + .5) * 10) / 10
+            }), Bn(s)
+        }), e.textPresetItemsHost?.addEventListener("click", s => {
+            const a = s.target.closest("[data-tp-remove]");
+            if (!a) return;
+            a.closest(".text-preset-item-row")?.remove(), e.textPresetItemsHost.querySelector(".text-preset-item-row") || Bn(Dr())
+        }), e.textPresetInsertNewBtn?.addEventListener("click", () => {
+            const s = _.normalizeGroup({
+                id: t.textPresetEditingId || void 0,
+                name: e.textPresetName?.value || "\u672A\u547D\u540D\u7EC4",
+                anchor: e.textPresetAnchor?.value || "playhead",
+                items: Tr()
+            });
+            if (!s.items.length) {
+                d("\u8BF7\u5148\u586B\u5199\u7EC4\u5185\u6761\u76EE\uFF08\u6807\u7B7E+\u6587\u672C\uFF09", "warn");
+                return
+            }
+            Ar(s)
+        }), e.textPresetQuickSelect?.addEventListener("change", () => {
+            const s = e.textPresetQuickSelect.value;
+            if (e.textPresetQuickSelect.value = "", !!s) {
+                if (s === "__manage__") {
+                    wn();
+                    return
+                }
+                Ho(s)
+            }
+        }), e.findInput?.addEventListener("input", () => {
+            _s({
+                navigate: !1
+            })
+        }), e.findCase?.addEventListener("change", () => {
+            _s({
+                navigate: !1
+            })
+        }), e.findNextBtn?.addEventListener("click", () => {
+            js()
+        }), e.findPrevBtn?.addEventListener("click", () => {
+            Gs()
+        }), e.replaceOneBtn?.addEventListener("click", () => {
+            Ks()
+        }), e.replaceAllBtn?.addEventListener("click", () => {
+            mo()
+        }), e.batchDurBtn?.addEventListener("click", pr), e.batchDurConfirm?.addEventListener("click", vo), e.batchDurCancel?.addEventListener("click", _e), e.batchDurModal?.querySelectorAll("[data-batch-dur-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), _e()
+            })
+        }), document.querySelectorAll('input[name="editorBatchDurCond"]').forEach(s => {
+            s.addEventListener("change", ae)
+        }), document.querySelectorAll('input[name="editorBatchDurMode"]').forEach(s => {
+            s.addEventListener("change", ae)
+        }), [e.batchDurTarget, e.batchDurSilenceDb, e.batchDurSilenceDur, e.batchDurSnapPadMs, e.batchDurShorter, e.batchDurLonger, e.batchDurMin, e.batchDurMax, e.batchDurCpsAbove, e.batchDurCpsBelow, e.batchDurText, e.batchDurAvoidOverlap].forEach(s => {
+            s?.addEventListener("input", ae), s?.addEventListener("change", ae)
+        }), e.smartAdjustBtn?.addEventListener("click", bi), e.removeNoiseBtn?.addEventListener("click", Mi), e.chineseConvertBtn?.addEventListener("click", ki), e.chineseConvertConfirm?.addEventListener("click", zo), e.chineseConvertCancel?.addEventListener("click", Tn), e.chineseConvertModal?.querySelectorAll("[data-chinese-dismiss]").forEach(s => {
+            s.addEventListener("click", Tn)
+        }), e.chineseConvertModal?.querySelectorAll('input[type="radio"]').forEach(s => {
+            s.addEventListener("change", Dn)
+        }), e.chineseProtectGlossary?.addEventListener("change", Dn), e.compressRepBtn?.addEventListener("click", Ci), e.compressRepConfirm?.addEventListener("click", Qo), e.compressRepCancel?.addEventListener("click", $n), e.compressRepModal?.querySelectorAll("[data-compress-rep-dismiss]").forEach(s => {
+            s.addEventListener("click", $n)
+        }), e.compressRepModal?.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach(s => {
+            s.addEventListener("change", Rr)
+        }), e.qcBtn?.addEventListener("click", Fr), e.retranscribeDurBtn?.addEventListener("click", ur), e.smartSplitBtn?.addEventListener("click", hr), e.silenceSplitBtn?.addEventListener("click", () => vr()), e.smartSplitCueBtn?.addEventListener("click", () => {
+            const s = Ke();
+            lt("smart", {
+                smartMaxChars: s.smartMaxChars,
+                smartLineChars: s.smartLineChars,
+                useCps: s.useCps,
+                fixOverlap: s.fixOverlap
+            })
+        }), e.silenceSplitCueBtn?.addEventListener("click", () => ir()), e.compressRepCueBtn?.addEventListener("click", () => Zo()), e.splitLinesBtn?.addEventListener("click", () => lt("lines")), e.splitSpacesBtn?.addEventListener("click", () => lt("spaces")), e.charDurBtn?.addEventListener("click", () => Ds()), e.smartDurBtn?.addEventListener("click", () => Fs()), e.audioSnapBtn?.addEventListener("click", () => {
+            As()
+        }), e.silenceSplitConfirm?.addEventListener("click", si), e.silenceProgressCancel?.addEventListener("click", () => {
+            if (t.workflowBusy) {
+                St.cancelWorkflowRun(), sr();
+                return
+            }
+            if (e.silenceProgress && !e.silenceProgress.classList.contains("hidden") && e.silenceProgressCancel?.textContent === "\u5173\u95ED") {
+                Ie(), e.silenceProgressCancel && (e.silenceProgressCancel.textContent = "\u53D6\u6D88");
+                return
+            }
+            sr()
+        }), e.silenceSplitCancel?.addEventListener("click", Wt), e.silenceSplitModal?.querySelectorAll("[data-silence-split-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Wt()
+            })
+        }), document.querySelectorAll('input[name="editorSilenceSplitCond"]').forEach(s => {
+            s.addEventListener("change", Je)
+        }), [e.silenceSplitDb, e.silenceSplitDur, e.silenceSplitDurLong, e.silenceSplitCpsAbove, e.silenceSplitCharsLong, e.silenceSplitFixOverlap].forEach(s => {
+            s?.addEventListener("input", Je), s?.addEventListener("change", Je)
+        }), e.smartSplitConfirm?.addEventListener("click", xo), e.smartSplitCancel?.addEventListener("click", xn), e.smartSplitModal?.querySelectorAll("[data-smart-split-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), xn()
+            })
+        }), document.querySelectorAll('input[name="editorSmartSplitCond"]').forEach(s => {
+            s.addEventListener("change", Ae)
+        }), [e.smartSplitMaxChars, e.smartSplitLineChars, e.smartSplitCpsAbove, e.smartSplitLineLen, e.smartSplitDurLong, e.smartSplitCharsLong, e.smartSplitUseCps, e.smartSplitFixOverlap].forEach(s => {
+            s?.addEventListener("input", Ae), s?.addEventListener("change", Ae)
+        }), e.smartAdjustConfirm?.addEventListener("click", Ko), e.smartAdjustCancel?.addEventListener("click", In), e.smartAdjustModal?.querySelectorAll("[data-smart-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), In()
+            })
+        }), e.removeNoiseConfirm?.addEventListener("click", Xo), e.removeNoiseCancel?.addEventListener("click", Ln), e.removeNoiseModal?.querySelectorAll("[data-remove-noise-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Ln()
+            })
+        }), [e.noiseRemoveEmpty, e.noiseRemoveFragments, e.noiseRemoveSoundEffects, e.noiseRemoveSymbolOnly, e.noiseRemoveDuplicates, e.noiseRemoveHallucinations].forEach(s => {
+            s?.addEventListener("change", Pn)
+        }), e.qcConfirm?.addEventListener("click", () => Si()), e.qcFixFiltered?.addEventListener("click", () => Si({
+            filtered: !0
+        })), e.qcCancel?.addEventListener("click", En), e.qcModal?.querySelectorAll("[data-qc-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), En()
+            })
+        }), e.qcSummaryBar?.addEventListener("click", s => {
+            const a = s.target.closest?.("[data-qc-type]");
+            if (!a || !e.qcSummaryBar.contains(a)) return;
+            const o = a.getAttribute("data-qc-type");
+            Go(o || null)
+        }), e.qcIssueList?.addEventListener("click", s => {
+            const a = s.target.closest?.("[data-qc-idx]");
+            if (!a) return;
+            const o = Number(a.getAttribute("data-qc-idx"));
+            !Number.isFinite(o) || o < 0 || X(o, {
+                scroll: !0,
+                seek: !0
+            })
+        }), [e.qcFixOverlap, e.qcFixCpsSplit, e.qcFixCpsExtend, e.qcEnforceMin, e.qcEnforceMax, e.qcCompressRep, e.qcMaxCps, e.qcMinSec, e.qcMaxSec, e.qcGapMs].forEach(s => {
+            s?.addEventListener("input", gt), s?.addEventListener("change", gt)
+        }), e.retranscribeDurConfirm?.addEventListener("click", () => {
+            ao()
+        }), e.retranscribeDurAll?.addEventListener("click", () => {
+            lo()
+        }), e.retranscribeDurCancel?.addEventListener("click", Ft), e.retranscribeDurModal?.querySelectorAll("[data-retranscribe-dur-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Ft()
+            })
+        }), document.querySelectorAll('input[name="editorRetranscribeDurStart"]').forEach(s => {
+            s.addEventListener("change", Oe)
+        }), document.querySelectorAll('input[name="editorRetranscribeWriteAs"]').forEach(s => {
+            s.addEventListener("change", Oe)
+        }), [e.retranscribeDurSec, e.retranscribeDurPadMs].forEach(s => {
+            s?.addEventListener("input", Oe), s?.addEventListener("change", Oe)
+        }), document.querySelectorAll("[data-retranscribe-dur-preset]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault();
+                const o = Number(s.getAttribute("data-retranscribe-dur-preset"));
+                !Number.isFinite(o) || !e.retranscribeDurSec || (e.retranscribeDurSec.value = String(o), Oe())
+            })
+        }), [e.smartFixOverlap, e.smartFixCps, e.smartEnforceMin, e.smartEnforceMax, e.smartMaxCps, e.smartMinSec, e.smartMaxSec, e.smartGapMs].forEach(s => {
+            s?.addEventListener("input", Ht), s?.addEventListener("change", Ht)
+        }), e.restoreBtn?.addEventListener("click", Zr), e.findInput?.addEventListener("keydown", s => {
+            s.key === "Enter" && !s.shiftKey ? (s.preventDefault(), js()) : s.key === "Enter" && s.shiftKey ? (s.preventDefault(), Gs()) : s.key === "Escape" && (s.preventDefault(), mt())
+        }), e.replaceInput?.addEventListener("keydown", s => {
+            s.key === "Enter" ? (s.preventDefault(), Ks()) : s.key === "Escape" && (s.preventDefault(), mt())
+        }), e.prevCueBtn?.addEventListener("click", () => X(t.selectedIndex - 1, {
+            scroll: !0
+        })), e.nextCueBtn?.addEventListener("click", () => X(t.selectedIndex + 1, {
+            scroll: !0
+        })), e.deleteCueBtn?.addEventListener("click", pn), e.splitCueBtn?.addEventListener("click", Os), e.splitConfirm?.addEventListener("click", uo), e.splitCancel?.addEventListener("click", Rt), e.splitModal?.querySelectorAll("[data-split-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Rt()
+            })
+        }), document.querySelectorAll('input[name="editorSplitMode"]').forEach(s => {
+            s.addEventListener("change", $e)
+        }), [e.splitCharCount, e.splitCount, e.splitSmartMaxChars, e.splitSmartLineChars, e.splitSilenceDb, e.splitSilenceDur, e.splitUseCps, e.splitFixOverlap].forEach(s => {
+            s?.addEventListener("input", $e), s?.addEventListener("change", $e)
+        }), e.splitRemember?.addEventListener("change", Vr), e.detailText?.addEventListener("click", () => {
+            e.splitModal?.classList.contains("hidden") || $e()
+        }), e.detailText?.addEventListener("keyup", () => {
+            e.splitModal?.classList.contains("hidden") || $e()
+        }), e.detailText?.addEventListener("keydown", s => {
+            if (!(s.ctrlKey || s.metaKey) || s.altKey || s.key !== "ArrowUp" && s.key !== "ArrowDown") return;
+            const a = s.key === "ArrowUp" ? -1 : 1,
+                o = t.selectedIndex + a;
+            o < 0 || o >= t.cues.length || (s.preventDefault(), s.stopPropagation(), X(o, {
+                scroll: !0
+            }), requestAnimationFrame(() => {
+                if (!e.detailText) return;
+                e.detailText.focus();
+                const l = e.detailText.value.length;
+                e.detailText.setSelectionRange(l, l)
+            }))
+        }), e.startNudgeBack?.addEventListener("click", () => xs(-100)), e.startNudgeFwd?.addEventListener("click", () => xs(100)), e.durNudgeDown?.addEventListener("click", () => bs(-.1)), e.durNudgeUp?.addEventListener("click", () => bs(.1)), e.setStartToPlayhead?.addEventListener("click", Yn), e.setEndToPlayhead?.addEventListener("click", Jn), e.undoBtn?.addEventListener("click", Ur), e.redoBtn?.addEventListener("click", Qr), e.shortcutsBtn?.addEventListener("click", ji), e.shortcutsClose?.addEventListener("click", Or), e.shortcutsModal?.querySelectorAll("[data-shortcuts-dismiss]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), Or()
+            })
+        }), e.detailStart?.addEventListener("change", () => {
+            Ze(), (t.selectedIndex < 0 || !Ut(t.selectedIndex)) && me()
+        }), e.detailDuration?.addEventListener("change", () => {
+            Ze(), (t.selectedIndex < 0 || !Ut(t.selectedIndex)) && me()
+        }), e.detailDuration?.addEventListener("input", () => {
+            if (e.detailEnd && t.selectedIndex >= 0) {
+                const s = t.cues[t.selectedIndex],
+                    a = Number(e.detailDuration.value);
+                Number.isFinite(a) && (e.detailEnd.value = Z(s.startMs + Math.round(a * 1e3), t.format))
+            }
+            wt(), at()
+        }), e.detailText?.addEventListener("input", Ze), e.targetCps?.addEventListener("input", () => {
+            Yi(), wt(), e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.smartSplitModal && !e.smartSplitModal.classList.contains("hidden") && Ae()
+        }), e.targetCps?.addEventListener("change", () => {
+            Yi(), wt(), e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.smartSplitModal && !e.smartSplitModal.classList.contains("hidden") && Ae()
+        }), e.sidecarSelect?.addEventListener("change", async s => {
+            !t.dirty || await ie("\u5207\u6362\u5B57\u5E55\u540E\u5F53\u524D\u4FEE\u6539\u5C06\u4E22\u5931\uFF0C\u7EE7\u7EED\uFF1F") ? await mn(s.target.value, t.videoPath) : s.target.value = t.path
+        }), e.dualDisplaySelect?.addEventListener("change", () => {
+            ha(e.dualDisplaySelect.value)
+        }), e.dualLineOrderSelect?.addEventListener("change", () => {
+            ya(e.dualLineOrderSelect.value)
+        }), t.dualDisplayMode = zn(), t.dualLineOrder = nn(), e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode), e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder), e.cueBody?.addEventListener("click", s => {
+            const a = s.target.closest("tr[data-cue-idx]");
+            if (!a) return;
+            const o = Number(a.dataset.cueIdx);
+            X(o, {
+                scroll: !0,
+                additive: s.ctrlKey || s.metaKey,
+                range: s.shiftKey
+            }), er()
+        }), e.cueBody?.addEventListener("dblclick", s => {
+            const a = s.target.closest("tr[data-cue-idx]");
+            if (!a) return;
+            const o = Number(a.dataset.cueIdx);
+            X(o, {
+                seek: !0,
+                scroll: !0
+            }), er()
+        }), e.cueBody?.addEventListener("contextmenu", s => {
+            const a = s.target.closest("tr[data-cue-idx]");
+            a && (s.preventDefault(), or(Number(a.dataset.cueIdx), s.clientX, s.clientY, {
+                scroll: !1
+            }))
+        }), e.cueContextMenu?.querySelectorAll("[data-ctx-action]").forEach(s => {
+            s.addEventListener("click", a => {
+                a.preventDefault(), !s.disabled && Ga(s.dataset.ctxAction)
+            })
+        }), document.addEventListener("click", s => {
+            !e.cueContextMenu?.classList.contains("hidden") && !e.cueContextMenu?.contains(s.target) && ct()
+        }), document.addEventListener("keydown", s => {
+            s.key === "Escape" && e.cueContextMenu && !e.cueContextMenu.classList.contains("hidden") && ct()
+        }), e.cueBody?.closest(".editor-list-wrap")?.addEventListener("scroll", ct), window.addEventListener("resize", ct), e.listWrap?.addEventListener("mousedown", s => {
+            s.button === 0 && (s.target.closest("tr[data-cue-idx]") || er())
+        }), e.videoWrap?.addEventListener("mousedown", s => {
+            s.button === 0 && (s.target.closest('button, select, input, textarea, a, [contenteditable="true"]') || Ms())
+        }), e.timelinePanel?.addEventListener("mousedown", s => {
+            s.button === 0 && (s.target.closest('button, select, input, textarea, a, [contenteditable="true"]') || Ms())
+        }), document.addEventListener("keydown", s => {
+            if (s.key === "Escape") {
+                if (t.silenceSplitBusy || t.retranscribeBusy) {
+                    s.preventDefault(), sr();
+                    return
+                }
+                if (e.shortcutsModal && !e.shortcutsModal.classList.contains("hidden")) {
+                    s.preventDefault(), Or();
+                    return
+                }
+                if (e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden")) {
+                    s.preventDefault(), Wt();
+                    return
+                }
+                if (e.smartSplitModal && !e.smartSplitModal.classList.contains("hidden")) {
+                    s.preventDefault(), xn();
+                    return
+                }
+                if (e.smartAdjustModal && !e.smartAdjustModal.classList.contains("hidden")) {
+                    s.preventDefault(), In();
+                    return
+                }
+                if (e.removeNoiseModal && !e.removeNoiseModal.classList.contains("hidden")) {
+                    s.preventDefault(), Ln();
+                    return
+                }
+                if (e.chineseConvertModal && !e.chineseConvertModal.classList.contains("hidden")) {
+                    s.preventDefault(), Tn();
+                    return
+                }
+                if (e.compressRepModal && !e.compressRepModal.classList.contains("hidden")) {
+                    s.preventDefault(), $n();
+                    return
+                }
+                if (e.qcModal && !e.qcModal.classList.contains("hidden")) {
+                    s.preventDefault(), En();
+                    return
+                }
+                if (e.retranscribeDurModal && !e.retranscribeDurModal.classList.contains("hidden")) {
+                    s.preventDefault(), Ft();
+                    return
+                }
+                if (e.batchDurModal && !e.batchDurModal.classList.contains("hidden")) {
+                    s.preventDefault(), _e();
+                    return
+                }
+                if (e.findReplaceModal && !e.findReplaceModal.classList.contains("hidden")) {
+                    s.preventDefault(), mt();
+                    return
+                }
+                if (e.glossaryModal && !e.glossaryModal.classList.contains("hidden")) {
+                    s.preventDefault(), Ir();
+                    return
+                }
+                if (e.breakWordsModal && !e.breakWordsModal.classList.contains("hidden")) {
+                    s.preventDefault(), Cr();
+                    return
+                }
+                if (e.splitModal && !e.splitModal.classList.contains("hidden")) {
+                    s.preventDefault(), Rt();
+                    return
+                }
+            }
+            if ((s.ctrlKey || s.metaKey) && s.key === "z" && !s.shiftKey) {
+                s.preventDefault(), Ur();
+                return
+            }
+            if ((s.ctrlKey || s.metaKey) && s.key === "y") {
+                s.preventDefault(), Qr();
+                return
+            }
+            if (s.key === "F11") {
+                s.preventDefault(), Yn();
+                return
+            }
+            if (s.key === "F12") {
+                s.preventDefault(), Jn();
+                return
+            }
+            if ((s.ctrlKey || s.metaKey) && (s.key === "f" || s.key === "F")) {
+                s.preventDefault(), qt(!1);
+                return
+            }
+            if ((s.ctrlKey || s.metaKey) && (s.key === "h" || s.key === "H")) {
+                s.preventDefault(), qt(!0);
+                return
+            }
+            if ((s.ctrlKey || s.metaKey) && (s.key === "s" || s.key === "S")) {
+                s.preventDefault(), Pt();
+                return
+            }
+            if (s.altKey && !s.ctrlKey && !s.metaKey && !Ct(s.target)) {
+                const o = {
+                    1: "polish",
+                    2: "timeline",
+                    3: "dual",
+                    4: "ai",
+                    5: "pro"
+                } [s.key];
+                if (o) {
+                    s.preventDefault(), Bt?.setWorkspaceMode?.(o);
+                    return
+                }
+            }
+            if (s.key === "Delete" && !s.ctrlKey && !s.metaKey && !s.altKey) {
+                if (s.target.matches("input, textarea") || [e.splitModal, e.findReplaceModal, e.glossaryModal, e.breakWordsModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.qcModal, e.retranscribeDurModal, e.shortcutsModal].some(o => o && !o.classList.contains("hidden")) || t.selectedIndex < 0 && !J().length) return;
+                s.preventDefault(), pn();
+                return
+            }
+            if ((s.ctrlKey || s.metaKey) && !s.altKey && String(s.key).toLowerCase() === "a") {
+                if (Ct(s.target)) return;
+                if (Xe() || s.target === document.body || s.target === document.documentElement) {
+                    s.preventDefault(), Ss();
+                    return
+                }
+            }
+            if ((s.ctrlKey || s.metaKey) && !s.altKey && String(s.key).toLowerCase() === "m") {
+                if (Ct(s.target)) return;
+                if (Xe()) {
+                    s.preventDefault(), Xn();
+                    return
+                }
+            }
+            if (s.key === " " || s.code === "Space") {
+                if (Ct(s.target)) return;
+                if (Xe() || un()) {
+                    s.preventDefault(), Bs();
+                    return
+                }
+            }
+            if (!s.ctrlKey && !s.metaKey && !s.altKey && !Ct(s.target)) {
+                if (String(s.key).toLowerCase() === "b" && (Xe() || un())) {
+                    s.preventDefault(), H?.toggleBookmarkAtPlayhead?.();
+                    return
+                }
+                if (s.key === "[" && (Xe() || un())) {
+                    s.preventDefault(), H?.setAbPoint?.("a");
+                    return
+                }
+                if (s.key === "]" && (Xe() || un())) {
+                    s.preventDefault(), H?.setAbPoint?.("b");
+                    return
+                }
+            }
+            if (Xe() && s.key === "Enter" && !s.ctrlKey && !s.metaKey && !s.altKey && !s.shiftKey) {
+                s.preventDefault(), Lt();
+                return
+            }
+            s.target === e.detailText && (s.ctrlKey || s.metaKey) && (s.key === "ArrowUp" || s.key === "ArrowDown") || s.target.matches("input, textarea") && !s.ctrlKey && !s.metaKey || (s.key === "ArrowUp" && t.selectedIndex > 0 ? (s.preventDefault(), X(t.selectedIndex - 1, {
+                scroll: !0
+            })) : s.key === "ArrowDown" && t.selectedIndex < t.cues.length - 1 && (s.preventDefault(), X(t.selectedIndex + 1, {
+                scroll: !0
+            })))
+        }), e.video?.addEventListener("play", Ha), e.video?.addEventListener("pause", Es), e.video?.addEventListener("ended", Es), e.video?.addEventListener("playing", () => {
+            e.video && !e.video.paused && (Ce(!0), ot()), requestAnimationFrame(() => {
+                const s = e.video;
+                if (!s || s.paused || s.videoWidth > 0 && s.videoHeight > 0) return;
+                const a = String(t.videoCodec || "").toLowerCase(),
+                    o = ["hevc", "h265", "av1", "vp9"].includes(a);
+                d(o ? "\u5185\u7F6E\u64AD\u653E\u5668\u65E0\u6CD5\u89E3\u7801\u8BE5\u89C6\u9891\u7F16\u7801\uFF08\u9ED1\u5C4F\u4EC5\u6709\u58F0\u97F3\uFF09\uFF0C\u53EF\u5C1D\u8BD5 H.264 \u7248\u672C\u6216\u5B89\u88C5 HEVC \u89C6\u9891\u6269\u5C55" : "\u89C6\u9891\u6B63\u5728\u64AD\u653E\u4F46\u65E0\u753B\u9762\uFF0C\u8BF7\u68C0\u67E5\u89C6\u9891\u6587\u4EF6", "err")
+            })
+        }), e.video?.addEventListener("seeked", () => {
+            Ce(!0), e.video && !e.video.paused && ot()
+        }), e.video?.addEventListener("ratechange", () => {
+            e.video && !e.video.paused && ot()
+        }), e.video?.addEventListener("loadedmetadata", () => {
+            Nn(), me(), Wr()
+        }), e.video?.addEventListener("timeupdate", () => {
+            if (!e.video || e.video.paused) return;
+            const s = performance.now();
+            s - (t.lastPlaybackSyncAt || 0) >= 50 && (t.lastPlaybackSyncAt = s, Ce(!1));
+            const a = Math.round((e.video.currentTime || 0) * 1e3);
+            H?.tickAbLoop?.(a), tt(a, {
+                follow: !0
+            })
+        }), p?.onSubtitleEditorMenuAction?.(Pl)
+    }
+
+    function Dl() {
+        Object.assign(e, {
+            formatBadge: document.getElementById("editorFormatBadge"),
+            autoFocusBtn: document.getElementById("editorAutoFocusBtn"),
+            waveformToggle: document.getElementById("editorWaveformToggle"),
+            cueCount: document.getElementById("editorCueCount"),
+            lowConfBadge: document.getElementById("editorLowConfBadge"),
+            keptTranscriptBadge: document.getElementById("editorKeptTranscriptBadge"),
+            keptDiffBtn: document.getElementById("editorKeptDiffBtn"),
+            keptAttachBtn: document.getElementById("editorKeptAttachBtn"),
+            abLoopBadge: document.getElementById("editorAbLoopBadge"),
+            bookmarkCountBadge: document.getElementById("editorBookmarkCountBadge"),
+            contextActionBar: document.getElementById("editorContextActionBar"),
+            genericModal: document.getElementById("editorGenericModal"),
+            genericModalTitle: document.getElementById("editorGenericModalTitle"),
+            genericModalBody: document.getElementById("editorGenericModalBody"),
+            bookmarkBtn: document.getElementById("editorBookmarkBtn"),
+            abSetABtn: document.getElementById("editorAbSetABtn"),
+            abSetBBtn: document.getElementById("editorAbSetBBtn"),
+            abClearBtn: document.getElementById("editorAbClearBtn"),
+            exportChecklistBtn: document.getElementById("editorExportChecklistBtn"),
+            bilingualReviewBtn: document.getElementById("editorBilingualReviewBtn"),
+            exportAssBtn: document.getElementById("editorExportAssBtn"),
+            suggestSpeakersBtn: document.getElementById("editorSuggestSpeakersBtn"),
+            tourOverlay: document.getElementById("editorTourOverlay"),
+            tourTitle: document.getElementById("editorTourTitle"),
+            tourBody: document.getElementById("editorTourBody"),
+            tourProgress: document.getElementById("editorTourProgress"),
+            tourSkipBtn: document.getElementById("editorTourSkipBtn"),
+            tourNextBtn: document.getElementById("editorTourNextBtn"),
+            tourReplayBtn: document.getElementById("editorTourReplayBtn"),
+            listToolbar: document.querySelector(".editor-list-toolbar"),
+            dirtyBadge: document.getElementById("editorDirtyBadge"),
+            saveStatus: document.getElementById("editorSaveStatus"),
+            saveBtn: document.getElementById("editorSaveBtn"),
+            exportDualBtn: document.getElementById("editorExportDualBtn"),
+            exportDualMenuBtn: document.getElementById("editorExportDualMenuBtn"),
+            addCueBtn: document.getElementById("editorAddCueBtn"),
+            insertCueBtn: document.getElementById("editorInsertCueBtn"),
+            detailInsertCueBtn: document.getElementById("editorDetailInsertCueBtn"),
+            retranscribeCueBtn: document.getElementById("editorRetranscribeCueBtn"),
+            retranscribeDurBtn: document.getElementById("editorRetranscribeDurBtn"),
+            playheadTime: document.getElementById("editorPlayheadTime"),
+            openFileBtn: document.getElementById("editorOpenFileBtn"),
+            undoBtn: document.getElementById("editorUndoBtn"),
+            redoBtn: document.getElementById("editorRedoBtn"),
+            toolsMenuBtn: document.getElementById("editorToolsMenuBtn"),
+            toolsMenu: document.getElementById("editorToolsMenu"),
+            modeTools: document.getElementById("editorModeTools"),
+            themeToggle: document.getElementById("editorThemeToggle"),
+            openGeneratorBtn: document.getElementById("editorOpenGeneratorBtn"),
+            settingsBtn: document.getElementById("editorSettingsBtn"),
+            splitter: document.getElementById("editorSplitter"),
+            cuesPanel: document.getElementById("editorCuesPanel"),
+            listPanel: document.getElementById("editorListPanel"),
+            detailPanel: document.getElementById("editorDetailPanel"),
+            mediaPanel: document.getElementById("editorVideoWrap"),
+            timelinePanel: document.getElementById("editorTimelinePanel"),
+            layoutMenuBtn: document.getElementById("editorViewMenuBtn"),
+            layoutMenu: document.getElementById("editorViewMenu"),
+            viewMenuBtn: document.getElementById("editorViewMenuBtn"),
+            viewMenu: document.getElementById("editorViewMenu"),
+            reviewFilterBtn: document.getElementById("editorReviewFilterBtn"),
+            reviewFilterMenu: document.getElementById("editorReviewFilterMenu"),
+            main: document.getElementById("editorMain") || document.querySelector(".editor-main"),
+            filterCount: document.getElementById("editorFilterCount"),
+            nextIssueBtn: document.getElementById("editorNextIssueBtn"),
+            speakerFilter: document.getElementById("editorSpeakerFilter"),
+            detailTools: document.getElementById("editorDetailTools"),
+            playPauseBtn: document.getElementById("editorPlayPauseBtn"),
+            seekBackBtn: document.getElementById("editorSeekBackBtn"),
+            seekFwdBtn: document.getElementById("editorSeekFwdBtn"),
+            rateSelect: document.getElementById("editorRateSelect"),
+            dualDisplaySelect: document.getElementById("editorDualDisplaySelect"),
+            dualLineOrderSelect: document.getElementById("editorDualLineOrderSelect"),
+            volumeSlider: document.getElementById("editorVolumeSlider"),
+            videoEmpty: document.getElementById("editorVideoEmpty"),
+            timelineStack: document.getElementById("editorTimelineStack"),
+            timeline: document.getElementById("editorTimeline"),
+            timelineTrack: document.getElementById("editorTimelineTrack"),
+            waveformRow: document.getElementById("editorWaveformRow"),
+            waveformTrack: document.getElementById("editorWaveformTrack"),
+            timelineWaveform: document.getElementById("editorTimelineWaveform"),
+            waveformPlayhead: document.getElementById("editorWaveformPlayhead"),
+            waveformLoading: document.getElementById("editorWaveformLoading"),
+            waveformLoadingText: document.getElementById("editorWaveformLoadingText"),
+            timelineCues: document.getElementById("editorTimelineCues"),
+            timelineMarkers: document.getElementById("editorTimelineMarkers"),
+            timelinePlayhead: document.getElementById("editorTimelinePlayhead"),
+            timelineHScrollWrap: document.getElementById("editorTimelineHScrollWrap"),
+            timelineHScroll: document.getElementById("editorTimelineHScroll"),
+            timelineZoomIn: document.getElementById("editorTimelineZoomIn"),
+            timelineZoomOut: document.getElementById("editorTimelineZoomOut"),
+            timelineZoomFit: document.getElementById("editorTimelineZoomFit"),
+            shortcutsBtn: document.getElementById("editorShortcutsBtn"),
+            shortcutsModal: document.getElementById("editorShortcutsModal"),
+            shortcutsClose: document.getElementById("editorShortcutsClose"),
+            shiftBackBtn: document.getElementById("editorShiftBackBtn"),
+            shiftFwdBtn: document.getElementById("editorShiftFwdBtn"),
+            linkVideoBtn: document.getElementById("editorLinkVideoBtn"),
+            findReplaceBtn: document.getElementById("editorFindReplaceBtn"),
+            findReplaceModal: document.getElementById("editorFindReplaceModal"),
+            findReplaceClose: document.getElementById("editorFindReplaceClose"),
+            glossaryBtn: document.getElementById("editorGlossaryBtn"),
+            contextReconstructBtn: document.getElementById("editorContextReconstructBtn"),
+            filmContextReconstructBtn: document.getElementById("editorFilmContextReconstructBtn"),
+            bilingualReviewBtn: document.getElementById("editorBilingualReviewBtn"),
+            exportAssBtn: document.getElementById("editorExportAssBtn"),
+            proAssBtn: document.getElementById("editorProAssBtn"),
+            semanticReviewBtn: document.getElementById("editorSemanticReviewBtn"),
+            suggestSpeakersBtn: document.getElementById("editorSuggestSpeakersBtn"),
+            sakuraTranslateBtn: document.getElementById("editorSakuraTranslateBtn"),
+            smartTranslateBtn: document.getElementById("editorSmartTranslateBtn"),
+            filmHintModal: document.getElementById("editorFilmHintModal"),
+            filmHintTitleInput: document.getElementById("editorFilmHintTitleInput"),
+            filmHintSynopsisInput: document.getElementById("editorFilmHintSynopsisInput"),
+            filmHintTermsInput: document.getElementById("editorFilmHintTermsInput"),
+            filmHintGlossaryHint: document.getElementById("editorFilmHintGlossaryHint"),
+            filmHintScope: document.getElementById("editorFilmHintScope"),
+            filmHintConfirm: document.getElementById("editorFilmHintConfirm"),
+            filmHintCancel: document.getElementById("editorFilmHintCancel"),
+            filmBriefModal: document.getElementById("editorFilmBriefModal"),
+            filmBriefTitleGuess: document.getElementById("editorFilmBriefTitleGuess"),
+            filmBriefGenre: document.getElementById("editorFilmBriefGenre"),
+            filmBriefSynopsis: document.getElementById("editorFilmBriefSynopsis"),
+            filmBriefTone: document.getElementById("editorFilmBriefTone"),
+            filmBriefStyleNotes: document.getElementById("editorFilmBriefStyleNotes"),
+            filmBriefConfirm: document.getElementById("editorFilmBriefConfirm"),
+            filmBriefCancel: document.getElementById("editorFilmBriefCancel"),
+            reconstructReviewModal: document.getElementById("editorReconstructReviewModal"),
+            reconstructReviewList: document.getElementById("editorReconstructReviewList"),
+            reconstructReviewMeta: document.getElementById("editorReconstructReviewMeta"),
+            reconstructReviewLead: document.getElementById("editorReconstructReviewLead"),
+            reconstructReviewTitle: document.getElementById("editorReconstructReviewTitle"),
+            reconstructReviewConfirm: document.getElementById("editorReconstructReviewConfirm"),
+            reconstructReviewCancel: document.getElementById("editorReconstructReviewCancel"),
+            reconstructReviewSelectAll: document.getElementById("editorReconstructReviewSelectAll"),
+            reconstructReviewSelectNone: document.getElementById("editorReconstructReviewSelectNone"),
+            reconstructReviewOnlyChanged: document.getElementById("editorReconstructReviewOnlyChanged"),
+            reconstructReviewRetryFailed: document.getElementById("editorReconstructReviewRetryFailed"),
+            reconstructReviewBeforeLabel: document.getElementById("editorReconstructReviewBeforeLabel"),
+            reconstructReviewAfterLabel: document.getElementById("editorReconstructReviewAfterLabel"),
+            glossaryBadge: document.getElementById("editorGlossaryBadge"),
+            glossaryModal: document.getElementById("editorGlossaryModal"),
+            glossaryScopeGlobal: document.getElementById("editorGlossaryScopeGlobal"),
+            glossaryScopeProject: document.getElementById("editorGlossaryScopeProject"),
+            glossaryScopeProjectLabel: document.getElementById("editorGlossaryScopeProjectLabel"),
+            glossaryEntryList: document.getElementById("editorGlossaryEntryList"),
+            glossaryIssueList: document.getElementById("editorGlossaryIssueList"),
+            textPresetsBtn: document.getElementById("editorTextPresetsBtn"),
+            textPresetsBadge: document.getElementById("editorTextPresetsBadge"),
+            textPresetsModal: document.getElementById("editorTextPresetsModal"),
+            workflowBtn: document.getElementById("editorWorkflowBtn"),
+            workflowModal: document.getElementById("editorWorkflowModal"),
+            workflowSelect: document.getElementById("editorWorkflowSelect"),
+            workflowNote: document.getElementById("editorWorkflowNote"),
+            workflowStepList: document.getElementById("editorWorkflowStepList"),
+            workflowStatus: document.getElementById("editorWorkflowStatus"),
+            workflowRunBtn: document.getElementById("editorWorkflowRunBtn"),
+            workflowCancelRunBtn: document.getElementById("editorWorkflowCancelRunBtn"),
+            workflowClose: document.getElementById("editorWorkflowClose"),
+            workflowDupBtn: document.getElementById("editorWorkflowDupBtn"),
+            workflowNewBtn: document.getElementById("editorWorkflowNewBtn"),
+            workflowDeleteBtn: document.getElementById("editorWorkflowDeleteBtn"),
+            workflowImportBtn: document.getElementById("editorWorkflowImportBtn"),
+            workflowExportBtn: document.getElementById("editorWorkflowExportBtn"),
+            workflowAddRow: document.getElementById("editorWorkflowAddRow"),
+            workflowAddStepSelect: document.getElementById("editorWorkflowAddStepSelect"),
+            workflowAddStepBtn: document.getElementById("editorWorkflowAddStepBtn"),
+            workflowPauseBanner: document.getElementById("editorWorkflowPauseBanner"),
+            workflowPauseMessage: document.getElementById("editorWorkflowPauseMessage"),
+            workflowContinueBtn: document.getElementById("editorWorkflowContinueBtn"),
+            workflowSkipStepBtn: document.getElementById("editorWorkflowSkipStepBtn"),
+            workflowAbortBtn: document.getElementById("editorWorkflowAbortBtn"),
+            workflowPauseOverlay: document.getElementById("editorWorkflowPauseOverlay"),
+            workflowPauseOverlayMessage: document.getElementById("editorWorkflowPauseOverlayMessage"),
+            workflowOverlayContinueBtn: document.getElementById("editorWorkflowOverlayContinueBtn"),
+            workflowOverlaySkipBtn: document.getElementById("editorWorkflowOverlaySkipBtn"),
+            workflowOverlayAbortBtn: document.getElementById("editorWorkflowOverlayAbortBtn"),
+            textPresetsList: document.getElementById("editorTextPresetsList"),
+            textPresetsSearch: document.getElementById("editorTextPresetsSearch"),
+            textPresetsStatus: document.getElementById("editorTextPresetsStatus"),
+            textPresetsAddBtn: document.getElementById("editorTextPresetsAddBtn"),
+            textPresetsImportBtn: document.getElementById("editorTextPresetsImportBtn"),
+            textPresetsExportBtn: document.getElementById("editorTextPresetsExportBtn"),
+            textPresetsSeedBtn: document.getElementById("editorTextPresetsSeedBtn"),
+            textPresetsClose: document.getElementById("editorTextPresetsClose"),
+            textPresetName: document.getElementById("editorTextPresetName"),
+            textPresetAnchor: document.getElementById("editorTextPresetAnchor"),
+            textPresetItemsHost: document.getElementById("editorTextPresetItemsHost"),
+            textPresetAddItemBtn: document.getElementById("editorTextPresetAddItemBtn"),
+            textPresetSaveBtn: document.getElementById("editorTextPresetSaveBtn"),
+            textPresetDeleteBtn: document.getElementById("editorTextPresetDeleteBtn"),
+            textPresetInsertNewBtn: document.getElementById("editorTextPresetInsertNewBtn"),
+            textPresetQuickSelect: document.getElementById("editorTextPresetQuickSelect"),
+            glossaryCanonical: document.getElementById("editorGlossaryCanonical"),
+            glossaryAliases: document.getElementById("editorGlossaryAliases"),
+            glossaryCaseSensitive: document.getElementById("editorGlossaryCaseSensitive"),
+            glossaryEnabled: document.getElementById("editorGlossaryEnabled"),
+            glossaryAddBtn: document.getElementById("editorGlossaryAddBtn"),
+            glossarySaveEntryBtn: document.getElementById("editorGlossarySaveEntryBtn"),
+            glossaryDeleteEntryBtn: document.getElementById("editorGlossaryDeleteEntryBtn"),
+            glossaryImportBtn: document.getElementById("editorGlossaryImportBtn"),
+            glossaryExportBtn: document.getElementById("editorGlossaryExportBtn"),
+            glossaryScanBtn: document.getElementById("editorGlossaryScanBtn"),
+            breakWordsBtn: document.getElementById("editorBreakWordsBtn"),
+            splitOpenBreakWordsBtn: document.getElementById("editorSplitOpenBreakWordsBtn"),
+            smartSplitOpenBreakWordsBtn: document.getElementById("editorSmartSplitOpenBreakWordsBtn"),
+            breakWordsModal: document.getElementById("editorBreakWordsModal"),
+            breakWordsChips: document.getElementById("editorBreakWordsChips"),
+            breakWordsInput: document.getElementById("editorBreakWordsInput"),
+            breakWordsAddBtn: document.getElementById("editorBreakWordsAddBtn"),
+            breakWordsResetBtn: document.getElementById("editorBreakWordsResetBtn"),
+            breakWordsClearBtn: document.getElementById("editorBreakWordsClearBtn"),
+            breakWordsClose: document.getElementById("editorBreakWordsClose"),
+            breakWordsStatus: document.getElementById("editorBreakWordsStatus"),
+            glossaryPreview: document.getElementById("editorGlossaryPreview"),
+            glossaryConfirm: document.getElementById("editorGlossaryConfirm"),
+            glossaryCancel: document.getElementById("editorGlossaryCancel"),
+            findInput: document.getElementById("editorFindInput"),
+            replaceInput: document.getElementById("editorReplaceInput"),
+            findCase: document.getElementById("editorFindCase"),
+            findStatus: document.getElementById("editorFindStatus"),
+            findPrevBtn: document.getElementById("editorFindPrevBtn"),
+            findNextBtn: document.getElementById("editorFindNextBtn"),
+            replaceOneBtn: document.getElementById("editorReplaceOneBtn"),
+            replaceAllBtn: document.getElementById("editorReplaceAllBtn"),
+            batchDurBtn: document.getElementById("editorBatchDurBtn"),
+            batchDurModal: document.getElementById("editorBatchDurModal"),
+            batchDurFixedWrap: document.getElementById("editorBatchDurFixedWrap"),
+            batchDurSilenceWrap: document.getElementById("editorBatchDurSilenceWrap"),
+            batchDurTarget: document.getElementById("editorBatchDurTarget"),
+            batchDurHint: document.getElementById("editorBatchDurHint"),
+            batchDurSilenceDb: document.getElementById("editorBatchDurSilenceDb"),
+            batchDurSilenceDur: document.getElementById("editorBatchDurSilenceDur"),
+            batchDurSnapPadWrap: document.getElementById("editorBatchDurSnapPadWrap"),
+            batchDurSnapPadMs: document.getElementById("editorBatchDurSnapPadMs"),
+            batchDurAvoidOverlapRow: document.getElementById("editorBatchDurAvoidOverlapRow"),
+            batchDurShorter: document.getElementById("editorBatchDurShorter"),
+            batchDurLonger: document.getElementById("editorBatchDurLonger"),
+            batchDurMin: document.getElementById("editorBatchDurMin"),
+            batchDurMax: document.getElementById("editorBatchDurMax"),
+            batchDurCpsAbove: document.getElementById("editorBatchDurCpsAbove"),
+            batchDurCpsBelow: document.getElementById("editorBatchDurCpsBelow"),
+            batchDurText: document.getElementById("editorBatchDurText"),
+            batchDurAvoidOverlap: document.getElementById("editorBatchDurAvoidOverlap"),
+            batchDurPreview: document.getElementById("editorBatchDurPreview"),
+            batchDurConfirm: document.getElementById("editorBatchDurConfirm"),
+            batchDurCancel: document.getElementById("editorBatchDurCancel"),
+            smartAdjustBtn: document.getElementById("editorSmartAdjustBtn"),
+            qcBtn: document.getElementById("editorQcBtn"),
+            qcBadge: document.getElementById("editorQcBadge"),
+            retranscribeDurBtn: document.getElementById("editorRetranscribeDurBtn"),
+            retranscribeDurModal: document.getElementById("editorRetranscribeDurModal"),
+            retranscribeDurSec: document.getElementById("editorRetranscribeDurSec"),
+            retranscribeDurPadMs: document.getElementById("editorRetranscribeDurPadMs"),
+            retranscribeDurSnapAfter: document.getElementById("editorRetranscribeDurSnapAfter"),
+            retranscribeDurPreview: document.getElementById("editorRetranscribeDurPreview"),
+            retranscribeDurConfirm: document.getElementById("editorRetranscribeDurConfirm"),
+            retranscribeDurAll: document.getElementById("editorRetranscribeDurAll"),
+            retranscribeDurCancel: document.getElementById("editorRetranscribeDurCancel"),
+            qcModal: document.getElementById("editorQcModal"),
+            qcSummaryBar: document.getElementById("editorQcSummaryBar"),
+            qcIssueList: document.getElementById("editorQcIssueList"),
+            qcFixOverlap: document.getElementById("editorQcFixOverlap"),
+            qcFixCpsSplit: document.getElementById("editorQcFixCpsSplit"),
+            qcFixCpsExtend: document.getElementById("editorQcFixCpsExtend"),
+            qcEnforceMin: document.getElementById("editorQcEnforceMin"),
+            qcEnforceMax: document.getElementById("editorQcEnforceMax"),
+            qcCompressRep: document.getElementById("editorQcCompressRep"),
+            qcMaxCps: document.getElementById("editorQcMaxCps"),
+            qcMinSec: document.getElementById("editorQcMinSec"),
+            qcMaxSec: document.getElementById("editorQcMaxSec"),
+            qcGapMs: document.getElementById("editorQcGapMs"),
+            qcPreview: document.getElementById("editorQcPreview"),
+            qcConfirm: document.getElementById("editorQcConfirm"),
+            qcFixFiltered: document.getElementById("editorQcFixFiltered"),
+            qcCancel: document.getElementById("editorQcCancel"),
+            smartSplitBtn: document.getElementById("editorSmartSplitBtn"),
+            silenceSplitBtn: document.getElementById("editorSilenceSplitBtn"),
+            smartSplitCueBtn: document.getElementById("editorSmartSplitCueBtn"),
+            silenceSplitCueBtn: document.getElementById("editorSilenceSplitCueBtn"),
+            compressRepCueBtn: document.getElementById("editorCompressRepCueBtn"),
+            splitLinesBtn: document.getElementById("editorSplitLinesBtn"),
+            splitSpacesBtn: document.getElementById("editorSplitSpacesBtn"),
+            charDurBtn: document.getElementById("editorCharDurBtn"),
+            smartDurBtn: document.getElementById("editorSmartDurBtn"),
+            audioSnapBtn: document.getElementById("editorAudioSnapBtn"),
+            silenceSplitModal: document.getElementById("editorSilenceSplitModal"),
+            silenceSplitDb: document.getElementById("editorSilenceSplitDb"),
+            silenceSplitDur: document.getElementById("editorSilenceSplitDur"),
+            silenceSplitDurLong: document.getElementById("editorSilenceSplitDurLong"),
+            silenceSplitCpsAbove: document.getElementById("editorSilenceSplitCpsAbove"),
+            silenceSplitCharsLong: document.getElementById("editorSilenceSplitCharsLong"),
+            silenceSplitFixOverlap: document.getElementById("editorSilenceSplitFixOverlap"),
+            silenceSplitPreview: document.getElementById("editorSilenceSplitPreview"),
+            silenceSplitConfirm: document.getElementById("editorSilenceSplitConfirm"),
+            silenceSplitCancel: document.getElementById("editorSilenceSplitCancel"),
+            smartSplitModal: document.getElementById("editorSmartSplitModal"),
+            smartSplitMaxChars: document.getElementById("editorSmartSplitMaxChars"),
+            smartSplitLineChars: document.getElementById("editorSmartSplitLineChars"),
+            smartSplitCpsAbove: document.getElementById("editorSmartSplitCpsAbove"),
+            smartSplitLineLen: document.getElementById("editorSmartSplitLineLen"),
+            smartSplitDurLong: document.getElementById("editorSmartSplitDurLong"),
+            smartSplitCharsLong: document.getElementById("editorSmartSplitCharsLong"),
+            smartSplitUseCps: document.getElementById("editorSmartSplitUseCps"),
+            smartSplitFixOverlap: document.getElementById("editorSmartSplitFixOverlap"),
+            smartSplitPreview: document.getElementById("editorSmartSplitPreview"),
+            smartSplitConfirm: document.getElementById("editorSmartSplitConfirm"),
+            smartSplitCancel: document.getElementById("editorSmartSplitCancel"),
+            smartAdjustModal: document.getElementById("editorSmartAdjustModal"),
+            smartFixOverlap: document.getElementById("editorSmartFixOverlap"),
+            smartFixCps: document.getElementById("editorSmartFixCps"),
+            smartEnforceMin: document.getElementById("editorSmartEnforceMin"),
+            smartEnforceMax: document.getElementById("editorSmartEnforceMax"),
+            smartMaxCps: document.getElementById("editorSmartMaxCps"),
+            smartMinSec: document.getElementById("editorSmartMinSec"),
+            smartMaxSec: document.getElementById("editorSmartMaxSec"),
+            smartGapMs: document.getElementById("editorSmartGapMs"),
+            smartPreview: document.getElementById("editorSmartPreview"),
+            smartAdjustConfirm: document.getElementById("editorSmartAdjustConfirm"),
+            smartAdjustCancel: document.getElementById("editorSmartAdjustCancel"),
+            removeNoiseBtn: document.getElementById("editorRemoveNoiseBtn"),
+            removeNoiseModal: document.getElementById("editorRemoveNoiseModal"),
+            removeNoisePreview: document.getElementById("editorRemoveNoisePreview"),
+            removeNoiseConfirm: document.getElementById("editorRemoveNoiseConfirm"),
+            removeNoiseCancel: document.getElementById("editorRemoveNoiseCancel"),
+            noiseRemoveEmpty: document.getElementById("editorNoiseRemoveEmpty"),
+            noiseRemoveFragments: document.getElementById("editorNoiseRemoveFragments"),
+            noiseRemoveSoundEffects: document.getElementById("editorNoiseRemoveSoundEffects"),
+            noiseRemoveSymbolOnly: document.getElementById("editorNoiseRemoveSymbolOnly"),
+            noiseRemoveDuplicates: document.getElementById("editorNoiseRemoveDuplicates"),
+            noiseRemoveHallucinations: document.getElementById("editorNoiseRemoveHallucinations"),
+            chineseConvertBtn: document.getElementById("editorChineseConvertBtn"),
+            chineseConvertModal: document.getElementById("editorChineseConvertModal"),
+            chineseConvertPreview: document.getElementById("editorChineseConvertPreview"),
+            chineseConvertConfirm: document.getElementById("editorChineseConvertConfirm"),
+            chineseConvertCancel: document.getElementById("editorChineseConvertCancel"),
+            chineseDirS2T: document.getElementById("editorChineseDirS2T"),
+            chineseDirT2S: document.getElementById("editorChineseDirT2S"),
+            chineseScopeAll: document.getElementById("editorChineseScopeAll"),
+            chineseScopeSelected: document.getElementById("editorChineseScopeSelected"),
+            chineseProtectGlossary: document.getElementById("editorChineseProtectGlossary"),
+            compressRepBtn: document.getElementById("editorCompressRepBtn"),
+            compressRepModal: document.getElementById("editorCompressRepModal"),
+            compressRepPreview: document.getElementById("editorCompressRepPreview"),
+            compressRepConfirm: document.getElementById("editorCompressRepConfirm"),
+            compressRepCancel: document.getElementById("editorCompressRepCancel"),
+            compressRepScopeAll: document.getElementById("editorCompressRepScopeAll"),
+            compressRepScopeSelected: document.getElementById("editorCompressRepScopeSelected"),
+            compressRepSingleChar: document.getElementById("editorCompressRepSingleChar"),
+            compressRepExclaim: document.getElementById("editorCompressRepExclaim"),
+            restoreBtn: document.getElementById("editorRestoreBtn"),
+            sidecarSelect: document.getElementById("editorSidecarSelect"),
+            cueBody: document.getElementById("editorCueBody"),
+            cueTable: document.getElementById("editorCueTable"),
+            listWrap: document.getElementById("editorListWrap"),
+            cueContextMenu: document.getElementById("editorCueContextMenu"),
+            detailPane: document.getElementById("editorDetailPane"),
+            detailStart: document.getElementById("editorDetailStart"),
+            detailDuration: document.getElementById("editorDetailDuration"),
+            detailEnd: document.getElementById("editorDetailEnd"),
+            detailText: document.getElementById("editorDetailText"),
+            detailPairWrap: document.getElementById("editorDetailPairWrap"),
+            detailPairText: document.getElementById("editorDetailPairText"),
+            detailCps: document.getElementById("editorDetailCps"),
+            targetCps: document.getElementById("editorTargetCps"),
+            lineLen: document.getElementById("editorLineLen"),
+            textLen: document.getElementById("editorTextLen"),
+            detailWarn: document.getElementById("editorDetailWarn"),
+            prevCueBtn: document.getElementById("editorPrevCueBtn"),
+            nextCueBtn: document.getElementById("editorNextCueBtn"),
+            deleteCueBtn: document.getElementById("editorDeleteCueBtn"),
+            splitCueBtn: document.getElementById("editorSplitCueBtn"),
+            splitModal: document.getElementById("editorSplitModal"),
+            splitConfirm: document.getElementById("editorSplitConfirm"),
+            splitCancel: document.getElementById("editorSplitCancel"),
+            splitCharCount: document.getElementById("editorSplitCharCount"),
+            splitCount: document.getElementById("editorSplitCount"),
+            splitSmartMaxChars: document.getElementById("editorSplitSmartMaxChars"),
+            splitSmartLineChars: document.getElementById("editorSplitSmartLineChars"),
+            splitSilenceDb: document.getElementById("editorSplitSilenceDb"),
+            splitSilenceDur: document.getElementById("editorSplitSilenceDur"),
+            splitUseCps: document.getElementById("editorSplitUseCps"),
+            splitFixOverlap: document.getElementById("editorSplitFixOverlap"),
+            splitPreview: document.getElementById("editorSplitPreview"),
+            splitRemember: document.getElementById("editorSplitRemember"),
+            splitHint: document.getElementById("editorSplitHint"),
+            startNudgeBack: document.getElementById("editorStartNudgeBack"),
+            startNudgeFwd: document.getElementById("editorStartNudgeFwd"),
+            durNudgeDown: document.getElementById("editorDurNudgeDown"),
+            durNudgeUp: document.getElementById("editorDurNudgeUp"),
+            setStartToPlayhead: document.getElementById("editorSetStartToPlayhead"),
+            setEndToPlayhead: document.getElementById("editorSetEndToPlayhead"),
+            video: document.getElementById("editorVideo"),
+            videoFrame: document.getElementById("editorVideoFrame"),
+            videoWrap: document.getElementById("editorVideoWrap"),
+            videoHint: document.getElementById("editorVideoHint"),
+            videoSubtitle: document.getElementById("editorVideoSubtitle"),
+            videoSubtitleSource: document.getElementById("editorVideoSubtitleSource"),
+            videoSubtitleText: document.getElementById("editorVideoSubtitleText"),
+            statusLine: document.getElementById("editorStatusLine"),
+            bootProgress: document.getElementById("editorBootProgress"),
+            welcome: document.getElementById("editorWelcome"),
+            welcomeIconWrap: document.getElementById("editorWelcomeIconWrap"),
+            welcomeIcon: document.getElementById("editorWelcomeIcon"),
+            welcomeOpenBtn: document.getElementById("editorWelcomeOpenBtn"),
+            welcomeOpenGeneratorBtn: document.getElementById("editorWelcomeOpenGeneratorBtn"),
+            welcomeHistoryList: document.getElementById("editorWelcomeHistoryList"),
+            welcomeClearBtn: document.getElementById("editorWelcomeClearBtn"),
+            bootProgressTitle: document.getElementById("editorBootProgressTitle"),
+            bootProgressDetail: document.getElementById("editorBootProgressDetail"),
+            silenceProgress: document.getElementById("editorSilenceProgress"),
+            silenceProgressTitle: document.getElementById("editorSilenceProgressTitle"),
+            silenceProgressCount: document.getElementById("editorSilenceProgressCount"),
+            silenceProgressDetail: document.getElementById("editorSilenceProgressDetail"),
+            silenceProgressTrack: document.getElementById("editorSilenceProgressTrack"),
+            silenceProgressBar: document.getElementById("editorSilenceProgressBar"),
+            silenceProgressHint: document.getElementById("editorSilenceProgressHint"),
+            silenceProgressCancel: document.getElementById("editorSilenceProgressCancel")
+        })
+    }
+
+    function da() {
+        if (!(!p?.isDesktop || !document.getElementById("editorCueBody")))
+            if (Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.qcModal, e.glossaryModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
+                    n?.classList.contains("hidden") && n.setAttribute("inert", "")
+                }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), p?.onTransubComputeTaskChanged?.(n => {
+                    t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", ar(), Qe()
+                }), (async () => {
+                    try {
+                        const n = await p?.transubComputeTaskStatus?.();
+                        n?.busy && (t.computeBusy = !0, t.computeBusyLabel = String(n.label || n.kind || "").trim(), ar(), Qe())
+                    } catch {}
+                })(), p?.onSubtitleEditorRefocus?.(() => ht()), window.addEventListener("focus", () => {
+                    const n = document.activeElement;
+                    (!n || n === document.body || !!n.closest?.(".editor-modal.hidden")) && ht()
+                }), Vn = !0, st) {
+                const n = st;
+                st = null, ds(n)
+            } else jr({
+                title: "\u5B57\u5E55\u7F16\u8F91\u5668\u5DF2\u5C31\u7EEA",
+                detail: "\u7B49\u5F85\u6253\u5F00\u5B57\u5E55\u6587\u4EF6\u2026",
+                statusMessage: "\u6B63\u5728\u7B49\u5F85\u5B57\u5E55\u6587\u4EF6\u2026"
+            }), setTimeout(() => {
+                !t.ready && !st && !Jt && !t.path && cn()
+            }, 400)
+    }
+    document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", () => setTimeout(da, 0)) : setTimeout(da, 0)
+})(window);

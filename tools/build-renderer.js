@@ -52,12 +52,23 @@ copyRecursive(path.join(src, 'splash.html'), path.join(outDir, 'splash.html'));
 copyRecursive(path.join(src, 'subtitle-editor.html'), path.join(outDir, 'subtitle-editor.html'));
 copyRecursive(path.join(src, 'update.html'), path.join(outDir, 'update.html'));
 copyRecursive(path.join(src, 'about.html'), path.join(outDir, 'about.html'));
+copyRecursive(path.join(src, 'advanced-llm-pick.html'), path.join(outDir, 'advanced-llm-pick.html'));
 copyRecursive(path.join(src, 'icon.png'), path.join(outDir, 'icon.png'));
 copyRecursive(path.join(src, 'icon-64.png'), path.join(outDir, 'icon-64.png'));
 copyRecursive(path.join(src, 'icon-editor.png'), path.join(outDir, 'icon-editor.png'));
 copyRecursive(path.join(src, 'tseditor.png'), path.join(outDir, 'tseditor.png'));
 copyRecursive(path.join(src, 'js'), path.join(outDir, 'js'));
 copyRecursive(path.join(src, 'vendor'), path.join(outDir, 'vendor'));
+
+// Closed-source Pro algorithms ship via `_advanced` only — strip from renderer asar copy.
+const proprietaryRendererJs = [
+    'advanced-film-reconstruct-core.js',
+    'advanced-smart-translate-core.js',
+];
+for (const name of proprietaryRendererJs) {
+    const full = path.join(outDir, 'js', name);
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+}
 
 console.log('[build-renderer] 3/3 压缩 JS');
 minifyJsDir(path.join(outDir, 'js'));

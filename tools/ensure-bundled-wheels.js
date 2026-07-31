@@ -30,7 +30,8 @@ const PACKAGES = [
     // SenseVoice Python package (torch still on-demand)
     { id: 'funasr', spec: 'funasr==1.3.30', importName: 'funasr', required: false },
     // HF / tokenizer stack used by Whisper + model downloads
-    { id: 'tokenizers', spec: 'tokenizers==0.23.1', importName: 'tokenizers', required: true },
+    // transformers 5.x requires tokenizers<=0.23.0 (0.23.1 breaks import).
+    { id: 'tokenizers', spec: 'tokenizers==0.23.0', importName: 'tokenizers', required: true },
     { id: 'huggingface-hub', spec: 'huggingface-hub==1.25.1', importName: 'huggingface_hub', required: true },
     { id: 'hf-xet', spec: 'hf-xet==1.5.2', importName: 'hf_xet', required: false },
     { id: 'httpx', spec: 'httpx==0.28.1', importName: 'httpx', required: true },

@@ -7,20 +7,28 @@ describe('subtitle-workflows-core', () => {
         assert.ok(catalog.length >= 30);
         assert.ok(catalog.some((s) => s.id === 'timing.smartAdjust'));
         assert.ok(catalog.some((s) => s.id === 'ai.retranscribeLowConfidence'));
+        assert.ok(catalog.some((s) => s.id === 'text.contextReconstruct' && s.advanced));
+        assert.ok(catalog.some((s) => s.id === 'text.filmContextReconstruct' && s.advanced));
+        assert.ok(catalog.some((s) => s.id === 'text.sakuraTranslate'));
+        assert.ok(catalog.some((s) => s.id === 'text.smartTranslate' && !s.advanced));
         const builtins = api.builtinWorkflows();
-        assert.strictEqual(builtins.length, 2);
+        assert.strictEqual(builtins.length, 4);
         assert.ok(builtins.every((w) => w.builtin && w.steps.length >= 2));
         assert.ok(builtins.some((w) => w.name === '时间轴优先'));
         assert.ok(builtins.some((w) => w.name === '双语交付'));
+        assert.ok(builtins.some((w) => w.name === '书签段精修'));
+        assert.ok(builtins.some((w) => w.name === '书签段重构（Pro）'));
         assert.ok(!builtins.some((w) => w.name === '译文润色'));
+        assert.ok(api.SCOPES.includes('bookmarks'));
+        assert.strictEqual(api.normalizeScope('bookmarks'), 'bookmarks');
     });
 
     it('normalize and ensure builtins', () => {
         const doc = api.ensureBuiltinWorkflows(api.emptyWorkflowsDoc());
-        assert.strictEqual(doc.workflows.length, 2);
+        assert.strictEqual(doc.workflows.length, 4);
         assert.ok(doc.activeId);
         const again = api.ensureBuiltinWorkflows(doc);
-        assert.strictEqual(again.workflows.length, 2);
+        assert.strictEqual(again.workflows.length, 4);
     });
 
     it('drops removed builtin polish on ensure', () => {
@@ -35,7 +43,7 @@ describe('subtitle-workflows-core', () => {
             ],
         });
         assert.ok(!doc.workflows.some((w) => w.id === 'builtin_polish'));
-        assert.strictEqual(doc.workflows.filter((w) => w.builtin).length, 2);
+        assert.strictEqual(doc.workflows.filter((w) => w.builtin).length, 4);
     });
 
     it('upsert duplicate remove custom workflows', () => {

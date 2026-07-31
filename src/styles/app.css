@@ -127,6 +127,112 @@
     .param-chip-select {
         @apply pr-0;
     }
+    .content-profile-chip {
+        @apply inline-flex items-center gap-1 max-w-full h-8 px-2 rounded-lg border transition-colors cursor-pointer;
+    }
+    .content-profile-chip-toggle {
+        @apply inline-flex items-center gap-1 min-w-0 h-full p-0 m-0 border-0 bg-transparent appearance-none cursor-pointer;
+        color: inherit;
+    }
+    .content-profile-chip .settings-tip-btn {
+        width: 0.95rem;
+        height: 0.95rem;
+        font-size: 0.6rem;
+    }
+    /* 感知开：绿色系（空闲 / 进行中 / 有结果） */
+    .content-profile-chip.tone-idle,
+    .content-profile-chip.tone-apply,
+    .content-profile-chip.tone-suggest,
+    .content-profile-chip[aria-pressed="true"] {
+        @apply border-emerald-300 bg-emerald-50 text-emerald-800 hover:border-emerald-400 hover:bg-emerald-100/80;
+    }
+    .content-profile-chip.tone-apply {
+        @apply border-emerald-400 bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200/80;
+    }
+    .content-profile-chip.tone-suggest {
+        @apply border-emerald-300 bg-emerald-50/90 text-emerald-900;
+    }
+    /* 感知关：红色 */
+    .content-profile-chip.tone-off,
+    .content-profile-chip[aria-pressed="false"] {
+        @apply border-red-300 bg-red-50 text-red-800 hover:border-red-400 hover:bg-red-100/80;
+    }
+    .content-profile-chip .param-chip-value {
+        @apply max-w-[9rem];
+    }
+    .content-profile-chip[aria-pressed="true"] .param-chip-value {
+        @apply text-emerald-700 font-semibold;
+    }
+    .content-profile-chip[aria-pressed="false"] .param-chip-value {
+        @apply text-red-700 font-semibold;
+    }
+    .file-profile-badge {
+        @apply inline-flex items-center rounded px-1 py-px text-[9px] font-semibold leading-none align-middle ml-1;
+    }
+    .file-profile-badge.profile-av_soft {
+        @apply bg-rose-50 text-rose-700;
+    }
+    .file-profile-badge.profile-film {
+        @apply bg-indigo-50 text-indigo-700;
+    }
+    .file-profile-badge.profile-talk {
+        @apply bg-sky-50 text-sky-700;
+    }
+    .file-profile-badge.is-sensing {
+        @apply bg-violet-50 text-violet-600;
+    }
+    .file-profile-badge.is-rejected {
+        @apply opacity-50 line-through;
+    }
+    .file-profile-badge.is-suggest {
+        @apply bg-amber-50 text-amber-800;
+    }
+    .file-sense-status {
+        @apply inline-flex items-center align-middle ml-1 shrink-0 gap-0.5;
+    }
+    .file-sense-label {
+        @apply text-[10px] font-normal text-violet-600 whitespace-nowrap;
+        animation: file-sense-pulse 1.1s ease-in-out infinite;
+    }
+    .file-sense-icon {
+        @apply inline-flex items-center justify-center align-middle ml-1 shrink-0;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 9999px;
+        font-size: 0.55rem;
+        line-height: 1;
+        color: #6b7280;
+        background: #f3f4f6;
+    }
+    .file-sense-status .file-sense-icon {
+        @apply ml-0;
+    }
+    .file-sense-icon.is-sensing {
+        @apply text-violet-600 bg-violet-50;
+        animation: file-sense-pulse 1.1s ease-in-out infinite;
+    }
+    .file-sense-icon.is-adopted {
+        @apply text-violet-700 bg-violet-100;
+    }
+    .file-sense-icon.is-adopted.profile-av_soft {
+        @apply text-rose-700 bg-rose-50;
+    }
+    .file-sense-icon.is-adopted.profile-film {
+        @apply text-indigo-700 bg-indigo-50;
+    }
+    .file-sense-icon.is-adopted.profile-talk {
+        @apply text-sky-700 bg-sky-50;
+    }
+    .file-sense-icon.is-rejected {
+        @apply opacity-45 text-gray-400 bg-gray-100;
+    }
+    .file-sense-icon.is-suggest {
+        @apply text-amber-700 bg-amber-50;
+    }
+    @keyframes file-sense-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+    }
     .row-status-badge {
         @apply inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none whitespace-nowrap;
     }
@@ -360,4 +466,150 @@
         @apply flex items-center justify-center text-gray-400 text-sm py-8 bg-gray-100;
     }
     .video-item.live-preview-active .thumb img { @apply opacity-90; }
+
+    /* Main window UX */
+    .toast-host {
+        @apply fixed bottom-3 right-3 z-[140] flex flex-col gap-2 pointer-events-none max-w-sm w-full;
+    }
+    .toast-item {
+        @apply pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-lg bg-white;
+        animation: toast-in 0.22s ease-out;
+    }
+    .toast-item.toast-out { animation: toast-out 0.2s ease-in forwards; }
+    .toast-ok { @apply border-emerald-200 bg-emerald-50 text-emerald-900; }
+    .toast-warn { @apply border-amber-200 bg-amber-50 text-amber-900; }
+    .toast-err { @apply border-red-200 bg-red-50 text-red-900; }
+    .toast-info { @apply border-gray-200 bg-white text-gray-800; }
+    .toast-text { @apply flex-1 min-w-0 leading-snug; }
+    .toast-action {
+        @apply shrink-0 text-xs font-semibold text-violet-700 hover:text-violet-900 underline underline-offset-2;
+    }
+    @keyframes toast-in {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes toast-out {
+        to { opacity: 0; transform: translateY(6px); }
+    }
+    .readiness-strip {
+        @apply flex flex-wrap items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 bg-gray-50/80 text-gray-600;
+    }
+    .readiness-strip.is-warn { @apply border-amber-200 bg-amber-50/80 text-amber-900; }
+    .readiness-strip.is-ok { @apply border-emerald-200 bg-emerald-50/70 text-emerald-900; }
+    .readiness-strip-text { @apply flex-1 min-w-0 truncate; }
+    .readiness-strip-action {
+        @apply shrink-0 text-xs font-medium text-violet-700 hover:text-violet-900 underline underline-offset-2;
+    }
+    .row-error-expand {
+        @apply text-[10px] text-red-700 mt-1 leading-snug;
+        word-break: break-word;
+    }
+    .row-error-toggle {
+        @apply text-[10px] text-red-600 hover:text-red-800 underline underline-offset-2 ml-1;
+    }
+    .row-sense-actions {
+        @apply inline-flex items-center gap-0.5 flex-wrap justify-center;
+    }
+    .row-sense-pill {
+        @apply inline-flex items-center rounded px-1 py-px text-[9px] font-medium leading-none border;
+    }
+    .row-sense-pill-adopt { @apply border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100; }
+    .row-sense-pill-reject { @apply border-gray-200 bg-white text-gray-600 hover:bg-gray-50; }
+    .row-sense-pill-resense { @apply border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100; }
+    body.log-collapsed #logSectionBody { display: none; }
+    body.log-collapsed #logCollapseIcon { transform: rotate(-90deg); }
+    body.log-collapsed #mainLogSplitter { display: none; }
+    body.log-collapsed #logSection {
+        height: auto !important;
+        flex: 0 0 auto !important;
+    }
+
+    .main-log-splitter {
+        flex: 0 0 10px;
+        position: relative;
+        z-index: 5;
+        cursor: row-resize;
+        touch-action: none;
+        background: transparent;
+    }
+    .main-log-splitter::after {
+        content: '';
+        position: absolute;
+        left: 28%;
+        right: 28%;
+        top: 50%;
+        height: 3px;
+        margin-top: -1.5px;
+        border-radius: 999px;
+        background: #d1d5db;
+        transition: background .12s ease;
+    }
+    .main-log-splitter:hover::after,
+    .main-log-splitter.is-dragging::after,
+    .main-log-splitter:focus-visible::after {
+        background: #8b5cf6;
+    }
+    body.main-log-splitting {
+        cursor: row-resize !important;
+        user-select: none !important;
+    }
+    #logSectionBody { flex: 1 1 0; min-height: 0; overflow: hidden; }
+    .log-panel.active { height: 100%; box-sizing: border-box; }
+
+    html.main-theme-dark body {
+        @apply bg-gray-900 text-gray-100;
+        color-scheme: dark;
+    }
+    html.main-theme-dark .app-header,
+    html.main-theme-dark #filePanel,
+    html.main-theme-dark #logSection {
+        @apply bg-gray-800 border-gray-700 text-gray-100;
+    }
+    html.main-theme-dark .main-log-splitter::after { background: #4b5563; }
+    html.main-theme-dark .main-log-splitter:hover::after,
+    html.main-theme-dark .main-log-splitter.is-dragging::after,
+    html.main-theme-dark .main-log-splitter:focus-visible::after {
+        background: #a78bfa;
+    }
+    html.main-theme-dark .app-header h1,
+    html.main-theme-dark #progressLabel {
+        @apply text-gray-100;
+    }
+    html.main-theme-dark .toolbar-text-btn,
+    html.main-theme-dark .toolbar-icon-btn,
+    html.main-theme-dark .post-task-power-btn {
+        @apply border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-gray-100;
+    }
+    html.main-theme-dark .param-chip {
+        @apply border-gray-600 bg-gray-700/50 text-gray-100 hover:border-violet-500;
+    }
+    html.main-theme-dark .content-profile-chip.tone-idle,
+    html.main-theme-dark .content-profile-chip.tone-apply,
+    html.main-theme-dark .content-profile-chip.tone-suggest,
+    html.main-theme-dark .content-profile-chip[aria-pressed="true"] {
+        @apply border-emerald-600/70 bg-emerald-950/50 text-emerald-200 hover:border-emerald-500 hover:bg-emerald-900/60;
+    }
+    html.main-theme-dark .content-profile-chip.tone-apply {
+        @apply border-emerald-500 bg-emerald-900/70 text-emerald-100 ring-emerald-700/50;
+    }
+    html.main-theme-dark .content-profile-chip.tone-off,
+    html.main-theme-dark .content-profile-chip[aria-pressed="false"] {
+        @apply border-red-600/70 bg-red-950/45 text-red-200 hover:border-red-500 hover:bg-red-900/55;
+    }
+    html.main-theme-dark .content-profile-chip[aria-pressed="true"] .param-chip-value {
+        @apply text-emerald-300;
+    }
+    html.main-theme-dark .content-profile-chip[aria-pressed="false"] .param-chip-value {
+        @apply text-red-300;
+    }
+    html.main-theme-dark .file-sense-label { @apply text-violet-300; }
+    html.main-theme-dark .param-chip-label { @apply text-gray-400; }
+    html.main-theme-dark .param-chip-value,
+    html.main-theme-dark .param-chip-select { @apply text-gray-100; }
+    html.main-theme-dark #dropZone { @apply border-gray-600 bg-gray-900/40; }
+    html.main-theme-dark .subtitle-task-table thead { @apply bg-gray-800/95 text-gray-400; }
+    html.main-theme-dark .subtitle-task-table tbody { @apply bg-gray-800; }
+    html.main-theme-dark .task-row:hover { @apply bg-gray-700/40; }
+    html.main-theme-dark .readiness-strip { @apply bg-gray-800 border-gray-600 text-gray-300; }
+    html.main-theme-dark #emptyState .text-gray-800 { @apply text-gray-100; }
 }

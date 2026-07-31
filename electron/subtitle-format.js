@@ -260,7 +260,94 @@ function serializeLrc(cues, header) {
     return all.join('\n') + (all.length ? '\n' : '');
 }
 
-function serializeSubtitle({ format, cues, header }) {
+function serializeAss(cues, options = {}) {
+    const title = String(options.title || 'Transub').replace(/[\r\n]/g, ' ');
+    const speakers = Array.isArray(options.speakers) ? options.speakers : [];
+    const cueMarkers = options.cueMarkers && typeof options.cueMarkers === 'object'
+        ? options.cueMarkers
+        : {};
+    const dualApi = options.pairCues && Array.isArray(options.pairCues) ? options.pairCues : null;
+
+    const styleLines = [
+        'Style: Default,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1',
+    ];
+    const speakerStyleName = new Map();
+    speakers.forEach((sp, i) => {
+        if (!sp?.id || !sp?.name) return;
+        const safe = `Sp${i + 1}`;
+        speakerStyleName.set(sp.id, safe);
+        const color = assColourFromHex(sp.color || '#FFFFFF');
+        styleLines.push(
+            `Style: ${safe},Microsoft YaHei,48,${color},&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1`,
+        );
+    });
+    if (dualApi) {
+        // Alignment 2 = bottom-center; larger MarginV stacks Source above ZH (like bilingual SRT)
+        styleLines.push(
+            'Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,112,1',
+        );
+    }
+
+    const header = [
+        '[Script Info]',
+        `Title: ${title}`,
+        'ScriptType: v4.00+',
+        'PlayResX: 1920',
+        'PlayResY: 1080',
+        'WrapStyle: 0',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        ...styleLines,
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    ].join('\n');
+
+    const events = [];
+    const list = Array.isArray(cues) ? cues : [];
+    list.forEach((cue, index) => {
+        const start = formatAssTimeMs(cue.startMs);
+        const end = formatAssTimeMs(cue.endMs != null ? cue.endMs : cue.startMs + 2000);
+        const key = `${index}:${Math.round(Number(cue.startMs) || 0)}`;
+        const marker = cueMarkers[key] || null;
+        const style = (marker?.speakerId && speakerStyleName.get(marker.speakerId)) || 'Default';
+        const name = speakers.find((s) => s.id === marker?.speakerId)?.name || '';
+        let text = String(cue.text || '').replace(/\r?\n/g, '\\N').replace(/,/g, '，') || ' ';
+        events.push(`Dialogue: 0,${start},${end},${style},${escapeAssName(name)},0,0,0,,${text}`);
+    });
+
+    return `${header}\n${events.join('\n')}${events.length ? '\n' : ''}`;
+}
+
+function formatAssTimeMs(ms) {
+    const n = Math.max(0, Math.round(Number(ms) || 0));
+    const h = Math.floor(n / 3600000);
+    const m = Math.floor((n % 3600000) / 60000);
+    const s = Math.floor((n % 60000) / 1000);
+    const cs = Math.floor((n % 1000) / 10);
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+}
+
+function assColourFromHex(hex) {
+    const raw = String(hex || '').replace('#', '').trim();
+    if (!/^[0-9a-fA-F]{6}$/.test(raw)) return '&H00FFFFFF';
+    const r = raw.slice(0, 2);
+    const g = raw.slice(2, 4);
+    const b = raw.slice(4, 6);
+    // ASS is &HAABBGGRR
+    return `&H00${b}${g}${r}`.toUpperCase();
+}
+
+function escapeAssName(name) {
+    return String(name || '').replace(/[,]/g, ' ').slice(0, 40);
+}
+
+function serializeSubtitle({ format, cues, header, assOptions }) {
+    const fmt = String(format || 'srt').toLowerCase();
+    if (fmt === 'ass') {
+        return serializeAss(cues, assOptions || {});
+    }
     const normalized = normalizeCues(cues.map((c) => ({ ...c })), format);
     if (format === 'vtt') return serializeVtt(normalized, header);
     if (format === 'lrc') return serializeLrc(normalized, header);
@@ -276,6 +363,7 @@ module.exports = {
     detectFormat,
     parseSubtitle,
     serializeSubtitle,
+    serializeAss,
     parseTimeToMs,
     formatTimeMs,
     isEditableFormat,

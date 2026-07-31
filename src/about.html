@@ -89,30 +89,6 @@
         .about-btn i {
             color: #9ca3af;
         }
-        .about-footer {
-            flex-shrink: 0;
-            padding: 0.75rem 1.25rem 1rem;
-            border-top: 1px solid #e5e7eb;
-            background: #fff;
-            display: flex;
-            justify-content: center;
-        }
-        .about-close {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 5.5rem;
-            padding: 0.45rem 1rem;
-            border: 1px solid #e5e7eb;
-            border-radius: 0.5rem;
-            background: #fff;
-            color: #374151;
-            font-size: 0.8125rem;
-            cursor: pointer;
-        }
-        .about-close:hover {
-            background: #f3f4f6;
-        }
     </style>
 </head>
 <body>
@@ -120,22 +96,20 @@
         <img src="icon-64.png" alt="" width="64" height="64" decoding="async">
         <h1>Transub</h1>
         <p id="aboutVersion" class="about-version">…</p>
+        <p id="aboutAdvancedStatus" class="about-meta" style="margin-top:0.25rem">Pro：检测中…</p>
         <p class="about-desc">字幕批量转写 / 翻译，结构化字幕编辑与视频同步预览。</p>
-        <p class="about-meta">开源软件 · MIT License<br>引擎：Faster-Whisper TransWithAI</p>
+        <p class="about-meta">核心开源 · MIT License<br>Pro 为可选专有组件（大版本内买断 + BYOK）<br>引擎：Transub Engine</p>
         <div class="about-actions">
             <button type="button" id="aboutGithubBtn" class="about-btn">
                 <i class="fa fa-github" aria-hidden="true"></i>
                 <span>Transub</span>
             </button>
-            <button type="button" id="aboutEngineBtn" class="about-btn">
-                <i class="fa fa-external-link" aria-hidden="true"></i>
-                <span>TransWithAI</span>
+            <button type="button" id="aboutAfdianBtn" class="about-btn">
+                <i class="fa fa-heart" aria-hidden="true"></i>
+                <span>赞助解锁Pro</span>
             </button>
         </div>
     </main>
-    <footer class="about-footer">
-        <button type="button" id="aboutCloseBtn" class="about-close">关闭</button>
-    </footer>
     <script src="js/about-window.js"></script>
 </body>
 </html>

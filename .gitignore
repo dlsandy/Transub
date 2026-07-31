@@ -9,8 +9,41 @@ tools/tmp-opencc/
 tools/tmp-release/
 
 # Bundled FFmpeg binaries (use npm run setup:ffmpeg)
+# Matches app `_internal/bin` and optional engine `_internal/bin`
 _internal/bin/*.exe
 _internal/bin/*.dll
+
+# Engine local caches / heavy weights (standalone runtime/ is vendored)
+transub-engine/.venv/
+transub-engine/venv/
+transub-engine/**/__pycache__/
+transub-engine/**/*.pyc
+# Hub weights under models/{asr,mt,vad} — fetch shipped essentials via:
+#   npm run ensure:bundled-models
+transub-engine/models/asr/
+transub-engine/models/mt/
+transub-engine/models/vad/
+# Installed third-party site-packages (keep only transub_engine package sources in git)
+transub-engine/runtime/Lib/site-packages/*
+!transub-engine/runtime/Lib/site-packages/transub_engine/
+!transub-engine/runtime/Lib/site-packages/transub_engine/**
+!transub-engine/runtime/Lib/site-packages/transub_engine-*.dist-info/
+!transub-engine/runtime/Lib/site-packages/transub_engine-*.dist-info/**
+transub-engine/runtime/Lib/site-packages/transub_engine/**/__pycache__/
+transub-engine/runtime/Lib/site-packages/transub_engine/**/*.pyc
+
+# Embeddable CPython binaries / stdlib zip (ship in release zip, not source tree)
+transub-engine/runtime/*.exe
+transub-engine/runtime/*.dll
+transub-engine/runtime/*.pyd
+transub-engine/runtime/*.zip
+transub-engine/runtime/*.cat
+transub-engine/runtime/Scripts/
+transub-engine/runtime/share/
+transub-engine/_internal/
+
+# Optional TWAI sidecar config (machine-local)
+transwithai-config/
 
 # User-specific runtime data (paths, task history, presets)
 transub-settings.json
@@ -20,8 +53,12 @@ transub-presets.json
 transub-text-presets.json
 transub-editor-history.json
 transub-editor-workflows.json
+transub-advanced.json
+transub-advanced-device.json
+advanced-llm/
 transwithai-settings.json
 window-state.json
+ui-prefs.json
 *.lnk
 
 # Logs & OS
@@ -36,6 +73,39 @@ desktop.ini
 *.swp
 *.swo
 
-# Environment
-.env
-.env.*
+# Tone-adapt plaintext source (edit locally, then encode; do not commit)
+tools/tone-adapt.src.json
+
+# Generated closed Pro module (minify of proprietary algorithms; rebuild with npm run build:advanced)
+_advanced/
+
+# Pro proprietary algorithm sources (never push; pack via npm run build:advanced → _advanced)
+electron/advanced-context-reconstruct.js
+electron/advanced-film-reconstruct.js
+electron/advanced-bilingual-semantic.js
+electron/advanced-reconstruct-runtime.js
+electron/advanced-smart-translate.js
+src/js/advanced-film-reconstruct-core.js
+src/js/advanced-smart-translate-core.js
+tools/advanced-module-entry.js
+tests/advanced-film-reconstruct.test.js
+tests/advanced-smart-translate.test.js
+
+# Advanced license private key & generated redeem codes (never commit)
+.advanced-license-private.b64
+keys.txt
+*.license-keys.txt
+
+# Local subtitle work samples (not part of the product tree)
+subtitles/
+
+# Afdian fulfillment Worker local deps / wrangler state
+services/afdian-fulfillment/node_modules/
+services/afdian-fulfillment/.wrangler/
+
+# AV makers fetch temp / plaintext source (opaque .am1 is committed)
+tools/_tmp_av_fetch/
+tools/av-makers.src.json
+
+# Local sense-memory / runtime prefs
+transub-sense-memory.json

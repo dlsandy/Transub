@@ -17,14 +17,34 @@ const {
     normalizePostTaskOptions,
     mergeTransWithAiOptions,
 } = require('./transwithai-options');
+const {
+    dualTargetPathFromSource,
+    renameStemSubtitlesWithSuffix,
+    writeMergedBilingualSubtitleFiles,
+    unlinkSubtitleFilesQuietly,
+} = require('./subtitle-fs-helpers');
+const {
+    waitForWebContentsReady,
+    notifySubtitleTask,
+    broadcastToSubtitleTaskUi,
+} = require('./subtitle-task-ui');
+const {
+    createPostSubtitleTaskRunner,
+    notifyBatchComplete,
+} = require('./subtitle-batch-lifecycle');
+const { applyPostBatchPipeline } = require('./post-batch-pipeline');
+const {
+    MEDIA_EXTENSIONS,
+    AUDIO_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+} = require('../src/js/media-extensions-core');
 
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
 const TRANWITHAI_LATEST_API = 'https://api.github.com/repos/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases/latest';
-const VALID_DEVICES = new Set(['cuda', 'cpu', 'cuda_low_vram', 'cuda_batch', 'amd', 'modal']);
+const VALID_DEVICES = new Set(['cuda', 'cpu', 'auto', 'cuda_low_vram', 'cuda_batch', 'amd', 'modal']);
 const VALID_LOG_LEVELS = new Set(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
 const VALID_LANGUAGES = new Set(['auto', 'ja', 'zh', 'en']);
 const VALID_TASKS = new Set(['translate', 'transcribe', 'dual']);
-const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp'];
 
 function normalizeTask(value) {
     const task = String(value || '').trim().toLowerCase();
@@ -298,7 +318,7 @@ function normalizeSubFormats(value) {
     const parts = String(value || '')
         .split(/[,;\s]+/)
         .map((part) => part.trim().toLowerCase())
-        .filter((part) => ['srt', 'vtt', 'lrc'].includes(part));
+        .filter((part) => ['srt', 'vtt', 'lrc', 'ass', 'ass-dual'].includes(part));
     const unique = [...new Set(parts)];
     return unique.length ? unique.join(',') : 'srt';
 }
@@ -307,6 +327,46 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
     const merged = mergeTransWithAiOptions(options);
     const language = String(merged.language || 'auto').trim().toLowerCase();
     return {
+        // Transub Engine fields — must survive save/load (settings form uses these)
+        engineBackend: merged.engineBackend === 'twai' ? 'twai' : 'transub',
+        engineInstallPath: String(merged.engineInstallPath || '').trim(),
+        engineUrl: String(merged.engineUrl || '').trim().replace(/\/+$/, ''),
+        engineHfEndpoint: String(merged.engineHfEndpoint || '').trim().replace(/\/+$/, ''),
+        ...(() => {
+            try {
+                const { normalizeProxyOptions } = require('./proxy-settings');
+                return normalizeProxyOptions(merged);
+            } catch {
+                return {
+                    proxyEnabled: !!merged.proxyEnabled,
+                    proxyUrl: String(merged.proxyUrl || '').trim(),
+                    proxyBypass: String(merged.proxyBypass || '').trim(),
+                };
+            }
+        })(),
+        engineProfile: String(merged.engineProfile || 'balanced').trim() || 'balanced',
+        engineAsrModel: String(merged.engineAsrModel || 'sensevoice-small').trim(),
+        engineMtModel: String(merged.engineMtModel || '').trim(),
+        // Split MT slots (environment page) — must survive save/load independently of active engineMtModel
+        engineOpusMtModel: String(
+            merged.engineOpusMtModel != null ? merged.engineOpusMtModel : '',
+        ).trim(),
+        engineLlmMtModel: String(merged.engineLlmMtModel || 'sakura-1.5b').trim() || 'sakura-1.5b',
+        // Explicit 翻译方式 (engine|llm|smart). Prefer this on load over inferring from engineMtModel.
+        translateMode: (() => {
+            try {
+                const catalog = require('../src/js/sakura-mt-catalog-core');
+                return catalog.resolveTranslateModeFromOptions(merged);
+            } catch {
+                if (merged.smartTranslate) return 'smart';
+                const mt = String(merged.engineMtModel || '').trim();
+                if (!mt) return 'engine';
+                if (/^opus[-_]?mt[-_]/i.test(mt) || mt.includes('opus-mt-')) return 'engine';
+                return 'llm';
+            }
+        })(),
+        engineVadModel: String(merged.engineVadModel || 'fsmn-vad').trim(),
+        engineAutoStart: merged.engineAutoStart !== false,
         installPath: normalizeInstallPath(merged.installPath),
         device: VALID_DEVICES.has(merged.device) ? merged.device : 'cuda',
         task: normalizeTask(merged.task),
@@ -326,9 +386,18 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         beamSize: Math.max(1, Math.min(20, Number(merged.beamSize) || 5)),
         language: VALID_LANGUAGES.has(language) ? language : 'auto',
         vadThreshold: Math.max(0.1, Math.min(0.9, Number(merged.vadThreshold) || 0.5)),
-        vadMinSpeechDurationMs: Math.max(0, Math.min(5000, Number(merged.vadMinSpeechDurationMs) || 300)),
-        vadMinSilenceDurationMs: Math.max(0, Math.min(5000, Number(merged.vadMinSilenceDurationMs) || 100)),
-        vadSpeechPadMs: Math.max(0, Math.min(2000, Number(merged.vadSpeechPadMs) || 200)),
+        vadMinSpeechDurationMs: Math.max(0, Math.min(5000, (() => {
+            const n = Number(merged.vadMinSpeechDurationMs);
+            return Number.isFinite(n) ? n : 300;
+        })())),
+        vadMinSilenceDurationMs: Math.max(0, Math.min(5000, (() => {
+            const n = Number(merged.vadMinSilenceDurationMs);
+            return Number.isFinite(n) ? n : 100;
+        })())),
+        vadSpeechPadMs: Math.max(0, Math.min(2000, (() => {
+            const n = Number(merged.vadSpeechPadMs);
+            return Number.isFinite(n) ? n : 200;
+        })())),
         maxInitialTimestamp: Math.max(0, Math.min(60, Number(merged.maxInitialTimestamp) || 30)),
         repetitionPenalty: Math.max(1, Math.min(2, Number(merged.repetitionPenalty) || 1.1)),
         noSpeechThreshold: Math.max(0.1, Math.min(1, Number(merged.noSpeechThreshold) || 0.6)),
@@ -342,7 +411,8 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             if (!Number.isFinite(n) || n <= 0) return null;
             return Math.max(0.1, Math.min(30, n));
         })(),
-        glossaryPromptEnabled: merged.glossaryPromptEnabled !== false,
+        glossaryPromptEnabled: false,
+        glossaryMtEnabled: merged.glossaryMtEnabled !== false,
         chineseSubtitleVariant: String(merged.chineseSubtitleVariant || '').trim() === 'traditional'
             ? 'traditional'
             : 'simplified',
@@ -353,19 +423,82 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         deleteSourcesAfterMergeBilingual: !!merged.deleteSourcesAfterMergeBilingual
             && !!merged.mergeBilingualSubtitles
             && normalizeTask(merged.task) === 'dual',
+        includeWords: !!merged.includeWords,
+        karaokeVtt: !!merged.karaokeVtt,
+        releaseGpuAfter: (() => {
+            if (merged.releaseGpuAfter == null || merged.releaseGpuAfter === '') return null;
+            return !!merged.releaseGpuAfter;
+        })(),
         postBatchCpsSplit: merged.postBatchCpsSplit !== false,
         postBatchRemoveNoise: merged.postBatchRemoveNoise !== false,
         postBatchCompressRepetition: merged.postBatchCompressRepetition !== false,
+        postBatchContextReconstruct: !!merged.postBatchContextReconstruct,
+        smartTranslate: !!merged.smartTranslate,
+        // Faithful tone applies to all translate modes (engine / sakura / smart); only needs translate|dual.
+        smartTranslateFaithfulTone: !!merged.smartTranslateFaithfulTone
+            && (normalizeTask(merged.task) === 'translate' || normalizeTask(merged.task) === 'dual'),
+        // null = auto (AV sense / preset / faithful); true/false = force
+        sakuraNsfwPrompt: (() => {
+            if (merged.sakuraNsfwPrompt === true || merged.sakuraNsfwPrompt === false) {
+                return merged.sakuraNsfwPrompt;
+            }
+            return null;
+        })(),
+        filmAudioEnhance: !!merged.filmAudioEnhance,
+        filmVadPreset: !!merged.filmVadPreset && !merged.filmAudioEnhance,
+        vadEnabled: merged.vadEnabled !== false,
+        vadSensitive: !!merged.vadSensitive,
+        vadAggressive: !!merged.vadAggressive && !merged.vadSensitive,
+        audioLightDenoise: !!merged.audioLightDenoise,
+        vadMaxSingleSegmentMs: (() => {
+            const n = Number(merged.vadMaxSingleSegmentMs);
+            if (Number.isFinite(n) && n > 0) {
+                return Math.max(5000, Math.min(60000, Math.round(n)));
+            }
+            const sec = Number(merged.targetChunkDurationS);
+            if (Number.isFinite(sec) && sec > 0) {
+                return Math.max(5000, Math.min(60000, Math.round(sec * 1000)));
+            }
+            return 30000;
+        })(),
         smartSplitWithVad: merged.smartSplitWithVad !== false,
         targetChunkDurationS: Math.max(5, Math.min(30, Number(merged.targetChunkDurationS) || 30)),
         retranscribeWarmLight: !!merged.retranscribeWarmLight,
         subtitleBakMode: ['off', 'beside', 'appBackup'].includes(String(merged.subtitleBakMode || '').trim())
             ? String(merged.subtitleBakMode).trim()
             : 'off',
+        keepTranscript: merged.keepTranscript !== false,
+        transcriptKeepDir: String(merged.transcriptKeepDir || '').trim(),
+        transcriptKeepLimit: (() => {
+            const n = Number(merged.transcriptKeepLimit);
+            if (!Number.isFinite(n)) return 200;
+            return Math.max(0, Math.min(9999, Math.round(n)));
+        })(),
+        transcriptKeepDays: (() => {
+            const n = Number(merged.transcriptKeepDays);
+            if (!Number.isFinite(n)) return 90;
+            return Math.max(0, Math.min(3650, Math.round(n)));
+        })(),
         trayProgressEnabled: !!merged.trayProgressEnabled,
+        showTaskResourceUsage: merged.showTaskResourceUsage !== false,
+        minimizeToTrayEnabled: merged.minimizeToTrayEnabled !== false,
         minimizeToTrayOnStart: !!merged.minimizeToTrayOnStart,
         trayNotifyEnabled: !!merged.trayNotifyEnabled,
+        startupWindow: (() => {
+            const raw = String(merged.startupWindow || '').trim().toLowerCase();
+            return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
+        })(),
         postBatchQc: merged.postBatchQc !== false,
+        autoSense: (() => {
+            if (Object.prototype.hasOwnProperty.call(merged, 'autoSense')) {
+                return merged.autoSense !== false;
+            }
+            if (Object.prototype.hasOwnProperty.call(merged, 'autoContentProfile')) {
+                return merged.autoContentProfile !== false;
+            }
+            return true;
+        })(),
+        autoDeepSense: !!merged.autoDeepSense,
         outputDir: String(merged.outputDir || '').trim(),
         outputMode: merged.outputMode === 'custom' ? 'custom' : 'same',
         audioSuffixes: normalizeAudioSuffixes(merged.audioSuffixes),
@@ -434,13 +567,44 @@ function resolveGenerationConfigPath(installPath, options = {}, getUserDataPath)
     if (normalized.glossaryPromptEnabled !== false) {
         try {
             const { readGlossary } = require('./glossary-data');
-            const { buildAsrPromptHints } = require('../src/js/subtitle-glossary-core');
+            const {
+                buildAsrPromptHints,
+                buildJaAvAsrPromptHints,
+            } = require('../src/js/subtitle-glossary-core');
             const gloss = readGlossary();
             if (gloss?.ok && gloss.glossary) {
                 const hints = buildAsrPromptHints(gloss.glossary);
                 if (hints.termCount > 0) {
                     if (hints.initial_prompt) merged.initial_prompt = hints.initial_prompt;
                     if (hints.hotwords) merged.hotwords = hints.hotwords;
+                }
+            }
+            const lang = String(normalized.language || merged.language || '').toLowerCase();
+            const profile = String(
+                normalized.contentProfile || normalized.senseProfile || '',
+            ).toLowerCase();
+            // Only inject mens-esthe bias for av_soft — all-JA injection polluted drama (JUR-809).
+            const wantDomain = /av[_-]?soft|ja[_-]?av|^av$/.test(profile);
+            if (wantDomain && typeof buildJaAvAsrPromptHints === 'function') {
+                const domain = buildJaAvAsrPromptHints();
+                if (domain.initial_prompt) {
+                    const cur = String(merged.initial_prompt || '');
+                    if (!/メンズエステ|メンエス/.test(cur)) {
+                        merged.initial_prompt = cur
+                            ? `${domain.initial_prompt}${cur}`
+                            : domain.initial_prompt;
+                    }
+                }
+                if (domain.hotwords) {
+                    const seen = new Set();
+                    const parts = [];
+                    for (const part of `${merged.hotwords || ''} ${domain.hotwords}`.split(/\s+/)) {
+                        if (part && !seen.has(part)) {
+                            seen.add(part);
+                            parts.push(part);
+                        }
+                    }
+                    merged.hotwords = parts.join(' ');
                 }
             }
         } catch {
@@ -498,6 +662,14 @@ async function saveTransWithAiOptions(getAppRoot, patch) {
     const next = stripPostTaskFields({ ...current, ...patch });
     saveSettings(getAppRoot, next);
     syncTrayNotifyFromOptions(next);
+    syncMinimizeToTrayFromOptions(next);
+    try {
+        const { applyProxyFromSettings } = require('./proxy-settings');
+        const { session } = require('electron');
+        await applyProxyFromSettings(next, { session: session.defaultSession });
+    } catch (err) {
+        console.warn('[proxy] apply on save failed:', err?.message || err);
+    }
     broadcastSettingsUpdated(next);
 }
 
@@ -518,89 +690,20 @@ function syncTrayNotifyFromOptions(options = {}) {
     } catch { /* ignore */ }
 }
 
-function runPostSubtitleTaskActions(_options, result, windowManager) {
-    if (result?.cancelled || jobCancelled) return;
+/** @type {{ setMinimizeToTrayEnabled?: Function } | null} */
+let trayUiWindowManager = null;
 
-    const merged = mergeTransWithAiOptions(getSessionPostTaskOptions());
-    const hasFailure = (Number(result?.failed) || 0) > 0;
-
-    if (merged.playSoundOnComplete && !hasFailure) {
-        try {
-            const { playCompletionSound } = require('./system-actions');
-            playCompletionSound();
-        } catch { /* ignore */ }
-    }
-
-    if (merged.openOutputFolderOnComplete && !hasFailure && merged.lastOutputDir) {
-        try {
-            const { openPathInShell } = require('./system-actions');
-            openPathInShell(merged.lastOutputDir);
-        } catch (err) {
-            console.warn('[transwithai] 打开输出目录失败:', err.message || err);
-        }
-    }
-
-    if (merged.closeWindowOnComplete && !hasFailure && windowManager?.closeMainWindow) {
-        setTimeout(() => {
-            try {
-                windowManager.closeMainWindow();
-            } catch (err) {
-                console.warn('[transwithai] 关闭任务窗口失败:', err.message || err);
-            }
-        }, 2000);
-    }
-
-    const quit = !!merged.quitAppOnComplete;
-    const shutdown = !!merged.shutdownOnComplete;
-    const sleep = !!merged.sleepOnComplete;
-
-    if (sleep && !hasFailure) {
-        try {
-            const { scheduleSystemSleep } = require('./system-actions');
-            scheduleSystemSleep();
-        } catch (err) {
-            console.warn('[transwithai] 睡眠失败:', err.message || err);
-        }
-    }
-
-    if (!quit && !shutdown) {
-        if (!sleep) return;
-        setTimeout(() => {
-            try { windowManager?.quitApp?.(); } catch { /* ignore */ }
-        }, sleep ? 1200 : 0);
-        return;
-    }
-    if (hasFailure) return;
-    if (result?.ok === false && !(Number(result?.skipped) > 0)) return;
-
-    if (shutdown) {
-        try {
-            const { scheduleSystemShutdown } = require('./system-shutdown');
-            const delaySec = merged.shutdownDelaySec;
-            const res = scheduleSystemShutdown(
-                delaySec,
-                delaySec > 0
-                    ? `字幕任务已完成，${delaySec} 秒后将关机`
-                    : '字幕任务已完成，即将关机',
-            );
-            if (!res.ok) {
-                console.warn('[transwithai] 安排关机失败:', res.error);
-            }
-        } catch (err) {
-            console.warn('[transwithai] 安排关机失败:', err.message || err);
-        }
-    }
-
-    if (quit || shutdown) {
-        setTimeout(() => {
-            try {
-                windowManager?.quitApp?.();
-            } catch (err) {
-                console.warn('[transwithai] 退出应用失败:', err.message || err);
-            }
-        }, shutdown ? 800 : 300);
-    }
+function syncMinimizeToTrayFromOptions(options = {}) {
+    try {
+        trayUiWindowManager?.setMinimizeToTrayEnabled?.(options.minimizeToTrayEnabled !== false);
+    } catch { /* ignore */ }
 }
+
+const runPostSubtitleTaskActions = createPostSubtitleTaskRunner({
+    getSessionPostTaskOptions,
+    normalizePostTaskOptions,
+    isJobCancelled: () => jobCancelled,
+});
 
 function resolveInferOutputDir(resolvedVideo, options = {}) {
     const merged = normalizeTransWithAiRuntimeOptions(options);
@@ -638,106 +741,6 @@ async function resolveSubtitlePathAfterWrite(resolvedVideo, outputDir, subFormat
         if (fs.existsSync(direct)) return direct;
     }
     return resolveLocalSubtitlePath(resolvedVideo, dir);
-}
-
-/**
- * Rename engine output `{stem}.{ext}` → `{stem}.{suffix}.{ext}` for each format.
- */
-function renameStemSubtitlesWithSuffix(videoPath, outputDir, subFormats, suffix, { overwrite = true } = {}) {
-    const resolved = path.resolve(String(videoPath || ''));
-    const dir = path.resolve(String(outputDir || path.dirname(resolved)));
-    const stem = path.basename(resolved, path.extname(resolved));
-    const tag = String(suffix || '').trim().toLowerCase();
-    if (!tag) throw new Error('缺少双语后缀');
-    const formats = String(subFormats || 'srt')
-        .split(/[,;\s]+/)
-        .map((s) => s.trim().toLowerCase())
-        .filter((s) => ['srt', 'vtt', 'lrc'].includes(s));
-    const unique = formats.length ? [...new Set(formats)] : ['srt'];
-    const renamed = [];
-    for (const fmt of unique) {
-        const src = path.join(dir, `${stem}.${fmt}`);
-        const dest = path.join(dir, `${stem}.${tag}.${fmt}`);
-        if (!fs.existsSync(src)) continue;
-        if (path.resolve(src) === path.resolve(dest)) {
-            renamed.push(dest);
-            continue;
-        }
-        if (fs.existsSync(dest)) {
-            if (!overwrite) {
-                throw new Error(`目标字幕已存在：${path.basename(dest)}`);
-            }
-            fs.unlinkSync(dest);
-        }
-        fs.renameSync(src, dest);
-        renamed.push(dest);
-    }
-    if (!renamed.length) {
-        throw new Error(`未找到可重命名的字幕（期望 ${stem}.{srt|vtt|lrc}）`);
-    }
-    return renamed;
-}
-
-/**
- * Merge dual-track subtitle files next to them.
- * Default name: `{stem}.bilingual.{ext}`；nameAsVideoStem 时为 `{stem}.{ext}`。
- * Timing follows dualPrimaryTrack (default target).
- */
-function writeMergedBilingualSubtitleFiles(sourcePath, targetPath, {
-    primaryTrack = 'target',
-    lineOrder = 'target-first',
-    nameAsVideoStem = false,
-} = {}) {
-    const { serializeSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
-    const srcResolved = path.resolve(String(sourcePath || ''));
-    const tgtResolved = path.resolve(String(targetPath || ''));
-    if (!fs.existsSync(srcResolved) || !fs.existsSync(tgtResolved)) {
-        throw new Error('合并双语失败：原文或译文字幕不存在');
-    }
-    const readOne = (filePath) => {
-        const raw = fs.readFileSync(filePath, 'utf8');
-        const format = detectFormat(filePath, raw);
-        if (!isEditableFormat(format)) {
-            throw new Error(`不支持合并格式：${path.basename(filePath)}`);
-        }
-        const parsed = parseSubtitle(raw, format);
-        return { format: parsed.format, cues: parsed.cues || [], header: parsed.header || [] };
-    };
-    const sourceDoc = readOne(srcResolved);
-    const targetDoc = readOne(tgtResolved);
-    const primary = dualCore.normalizeDualPrimaryTrack(primaryTrack);
-    const primaryDoc = primary === 'source' ? sourceDoc : targetDoc;
-    const pairDoc = primary === 'source' ? targetDoc : sourceDoc;
-    const mergedCues = dualCore.buildMergedDualCues(primaryDoc.cues, pairDoc.cues, {
-        primaryRole: primary,
-        order: dualCore.normalizeDualLineOrder(lineOrder),
-    });
-    if (!mergedCues.length) {
-        throw new Error('合并双语失败：结果为空');
-    }
-    const format = primaryDoc.format || targetDoc.format || 'srt';
-    const suggested = dualCore.suggestMergedExportName(tgtResolved, { asVideoName: !!nameAsVideoStem });
-    const dest = path.join(path.dirname(tgtResolved), suggested);
-    const content = serializeSubtitle({
-        format,
-        cues: mergedCues,
-        header: primaryDoc.header,
-    });
-    fs.writeFileSync(dest, content, 'utf8');
-    return dest;
-}
-
-function unlinkSubtitleFilesQuietly(filePaths) {
-    const list = Array.isArray(filePaths) ? filePaths : [filePaths];
-    for (const filePath of list) {
-        const resolved = path.resolve(String(filePath || ''));
-        if (!resolved || !fs.existsSync(resolved)) continue;
-        try {
-            fs.unlinkSync(resolved);
-        } catch (_) {
-            // best-effort cleanup
-        }
-    }
 }
 
 function resolveInferModelPath(installPath, modelPath) {
@@ -1235,44 +1238,6 @@ function buildInferSpawnEnv() {
     };
 }
 
-function waitForWebContentsReady(webContents) {
-    if (!webContents || webContents.isDestroyed()) {
-        return Promise.resolve(false);
-    }
-    if (!webContents.isLoading()) {
-        return Promise.resolve(true);
-    }
-    return new Promise((resolve) => {
-        webContents.once('did-finish-load', () => resolve(true));
-    });
-}
-
-function notifySubtitleTask(windowManager, channel, payload) {
-    if (!windowManager?.sendToRenderer) return false;
-    return windowManager.sendToRenderer(channel, payload);
-}
-
-function getMainWebContents(windowManager) {
-    const win = windowManager?.getMainWindow?.();
-    if (!win || win.isDestroyed()) return null;
-    const wc = win.webContents;
-    if (!wc || wc.isDestroyed()) return null;
-    return wc;
-}
-
-function isSameWebContents(a, b) {
-    if (!a || !b || a.isDestroyed() || b.isDestroyed()) return false;
-    return a.id === b.id;
-}
-
-function broadcastToSubtitleTaskUi(windowManager, invokeSender, channel, payload) {
-    notifySubtitleTask(windowManager, channel, payload);
-    if (!invokeSender || invokeSender.isDestroyed()) return;
-    const mainWc = getMainWebContents(windowManager);
-    if (mainWc && isSameWebContents(invokeSender, mainWc)) return;
-    invokeSender.send(channel, payload);
-}
-
 function browserWindowFromEvent(event) {
     return BrowserWindow.fromWebContents(event.sender);
 }
@@ -1330,7 +1295,7 @@ function broadcastProgress(windowManager, progress, invokeSender) {
     updateTrayFromProgress(windowManager, progress);
 }
 
-async function notifySubtitleTaskJobStart(windowManager, payload, { minimizeToTray = true } = {}) {
+async function notifySubtitleTaskJobStartLocal(windowManager, payload, { minimizeToTray = true } = {}) {
     if (!windowManager?.createMainWindow) return false;
     const win = windowManager.createMainWindow({ startMinimizedToTray: minimizeToTray });
     if (!win || win.isDestroyed()) return false;
@@ -1348,6 +1313,8 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
     const outputs = [];
     const getUserDataPath = extra.getUserDataPath || null;
     const isDual = options.task === 'dual';
+    const useSmartTranslate = !!options.smartTranslate
+        && (options.task === 'translate' || options.task === 'dual');
     const sourceSuffix = dualCore.resolveDualSourceSuffix(options.language, options.dualTargetSuffix);
     const targetSuffix = dualCore.normalizeDualTargetSuffix(options.dualTargetSuffix);
 
@@ -1483,22 +1450,89 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
             const durationHint = Number(item.durationSec || item.duration || 0) || 0;
 
             if (!isDual) {
+                const wantSmart = useSmartTranslate && options.task === 'translate';
                 const singleOpts = {
                     ...itemOptions,
-                    modelPath: modelCore.resolvePassModelPath(itemOptions, itemOptions.task),
+                    task: wantSmart ? 'transcribe' : itemOptions.task,
+                    modelPath: modelCore.resolvePassModelPath(
+                        itemOptions,
+                        wantSmart ? 'transcribe' : itemOptions.task,
+                    ),
                 };
                 const result = await runSingleInferItem(safePath, singleOpts, durationHint, progressMetaBase);
+                let subtitlePath = result.subtitlePath || '';
+
+                if (wantSmart && subtitlePath) {
+                    // Archive ASR transcript before smart translate overwrites in place.
+                    try {
+                        const { keepTranscriptFiles } = require('./transcript-keep');
+                        keepTranscriptFiles([subtitlePath], options);
+                    } catch { /* ignore */ }
+                    emitBatchProgress({
+                        ...progressMetaBase,
+                        phase: 'running',
+                        itemProgress: 55,
+                        itemStage: 'translate',
+                        itemDetail: '智能翻译中…',
+                        itemDualPhase: 'translate',
+                        subtitlePath,
+                    });
+                    const { smartTranslateSubtitleFile } = require('./advanced-bridge');
+                    const translated = await smartTranslateSubtitleFile({
+                        sourcePath: subtitlePath,
+                        destPath: subtitlePath,
+                        chineseSubtitleVariant: options.chineseSubtitleVariant,
+                        smartTranslateFaithfulTone: !!options.smartTranslateFaithfulTone,
+                        signal: extra.signal,
+                        _batchMode: true,
+                        onProgress: (info) => {
+                            const pct = Number(info?.pct);
+                            emitBatchProgress({
+                                ...progressMetaBase,
+                                phase: 'running',
+                                itemProgress: Number.isFinite(pct)
+                                    ? Math.min(99, 55 + Math.round(pct * 0.4))
+                                    : 70,
+                                itemStage: 'translate',
+                                itemDetail: info?.message || '智能翻译中…',
+                                itemDualPhase: 'translate',
+                                subtitlePath,
+                            });
+                        },
+                    });
+                    if (!translated?.ok) {
+                        throw new Error(translated?.error || '智能翻译失败');
+                    }
+                    subtitlePath = translated.path || subtitlePath;
+                } else if (options.task === 'transcribe' && subtitlePath) {
+                    try {
+                        const { keepTranscriptFiles } = require('./transcript-keep');
+                        keepTranscriptFiles([subtitlePath], options);
+                    } catch { /* ignore */ }
+                }
+
+                applyPostBatchPipeline([subtitlePath], options, {
+                    onLog: (line) => {
+                        broadcastToSubtitleTaskUi(
+                            windowManager,
+                            invokeSender,
+                            'transwithai-infer-log',
+                            { line: `[post] ${line}`, source: 'twai' },
+                        );
+                    },
+                });
+
                 setSessionPostTaskOptions({ lastOutputDir: subtitleOutputDir });
                 generated += 1;
                 outputs.push({
                     videoPath: fullPath,
-                    subtitlePath: result.subtitlePath || '',
+                    subtitlePath,
                     status: 'done',
                 });
                 emitBatchProgress({
                     ...progressMetaBase,
                     phase: 'done',
-                    subtitlePath: result.subtitlePath,
+                    subtitlePath,
                     itemProgress: 100,
                     itemStage: 'done',
                     itemDetail: '完成',
@@ -1536,26 +1570,62 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
                     phase: 'running',
                     itemProgress: 49,
                     itemStage: 'starting',
-                    itemDetail: undefined,
+                    itemDetail: useSmartTranslate ? '智能翻译中…' : undefined,
                     itemDualPhase: 'translate',
                     sourceSubtitlePath,
                 });
 
-                const translateOpts = buildDualPassOptions(itemOptions, 'translate', check.path, getUserDataPath);
-                await runSingleInferItem(safePath, translateOpts, durationHint, {
-                    ...progressMetaBase,
-                    dualPhase: 'translate',
-                    passIndex: 1,
-                });
-                const targetRenamed = renameStemSubtitlesWithSuffix(
-                    safePath,
-                    subtitleOutputDir,
-                    options.subFormats,
-                    targetSuffix,
-                    { overwrite: true },
-                );
-                targetSubtitlePaths = targetRenamed;
-                targetSubtitlePath = targetRenamed[0] || null;
+                if (useSmartTranslate) {
+                    const { smartTranslateSubtitleFile } = require('./advanced-bridge');
+                    targetSubtitlePaths = [];
+                    for (let si = 0; si < sourceSubtitlePaths.length; si += 1) {
+                        const srcPath = sourceSubtitlePaths[si];
+                        const destPath = dualTargetPathFromSource(srcPath, sourceSuffix, targetSuffix);
+                        const translated = await smartTranslateSubtitleFile({
+                            sourcePath: srcPath,
+                            destPath,
+                            chineseSubtitleVariant: options.chineseSubtitleVariant,
+                            smartTranslateFaithfulTone: !!options.smartTranslateFaithfulTone,
+                            signal: extra.signal,
+                            _batchMode: true,
+                            onProgress: (info) => {
+                                const pct = Number(info?.pct);
+                                emitBatchProgress({
+                                    ...progressMetaBase,
+                                    phase: 'running',
+                                    itemProgress: Number.isFinite(pct)
+                                        ? Math.min(99, 50 + Math.round(pct * 0.45))
+                                        : 70,
+                                    itemStage: 'translate',
+                                    itemDetail: info?.message || '智能翻译中…',
+                                    itemDualPhase: 'translate',
+                                    sourceSubtitlePath,
+                                });
+                            },
+                        });
+                        if (!translated?.ok) {
+                            throw new Error(translated?.error || '智能翻译失败');
+                        }
+                        targetSubtitlePaths.push(translated.path || destPath);
+                    }
+                    targetSubtitlePath = targetSubtitlePaths[0] || null;
+                } else {
+                    const translateOpts = buildDualPassOptions(itemOptions, 'translate', check.path, getUserDataPath);
+                    await runSingleInferItem(safePath, translateOpts, durationHint, {
+                        ...progressMetaBase,
+                        dualPhase: 'translate',
+                        passIndex: 1,
+                    });
+                    const targetRenamed = renameStemSubtitlesWithSuffix(
+                        safePath,
+                        subtitleOutputDir,
+                        options.subFormats,
+                        targetSuffix,
+                        { overwrite: true },
+                    );
+                    targetSubtitlePaths = targetRenamed;
+                    targetSubtitlePath = targetRenamed[0] || null;
+                }
             } catch (dualErr) {
                 const msg = dualErr.message || String(dualErr);
                 const wrapped = new Error(
@@ -1569,9 +1639,17 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
 
             let bilingualSubtitlePath = null;
             let deletedSourcesAfterMerge = false;
+            // Archive source-language tracks before optional merge deletion.
+            if (sourceSubtitlePaths.length) {
+                try {
+                    const { keepTranscriptFiles } = require('./transcript-keep');
+                    keepTranscriptFiles(sourceSubtitlePaths, options);
+                } catch { /* ignore */ }
+            }
             if (options.mergeBilingualSubtitles && sourceSubtitlePaths.length && targetSubtitlePaths.length) {
                 try {
-                    const nameAsVideoStem = !!options.deleteSourcesAfterMergeBilingual;
+                    // Always name merged file like the media (players auto-load `{stem}.srt`).
+                    const nameAsVideoStem = true;
                     const mergedPaths = [];
                     for (const src of sourceSubtitlePaths) {
                         const srcExt = path.extname(src).toLowerCase();
@@ -1603,6 +1681,23 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
                     });
                 }
             }
+
+            applyPostBatchPipeline([
+                bilingualSubtitlePath,
+                targetSubtitlePath,
+                sourceSubtitlePath,
+                ...sourceSubtitlePaths,
+                ...targetSubtitlePaths,
+            ], options, {
+                onLog: (line) => {
+                    broadcastToSubtitleTaskUi(
+                        windowManager,
+                        invokeSender,
+                        'transwithai-infer-log',
+                        { line: `[post] ${line}`, source: 'twai' },
+                    );
+                },
+            });
 
             setSessionPostTaskOptions({ lastOutputDir: subtitleOutputDir });
             generated += 1;
@@ -1656,6 +1751,12 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
         }
     }
 
+    try {
+        if (useSmartTranslate) {
+            require('./advanced-llama-server').stopLlamaServer();
+        }
+    } catch (_) { /* ignore */ }
+
     return jobCancelled
         ? {
             ok: false,
@@ -1703,16 +1804,83 @@ async function runSubtitleBatch({
         return { ok: false, error: '缺少待处理视频' };
     }
     if (manageJobState && jobRunning) {
-        return { ok: false, error: '已有字幕任务正在运行，请先在任务窗口等待完成' };
+        return { ok: false, error: '已有字幕任务正在运行，请先在任务窗口等待完成', code: 'compute_busy' };
     }
 
     if (manageJobState) {
-        jobRunning = true;
-        jobCancelled = false;
+        const computeLock = require('./compute-task-lock');
+        return computeLock.runWithComputeLock({
+            kind: 'twai_batch',
+            owner: '主程序',
+            source: 'runSubtitleBatch',
+        }, async () => {
+            jobRunning = true;
+            jobCancelled = false;
+            try {
+                return await runSubtitleBatchBody({
+                    items: list,
+                    options,
+                    windowManager,
+                    invokeSender,
+                    manageJobState,
+                    onBatchProgress,
+                    getUserDataPath,
+                    minimizeToTray,
+                });
+            } finally {
+                jobRunning = false;
+                jobCancelled = false;
+                activeProc = null;
+            }
+        });
     }
 
+    return runSubtitleBatchBody({
+        items: list,
+        options,
+        windowManager,
+        invokeSender,
+        manageJobState,
+        onBatchProgress,
+        getUserDataPath,
+        minimizeToTray,
+    });
+}
+
+async function runSubtitleBatchBody({
+    items: list,
+    options,
+    windowManager,
+    invokeSender = null,
+    manageJobState = true,
+    onBatchProgress = null,
+    getUserDataPath = null,
+    minimizeToTray,
+}) {
     try {
         const merged = normalizeTransWithAiRuntimeOptions(options || {});
+
+        if (merged.smartTranslate && (merged.task === 'translate' || merged.task === 'dual')) {
+            try {
+                const { requireSmartTranslate } = require('./advanced-gates');
+                const gate = requireSmartTranslate({
+                    faithfulTone: !!merged.smartTranslateFaithfulTone,
+                });
+                if (!gate.ok) {
+                    return {
+                        ok: false,
+                        error: gate.error
+                            || '智能翻译需解锁 Pro',
+                        code: gate.code || 'not_entitled',
+                    };
+                }
+            } catch (err) {
+                return {
+                    ok: false,
+                    error: err.message || '无法校验智能翻译资格',
+                };
+            }
+        }
 
         // Soft-fill empty model paths from install models dir when possible
         try {
@@ -1800,13 +1968,14 @@ async function runSubtitleBatch({
             setTrayNotifyEnabled(!!runtimeOptions.trayNotifyEnabled);
         } catch { /* ignore */ }
 
-        await notifySubtitleTaskJobStart(windowManager, {
+        await notifySubtitleTaskJobStartLocal(windowManager, {
             total: list.length,
             items: list
                 .map((item) => String(item?.fullPath || item?.path || item || '').trim())
                 .filter(Boolean),
             startedAt: new Date().toISOString(),
             device: runtimeOptions.device,
+            backend: 'twai',
         }, { minimizeToTray: shouldMinimizeToTray });
 
         const result = await executeSubtitleBatchLoop(
@@ -1848,11 +2017,7 @@ async function runSubtitleBatch({
 
         notifySubtitleTask(windowManager, 'subtitle-task-job-finished', result);
         if (!result.cancelled && manageJobState) {
-            try {
-                const { notifySubtitleComplete, setTrayNotifyEnabled } = require('./notifications');
-                setTrayNotifyEnabled(!!runtimeOptions.trayNotifyEnabled);
-                notifySubtitleComplete(`成功 ${result.generated}，跳过 ${result.skipped}，失败 ${result.failed}`);
-            } catch { /* ignore */ }
+            notifyBatchComplete(runtimeOptions, result);
             runPostSubtitleTaskActions(runtimeOptions, result, windowManager);
         }
         return result;
@@ -1959,131 +2124,139 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
         return { ok: false, error: '字幕时间范围过短，无法重转写' };
     }
     if (jobRunning) {
-        return { ok: false, error: '已有字幕任务正在运行，请稍后再试' };
+        return { ok: false, error: '已有字幕任务正在运行，请稍后再试', code: 'compute_busy' };
     }
 
-    const baseOptions = normalizeTransWithAiRuntimeOptions({
-        ...(getAppRoot ? stripPostTaskFields(loadSettings(getAppRoot).options || {}) : {}),
-        ...(payload.options || {}),
-        overwrite: true,
-        mergeSegments: false,
-        subFormats: 'srt',
-        outputMode: 'custom',
-        postTaskAction: 'none',
-        closeWindowOnComplete: false,
-        playSoundOnComplete: false,
-    });
-    const rangeTask = payload.options?.task === 'translate' ? 'translate' : 'transcribe';
-    baseOptions.task = rangeTask;
-    baseOptions.modelPath = modelCore.resolvePassModelPath(baseOptions, rangeTask);
-    const warmLight = !!baseOptions.retranscribeWarmLight;
-    const emitProgress = (update) => {
-        if (!onProgress) return;
-        const payloadOut = {
-            ...update,
-            warmLight,
-            message: mapRetranscribeProgressMessage(update, { warmLight, task: rangeTask }),
-        };
-        try { onProgress(payloadOut); } catch (_) { /* ignore */ }
-    };
-
-    const check = validateInstall(baseOptions.installPath, baseOptions.device);
-    if (!check.ok) {
-        return { ok: false, error: check.error || 'TransWithAI 未正确安装' };
-    }
-
-    const clipStartMs = Math.max(0, startMs - padMs);
-    const clipEndMs = endMs + padMs;
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-re-'));
-    const clipPath = path.join(tempRoot, 'clip.wav');
-    const outputDir = path.join(tempRoot, 'out');
-    fs.mkdirSync(outputDir, { recursive: true });
-
-    jobRunning = true;
-    jobCancelled = false;
-    const actionNoun = rangeTask === 'translate' ? '重译' : '重转写';
-
-    try {
-        emitProgress({ stage: 'warmup', detail: warmLight ? '轻量模式：预热配置' : '预热配置' });
-        const generationConfigPath = getUserDataPath
-            ? resolveGenerationConfigPath(
-                check.path,
-                applyRetranscribeWarmLightOptions(baseOptions),
-                getUserDataPath,
-            )
-            : path.join(check.path, 'generation_config.json5');
-
-        emitProgress({ stage: 'extract', detail: '截取音频片段' });
-        const { extractMediaRange } = require('./ffmpeg-bridge');
-        const clip = await extractMediaRange(mediaPath, clipStartMs, clipEndMs, clipPath, {
-            ffmpegPath: baseOptions.ffmpegPath || payload.ffmpegPath,
-        });
-        if (!clip.ok) {
-            return { ok: false, error: clip.error || '截取音频失败' };
-        }
-
-        const runtimeOptions = applyRetranscribeWarmLightOptions({
-            ...baseOptions,
-            outputDir,
+    const computeLock = require('./compute-task-lock');
+    return computeLock.runWithComputeLock({
+        kind: 'twai_range',
+        owner: '字幕编辑器',
+        source: 'transcribeMediaRange',
+    }, async () => {
+        const baseOptions = normalizeTransWithAiRuntimeOptions({
+            ...(getAppRoot ? stripPostTaskFields(loadSettings(getAppRoot).options || {}) : {}),
+            ...(payload.options || {}),
+            overwrite: true,
+            mergeSegments: false,
+            subFormats: 'srt',
             outputMode: 'custom',
-            generationConfigPath,
-            durationHint: (clipEndMs - clipStartMs) / 1000,
+            postTaskAction: 'none',
+            closeWindowOnComplete: false,
+            playSoundOnComplete: false,
         });
-
-        emitProgress({
-            stage: 'starting',
-            detail: warmLight ? '轻量模式：启动引擎' : '启动引擎',
-        });
-        const result = await runInferOnce(
-            check.path,
-            clipPath,
-            runtimeOptions,
-            (update) => emitProgress(update || {}),
-        );
-        if (!result?.subtitlePath || !fs.existsSync(result.subtitlePath)) {
-            return { ok: false, error: `${actionNoun}未生成字幕文件` };
-        }
-
-        emitProgress({ stage: 'save', detail: '解析字幕结果' });
-        const raw = fs.readFileSync(result.subtitlePath, 'utf8');
-        const parsed = parseSubtitle(raw, 'srt');
-        const cues = (parsed.cues || []).map((cue) => ({
-            startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
-            endMs: Math.max(0, Math.round((cue.endMs != null ? cue.endMs : (cue.startMs + 1000)) + clipStartMs)),
-            text: String(cue.text || '').trim(),
-        })).filter((cue) => cue.text);
-
-        if (!cues.length) {
-            return { ok: false, error: `${actionNoun}结果为空` };
-        }
-
-        emitProgress({ stage: 'done', detail: `${actionNoun}完成` });
-        return {
-            ok: true,
-            cues,
-            clipStartMs,
-            clipEndMs,
-            padMs,
-            sourceStartMs: startMs,
-            sourceEndMs: endMs,
-            subtitlePath: result.subtitlePath,
-            task: runtimeOptions.task,
-            language: runtimeOptions.language,
-            warmLight,
+        const rangeTask = payload.options?.task === 'translate' ? 'translate' : 'transcribe';
+        baseOptions.task = rangeTask;
+        baseOptions.modelPath = modelCore.resolvePassModelPath(baseOptions, rangeTask);
+        const warmLight = !!baseOptions.retranscribeWarmLight;
+        const emitProgress = (update) => {
+            if (!onProgress) return;
+            const payloadOut = {
+                ...update,
+                warmLight,
+                message: mapRetranscribeProgressMessage(update, { warmLight, task: rangeTask }),
+            };
+            try { onProgress(payloadOut); } catch (_) { /* ignore */ }
         };
-    } catch (err) {
-        return { ok: false, error: err.message || String(err) };
-    } finally {
-        jobRunning = false;
+
+        const check = validateInstall(baseOptions.installPath, baseOptions.device);
+        if (!check.ok) {
+            return { ok: false, error: check.error || 'TransWithAI 未正确安装' };
+        }
+
+        const clipStartMs = Math.max(0, startMs - padMs);
+        const clipEndMs = endMs + padMs;
+        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-re-'));
+        const clipPath = path.join(tempRoot, 'clip.wav');
+        const outputDir = path.join(tempRoot, 'out');
+        fs.mkdirSync(outputDir, { recursive: true });
+
+        jobRunning = true;
         jobCancelled = false;
-        activeProc = null;
-        safeRmDir(tempRoot);
-    }
+        const actionNoun = rangeTask === 'translate' ? '重译' : '重转写';
+
+        try {
+            emitProgress({ stage: 'warmup', detail: warmLight ? '轻量模式：预热配置' : '预热配置' });
+            const generationConfigPath = getUserDataPath
+                ? resolveGenerationConfigPath(
+                    check.path,
+                    applyRetranscribeWarmLightOptions(baseOptions),
+                    getUserDataPath,
+                )
+                : path.join(check.path, 'generation_config.json5');
+
+            emitProgress({ stage: 'extract', detail: '截取音频片段' });
+            const { extractMediaRange } = require('./ffmpeg-bridge');
+            const clip = await extractMediaRange(mediaPath, clipStartMs, clipEndMs, clipPath, {
+                ffmpegPath: baseOptions.ffmpegPath || payload.ffmpegPath,
+            });
+            if (!clip.ok) {
+                return { ok: false, error: clip.error || '截取音频失败' };
+            }
+
+            const runtimeOptions = applyRetranscribeWarmLightOptions({
+                ...baseOptions,
+                outputDir,
+                outputMode: 'custom',
+                generationConfigPath,
+                durationHint: (clipEndMs - clipStartMs) / 1000,
+            });
+
+            emitProgress({
+                stage: 'starting',
+                detail: warmLight ? '轻量模式：启动引擎' : '启动引擎',
+            });
+            const result = await runInferOnce(
+                check.path,
+                clipPath,
+                runtimeOptions,
+                (update) => emitProgress(update || {}),
+            );
+            if (!result?.subtitlePath || !fs.existsSync(result.subtitlePath)) {
+                return { ok: false, error: `${actionNoun}未生成字幕文件` };
+            }
+
+            emitProgress({ stage: 'save', detail: '解析字幕结果' });
+            const raw = fs.readFileSync(result.subtitlePath, 'utf8');
+            const parsed = parseSubtitle(raw, 'srt');
+            const cues = (parsed.cues || []).map((cue) => ({
+                startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
+                endMs: Math.max(0, Math.round((cue.endMs != null ? cue.endMs : (cue.startMs + 1000)) + clipStartMs)),
+                text: String(cue.text || '').trim(),
+            })).filter((cue) => cue.text);
+
+            if (!cues.length) {
+                return { ok: false, error: `${actionNoun}结果为空` };
+            }
+
+            emitProgress({ stage: 'done', detail: `${actionNoun}完成` });
+            return {
+                ok: true,
+                cues,
+                clipStartMs,
+                clipEndMs,
+                padMs,
+                sourceStartMs: startMs,
+                sourceEndMs: endMs,
+                subtitlePath: result.subtitlePath,
+                task: runtimeOptions.task,
+                language: runtimeOptions.language,
+                warmLight,
+            };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        } finally {
+            jobRunning = false;
+            jobCancelled = false;
+            activeProc = null;
+            safeRmDir(tempRoot);
+        }
+    });
 }
 
 function setupTransWithAiBridge(api, deps) {
     const { register } = api;
     const { getUserDataPath, getAppRoot, windowManager } = deps;
+    trayUiWindowManager = windowManager || null;
     async function readOptions(override = {}) {
         return mergeTransWithAiOptions({
             ...(stripPostTaskFields(loadSettings(getAppRoot).options || {})),
@@ -2092,7 +2265,9 @@ function setupTransWithAiBridge(api, deps) {
     }
 
     try {
-        syncTrayNotifyFromOptions(loadSettings(getAppRoot).options || {});
+        const opts = loadSettings(getAppRoot).options || {};
+        syncTrayNotifyFromOptions(opts);
+        syncMinimizeToTrayFromOptions(opts);
     } catch { /* ignore */ }
 
     register('transwithai-validate', async (_event, payload = {}) => {
@@ -2141,33 +2316,23 @@ function setupTransWithAiBridge(api, deps) {
         return { ok: true, cancelled: true };
     });
 
-    register('transub-transcribe-range', async (event, payload = {}) => {
-        try {
-            return await transcribeMediaRange(payload || {}, {
-                getUserDataPath,
-                getAppRoot,
-                onProgress: (progress) => {
-                    try {
-                        if (!event?.sender?.isDestroyed?.()) {
-                            event.sender.send('transub-retranscribe-progress', progress);
-                        }
-                    } catch (_) { /* ignore */ }
-                },
-            });
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
+    // transub-transcribe-range is owned by engine-bridge (dispatches to TWAI when engineBackend=twai)
 
     register('transub-trial-compare', async (event, payload = {}) => {
         try {
             if (jobRunning) {
-                return { ok: false, error: '已有字幕任务正在运行，请稍后再试' };
+                return { ok: false, error: '已有字幕任务正在运行，请稍后再试', code: 'compute_busy' };
             }
             const mediaPath = path.resolve(String(payload.mediaPath || payload.videoPath || ''));
             if (!mediaPath || !fs.existsSync(mediaPath)) {
                 return { ok: false, error: '视频文件不存在' };
             }
+            const computeLock = require('./compute-task-lock');
+            return computeLock.runWithComputeLock({
+                kind: 'twai_trial',
+                owner: '主程序',
+                source: 'transub-trial-compare',
+            }, async () => {
             const durationSec = Math.max(5, Math.min(120, Number(payload.durationSec) || 30));
             const baseOptions = await readOptions(payload.baseOptions || {});
             const optionA = normalizeTransWithAiRuntimeOptions({ ...baseOptions, ...(payload.optionsA || {}) });
@@ -2261,6 +2426,7 @@ function setupTransWithAiBridge(api, deps) {
             } finally {
                 jobRunning = false;
             }
+            });
         } catch (err) {
             jobRunning = false;
             return { ok: false, error: err.message || String(err) };
@@ -2293,6 +2459,12 @@ function setupTransWithAiBridge(api, deps) {
                 patch.installPath = normalizeInstallPath(payload.installPath);
             }
             [
+                'engineBackend', 'engineInstallPath', 'engineUrl', 'engineHfEndpoint',
+                'engineProfile', 'engineAsrModel', 'engineMtModel',
+                'engineOpusMtModel', 'engineLlmMtModel', 'engineVadModel',
+                'engineAutoStart',
+                'translateMode',
+                'proxyEnabled', 'proxyUrl', 'proxyBypass',
                 'device', 'task', 'overwrite',
                 'subFormats', 'modelPath', 'transcribeModelPath', 'translateModelPath',
                 'logLevel', 'mergeSegments',
@@ -2301,18 +2473,29 @@ function setupTransWithAiBridge(api, deps) {
                 'vadMinSpeechDurationMs', 'vadMinSilenceDurationMs', 'vadSpeechPadMs',
                 'maxInitialTimestamp', 'repetitionPenalty',
                 'noSpeechThreshold', 'logProbThreshold', 'compressionRatioThreshold',
-                'hallucinationSilenceThreshold', 'glossaryPromptEnabled',
+                'hallucinationSilenceThreshold', 'glossaryPromptEnabled', 'glossaryMtEnabled',
                 'chineseSubtitleVariant',
                 'dualTargetSuffix', 'dualPrimaryTrack', 'dualDisplayMode',
                 'mergeBilingualSubtitles', 'deleteSourcesAfterMergeBilingual',
+                'includeWords', 'karaokeVtt', 'releaseGpuAfter',
                 'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',
+                'postBatchContextReconstruct',
+                'smartTranslate',
+                'smartTranslateFaithfulTone',
+                'sakuraNsfwPrompt',
+                'filmAudioEnhance', 'filmVadPreset',
+                'vadEnabled', 'vadSensitive', 'vadAggressive', 'audioLightDenoise',
+                'vadMaxSingleSegmentMs',
                 'smartSplitWithVad', 'targetChunkDurationS',
                 'retranscribeWarmLight', 'subtitleBakMode',
-                'trayProgressEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'postBatchQc',
+                'keepTranscript', 'transcriptKeepDir', 'transcriptKeepLimit', 'transcriptKeepDays',
+                'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow', 'postBatchQc',
+                'autoSense', 'autoDeepSense',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath', 'settingsUiMode',
             ]
                 .forEach((key) => {
-                    if (payload[key] != null) patch[key] = payload[key];
+                    // Allow empty string (e.g. engineHfEndpoint = official hub)
+                    if (payload[key] !== undefined && payload[key] !== null) patch[key] = payload[key];
                 });
             if (!Object.keys(patch).length) {
                 return { ok: false, error: '无有效参数' };
@@ -2320,6 +2503,24 @@ function setupTransWithAiBridge(api, deps) {
             const normalized = buildTransWithAiOptionsFromPayload(patch, await readOptions());
             await saveTransWithAiOptions(getAppRoot, stripPostTaskFields(normalized));
             return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-test-proxy', async (_event, payload = {}) => {
+        try {
+            const { testProxyConnectivity, normalizeProxyOptions } = require('./proxy-settings');
+            return await testProxyConnectivity(normalizeProxyOptions(payload || {}));
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-test-hf-endpoint', async (_event, payload = {}) => {
+        try {
+            const { testHfEndpointConnectivity } = require('./proxy-settings');
+            return await testHfEndpointConnectivity(payload || {});
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -2364,9 +2565,13 @@ function setupTransWithAiBridge(api, deps) {
     register('transwithai-select-videos', async (event, options = {}) => {
         const win = browserWindowFromEvent(event);
         const result = await dialog.showOpenDialog(win, {
-            title: options.title || '选择视频文件',
+            title: options.title || '选择媒体文件',
             properties: ['openFile', 'multiSelections'],
-            filters: [{ name: '视频', extensions: VIDEO_EXTENSIONS }],
+            filters: [
+                { name: '媒体文件', extensions: [...MEDIA_EXTENSIONS] },
+                { name: '音频', extensions: [...AUDIO_EXTENSIONS] },
+                { name: '视频', extensions: [...VIDEO_EXTENSIONS] },
+            ],
             defaultPath: options.defaultPath || undefined,
         });
         if (result.canceled || !result.filePaths?.length) {
@@ -2405,4 +2610,6 @@ module.exports = {
     resetSessionPostTaskOptions,
     setSessionPostTaskOptions,
     getSessionPostTaskOptions,
+    runPostSubtitleTaskActions,
+    writeMergedBilingualSubtitleFiles,
 };

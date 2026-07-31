@@ -106,6 +106,44 @@
             return ok;
         }
 
+        /**
+         * 多选项对话框。返回选中按钮下标；取消或失败返回 -1。
+         * @param {string} message
+         * @param {{ buttons: string[], cancelId?: number, defaultId?: number, detail?: string, title?: string }} options
+         * @returns {Promise<number>}
+         */
+        async function editorChoice(message, options = {}) {
+            const text = String(message || '').trim() || '请选择';
+            const buttons = Array.isArray(options.buttons)
+                ? options.buttons.map((b) => String(b || '').trim()).filter(Boolean)
+                : [];
+            if (buttons.length < 2) return -1;
+            const cancelId = Number.isInteger(options.cancelId)
+                ? options.cancelId
+                : buttons.length - 1;
+            if (electron?.transubEditorConfirm) {
+                try {
+                    const res = await electron.transubEditorConfirm({
+                        message: text,
+                        detail: options.detail || '',
+                        title: options.title || '请选择',
+                        buttons,
+                        cancelId,
+                        defaultId: options.defaultId ?? 0,
+                        type: options.type || 'question',
+                    });
+                    restoreEditorFocus();
+                    if (!res?.ok || res.cancelled) return -1;
+                    const idx = Number(res.response);
+                    return Number.isInteger(idx) ? idx : -1;
+                } catch (_) { /* fall through */ }
+            }
+            // Fallback: first non-cancel option via confirm
+            const ok = window.confirm(`${text}\n\n确定 = ${buttons[0]}；取消 = ${buttons[cancelId] || '取消'}`);
+            requestOsRefocus();
+            return ok ? 0 : -1;
+        }
+
         function showEditorModal(modalEl, focusEl) {
             if (!modalEl) return;
             modalEl.classList.remove('hidden');
@@ -138,6 +176,7 @@
         ctx.requestOsRefocus = requestOsRefocus;
         ctx.releaseFocusFromModal = releaseFocusFromModal;
         ctx.editorConfirm = editorConfirm;
+        ctx.editorChoice = editorChoice;
         ctx.showEditorModal = showEditorModal;
         ctx.hideEditorModal = hideEditorModal;
 

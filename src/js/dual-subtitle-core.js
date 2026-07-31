@@ -35,6 +35,7 @@
 
     function normalizeDualDisplayMode(value) {
         const mode = String(value || '').trim().toLowerCase();
+        if (mode === 'translation') return 'target';
         return DISPLAY_MODES.has(mode) ? mode : 'both';
     }
 
@@ -45,7 +46,9 @@
 
     function normalizeDualLineOrder(value) {
         const order = String(value || '').trim().toLowerCase();
-        if (order === 'target-first' || order === 'target') return 'target-first';
+        if (order === 'target-first' || order === 'target' || order === 'translation-first' || order === 'translation') {
+            return 'target-first';
+        }
         if (order === 'source-first' || order === 'source') return 'source-first';
         return LINE_ORDERS.has(order) ? order : 'source-first';
     }
@@ -141,6 +144,140 @@
     }
 
     /**
+     * Script stats for one string (kana ≈ Japanese dialogue; Han-without-kana ≈ Chinese).
+     * @param {string} text
+     * @returns {{ kana: number, han: number, latin: number, total: number }}
+     */
+    function scoreSubtitleScript(text) {
+        const t = String(text || '');
+        const kana = (t.match(/[\u3040-\u30ff]/g) || []).length;
+        const han = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+        const latin = (t.match(/[A-Za-z]/g) || []).length;
+        return { kana, han, latin, total: kana + han + latin };
+    }
+
+    /**
+     * Infer subtitle language from cue text when filename has no .ja/.zh suffix
+     * (common: same stem as the video).
+     * @param {Array<{ text?: string }>} cues
+     * @param {{ maxCues?: number }} [options]
+     * @returns {{ language: 'ja'|'zh'|'en'|'unknown', role: 'source'|'target'|null, confidence: number, sampled: number, kana: number, han: number, latin: number }}
+     */
+    function inferLanguageFromCues(cues, { maxCues = 48 } = {}) {
+        let kana = 0;
+        let han = 0;
+        let latin = 0;
+        let sampled = 0;
+        const limit = Math.max(4, Math.min(120, Number(maxCues) || 48));
+        for (const c of Array.isArray(cues) ? cues : []) {
+            const t = String(c?.text || '').trim();
+            if (!t) continue;
+            const s = scoreSubtitleScript(t);
+            kana += s.kana;
+            han += s.han;
+            latin += s.latin;
+            sampled += 1;
+            if (sampled >= limit) break;
+        }
+        const total = kana + han + latin;
+        const empty = {
+            language: 'unknown',
+            role: null,
+            confidence: 0,
+            sampled,
+            kana,
+            han,
+            latin,
+        };
+        if (sampled < 1 || total < 6) return empty;
+
+        // Japanese: hiragana/katakana is a strong signal even with many kanji
+        if (kana >= 6 && kana / total >= 0.10) {
+            return {
+                language: 'ja',
+                role: 'source',
+                confidence: Math.min(0.98, 0.55 + kana / total),
+                sampled,
+                kana,
+                han,
+                latin,
+            };
+        }
+        if (kana >= 3 && kana >= latin && kana / Math.max(1, han) >= 0.08) {
+            return {
+                language: 'ja',
+                role: 'source',
+                confidence: Math.min(0.9, 0.45 + kana / Math.max(1, total)),
+                sampled,
+                kana,
+                han,
+                latin,
+            };
+        }
+
+        // Chinese: Han-dominant, virtually no kana
+        if (han >= 6 && kana <= 1 && han / total >= 0.45) {
+            return {
+                language: 'zh',
+                role: 'target',
+                confidence: Math.min(0.95, 0.5 + han / total),
+                sampled,
+                kana,
+                han,
+                latin,
+            };
+        }
+
+        // Latin-heavy → treat as source (en) for MT pairing with .zh
+        if (latin >= 10 && latin / total >= 0.55 && kana <= 1) {
+            return {
+                language: 'en',
+                role: 'source',
+                confidence: Math.min(0.9, 0.45 + latin / total),
+                sampled,
+                kana,
+                han,
+                latin,
+            };
+        }
+
+        return empty;
+    }
+
+    /**
+     * Map cue-text language guess to dual role (+ default pair suffix).
+     * @param {Array} cues
+     * @param {{ targetSuffix?: string }} [options]
+     * @returns {{ role: 'source'|'target'|null, pairSuffix: string|null, language: string, confidence: number }}
+     */
+    function inferDualRoleFromCues(cues, { targetSuffix = TARGET_SUFFIX_DEFAULT } = {}) {
+        const guess = inferLanguageFromCues(cues);
+        const tgt = normalizeDualTargetSuffix(targetSuffix);
+        if (guess.role === 'source') {
+            return {
+                role: 'source',
+                pairSuffix: tgt,
+                language: guess.language,
+                confidence: guess.confidence,
+            };
+        }
+        if (guess.role === 'target') {
+            return {
+                role: 'target',
+                pairSuffix: guess.language === 'zh' ? 'ja' : 'source',
+                language: guess.language,
+                confidence: guess.confidence,
+            };
+        }
+        return {
+            role: null,
+            pairSuffix: null,
+            language: guess.language,
+            confidence: guess.confidence,
+        };
+    }
+
+    /**
      * Candidate suffixes to try when locating the complementary dual file.
      * Opening `.zh.srt` should also find `.ja.srt` / `.en.srt`, not only `.source.srt`.
      */
@@ -156,26 +293,73 @@
     }
 
     /**
+     * Build a startMs-sorted index for fast overlap queries against a cue list.
+     * Invalidate / rebuild whenever the underlying cues array content changes.
+     */
+    function buildOverlapIndex(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        const entries = list.map((cue, index) => {
+            const startMs = Number(cue?.startMs) || 0;
+            const endMs = Math.max(startMs, Number(cue?.endMs) || startMs);
+            return { index, startMs, endMs };
+        });
+        entries.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.index - b.index);
+        return { cues: list, entries };
+    }
+
+    function lowerBoundByStart(entries, startMs) {
+        let lo = 0;
+        let hi = entries.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (entries[mid].startMs < startMs) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /**
      * Find cue in `cues` with maximum time overlap against [startMs, endMs].
      * If no overlap, fall back to nearest start within maxStartGapMs.
+     * Pass `{ index: buildOverlapIndex(cues) }` to avoid O(n) scans per query.
      * @returns {{ index: number, cue: object|null, overlapMs: number, match: 'overlap'|'nearest'|'none' }}
      */
-    function findBestOverlapCue(cues, startMs, endMs, { maxStartGapMs = 2500 } = {}) {
+    function findBestOverlapCue(cues, startMs, endMs, { maxStartGapMs = 2500, index = null } = {}) {
         const list = Array.isArray(cues) ? cues : [];
         const a0 = Number(startMs) || 0;
         const a1 = Math.max(a0, Number(endMs) || a0);
+        const useIndex = index && index.cues === list && Array.isArray(index.entries);
+
         let bestIdx = -1;
         let bestOverlap = 0;
-        for (let i = 0; i < list.length; i += 1) {
-            const cue = list[i];
-            const b0 = Number(cue?.startMs) || 0;
-            const b1 = Math.max(b0, Number(cue?.endMs) || b0);
-            const overlap = Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
-            if (overlap > bestOverlap) {
-                bestOverlap = overlap;
-                bestIdx = i;
+
+        if (useIndex) {
+            const entries = index.entries;
+            // Cues that start before a1 may overlap; look back for long-running early cues.
+            const lookbackMs = 120000;
+            const right = lowerBoundByStart(entries, a1);
+            let left = lowerBoundByStart(entries, a0 - lookbackMs);
+            for (let i = left; i < right; i += 1) {
+                const e = entries[i];
+                const overlap = Math.max(0, Math.min(a1, e.endMs) - Math.max(a0, e.startMs));
+                if (overlap > bestOverlap) {
+                    bestOverlap = overlap;
+                    bestIdx = e.index;
+                }
+            }
+        } else {
+            for (let i = 0; i < list.length; i += 1) {
+                const cue = list[i];
+                const b0 = Number(cue?.startMs) || 0;
+                const b1 = Math.max(b0, Number(cue?.endMs) || b0);
+                const overlap = Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+                if (overlap > bestOverlap) {
+                    bestOverlap = overlap;
+                    bestIdx = i;
+                }
             }
         }
+
         if (bestIdx >= 0 && bestOverlap > 0) {
             return { index: bestIdx, cue: list[bestIdx], overlapMs: bestOverlap, match: 'overlap' };
         }
@@ -184,12 +368,37 @@
         if (gapLimit > 0 && list.length) {
             let nearIdx = -1;
             let nearGap = Infinity;
-            for (let i = 0; i < list.length; i += 1) {
-                const b0 = Number(list[i]?.startMs) || 0;
-                const gap = Math.abs(b0 - a0);
-                if (gap < nearGap) {
-                    nearGap = gap;
-                    nearIdx = i;
+            if (useIndex) {
+                const entries = index.entries;
+                const pos = lowerBoundByStart(entries, a0);
+                const candidates = [];
+                if (pos < entries.length) candidates.push(entries[pos]);
+                if (pos > 0) candidates.push(entries[pos - 1]);
+                for (const e of candidates) {
+                    const gap = Math.abs(e.startMs - a0);
+                    if (gap < nearGap) {
+                        nearGap = gap;
+                        nearIdx = e.index;
+                    }
+                }
+                // Rare: denser neighborhood within gapLimit
+                if (nearGap > gapLimit) {
+                    for (let i = Math.max(0, pos - 8); i < Math.min(entries.length, pos + 8); i += 1) {
+                        const gap = Math.abs(entries[i].startMs - a0);
+                        if (gap < nearGap) {
+                            nearGap = gap;
+                            nearIdx = entries[i].index;
+                        }
+                    }
+                }
+            } else {
+                for (let i = 0; i < list.length; i += 1) {
+                    const b0 = Number(list[i]?.startMs) || 0;
+                    const gap = Math.abs(b0 - a0);
+                    if (gap < nearGap) {
+                        nearGap = gap;
+                        nearIdx = i;
+                    }
                 }
             }
             if (nearIdx >= 0 && nearGap <= gapLimit) {
@@ -370,9 +579,9 @@
 
     /**
      * Suggest merged export basename next to a dual track path.
-     * Default: `{stem}.bilingual.{ext}`；asVideoName 时为 `{stem}.{ext}`（与影片同名）。
+     * Default: `{stem}.{ext}`（与影片同名，播放器可自动挂载）；asVideoName=false 时为 `{stem}.bilingual.{ext}`。
      */
-    function suggestMergedExportName(subtitlePath, { asVideoName = false } = {}) {
+    function suggestMergedExportName(subtitlePath, { asVideoName = true } = {}) {
         const raw = String(subtitlePath || '').replace(/\\/g, '/');
         const base = raw.split('/').pop() || 'subtitle.srt';
         const m = base.match(/^(.*?)(\.[^.]+)$/);
@@ -405,8 +614,12 @@
         buildSuffixedSubtitlePath,
         buildDualPathPair,
         inferDualRole,
+        scoreSubtitleScript,
+        inferLanguageFromCues,
+        inferDualRoleFromCues,
         listPairSuffixCandidates,
         findComplementarySidecarPath,
+        buildOverlapIndex,
         findBestOverlapCue,
         composeDualOverlayText,
         mapDualPassProgress,

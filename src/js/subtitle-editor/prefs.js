@@ -12,10 +12,23 @@
     const AUTO_FOCUS_KEY = 'transub-editor-auto-focus';
     const WAVEFORM_KEY = 'transub-editor-waveform';
     const TIMELINE_ZOOM_KEY = 'transub-editor-timeline-zoom';
+    const FILM_HINTS_KEY = 'transub-editor-film-hints';
+    const LIST_FILTER_KEY = 'transub-editor-list-filter';
     const DEFAULT_TARGET_CPS = 3;
     const DEFAULT_RETRANSCRIBE_DUR_SEC = 10;
     const DEFAULT_TIMELINE_ZOOM = 5;
     const SPLIT_MODES = new Set(['smart', 'lines', 'spaces', 'chars', 'count', 'cursor', 'playhead', 'silence']);
+    const FILM_HINTS_MAX = 40;
+    const PERSISTABLE_LIST_FILTERS = new Set([
+        'all',
+        'low',
+        'qc',
+        'review-unseen',
+        'review-edited',
+        'review-approved',
+        'bookmarks',
+        'speaker',
+    ]);
 
     function installPrefs(ctx) {
         if (!ctx?.state || !ctx?.els) {
@@ -108,6 +121,7 @@
                         padMs: 350,
                         startMode: 'selected',
                         snapAfter: true,
+                        writeAs: 'source',
                     };
                 }
                 const prefs = JSON.parse(raw);
@@ -116,6 +130,7 @@
                     padMs: Math.max(0, Math.min(2000, Math.round(Number(prefs.padMs) || 350))),
                     startMode: prefs.startMode === 'playhead' ? 'playhead' : 'selected',
                     snapAfter: prefs.snapAfter !== false,
+                    writeAs: prefs.writeAs === 'target' ? 'target' : 'source',
                 };
             } catch (_) {
                 return {
@@ -123,6 +138,7 @@
                     padMs: 350,
                     startMode: 'selected',
                     snapAfter: true,
+                    writeAs: 'source',
                 };
             }
         }
@@ -229,7 +245,9 @@
             if (!els.autoFocusBtn) return;
             const on = state.autoFocus === true;
             els.autoFocusBtn.classList.toggle('is-active', on);
+            els.autoFocusBtn.classList.toggle('is-checked', on);
             els.autoFocusBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            els.autoFocusBtn.setAttribute('aria-checked', on ? 'true' : 'false');
             els.autoFocusBtn.title = on
                 ? '自动焦点：开启（播放时字幕选中跟随进度）'
                 : '自动焦点：关闭（播放时不自动选中字幕）';
@@ -262,13 +280,18 @@
         function applyTheme(theme) {
             const { els } = ctx;
             const dark = theme === 'dark';
+            const root = document.documentElement;
+            root.classList.toggle('editor-theme-dark', dark);
+            root.classList.toggle('editor-theme-light', !dark);
             document.body.classList.toggle('editor-theme-dark', dark);
             document.body.classList.toggle('editor-theme-light', !dark);
+            try { root.style.colorScheme = dark ? 'dark' : 'light'; } catch (_) { /* ignore */ }
             try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (_) { /* ignore */ }
             if (els.themeToggle) {
-                els.themeToggle.innerHTML = dark ? '<i class="fa fa-sun-o" aria-hidden="true"></i>' : '<i class="fa fa-moon-o" aria-hidden="true"></i>';
-                els.themeToggle.title = dark ? '切换到浅色主题' : '切换到深色主题';
-                els.themeToggle.setAttribute('aria-label', els.themeToggle.title);
+                const label = dark ? '切换到浅色主题' : '切换到深色主题';
+                els.themeToggle.textContent = dark ? '浅色主题' : '深色主题';
+                els.themeToggle.title = label;
+                els.themeToggle.setAttribute('aria-label', label);
             }
         }
 
@@ -319,7 +342,9 @@
             document.body.classList.toggle('editor-waveform-on', on);
             if (els.waveformToggle) {
                 els.waveformToggle.classList.toggle('is-active', on);
+                els.waveformToggle.classList.toggle('is-checked', on);
                 els.waveformToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+                els.waveformToggle.setAttribute('aria-checked', on ? 'true' : 'false');
                 if (!els.waveformToggle.classList.contains('is-loading')) {
                     els.waveformToggle.title = on ? '波形时间轴：开启（默认）' : '波形时间轴：关闭';
                 }
@@ -381,6 +406,93 @@
             return value;
         }
 
+        function normalizeFilmHintPath(path) {
+            return String(path || '').trim().toLowerCase().replace(/\\/g, '/');
+        }
+
+        function emptyFilmHints() {
+            return { title: '', synopsis: '', terms: '', intensity: 'balanced' };
+        }
+
+        function loadAllFilmHints() {
+            try {
+                const raw = localStorage.getItem(FILM_HINTS_KEY);
+                if (!raw) return {};
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function loadFilmHints(path) {
+            const key = normalizeFilmHintPath(path);
+            if (!key) return emptyFilmHints();
+            const all = loadAllFilmHints();
+            const hit = all[key];
+            if (!hit || typeof hit !== 'object') return emptyFilmHints();
+            return {
+                title: String(hit.title || '').slice(0, 120),
+                synopsis: String(hit.synopsis || '').slice(0, 800),
+                terms: String(hit.terms || '').slice(0, 800),
+                intensity: ['light', 'balanced', 'strong'].includes(hit.intensity) ? hit.intensity : 'balanced',
+            };
+        }
+
+        function saveFilmHints(path, hints = {}) {
+            const key = normalizeFilmHintPath(path);
+            if (!key) return;
+            const next = {
+                title: String(hints.title || '').trim().slice(0, 120),
+                synopsis: String(hints.synopsis || '').trim().slice(0, 800),
+                terms: String(hints.terms || '').trim().slice(0, 800),
+                intensity: ['light', 'balanced', 'strong'].includes(hints.intensity)
+                    ? hints.intensity
+                    : 'balanced',
+                updatedAt: Date.now(),
+            };
+            try {
+                const all = loadAllFilmHints();
+                if (!next.title && !next.synopsis && !next.terms) {
+                    delete all[key];
+                } else {
+                    all[key] = next;
+                }
+                const entries = Object.entries(all)
+                    .sort((a, b) => (Number(b[1]?.updatedAt) || 0) - (Number(a[1]?.updatedAt) || 0))
+                    .slice(0, FILM_HINTS_MAX);
+                localStorage.setItem(FILM_HINTS_KEY, JSON.stringify(Object.fromEntries(entries)));
+            } catch (_) { /* ignore */ }
+        }
+
+        function loadListFilterPrefs() {
+            try {
+                const raw = localStorage.getItem(LIST_FILTER_KEY);
+                if (!raw) return { filter: 'all', speakerId: '' };
+                const parsed = JSON.parse(raw);
+                let filter = String(parsed?.filter || 'all');
+                if (!PERSISTABLE_LIST_FILTERS.has(filter)) filter = 'all';
+                const speakerId = filter === 'speaker'
+                    ? String(parsed?.speakerId || '').trim()
+                    : '';
+                if (filter === 'speaker' && !speakerId) filter = 'all';
+                return { filter, speakerId };
+            } catch (_) {
+                return { filter: 'all', speakerId: '' };
+            }
+        }
+
+        function saveListFilterPrefs(filter, speakerId) {
+            const f = String(filter || 'all');
+            if (f === 'find' || !PERSISTABLE_LIST_FILTERS.has(f)) return;
+            try {
+                localStorage.setItem(LIST_FILTER_KEY, JSON.stringify({
+                    filter: f,
+                    speakerId: f === 'speaker' ? String(speakerId || '').trim() : '',
+                }));
+            } catch (_) { /* ignore */ }
+        }
+
         ctx.loadTargetCpsPrefs = loadTargetCpsPrefs;
         ctx.saveTargetCpsPrefs = saveTargetCpsPrefs;
         ctx.getTargetCps = getTargetCps;
@@ -409,6 +521,11 @@
         ctx.loadTimelineZoomPref = loadTimelineZoomPref;
         ctx.saveTimelineZoomPref = saveTimelineZoomPref;
         ctx.clampTimelineZoomPref = clampTimelineZoomPref;
+        ctx.loadFilmHints = loadFilmHints;
+        ctx.saveFilmHints = saveFilmHints;
+        ctx.emptyFilmHints = emptyFilmHints;
+        ctx.loadListFilterPrefs = loadListFilterPrefs;
+        ctx.saveListFilterPrefs = saveListFilterPrefs;
 
         return ctx;
     }
@@ -426,6 +543,8 @@
         AUTO_FOCUS_KEY,
         WAVEFORM_KEY,
         TIMELINE_ZOOM_KEY,
+        FILM_HINTS_KEY,
+        LIST_FILTER_KEY,
     };
     global.TransubEditorParts.DEFAULT_TARGET_CPS = DEFAULT_TARGET_CPS;
     global.TransubEditorParts.DEFAULT_RETRANSCRIBE_DUR_SEC = DEFAULT_RETRANSCRIBE_DUR_SEC;
