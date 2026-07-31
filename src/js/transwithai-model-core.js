@@ -299,10 +299,12 @@
         if (t === 'dual') {
             const e1 = checkOne(transcribePath, 'transcribe', '转写模型');
             if (e1) return { ok: false, error: e1, warnings };
-            const e2 = checkOne(translatePath, 'translate', '翻译模型');
-            if (e2) return { ok: false, error: e2, warnings };
-            if (transcribePath && translatePath && transcribePath.toLowerCase() === translatePath.toLowerCase()) {
-                warnings.push('转写与翻译指向同一目录。官方通常无合一模型，双语结果可能不可靠。');
+            if (!options.smartTranslate) {
+                const e2 = checkOne(translatePath, 'translate', '翻译模型');
+                if (e2) return { ok: false, error: e2, warnings };
+                if (transcribePath && translatePath && transcribePath.toLowerCase() === translatePath.toLowerCase()) {
+                    warnings.push('转写与翻译指向同一目录。官方通常无合一模型，双语结果可能不可靠。');
+                }
             }
             return { ok: true, warnings, options: filled };
         }
@@ -316,7 +318,16 @@
             return { ok: true, warnings, options: filled };
         }
 
-        // translate (default)
+        // translate (default) — 智能翻译只需转写模型
+        if (options.smartTranslate) {
+            if (transcribePath) {
+                const err = checkOne(transcribePath, 'transcribe', '转写模型');
+                if (err) return { ok: false, error: err, warnings };
+            } else if (translatePath) {
+                // 兼容：未填转写时仍可用已填路径作转写（由 resolvePassModelPath 处理）
+            }
+            return { ok: true, warnings, options: filled };
+        }
         if (translatePath) {
             const err = checkOne(translatePath, 'translate', '翻译模型');
             if (err) return { ok: false, error: err, warnings };

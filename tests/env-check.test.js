@@ -134,7 +134,7 @@ test('planEnvFixes collects SenseVoice runtime force download', () => {
 test('planEnvFixes ensures GPU only when runtime warns about CUDA packages', () => {
     const { planEnvFixes } = require('../electron/env-check');
     const withGpu = planEnvFixes([
-        { id: 'gpuRuntime', status: 'warn', detail: '未找到 cublas64_12.dll；可先用 CPU，或稍后在「环境」下载 GPU 支持' },
+        { id: 'gpuRuntime', status: 'warn', detail: '未找到 cublas64_12.dll；可先用 CPU，或稍后在「运行环境」下载 GPU 支持' },
     ]);
     assert.equal(withGpu.ensureGpu, true);
     const cpuOnly = planEnvFixes([
@@ -169,7 +169,25 @@ test('planEnvFixes skips auto pip when Whisper is policy-blocked', () => {
         },
         { id: 'vcRedist', status: 'ok', detail: 'ok' },
     ]);
-    assert.equal(plan.fixable, false);
-    assert.equal(plan.modelIds.includes('whisper-tiny'), false);
+    // Still offer one-click retry so the fix button remains visible.
+    assert.equal(plan.fixable, true);
+    assert.ok(plan.modelIds.includes('whisper-tiny'));
     assert.ok(plan.manualHints.some((h) => h.id === 'whisperRuntime'));
+});
+
+test('planEnvFixes keeps whisper-tiny retry when runtime is policy-blocked', () => {
+    const { planEnvFixes } = require('../electron/env-check');
+    const plan = planEnvFixes([
+        { id: 'lidModel', status: 'warn', detail: 'whisper-tiny 未找到' },
+        {
+            id: 'whisperRuntime',
+            status: 'fail',
+            detail: 'Windows 应用程序控制策略拦截了 Whisper 依赖 DLL',
+            policyBlocked: true,
+        },
+        { id: 'sensevoiceRuntime', status: 'warn', detail: '缺少运行库 torch' },
+    ], { engineAsrModel: 'sensevoice-small' });
+    assert.ok(plan.modelIds.includes('whisper-tiny'));
+    assert.ok(plan.modelIds.includes('sensevoice-small'));
+    assert.equal(plan.fixable, true);
 });

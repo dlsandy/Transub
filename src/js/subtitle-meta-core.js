@@ -181,7 +181,94 @@
     }
 
     /**
-     * 合并启发式与 sidecar 覆盖（sidecar 中 confirmed / retranscribe 优先）
+     * Map Whisper segment meta → [0,1] confidence.
+     * avg_logprob is typically in [-1, 0]; no_speech_prob in [0, 1].
+     */
+    function confidenceFromAsrMeta(meta = {}, options = {}) {
+        const avg = Number(meta.avgLogprob ?? meta.avg_logprob);
+        const noSpeech = Number(meta.noSpeechProb ?? meta.no_speech_prob);
+        const threshold = Math.max(0.05, Math.min(0.95, Number(options.lowThreshold) || DEFAULT_LOW_THRESHOLD));
+        let score = 0.72;
+        const flags = [];
+        if (Number.isFinite(avg)) {
+            // -0.2 → ~0.9, -0.6 → ~0.55, -1.0 → ~0.25
+            score = Math.max(0.05, Math.min(0.98, 1 + avg));
+            if (avg < -0.55) flags.push('low_logprob');
+        } else {
+            return null;
+        }
+        if (Number.isFinite(noSpeech)) {
+            if (noSpeech > 0.55) {
+                score -= Math.min(0.45, (noSpeech - 0.55) * 0.9);
+                flags.push('high_no_speech');
+            } else if (noSpeech > 0.35) {
+                score -= 0.08;
+                flags.push('mid_no_speech');
+            }
+        }
+        const confidence = Math.max(0, Math.min(1, Number(score.toFixed(3))));
+        return {
+            confidence,
+            flags,
+            low: confidence < threshold,
+            source: 'asr',
+            avgLogprob: Number.isFinite(avg) ? avg : undefined,
+            noSpeechProb: Number.isFinite(noSpeech) ? noSpeech : undefined,
+        };
+    }
+
+    /**
+     * Build sidecar entries from engine cues (start/end seconds or ms + avgLogprob).
+     */
+    function buildAsrSidecarFromEngineCues(engineCues, options = {}) {
+        const list = Array.isArray(engineCues) ? engineCues : [];
+        const entries = [];
+        for (let i = 0; i < list.length; i += 1) {
+            const c = list[i];
+            if (!c || typeof c !== 'object') continue;
+            const startSec = Number(c.start ?? c.startSec);
+            const endSec = Number(c.end ?? c.endSec);
+            let startMs = Number(c.startMs);
+            let endMs = Number(c.endMs);
+            if (!Number.isFinite(startMs)) {
+                startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : 0;
+            }
+            if (!Number.isFinite(endMs)) {
+                endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : startMs + 1000;
+            }
+            const text = String(c.text || '').trim();
+            const meta = c.meta && typeof c.meta === 'object' ? c.meta : c;
+            const scored = confidenceFromAsrMeta({
+                avgLogprob: meta.avgLogprob ?? meta.avg_logprob ?? c.avgLogprob ?? c.avg_logprob,
+                noSpeechProb: meta.noSpeechProb ?? meta.no_speech_prob ?? c.noSpeechProb ?? c.no_speech_prob,
+            }, options);
+            if (!scored) continue;
+            const cue = { startMs, endMs, text };
+            entries.push({
+                index: i,
+                startMs,
+                endMs,
+                text,
+                fingerprint: cueFingerprint(cue),
+                confidence: scored.confidence,
+                flags: scored.flags,
+                source: 'asr',
+                confirmed: false,
+                avgLogprob: scored.avgLogprob,
+                noSpeechProb: scored.noSpeechProb,
+            });
+        }
+        return {
+            version: META_VERSION,
+            updatedAt: new Date().toISOString(),
+            sourceSub: options.sourceSub || '',
+            entries,
+            asrSeeded: true,
+        };
+    }
+
+    /**
+     * 合并启发式与 sidecar 覆盖（confirmed > asr > sidecar confidence > heuristic）
      */
     function mergeConfidenceAnnotations(cues, sidecar = null, options = {}) {
         const heuristic = annotateCuesConfidence(cues, options);
@@ -208,13 +295,19 @@
                 const flags = Array.isArray(entry.flags) && entry.flags.length
                     ? entry.flags.slice()
                     : (entry.source ? [String(entry.source)] : []);
-                return {
-                    confidence,
-                    flags,
-                    low: confidence < threshold,
-                    source: String(entry.source || 'sidecar'),
-                    fingerprint: cueFingerprint(cue),
-                };
+                const source = String(entry.source || 'sidecar');
+                // Prefer true ASR over pure heuristic when both exist
+                if (source === 'asr' || source === 'sidecar' || source === 'retranscribe') {
+                    return {
+                        confidence,
+                        flags,
+                        low: confidence < threshold,
+                        source,
+                        fingerprint: cueFingerprint(cue),
+                        avgLogprob: entry.avgLogprob,
+                        noSpeechProb: entry.noSpeechProb,
+                    };
+                }
             }
 
             return { ...base, fingerprint: cueFingerprint(cue) };
@@ -224,13 +317,13 @@
     function buildSidecarDocument(cues, annotations, extras = {}) {
         const list = Array.isArray(cues) ? cues : [];
         const meta = Array.isArray(annotations) ? annotations : [];
-        return {
+        const doc = {
             version: META_VERSION,
             updatedAt: extras.updatedAt || new Date().toISOString(),
             sourceSub: extras.sourceSub || '',
             entries: list.map((cue, index) => {
                 const ann = meta[index] || {};
-                return {
+                const row = {
                     index,
                     startMs: cue.startMs,
                     endMs: cueEndMs(cue),
@@ -241,8 +334,15 @@
                     source: ann.source || 'heuristic',
                     confirmed: ann.source === 'confirmed' || ann.confirmed === true,
                 };
+                if (ann.avgLogprob != null) row.avgLogprob = ann.avgLogprob;
+                if (ann.noSpeechProb != null) row.noSpeechProb = ann.noSpeechProb;
+                return row;
             }),
         };
+        if (extras.markers && typeof extras.markers === 'object') {
+            doc.markers = extras.markers;
+        }
+        return doc;
     }
 
     function summarizeLowConfidence(annotations) {
@@ -275,6 +375,10 @@
             retranscribe: '已重转写',
             heuristic: '启发式',
             sidecar: '元数据',
+            asr: 'ASR',
+            low_logprob: 'ASR低概率',
+            high_no_speech: '高无语音概率',
+            mid_no_speech: '中等无语音概率',
         };
         if (fluencyCore?.fluencyFlagLabel && map[flag] == null) {
             return fluencyCore.fluencyFlagLabel(flag);
@@ -356,6 +460,8 @@
         cueFingerprint,
         scoreCueConfidence,
         annotateCuesConfidence,
+        confidenceFromAsrMeta,
+        buildAsrSidecarFromEngineCues,
         mergeConfidenceAnnotations,
         buildSidecarDocument,
         summarizeLowConfidence,

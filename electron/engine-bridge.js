@@ -38,7 +38,7 @@ const {
     waitJob,
 } = require('./engine-client');
 const { mergeTransWithAiOptions, stripPostTaskFields } = require('./transwithai-options');
-const { mergeSenseOverrides } = require('../src/js/content-profile-core');
+const { mergeSenseOverrides, sanitizeSakuraMtForLanguage } = require('../src/js/content-profile-core');
 const { buildVadJobOptions, buildAudioJobOptions } = require('./engine-audio-options');
 const {
     resolveEngineSubFormats,
@@ -286,7 +286,7 @@ const SENSEVOICE_MANUAL_PACKAGES = [
     },
 ];
 
-/** Whisper extras (faster-whisper / numpy) — direct .whl links. */
+/** Whisper extras (faster-whisper / ctranslate2 / numpy) — direct .whl links. */
 const WHISPER_MANUAL_PACKAGES = [
     {
         id: 'numpy',
@@ -294,6 +294,20 @@ const WHISPER_MANUAL_PACKAGES = [
         fileName: 'numpy-2.4.6-cp312-cp312-win_amd64.whl',
         officialUrl: 'https://files.pythonhosted.org/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
+    },
+    {
+        id: 'ctranslate2',
+        name: 'CTranslate2（Whisper 推理核心）',
+        fileName: 'ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/c0/82/0a5f7f2b03b4e10aacb3146715724e1b96bb993cc7d199be28c9825aa120/ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/c0/82/0a5f7f2b03b4e10aacb3146715724e1b96bb993cc7d199be28c9825aa120/ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
+    },
+    {
+        id: 'onnxruntime',
+        name: 'ONNX Runtime（Silero VAD）',
+        fileName: 'onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/5f/9d/fb8895b2cb38c9965d4b4e0a9aa1398f3e3f16c4acb75cf3b61689780a65/onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/5f/9d/fb8895b2cb38c9965d4b4e0a9aa1398f3e3f16c4acb75cf3b61689780a65/onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'faster-whisper',
@@ -528,9 +542,9 @@ async function buildEngineDownloadInfo(payload = {}) {
                 kind: 'whisper',
                 title: '手动安装 Whisper 运行库',
                 folder,
-                pipCommand: `${pipPrefix} install --upgrade --prefer-binary -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "faster-whisper>=1.1.0" "numpy>=1.24.0,<2.5"`,
-                hint: 'Whisper 需要 faster-whisper / av / numpy(<2.5)。若提示「应用程序控制策略」拦截，请关闭智能应用控制或将引擎目录加入排除（重装 .whl 无效）。',
-                wheelHint: '优先排除系统策略拦截。若确缺包：装下方 .whl，并确保 numpy 为 2.4.x；av 为 faster-whisper 音频依赖。',
+                pipCommand: `${pipPrefix} install --upgrade --prefer-binary -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "faster-whisper>=1.1.0" "ctranslate2>=4.0.0" "onnxruntime>=1.14.0,<1.22" "av>=10.0.0" "numpy>=1.24.0,<2.5"`,
+                hint: 'Whisper 需要 faster-whisper / ctranslate2 / onnxruntime（Silero VAD）/ av / numpy(<2.5)。若提示「应用程序控制策略」拦截，请关闭智能应用控制或将引擎目录加入排除（重装 .whl 无效）。',
+                wheelHint: '优先排除系统策略拦截。若确缺包：先装 ctranslate2、onnxruntime 与 numpy 2.4.x，再装 faster-whisper；av 为音频解码依赖。',
                 items: WHISPER_MANUAL_PACKAGES.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
@@ -567,7 +581,8 @@ async function buildEngineDownloadInfo(payload = {}) {
 
     const profile = String(payload.profile || merged.engineProfile || 'balanced').trim();
     const profileIds = ENGINE_PROFILE_MODELS[profile] || ENGINE_PROFILE_MODELS.balanced;
-    const requestedIds = Array.isArray(payload.modelIds)
+    const hasExplicitModelIds = Array.isArray(payload.modelIds);
+    const requestedIds = hasExplicitModelIds
         ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
         : [
             merged.engineAsrModel,
@@ -626,11 +641,15 @@ async function buildEngineDownloadInfo(payload = {}) {
         return String(a.name).localeCompare(String(b.name), 'zh');
     });
 
-    // Manual links for preselected items
-    const linkIds = uniqueIds([
-        ...catalog.filter((c) => c.selected).map((c) => c.id),
-        ...requestedIds,
-    ]);
+    // Manual links: when caller passes modelIds, only those (do not expand to whole profile).
+    const linkIds = uniqueIds(
+        hasExplicitModelIds && requestedIds.length
+            ? requestedIds
+            : [
+                ...catalog.filter((c) => c.selected).map((c) => c.id),
+                ...requestedIds,
+            ],
+    );
     const items = linkIds.map((id) => {
         const live = byId.get(id) || {};
         const fallback = ENGINE_MODEL_HUB_FALLBACK[id] || {};
@@ -695,11 +714,31 @@ function friendlyEngineError(raw) {
     const msg = String(raw || '').trim();
     if (!msg) return '引擎任务失败';
     const lower = msg.toLowerCase();
+    if (
+        lower === 'aborted'
+        || lower === 'cancelled'
+        || lower.includes('operation was aborted')
+        || lower.includes('user aborted')
+        || lower.includes('aborterror')
+    ) {
+        return '操作已中止或请求超时，请重试';
+    }
     if (lower.includes('cublas64_12') || (lower.includes('cublas') && lower.includes('not found'))) {
         return (
             '缺少 CUDA 12 运行库 cublas64_12.dll（Whisper/CTranslate2 需要）。'
             + '引擎已尽量回退 CPU；若仍失败请将设置 → 推理设备改为 CPU，'
             + '或安装 CUDA Toolkit 12 并把其 bin 加入系统 PATH 后重启引擎。'
+            + ` 原始错误：${msg}`
+        );
+    }
+    const mtMissing = msg.match(/MT model not installed:\s*([^\s.]+)/i)
+        || msg.match(/未安装翻译模型\s+([^\s。]+)/);
+    if (mtMissing) {
+        const id = mtMissing[1];
+        return (
+            `未安装翻译模型 ${id}。`
+            + '请在「设置 → 环境 / 模型」下载后再生成；'
+            + '若转写已完成，可查看同目录下的 `*.src.partial.*` / `*.src.*` 原文后单独翻译。'
             + ` 原始错误：${msg}`
         );
     }
@@ -728,6 +767,134 @@ function resolveEngineRuntimePython(installPath) {
         if (fs.existsSync(exe)) return exe;
     }
     return '';
+}
+
+function modelIdsNeedWhisperExtras(modelIds) {
+    const list = Array.isArray(modelIds) ? modelIds : [];
+    return list.some((id) => {
+        const s = String(id || '').toLowerCase();
+        return s.includes('whisper') && !s.includes('whisperseg');
+    });
+}
+
+/**
+ * Install Whisper pip extras with engine stopped (fresh python.exe).
+ * Avoids WinError 5 when the HTTP server already imported native wheels.
+ */
+function ensureAsrWhisperOffline(opts = {}) {
+    const pythonPath = String(opts.pythonPath || '').trim();
+    const cwd = String(opts.cwd || '').trim();
+    if (!pythonPath || !fs.existsSync(pythonPath)) {
+        return Promise.resolve({ ok: false, error: '找不到引擎 Python（runtime\\python.exe）' });
+    }
+    const force = !!opts.force;
+    const timeoutMs = Math.max(60_000, Number(opts.timeoutMs) || 1_800_000);
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+    const signal = opts.signal;
+    const args = [
+        '-m', 'transub_engine', 'runtime', 'ensure-asr-whisper',
+        '--progress', 'jsonl',
+    ];
+    if (force) args.push('--force');
+
+    return new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve({ ok: false, cancelled: true, error: 'cancelled' });
+            return;
+        }
+        let child;
+        try {
+            child = spawn(pythonPath, args, {
+                cwd: cwd || undefined,
+                windowsHide: true,
+                env: {
+                    ...process.env,
+                    PYTHONUNBUFFERED: '1',
+                    PYTHONIOENCODING: 'utf-8',
+                },
+            });
+        } catch (err) {
+            resolve({ ok: false, error: err.message || String(err) });
+            return;
+        }
+
+        const lines = [];
+        let settled = false;
+        let resultPayload = null;
+        const finish = (payload) => {
+            if (settled) return;
+            settled = true;
+            try { signal?.removeEventListener?.('abort', onAbort); } catch { /* ignore */ }
+            clearTimeout(timer);
+            resolve(payload);
+        };
+        const onAbort = () => {
+            try { child.kill(); } catch { /* ignore */ }
+            finish({ ok: false, cancelled: true, error: 'cancelled' });
+        };
+        if (signal) {
+            if (signal.aborted) {
+                onAbort();
+                return;
+            }
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+        const timer = setTimeout(() => {
+            try { child.kill(); } catch { /* ignore */ }
+            finish({ ok: false, error: `Whisper 运行库安装超时（${Math.round(timeoutMs / 1000)} 秒）` });
+        }, timeoutMs);
+
+        const handleLine = (raw) => {
+            const text = String(raw || '').trim();
+            if (!text) return;
+            lines.push(text);
+            if (lines.length > 80) lines.splice(0, lines.length - 60);
+            let ev;
+            try { ev = JSON.parse(text); } catch { return; }
+            if (!ev || typeof ev !== 'object') return;
+            if (ev.type === 'progress' || ev.stage || ev.detail) {
+                onProgress?.(ev);
+            }
+            if (ev.type === 'result' || (ev.ok != null && (ev.ready != null || ev.code || ev.installed))) {
+                resultPayload = ev;
+            }
+        };
+
+        let buf = '';
+        const onChunk = (chunk) => {
+            buf += chunk.toString('utf8');
+            const parts = buf.split(/\r?\n/);
+            buf = parts.pop() || '';
+            for (const part of parts) handleLine(part);
+        };
+        child.stdout?.on('data', onChunk);
+        child.stderr?.on('data', onChunk);
+        child.on('error', (err) => {
+            finish({ ok: false, error: err.message || String(err), logTail: lines.slice(-20).join('\n') });
+        });
+        child.on('close', (code) => {
+            if (buf.trim()) handleLine(buf);
+            const logTail = lines.slice(-20).join('\n');
+            if (resultPayload && resultPayload.ok) {
+                finish({ ok: true, ...resultPayload, logTail });
+                return;
+            }
+            if (code === 0) {
+                finish({ ok: true, ...(resultPayload || {}), logTail });
+                return;
+            }
+            const err = resultPayload?.message
+                || resultPayload?.error
+                || (logTail ? logTail.slice(-400) : `Whisper 运行库安装失败（exit ${code}）`);
+            finish({
+                ok: false,
+                error: err,
+                code: resultPayload?.code || '',
+                logTail,
+                ...(resultPayload || {}),
+            });
+        });
+    });
 }
 
 function resolveEngineEntrypoints(installPath) {
@@ -1226,6 +1393,9 @@ async function ensureEngineRunning(options = {}) {
         ...process.env,
         TRANSUB_ENGINE_STUB: process.env.TRANSUB_ENGINE_STUB || '',
         TQDM_DISABLE: '1',
+        // Force UTF-8 so Chinese progress / logs are not GBK-mojibake on Windows.
+        PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8',
+        PYTHONUTF8: process.env.PYTHONUTF8 || '1',
         // Suppress transformers/UserWarning spam in captured stderr.
         PYTHONWARNINGS: process.env.PYTHONWARNINGS
             || 'ignore::UserWarning:transformers,ignore::FutureWarning',
@@ -1604,7 +1774,11 @@ async function runEngineBatchLocked({
         || sakuraCatalog.isSakuraMtModel(id)
     );
     const translateLikeBatch = merged.task === 'translate' || merged.task === 'dual';
-    const fileMergedList = list.map((it) => mergeSenseOverrides(merged, it?.optionOverrides || {}));
+    const fileMergedList = list.map((it) => {
+        const fo = mergeSenseOverrides(merged, it?.optionOverrides || {});
+        // Hard guard: never keep Sakura when the merged file language is known non-Japanese.
+        return sanitizeSakuraMtForLanguage(fo, fo.language).options;
+    });
     const batchWantsSmart = translateLikeBatch && (
         !!merged.smartTranslate
         || fileMergedList.some((fo) => !!fo.smartTranslate)
@@ -1614,15 +1788,18 @@ async function runEngineBatchLocked({
         && !fo.smartTranslate
         && translateLikeBatch
     ));
+    // Prefer per-file (post-sanitize) decisions so a global Sakura form cannot force
+    // Sakura onto sensed non-Japanese items.
     const batchWantsSakura = translateLikeBatch && !batchWantsSmart && (
         !!sakuraFile
         || (
-            isLlmMtId(merged.engineMtModel)
+            list.length === 0
+            && isLlmMtId(merged.engineMtModel)
             && !merged.smartTranslate
         )
     );
     const sakuraModelId = sakuraFile?.engineMtModel
-        || (isLlmMtId(merged.engineMtModel) ? merged.engineMtModel : null);
+        || (list.length === 0 && isLlmMtId(merged.engineMtModel) ? merged.engineMtModel : null);
 
     // Gate Advanced features before job-start so UI never flashes "running" then fails.
     if (batchWantsSmart) {
@@ -1635,7 +1812,7 @@ async function runEngineBatchLocked({
                 return {
                     ok: false,
                     error: gate.error
-                        || '智能翻译需解锁 Advanced，或改用软件内白名单 ≤7B 模型',
+                        || '智能翻译需解锁 Pro',
                 };
             }
         } catch (err) {
@@ -1653,7 +1830,7 @@ async function runEngineBatchLocked({
             if (!gate.ok) {
                 return {
                     ok: false,
-                    error: gate.error || '影视音频增强需解锁 Advanced',
+                    error: gate.error || '影视音频增强需解锁 Pro',
                 };
             }
         } catch (err) {
@@ -1725,6 +1902,12 @@ async function runEngineBatchLocked({
                 options: {
                     ...merged,
                     sakuraNsfwPrompt,
+                    ...(batchWantsSmart
+                        ? {
+                            windowCues: merged.windowCues ?? 10,
+                            overlapCues: merged.overlapCues ?? 2,
+                        }
+                        : {}),
                 },
                 signal: batchMtAbortController.signal,
                 onProgress: (info) => {
@@ -1800,7 +1983,15 @@ async function runEngineBatchLocked({
                 : path.dirname(mediaPath);
             lastOutputDir = outDir;
 
-            const fileMerged = mergeSenseOverrides(merged, item.optionOverrides || {});
+            const fileMergedRaw = mergeSenseOverrides(merged, item.optionOverrides || {});
+            const sakuraSanitize = sanitizeSakuraMtForLanguage(fileMergedRaw, fileMergedRaw.language);
+            const fileMerged = sakuraSanitize.options;
+            if (sakuraSanitize.changed && sakuraSanitize.note) {
+                appendEngineLogLine(
+                    `[engine] #${index1}/${list.length} ${sakuraSanitize.note}`,
+                    invokeSender,
+                );
+            }
             if (!fileMerged.overwrite) {
                 const isDual = fileMerged.task === 'dual';
                 if (isDual) {
@@ -1880,6 +2071,38 @@ async function runEngineBatchLocked({
                 sakuraMt: useSakuraMt,
             });
 
+            // Never silently fall through to Opus when Sakura/smart was requested but
+            // the external adapter was not started (would look like "missing opus-mt-*").
+            if (useExternalMt && !mtAdapter?.ok) {
+                const errMsg = mtAdapter?.error
+                    || (useSakuraMt
+                        ? `感知/表单指定了 ${fileMerged.engineMtModel || 'Sakura'}，但外部翻译适配器未启动`
+                        : '智能翻译适配器未启动');
+                failed += 1;
+                results.push({ ok: false, path: mediaPath, error: errMsg });
+                sendProgress(invokeSender, {
+                    stage: 'failed',
+                    index1,
+                    total: list.length,
+                    file: mediaPath,
+                    error: errMsg,
+                    detail: errMsg,
+                });
+                continue;
+            }
+
+            if (useSakuraMt) {
+                appendEngineLogLine(
+                    `[engine] #${index1}/${list.length} 翻译后端 · Sakura（${fileMerged.engineMtModel}）`,
+                    invokeSender,
+                );
+            } else if (useSmartTranslate) {
+                appendEngineLogLine(
+                    `[engine] #${index1}/${list.length} 翻译后端 · 智能翻译`,
+                    invokeSender,
+                );
+            }
+
             const jobMtModel = useExternalMt
                 ? null
                 : (fileMerged.engineMtModel || null);
@@ -1899,11 +2122,16 @@ async function runEngineBatchLocked({
                 ? (typeof mtAdapter.mtExternal === 'function'
                     ? {
                         mtBackend: 'external',
-                        mtExternal: mtAdapter.mtExternal(),
+                        mtExternal: mtAdapter.mtExternal(
+                            useSmartTranslate
+                                ? { batchSize: 40 }
+                                : { batchSize: 8 },
+                        ),
                     }
                     : buildExternalMtJobFields({
                         url: mtAdapter.url,
                         token: mtAdapter.token,
+                        batchSize: useSmartTranslate ? 40 : 8,
                     }))
                 : null;
 
@@ -1926,6 +2154,8 @@ async function runEngineBatchLocked({
                 includeWords: jobFlags.includeWords,
                 karaokeVtt: jobFlags.karaokeVtt,
                 glossary: glossaryPairs,
+                contentProfile: fileMerged.contentProfile || fileMerged.senseProfile || undefined,
+                senseProfile: fileMerged.senseProfile || fileMerged.contentProfile || undefined,
                 // LLM MT: skip built-in JA name lexicon protect (__GLOSS*__),
                 // which harms Sakura/smart quality vs the subtitle editor path.
                 ...(useExternalMt ? { builtinNames: false } : {}),
@@ -2716,6 +2946,83 @@ function setupEngineBridge(api, {
                 stopEngineProcess();
                 await sleep(600);
             }
+
+            // Whisper extras must install while the engine is stopped: a running
+            // server already imports ctranslate2/onnxruntime and Windows then
+            // denies --force-reinstall (WinError 5).
+            const earlyModelIds = Array.isArray(payload.modelIds)
+                ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
+                : [];
+            const needWhisperExtras = !!payload.force || modelIdsNeedWhisperExtras(earlyModelIds);
+            if (kind === 'models' && needWhisperExtras) {
+                const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
+                const pythonPath = resolveEngineRuntimePython(installPath);
+                if (pythonPath) {
+                    emit({
+                        phase: 'progress',
+                        message: '正在补齐 Whisper 运行库（引擎已停止，避免文件占用）…',
+                        pct: 3,
+                    });
+                    let pre = await ensureAsrWhisperOffline({
+                        pythonPath,
+                        cwd: installPath,
+                        force: false,
+                        signal,
+                        onProgress: (ev) => {
+                            const pct = Number(ev.percent);
+                            emit({
+                                phase: 'progress',
+                                message: ev.detail || ev.message || '正在安装 Whisper 运行库…',
+                                pct: Number.isFinite(pct) ? Math.min(18, 3 + Math.round(pct * 0.15)) : 6,
+                                raw: ev,
+                            });
+                        },
+                    });
+                    if (
+                        !pre.ok
+                        && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
+                        && !signal?.aborted
+                    ) {
+                        emit({
+                            phase: 'progress',
+                            message: '运行库需强制重装，正在独立进程中重写（引擎已停止）…',
+                            pct: 5,
+                        });
+                        pre = await ensureAsrWhisperOffline({
+                            pythonPath,
+                            cwd: installPath,
+                            force: true,
+                            signal,
+                            onProgress: (ev) => {
+                                const pct = Number(ev.percent);
+                                emit({
+                                    phase: 'progress',
+                                    message: ev.detail || ev.message || '正在强制重装 Whisper 运行库…',
+                                    pct: Number.isFinite(pct) ? Math.min(18, 5 + Math.round(pct * 0.13)) : 8,
+                                    raw: ev,
+                                });
+                            },
+                        });
+                    }
+                    if (pre.cancelled || signal.aborted) {
+                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
+                        return { ok: false, cancelled: true, error: 'cancelled' };
+                    }
+                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL') {
+                        const err = pre.error || pre.message || 'Whisper 运行库安装失败';
+                        emit({ phase: 'error', ok: false, message: err, pct: 0 });
+                        return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
+                    }
+                    if (pre.code === 'SMART_APP_CONTROL') {
+                        emit({
+                            phase: 'progress',
+                            message: pre.message || pre.error || 'Whisper 运行库受系统策略拦截，将继续尝试其它项…',
+                            pct: 8,
+                        });
+                    }
+                }
+            }
+
             emit({ phase: 'progress', message: '正在启动引擎…', pct: 2 });
             let ensure = await ensureEngineRunning(optionsWithHf);
             const sakuraCatalogEarly = require('../src/js/sakura-mt-catalog-core');
@@ -2927,6 +3234,7 @@ function setupEngineBridge(api, {
                                 emit({ phase: 'progress', message: 'GPU 支持已处理，开始下载模型…', pct: 38 });
                             }
                         }
+                    }
                 }
             } catch { /* ignore optional GPU pre-step */ }
 
@@ -3569,11 +3877,24 @@ async function translateCuesWithEngineOpus(payload = {}, deps = {}) {
                     return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
                 }
                 if (!res.ok) {
+                    if (res.cancelled || res.code === 'cancelled') {
+                        return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
+                    }
+                    if (res.code === 'timeout') {
+                        return {
+                            ok: false,
+                            code: 'timeout',
+                            error: res.error || '请求超时',
+                            status: res.status,
+                        };
+                    }
                     return {
                         ok: false,
-                        error: res.data?.message || res.data?.error
-                            || `机器翻译失败 (HTTP ${res.status})`,
-                        code: res.data?.code,
+                        error: friendlyEngineError(
+                            res.error || res.data?.message || res.data?.error
+                            || `机器翻译失败 (HTTP ${res.status || 0})`,
+                        ),
+                        code: res.code || res.data?.code,
                         status: res.status,
                     };
                 }
@@ -3659,12 +3980,22 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
         fs.mkdirSync(outputDir, { recursive: true });
 
         try {
+            batchCancelled = false;
             onProgress?.({ stage: 'extract', detail: '截取音频片段' });
             const { extractMediaRange } = require('./ffmpeg-bridge');
             const clip = await extractMediaRange(mediaPath, clipStartMs, clipEndMs, clipPath, {
                 ffmpegPath: options.ffmpegPath || payload.ffmpegPath,
             });
-            if (!clip.ok) return { ok: false, error: clip.error || '截取音频失败' };
+            if (!clip.ok) {
+                return {
+                    ok: false,
+                    cancelled: !!clip.cancelled || batchCancelled,
+                    error: friendlyEngineError(clip.error || '截取音频失败'),
+                };
+            }
+            if (batchCancelled) {
+                return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
+            }
 
             const task = mapTaskToEngineTask(
                 payload.options?.task === 'translate' ? 'translate' : 'transcribe',
@@ -3677,7 +4008,9 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             if (
                 options.smartTranslate
                 || sakuraCatalog.isSakuraMtModel(mtModel)
+                || sakuraCatalog.isLlmInferenceMtModel?.(mtModel)
                 || sakuraCatalog.isSakuraMtModel(options.engineLlmMtModel)
+                || sakuraCatalog.isLlmInferenceMtModel?.(options.engineLlmMtModel)
             ) {
                 mtModel = String(options.engineOpusMtModel || '').trim() || null;
             }
@@ -3698,15 +4031,35 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                     filmAudioEnhance: false,
                     filmVadPreset: false,
                 }, { entitled: false }),
+                contentProfile: options.contentProfile || options.senseProfile || undefined,
+                senseProfile: options.senseProfile || options.contentProfile || undefined,
+                castNames: options.castNames || options.cast_names || undefined,
                 releaseGpuAfter: true,
                 sync: false,
-            }, { timeoutMs: 60000 });
+            }, { timeoutMs: 600000 });
             if (!created.ok || !created.data?.id) {
-                return { ok: false, error: created.data?.message || '创建引擎任务失败' };
+                return {
+                    ok: false,
+                    cancelled: !!created.cancelled,
+                    error: friendlyEngineError(
+                        created.error || created.data?.message || created.data?.error || '创建引擎任务失败',
+                    ),
+                    code: created.code,
+                };
             }
-            const waited = await waitJob(ensure.baseUrl, created.data.id);
+            // Track job so Esc → transub-engine-cancel can cancelJob(currentJobId).
+            currentJobId = created.data.id;
+            const waited = await waitJob(ensure.baseUrl, created.data.id, {
+                shouldStop: () => batchCancelled,
+            });
+            currentJobId = '';
             if (!waited.ok) {
-                return { ok: false, error: waited.error || '引擎任务失败' };
+                return {
+                    ok: false,
+                    cancelled: !!waited.cancelled || batchCancelled,
+                    error: friendlyEngineError(waited.error || '引擎任务失败'),
+                    code: (waited.cancelled || batchCancelled) ? 'cancelled' : undefined,
+                };
             }
             const outputs = waited.data?.result?.outputs || [];
             const outPath = outputs[0]?.path || '';
@@ -3740,8 +4093,14 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                 task,
             };
         } catch (err) {
-            return { ok: false, error: err.message || String(err) };
+            return {
+                ok: false,
+                cancelled: err?.name === 'AbortError' || err?.code === 'cancelled' || batchCancelled,
+                error: friendlyEngineError(err?.message || String(err)),
+                code: (err?.name === 'AbortError' || batchCancelled) ? 'cancelled' : err?.code,
+            };
         } finally {
+            currentJobId = '';
             try {
                 fs.rmSync(tempRoot, { recursive: true, force: true });
             } catch { /* ignore */ }

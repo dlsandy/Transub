@@ -27,6 +27,10 @@ function testSubtitlePathExt() {
 function testVideoPathExt() {
     const mp4 = assertVideoFilePath('D:\\clip.mp4');
     assert.ok(mp4.toLowerCase().endsWith('.mp4'));
+    const mp3 = assertVideoFilePath('D:\\podcast.mp3');
+    assert.ok(mp3.toLowerCase().endsWith('.mp3'));
+    const wav = assertVideoFilePath('E:\\voice.wav');
+    assert.ok(wav.toLowerCase().endsWith('.wav'));
     assert.throws(() => assertVideoFilePath('D:\\clip.srt'), (err) => /\u6269\u5c55\u540d/.test(err.message));
 }
 

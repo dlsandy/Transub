@@ -4,10 +4,9 @@ const path = require('path');
 const { resolveHtmlPath, getWritableRoot } = require('./app-paths');
 const { getTrayIcon, getWindowIconOption, applyWindowIcon } = require('./icons');
 const { sendNotification } = require('./notifications');
-
-function jobHelpers() {
-    return require('./transwithai-bridge');
-}
+const { attachUiZoom } = require('./ui-zoom');
+const { clampInt } = require('./shared-utils');
+const { hasActiveTask, getActiveTaskLabel, stopActiveJobs } = require('./active-task-guard');
 
 const DEFAULT_TRAY_TOOLTIP = 'Transub 字幕生成';
 const WINDOW_STATE_FILE = 'window-state.json';
@@ -21,12 +20,6 @@ const SAVE_STATE_DEBOUNCE_MS = 400;
 
 function getWindowStatePath() {
     return path.join(getWritableRoot(), WINDOW_STATE_FILE);
-}
-
-function clampInt(value, fallback, min, max) {
-    const n = Math.round(Number(value));
-    if (!Number.isFinite(n)) return fallback;
-    return Math.max(min, Math.min(max, n));
 }
 
 function boundsOverlapWorkArea(bounds, workArea) {
@@ -100,12 +93,90 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     let trayHintShown = false;
     let isQuitting = false;
     let trayProgressEnabled = false;
+    /** When true, clicking minimize hides the main window to the system tray. */
+    let minimizeToTrayEnabled = true;
+    /** @type {string} */
+    let downloadTrayTip = '';
     let saveStateTimer = null;
+    /**
+     * Windows: closing another BrowserWindow (owned child OR sibling like the
+     * subtitle editor) can spuriously fire the main window's `minimize`, which
+     * we map to hide-to-tray + skipTaskbar — looks like the app quit.
+     */
+    let suppressMinimizeToTrayUntil = 0;
+    let secondaryWindowMinimizeGuardAttached = false;
+    /** Snapshot: only restore if main was visible when suppress was first armed. */
+    let mainVisibleWhenSuppressArmed = false;
 
     function hideToTray() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         mainWindow.setSkipTaskbar(true);
         mainWindow.hide();
+    }
+
+    function isMainVisiblyOpen() {
+        if (!mainWindow || mainWindow.isDestroyed()) return false;
+        try {
+            return mainWindow.isVisible() && !mainWindow.isMinimized();
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function beginSuppressMinimizeToTray(ms = 800) {
+        const now = Date.now();
+        if (now >= suppressMinimizeToTrayUntil) {
+            mainVisibleWhenSuppressArmed = isMainVisiblyOpen();
+        }
+        suppressMinimizeToTrayUntil = Math.max(suppressMinimizeToTrayUntil, now + ms);
+    }
+
+    function restoreMainIfHiddenBySpuriousMinimize() {
+        if (!mainVisibleWhenSuppressArmed) return;
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        try {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            if (!mainWindow.isVisible()) {
+                mainWindow.setSkipTaskbar(false);
+                mainWindow.show();
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    function attachSecondaryWindowMinimizeGuardTo(child) {
+        if (!child || child.isDestroyed()) return;
+        // Avoid stacking duplicate listeners if the same window is visited twice.
+        if (child.__transubMinimizeGuardAttached) return;
+        child.__transubMinimizeGuardAttached = true;
+
+        const armIfSecondary = () => {
+            try {
+                if (!mainWindow || mainWindow.isDestroyed()) return;
+                if (child.id === mainWindow.id) return;
+                beginSuppressMinimizeToTray();
+            } catch (_) { /* ignore */ }
+        };
+        child.on('close', armIfSecondary);
+        child.on('closed', () => {
+            if (Date.now() < suppressMinimizeToTrayUntil) {
+                restoreMainIfHiddenBySpuriousMinimize();
+            }
+        });
+    }
+
+    function attachOwnedWindowMinimizeGuard() {
+        if (secondaryWindowMinimizeGuardAttached) return;
+        secondaryWindowMinimizeGuardAttached = true;
+        app.on('browser-window-created', (_event, child) => {
+            attachSecondaryWindowMinimizeGuardTo(child);
+        });
+        // Editor-first startup may open secondary windows before the main window;
+        // cover those that already exist when the guard is installed.
+        try {
+            for (const win of BrowserWindow.getAllWindows()) {
+                attachSecondaryWindowMinimizeGuardTo(win);
+            }
+        } catch (_) { /* ignore */ }
     }
 
     function showMainWindow() {
@@ -124,7 +195,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
 
     function closeMainWindow() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
-        if (jobHelpers().isSubtitleJobRunning()) return;
+        if (hasActiveTask()) return;
         mainWindow.close();
     }
 
@@ -134,18 +205,38 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         trayHintShown = true;
     }
 
+    function applyTrayTooltip() {
+        if (!tray) return;
+        try {
+            if (trayProgressEnabled) return;
+            tray.setToolTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP);
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
+     * 下载中心托盘提示（字幕任务进度开启时不覆盖）
+     * @param {string} tip
+     */
+    function setDownloadTrayTip(tip) {
+        downloadTrayTip = String(tip || '').trim();
+        if (!tray) {
+            try { setupTray(); } catch (_) { /* ignore */ }
+        }
+        applyTrayTooltip();
+    }
+
     function setupTray() {
         if (tray) return;
         const icon = getTrayIcon();
         if (icon.isEmpty()) return;
 
         tray = new Tray(icon);
-        tray.setToolTip(DEFAULT_TRAY_TOOLTIP);
+        tray.setToolTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP);
 
         const contextMenu = Menu.buildFromTemplate([
             { label: '显示任务窗口', click: () => showMainWindow() },
             { type: 'separator' },
-            { label: '退出', click: () => quitApp() },
+            { label: '退出', click: () => { void confirmQuitApp(); } },
         ]);
         tray.setContextMenu(contextMenu);
         tray.on('double-click', () => showMainWindow());
@@ -155,41 +246,90 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     }
 
     function attachTrayBehavior(win) {
+        let minimizeHideToken = 0;
+        let closeConfirmPending = false;
+
         win.on('close', async (event) => {
             if (isQuitting) return;
-            if (!jobHelpers().isSubtitleJobRunning()) return;
+            if (!hasActiveTask()) return;
 
             event.preventDefault();
-            const { response } = await dialog.showMessageBox(win, {
-                type: 'warning',
-                buttons: ['取消', '后台继续', '停止并关闭'],
-                defaultId: 0,
-                cancelId: 0,
-                title: '字幕任务进行中',
-                message: '字幕生成任务仍在后台运行',
-                detail: '可选择后台继续（托盘查看进度），或停止任务并关闭窗口。',
-            });
-            if (response === 1) {
-                hideToTray();
-                maybeShowTrayHint();
-            } else if (response === 2) {
-                jobHelpers().stopSubtitleJobs();
-                win.destroy();
-            } else {
-                // 取消：归还焦点，避免主窗口输入框失焦
-                try {
-                    win.show();
-                    win.focus();
-                    win.webContents?.focus?.();
-                } catch (_) { /* ignore */ }
+            if (closeConfirmPending) return;
+            closeConfirmPending = true;
+            try {
+                const label = getActiveTaskLabel();
+                const { response } = await dialog.showMessageBox(win, {
+                    type: 'warning',
+                    buttons: ['取消', '后台继续', '停止并关闭'],
+                    defaultId: 0,
+                    cancelId: 0,
+                    title: '任务进行中',
+                    message: `${label}仍在运行`,
+                    detail: '关闭将中断正在运行的操作。可选择后台继续（托盘查看进度），或停止任务并关闭窗口。',
+                });
+                if (response === 1) {
+                    hideToTray();
+                    maybeShowTrayHint();
+                } else if (response === 2) {
+                    stopActiveJobs();
+                    win.destroy();
+                } else {
+                    // 取消：归还焦点，避免主窗口输入框失焦
+                    try {
+                        win.show();
+                        win.focus();
+                        win.webContents?.focus?.();
+                    } catch (_) { /* ignore */ }
+                }
+            } finally {
+                closeConfirmPending = false;
             }
         });
 
         win.on('minimize', (event) => {
             if (isQuitting) return;
+            if (!minimizeToTrayEnabled) return;
             event.preventDefault();
-            hideToTray();
-            maybeShowTrayHint();
+
+            const token = ++minimizeHideToken;
+            const secondaryWindowsOpen = () => {
+                try {
+                    return BrowserWindow.getAllWindows().some(
+                        (w) => w && !w.isDestroyed() && w.id !== win.id
+                    );
+                } catch (_) {
+                    return false;
+                }
+            };
+            const undoSpuriousMinimize = () => {
+                try {
+                    if (win.isMinimized()) win.restore();
+                    if (!win.isVisible()) {
+                        win.setSkipTaskbar(false);
+                        win.show();
+                    }
+                } catch (_) { /* ignore */ }
+            };
+            const maybeHideToTray = () => {
+                if (token !== minimizeHideToken) return;
+                if (isQuitting || !win || win.isDestroyed()) return;
+                // Secondary-window close may arm suppress a tick after this event (Windows quirk).
+                if (Date.now() < suppressMinimizeToTrayUntil || secondaryWindowsOpen()) {
+                    // Prefer full restore when another window still exists; snapshot gate
+                    // only applies to post-close suppress cleanup.
+                    if (secondaryWindowsOpen()) undoSpuriousMinimize();
+                    else restoreMainIfHiddenBySpuriousMinimize();
+                    return;
+                }
+                hideToTray();
+                maybeShowTrayHint();
+            };
+
+            if (Date.now() < suppressMinimizeToTrayUntil || secondaryWindowsOpen()) {
+                maybeHideToTray();
+                return;
+            }
+            setTimeout(maybeHideToTray, 80);
         });
     }
 
@@ -219,6 +359,25 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         win.on('close', () => {
             saveMainWindowState();
         });
+    }
+
+    function setMainWindowTitle(title) {
+        const next = String(title || '').trim() || 'Transub';
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        try {
+            mainWindow.setTitle(next);
+        } catch (_) { /* ignore */ }
+    }
+
+    function refreshProductTitle() {
+        let title = 'Transub';
+        try {
+            const { getProductWindowTitle } = require('./advanced-bridge');
+            if (typeof getProductWindowTitle === 'function') {
+                title = getProductWindowTitle() || 'Transub';
+            }
+        } catch (_) { /* advanced bridge not ready */ }
+        setMainWindowTitle(title);
     }
 
     function createMainWindow(options = {}) {
@@ -252,10 +411,13 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         }
 
         mainWindow = new BrowserWindow(winOpts);
+        attachUiZoom(mainWindow);
+        attachOwnedWindowMinimizeGuard();
 
         mainWindow.setMenuBarVisibility(false);
         mainWindow.removeMenu();
         applyWindowIcon(mainWindow);
+        refreshProductTitle();
 
         const shouldMaximize = !!saved?.isMaximized;
 
@@ -297,6 +459,11 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             setTimeout(reveal, 450);
         }
 
+        // Page <title> can override BrowserWindow title on navigation — re-apply Pro title.
+        mainWindow.webContents.on('did-finish-load', () => {
+            refreshProductTitle();
+        });
+
         attachTrayBehavior(mainWindow);
         attachWindowStatePersistence(mainWindow);
 
@@ -324,7 +491,11 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
 
     function setTrayProgressEnabled(enabled) {
         trayProgressEnabled = !!enabled;
-        if (!trayProgressEnabled) clearTrayProgress();
+        if (!trayProgressEnabled) applyTrayTooltip();
+    }
+
+    function setMinimizeToTrayEnabled(enabled) {
+        minimizeToTrayEnabled = enabled !== false;
     }
 
     function updateTrayProgress(payload = {}) {
@@ -351,7 +522,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
 
     function clearTrayProgress() {
         if (!tray) return;
-        try { tray.setToolTip(DEFAULT_TRAY_TOOLTIP); } catch (_) { /* ignore */ }
+        applyTrayTooltip();
     }
 
     function quitApp() {
@@ -361,6 +532,47 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             tray = null;
         }
         app.quit();
+    }
+
+    /**
+     * Tray / explicit quit: confirm when a compute task is still running.
+     * Programmatic quit after completed batches should call quitApp() directly.
+     */
+    async function confirmQuitApp() {
+        if (isQuitting) {
+            quitApp();
+            return;
+        }
+        if (!hasActiveTask()) {
+            quitApp();
+            return;
+        }
+        const parent = (mainWindow && !mainWindow.isDestroyed())
+            ? mainWindow
+            : BrowserWindow.getFocusedWindow();
+        const label = getActiveTaskLabel();
+        const opts = {
+            type: 'warning',
+            buttons: ['取消', '停止并退出'],
+            defaultId: 0,
+            cancelId: 0,
+            title: '任务进行中',
+            message: `${label}仍在运行`,
+            detail: '退出将中断正在运行的操作。确定要停止任务并退出吗？',
+        };
+        const { response } = parent
+            ? await dialog.showMessageBox(parent, opts)
+            : await dialog.showMessageBox(opts);
+        if (response === 1) {
+            stopActiveJobs();
+            quitApp();
+        } else if (parent && !parent.isDestroyed()) {
+            try {
+                parent.show();
+                parent.focus();
+                parent.webContents?.focus?.();
+            } catch (_) { /* ignore */ }
+        }
     }
 
     return {
@@ -373,9 +585,21 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         updateTrayProgress,
         clearTrayProgress,
         setTrayProgressEnabled,
+        setMinimizeToTrayEnabled,
+        setDownloadTrayTip,
         quitApp,
+        confirmQuitApp,
+        setMainWindowTitle,
+        refreshProductTitle,
         isQuitting: () => isQuitting,
         setQuitting: (v) => { isQuitting = !!v; },
+        /** Arm suppress before a secondary window closes (Windows spurious minimize). */
+        beginSuppressMinimizeToTray,
+        /** After a secondary window closes: keep suppress and undo a spurious hide-to-tray. */
+        restoreMainAfterSecondaryWindowClosed: () => {
+            beginSuppressMinimizeToTray();
+            restoreMainIfHiddenBySpuriousMinimize();
+        },
     };
 }
 

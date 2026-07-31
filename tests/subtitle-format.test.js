@@ -150,6 +150,42 @@ function testGuessVideoPath() {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+function testGuessAudioPath() {
+    const { guessVideoPathForSubtitle } = require('../electron/subtitle-utils');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-guess-audio-'));
+    const audio = path.join(tmp, 'podcast.mp3');
+    const sub = path.join(tmp, 'podcast.srt');
+    fs.writeFileSync(audio, '', 'utf8');
+    fs.writeFileSync(sub, '1\n', 'utf8');
+    assert.strictEqual(guessVideoPathForSubtitle(sub), audio);
+    fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+function testGuessVideoMultiDotStem() {
+    const { guessVideoPathForSubtitle, mediaStemCandidatesFromSubtitle } = require('../electron/subtitle-utils');
+    assert.deepStrictEqual(
+        mediaStemCandidatesFromSubtitle('Show.Name.S01E01.zh'),
+        ['Show.Name.S01E01.zh', 'Show.Name.S01E01'],
+    );
+    assert.deepStrictEqual(
+        mediaStemCandidatesFromSubtitle('movie.src'),
+        ['movie.src', 'movie'],
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-guess-multidot-'));
+    const video = path.join(tmp, 'Show.Name.S01E01.mkv');
+    const sub = path.join(tmp, 'Show.Name.S01E01.zh.srt');
+    fs.writeFileSync(video, '', 'utf8');
+    fs.writeFileSync(sub, '1\n', 'utf8');
+    assert.strictEqual(guessVideoPathForSubtitle(sub), video);
+    // Exact same basename
+    const video2 = path.join(tmp, 'same.mp4');
+    const sub2 = path.join(tmp, 'same.srt');
+    fs.writeFileSync(video2, '', 'utf8');
+    fs.writeFileSync(sub2, '1\n', 'utf8');
+    assert.strictEqual(guessVideoPathForSubtitle(sub2), video2);
+    fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 describe("subtitle-format", () => {
     it("detect format", () => {
         testDetectFormat();
@@ -171,5 +207,11 @@ describe("subtitle-format", () => {
     });
     it("guess video path", () => {
         testGuessVideoPath();
+    });
+    it("guess audio path", () => {
+        testGuessAudioPath();
+    });
+    it("guess video multi-dot stem", () => {
+        testGuessVideoMultiDotStem();
     });
 });

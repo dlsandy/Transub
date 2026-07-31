@@ -1,11 +1,20 @@
 /**
  * Windows app update via GitHub Releases.
- * - NSIS installs: electron-updater when latest.yml is present
- * - Portable / missing yml / unpackaged: GitHub Releases API + open download page
+ * - Zip / win-unpacked: download zip, merge in place (preserve models + GPU/Demucs + Advanced LLM), relaunch
+ * - NSIS: electron-updater when latest.yml is present (installer.nsh stashes the same user data on update)
+ * - Portable / unpackaged: GitHub Releases API + open download page
  * Code signing is not used (no free Authenticode cert).
  */
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const { asString } = require('./ipc-validate');
+const {
+    collectPreserveRelPaths,
+    findPackageRoot,
+    rimrafSafe,
+} = require('./zip-update-merge');
 
 const GITHUB_OWNER = 'dlsandy';
 const GITHUB_REPO = 'Transub';
@@ -16,8 +25,24 @@ const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-T
 /** @type {import('electron-updater').AppUpdater | null} */
 let updater = null;
 let updateReady = false;
-/** @type {{ version: string, releaseNotes?: string } | null} */
+/** @type {{
+ *   version: string,
+ *   releaseNotes?: string,
+ *   downloadUrl?: string,
+ *   downloadName?: string,
+ *   mode?: 'nsis'|'zip',
+ * } | null} */
 let pendingUpdate = null;
+/** @type {{
+ *   version: string,
+ *   zipPath: string,
+ *   extractDir: string,
+ *   packageRoot: string,
+ *   installRoot: string,
+ *   preserveRelPaths: string[],
+ *   workDir: string,
+ * } | null} */
+let pendingZipUpdate = null;
 /** @type {((progress: {
  *   percent: number,
  *   transferred: number,
@@ -87,13 +112,36 @@ function isPortableBuild() {
     return Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
 }
 
-function canUseElectronUpdater() {
+function getInstallRootSafe() {
     try {
-        const electronApp = getElectronApp();
-        return Boolean(electronApp?.isPackaged) && !isPortableBuild() && process.platform === 'win32';
+        return require('./app-paths').getInstallRoot();
     } catch {
-        return false;
+        return path.dirname(process.execPath);
     }
+}
+
+/**
+ * @returns {'nsis'|'zip'|'portable'|'dev'|'unsupported'}
+ */
+function getInstallKind() {
+    if (process.platform !== 'win32') return 'unsupported';
+    if (isPortableBuild()) return 'portable';
+    const electronApp = getElectronApp();
+    if (!electronApp?.isPackaged) return 'dev';
+    const installRoot = getInstallRootSafe();
+    // electron-builder NSIS writes Uninstall <ProductName>.exe beside the app
+    if (fs.existsSync(path.join(installRoot, 'Uninstall Transub.exe'))) {
+        return 'nsis';
+    }
+    return 'zip';
+}
+
+function canUseElectronUpdater() {
+    return getInstallKind() === 'nsis';
+}
+
+function canAutoInstallZip() {
+    return getInstallKind() === 'zip';
 }
 
 function parseVersion(raw) {
@@ -142,11 +190,15 @@ function pickSetupAsset(release) {
     return assets.find((a) => /\.exe$/i.test(a.name || '')) || null;
 }
 
+function pickZipAsset(release) {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.find((a) => /\.zip$/i.test(a.name || '') && /transub/i.test(a.name || '')) || null;
+}
+
 function getUpdater() {
     if (updater) return updater;
     if (!canUseElectronUpdater()) return null;
-    // Lazy require so unpackaged / portable paths never load native updater deps unnecessarily
-    // eslint-disable-next-line global-require
+    // Lazy require so unpackaged / portable / zip paths never load native updater deps unnecessarily
     const { autoUpdater } = require('electron-updater');
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -161,6 +213,7 @@ function getUpdater() {
         pendingUpdate = {
             version: info.version,
             releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '',
+            mode: 'nsis',
         };
     });
     autoUpdater.on('download-progress', (progress) => {
@@ -187,20 +240,41 @@ async function checkViaGithubApi() {
             currentVersion,
             updateAvailable: false,
             mode: 'github-api',
+            installKind: getInstallKind(),
             releasesUrl: RELEASES_URL,
             transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
             message: '无法解析最新版本号',
         };
     }
     const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
-    const setup = pickSetupAsset(release);
+    const installKind = getInstallKind();
+    const zipAsset = pickZipAsset(release);
+    const setup = installKind === 'zip' && zipAsset ? zipAsset : pickSetupAsset(release);
     const electronApp = getElectronApp();
+    const zipAuto = Boolean(
+        updateAvailable
+        && installKind === 'zip'
+        && zipAsset
+        && /\.zip$/i.test(zipAsset.name || ''),
+    );
+
+    if (zipAuto) {
+        pendingUpdate = {
+            version: latestVersion,
+            releaseNotes: asString(release.body || '', 8000),
+            downloadUrl: zipAsset.browser_download_url,
+            downloadName: zipAsset.name || '',
+            mode: 'zip',
+        };
+    }
+
     return {
         ok: true,
         currentVersion,
         latestVersion,
         updateAvailable,
         mode: 'github-api',
+        installKind,
         releaseName: release.name || `v${latestVersion}`,
         releaseNotes: asString(release.body || '', 8000),
         releasesUrl: release.html_url || RELEASES_URL,
@@ -208,10 +282,13 @@ async function checkViaGithubApi() {
         downloadName: setup?.name || '',
         portable: isPortableBuild(),
         packaged: Boolean(electronApp?.isPackaged),
-        canAutoInstall: false,
+        canAutoInstall: zipAuto,
+        preservesEngineData: zipAuto,
         transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
         message: updateAvailable
-            ? `发现新版本 v${latestVersion}`
+            ? (zipAuto
+                ? `发现新版本 v${latestVersion}（可在应用内更新，将保留已下载的模型、支持库与 Advanced LLM）`
+                : `发现新版本 v${latestVersion}`)
             : `已是最新版本 v${currentVersion}`,
     };
 }
@@ -236,6 +313,7 @@ async function checkViaElectronUpdater() {
             pendingUpdate = {
                 version: latestVersion,
                 releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
+                mode: 'nsis',
             };
         }
         return {
@@ -244,15 +322,17 @@ async function checkViaElectronUpdater() {
             latestVersion,
             updateAvailable,
             mode: 'electron-updater',
+            installKind: 'nsis',
             releaseNotes: pendingUpdate?.releaseNotes || '',
             releasesUrl: RELEASES_URL,
             portable: false,
             packaged: true,
             canAutoInstall: updateAvailable,
             updateReady,
+            preservesEngineData: true,
             transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
             message: updateAvailable
-                ? `发现新版本 v${latestVersion}（可在应用内下载安装）`
+                ? `发现新版本 v${latestVersion}（可在应用内下载安装，将保留已下载的模型与支持库）`
                 : `已是最新版本 v${currentVersion}`,
         };
     } catch (err) {
@@ -272,23 +352,157 @@ async function checkForAppUpdate() {
             releasesUrl: RELEASES_URL,
         };
     }
-    if (canUseElectronUpdater()) {
+    const installKind = getInstallKind();
+    if (installKind === 'nsis') {
         return checkViaElectronUpdater();
     }
     const result = await checkViaGithubApi();
-    if (isPortableBuild()) {
+    if (installKind === 'portable') {
         result.message = result.updateAvailable
             ? `${result.message}。便携版已停更，请改用 zip 解压版或 Setup 安装版。`
             : result.message;
-    } else if (!getElectronApp()?.isPackaged) {
+    } else if (installKind === 'dev') {
         result.message = `${result.message}（开发模式仅检查，不自动安装）`;
     }
     return result;
 }
 
+function clearPendingZipArtifacts() {
+    if (!pendingZipUpdate) return;
+    try {
+        if (pendingZipUpdate.workDir) rimrafSafe(pendingZipUpdate.workDir);
+    } catch {
+        /* ignore */
+    }
+    pendingZipUpdate = null;
+}
+
+async function downloadZipUpdate() {
+    if (!canAutoInstallZip()) {
+        return { ok: false, error: '当前不是 zip 解压版，无法应用内更新' };
+    }
+    let downloadUrl = String(pendingUpdate?.downloadUrl || '').trim();
+    let version = String(pendingUpdate?.version || '').trim();
+    let downloadName = String(pendingUpdate?.downloadName || '').trim();
+
+    const looksLikeZip = /\.zip(\?|#|$)/i.test(downloadUrl) || /\.zip$/i.test(downloadName);
+    if (!downloadUrl || !looksLikeZip) {
+        // Refresh from GitHub so a stale pendingUpdate does not block install
+        const check = await checkViaGithubApi();
+        if (!check.updateAvailable || !check.canAutoInstall) {
+            return { ok: false, error: check.message || '没有可下载的 zip 更新' };
+        }
+        downloadUrl = String(check.downloadUrl || '').trim();
+        version = String(check.latestVersion || '').trim();
+        downloadName = String(check.downloadName || '').trim();
+    }
+
+    if (!downloadUrl || !/^https:\/\//i.test(downloadUrl)) {
+        return { ok: false, error: '缺少有效的 zip 下载地址' };
+    }
+
+    const downloader = require('./advanced-llm-download');
+    clearPendingZipArtifacts();
+
+    const workDir = path.join(os.tmpdir(), `transub-zip-update-${process.pid}-${Date.now()}`);
+    const extractDir = path.join(workDir, 'extract');
+    const zipName = downloadName && /\.zip$/i.test(downloadName)
+        ? downloadName
+        : `Transub-${version || 'update'}-win.zip`;
+    const zipPath = path.join(workDir, zipName);
+
+    fs.mkdirSync(workDir, { recursive: true });
+    fs.mkdirSync(extractDir, { recursive: true });
+
+    try {
+        emitDownloadProgress({
+            percent: 0,
+            transferred: 0,
+            total: 0,
+            bytesPerSecond: 0,
+        });
+
+        await downloader.downloadFile(downloadUrl, zipPath, {
+            onProgress: (p) => {
+                const received = Number(p.received || p.downloadedBytes || 0);
+                const total = Number(p.total || p.totalBytes || 0);
+                const pct = Number(p.pct);
+                emitDownloadProgress({
+                    percent: Number.isFinite(pct)
+                        ? pct
+                        : (total > 0 ? Math.min(99, (received / total) * 100) : 0),
+                    transferred: received,
+                    total,
+                    bytesPerSecond: Number(p.bytesPerSecond) || 0,
+                });
+            },
+        });
+
+        emitDownloadProgress({
+            percent: 99,
+            transferred: 0,
+            total: 0,
+            bytesPerSecond: 0,
+        });
+
+        downloader.extractArchive(zipPath, extractDir, 'zip');
+        const packageRoot = findPackageRoot(extractDir);
+        const installRoot = getInstallRootSafe();
+        const preserveRelPaths = collectPreserveRelPaths(installRoot);
+
+        pendingZipUpdate = {
+            version,
+            zipPath,
+            extractDir,
+            packageRoot,
+            installRoot,
+            preserveRelPaths,
+            workDir,
+        };
+        pendingUpdate = {
+            ...(pendingUpdate || {}),
+            version,
+            downloadUrl,
+            downloadName: zipName,
+            mode: 'zip',
+        };
+        updateReady = true;
+
+        emitDownloadProgress({
+            percent: 100,
+            transferred: 0,
+            total: 0,
+            bytesPerSecond: 0,
+        });
+
+        return {
+            ok: true,
+            updateReady: true,
+            version,
+            mode: 'zip',
+            preservesEngineData: true,
+            preservedCount: preserveRelPaths.length,
+            message: preserveRelPaths.length
+                ? '更新已下载，重启后完成安装（将保留已下载的模型、支持库与 Advanced LLM）'
+                : '更新已下载，重启后完成安装',
+        };
+    } catch (err) {
+        clearPendingZipArtifacts();
+        updateReady = false;
+        return { ok: false, error: err.message || String(err) };
+    }
+}
+
 async function downloadAppUpdate() {
+    const installKind = getInstallKind();
+    if (installKind === 'zip') {
+        return downloadZipUpdate();
+    }
     if (!canUseElectronUpdater()) {
-        return { ok: false, error: '当前安装方式不支持应用内下载（请使用 NSIS 安装版，或打开 Releases 手动下载）' };
+        return {
+            ok: false,
+            error: '当前安装方式不支持应用内下载（请使用 zip 解压版或 NSIS 安装版，或打开 Releases 手动下载）',
+        };
     }
     const autoUpdater = getUpdater();
     if (!autoUpdater) return { ok: false, error: '更新器不可用' };
@@ -299,23 +513,109 @@ async function downloadAppUpdate() {
             ok: true,
             updateReady: true,
             version: pendingUpdate?.version || '',
-            message: '更新已下载，重启后完成安装',
+            mode: 'nsis',
+            preservesEngineData: true,
+            message: '更新已下载，重启后完成安装（将保留已下载的模型与支持库）',
         };
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
 }
 
+function stopEngineBeforeUpdate() {
+    try {
+        const engine = require('./engine-bridge');
+        if (typeof engine.stopEngineProcess === 'function') {
+            engine.stopEngineProcess();
+        }
+    } catch (err) {
+        console.warn('[app-updater] stop engine:', err?.message || err);
+    }
+}
+
+function quitAndInstallZipUpdate() {
+    if (!updateReady || !pendingZipUpdate) {
+        return { ok: false, error: '没有已下载的 zip 更新' };
+    }
+    const meta = pendingZipUpdate;
+    const electronApp = getElectronApp();
+    if (!electronApp) return { ok: false, error: '应用实例不可用' };
+
+    stopEngineBeforeUpdate();
+
+    const stagingDir = path.join(os.tmpdir(), `transub-zip-apply-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(stagingDir, { recursive: true });
+    const hostExe = path.join(stagingDir, 'transub-update-host.exe');
+    const metaPath = path.join(stagingDir, 'update-meta.json');
+    const logPath = path.join(stagingDir, 'update.log');
+    const applyScript = path.join(__dirname, 'zip-update-apply.js');
+    const mergeScript = path.join(__dirname, 'zip-update-merge.js');
+
+    try {
+        fs.copyFileSync(process.execPath, hostExe);
+    } catch (err) {
+        return { ok: false, error: `无法准备更新宿主: ${err.message || err}` };
+    }
+
+    const payload = {
+        waitPid: process.pid,
+        waitTimeoutMs: 180000,
+        installRoot: meta.installRoot,
+        packageRoot: meta.packageRoot,
+        preserveRelPaths: meta.preserveRelPaths,
+        exePath: path.join(meta.installRoot, 'Transub.exe'),
+        logPath,
+        cleanupPaths: [meta.workDir],
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(payload, null, 2), 'utf8');
+
+    try {
+        const child = spawn(hostExe, [applyScript, metaPath, mergeScript], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            env: {
+                ...process.env,
+                ELECTRON_RUN_AS_NODE: '1',
+            },
+        });
+        child.unref();
+    } catch (err) {
+        return { ok: false, error: `无法启动更新进程: ${err.message || err}` };
+    }
+
+    setImmediate(() => {
+        try {
+            electronApp.quit();
+        } catch (err) {
+            console.warn('[app-updater] quit failed', err?.message || err);
+        }
+    });
+    return { ok: true, mode: 'zip' };
+}
+
 function quitAndInstallUpdate() {
+    if (pendingZipUpdate && updateReady && pendingUpdate?.mode === 'zip') {
+        return quitAndInstallZipUpdate();
+    }
     if (!updateReady || !canUseElectronUpdater()) {
         return { ok: false, error: '没有已下载的更新' };
     }
     const autoUpdater = getUpdater();
     if (!autoUpdater) return { ok: false, error: '更新器不可用' };
+    stopEngineBeforeUpdate();
     setImmediate(() => {
         autoUpdater.quitAndInstall(false, true);
     });
-    return { ok: true };
+    return { ok: true, mode: 'nsis' };
+}
+
+function getPendingUpdate() {
+    return pendingUpdate ? { ...pendingUpdate } : null;
+}
+
+function isUpdateReady() {
+    return !!updateReady;
 }
 
 async function openUpdateDownload(url) {
@@ -338,10 +638,14 @@ module.exports = {
     compareVersions,
     getCurrentVersion,
     isPortableBuild,
+    getInstallKind,
     canUseElectronUpdater,
+    canAutoInstallZip,
     checkForAppUpdate,
     downloadAppUpdate,
     quitAndInstallUpdate,
     openUpdateDownload,
     setUpdateProgressListener,
+    getPendingUpdate,
+    isUpdateReady,
 };

@@ -300,6 +300,63 @@ function parseVideoStreamFromFfprobeOutput(text) {
     }
 }
 
+function normalizeMediaLangTag(raw) {
+    const s = String(raw || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!s || s === 'und' || s === 'unknown') return '';
+    const base = s.split('-')[0];
+    const map = {
+        jpn: 'ja', jp: 'ja', japanese: 'ja',
+        eng: 'en', english: 'en',
+        chi: 'zh', zho: 'zh', cmn: 'zh', chinese: 'zh',
+        kor: 'ko', korean: 'ko',
+        fra: 'fr', fre: 'fr', french: 'fr',
+        deu: 'de', ger: 'de', german: 'de',
+        spa: 'es', spanish: 'es',
+        por: 'pt', portuguese: 'pt',
+        rus: 'ru', russian: 'ru',
+        ita: 'it', italian: 'it',
+        vie: 'vi', vietnamese: 'vi',
+        tha: 'th', thai: 'th',
+        ara: 'ar', arabic: 'ar',
+        hin: 'hi', hindi: 'hi',
+    };
+    return map[base] || (base.length === 2 ? base : '');
+}
+
+function parseMediaMetaFromFfprobeOutput(text) {
+    const base = parseVideoStreamFromFfprobeOutput(text);
+    const audioLanguages = [];
+    try {
+        const data = JSON.parse(String(text || ''));
+        const streams = Array.isArray(data.streams) ? data.streams : [];
+        for (const stream of streams) {
+            if (String(stream?.codec_type || '').toLowerCase() !== 'audio') continue;
+            const tags = stream.tags || {};
+            const lang = normalizeMediaLangTag(tags.language || tags.LANGUAGE || tags.lang);
+            if (lang && !audioLanguages.includes(lang)) audioLanguages.push(lang);
+        }
+        const formatTags = data.format?.tags || {};
+        const formatLang = normalizeMediaLangTag(
+            formatTags.language || formatTags.LANGUAGE || formatTags.lang,
+        );
+        if (formatLang && !audioLanguages.includes(formatLang)) {
+            audioLanguages.unshift(formatLang);
+        }
+        // Prefer first video stream dimensions when multiple streams listed
+        const video = streams.find((s) => String(s?.codec_type || '').toLowerCase() === 'video');
+        if (video) {
+            base.codec = String(video.codec_name || base.codec || '').toLowerCase();
+            base.width = Number(video.width) || base.width;
+            base.height = Number(video.height) || base.height;
+        }
+    } catch { /* ignore */ }
+    return {
+        ...base,
+        audioLanguages,
+        language: audioLanguages[0] || '',
+    };
+}
+
 function probeVideo(filePath, ffprobePath) {
     const resolved = path.resolve(String(filePath || ''));
     if (!fs.existsSync(resolved)) {
@@ -308,9 +365,8 @@ function probeVideo(filePath, ffprobePath) {
     const exe = ffprobePath || findFfprobePath();
     const args = [
         '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=codec_name,width,height',
-        '-show_entries', 'format=duration',
+        '-show_entries', 'stream=index,codec_type,codec_name,width,height:stream_tags=language,LANGUAGE,lang',
+        '-show_entries', 'format=duration:format_tags=language,LANGUAGE,lang',
         '-of', 'json',
         resolved,
     ];
@@ -342,13 +398,15 @@ function probeVideo(filePath, ffprobePath) {
                     resolve({ ok: false, error: stderr.trim() || `ffprobe 退出码 ${code}` });
                     return;
                 }
-                const info = parseVideoStreamFromFfprobeOutput(stdout);
+                const info = parseMediaMetaFromFfprobeOutput(stdout);
                 resolve({
                     ok: true,
                     duration: info.duration,
                     codec: info.codec,
                     width: info.width,
                     height: info.height,
+                    language: info.language || '',
+                    audioLanguages: info.audioLanguages || [],
                     path: resolved,
                 });
             });
@@ -997,6 +1055,126 @@ function extractWaveformPeaks(filePath, options = {}) {
     })();
 }
 
+/**
+ * 短窗声学探测：volumedetect + silencedetect（可由 startSec 跳过片头）。
+ * 用于自动感知判断是否偏配乐 / 软声稀疏对白。
+ */
+function parseAcousticProbeLog(stderr, durationSec) {
+    const text = String(stderr || '');
+    const meanMatch = text.match(/mean_volume:\s*([-\d.]+)\s*dB/i);
+    const maxMatch = text.match(/max_volume:\s*([-\d.]+)\s*dB/i);
+    const meanVolumeDb = meanMatch ? Number(meanMatch[1]) : null;
+    const maxVolumeDb = maxMatch ? Number(maxMatch[1]) : null;
+    const dur = Math.max(1, Number(durationSec) || 12);
+    const intervals = parseSilenceDetectLog(text, 0, dur);
+    let silenceSec = 0;
+    for (const { startSec, endSec } of intervals) {
+        silenceSec += Math.max(0, endSec - startSec);
+    }
+    const silenceRatio = Math.max(0, Math.min(1, silenceSec / dur));
+    const mean = Number.isFinite(meanVolumeDb) ? meanVolumeDb : -30;
+    const max = Number.isFinite(maxVolumeDb) ? maxVolumeDb : mean;
+
+    // Dense, relatively loud → likely BGM / continuous mix (film)
+    const musicLikely = silenceRatio < 0.18 && mean > -28 && (max - mean) < 18;
+    // Lots of quiet gaps + low mean → soft / sparse dialogue
+    const softSparse = silenceRatio > 0.4 && mean < -32;
+    // Elevated floor with moderate silence → ambient noise; denoise helps talk
+    const noisyFloor = mean > -24 && silenceRatio > 0.2 && silenceRatio < 0.55;
+
+    let hint = 'neutral';
+    if (musicLikely) hint = 'music';
+    else if (softSparse) hint = 'soft';
+    else if (noisyFloor) hint = 'noisy';
+
+    return {
+        ok: true,
+        durationSec: dur,
+        meanVolumeDb: Number.isFinite(meanVolumeDb) ? meanVolumeDb : null,
+        maxVolumeDb: Number.isFinite(maxVolumeDb) ? maxVolumeDb : null,
+        silenceRatio: Math.round(silenceRatio * 1000) / 1000,
+        silenceSec: Math.round(silenceSec * 100) / 100,
+        musicLikely,
+        softSparse,
+        noisyFloor,
+        hint,
+    };
+}
+
+function probeAcousticWindow(filePath, options = {}) {
+    const resolved = path.resolve(String(filePath || ''));
+    if (!fs.existsSync(resolved)) {
+        return Promise.resolve({ ok: false, error: '文件不存在' });
+    }
+    const durationSec = Math.max(4, Math.min(20, Number(options.durationSec) || 12));
+    const startSec = Math.max(0, Math.min(3600, Number(options.startSec) || 0));
+    const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
+    if (!ffmpegResolved?.ok) {
+        return Promise.resolve({ ok: false, error: ffmpegResolved?.error || 'ffmpeg 不可用' });
+    }
+    const exe = ffmpegResolved.path;
+    const noiseDb = Number.isFinite(Number(options.noiseDb)) ? Number(options.noiseDb) : -35;
+    const minSilence = Math.max(0.15, Number(options.minSilenceSec) || 0.35);
+    const filter = `silencedetect=noise=${noiseDb}dB:duration=${minSilence},volumedetect`;
+    const args = [
+        '-hide_banner',
+        '-nostats',
+        '-ss', String(startSec),
+        '-t', String(durationSec),
+        '-i', resolved,
+        '-vn',
+        '-af', filter,
+        '-f', 'null',
+        '-',
+    ];
+
+    return (async () => {
+        const ready = await ensureWindowsExecutableReady(exe, 'ffmpeg');
+        if (!ready.ok) return { ok: false, error: ready.error };
+
+        return new Promise((resolve) => {
+            let stderr = '';
+            let proc;
+            let settled = false;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+            try {
+                proc = spawn(exe, args, { windowsHide: true });
+                trackFfmpegProc(proc);
+            } catch (err) {
+                finish({ ok: false, error: err.message || String(err) });
+                return;
+            }
+            proc.stderr.on('data', (chunk) => {
+                stderr += chunk.toString();
+                if (stderr.length > 24000) stderr = stderr.slice(-12000);
+            });
+            proc.on('error', (err) => {
+                finish({
+                    ok: false,
+                    error: formatExecutableSpawnError(err, exe, 'ffmpeg'),
+                });
+            });
+            proc.on('close', (code, signal) => {
+                if (signal || code === null) {
+                    finish({ ok: false, cancelled: true, error: '已取消' });
+                    return;
+                }
+                // volumedetect writes to stderr; exit code may be 0 even with null muxer
+                const parsed = parseAcousticProbeLog(stderr, durationSec);
+                if (parsed.meanVolumeDb == null && parsed.maxVolumeDb == null && code !== 0) {
+                    finish({ ok: false, error: stderr.trim().slice(-280) || `ffmpeg 退出码 ${code}` });
+                    return;
+                }
+                finish({ ...parsed, startSec });
+            });
+        });
+    })();
+}
+
 module.exports = {
     findFfprobePath,
     findBundledFfprobePath,
@@ -1019,5 +1197,7 @@ module.exports = {
     detectSilenceInRange,
     extractMediaRange,
     extractWaveformPeaks,
+    probeAcousticWindow,
+    parseAcousticProbeLog,
     cancelActiveFfmpegJobs,
 };

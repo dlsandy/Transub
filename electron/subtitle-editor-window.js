@@ -1,14 +1,68 @@
-const { BrowserWindow, dialog } = require('electron');
+const { BrowserWindow, dialog, nativeTheme, app: electronApp } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { resolveHtmlPath } = require('./app-paths');
 const { getEditorWindowIconOption, applyEditorWindowIcon } = require('./icons');
 const { guessVideoPathForSubtitle } = require('./subtitle-utils');
 const { asString } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
+const { applySubtitleEditorMenu } = require('./subtitle-editor-menu');
+const { attachUiZoom } = require('./ui-zoom');
 
 /** @type {Map<string, import('electron').BrowserWindow>} */
 const editorWindows = new Map();
 const EMPTY_EDITOR_KEY = '__welcome__';
+
+/** @type {{ beginSuppressMinimizeToTray?: (ms?: number) => void, restoreMainAfterSecondaryWindowClosed?: () => void } | null} */
+let linkedWindowManager = null;
+
+function linkWindowManager(windowManager) {
+    linkedWindowManager = windowManager || null;
+}
+
+/** Prevent Windows spurious main-window minimize→tray when this editor closes. */
+function armMainMinimizeSuppress() {
+    try {
+        linkedWindowManager?.beginSuppressMinimizeToTray?.();
+    } catch (_) { /* ignore */ }
+}
+
+function restoreMainAfterEditorClosed() {
+    try {
+        linkedWindowManager?.restoreMainAfterSecondaryWindowClosed?.();
+    } catch (_) { /* ignore */ }
+}
+
+const EDITOR_CHROME = {
+    light: { background: '#f3f4f6' },
+    dark: { background: '#0f1419' },
+};
+
+function getEditorChromePrefPath() {
+    try {
+        return path.join(electronApp.getPath('userData'), 'transub-editor-chrome-theme');
+    } catch (_) {
+        return '';
+    }
+}
+
+function readSavedEditorChromeDark() {
+    const file = getEditorChromePrefPath();
+    if (!file) return false;
+    try {
+        return String(fs.readFileSync(file, 'utf8') || '').trim() === 'dark';
+    } catch (_) {
+        return false;
+    }
+}
+
+function writeSavedEditorChromeDark(dark) {
+    const file = getEditorChromePrefPath();
+    if (!file) return;
+    try {
+        fs.writeFileSync(file, dark ? 'dark' : 'light', 'utf8');
+    } catch (_) { /* ignore */ }
+}
 
 function editorWindowKey(subPath) {
     const raw = String(subPath || '').trim();
@@ -27,6 +81,40 @@ function unbindEditorWindow(win) {
     for (const [key, existing] of editorWindows.entries()) {
         if (existing === win) editorWindows.delete(key);
     }
+}
+
+function anyEditorWantsDarkChrome() {
+    for (const win of editorWindows.values()) {
+        if (!win || win.isDestroyed()) continue;
+        if (win.__transubDarkTheme === true) return true;
+    }
+    return false;
+}
+
+function refreshNativeThemeFromEditors() {
+    try {
+        const next = anyEditorWantsDarkChrome() ? 'dark' : 'system';
+        if (nativeTheme.themeSource !== next) {
+            nativeTheme.themeSource = next;
+        }
+    } catch (_) { /* ignore */ }
+}
+
+/**
+ * Sync window chrome (title bar / menu / background) with editor dark theme.
+ * nativeTheme drives OS title bar + menu colors on Windows/macOS/Linux.
+ * @param {import('electron').BrowserWindow | null | undefined} win
+ * @param {boolean} dark
+ */
+function applyEditorWindowChrome(win, dark) {
+    if (!win || win.isDestroyed()) return;
+    const tone = dark ? EDITOR_CHROME.dark : EDITOR_CHROME.light;
+    win.__transubDarkTheme = !!dark;
+    writeSavedEditorChromeDark(dark);
+    try {
+        win.setBackgroundColor(tone.background);
+    } catch (_) { /* ignore */ }
+    refreshNativeThemeFromEditors();
 }
 
 function bindEditorWindow(win, subPath) {
@@ -87,6 +175,11 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         ? (String(videoPath || '').trim() || guessVideoPathForSubtitle(resolvedSub) || '')
         : '';
     const size = resolvedSub ? EDITOR_WINDOW : WELCOME_WINDOW;
+    // Windows title bar respects nativeTheme best when set before BrowserWindow creation
+    const preferDark = readSavedEditorChromeDark();
+    if (preferDark) {
+        try { nativeTheme.themeSource = 'dark'; } catch (_) { /* ignore */ }
+    }
     const win = new BrowserWindow({
         width: size.width,
         height: size.height,
@@ -97,8 +190,8 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             ? `Transub Editor — ${path.basename(resolvedSub)}`
             : 'Transub Editor',
         icon: getEditorWindowIconOption(),
-        autoHideMenuBar: true,
-        backgroundColor: '#f3f4f6',
+        autoHideMenuBar: false,
+        backgroundColor: preferDark ? EDITOR_CHROME.dark.background : EDITOR_CHROME.light.background,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -110,9 +203,17 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         show: false,
     });
 
-    win.setMenuBarVisibility(false);
-    win.removeMenu();
+    attachUiZoom(win);
+    // 仅显示自定义归类菜单；不使用 Electron 原生 File/Edit/View 等菜单
+    // 初始勾选与编辑器默认偏好对齐，随后由渲染进程同步真实状态
+    applySubtitleEditorMenu(win, {
+        autoFocus: false,
+        waveform: true,
+        darkTheme: preferDark,
+        timelineZoomed: false,
+    });
     applyEditorWindowIcon(win);
+    applyEditorWindowChrome(win, preferDark);
 
     const initPayload = resolvedSub
         ? { subPath: resolvedSub, videoPath: linkedVideo }
@@ -145,6 +246,9 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     win.on('close', async (e) => {
         if (closingConfirmed || win.isDestroyed() || win.webContents.isDestroyed()) return;
         e.preventDefault();
+        // Arm early: async dirty-check can finish after Windows already fired a
+        // spurious minimize on the main window.
+        armMainMinimizeSuppress();
 
         let dirty = false;
         try {
@@ -154,12 +258,14 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             );
         } catch (_) {
             closingConfirmed = true;
+            armMainMinimizeSuppress();
             win.close();
             return;
         }
 
         if (!dirty) {
             closingConfirmed = true;
+            armMainMinimizeSuppress();
             win.close();
             return;
         }
@@ -197,11 +303,14 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         }
 
         closingConfirmed = true;
+        armMainMinimizeSuppress();
         win.close();
     });
 
     win.on('closed', () => {
         unbindEditorWindow(win);
+        refreshNativeThemeFromEditors();
+        restoreMainAfterEditorClosed();
     });
 
     bindEditorWindow(win, resolvedSub);
@@ -239,6 +348,7 @@ async function pickSubtitleFile(parentWindow) {
 let pendingOpenParamsTab = null;
 
 function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, windowManager } = {}) {
+    linkWindowManager(windowManager);
     register('transub-open-subtitle-editor', async (event, payload = {}) => {
         try {
             warmBridges?.();
@@ -294,14 +404,45 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         try {
             warmBridges?.();
             const parentWin = BrowserWindow.fromWebContents(event.sender);
+            // Wizard has its own window — do not piggyback on settings.
+            if (payload?.wizard) {
+                const { openSetupWizardWindow } = require('./setup-wizard-window');
+                return openSetupWizardWindow(app, {
+                    parent: parentWin || undefined,
+                    forceWizard: payload?.forceWizard !== false,
+                });
+            }
             const { openSettingsWindow } = require('./settings-window');
             return openSettingsWindow(app, {
-                tab: payload?.tab || 'editor',
+                tab: payload?.tab || 'runtime',
                 parent: parentWin || undefined,
                 checkUpdate: !!payload?.checkUpdate,
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-open-setup-wizard', async (event, payload = {}) => {
+        try {
+            warmBridges?.();
+            const parentWin = BrowserWindow.fromWebContents(event.sender);
+            const { openSetupWizardWindow } = require('./setup-wizard-window');
+            return openSetupWizardWindow(app, {
+                parent: parentWin || undefined,
+                forceWizard: payload?.forceWizard !== false,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-consume-pending-setup-wizard', async () => {
+        try {
+            const { consumePendingSetupWizardOpen } = require('./setup-wizard-window');
+            return { ok: true, ...consumePendingSetupWizardOpen() };
+        } catch (err) {
+            return { ok: false, forceWizard: true, error: err?.message || String(err) };
         }
     });
 
@@ -347,14 +488,22 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
 
     register('transub-consume-pending-open-params', async () => {
         try {
-            const { consumePendingSettingsTab } = require('./settings-window');
-            const tab = consumePendingSettingsTab() || pendingOpenParamsTab;
+            const { consumePendingSettingsOpen, consumePendingSettingsTab } = require('./settings-window');
+            const pending = typeof consumePendingSettingsOpen === 'function'
+                ? consumePendingSettingsOpen()
+                : { tab: consumePendingSettingsTab(), wizard: false, forceWizard: false };
+            const tab = pending?.tab || pendingOpenParamsTab;
             pendingOpenParamsTab = null;
-            return { ok: true, tab: tab || null };
+            return {
+                ok: true,
+                tab: tab || null,
+                wizard: !!pending?.wizard,
+                forceWizard: !!pending?.forceWizard,
+            };
         } catch {
             const tab = pendingOpenParamsTab;
             pendingOpenParamsTab = null;
-            return { ok: true, tab: tab || null };
+            return { ok: true, tab: tab || null, wizard: false, forceWizard: false };
         }
     });
 
@@ -364,6 +513,19 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         return { ok: true };
     });
 
+    register('transub-editor-sync-menu', async (event, payload = {}) => {
+        try {
+            const win = BrowserWindow.fromWebContents(event.sender);
+            if (!win || win.isDestroyed()) return { ok: false, error: '窗口不存在' };
+            const viewState = payload?.viewState || payload || {};
+            applySubtitleEditorMenu(win, viewState);
+            applyEditorWindowChrome(win, viewState.darkTheme === true);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-editor-confirm', async (event, payload = {}) => {
         const win = BrowserWindow.fromWebContents(event.sender);
         const message = asString(payload.message, 4000).trim() || '确定？';
@@ -371,22 +533,40 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         const title = asString(payload.title, 200).trim() || '确认';
         const okLabel = asString(payload.okLabel, 40).trim() || '确定';
         const cancelLabel = asString(payload.cancelLabel, 40).trim() || '取消';
+        const rawButtons = Array.isArray(payload.buttons)
+            ? payload.buttons.map((b) => asString(b, 40).trim()).filter(Boolean)
+            : null;
+        const buttons = (rawButtons && rawButtons.length >= 2)
+            ? rawButtons.slice(0, 6)
+            : [okLabel, cancelLabel];
+        const cancelId = Number.isInteger(payload.cancelId)
+            ? Math.max(0, Math.min(buttons.length - 1, payload.cancelId))
+            : buttons.length - 1;
+        const defaultId = Number.isInteger(payload.defaultId)
+            ? Math.max(0, Math.min(buttons.length - 1, payload.defaultId))
+            : 0;
         try {
             const { response } = await dialog.showMessageBox(win || undefined, {
                 type: payload.type || 'question',
-                buttons: [okLabel, cancelLabel],
-                defaultId: 0,
-                cancelId: 1,
+                buttons,
+                defaultId,
+                cancelId,
                 noLink: true,
                 title,
                 message,
                 detail: detail || undefined,
             });
             refocusWindow(win);
-            return { ok: true, confirmed: response === 0 };
+            const idx = Number(response);
+            return {
+                ok: true,
+                confirmed: idx !== cancelId,
+                response: idx,
+                cancelled: idx === cancelId,
+            };
         } catch (err) {
             refocusWindow(win);
-            return { ok: false, confirmed: false, error: err.message || String(err) };
+            return { ok: false, confirmed: false, cancelled: true, error: err.message || String(err) };
         }
     });
 }

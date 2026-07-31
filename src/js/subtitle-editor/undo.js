@@ -1,5 +1,5 @@
 /**
- * 字幕编辑器 — 撤销 / 重做栈
+ * 字幕编辑器 — 撤销 / 重做栈（相对 initial 基线的补丁，降低长片内存）
  */
 (function (global) {
     const UNDO_MAX = 50;
@@ -10,8 +10,20 @@
             throw new Error('installUndo(ctx): ctx.state, ctx.els, ctx.utils required');
         }
         const { cloneCues, cuesEqual } = ctx.utils;
+        const patchCore = ctx.undoPatchCore || global.TransubUndoPatch;
 
         let detailUndoTimer = null;
+
+        function getBaseline() {
+            const { state } = ctx;
+            if (state.initialSnapshot?.cues) {
+                return {
+                    cues: state.initialSnapshot.cues,
+                    header: state.initialSnapshot.header || [],
+                };
+            }
+            return { cues: [], header: [] };
+        }
 
         function createEditorSnapshot() {
             const { state } = ctx;
@@ -19,6 +31,28 @@
                 header: Array.isArray(state.header) ? [...state.header] : [],
                 cues: cloneCues(state.cues),
                 selectedIndex: state.selectedIndex,
+            };
+        }
+
+        function encodeEntry(snapshot) {
+            if (patchCore?.encodeEditorEntry) {
+                return patchCore.encodeEditorEntry(getBaseline(), snapshot);
+            }
+            return {
+                selectedIndex: snapshot.selectedIndex,
+                header: snapshot.header,
+                cuePatch: { type: 'full', cues: cloneCues(snapshot.cues) },
+            };
+        }
+
+        function decodeEntry(entry) {
+            if (patchCore?.decodeEditorEntry) {
+                return patchCore.decodeEditorEntry(getBaseline(), entry);
+            }
+            return {
+                selectedIndex: entry?.selectedIndex ?? -1,
+                header: Array.isArray(entry?.header) ? [...entry.header] : [],
+                cues: cloneCues(entry?.cuePatch?.cues || entry?.cues || []),
             };
         }
 
@@ -32,6 +66,13 @@
                 if (leftHeader[i] !== rightHeader[i]) return false;
             }
             return cuesEqual(a.cues, b.cues);
+        }
+
+        function entriesEqual(a, b) {
+            if (patchCore?.entriesEqual) {
+                return patchCore.entriesEqual(a, b, getBaseline());
+            }
+            return editorSnapshotsEqual(decodeEntry(a), decodeEntry(b));
         }
 
         function updateUndoRedoUi() {
@@ -53,9 +94,10 @@
             const { state } = ctx;
             if (state.undoRecording) return;
             const snap = createEditorSnapshot();
+            const entry = encodeEntry(snap);
             const top = state.undoStack[state.undoStack.length - 1];
-            if (top && editorSnapshotsEqual(top, snap)) return;
-            state.undoStack.push(snap);
+            if (top && entriesEqual(top, entry)) return;
+            state.undoStack.push(entry);
             if (state.undoStack.length > UNDO_MAX) state.undoStack.shift();
             state.redoStack = [];
             updateUndoRedoUi();
@@ -111,9 +153,9 @@
             const { state, syncDetailToCue, setStatus } = ctx;
             if (!state.undoStack.length) return;
             syncDetailToCue();
-            state.redoStack.push(createEditorSnapshot());
-            const snap = state.undoStack.pop();
-            applyEditorSnapshot(snap);
+            state.redoStack.push(encodeEntry(createEditorSnapshot()));
+            const entry = state.undoStack.pop();
+            applyEditorSnapshot(decodeEntry(entry));
             updateUndoRedoUi();
             setStatus('已返回', 'ok');
         }
@@ -122,9 +164,9 @@
             const { state, syncDetailToCue, setStatus } = ctx;
             if (!state.redoStack.length) return;
             syncDetailToCue();
-            state.undoStack.push(createEditorSnapshot());
-            const snap = state.redoStack.pop();
-            applyEditorSnapshot(snap);
+            state.undoStack.push(encodeEntry(createEditorSnapshot()));
+            const entry = state.redoStack.pop();
+            applyEditorSnapshot(decodeEntry(entry));
             updateUndoRedoUi();
             setStatus('已重做', 'ok');
         }
@@ -137,7 +179,11 @@
                 cues,
             };
             state.savedSnapshot = cloneCues(cues);
+            // Re-encode existing undo/redo against new baseline (usually empty stacks)
+            state.undoStack = [];
+            state.redoStack = [];
             if (els.restoreBtn) els.restoreBtn.disabled = !state.initialSnapshot?.cues?.length;
+            updateUndoRedoUi();
         }
 
         async function restoreInitialSnapshot() {

@@ -1,0 +1,28 @@
+# NOTICE
+
+Transub uses a dual-licensing model.
+
+## Core (MIT)
+
+Desktop shell, subtitle editor, free Engine path, Pro entitlement gates,
+license verification (public key), BYOK storage contract, and free-tier
+smart-translate (whitelist managed GGUF ≤7B) are under MIT. See `LICENSE`.
+
+## Pro (proprietary)
+
+Context reconstruct, film context reconstruct, bilingual semantic review,
+and the shipped `_advanced` module are proprietary. See `LICENSE-PRO`.
+
+Commercial Windows builds must include `_advanced/index.js` next to the
+executable. Packaged apps do not fall back to in-tree algorithm sources.
+
+## Third-party
+
+- Font Awesome 4.7 — SIL OFL 1.1
+- Electron and npm dependencies — see their respective licenses
+- Transub Engine / bundled Python packages — see `transub-engine/`
+- Sakura translation models (when downloaded by the user) — typically
+  CC-BY-NC-SA; follow the model card on the download source. Non-commercial
+  model terms apply to the model weights, not to this application's MIT Core.
+- Whisper / SenseVoice / Opus-MT / Demucs and other model weights — follow
+  each upstream license when downloaded.

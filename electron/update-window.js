@@ -2,6 +2,7 @@ const { BrowserWindow } = require('electron');
 const path = require('path');
 const { resolveHtmlPath } = require('./app-paths');
 const { getWindowIconOption, applyWindowIcon } = require('./icons');
+const { attachUiZoom } = require('./ui-zoom');
 
 /** @type {import('electron').BrowserWindow|null} */
 let updateWindow = null;
@@ -54,6 +55,7 @@ function openUpdateWindow(app, { parent, autoCheck = true } = {}) {
     });
 
     updateWindow = win;
+    attachUiZoom(win);
     win.setMenuBarVisibility(false);
     win.removeMenu();
     applyWindowIcon(win);

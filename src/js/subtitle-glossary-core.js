@@ -351,6 +351,16 @@
         return { initial_prompt, hotwords, termCount: terms.length };
     }
 
+    /** Mens-esthe / soft-AV JA vocabulary for Whisper (keep didactic text out — model echoes it). */
+    function buildJaAvAsrPromptHints() {
+        return {
+            // Keep short — long term lists get echoed as cues (JUR-809 / HMN-878).
+            initial_prompt: 'メンズエステの店内会話。',
+            hotwords: 'メンズエステ メンエス オイル 指圧 半パンツ リンパ ふくらはぎ ほぐして うつ伏せ 仰向け ゲスト',
+            termCount: 11,
+        };
+    }
+
     return {
         GLOSSARY_VERSION,
         escapeRegExp,
@@ -370,6 +380,7 @@
         mergeGlossaries,
         collectProtectTerms,
         buildAsrPromptHints,
+        buildJaAvAsrPromptHints,
         makeEntryId,
     };
 }));

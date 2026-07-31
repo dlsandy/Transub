@@ -8,12 +8,14 @@ const {
     detectSilenceInRange,
     cancelActiveFfmpegJobs,
     extractWaveformPeaks,
+    probeAcousticWindow,
 } = require('./ffmpeg-bridge');
 const { loadPresets, saveCustomPreset, deleteCustomPreset } = require('./presets-data');
 const { loadTaskHistory, appendTaskHistory, clearTaskHistory } = require('./task-history');
 const { loadEditorHistory, appendEditorHistory, clearEditorHistory } = require('./editor-history');
 const { detectGpuEnvironment } = require('./gpu-detect');
-const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch, collectSubtitleSidecars, isSubtitleFile, guessVideoPathForSubtitle, VIDEO_EXTENSIONS: SUBTITLE_VIDEO_EXTENSIONS } = require('./subtitle-utils');
+const { resolveLocalSubtitlePath, resolveLocalSubtitleBatch, collectSubtitleSidecars, isSubtitleFile, guessVideoPathForSubtitle, MEDIA_EXTENSIONS: SUBTITLE_MEDIA_EXTENSIONS, AUDIO_EXTENSIONS, VIDEO_EXTENSIONS } = require('./subtitle-utils');
+const { isMediaExt } = require('../src/js/media-extensions-core');
 const { parseSubtitle, serializeSubtitle, detectFormat, isEditableFormat } = require('./subtitle-format');
 const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
@@ -48,13 +50,8 @@ const {
     setUpdateProgressListener,
 } = require('./app-updater');
 
-const VIDEO_EXTENSIONS = new Set([
-    'mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'webm', 'm4v', 'ts', 'mpeg', 'mpg', 'rmvb', 'rm', '3gp',
-]);
-
 function isVideoFile(filePath) {
-    const ext = path.extname(String(filePath || '')).slice(1).toLowerCase();
-    return VIDEO_EXTENSIONS.has(ext);
+    return isMediaExt(filePath);
 }
 
 function scanVideosInDirectory(rootDir, recursive = true) {
@@ -162,6 +159,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
         spacePunct: null,
         cpsSplit: null,
         noise: null,
+        jaStitch: null,
         compressRep: null,
         chinese: null,
         written: false,
@@ -224,6 +222,20 @@ function applySubtitlePostprocess(filePath, options = {}) {
         } catch (err) {
             return { ok: false, error: err.message || '无法加载通顺度模块' };
         }
+        // Stitch JA mid-phrase ASR splits before deleting leftover fragments.
+        if (options.stitchJaFragments !== false && typeof fluency.stitchJaFragmentCues === 'function') {
+            const stitched = fluency.stitchJaFragmentCues(cues, {
+                maxGapMs: options.jaStitchMaxGapMs,
+                maxMergedDurMs: options.jaStitchMaxMergedDurMs,
+            });
+            if (stitched.mergedPairs > 0) {
+                cues = stitched.cues;
+                result.jaStitch = {
+                    summary: fluency.summarizeJaStitch(stitched.stats),
+                    stats: stitched.stats,
+                };
+            }
+        }
         const noise = fluency.removeNoiseFromCues(cues, {
             removeEmpty: options.removeEmpty !== false,
             removeFragments: options.removeFragments !== false,
@@ -231,12 +243,30 @@ function applySubtitlePostprocess(filePath, options = {}) {
             removeSymbolOnly: options.removeSymbolOnly !== false,
             removeDuplicates: options.removeDuplicates === true,
             removeHallucinations: options.removeHallucinations !== false,
+            blankInsteadOfRemove: options.blankInsteadOfRemove === true,
+            blankPlaceholder: options.blankPlaceholder,
         });
         cues = noise.cues;
         result.noise = {
             summary: fluency.summarizeNoiseRemoval(noise.stats),
             stats: noise.stats,
         };
+        // Mens-esthe / soft-AV ASR mishears on source tracks (免税→メンエス …)
+        if (options.jaAsrDomainFix !== false) {
+            try {
+                const mtSanitize = require('../src/js/mt-sanitize-core');
+                if (typeof mtSanitize.correctJaAsrDomainMishearsInCues === 'function') {
+                    const domain = mtSanitize.correctJaAsrDomainMishearsInCues(cues);
+                    if (domain.changed > 0) {
+                        cues = domain.cues;
+                        result.jaAsrDomain = {
+                            changed: domain.changed,
+                            summary: `ASR领域纠错 ${domain.changed} 条`,
+                        };
+                    }
+                }
+            } catch { /* domain fix optional */ }
+        }
     }
 
     if (doCompressRep) {
@@ -327,6 +357,160 @@ function applySubtitlePostprocess(filePath, options = {}) {
         ...result,
         written: true,
         summary: parts.join('；') || `已更新（${result.beforeCount} → ${result.afterCount} 条）`,
+    };
+}
+
+/**
+ * File-level MT sanitize: strip trailing hallucinated names / Gloss / loops on ZH
+ * against the JA source (covers Opus path and any adapter miss).
+ * @param {string} targetPath - Chinese / translation subtitle
+ * @param {string} [sourcePath] - Japanese / ASR source subtitle
+ * @param {object} [options]
+ * @returns {{ ok: boolean, changed?: number, skipped?: boolean, reason?: string, path?: string, summary?: string, flags?: object, error?: string }}
+ */
+function sanitizeMtSubtitlePair(targetPath, sourcePath = '', options = {}) {
+    const target = readSubtitleDocument(targetPath);
+    if (!target.ok) return target;
+
+    let sourceCues = Array.isArray(options.sourceCues) ? options.sourceCues : [];
+    const srcPath = String(sourcePath || options.sourcePath || '').trim();
+    if (srcPath) {
+        try {
+            if (fs.existsSync(path.resolve(srcPath))) {
+                const src = readSubtitleDocument(srcPath);
+                if (src.ok && Array.isArray(src.cues) && src.cues.length) {
+                    sourceCues = src.cues;
+                }
+            }
+        } catch { /* keep sourceCues fallback */ }
+    }
+    if (!sourceCues.length) {
+        return {
+            ok: true,
+            changed: 0,
+            skipped: true,
+            reason: 'no_source',
+            path: target.path,
+        };
+    }
+
+    // Drop Whisper JA name-loops on source before justify / ZH sanitize
+    let sourceAsrCleaned = 0;
+    try {
+        const jaNames = require('../src/js/ja-person-names-core');
+        if (typeof jaNames.stripAsrHallucinationLoopsInCues === 'function') {
+            const srcClean = jaNames.stripAsrHallucinationLoopsInCues(sourceCues);
+            sourceCues = srcClean.cues;
+            sourceAsrCleaned = srcClean.changed || 0;
+        }
+    } catch { /* source ASR clean optional */ }
+
+    // Mens-esthe / soft-AV ASR mishears (免税→メンエス, 本島→オイル, …)
+    let sourceDomainCleaned = 0;
+    try {
+        const mtSanitizePre = require('../src/js/mt-sanitize-core');
+        if (typeof mtSanitizePre.correctJaAsrDomainMishearsInCues === 'function') {
+            const domainClean = mtSanitizePre.correctJaAsrDomainMishearsInCues(sourceCues);
+            sourceCues = domainClean.cues;
+            sourceDomainCleaned = domainClean.changed || 0;
+        }
+    } catch { /* domain ASR clean optional */ }
+
+    if (
+        (sourceAsrCleaned > 0 || sourceDomainCleaned > 0)
+        && options.cleanSource !== false
+        && srcPath
+        && fs.existsSync(path.resolve(srcPath))
+    ) {
+        try {
+            const srcDoc = readSubtitleDocument(srcPath);
+            if (srcDoc.ok) {
+                writeSubtitleDocument(srcDoc.path, {
+                    cues: sourceCues,
+                    format: srcDoc.format,
+                    header: srcDoc.header,
+                    backupMode: options.backupMode || 'off',
+                });
+            }
+        } catch { /* keep going */ }
+    }
+
+    let mtSanitize;
+    try {
+        mtSanitize = require('../src/js/mt-sanitize-core');
+    } catch (err) {
+        return { ok: false, error: err.message || '无法加载译后清洗模块' };
+    }
+
+    const cleaned = mtSanitize.sanitizeMtCues(target.cues, sourceCues, {
+        glossary: options.glossary,
+        glossaryTerms: options.glossaryTerms,
+        nameMap: options.nameMap,
+        unifyNames: options.unifyNames !== false,
+        sakuraNsfwPrompt: options.sakuraNsfwPrompt,
+        nsfwPrompt: options.nsfwPrompt,
+        contentProfile: options.contentProfile || options.senseProfile,
+        senseProfile: options.senseProfile || options.contentProfile,
+        faithfulTone: options.faithfulTone || options.smartTranslateFaithfulTone,
+        smartTranslateFaithfulTone: options.smartTranslateFaithfulTone || options.faithfulTone,
+        applyNsfwLexicon: options.applyNsfwLexicon,
+        // Source already domain-corrected above; avoid double-counting flags only
+        skipJaAsrDomain: sourceDomainCleaned > 0,
+    });
+
+    // Prefer domain-corrected source from sanitize when it rewrote again
+    if (Array.isArray(cleaned.sourceCues) && cleaned.jaAsrDomainChanged > 0) {
+        sourceCues = cleaned.sourceCues;
+        sourceDomainCleaned += cleaned.jaAsrDomainChanged;
+        if (options.cleanSource !== false && srcPath && fs.existsSync(path.resolve(srcPath))) {
+            try {
+                const srcDoc = readSubtitleDocument(srcPath);
+                if (srcDoc.ok) {
+                    writeSubtitleDocument(srcDoc.path, {
+                        cues: sourceCues,
+                        format: srcDoc.format,
+                        header: srcDoc.header,
+                        backupMode: options.backupMode || 'off',
+                    });
+                }
+            } catch { /* ignore */ }
+        }
+    }
+
+    if (!cleaned.changed) {
+        return {
+            ok: true,
+            changed: 0,
+            sourceAsrCleaned,
+            sourceDomainCleaned,
+            path: target.path,
+            flags: cleaned.flags || {},
+            summary: [
+                sourceAsrCleaned ? `ASR叠名清理 ${sourceAsrCleaned} 条` : '',
+                sourceDomainCleaned ? `ASR领域纠错 ${sourceDomainCleaned} 条` : '',
+            ].filter(Boolean).join(' · ') || undefined,
+        };
+    }
+
+    const written = writeSubtitleDocument(target.path, {
+        cues: cleaned.cues,
+        format: target.format,
+        header: target.header,
+        backupMode: options.backupMode || 'off',
+    });
+    if (!written.ok) return written;
+
+    const bits = [`译后清洗 ${cleaned.changed} 条`];
+    if (sourceAsrCleaned) bits.push(`ASR叠名 ${sourceAsrCleaned}`);
+    if (sourceDomainCleaned) bits.push(`ASR领域 ${sourceDomainCleaned}`);
+    return {
+        ok: true,
+        changed: cleaned.changed,
+        sourceAsrCleaned,
+        sourceDomainCleaned,
+        path: target.path,
+        flags: cleaned.flags || {},
+        summary: bits.join(' · '),
     };
 }
 
@@ -535,7 +719,7 @@ function writeSubtitleDocument(filePath, payload = {}) {
 
 function listSubtitleSidecars(videoPath, outputDir) {
     const resolved = path.resolve(String(videoPath || ''));
-    if (!fs.existsSync(resolved)) return { ok: false, error: '视频文件不存在' };
+    if (!fs.existsSync(resolved)) return { ok: false, error: '媒体文件不存在' };
     const seen = new Set();
     const sidecars = [];
     const add = (p) => {
@@ -563,14 +747,7 @@ function listSubtitleSidecars(videoPath, outputDir) {
 
     const items = sidecars.map((p) => {
         let format = detectFormat(p, '');
-        let editable = isEditableFormat(format);
-        if (editable) {
-            try {
-                const raw = fs.readFileSync(p, 'utf8');
-                format = detectFormat(p, raw);
-                editable = isEditableFormat(format);
-            } catch (_) { editable = false; }
-        }
+        const editable = isEditableFormat(format);
         return {
             path: p,
             basename: path.basename(p),
@@ -624,6 +801,63 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('ffmpeg-probe-acoustic', async (_event, payload = {}) => {
+        try {
+            const filePath = asString(payload.path || payload.mediaPath, 4096).trim();
+            if (!filePath) return { ok: false, error: '缺少路径' };
+            const settings = loadSettings(getAppRoot).options || {};
+            const ffmpegPath = payload.ffmpegPath != null
+                ? asString(payload.ffmpegPath, 4096).trim()
+                : settings.ffmpegPath;
+            return await probeAcousticWindow(filePath, {
+                ffmpegPath,
+                durationSec: payload.durationSec,
+                startSec: payload.startSec,
+                noiseDb: payload.noiseDb,
+                minSilenceSec: payload.minSilenceSec,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-sense-memory-lookup', async (_event, payload = {}) => {
+        try {
+            const { lookupSenseMemory } = require('./sense-memory');
+            const keys = Array.isArray(payload.keys) ? payload.keys : [];
+            return lookupSenseMemory(keys);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), hits: [] };
+        }
+    });
+
+    register('transub-sense-memory-record', async (_event, payload = {}) => {
+        try {
+            const { recordSenseMemory } = require('./sense-memory');
+            return recordSenseMemory(payload || {});
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-sense-memory-stats', async () => {
+        try {
+            const { getSenseMemoryStats } = require('./sense-memory');
+            return getSenseMemoryStats();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), count: 0 };
+        }
+    });
+
+    register('transub-sense-memory-clear', async () => {
+        try {
+            const { clearSenseMemory } = require('./sense-memory');
+            return clearSenseMemory();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), cleared: 0 };
+        }
+    });
+
     register('ffmpeg-validate', async (_event, payload = {}) => {
         try {
             const settings = loadSettings(getAppRoot).options || {};
@@ -633,6 +867,29 @@ function setupExtensionsBridge(api, deps) {
             return validateFfmpegSetup(ffmpegPath, { quick: !!payload.quick });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-env-check', async (_event, payload = {}) => {
+        try {
+            const { runEnvCheck } = require('./env-check');
+            const settings = loadSettings(getAppRoot).options || {};
+            const ffmpegPath = payload.ffmpegPath != null
+                ? asString(payload.ffmpegPath, 4096).trim()
+                : settings.ffmpegPath;
+            const engineInstallPath = payload.engineInstallPath != null
+                ? asString(payload.engineInstallPath, 4096).trim()
+                : String(settings.engineInstallPath || '').trim();
+            const engineAsrModel = payload.engineAsrModel != null
+                ? asString(payload.engineAsrModel, 128).trim()
+                : String(settings.engineAsrModel || '').trim();
+            return await runEnvCheck({
+                ffmpegPath,
+                engineInstallPath,
+                engineAsrModel,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), items: [] };
         }
     });
 
@@ -759,6 +1016,48 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transwithai-export-preset', async (event, payload = {}) => {
+        try {
+            const id = String(payload.id || '').trim();
+            if (!id) return { ok: false, error: '缺少预设 id' };
+            const preset = loadPresets().presets.find((p) => p.id === id);
+            if (!preset) return { ok: false, error: '未找到该预设' };
+            const win = browserWindowFromEvent(event);
+            // eslint-disable-next-line no-control-regex -- strip Windows-illegal / control chars from filename
+            const safeName = String(preset.name || 'preset').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 64);
+            const result = await dialog.showSaveDialog(win, {
+                title: '导出预设',
+                defaultPath: path.join(getProjectRoot(), `${safeName}.json`),
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            fs.writeFileSync(result.filePath, `${JSON.stringify(preset, null, 2)}\n`, 'utf8');
+            return { ok: true, path: result.filePath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transwithai-import-preset', async (event) => {
+        try {
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win, {
+                title: '导入预设',
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+                properties: ['openFile'],
+            });
+            if (result.canceled || !result.filePaths?.length) return { ok: true, canceled: true };
+            const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+            const name = String(parsed?.name || '').trim();
+            const options = parsed?.options && typeof parsed.options === 'object' ? parsed.options : null;
+            if (!name || !options) return { ok: false, error: '文件需包含 name 与 options' };
+            const preset = saveCustomPreset({ name, options });
+            return { ok: true, preset, presets: loadPresets().presets };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transwithai-get-task-history', async () => {
         try {
             const entries = loadTaskHistory().entries.map((entry) => {
@@ -788,6 +1087,65 @@ function setupExtensionsBridge(api, deps) {
         try {
             clearTaskHistory();
             return { ok: true, entries: [] };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-clear-transcript-cache', async (_event, payload = {}) => {
+        try {
+            const { clearTranscriptKeepDir, resolveTranscriptKeepDir } = require('./transcript-keep');
+            let options = payload && typeof payload === 'object' ? { ...payload } : {};
+            if (!Object.keys(options).filter((k) => k !== 'force').length) {
+                try {
+                    const { loadSettings } = require('./settings-data');
+                    options = { ...(loadSettings()?.options || {}), force: options.force !== false };
+                } catch { /* ignore */ }
+            }
+            // Manual clear from settings should remove pinned files too unless force:false.
+            if (options.force == null) options.force = true;
+            const result = clearTranscriptKeepDir(options);
+            return {
+                ok: true,
+                ...result,
+                dir: result.dir || resolveTranscriptKeepDir(options),
+            };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-find-kept-transcript', async (_event, payload = {}) => {
+        try {
+            const { findKeptTranscript } = require('./transcript-keep');
+            let options = {};
+            try {
+                const { loadSettings } = require('./settings-data');
+                options = loadSettings()?.options || {};
+            } catch { /* ignore */ }
+            if (payload?.options && typeof payload.options === 'object') {
+                options = { ...options, ...payload.options };
+            }
+            return findKeptTranscript({
+                videoPath: payload?.videoPath || '',
+                subPath: payload?.subPath || payload?.path || '',
+                stem: payload?.stem || '',
+                options,
+            });
+        } catch (err) {
+            return { ok: false, found: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-pin-kept-transcript', async (_event, payload = {}) => {
+        try {
+            const { pinKeptTranscript, unpinKeptTranscript } = require('./transcript-keep');
+            const filePath = String(payload?.path || '').trim();
+            if (!filePath) return { ok: false, error: '缺少路径' };
+            if (payload?.unpin) {
+                return unpinKeptTranscript(filePath, { hard: payload.hard !== false });
+            }
+            return pinKeptTranscript(filePath, { hard: !!payload?.hard });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -978,16 +1336,18 @@ function setupExtensionsBridge(api, deps) {
             const cues = Array.isArray(payload.cues) ? payload.cues : [];
             if (!cues.length) return { ok: false, error: '字幕内容为空' };
             const formatHint = String(payload.format || 'srt').toLowerCase();
-            const format = ['srt', 'vtt', 'lrc'].includes(formatHint) ? formatHint : 'srt';
+            const format = ['srt', 'vtt', 'lrc', 'ass'].includes(formatHint) ? formatHint : 'srt';
             const defaultName = asString(payload.defaultName || payload.suggestedName || '', 512).trim()
                 || `subtitle.${format}`;
             const title = asString(payload.title || '', 200).trim() || '导出字幕';
             const win = browserWindowFromEvent(event);
             const filters = format === 'vtt'
-                ? [{ name: 'WebVTT', extensions: ['vtt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }]
+                ? [{ name: 'WebVTT', extensions: ['vtt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
                 : format === 'lrc'
-                    ? [{ name: 'LRC', extensions: ['lrc'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }]
-                    : [{ name: 'SubRip', extensions: ['srt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc'] }];
+                    ? [{ name: 'LRC', extensions: ['lrc'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
+                    : format === 'ass'
+                        ? [{ name: 'Advanced SubStation', extensions: ['ass'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
+                        : [{ name: 'SubRip', extensions: ['srt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }];
             const result = await dialog.showSaveDialog(win || undefined, {
                 title,
                 defaultPath: defaultName,
@@ -997,7 +1357,17 @@ function setupExtensionsBridge(api, deps) {
             if (result.canceled || !result.filePath) return { ok: true, canceled: true };
             const dest = result.filePath;
             const ext = path.extname(dest).toLowerCase().replace(/^\./, '');
-            const saveFormat = ['srt', 'vtt', 'lrc'].includes(ext) ? ext : format;
+            const saveFormat = ['srt', 'vtt', 'lrc', 'ass'].includes(ext) ? ext : format;
+            if (saveFormat === 'ass') {
+                const { serializeAss } = require('./subtitle-format');
+                const content = serializeAss(cues, {
+                    title: path.basename(dest, path.extname(dest)),
+                    speakers: payload.speakers || [],
+                    cueMarkers: payload.cueMarkers || {},
+                });
+                fs.writeFileSync(dest, content, 'utf8');
+                return { ok: true, path: dest, cueCount: cues.length, format: 'ass' };
+            }
             return writeSubtitleDocument(dest, {
                 format: saveFormat,
                 cues,
@@ -1300,9 +1670,12 @@ function setupExtensionsBridge(api, deps) {
                 win.focus();
             }
             const defaultPath = asString(options.defaultPath, 4096).trim();
+            const multiple = !!options.multiple;
             const result = await dialog.showOpenDialog(win || undefined, {
-                title: options.title || '选择字幕文件',
-                properties: ['openFile'],
+                title: options.title || (multiple ? '选择字幕文件（可多选）' : '选择字幕文件'),
+                properties: multiple
+                    ? ['openFile', 'multiSelections']
+                    : ['openFile'],
                 filters: [
                     { name: '字幕 (SRT / VTT / LRC)', extensions: ['srt', 'vtt', 'lrc'] },
                     { name: '所有文件', extensions: ['*'] },
@@ -1312,6 +1685,18 @@ function setupExtensionsBridge(api, deps) {
             refocusWindow(win);
             if (result.canceled || !result.filePaths?.length) {
                 return { ok: true, canceled: true };
+            }
+            if (multiple) {
+                const paths = result.filePaths.map((p) => path.resolve(p));
+                return {
+                    ok: true,
+                    canceled: false,
+                    paths,
+                    files: paths.map((subPath) => ({
+                        path: subPath,
+                        videoPath: guessVideoPathForSubtitle(subPath) || '',
+                    })),
+                };
             }
             const subPath = path.resolve(result.filePaths[0]);
             const videoPath = guessVideoPathForSubtitle(subPath) || '';
@@ -1332,9 +1717,13 @@ function setupExtensionsBridge(api, deps) {
             const hintPath = asString(payload.defaultPath, 4096).trim();
             const defaultPath = hintPath ? path.dirname(path.resolve(hintPath)) : undefined;
             const result = await dialog.showOpenDialog(win, {
-                title: payload.title || '选择关联视频',
+                title: payload.title || '选择关联媒体',
                 properties: ['openFile'],
-                filters: [{ name: '视频', extensions: SUBTITLE_VIDEO_EXTENSIONS }],
+                filters: [
+                    { name: '媒体文件', extensions: [...SUBTITLE_MEDIA_EXTENSIONS] },
+                    { name: '音频', extensions: [...AUDIO_EXTENSIONS] },
+                    { name: '视频', extensions: [...VIDEO_EXTENSIONS] },
+                ],
                 defaultPath,
             });
             refocusWindow(win);
@@ -1351,8 +1740,17 @@ function setupExtensionsBridge(api, deps) {
         try {
             const subPath = asString(payload.path, 4096).trim();
             if (!subPath) return { ok: false, error: '缺少字幕路径' };
+            const preferPath = asString(payload.preferPath, 4096).trim();
+            if (preferPath) {
+                try {
+                    const resolvedPrefer = path.resolve(preferPath);
+                    if (fs.existsSync(resolvedPrefer)) {
+                        return { ok: true, videoPath: resolvedPrefer, fromPrefer: true };
+                    }
+                } catch (_) { /* fall through to guess */ }
+            }
             const videoPath = guessVideoPathForSubtitle(subPath);
-            return { ok: true, videoPath: videoPath || null };
+            return { ok: true, videoPath: videoPath || null, fromPrefer: false };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1425,8 +1823,10 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
-    register('transub-download-app-update', async (event) => {
-        setUpdateProgressListener((progress) => {
+    register('transub-download-app-update', async (event, _payload = {}) => {
+        const { broadcastAppUpdateProgress } = require('./download-window');
+
+        const pushProgress = (progress) => {
             try {
                 if (event?.sender && !event.sender.isDestroyed()) {
                     event.sender.send('transub-app-update-progress', progress);
@@ -1434,10 +1834,35 @@ function setupExtensionsBridge(api, deps) {
             } catch {
                 /* ignore destroyed sender */
             }
-        });
+            broadcastAppUpdateProgress(progress);
+        };
+
+        setUpdateProgressListener(pushProgress);
         try {
-            return await downloadAppUpdate();
+            const result = await downloadAppUpdate();
+            if (result?.ok) {
+                pushProgress({
+                    percent: 100,
+                    phase: 'done',
+                    ok: true,
+                    message: result.message || '更新已下载，可重启安装',
+                });
+            } else {
+                pushProgress({
+                    percent: 0,
+                    phase: 'error',
+                    ok: false,
+                    message: result?.error || '下载失败',
+                });
+            }
+            return result;
         } catch (err) {
+            pushProgress({
+                percent: 0,
+                phase: 'error',
+                ok: false,
+                message: err.message || String(err),
+            });
             return { ok: false, error: err.message || String(err) };
         } finally {
             setUpdateProgressListener(null);
@@ -1486,4 +1911,6 @@ module.exports = {
     listTransWithAiModels,
     inspectWhisperModelDir,
     resolveModelDir,
+    applySubtitlePostprocess,
+    sanitizeMtSubtitlePair,
 };

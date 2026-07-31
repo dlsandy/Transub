@@ -13,7 +13,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleWorkflowsCoreFactory() {
     const WORKFLOWS_VERSION = 1;
     const FAIL_POLICIES = new Set(['pause', 'skip', 'abort']);
-    const SCOPES = new Set(['all', 'selected', 'filtered', 'lowConfidence']);
+    const SCOPES = new Set(['all', 'selected', 'filtered', 'lowConfidence', 'bookmarks']);
 
     /** @type {Record<string, { id: string, label: string, group: string, preferConfirm?: boolean, defaultParams?: object }>} */
     const STEP_CATALOG = {
@@ -144,6 +144,53 @@
             label: '术语扫描',
             group: '文本',
             defaultParams: {},
+        },
+        'text.sakuraTranslate': {
+            id: 'text.sakuraTranslate',
+            label: 'Sakura 翻译',
+            group: 'AI',
+            preferConfirm: true,
+            defaultParams: {
+                scope: 'all',
+            },
+        },
+        'text.smartTranslate': {
+            id: 'text.smartTranslate',
+            label: '智能翻译',
+            group: 'AI',
+            preferConfirm: true,
+            advanced: false,
+            featureId: 'smartTranslate',
+            defaultParams: {
+                scope: 'all',
+            },
+        },
+        'text.contextReconstruct': {
+            id: 'text.contextReconstruct',
+            label: '语境重构（Pro）',
+            group: '高级',
+            preferConfirm: true,
+            advanced: true,
+            featureId: 'contextReconstruct',
+            defaultParams: {
+                scope: 'all',
+                windowCues: 30,
+                preserveTiming: true,
+            },
+        },
+        'text.filmContextReconstruct': {
+            id: 'text.filmContextReconstruct',
+            label: '影片理解重构（Pro）',
+            group: '高级',
+            preferConfirm: true,
+            advanced: true,
+            featureId: 'filmContextReconstruct',
+            defaultParams: {
+                scope: 'all',
+                preserveTiming: true,
+                sceneMaxCues: 36,
+                sceneGapMs: 2500,
+            },
         },
         'presets.insertGroup': {
             id: 'presets.insertGroup',
@@ -384,6 +431,30 @@
                     step('text.glossaryUnify'),
                     step('dual.exportMerged'),
                     step('file.save'),
+                ],
+            }),
+            normalizeWorkflow({
+                id: 'builtin_bookmark_polish',
+                name: '书签段精修',
+                note: '仅处理覆盖书签时间点的字幕：压缩叠词 → 复查 QC（可先筛选「书签」再跑「当前筛选」类步骤）',
+                builtin: true,
+                steps: [
+                    step('qc.scan'),
+                    step('text.compressRep', { params: { scope: 'bookmarks' } }),
+                    step('qc.scan', { label: '质量检查（复查）' }),
+                ],
+            }),
+            normalizeWorkflow({
+                id: 'builtin_bookmark_reconstruct',
+                name: '书签段重构（Pro）',
+                note: 'Pro：仅对覆盖书签的字幕做语境重构，再复查 QC',
+                builtin: true,
+                steps: [
+                    step('text.contextReconstruct', {
+                        params: { scope: 'bookmarks' },
+                        requireConfirm: true,
+                    }),
+                    step('qc.scan', { label: '质量检查（复查）' }),
                 ],
             }),
         ];
