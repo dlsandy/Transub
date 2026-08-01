@@ -159,7 +159,7 @@
         'sdde', 'sdmm', 'sdmu', 'nhdt', 'nhdtb', 'gvh', 'gvg',
         'dvaj', 'dva', 'ebod', 'eyan', 'fj', 'fcdss', 'kmhrs', 'luxu',
         'maan', 'siro', 'gana', 'mium', 'mywife', 'oren', 'ara',
-        'fc2', 'ppv',
+        'fc2', 'ppv', 'mngs', 'cjod', 'juq', 'fthtd',
     ]);
 
     function loadOpaqueAvMakers() {
@@ -212,6 +212,14 @@
         'h264', 'h265', 'x264', 'x265', 'avc', 'hevc', 'aac', 'mp3', 'mp4', 'mkv', 'webm', 'av1',
     ]);
 
+    /** Weak CODE-123 prefixes that are almost never JAV makers (SKU / release noise). */
+    const WEAK_AV_PREFIX_DENY = new Set([
+        ...CODEC_FALSE_POSITIVE,
+        'vol', 'part', 'track', 'disc', 'file', 'clip', 'test', 'demo', 'sample',
+        'sku', 'item', 'ver', 'rev', 'movie', 'film', 'video', 'audio', 'scene',
+        'chap', 'page', 'book', 'issue', 'pack', 'disk', 'edit', 'cut',
+    ]);
+
     /** Explicit AV / soft-scene path or name tokens (strong). */
     const AV_STRONG_RE = new RegExp(
         `${TB}(`
@@ -247,12 +255,41 @@
     /** @type {ReadonlyArray<{ re: RegExp, weight: number, profile: string, reason: string, id?: string }>} */
     const NAME_RULES = Object.freeze([
         { id: 'av_strong', re: AV_STRONG_RE, weight: 0.55, profile: 'av_soft', reason: 'AV 关键词/厂牌' },
-        { id: 'film_release', re: new RegExp(`${TB}(bluray|bdrip|remux|web[-_]?dl|webrip|hdtv|uhd|truehd|dts[-_]?hd|atmos|criterion)${TE}`, 'i'), weight: 0.42, profile: 'film', reason: '影视发行标签' },
-        { id: 'film_keyword', re: new RegExp(`${TB}(movie|cinema|feature|剧场版|电影|影片|劇場版|documentary|纪录片)${TE}`, 'i'), weight: 0.35, profile: 'film', reason: '影视关键词' },
+        { id: 'film_release', re: new RegExp(`${TB}(bluray|bdrip|remux|web[-_]?dl|webrip|hdtv|uhd|truehd|dts[-_]?hd|atmos|criterion|bilibili|哔哩)${TE}`, 'i'), weight: 0.42, profile: 'film', reason: '影视发行标签' },
+        { id: 'film_keyword', re: new RegExp(`${TB}(movie|cinema|feature|剧场版|电影|影片|劇場版|documentary|纪录片|anime|ova|oad|动画|アニメ|特番)${TE}`, 'i'), weight: 0.35, profile: 'film', reason: '影视关键词' },
         { id: 'film_res', re: new RegExp(`${TB}(2160p|1080p|720p|4k|uhd)${TE}`, 'i'), weight: 0.12, profile: 'film', reason: '影视分辨率标记' },
-        { id: 'film_episode', re: new RegExp(`${TB}(s\\d{1,2}e\\d{1,3}|season\\s*\\d+|第\\d+季|第\\d+集)${TE}`, 'i'), weight: 0.28, profile: 'film', reason: '剧集标记' },
-        { id: 'talk_keyword', re: new RegExp(`${TB}(interview|podcast|lecture|talk[-_]?show|会议|访谈|讲座|対談|对谈|研讨|演讲)${TE}`, 'i'), weight: 0.45, profile: 'talk', reason: '对白/访谈关键词' },
+        { id: 'film_episode', re: new RegExp(`${TB}(s\\d{1,2}e\\d{1,3}|season\\s*\\d+|第\\d+季|第\\d+集|ep\\.?\\s*\\d+)${TE}`, 'i'), weight: 0.28, profile: 'film', reason: '剧集标记' },
+        { id: 'talk_keyword', re: new RegExp(`${TB}(interview|podcast|lecture|talk[-_]?show|会议|访谈|讲座|対談|对谈|研讨|演讲|综艺|variety|漫才|相声|朗读|电台)${TE}`, 'i'), weight: 0.45, profile: 'talk', reason: '对白/访谈关键词' },
         { id: 'commercial_talk', re: COMMERCIAL_TALK_RE, weight: 0.58, profile: 'talk', reason: '产品/教程解说' },
+    ]);
+
+    /**
+     * CJK keywords need substring match — Han runs have no Latin-style token borders.
+     * Keep weights aligned with NAME_RULES counterparts.
+     */
+    const CJK_NAME_HINTS = Object.freeze([
+        {
+            id: 'cjk_film',
+            re: /剧场版|劇場版|电影|影片|纪录片|动画|アニメ|特番/,
+            weight: 0.35,
+            profile: 'film',
+            reason: '影视关键词',
+        },
+        {
+            id: 'cjk_talk',
+            re: /访谈|讲座|対談|对谈|研讨|演讲|综艺|漫才|相声|朗读|电台|会议/,
+            weight: 0.45,
+            profile: 'talk',
+            reason: '对白/访谈关键词',
+        },
+        {
+            id: 'cjk_av',
+            re: /里番|エロ|無修正|无修正|有碼|无码|有码|东京热|一本道/,
+            weight: 0.55,
+            profile: 'av_soft',
+            reason: 'AV 关键词/厂牌',
+            strongAv: true,
+        },
     ]);
 
     function basenameOf(filePath) {
@@ -320,10 +357,14 @@
         if (/\b(chinese|mandarin|中文|汉语|漢語|普通话)\b/i.test(sample)) {
             return { language: 'zh', confidence: 0.55, reason: '文件名语种标记' };
         }
-        // Known AV makers strongly imply Japanese dialogue (basename or parent folder)
+        // Known / standalone-looking AV codes imply Japanese dialogue
+        // (opening BGM short-window LID often false-positives as English)
         const codes = extractAvCodesFromPath(filePathOrName);
-        if (codes.some((c) => c.known) || AV_STRONG_RE.test(sample) || AV_FOLDER_RE.test(full)) {
-            // Strong enough to skip short-window LID (opening BGM often false-positives as en)
+        if (
+            codes.some((c) => c.known || isLikelyStandaloneAvCode(c, filePathOrName))
+            || AV_STRONG_RE.test(sample)
+            || AV_FOLDER_RE.test(full)
+        ) {
             return { language: 'ja', confidence: 0.7, reason: 'AV 语境先验' };
         }
         return null;
@@ -454,6 +495,13 @@
         const nameConf = Number(nameGuess.confidence) || 0;
         const nameLang = String(nameGuess.language || '').trim().toLowerCase();
         if (sniffLang === nameLang) return sniffConf >= nameConf;
+
+        // AV 番号 / folder priors: do not let opening BGM "English" override Japanese
+        const avPrior = /AV/.test(String(nameGuess.reason || ''))
+            || opts.avLikely === true;
+        if (avPrior && nameLang === 'ja' && sniffLang === 'en' && sniffConf < 0.9) {
+            return false;
+        }
 
         const minVsName = skippedIntro ? 0.65 : 0.72;
         if (sniffConf >= minVsName) return true;
@@ -612,6 +660,147 @@
     }
 
     /**
+     * Quick sense finished as 未识别 → escalate to deep probes (LID / acoustic / memory).
+     * Instant AV and already-deep runs never escalate again.
+     */
+    function shouldEscalateSenseDepth(classification = {}, opts = {}) {
+        const depth = String(opts.depth || '').toLowerCase();
+        if (depth === 'deep' || depth === 'instant') return false;
+        if (opts.force === true && opts.deep === true) return false;
+        if (opts.alreadyEscalated) return false;
+        if (classification?.strongAv) return false;
+        if (isFilenameSenseConfident(classification)) return false;
+        const profile = classification?.profile || PROFILES.unknown;
+        return profile === PROFILES.unknown
+            || Number(classification?.confidence || 0) < 0.28;
+    }
+
+    /**
+     * When filename still yields 未识别, promote profile from deep evidence
+     * (acoustic hint + spoken-language prior + duration).
+     *
+     * @returns {{ classification: object, promoted: boolean, notes: string[] }}
+     */
+    function promoteClassificationFromEvidence(classification = {}, evidence = {}) {
+        const base = classification && typeof classification === 'object'
+            ? classification
+            : { profile: PROFILES.unknown, confidence: 0, reasons: [], scores: {} };
+        const profile = base.profile || PROFILES.unknown;
+        const conf = Number(base.confidence) || 0;
+        // Only promote unresolved / sub-threshold results
+        if (profile !== PROFILES.unknown && conf >= 0.28) {
+            return { classification: base, promoted: false, notes: [] };
+        }
+
+        const acoustic = evidence.acoustic && typeof evidence.acoustic === 'object'
+            ? evidence.acoustic
+            : {};
+        const language = String(evidence.language || '').trim().toLowerCase();
+        const langConf = Number(evidence.languageConfidence) || 0;
+        const durationSec = Math.max(0, Number(evidence.durationSec) || 0);
+        const avLikely = evidence.avLikely === true
+            || evidence.strongAv === true
+            || !!base.strongAv
+            || (Array.isArray(evidence.codes) && evidence.codes.some((c) => (
+                c?.known || isLikelyStandaloneAvCode(c, evidence.path || '')
+            )));
+        const hint = acoustic.hint
+            || (acoustic.musicLikely ? 'music'
+                : acoustic.softSparse ? 'soft'
+                    : acoustic.noisyFloor ? 'noisy' : 'neutral');
+
+        const next = {
+            ...base,
+            scores: { av_soft: 0, film: 0, talk: 0, ...(base.scores || {}) },
+            reasons: [...(base.reasons || [])],
+        };
+        const notes = [];
+        let promotedProfile = null;
+        let promotedConf = 0;
+        let reason = '';
+
+        // Filename 番号 hint wins over mis-sniffed English / music-island acoustics
+        if (avLikely) {
+            promotedProfile = PROFILES.av_soft;
+            promotedConf = APPLY_CONFIDENCE;
+            reason = hint === 'soft' || acoustic.softSparse
+                ? '疑似番号 + 声学偏软声'
+                : '疑似番号优先';
+        } else if (hint === 'music' || acoustic.musicLikely) {
+            promotedProfile = PROFILES.film;
+            promotedConf = APPLY_CONFIDENCE;
+            reason = '声学偏配乐';
+        } else if (hint === 'soft' || acoustic.softSparse) {
+            // Soft sparse: JA / unknown LID → AV soft recipe; clear non-JA → talk
+            const clearNonJa = language
+                && language !== 'auto'
+                && !isJaLanguage(language)
+                && langConf >= 0.55;
+            promotedProfile = clearNonJa ? PROFILES.talk : PROFILES.av_soft;
+            promotedConf = APPLY_CONFIDENCE;
+            reason = clearNonJa ? '声学偏软声稀疏 → 对白' : '声学偏软声稀疏';
+        } else if (hint === 'noisy' || acoustic.noisyFloor) {
+            if (durationSec >= 70 * 60) {
+                promotedProfile = PROFILES.film;
+                promotedConf = Math.max(0.45, APPLY_CONFIDENCE - 0.1);
+                reason = '长片 + 声学偏底噪';
+            }
+        }
+
+        // Strong spoken-language prior with feature length, still no acoustic cue
+        if (!promotedProfile && durationSec >= 80 * 60 && langConf >= 0.7
+            && language && language !== 'auto') {
+            promotedProfile = PROFILES.film;
+            promotedConf = 0.48;
+            reason = `长片语种 ${language}`;
+        }
+
+        if (!promotedProfile) {
+            return { classification: base, promoted: false, notes: [] };
+        }
+
+        next.scores[promotedProfile] = Math.min(
+            1,
+            Math.max(Number(next.scores[promotedProfile]) || 0, promotedConf),
+        );
+        next.profile = promotedProfile;
+        next.confidence = clamp01(Math.max(conf, promotedConf));
+        next.label = PROFILE_LABELS[promotedProfile] || promotedProfile;
+        next.presetId = PROFILE_PRESET_IDS[promotedProfile] || null;
+        if (promotedProfile === PROFILES.av_soft && avLikely) next.strongAv = true;
+        next.reasons.push(reason);
+        notes.push(`深入证据 →「${next.label}」（${reason}）`);
+        return { classification: next, promoted: true, notes };
+    }
+
+    /**
+     * Build adopt-ready sense result from a promoted classification (deep path).
+     */
+    function resolveSenseFromClassification(classification, baseOptions = {}, prefs = {}) {
+        const advancedEntitled = prefs.advancedEntitled !== false
+            && baseOptions.advancedEntitled !== false;
+        const patch = optionPatchForProfile(classification.profile, {
+            advancedEntitled,
+            task: baseOptions.task,
+        });
+        const overrides = pickSenseOverrides(patch);
+        const method = describeAudioMethod({ ...baseOptions, ...overrides });
+        const confPct = Math.round((Number(classification.confidence) || 0) * 100);
+        const reasonText = Array.isArray(classification.reasons) && classification.reasons.length
+            ? `（${classification.reasons.slice(0, 3).join(' · ')}）`
+            : '';
+        return {
+            action: 'apply',
+            adopted: true,
+            classification,
+            overrides,
+            options: { ...baseOptions, ...overrides },
+            appliedKeys: Object.keys(overrides),
+            message: `深入感知「${classification.label}」置信度 ${confPct}%${reasonText} → ${method.short}`,
+        };
+    }
+
+    /**
      * True when the user already set an explicit audio profile in the form/options.
      * Auto-apply should not override these.
      */
@@ -622,6 +811,28 @@
         const vad = String(options.engineVadModel || '').toLowerCase();
         if (vad.includes('whisperseg')) return true;
         return false;
+    }
+
+    /**
+     * True when a weak CODE-123 looks like a standalone JAV 番号 filename
+     * (e.g. MNGS-057.mp4 / MNGS-057_1080p.mkv), not a shop SKU fragment.
+     */
+    function isLikelyStandaloneAvCode(code = {}, filePathOrName = '') {
+        const prefix = String(code.prefix || '').toLowerCase();
+        const num = String(code.num || '');
+        if (!prefix || !num) return false;
+        if (code.known) return true;
+        if (WEAK_AV_PREFIX_DENY.has(prefix) || CODEC_FALSE_POSITIVE.has(prefix)) return false;
+        // Classic censored JAV: 3–5 letters + 2–4 digits
+        if (prefix.length < 3 || prefix.length > 5) return false;
+        if (num.length < 2 || num.length > 4) return false;
+        if (!/^[a-z]+$/.test(prefix)) return false;
+        const stem = stemOf(basenameOf(filePathOrName)).toLowerCase();
+        if (!stem) return false;
+        const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Stem is the code, optionally followed by release / site tags
+        const re = new RegExp(`^${esc}[-_]0*${num}(?:[-_.\\s\\[@].*)?$`);
+        return re.test(stem);
     }
 
     function extractAvCodes(text) {
@@ -695,6 +906,15 @@
             if (rule.id === 'av_strong') strongAv = true;
         }
 
+        // Continuous Han filenames (今晚综艺特辑) — substring CJK hints
+        for (const hint of CJK_NAME_HINTS) {
+            if (!hint.re.test(text) && !hint.re.test(full)) continue;
+            if (reasons.includes(hint.reason)) continue;
+            scores[hint.profile] = Math.min(1, scores[hint.profile] + hint.weight);
+            reasons.push(hint.reason);
+            if (hint.strongAv) strongAv = true;
+        }
+
         // Resolution tag only reinforces existing film score
         if (scores.film > 0) {
             const resRule = NAME_RULES.find((r) => r.id === 'film_res');
@@ -725,13 +945,22 @@
                 strongAv = true;
             }
         } else if (weakCodes.length) {
-            // Generic CODE-123: only count when JA / AV folder / already strong, and not commercial-only
-            const allowWeak = strongAv || avFolder || isJaLanguage(options.language);
-            if (allowWeak && !commercialTalk) {
-                scores.av_soft = Math.min(1, scores.av_soft + 0.32);
-                reasons.push(`疑似番号(${weakCodes[0].raw.toUpperCase()})`);
-            } else if (commercialTalk && !strongAv) {
-                reasons.push('货号疑似SKU，已忽略');
+            // Standalone CODE-123 filename (MNGS-057.mp4): treat as strong AV even if maker
+            // is not yet in the opaque list — opening LID often mis-labels these as English.
+            const likely = weakCodes.find((c) => isLikelyStandaloneAvCode(c, fileName));
+            if (likely && !commercialTalk) {
+                scores.av_soft = Math.min(1, scores.av_soft + 0.52);
+                reasons.push(`疑似番号(${likely.raw.toUpperCase()})`);
+                strongAv = true;
+            } else {
+                // Generic embedded CODE-123: only with JA / AV folder / already strong
+                const allowWeak = strongAv || avFolder || isJaLanguage(options.language);
+                if (allowWeak && !commercialTalk) {
+                    scores.av_soft = Math.min(1, scores.av_soft + 0.32);
+                    reasons.push(`疑似番号(${weakCodes[0].raw.toUpperCase()})`);
+                } else if (commercialTalk && !strongAv) {
+                    reasons.push('货号疑似SKU，已忽略');
+                }
             }
         }
 
@@ -773,6 +1002,11 @@
         if (durationSec >= 70 * 60 && scores.film > 0) {
             scores.film = Math.min(1, scores.film + 0.1);
             reasons.push('长片时长');
+        } else if (durationSec >= 90 * 60 && scores.film === 0
+            && scores.av_soft === 0 && scores.talk === 0) {
+            // Bare long media with no name cues — weak film prior (still needs deep confirm)
+            scores.film = 0.22;
+            reasons.push('长片弱先验');
         }
         // Typical AV length reinforces existing AV score
         if (durationSec >= 40 * 60 && durationSec <= 200 * 60 && scores.av_soft >= 0.35) {
@@ -1456,7 +1690,7 @@
             : options);
         const langNote = overrides.language ? ` · 语种 ${overrides.language}` : '';
         const manualNote = manual
-            ? '；已覆盖表单中的音频/VAD（可点不采纳）'
+            ? '；已覆盖表单中的音频/VAD（可点文件名旁魔术棒切换）'
             : '';
         const softNote = !forceAdopt && classification.confidence < APPLY_CONFIDENCE
             ? '；置信度偏低仍已默认采纳'
@@ -1672,7 +1906,7 @@
             return {
                 tone: 'suggest',
                 chipLabel: `已感知 ${doneCount}`,
-                detail: '有感知结果但未采纳（可点行内采纳）',
+                detail: '有感知结果但未采纳（可点文件名旁魔术棒采纳）',
                 title: '感知完成但未采纳',
             };
         }
@@ -1681,14 +1915,14 @@
                 tone: 'idle',
                 chipLabel: '感知 · 开',
                 detail: '拖入后自动分析并默认采纳',
-                title: '智能感知已开启；结果默认采纳，可点不采纳',
+                title: '智能感知已开启；结果默认采纳，可点文件名旁魔术棒切换采纳',
             };
         }
         return {
             tone: 'idle',
             chipLabel: '感知 · 开',
             detail: '拖入视频后自动分析类型与参数（默认采纳）',
-            title: '智能感知已开启；结果默认采纳，可点不采纳',
+            title: '智能感知已开启；结果默认采纳，可点文件名旁魔术棒切换采纳',
         };
     }
 
@@ -1746,6 +1980,9 @@
         applySenseMemoryToClassification,
         applyAcousticHints,
         shouldProbeAcoustic,
+        shouldEscalateSenseDepth,
+        promoteClassificationFromEvidence,
+        resolveSenseFromClassification,
         suggestPostReconstructMode,
         formatClassificationLog,
         describeAudioMethod,
@@ -1754,6 +1991,7 @@
         profileBadge,
         extractAvCodes,
         extractAvCodesFromPath,
+        isLikelyStandaloneAvCode,
         basenameOf,
     };
 }));

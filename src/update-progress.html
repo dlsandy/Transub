@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+    <title>正在升级 — Transub</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        body {
+            background: #f9fafb;
+            color: #1f2937;
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            padding: 1.1rem 1.25rem;
+            box-sizing: border-box;
+        }
+        .hdr {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.9rem;
+        }
+        .hdr img {
+            width: 2rem;
+            height: 2rem;
+        }
+        .hdr h1 {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .hdr p {
+            margin: 0.15rem 0 0;
+            font-size: 0.75rem;
+            color: #9ca3af;
+        }
+        .msg {
+            margin: 0 0 0.75rem;
+            font-size: 0.875rem;
+            color: #374151;
+            line-height: 1.45;
+            min-height: 1.35rem;
+        }
+        .msg.is-err { color: #dc2626; }
+        .msg.is-ok { color: #059669; }
+        .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 0.35rem;
+        }
+        .pct {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+        .track {
+            height: 0.5rem;
+            background: #e5e7eb;
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+        .fill {
+            height: 100%;
+            width: 0%;
+            background: #7c3aed;
+            border-radius: 9999px;
+            transition: width 0.25s ease-out;
+        }
+        .hint {
+            margin: 0.85rem 0 0;
+            font-size: 0.6875rem;
+            color: #9ca3af;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="hdr">
+        <img src="icon.png" alt="" width="32" height="32" decoding="async">
+        <div>
+            <h1>正在升级 Transub</h1>
+            <p>请勿关闭此窗口或强制结束进程</p>
+        </div>
+    </div>
+    <p id="msg" class="msg" role="status" aria-live="polite">正在准备升级…</p>
+    <div class="row">
+        <span id="phaseLabel">准备中</span>
+        <span id="pct" class="pct">0%</span>
+    </div>
+    <div class="track" aria-hidden="true">
+        <div id="fill" class="fill"></div>
+    </div>
+    <p class="hint">文件替换可能需要几十秒到数分钟（取决于保留的模型与支持库体积）。完成后会自动重新启动。</p>
+    <script src="js/update-progress.js"></script>
+</body>
+</html>

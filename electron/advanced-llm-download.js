@@ -82,7 +82,7 @@ function expandDownloadUrls(url) {
 
 function isMirrorCandidateUrl(url, originalUrl = '') {
     const u = String(url || '');
-    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com/i.test(u)) return true;
+    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org/i.test(u)) return true;
     const orig = String(originalUrl || '').trim();
     return Boolean(orig) && u !== orig && u.includes(orig);
 }
@@ -92,6 +92,8 @@ function downloadSourceLabel(url, originalUrl = '') {
     if (/hf-mirror\.com/i.test(u)) return 'HF 镜像';
     if (/ghfast\.top/i.test(u)) return 'ghfast';
     if (/ghproxy\.com/i.test(u)) return 'ghproxy';
+    if (/codeberg\.org/i.test(u)) return 'Codeberg';
+    if (/github\.com|githubusercontent\.com/i.test(u)) return 'GitHub';
     if (originalUrl && u === String(originalUrl).trim()) return '官方源';
     try {
         return new URL(u).hostname || '备用源';
@@ -421,7 +423,11 @@ function requestGet(url, { headers = {}, signal, timeoutMs = 180000 } = {}) {
  * @param {{ onProgress?: Function, signal?: AbortSignal, expectedBytes?: number, skipProbe?: boolean }} [options]
  */
 async function downloadFile(url, destPath, options = {}) {
-    const expanded = expandDownloadUrls(url);
+    const seeds = [
+        url,
+        ...(Array.isArray(options.extraUrls) ? options.extraUrls : []),
+    ].map((u) => asString(u, 4096).trim()).filter(Boolean);
+    const expanded = [...new Set(seeds.flatMap((u) => expandDownloadUrls(u)))];
     if (!expanded.length) throw new Error('缺少下载地址');
 
     const candidates = await orderDownloadUrls(expanded, {

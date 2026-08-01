@@ -8,7 +8,7 @@ const {
 
 const SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc', '.ass', '.ssa', '.sub', '.sup', '.idx'];
 const PREFERRED_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc'];
-const EDITABLE_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc'];
+const EDITABLE_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc', '.ass', '.ssa'];
 
 function extRank(filePath) {
     const ext = path.extname(String(filePath || '')).toLowerCase();

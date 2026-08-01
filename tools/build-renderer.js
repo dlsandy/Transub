@@ -51,6 +51,7 @@ copyRecursive(path.join(src, 'index.html'), path.join(outDir, 'index.html'));
 copyRecursive(path.join(src, 'splash.html'), path.join(outDir, 'splash.html'));
 copyRecursive(path.join(src, 'subtitle-editor.html'), path.join(outDir, 'subtitle-editor.html'));
 copyRecursive(path.join(src, 'update.html'), path.join(outDir, 'update.html'));
+copyRecursive(path.join(src, 'update-progress.html'), path.join(outDir, 'update-progress.html'));
 copyRecursive(path.join(src, 'about.html'), path.join(outDir, 'about.html'));
 copyRecursive(path.join(src, 'advanced-llm-pick.html'), path.join(outDir, 'advanced-llm-pick.html'));
 copyRecursive(path.join(src, 'icon.png'), path.join(outDir, 'icon.png'));

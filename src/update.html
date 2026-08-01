@@ -67,6 +67,38 @@
             font-size: 0.75rem;
             color: #9ca3af;
         }
+        .upd-changelog {
+            display: none;
+            flex-direction: column;
+            gap: 0.375rem;
+            min-height: 0;
+            flex: 1 1 auto;
+        }
+        .upd-changelog.is-visible {
+            display: flex;
+        }
+        .upd-changelog-title {
+            margin: 0;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #6b7280;
+        }
+        .upd-changelog-body {
+            margin: 0;
+            flex: 1 1 auto;
+            min-height: 6rem;
+            max-height: 14rem;
+            overflow: auto;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background: #fff;
+            color: #374151;
+            font-size: 0.75rem;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .upd-progress {
             display: none;
             flex-direction: column;
@@ -179,6 +211,11 @@
         <p id="updateStatus" class="upd-status" role="status" aria-live="polite">准备检查更新…</p>
         <p id="updateMeta" class="upd-meta"></p>
 
+        <section id="updateChangelog" class="upd-changelog" aria-label="更新说明">
+            <h2 class="upd-changelog-title">更新说明</h2>
+            <pre id="updateChangelogBody" class="upd-changelog-body"></pre>
+        </section>
+
         <div id="updateDownloadProgress" class="upd-progress" aria-live="polite">
             <div class="upd-progress-row">
                 <span id="updateDownloadLabel">正在下载更新…</span>
@@ -210,10 +247,6 @@
             <button type="button" id="closeBtn" class="upd-btn upd-btn-ghost">关闭</button>
         </div>
     </main>
-
-    <footer class="upd-footer">
-        <p>安装版可在窗口内下载并重启安装；便携版请从 GitHub Releases 手动下载。</p>
-    </footer>
 
     <script src="js/update-window.js"></script>
 </body>

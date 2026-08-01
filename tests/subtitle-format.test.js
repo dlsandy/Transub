@@ -15,6 +15,9 @@ function testDetectFormat() {
     assert.strictEqual(detectFormat('a.srt', ''), 'srt');
     assert.strictEqual(detectFormat('a.vtt', 'WEBVTT\n\n'), 'vtt');
     assert.strictEqual(detectFormat('a.lrc', '[00:01.00]hi'), 'lrc');
+    assert.strictEqual(detectFormat('a.ass', ''), 'ass');
+    assert.strictEqual(detectFormat('a.ssa', ''), 'ass');
+    assert.strictEqual(detectFormat('a.txt', '[Script Info]\nTitle: x\n'), 'ass');
 }
 
 function testSrtRoundTrip() {
@@ -77,7 +80,81 @@ function testTimeHelpers() {
     assert.strictEqual(parseTimeToMs('00:00:01,500', 'srt'), 1500);
     assert.strictEqual(parseTimeToMs('00:01.500', 'vtt'), 1500);
     assert.strictEqual(parseTimeToMs('01:02.50', 'lrc'), 62500);
+    assert.strictEqual(parseTimeToMs('0:00:01.50', 'ass'), 1500);
     assert.strictEqual(formatTimeMs(1500, 'srt'), '00:00:01,500');
+    assert.strictEqual(formatTimeMs(1500, 'ass'), '0:00:01.50');
+}
+
+function testAssRoundTrip() {
+    const raw = `[Script Info]
+Title: Demo
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1
+Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,112,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,Hello{\\an8} world
+Dialogue: 0,0:00:05.00,0:00:08.50,Source,Bob,0,0,0,,Line two\\Nsecond
+`;
+    const parsed = parseSubtitle(raw, 'ass');
+    assert.strictEqual(parsed.format, 'ass');
+    assert.strictEqual(parsed.cues.length, 2);
+    assert.strictEqual(parsed.cues[0].startMs, 1000);
+    assert.strictEqual(parsed.cues[0].endMs, 4000);
+    assert.strictEqual(parsed.cues[0].text, 'Hello{\\an8} world');
+    assert.strictEqual(parsed.cues[1].text, 'Line two\nsecond');
+    assert.strictEqual(parsed.cues[1].ass.style, 'Source');
+    assert.strictEqual(parsed.cues[1].ass.name, 'Bob');
+    assert.ok(parsed.header.some((l) => /Style: Source/.test(l)));
+
+    const out = serializeSubtitle(parsed);
+    assert.ok(out.includes('[Script Info]'));
+    assert.ok(out.includes('Style: Source'));
+    assert.ok(out.includes('Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,Hello{\\an8} world'));
+    assert.ok(out.includes('Line two\\Nsecond'));
+    const again = parseSubtitle(out, 'ass');
+    assert.strictEqual(again.cues.length, 2);
+    assert.strictEqual(again.cues[1].text, 'Line two\nsecond');
+    assert.strictEqual(again.cues[1].ass.style, 'Source');
+}
+
+function testReadWriteAssBridge() {
+    const { readSubtitleDocument, writeSubtitleDocument } = require('../electron/extensions-bridge');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-ass-'));
+    const file = path.join(tmp, 'clip.ass');
+    const ass = `[Script Info]
+Title: Clip
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,Test cue
+`;
+    fs.writeFileSync(file, ass, 'utf8');
+    const read = readSubtitleDocument(file);
+    assert.strictEqual(read.ok, true, read.error);
+    assert.strictEqual(read.format, 'ass');
+    assert.strictEqual(read.cues.length, 1);
+    read.cues[0].text = 'Updated cue';
+    const write = writeSubtitleDocument(file, {
+        format: 'ass',
+        cues: read.cues,
+        header: read.header,
+        createBackup: false,
+    });
+    assert.strictEqual(write.ok, true, write.error);
+    const reread = fs.readFileSync(file, 'utf8');
+    assert.ok(reread.includes('Updated cue'));
+    assert.ok(reread.includes('[V4+ Styles]'));
+    fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 function testReadWriteBridge() {
@@ -199,11 +276,17 @@ describe("subtitle-format", () => {
     it("lrc round trip", () => {
         testLrcRoundTrip();
     });
+    it("ass round trip", () => {
+        testAssRoundTrip();
+    });
     it("time helpers", () => {
         testTimeHelpers();
     });
     it("read write bridge", () => {
         testReadWriteBridge();
+    });
+    it("read write ass bridge", () => {
+        testReadWriteAssBridge();
     });
     it("guess video path", () => {
         testGuessVideoPath();

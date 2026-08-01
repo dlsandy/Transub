@@ -76,7 +76,7 @@ Worker 部署与 Secrets 见 [`services/afdian-fulfillment/README.md`](../servic
 | 来源 | 说明 |
 |------|------|
 | **外接模型（BYOK）** | 填写 Base URL / 模型 / API Key（云端或自建 OpenAI 兼容接口，含本机 Ollama） |
-| **软件内选模型** | 软件下载推荐 GGUF，并安装固定版本的 **llama-server**（Windows 默认 Vulkan）；在设置 → Pro → 大模型设置内浏览目录、下载并分用途选用；调用重构时自动启动本地 OpenAI 兼容服务 |
+| **软件内选模型** | 软件下载推荐 GGUF；**llama-server** 后端在设置 → **运行环境** 安装/切换（有 NVIDIA 且驱动 CUDA≥12 时默认 CUDA 12，否则 Vulkan）；模型目录与用途选用在设置 → Pro → 大模型；调用重构时自动启动本地 OpenAI 兼容服务 |
 
 数据目录：`{可写根目录}/advanced-llm/`（`runtime/` + `models/`）。
 

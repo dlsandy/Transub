@@ -1,6 +1,7 @@
 /**
- * Transub Advanced IPC：许可激�?/ 复核 / 换机 / BYOK / 模块状。
+ * Transub Advanced IPC：许可激活 / 复核 / 换机 / BYOK / 模块状态。
  */
+const path = require('path');
 const { asString, asPlainObject } = require('./ipc-validate');
 const entitlement = require('../src/js/advanced-entitlement-core');
 const licenseCrypto = require('../src/js/advanced-license-crypto-core');
@@ -354,7 +355,11 @@ function saveByokConfig(payload = {}) {
 }
 
 async function getManagedLlmStatus() {
+    try {
+        await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+    } catch (_) { /* ignore */ }
     const deviceId = getAdvancedDeviceId();
+    // 探测完成后重新 normalize，使空 runtimeId 在 NVIDIA 机器上落为 CUDA 默认
     const doc = readAdvancedDoc().doc;
     const status = publicStatus(doc, deviceId);
     return {
@@ -428,9 +433,17 @@ function selectManagedModel(payload = {}) {
         managed,
     });
     const roleLabel = role === 'smartTranslate' ? '智能翻译' : (role === 'both' ? '智能翻译与推理' : 'LLM 推理');
+    const validated = llmFs.validateModelFile(entry);
+    let warn = '';
+    if (!validated.ok) {
+        const hint = llmFs.buildMisplacedModelHint(entry);
+        warn = `（注意：本地文件校验未通过——${validated.error}${hint ? ` ${hint}` : ''}）`;
+    }
     return {
         ok: true,
-        message: `已将「${entry.name}」设为${roleLabel}模型`,
+        message: `已将「${entry.name}」设为${roleLabel}模型${warn}`,
+        warning: validated.ok ? undefined : validated.error,
+        warningCode: validated.ok ? undefined : validated.code,
         status: publicStatus(saved.doc, deviceId),
         managed,
     };
@@ -478,7 +491,10 @@ async function pullManagedModelJob(event, payload = {}) {
             ...managed,
             activeModelId: managed.activeModelId || entry.id,
             pulledIds,
-            runtimeId: managedCatalog.getRuntimePackage()?.id || managed.runtimeId || '',
+            runtimeId: result.meta?.packageId
+                || managed.runtimeId
+                || managedCatalog.getRuntimePackage()?.id
+                || '',
         },
     });
     if (!saved.ok) return { ok: false, error: saved.error };
@@ -498,6 +514,14 @@ async function pullManagedModelJob(event, payload = {}) {
     };
 }
 
+function runtimePreferHints() {
+    try {
+        return require('./advanced-runtime-prefer').getHints();
+    } catch (_) {
+        return {};
+    }
+}
+
 async function installManagedRuntimeJob(event, payload = {}) {
     const patch = asPlainObject(payload);
     const sendProgress = (info) => {
@@ -506,39 +530,244 @@ async function installManagedRuntimeJob(event, payload = {}) {
             event?.sender?.send?.('transub-advanced-managed-llm-progress', info);
         } catch (_) { /* ignore */ }
     };
+    try {
+        await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+    } catch (_) { /* ignore */ }
+    const hints = runtimePreferHints();
+    const deviceId = getAdvancedDeviceId();
+    const docBefore = readAdvancedDoc().doc;
+    const managedBefore = entitlement.normalizeManagedLlm(docBefore.managedLlm, hints);
+    const runtimeId = managedCatalog.normalizeRuntimeId(
+        asString(patch.runtimeId || patch.packageId || managedBefore.runtimeId, 64),
+        process.platform,
+        process.arch,
+        hints,
+    );
+    if (runtimeId && runtimeId !== managedBefore.runtimeId) {
+        writeAdvancedDoc({
+            ...docBefore,
+            managedLlm: { ...managedBefore, runtimeId },
+        });
+    }
     const result = await managedLlm.ensureRuntimeInstalled({
         force: !!patch.force,
+        reinstall: !!patch.reinstall,
+        runtimeId,
         onProgress: sendProgress,
     });
     if (!result?.ok) return result;
-    const deviceId = getAdvancedDeviceId();
     const doc = readAdvancedDoc().doc;
     const managed = entitlement.normalizeManagedLlm(doc.managedLlm);
     const saved = writeAdvancedDoc({
         ...doc,
         managedLlm: {
             ...managed,
-            runtimeId: result.meta?.packageId || managedCatalog.getRuntimePackage()?.id || '',
+            runtimeId: result.meta?.packageId || runtimeId || managed.runtimeId || '',
+        },
+    });
+    let message = '运行时安装完成';
+    if (result.already) {
+        if (result.mismatch) {
+            message = '运行时已安装，但与偏好后端不一致，请重新安装';
+        } else if (result.outdated) {
+            message = '运行时已就绪（版本较旧，可强制更新）';
+        } else {
+            message = '运行时已就绪，无需重复下载';
+        }
+    }
+    return {
+        ok: true,
+        already: !!result.already,
+        message,
+        status: publicStatus((saved.ok ? saved.doc : doc), deviceId),
+        managed: managedStatusForDoc(saved.ok ? saved.doc : doc),
+    };
+}
+
+function setManagedRuntimePreference(payload = {}) {
+    const patch = asPlainObject(payload);
+    const deviceId = getAdvancedDeviceId();
+    const hints = runtimePreferHints();
+    const doc = readAdvancedDoc().doc;
+    const managed = entitlement.normalizeManagedLlm(doc.managedLlm, hints);
+    const runtimeId = managedCatalog.normalizeRuntimeId(
+        asString(patch.runtimeId || patch.packageId, 64),
+        process.platform,
+        process.arch,
+        hints,
+    );
+    if (!runtimeId) {
+        return { ok: false, error: '无效的运行时后端', code: 'invalid_runtime' };
+    }
+    const saved = writeAdvancedDoc({
+        ...doc,
+        managedLlm: { ...managed, runtimeId },
+    });
+    if (!saved.ok) return { ok: false, error: saved.error };
+    return {
+        ok: true,
+        message: '已保存运行时偏好',
+        status: publicStatus(saved.doc, deviceId),
+        managed: managedStatusForDoc(saved.doc),
+    };
+}
+
+function classifyRuntimeZipPaths(filePaths, pkg) {
+    const list = (Array.isArray(filePaths) ? filePaths : [])
+        .map((p) => String(p || '').trim())
+        .filter(Boolean);
+    if (!list.length) {
+        return { ok: false, error: '未选择压缩包', code: 'archive_missing' };
+    }
+    if (!pkg?.companionUrl) {
+        return { ok: true, archivePath: list[0], companionPath: '' };
+    }
+    const cudart = list.find((p) => /cudart/i.test(path.basename(p)));
+    const main = list.find((p) => !/cudart/i.test(path.basename(p)));
+    if (list.length === 1 && cudart) {
+        return {
+            ok: false,
+            error: '请同时选择主程序 zip（llama-*-bin-win-cuda-*.zip）与 cudart zip',
+            code: 'companion_missing',
+        };
+    }
+    if (list.length === 1) {
+        return {
+            ok: false,
+            error: 'CUDA 运行时需同时选择两个 zip：主程序 + cudart 运行库',
+            code: 'companion_missing',
+        };
+    }
+    return {
+        ok: true,
+        archivePath: main || list[0],
+        companionPath: cudart || list[1],
+    };
+}
+
+async function importManagedRuntimeJob(event, payload = {}) {
+    const patch = asPlainObject(payload);
+    const sendProgress = (info) => {
+        broadcastManagedLlmProgress(info);
+        try {
+            event?.sender?.send?.('transub-advanced-managed-llm-progress', info);
+        } catch (_) { /* ignore */ }
+    };
+    try {
+        await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+    } catch (_) { /* ignore */ }
+    const hints = runtimePreferHints();
+    const deviceId = getAdvancedDeviceId();
+    const docBefore = readAdvancedDoc().doc;
+    const managedBefore = entitlement.normalizeManagedLlm(docBefore.managedLlm, hints);
+    const runtimeId = managedCatalog.normalizeRuntimeId(
+        asString(patch.runtimeId || patch.packageId || managedBefore.runtimeId, 64),
+        process.platform,
+        process.arch,
+        hints,
+    );
+    const pkg = managedCatalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
+    if (!pkg) {
+        return { ok: false, error: `当前平台不支持内置运行时（${process.platform}-${process.arch}）` };
+    }
+
+    let archivePath = asString(patch.archivePath, 4096).trim();
+    let companionPath = asString(patch.companionPath, 4096).trim();
+    if (!archivePath) {
+        const { dialog, BrowserWindow } = require('electron');
+        const win = BrowserWindow.fromWebContents(event?.sender)
+            || BrowserWindow.getFocusedWindow()
+            || undefined;
+        const picked = await dialog.showOpenDialog(win || undefined, {
+            title: pkg.companionUrl
+                ? `选择 ${pkg.label} 压缩包（可多选：主程序 + cudart）`
+                : `选择 ${pkg.label} 压缩包`,
+            properties: ['openFile', 'multiSelections'],
+            filters: [
+                { name: 'ZIP', extensions: ['zip'] },
+                { name: '全部文件', extensions: ['*'] },
+            ],
+        });
+        if (picked.canceled || !picked.filePaths?.length) {
+            return { ok: false, cancelled: true, error: '已取消' };
+        }
+        const classified = classifyRuntimeZipPaths(picked.filePaths, pkg);
+        if (!classified.ok) return classified;
+        archivePath = classified.archivePath;
+        companionPath = classified.companionPath;
+    } else {
+        const classified = classifyRuntimeZipPaths(
+            [archivePath, companionPath].filter(Boolean),
+            pkg,
+        );
+        if (!classified.ok) return classified;
+        archivePath = classified.archivePath;
+        companionPath = classified.companionPath;
+    }
+
+    if (runtimeId && runtimeId !== managedBefore.runtimeId) {
+        writeAdvancedDoc({
+            ...docBefore,
+            managedLlm: { ...managedBefore, runtimeId },
+        });
+    }
+
+    const result = await managedLlm.installRuntimeFromLocalArchives({
+        runtimeId,
+        archivePath,
+        companionPath,
+        onProgress: sendProgress,
+    });
+    if (!result?.ok) return result;
+
+    const doc = readAdvancedDoc().doc;
+    const managed = entitlement.normalizeManagedLlm(doc.managedLlm);
+    const saved = writeAdvancedDoc({
+        ...doc,
+        managedLlm: {
+            ...managed,
+            runtimeId: result.meta?.packageId || runtimeId || managed.runtimeId || '',
         },
     });
     return {
         ok: true,
-        message: result.already ? '运行时已就绪' : '运行时安装完成',
+        message: `已从本地压缩包安装运行时（${pkg.label}）`,
         status: publicStatus((saved.ok ? saved.doc : doc), deviceId),
         managed: managedStatusForDoc(saved.ok ? saved.doc : doc),
     };
+}
+
+function archiveNameFromUrl(url) {
+    try {
+        const name = path.basename(new URL(String(url || '').trim()).pathname || '');
+        return decodeURIComponent(name || '') || '';
+    } catch (_) {
+        return path.basename(String(url || '').trim()) || '';
+    }
 }
 
 function buildDownloadInfo(payload = {}) {
     const patch = asPlainObject(payload);
     const kind = String(patch.kind || 'model').trim() === 'runtime' ? 'runtime' : 'model';
     if (kind === 'runtime') {
-        const pkg = managedCatalog.getRuntimePackage();
+        const hints = runtimePreferHints();
+        const doc = readAdvancedDoc().doc;
+        const managed = entitlement.normalizeManagedLlm(doc.managedLlm, hints);
+        const runtimeId = managedCatalog.normalizeRuntimeId(
+            asString(patch.runtimeId || patch.packageId || managed.runtimeId, 64),
+            process.platform,
+            process.arch,
+            hints,
+        );
+        const pkg = managedCatalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
         if (!pkg) {
             return { ok: false, error: `当前平台不支持内置运行时（${process.platform}-${process.arch}）` };
         }
         const urls = expandDownloadUrls(pkg.url);
         const mirrorUrl = urls.find((u) => u !== pkg.url) || '';
+        const companionUrl = String(pkg.companionUrl || '').trim();
+        const companionUrls = companionUrl ? expandDownloadUrls(companionUrl) : [];
+        const companionMirrorUrl = companionUrls.find((u) => u !== companionUrl) || '';
         return {
             ok: true,
             info: {
@@ -546,10 +775,20 @@ function buildDownloadInfo(payload = {}) {
                 title: '安装 llama-server 运行时',
                 runtimeLabel: pkg.label,
                 runtimeTag: managedCatalog.LLAMA_CPP_TAG,
+                runtimeId: pkg.id,
+                backend: pkg.backend || '',
                 runtimeUrl: pkg.url,
+                runtimeCompanionUrl: companionUrl,
                 runtimeMirrorUrl: mirrorUrl,
+                runtimeCompanionMirrorUrl: companionMirrorUrl,
+                runtimeArchiveName: archiveNameFromUrl(pkg.url),
+                runtimeCompanionArchiveName: archiveNameFromUrl(companionUrl),
+                exeName: pkg.exeName || (process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'),
                 mirrorUrl,
+                sizeHint: pkg.sizeHint || '',
+                note: pkg.note || '',
                 folder: llmFs.getRuntimeDir(),
+                needsCompanion: !!companionUrl,
             },
         };
     }
@@ -592,22 +831,44 @@ async function openManualDownload(payload = {}) {
     const infoRes = buildDownloadInfo(patch);
     if (!infoRes.ok) return infoRes;
     const info = infoRes.info;
-    const which = String(patch.which || 'mirror').trim();
-    let url = '';
+    const which = String(patch.which || 'mirror').trim().toLowerCase();
+    /** @type {string[]} */
+    const urls = [];
     if (info.kind === 'runtime') {
-        url = which === 'official'
-            ? info.runtimeUrl
-            : (info.runtimeMirrorUrl || info.runtimeUrl);
+        const wantCompanion = which === 'companion'
+            || which === 'companion-mirror'
+            || which === 'all'
+            || which === 'all-official';
+        const wantMain = which !== 'companion' && which !== 'companion-mirror';
+        const preferOfficial = which === 'official'
+            || which === 'all-official'
+            || which === 'companion';
+        if (wantMain) {
+            urls.push(preferOfficial
+                ? info.runtimeUrl
+                : (info.runtimeMirrorUrl || info.runtimeUrl));
+        }
+        if (wantCompanion && info.runtimeCompanionUrl) {
+            urls.push(preferOfficial || which === 'companion'
+                ? info.runtimeCompanionUrl
+                : (info.runtimeCompanionMirrorUrl || info.runtimeCompanionUrl));
+        }
     } else {
-        url = which === 'official'
+        urls.push(which === 'official'
             ? info.ggufUrl
-            : (info.ggufMirrorUrl || info.ggufUrl);
+            : (info.ggufMirrorUrl || info.ggufUrl));
     }
-    if (!url) return { ok: false, error: '没有可用下载链接' };
+    const unique = [...new Set(urls.map((u) => String(u || '').trim()).filter(Boolean))];
+    if (!unique.length) return { ok: false, error: '没有可用下载链接' };
     try {
         const { shell } = require('electron');
-        await shell.openExternal(url);
-        return { ok: true, url };
+        for (const url of unique) {
+            await shell.openExternal(url);
+            if (unique.length > 1) {
+                await new Promise((r) => setTimeout(r, 400));
+            }
+        }
+        return { ok: true, url: unique[0], urls: unique };
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
@@ -635,31 +896,80 @@ function verifyManualPlacement(payload = {}) {
     const doc = readAdvancedDoc().doc;
 
     if (kind === 'runtime') {
-        const runtime = managedLlm.getRuntimeStatus();
-        if (!runtime.installed) {
+        const hints = runtimePreferHints();
+        const managed = entitlement.normalizeManagedLlm(doc.managedLlm, hints);
+        const runtimeId = managedCatalog.normalizeRuntimeId(
+            asString(patch.runtimeId || patch.packageId || managed.runtimeId, 64),
+            process.platform,
+            process.arch,
+            hints,
+        );
+        const pkg = managedCatalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
+        const runtime = managedLlm.getRuntimeStatus({ runtimeId });
+        if (!runtime.installed || !runtime.exePath) {
             return {
                 ok: false,
-                error: '未检测到 llama-server。请先完成自动安装，或确认 runtime 目录中有可执行文件。',
+                error: `未检测到 ${pkg?.exeName || 'llama-server'}。请将压缩包内容解压到：${llmFs.getRuntimeDir()}`,
+                folder: llmFs.getRuntimeDir(),
                 managed: managedStatusForDoc(doc),
             };
         }
+        if (pkg?.backend === 'cuda') {
+            const cudaDll = llmFs.findFileRecursive(llmFs.getRuntimeDir(), 'ggml-cuda.dll', 4)
+                || llmFs.findFileRecursive(llmFs.getRuntimeDir(), 'cudart64_12.dll', 4);
+            if (!cudaDll) {
+                return {
+                    ok: false,
+                    error: '已找到 llama-server，但缺少 CUDA 组件。请把 cudart zip 一并解压到同一目录后再检测。',
+                    folder: llmFs.getRuntimeDir(),
+                    managed: managedStatusForDoc(doc),
+                };
+            }
+        }
+        if (pkg) {
+            try {
+                llmFs.writeRuntimeMeta({
+                    tag: managedCatalog.LLAMA_CPP_TAG,
+                    packageId: pkg.id,
+                    label: pkg.label,
+                    backend: pkg.backend || '',
+                    exeName: pkg.exeName,
+                    exePath: runtime.exePath,
+                    installedAt: new Date().toISOString(),
+                    source: 'manual-verify',
+                });
+            } catch (_) { /* ignore */ }
+        }
+        const saved = writeAdvancedDoc({
+            ...doc,
+            managedLlm: {
+                ...managed,
+                runtimeId: pkg?.id || runtimeId || managed.runtimeId || '',
+            },
+        });
+        const nextDoc = saved.ok ? saved.doc : doc;
         return {
             ok: true,
-            message: '已检测到本地运行时',
-            status: publicStatus(doc, deviceId),
-            managed: managedStatusForDoc(doc),
+            message: `已检测到本地运行时${pkg?.label ? `（${pkg.label}）` : ''}`,
+            status: publicStatus(nextDoc, deviceId),
+            managed: managedStatusForDoc(nextDoc),
         };
     }
 
     const modelId = asString(patch.modelId || patch.id, 128).trim();
     const entry = llmFs.resolveModelEntry(modelId);
     if (!entry) return { ok: false, error: '未知模型' };
-    if (!llmFs.isModelInstalled(entry)) {
+    const validated = llmFs.validateModelFile(entry);
+    if (!validated.ok) {
+        const hint = llmFs.buildMisplacedModelHint(entry);
         return {
             ok: false,
-            error: `未找到 ${entry.fileName}。请放入：${llmFs.getModelsDir()}`,
+            error: hint ? `${validated.error}\n${hint}` : validated.error,
+            code: validated.code || 'model_invalid',
             folder: llmFs.getModelsDir(),
             fileName: entry.fileName,
+            path: validated.path || '',
+            misplaced: llmFs.findMisplacedModelCandidates(entry),
         };
     }
 
@@ -677,7 +987,7 @@ function verifyManualPlacement(payload = {}) {
     if (!saved.ok) return { ok: false, error: saved.error };
     return {
         ok: true,
-        message: `已检测到 ${entry.name}，可开始使用`,
+        message: validated.message || `已检测到 ${entry.name}，可开始使用`,
         status: publicStatus(saved.doc, deviceId),
         managed: managedStatusForDoc(saved.doc),
     };
@@ -745,7 +1055,12 @@ function scheduleManagedIdleStop(delayMs = MANAGED_IDLE_STOP_MS) {
 
 function releaseManagedLlmAfterJob(llm, input = {}) {
     if (llm?.source !== 'managed') return;
-    if (input._batchMode) return;
+    if (input._batchMode || input._engineExternalMt) return;
+    // User cancel / abort: stop immediately so llama-server does not linger for 5 minutes.
+    if (input.signal?.aborted) {
+        stopManagedLlmServerQuiet();
+        return;
+    }
     // Always arm idle stop (including keepServer hops) so cancel cannot orphan the process.
     scheduleManagedIdleStop();
 }
@@ -784,12 +1099,12 @@ async function runContextReconstructBody(payload = {}, event = null) {
         || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim().toLowerCase() === 'true';
 
     let llm = { ok: true, apiKey: '', baseUrl: '', model: '', source: 'mock' };
-    if (!dryRun) {
-        llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
-        if (!llm.ok) return llm;
-    }
 
     try {
+        if (!dryRun) {
+            llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
+            if (!llm.ok) return llm;
+        }
         const sendProgress = (info) => {
             const payloadOut = {
                 mode: input._batchMode ? 'batch' : 'single',
@@ -876,12 +1191,12 @@ async function runBilingualSemanticReviewBody(payload = {}, event = null) {
         || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim().toLowerCase() === 'true';
 
     let llm = { ok: true, apiKey: '', baseUrl: '', model: '', source: 'mock' };
-    if (!dryRun) {
-        llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
-        if (!llm.ok) return llm;
-    }
 
     try {
+        if (!dryRun) {
+            llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
+            if (!llm.ok) return llm;
+        }
         const sendProgress = (info) => {
             const payloadOut = { mode: 'semantic-review', llmSource: llm.source, ...info };
             if (typeof input.onProgress === 'function') {
@@ -961,12 +1276,12 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
         || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim().toLowerCase() === 'true';
 
     let llm = { ok: true, apiKey: '', baseUrl: '', model: '', source: 'mock' };
-    if (!dryRun) {
-        llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
-        if (!llm.ok) return llm;
-    }
 
     try {
+        if (!dryRun) {
+            llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
+            if (!llm.ok) return llm;
+        }
         const sendProgress = (info) => {
             const payloadOut = {
                 mode: input._batchMode ? 'batch' : 'single',
@@ -1077,17 +1392,17 @@ async function runSmartTranslateBody(payload = {}, event = null) {
 
     let llm = { ok: true, apiKey: '', baseUrl: '', model: '', source: 'mock' };
     let smartChoice = { modelId: '', requestedId: '', fallbackFrom: '' };
-    if (!dryRun) {
-        smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
-        const smartModelId = smartChoice.modelId;
-        llm = await resolveAdvancedLlmConfig(doc, {
-            activeModelId: smartModelId || undefined,
-            requireSmartTranslateCapable: true,
-        });
-        if (!llm.ok) return llm;
-    }
 
     try {
+        if (!dryRun) {
+            smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
+            const smartModelId = smartChoice.modelId;
+            llm = await resolveAdvancedLlmConfig(doc, {
+                activeModelId: smartModelId || undefined,
+                requireSmartTranslateCapable: true,
+            });
+            if (!llm.ok) return llm;
+        }
         const sendProgress = (info) => {
             const payloadOut = {
                 mode: input._batchMode ? 'batch' : 'single',
@@ -1266,6 +1581,8 @@ function cancelContextReconstruct() {
         cancelled = true;
     }
     const batch = cancelBatchContextReconstruct();
+    // Abort alone can leave llama-server hot if the job never reaches finally.
+    stopManagedLlmServerQuiet();
     return { ok: true, cancelled: cancelled || !!batch.cancelled };
 }
 
@@ -1506,6 +1823,14 @@ function setupAdvancedBridge(api, deps = {}) {
         installManagedRuntimeJob(event, payload)
     ));
 
+    register('transub-advanced-managed-llm-set-runtime', async (_event, payload = {}) => (
+        setManagedRuntimePreference(payload)
+    ));
+
+    register('transub-advanced-managed-llm-import-runtime', async (event, payload = {}) => (
+        importManagedRuntimeJob(event, payload)
+    ));
+
     register('transub-advanced-managed-llm-cancel-pull', async () => managedLlm.cancelManagedPull());
 
     register('transub-advanced-managed-llm-stop-server', async () => {
@@ -1695,6 +2020,7 @@ module.exports = {
     runBatchContextReconstructJob,
     cancelBatchContextReconstruct,
     cancelContextReconstruct,
+    stopManagedLlmServerQuiet,
     publicStatus,
     isDevUnlockEnabled,
     getProductWindowTitle,

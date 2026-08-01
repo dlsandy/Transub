@@ -46,6 +46,10 @@ function stopActiveJobs() {
     try {
         require('./sakura-translate').cancelSakuraTranslate();
     } catch (_) { /* ignore */ }
+    // Belt-and-suspenders: cancel paths already stop these, but force-reclaim on close/quit.
+    try {
+        require('./advanced-llama-server').stopLlamaServer();
+    } catch (_) { /* ignore */ }
 }
 
 module.exports = {

@@ -71,9 +71,47 @@ describe('advanced-managed-llm-catalog-core', () => {
     it('exposes pinned llama.cpp runtime package for win32-x64', () => {
         const pkg = catalog.getRuntimePackage('win32', 'x64');
         assert.ok(pkg);
+        assert.strictEqual(pkg.id, 'win-vulkan-x64');
         assert.ok(pkg.url.includes(catalog.LLAMA_CPP_TAG));
+        assert.ok(pkg.url.includes('vulkan'));
         assert.ok(pkg.exeName.includes('llama-server'));
         assert.strictEqual(pkg.archive, 'zip');
+    });
+
+    it('allows selecting CUDA 12 runtime on win32-x64', () => {
+        const choices = catalog.listRuntimePackages('win32', 'x64');
+        assert.ok(choices.some((p) => p.id === 'win-vulkan-x64'));
+        assert.ok(choices.some((p) => p.id === 'win-cuda12-x64'));
+        const cuda = catalog.getRuntimePackage('win32', 'x64', 'win-cuda12-x64');
+        assert.ok(cuda);
+        assert.strictEqual(cuda.backend, 'cuda');
+        assert.ok(cuda.url.includes('cuda-12.4'));
+        assert.ok(String(cuda.companionUrl || '').includes('cudart-llama-bin-win-cuda-12.4'));
+        assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'win32', 'x64'), 'win-cuda12-x64');
+        assert.strictEqual(catalog.normalizeRuntimeId('', 'win32', 'x64'), 'win-vulkan-x64');
+        assert.strictEqual(catalog.normalizeRuntimeId('nope', 'win32', 'x64'), 'win-vulkan-x64');
+        // NVIDIA 机器：空偏好默认 CUDA 12
+        assert.strictEqual(
+            catalog.normalizeRuntimeId('', 'win32', 'x64', { preferCuda: true }),
+            'win-cuda12-x64',
+        );
+        assert.strictEqual(
+            catalog.getDefaultRuntimeId('win32', 'x64', { preferCuda: true }),
+            'win-cuda12-x64',
+        );
+        assert.strictEqual(
+            catalog.normalizeManagedLlm({}, { preferCuda: true }).runtimeId,
+            'win-cuda12-x64',
+        );
+        // 已显式选 Vulkan 时不因 preferCuda 覆盖
+        assert.strictEqual(
+            catalog.normalizeManagedLlm({ runtimeId: 'win-vulkan-x64' }, { preferCuda: true }).runtimeId,
+            'win-vulkan-x64',
+        );
+        const cudaFirst = catalog.listRuntimePackages('win32', 'x64', { preferCuda: true });
+        assert.strictEqual(cudaFirst[0]?.id, 'win-cuda12-x64');
+        // CUDA id is not valid on macOS — fall back to platform default
+        assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'darwin', 'arm64'), 'macos-arm64');
     });
 
     it('normalizes managed llm and source', () => {
@@ -86,9 +124,13 @@ describe('advanced-managed-llm-catalog-core', () => {
             pulledIds: ['qwen25-7b', '', 'qwen25-7b'],
             serverPort: 39281,
             nGpuLayers: 99,
+            runtimeId: 'win-cuda12-x64',
         });
         assert.strictEqual(m.activeModelId, 'qwen25-7b');
         assert.strictEqual(m.smartTranslateModelId, 'sakura-1.5b');
+        if (process.platform === 'win32' && process.arch === 'x64') {
+            assert.strictEqual(m.runtimeId, 'win-cuda12-x64');
+        }
         // Sakura is translate-only: resolve falls back to chat-capable activeModelId when present
         assert.strictEqual(
             catalog.resolveSmartTranslateModelId(m),

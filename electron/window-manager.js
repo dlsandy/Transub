@@ -11,8 +11,8 @@ const { hasActiveTask, getActiveTaskLabel, stopActiveJobs } = require('./active-
 const DEFAULT_TRAY_TOOLTIP = 'Transub 字幕生成';
 const WINDOW_STATE_FILE = 'window-state.json';
 const DEFAULT_WINDOW = Object.freeze({
-    width: 1080,
-    height: 720,
+    width: 1680,
+    height: 1200,
     minWidth: 760,
     minHeight: 520,
 });
@@ -99,19 +99,35 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     let downloadTrayTip = '';
     let saveStateTimer = null;
     /**
-     * Windows: closing another BrowserWindow (owned child OR sibling like the
-     * subtitle editor) can spuriously fire the main window's `minimize`, which
-     * we map to hide-to-tray + skipTaskbar — looks like the app quit.
+     * Windows: closing OR minimizing another BrowserWindow (owned child OR
+     * sibling like the subtitle editor) can spuriously fire the main window's
+     * `minimize`, which we map to hide-to-tray + skipTaskbar — looks like the
+     * app quit. A quick restore after that spurious minimize can also leave the
+     * main surface blank (native chrome + backgroundColor only) until a
+     * compositor nudge.
      */
     let suppressMinimizeToTrayUntil = 0;
     let secondaryWindowMinimizeGuardAttached = false;
     /** Snapshot: only restore if main was visible when suppress was first armed. */
     let mainVisibleWhenSuppressArmed = false;
+    let mainRepaintTimer = null;
 
     function hideToTray() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
+        // On Windows the minimize event fires after the shrink animation starts;
+        // zero opacity so that frame never paints before hide/skipTaskbar.
+        try {
+            if (process.platform === 'win32' && typeof mainWindow.setOpacity === 'function') {
+                mainWindow.setOpacity(0);
+            }
+        } catch (_) { /* ignore */ }
         mainWindow.setSkipTaskbar(true);
         mainWindow.hide();
+        try {
+            if (process.platform === 'win32' && typeof mainWindow.setOpacity === 'function') {
+                mainWindow.setOpacity(1);
+            }
+        } catch (_) { /* ignore */ }
     }
 
     function isMainVisiblyOpen() {
@@ -121,6 +137,43 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         } catch (_) {
             return false;
         }
+    }
+
+    /**
+     * Wake Chromium/DWM after a spurious minimize→restore. Without this, the
+     * main window can stay visibly open but paint only backgroundColor.
+     */
+    function forceMainWindowRepaint() {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        try {
+            const wc = mainWindow.webContents;
+            if (wc && !wc.isDestroyed() && typeof wc.invalidate === 'function') {
+                wc.invalidate();
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            if (mainWindow.isMinimized() || !mainWindow.isVisible()) return;
+            if (mainWindow.isMaximized()) {
+                const bounds = mainWindow.getBounds();
+                mainWindow.setBounds(bounds);
+            } else {
+                const [w, h] = mainWindow.getSize();
+                if (w > 1 && h > 1) {
+                    mainWindow.setSize(w, h + 1);
+                    mainWindow.setSize(w, h);
+                }
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    function scheduleMainWindowRepaint() {
+        forceMainWindowRepaint();
+        if (mainRepaintTimer) clearTimeout(mainRepaintTimer);
+        // Second pass: restore/show can finish a tick later on Windows.
+        mainRepaintTimer = setTimeout(() => {
+            mainRepaintTimer = null;
+            forceMainWindowRepaint();
+        }, 50);
     }
 
     function beginSuppressMinimizeToTray(ms = 800) {
@@ -135,11 +188,13 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         if (!mainVisibleWhenSuppressArmed) return;
         if (!mainWindow || mainWindow.isDestroyed()) return;
         try {
+            if (typeof mainWindow.setOpacity === 'function') mainWindow.setOpacity(1);
             if (mainWindow.isMinimized()) mainWindow.restore();
             if (!mainWindow.isVisible()) {
                 mainWindow.setSkipTaskbar(false);
                 mainWindow.show();
             }
+            scheduleMainWindowRepaint();
         } catch (_) { /* ignore */ }
     }
 
@@ -156,7 +211,24 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
                 beginSuppressMinimizeToTray();
             } catch (_) { /* ignore */ }
         };
+        const recoverFromSecondaryMinimize = () => {
+            armIfSecondary();
+            // Minimize of a sibling can blank the main surface even when main
+            // never reaches hide-to-tray (visible chrome, empty content).
+            setTimeout(() => {
+                if (!mainWindow || mainWindow.isDestroyed()) return;
+                try {
+                    if (mainWindow.isMinimized()) mainWindow.restore();
+                    if (!mainWindow.isVisible() && mainVisibleWhenSuppressArmed) {
+                        mainWindow.setSkipTaskbar(false);
+                        mainWindow.show();
+                    }
+                } catch (_) { /* ignore */ }
+                scheduleMainWindowRepaint();
+            }, 0);
+        };
         child.on('close', armIfSecondary);
+        child.on('minimize', recoverFromSecondaryMinimize);
         child.on('closed', () => {
             if (Date.now() < suppressMinimizeToTrayUntil) {
                 restoreMainIfHiddenBySpuriousMinimize();
@@ -184,6 +256,9 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             createMainWindow();
             return mainWindow;
         }
+        try {
+            if (typeof mainWindow.setOpacity === 'function') mainWindow.setOpacity(1);
+        } catch (_) { /* ignore */ }
         mainWindow.setSkipTaskbar(false);
         applyWindowIcon(mainWindow);
         if (mainWindow.isMinimized()) mainWindow.restore();
@@ -303,14 +378,17 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
             };
             const undoSpuriousMinimize = () => {
                 try {
+                    if (typeof win.setOpacity === 'function') win.setOpacity(1);
                     if (win.isMinimized()) win.restore();
                     if (!win.isVisible()) {
                         win.setSkipTaskbar(false);
                         win.show();
                     }
+                    // Spurious minimize from editor minimize often leaves a blank surface.
+                    scheduleMainWindowRepaint();
                 } catch (_) { /* ignore */ }
             };
-            const maybeHideToTray = () => {
+            const settleMinimizeToTray = () => {
                 if (token !== minimizeHideToken) return;
                 if (isQuitting || !win || win.isDestroyed()) return;
                 // Secondary-window close may arm suppress a tick after this event (Windows quirk).
@@ -321,15 +399,18 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
                     else restoreMainIfHiddenBySpuriousMinimize();
                     return;
                 }
-                hideToTray();
                 maybeShowTrayHint();
             };
 
             if (Date.now() < suppressMinimizeToTrayUntil || secondaryWindowsOpen()) {
-                maybeHideToTray();
+                settleMinimizeToTray();
                 return;
             }
-            setTimeout(maybeHideToTray, 80);
+            // Hide immediately: waiting lets Windows play the minimize-to-taskbar
+            // animation first (visible flash), then hide-to-tray. Re-check shortly
+            // in case a secondary close arms suppress a tick late.
+            hideToTray();
+            setTimeout(settleMinimizeToTray, 80);
         });
     }
 

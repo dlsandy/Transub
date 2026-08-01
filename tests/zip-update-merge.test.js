@@ -104,11 +104,16 @@ describe('zip-update-merge', () => {
             fs.writeFileSync(path.join(pkg, 'Transub.exe'), 'new-exe');
             fs.writeFileSync(path.join(pkg, 'resources.pak'), 'pak');
 
+            const phases = [];
             const result = applyZipUpdateMerge({
                 installRoot: install,
                 packageRoot: pkg,
+                onProgress: (info) => {
+                    phases.push(String(info.phase || ''));
+                },
             });
             assert.strictEqual(result.ok, true);
+            assert.ok(phases.includes('copying') || phases.includes('preserving') || phases.includes('preparing'));
             assert.strictEqual(
                 fs.readFileSync(path.join(install, 'transub-engine', 'models', 'asr', 'weights.bin'), 'utf8'),
                 'KEEP-ME',

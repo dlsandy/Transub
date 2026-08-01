@@ -21,6 +21,7 @@ const REQUIRED_RENDERER_FILES = [
     'subtitle-editor.html',
     'about.html',
     'update.html',
+    'update-progress.html',
     'advanced-llm-pick.html',
     'icon.png',
     'icon-64.png',
@@ -49,6 +50,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/workspace-ui.js',
     'js/about-window.js',
     'js/update-window.js',
+    'js/update-progress.js',
     'js/advanced-llm-pick-window.js',
     'js/eta-core.js',
     'js/media-extensions-core.js',
@@ -68,6 +70,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-glossary-core.js',
     'js/subtitle-fluency-core.js',
     'js/mt-sanitize-core.js',
+    'js/mt-opaque-strings.js',
     'js/subtitle-meta-core.js',
     'js/subtitle-split-core.js',
     'js/transcript-compare-core.js',
@@ -116,6 +119,7 @@ const HTML_PAGES = [
     'subtitle-editor.html',
     'about.html',
     'update.html',
+    'update-progress.html',
     'advanced-llm-pick.html',
 ];
 

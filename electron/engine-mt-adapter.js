@@ -14,7 +14,11 @@ const DEFAULT_SMART_BATCH_SIZE = 40;
 const DEFAULT_SMART_WINDOW_CUES = 10;
 const DEFAULT_SMART_OVERLAP_CUES = 2;
 const DEFAULT_TIMEOUT_SEC = 600;
+/** Smart translate (Brief + JSON windows + shrink retries) needs a longer HTTP budget. */
+const DEFAULT_SMART_TIMEOUT_SEC = 1800;
 const PATH_TRANSLATE = '/translate';
+/** Safety cap: extreme retry storms still get 429 instead of unbounded queue growth. */
+const MAX_QUEUED_TRANSLATE = 16;
 
 /**
  * @typedef {'smart'|'sakura'} MtAdapterMode
@@ -113,7 +117,8 @@ function buildEngineMtResponse(requestCues, translatedCues, options = {}) {
     return {
         cues: (requestCues || []).map((c) => ({
             id: c.id,
-            text: map.has(c.index) ? map.get(c.index) : String(c.text ?? ''),
+            // Missing index → empty (never echo JA into the ZH track).
+            text: map.has(c.index) ? map.get(c.index) : '',
         })),
     };
 }
@@ -323,10 +328,19 @@ function startEngineMtAdapter(session = {}) {
         signal: session.signal || null,
         onProgress: session.onProgress,
         busy: false,
+        queued: 0,
         closed: false,
         nsfwPromptLogged: false,
         filmBrief: session.filmBrief || null,
     };
+
+    /** Serialize /translate so engine timeout-retries wait instead of getting hard 429. */
+    let translateChain = Promise.resolve();
+    function enqueueTranslate(work) {
+        const run = translateChain.then(() => work(), () => work());
+        translateChain = run.catch(() => {});
+        return run;
+    }
 
     const server = http.createServer(async (req, res) => {
         if (state.closed) {
@@ -342,7 +356,12 @@ function startEngineMtAdapter(session = {}) {
         }
 
         if (method === 'GET' && (pathname === '/health' || pathname === '/')) {
-            sendJson(res, 200, { ok: true, mode: state.mode });
+            sendJson(res, 200, {
+                ok: true,
+                mode: state.mode,
+                busy: state.busy,
+                queued: state.queued,
+            });
             return;
         }
 
@@ -361,62 +380,89 @@ function startEngineMtAdapter(session = {}) {
             return;
         }
 
-        if (state.busy) {
+        // Cap only extreme storms; normal timeout-retries queue behind the in-flight batch.
+        if (state.busy && state.queued >= MAX_QUEUED_TRANSLATE) {
             sendJson(res, 429, { error: 'adapter busy', code: 'busy' });
             return;
         }
 
-        state.busy = true;
+        let body;
         try {
-            const body = await readJsonBody(req);
-            const parsed = parseEngineMtRequest(body);
-            if (!parsed.ok) {
-                sendJson(res, 400, { error: parsed.error || 'bad request' });
-                return;
-            }
-            const translated = await translateExternalBatch(parsed, state);
-            if (!translated.ok) {
-                const code = String(translated.code || 'translate_failed');
-                const errText = String(translated.error || '');
-                // 499 = client/job cancelled; 504 = chunk/LLM timeout; 502 = other adapter failure.
-                // Legacy `aborted` mixed cancel+timeout — prefer retryable 504 when 超时 is present.
-                let status = 502;
-                if (code === 'cancelled') {
-                    status = 499;
-                } else if (code === 'timeout') {
-                    status = 504;
-                } else if (code === 'aborted') {
-                    const cancelOnly = /已取消/.test(errText) && !/超时/.test(errText);
-                    status = cancelOnly ? 499 : 504;
-                } else if (code === 'busy') {
-                    status = 429;
-                }
-                sendJson(res, status, {
-                    error: translated.error || 'translate failed',
-                    code: status === 504 && code === 'aborted' ? 'timeout' : code,
-                });
-                return;
-            }
-            sendJson(res, 200, buildEngineMtResponse(parsed.cues, translated.cues, {
-                ...asPlainObject(state.options),
-                glossary: resolvePromptGlossary(state.options),
-            }));
+            body = await readJsonBody(req);
         } catch (err) {
-            const name = String(err?.name || '');
             const msg = String(err?.message || err || '');
-            const lower = msg.toLowerCase();
-            const aborted = name === 'AbortError'
-                || err?.code === 'cancelled'
-                || err?.code === 'aborted'
-                || lower.includes('operation was aborted')
-                || lower.includes('user aborted');
-            if (aborted) {
-                sendJson(res, 499, { error: '已取消', code: 'cancelled' });
-            } else {
-                sendJson(res, 500, { error: msg || 'translate failed' });
-            }
+            sendJson(res, err?.code === 'body_too_large' ? 413 : 400, {
+                error: msg || 'bad request',
+            });
+            return;
+        }
+
+        state.queued += 1;
+        try {
+            await enqueueTranslate(async () => {
+                if (state.closed) {
+                    sendJson(res, 503, { error: 'adapter closed' });
+                    return;
+                }
+                if (state.signal?.aborted) {
+                    sendJson(res, 499, { error: 'cancelled', code: 'cancelled' });
+                    return;
+                }
+
+                state.busy = true;
+                try {
+                    const parsed = parseEngineMtRequest(body);
+                    if (!parsed.ok) {
+                        sendJson(res, 400, { error: parsed.error || 'bad request' });
+                        return;
+                    }
+                    const translated = await translateExternalBatch(parsed, state);
+                    if (!translated.ok) {
+                        const code = String(translated.code || 'translate_failed');
+                        const errText = String(translated.error || '');
+                        // 499 = client/job cancelled; 504 = chunk/LLM timeout; 502 = other adapter failure.
+                        // Legacy `aborted` mixed cancel+timeout — prefer retryable 504 when 超时 is present.
+                        let status = 502;
+                        if (code === 'cancelled') {
+                            status = 499;
+                        } else if (code === 'timeout') {
+                            status = 504;
+                        } else if (code === 'aborted') {
+                            const cancelOnly = /已取消/.test(errText) && !/超时/.test(errText);
+                            status = cancelOnly ? 499 : 504;
+                        } else if (code === 'busy') {
+                            status = 429;
+                        }
+                        sendJson(res, status, {
+                            error: translated.error || 'translate failed',
+                            code: status === 504 && code === 'aborted' ? 'timeout' : code,
+                        });
+                        return;
+                    }
+                    sendJson(res, 200, buildEngineMtResponse(parsed.cues, translated.cues, {
+                        ...asPlainObject(state.options),
+                        glossary: resolvePromptGlossary(state.options),
+                    }));
+                } catch (err) {
+                    const name = String(err?.name || '');
+                    const msg = String(err?.message || err || '');
+                    const lower = msg.toLowerCase();
+                    const aborted = name === 'AbortError'
+                        || err?.code === 'cancelled'
+                        || err?.code === 'aborted'
+                        || lower.includes('operation was aborted')
+                        || lower.includes('user aborted');
+                    if (aborted) {
+                        sendJson(res, 499, { error: '已取消', code: 'cancelled' });
+                    } else {
+                        sendJson(res, 500, { error: msg || 'translate failed' });
+                    }
+                } finally {
+                    state.busy = false;
+                }
+            });
         } finally {
-            state.busy = false;
+            state.queued = Math.max(0, state.queued - 1);
         }
     });
 
@@ -446,12 +492,15 @@ function startEngineMtAdapter(session = {}) {
                     const smartDefault = mode === 'smart'
                         ? DEFAULT_SMART_BATCH_SIZE
                         : DEFAULT_BATCH_SIZE;
+                    const timeoutFallback = mode === 'smart'
+                        ? DEFAULT_SMART_TIMEOUT_SEC
+                        : DEFAULT_TIMEOUT_SEC;
                     return {
                         url,
                         timeoutSec: asNumber(extra.timeoutSec, {
                             min: 30,
                             max: 3600,
-                            fallback: DEFAULT_TIMEOUT_SEC,
+                            fallback: timeoutFallback,
                         }),
                         batchSize: asNumber(extra.batchSize, {
                             min: 1,
@@ -482,6 +531,8 @@ module.exports = {
     DEFAULT_SMART_WINDOW_CUES,
     DEFAULT_SMART_OVERLAP_CUES,
     DEFAULT_TIMEOUT_SEC,
+    DEFAULT_SMART_TIMEOUT_SEC,
+    MAX_QUEUED_TRANSLATE,
     parseEngineMtRequest,
     buildEngineMtResponse,
     resolvePromptGlossary,

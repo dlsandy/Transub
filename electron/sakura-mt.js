@@ -107,11 +107,20 @@ async function resolveSakuraEndpoint(options = {}) {
         sakuraEntry ? (portBase + SAKURA_SERVER_PORT_OFFSET) : portBase
     );
 
+    let runtimeId = asString(opts.runtimeId || opts.packageId, 64).trim();
+    if (!runtimeId) {
+        try {
+            const { readAdvancedDoc } = require('./advanced-license-data');
+            runtimeId = managedCatalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm).runtimeId || '';
+        } catch (_) { /* ignore */ }
+    }
+
     const started = await llamaServer.ensureLlamaServer({
         modelId: entry.id,
         port,
         nGpuLayers: opts.nGpuLayers,
         contextSize: opts.contextSize || (sakuraEntry ? 4096 : 8192),
+        runtimeId,
         onProgress: opts.onProgress,
         signal: opts.signal,
     });

@@ -7,7 +7,7 @@
     const metaEl = () => document.getElementById('updateMeta');
     const progressHost = () => document.getElementById('updateDownloadProgress');
 
-    /** @type {{ latestVersion?: string, downloadUrl?: string, releasesUrl?: string, canAutoInstall?: boolean, installKind?: string, preservesEngineData?: boolean } | null} */
+    /** @type {{ latestVersion?: string, downloadUrl?: string, releasesUrl?: string, canAutoInstall?: boolean, installKind?: string, preservesEngineData?: boolean, releaseNotes?: string } | null} */
     let lastCheck = null;
     let busy = false;
     /** @type {(() => void) | null} */
@@ -24,6 +24,20 @@
     function setMeta(text) {
         const el = metaEl();
         if (el) el.textContent = text || '';
+    }
+
+    function setChangelog(notes, { force = false } = {}) {
+        const host = document.getElementById('updateChangelog');
+        const body = document.getElementById('updateChangelogBody');
+        if (!host || !body) return;
+        const text = String(notes || '').trim();
+        if (!text && !force) {
+            host.classList.remove('is-visible');
+            body.textContent = '';
+            return;
+        }
+        body.textContent = text || '暂无更新说明';
+        host.classList.add('is-visible');
     }
 
     function showEl(id, visible) {
@@ -93,26 +107,52 @@
         const transferred = Number(progress.transferred) || 0;
         const total = Number(progress.total) || 0;
         const speed = Number(progress.bytesPerSecond) || 0;
+        const phase = String(progress.phase || '').trim();
+        const message = String(progress.message || '').trim();
         const label = document.getElementById('updateDownloadLabel');
         const pctEl = document.getElementById('updateDownloadPercent');
         const bar = document.getElementById('updateDownloadBar');
         const detail = document.getElementById('updateDownloadDetail');
         if (label) {
-            label.textContent = version
-                ? `正在下载 v${version}…`
-                : '正在下载更新…';
+            if (message) {
+                label.textContent = message;
+            } else if (phase === 'probe') {
+                label.textContent = '正在测速 GitHub / Codeberg…';
+            } else if (phase === 'extracting') {
+                label.textContent = version ? `正在解压 v${version}…` : '正在解压更新包…';
+            } else if (phase === 'preparing' || phase === 'ready') {
+                label.textContent = message || (version ? `正在准备 v${version}…` : '正在准备安装…');
+            } else {
+                label.textContent = version
+                    ? `正在下载 v${version}…`
+                    : '正在下载更新…';
+            }
         }
         if (pctEl) pctEl.textContent = `${Math.round(percent)}%`;
         if (bar) bar.style.width = `${percent}%`;
         if (detail) {
-            const parts = [];
-            const done = formatDownloadBytes(transferred);
-            const all = formatDownloadBytes(total);
-            if (done && all) parts.push(`${done} / ${all}`);
-            else if (done) parts.push(done);
-            const rate = formatDownloadBytes(speed);
-            if (rate) parts.push(`${rate}/s`);
-            detail.textContent = parts.join(' · ');
+            if (
+                phase === 'probe'
+                || phase === 'retry'
+                || phase === 'extracting'
+                || phase === 'preparing'
+                || phase === 'ready'
+                || phase === 'installing'
+            ) {
+                detail.textContent = message
+                    || (phase === 'probe'
+                        ? '比较 GitHub 与 Codeberg 速度，自动选择较快线路'
+                        : '请稍候，此阶段可能需要一段时间…');
+            } else {
+                const parts = [];
+                const done = formatDownloadBytes(transferred);
+                const all = formatDownloadBytes(total);
+                if (done && all) parts.push(`${done} / ${all}`);
+                else if (done) parts.push(done);
+                const rate = formatDownloadBytes(speed);
+                if (rate) parts.push(`${rate}/s`);
+                detail.textContent = parts.join(' · ');
+            }
         }
     }
 
@@ -137,30 +177,37 @@
         if (!res?.ok) {
             setStatus(res?.error || '检查更新失败', 'err');
             setMeta('');
+            setChangelog('');
             return;
         }
 
         setMeta(res.message || '');
         if (!res.updateAvailable) {
             setStatus(res.message || `已是最新版本 v${res.currentVersion}`, 'ok');
+            setChangelog('');
             return;
         }
 
         setStatus(`发现新版本 v${res.latestVersion}`, 'info');
+        setChangelog(res.releaseNotes, { force: true });
+        const sources = Array.isArray(res.updateSources) ? res.updateSources.filter(Boolean) : [];
+        const sourceHint = sources.length
+            ? `可用更新源：${sources.join(' / ')}。`
+            : '';
         if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
             showEl('downloadBtn', true);
             const btn = document.getElementById('downloadBtn');
             if (btn) btn.disabled = false;
             if (res.preservesEngineData || res.installKind === 'zip' || res.installKind === 'nsis') {
-                setMeta('可在本窗口下载并重启安装。已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。');
+                setMeta(`${sourceHint}下载前会测速并自动选择较快线路。已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。`);
             } else {
-                setMeta('可在本窗口下载并在重启后安装。');
+                setMeta(`${sourceHint}可在本窗口下载并在重启后安装。`);
             }
         } else {
             showEl('openReleasesBtn', true);
             const btn = document.getElementById('openReleasesBtn');
             if (btn) btn.disabled = false;
-            setMeta('请从 GitHub Releases 手动下载对应版本。');
+            setMeta(`${sourceHint}请从发布页手动下载对应版本。`);
         }
     }
 
@@ -171,6 +218,7 @@
         setProgressVisible(false);
         setStatus('正在检查更新…');
         setMeta('');
+        setChangelog('');
         try {
             if (!electron?.transWithAiCheckAppUpdate) {
                 presentCheckResult({ ok: false, error: '当前环境不支持检查更新' });
@@ -250,15 +298,39 @@
     async function runInstall() {
         if (busy) return;
         setBusy(true);
-        setStatus('正在退出并安装更新…', 'info');
+        setStatus('正在启动升级程序…', 'info');
+        setMeta('主窗口即将关闭。请留意随后出现的「正在升级」进度窗口，文件替换期间请勿强制结束进程。');
+        renderProgress({
+            percent: 2,
+            phase: 'installing',
+            message: '正在启动升级程序，请稍候…',
+        }, lastCheck?.latestVersion || '');
+        showEl('installBtn', false);
         try {
             const res = await electron?.transubQuitAndInstallUpdate?.();
             if (res && res.ok === false) {
+                setProgressVisible(false);
                 setStatus(res.error || '安装失败', 'err');
+                setMeta('');
+                showEl('installBtn', true);
+                const installBtn = document.getElementById('installBtn');
+                if (installBtn) installBtn.disabled = false;
                 setBusy(false);
+                return;
+            }
+            if (res?.mode === 'nsis') {
+                setStatus('即将打开安装程序，请按向导完成升级…', 'info');
+                setMeta('安装程序启动后本窗口会关闭。');
+            } else {
+                setStatus('升级程序已启动，主程序即将退出…', 'info');
             }
         } catch (err) {
+            setProgressVisible(false);
             setStatus(err?.message || '安装失败', 'err');
+            setMeta('');
+            showEl('installBtn', true);
+            const installBtn = document.getElementById('installBtn');
+            if (installBtn) installBtn.disabled = false;
             setBusy(false);
         }
     }

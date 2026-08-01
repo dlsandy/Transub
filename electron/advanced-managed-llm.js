@@ -64,7 +64,9 @@ function buildManagedStatus(doc, options = {}) {
     });
     const fullCount = catalog.listCatalog().length;
     const items = visible.map((entry) => {
-        const installed = llmFs.isModelInstalled(entry);
+        const present = llmFs.isModelInstalled(entry);
+        const validated = present ? llmFs.validateModelFile(entry) : null;
+        const installed = !!(validated?.ok);
         return {
             id: entry.id,
             name: entry.name,
@@ -84,6 +86,9 @@ function buildManagedStatus(doc, options = {}) {
             paramBillion: Number(entry.paramBillion) || 0,
             ollamaTag: entry.ollamaTag || '',
             installed,
+            present,
+            installError: present && !installed ? (validated?.error || '') : '',
+            installErrorCode: present && !installed ? (validated?.code || '') : '',
             active: !!(active && active.id === entry.id),
             smartTranslate: !!(smart && smart.id === entry.id),
             pulledByApp: (managed.pulledIds || []).includes(entry.id),
@@ -110,6 +115,17 @@ function buildManagedStatus(doc, options = {}) {
             available: !!runtime.installed,
             supported: !!runtime.supported,
             package: runtime.package,
+            preferredPackageId: runtime.preferredPackageId || managed.runtimeId || '',
+            installedPackageId: runtime.installedPackageId || '',
+            mismatch: !!runtime.mismatch,
+            choices: Array.isArray(runtime.choices) ? runtime.choices : [],
+            preferCuda: (() => {
+                try {
+                    return !!require('./advanced-runtime-prefer').getHints().preferCuda;
+                } catch (_) {
+                    return false;
+                }
+            })(),
             tag: runtime.tag,
             exePath: runtime.exePath || '',
             baseUrl: llamaServer.getServerBaseUrl(managed.serverPort),
@@ -165,6 +181,7 @@ async function pullManagedModel(options = {}) {
                 pct: 0,
             });
             const rt = await llamaServer.ensureRuntimeInstalled({
+                runtimeId: opts.runtimeId,
                 signal: controller.signal,
                 onProgress: (p) => send({ ...p, modelId: entry.id }),
             });
@@ -181,20 +198,28 @@ async function pullManagedModel(options = {}) {
             }
         }
 
-        if (llmFs.isModelInstalled(entry) && !opts.force) {
+        const existing = llmFs.validateModelFile(entry);
+        if (existing.ok && !opts.force) {
             send({
                 phase: 'done',
                 modelId: entry.id,
-                message: `${entry.name} 已存在，跳过下载`,
+                message: `${entry.name} 已存在且校验通过，跳过下载`,
                 pct: 100,
             });
             return {
                 ok: true,
                 already: true,
                 modelId: entry.id,
-                path: llmFs.getModelPath(entry),
+                path: existing.path || llmFs.getModelPath(entry),
                 message: `${entry.name} 已就绪`,
             };
+        }
+        if (!existing.ok && llmFs.isModelInstalled(entry) && !opts.force) {
+            send({
+                phase: 'warn',
+                modelId: entry.id,
+                message: `本地「${entry.name}」校验失败，将重新下载：${existing.error}`,
+            });
         }
 
         llmFs.ensureDirs();
@@ -217,6 +242,23 @@ async function pullManagedModel(options = {}) {
                 message: p.message || `下载 ${entry.name}…`,
             }),
         });
+
+        const validated = llmFs.validateModelFile(entry);
+        if (!validated.ok) {
+            send({
+                phase: 'error',
+                kind: 'model',
+                modelId: entry.id,
+                message: validated.error || '模型文件校验失败',
+            });
+            return {
+                ok: false,
+                error: validated.error || '模型文件校验失败',
+                code: validated.code || 'model_invalid',
+                modelId: entry.id,
+                path: dest,
+            };
+        }
 
         send({
             phase: 'done',
@@ -262,13 +304,22 @@ async function resolveManagedEndpoint(doc, options = {}) {
             code: 'managed_model_missing',
         };
     }
-    if (!llmFs.isModelInstalled(entry)) {
+    const validated = llmFs.validateModelFile(entry);
+    if (!validated.ok) {
+        const hint = llmFs.buildMisplacedModelHint(entry);
+        const missing = validated.code === 'model_file_missing';
         return {
             ok: false,
             source: 'managed',
-            error: `模型「${entry.name}」尚未下载，请先在设置中下载`,
-            code: 'model_not_installed',
+            error: missing
+                ? (hint
+                    ? `模型「${entry.name}」尚未正确放置。${hint}`
+                    : `模型「${entry.name}」尚未下载，请先在设置中下载或手动放入：${llmFs.getModelsDir()}`)
+                : (hint ? `${validated.error} ${hint}` : validated.error),
+            code: validated.code || 'model_not_installed',
             modelId: entry.id,
+            fileName: entry.fileName,
+            folder: llmFs.getModelsDir(),
         };
     }
 
@@ -277,6 +328,7 @@ async function resolveManagedEndpoint(doc, options = {}) {
         port: managed.serverPort,
         nGpuLayers: managed.nGpuLayers,
         contextSize: managed.contextSize,
+        runtimeId: managed.runtimeId,
         onProgress: options.onProgress,
         signal: options.signal,
     });
@@ -418,6 +470,7 @@ module.exports = {
     resolveManagedEndpoint,
     runManagedPerfBenchmark,
     ensureRuntimeInstalled: (...args) => llamaServer.ensureRuntimeInstalled(...args),
+    installRuntimeFromLocalArchives: (...args) => llamaServer.installRuntimeFromLocalArchives(...args),
     stopLlamaServer: (...args) => llamaServer.stopLlamaServer(...args),
     getRuntimeStatus: (...args) => llamaServer.getRuntimeStatus(...args),
     isModelInstalled: (...args) => llmFs.isModelInstalled(...args),

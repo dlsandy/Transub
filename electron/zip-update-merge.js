@@ -199,14 +199,44 @@ function restoreAside(absPath) {
     return true;
 }
 
+function countFilesRecursive(rootDir) {
+    const root = path.resolve(rootDir);
+    let count = 0;
+    const stack = [root];
+    while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const ent of entries) {
+            const full = path.join(dir, ent.name);
+            if (ent.isDirectory()) stack.push(full);
+            else if (ent.isFile()) count += 1;
+        }
+    }
+    return count;
+}
+
 /**
  * Copy package tree into install root (files + dirs). Does not follow preserve logic —
  * call {@link applyZipUpdateMerge} which renames preserves aside first.
+ * @param {string} srcDir
+ * @param {string} destDir
+ * @param {{ onProgress?: (info: { copied: number, total: number }) => void }} [opts]
  */
-function copyTreeOverwrite(srcDir, destDir) {
+function copyTreeOverwrite(srcDir, destDir, opts = {}) {
     const srcRoot = path.resolve(srcDir);
     const destRoot = path.resolve(destDir);
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     fs.mkdirSync(destRoot, { recursive: true });
+
+    const total = Math.max(1, countFilesRecursive(srcRoot));
+    let copied = 0;
+    let lastEmitCount = 0;
+    let lastEmitAt = 0;
 
     const stack = [''];
     while (stack.length) {
@@ -231,18 +261,43 @@ function copyTreeOverwrite(srcDir, destDir) {
             if (!ent.isFile()) continue;
             fs.mkdirSync(path.dirname(childTo), { recursive: true });
             fs.copyFileSync(childFrom, childTo);
+            copied += 1;
+            const now = Date.now();
+            if (onProgress && (
+                copied === total
+                || copied - lastEmitCount >= 25
+                || now - lastEmitAt >= 400
+            )) {
+                lastEmitCount = copied;
+                lastEmitAt = now;
+                try { onProgress({ copied, total }); } catch { /* ignore */ }
+            }
         }
+    }
+    if (onProgress) {
+        try { onProgress({ copied: total, total }); } catch { /* ignore */ }
     }
 }
 
 /**
  * Replace install root contents from extracted package, preserving listed relative paths
  * via rename-aside (no multi-GB copy).
- * @param {{ installRoot: string, packageRoot: string, preserveRelPaths?: string[] }} opts
+ * @param {{
+ *   installRoot: string,
+ *   packageRoot: string,
+ *   preserveRelPaths?: string[],
+ *   onProgress?: (info: { phase: string, message: string, percent: number }) => void,
+ * }} opts
  */
 function applyZipUpdateMerge(opts = {}) {
     const installRoot = path.resolve(String(opts.installRoot || ''));
     const packageRoot = path.resolve(String(opts.packageRoot || ''));
+    const report = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+    const emit = (phase, message, percent) => {
+        if (!report) return;
+        try { report({ phase, message, percent }); } catch { /* ignore */ }
+    };
+
     if (!installRoot || !fs.existsSync(installRoot)) {
         throw new Error('安装目录无效');
     }
@@ -253,6 +308,8 @@ function applyZipUpdateMerge(opts = {}) {
         throw new Error('更新包缺少 Transub.exe');
     }
 
+    emit('preparing', '正在扫描需保留的模型与支持库…', 8);
+
     // Union caller snapshot with a fresh scan so packages installed after download
     // (or missed by a stale list) are still preserved.
     const fromOpts = Array.isArray(opts.preserveRelPaths) ? opts.preserveRelPaths : [];
@@ -262,9 +319,16 @@ function applyZipUpdateMerge(opts = {}) {
     ]);
 
     const asides = [];
-    for (const rel of preserveRelPaths) {
+    const preserveTotal = Math.max(1, preserveRelPaths.length);
+    for (let i = 0; i < preserveRelPaths.length; i++) {
+        const rel = preserveRelPaths[i];
         const abs = path.join(installRoot, rel);
         if (!fs.existsSync(abs)) continue;
+        emit(
+            'preserving',
+            `正在暂存保留数据（${i + 1}/${preserveTotal}）…`,
+            10 + Math.round((i / preserveTotal) * 18),
+        );
         try {
             asides.push({ rel, abs, aside: renameAside(abs) });
         } catch (err) {
@@ -276,8 +340,18 @@ function applyZipUpdateMerge(opts = {}) {
         }
     }
 
+    emit('copying', '正在替换程序文件，请耐心等待…', 30);
     try {
-        copyTreeOverwrite(packageRoot, installRoot);
+        copyTreeOverwrite(packageRoot, installRoot, {
+            onProgress: ({ copied, total }) => {
+                const ratio = total > 0 ? copied / total : 1;
+                emit(
+                    'copying',
+                    `正在替换程序文件（${copied}/${total}）…`,
+                    30 + Math.round(ratio * 50),
+                );
+            },
+        });
     } catch (err) {
         for (const done of asides.reverse()) {
             try { restoreAside(done.abs); } catch { /* ignore */ }
@@ -285,13 +359,22 @@ function applyZipUpdateMerge(opts = {}) {
         throw err;
     }
 
-    for (const item of asides) {
+    const restoreTotal = Math.max(1, asides.length);
+    for (let i = 0; i < asides.length; i++) {
+        const item = asides[i];
+        emit(
+            'restoring',
+            `正在恢复保留数据（${i + 1}/${restoreTotal}）…`,
+            82 + Math.round((i / restoreTotal) * 12),
+        );
         try {
             restoreAside(item.abs);
         } catch (err) {
             throw new Error(`恢复保留目录失败 ${item.rel}: ${err.message || err}`);
         }
     }
+
+    emit('restoring', '文件替换完成', 95);
 
     return {
         ok: true,

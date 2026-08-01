@@ -20,6 +20,10 @@ function testSafeExternalUrl() {
 function testSubtitlePathExt() {
     const srt = assertEditableSubtitlePath('C:\\Videos\\a.srt');
     assert.ok(srt.toLowerCase().endsWith('.srt'));
+    const ass = assertEditableSubtitlePath('C:\\Videos\\a.ass');
+    assert.ok(ass.toLowerCase().endsWith('.ass'));
+    const ssa = assertEditableSubtitlePath('C:\\Videos\\a.ssa');
+    assert.ok(ssa.toLowerCase().endsWith('.ssa'));
     assert.throws(() => assertEditableSubtitlePath('C:\\Videos\\a.exe'), (err) => /\u6269\u5c55\u540d/.test(err.message));
     assert.throws(() => assertEditableSubtitlePath(''), (err) => /\u7f3a\u5c11/.test(err.message));
 }

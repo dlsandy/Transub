@@ -26,6 +26,10 @@ const {
     isFilenameSenseConfident,
     isInstantAvSenseCandidate,
     shouldProbeAcoustic,
+    shouldEscalateSenseDepth,
+    promoteClassificationFromEvidence,
+    resolveSenseFromClassification,
+    isLikelyStandaloneAvCode,
     AV_SOFT_PATCH,
     FILM_PATCH,
     APPLY_CONFIDENCE,
@@ -326,8 +330,13 @@ describe('content-profile-core', () => {
             shouldPreferSniffLanguage({ language: 'en', confidence: 0.53 }, namePrior, { skippedIntro: true }),
             false,
         );
+        // AV 番号 prior: mid/high English sniff (opening BGM) must not override Japanese
         assert.strictEqual(
             shouldPreferSniffLanguage({ language: 'en', confidence: 0.7 }, namePrior, { skippedIntro: true }),
+            false,
+        );
+        assert.strictEqual(
+            shouldPreferSniffLanguage({ language: 'en', confidence: 0.92 }, namePrior, { skippedIntro: true }),
             true,
         );
         assert.strictEqual(
@@ -433,6 +442,61 @@ describe('content-profile-core', () => {
             profile: weak.profile || 'unknown',
             confidence: weak.confidence,
         }), true);
+        assert.strictEqual(shouldEscalateSenseDepth(weak, { depth: 'quick' }), true);
+        assert.strictEqual(shouldEscalateSenseDepth(weak, { depth: 'deep' }), false);
+        assert.strictEqual(shouldEscalateSenseDepth(av, { depth: 'quick' }), false);
+        assert.strictEqual(shouldEscalateSenseDepth(film, { depth: 'quick' }), false);
+    });
+
+    it('promotes unknown classification from deep acoustic / duration evidence', () => {
+        const unknown = classifyContentProfile({ fileName: 'clip_001.mp4' });
+        assert.strictEqual(unknown.profile, 'unknown');
+
+        const music = promoteClassificationFromEvidence(unknown, {
+            acoustic: { hint: 'music', musicLikely: true },
+        });
+        assert.ok(music.promoted);
+        assert.strictEqual(music.classification.profile, 'film');
+        assert.ok(music.classification.confidence >= APPLY_CONFIDENCE);
+
+        const softJa = promoteClassificationFromEvidence(unknown, {
+            acoustic: { hint: 'soft', softSparse: true },
+            language: 'ja',
+            languageConfidence: 0.8,
+        });
+        assert.ok(softJa.promoted);
+        assert.strictEqual(softJa.classification.profile, 'av_soft');
+
+        const softEn = promoteClassificationFromEvidence(unknown, {
+            acoustic: { softSparse: true },
+            language: 'en',
+            languageConfidence: 0.8,
+        });
+        assert.ok(softEn.promoted);
+        assert.strictEqual(softEn.classification.profile, 'talk');
+
+        const longLang = promoteClassificationFromEvidence(unknown, {
+            language: 'en',
+            languageConfidence: 0.85,
+            durationSec: 100 * 60,
+        });
+        assert.ok(longLang.promoted);
+        assert.strictEqual(longLang.classification.profile, 'film');
+
+        const adopted = resolveSenseFromClassification(music.classification, {
+            language: 'auto',
+            task: 'transcribe',
+        }, { advancedEntitled: true });
+        assert.strictEqual(adopted.action, 'apply');
+        assert.strictEqual(adopted.adopted, true);
+        assert.ok(Object.keys(adopted.overrides || {}).length > 0);
+    });
+
+    it('recognizes anime / variety name cues', () => {
+        const anime = classifyContentProfile({ fileName: 'Cool.Anime.OVA.1080p.mkv' });
+        assert.strictEqual(anime.profile, 'film');
+        const variety = classifyContentProfile({ fileName: '今晚综艺特辑.mp4' });
+        assert.strictEqual(variety.profile, 'talk');
     });
 
     it('marks known 番号 as instant AV sense candidates', () => {
@@ -444,15 +508,55 @@ describe('content-profile-core', () => {
             'ABF-372.mp4',
             'CJOD-522.mp4',
             'SONE-855.mp4',
+            'MNGS-057.mp4',
+            'e:/迅雷下载/MNGS-057.mp4',
         ];
         for (const fileName of codes) {
-            const hit = classifyContentProfile({ fileName });
+            const hit = classifyContentProfile({ path: fileName, fileName });
             assert.ok(isInstantAvSenseCandidate(hit), fileName);
             assert.ok(hit.strongAv, fileName);
             assert.strictEqual(hit.profile, 'av_soft', fileName);
         }
         assert.strictEqual(
             isInstantAvSenseCandidate(classifyContentProfile({ fileName: 'lecture_sku_A12.mp4' })),
+            false,
+        );
+    });
+
+    it('treats standalone unknown 番号 as JA AV (not English talk)', () => {
+        const path = 'e:/迅雷下载/MNGS-057.mp4';
+        const hit = classifyContentProfile({ path });
+        assert.strictEqual(hit.profile, 'av_soft');
+        assert.ok(hit.strongAv);
+        assert.ok(isInstantAvSenseCandidate(hit));
+        const lang = guessLanguageFromName(path);
+        assert.strictEqual(lang?.language, 'ja');
+        assert.ok(Number(lang?.confidence) >= 0.65);
+        // Opening BGM English sniff must not override AV 番号 prior
+        assert.strictEqual(shouldPreferSniffLanguage(
+            { language: 'en', confidence: 0.8 },
+            lang,
+            { skippedIntro: true, avLikely: true },
+        ), false);
+        const softEn = promoteClassificationFromEvidence(
+            { profile: 'unknown', confidence: 0, reasons: [], scores: {} },
+            {
+                acoustic: { softSparse: true },
+                language: 'en',
+                languageConfidence: 0.8,
+                path,
+                avLikely: true,
+            },
+        );
+        assert.ok(softEn.promoted);
+        assert.strictEqual(softEn.classification.profile, 'av_soft');
+        // Deny obvious non-AV CODE patterns
+        assert.strictEqual(
+            isLikelyStandaloneAvCode({ prefix: 'vol', num: '01', known: false }, 'VOL-01.mp4'),
+            false,
+        );
+        assert.strictEqual(
+            isLikelyStandaloneAvCode({ prefix: 'ab', num: '12', known: false }, 'AB-12.mp4'),
             false,
         );
     });

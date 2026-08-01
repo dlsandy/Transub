@@ -13,7 +13,13 @@ const { attachUiZoom } = require('./ui-zoom');
 const editorWindows = new Map();
 const EMPTY_EDITOR_KEY = '__welcome__';
 
-/** @type {{ beginSuppressMinimizeToTray?: (ms?: number) => void, restoreMainAfterSecondaryWindowClosed?: () => void } | null} */
+/** @type {{
+ *   beginSuppressMinimizeToTray?: (ms?: number) => void,
+ *   restoreMainAfterSecondaryWindowClosed?: () => void,
+ *   getMainWindow?: () => import('electron').BrowserWindow | null,
+ *   showMainWindow?: () => import('electron').BrowserWindow | null | undefined,
+ *   isQuitting?: () => boolean,
+ * } | null} */
 let linkedWindowManager = null;
 
 function linkWindowManager(windowManager) {
@@ -27,9 +33,26 @@ function armMainMinimizeSuppress() {
     } catch (_) { /* ignore */ }
 }
 
+function anyOtherEditorOpen() {
+    for (const w of editorWindows.values()) {
+        if (w && !w.isDestroyed()) return true;
+    }
+    return false;
+}
+
+/**
+ * After an editor closes: undo Windows spurious main hide-to-tray, and if the
+ * main app window is already running (not editor-only), show/focus it.
+ */
 function restoreMainAfterEditorClosed() {
     try {
         linkedWindowManager?.restoreMainAfterSecondaryWindowClosed?.();
+        if (linkedWindowManager?.isQuitting?.()) return;
+        // Keep focus on remaining editors; only hand off when none left.
+        if (anyOtherEditorOpen()) return;
+        const main = linkedWindowManager?.getMainWindow?.();
+        if (!main || main.isDestroyed()) return;
+        linkedWindowManager?.showMainWindow?.();
     } catch (_) { /* ignore */ }
 }
 
@@ -327,7 +350,7 @@ async function pickSubtitleFile(parentWindow) {
         title: '选择要编辑的字幕文件',
         properties: ['openFile'],
         filters: [
-            { name: '字幕 (SRT / VTT / LRC)', extensions: ['srt', 'vtt', 'lrc'] },
+            { name: '字幕 (SRT / VTT / LRC / ASS)', extensions: ['srt', 'vtt', 'lrc', 'ass', 'ssa'] },
             { name: '所有文件', extensions: ['*'] },
         ],
     });
