@@ -8,7 +8,43 @@ const {
     PATH_TRANSLATE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_SMART_BATCH_SIZE,
+    DEFAULT_TIMEOUT_SEC,
+    DEFAULT_SMART_TIMEOUT_SEC,
 } = require('../electron/engine-mt-adapter');
+
+function postTranslate(url, auth, cues, { timeoutMs = 30000 } = {}) {
+    const payload = JSON.stringify({
+        apiVersion: 1,
+        language: 'ja',
+        targetLanguage: 'zh',
+        cues,
+    });
+    return new Promise((resolve, reject) => {
+        const req = http.request(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: auth,
+                'Content-Length': Buffer.byteLength(payload),
+            },
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const raw = Buffer.concat(chunks).toString('utf8');
+                let json = null;
+                try { json = JSON.parse(raw); } catch (_) { /* ignore */ }
+                resolve({ status: res.statusCode, json, raw });
+            });
+        });
+        req.setTimeout(timeoutMs, () => {
+            req.destroy(new Error('test request timeout'));
+        });
+        req.on('error', reject);
+        req.write(payload);
+        req.end();
+    });
+}
 
 describe('engine-mt-adapter', () => {
     it('parses engine cue batches', () => {
@@ -38,6 +74,16 @@ describe('engine-mt-adapter', () => {
             { id: 2, text: '你好' },
             { id: 3, text: '谢谢' },
         ]);
+    });
+
+    it('does not echo Japanese source when a cue translation is missing', () => {
+        const res = buildEngineMtResponse(
+            [{ id: 1, index: 1, text: 'こんにちは' }, { id: 2, index: 2, text: 'ありがとう' }],
+            [{ index: 1, text: '你好' }],
+        );
+        assert.strictEqual(res.cues[0].text, '你好');
+        assert.strictEqual(res.cues[1].text, '');
+        assert.ok(!res.cues[1].text.includes('ありがとう'));
     });
 
     it('sanitizes pathological / Gloss-polluted MT responses', () => {
@@ -141,6 +187,8 @@ describe('engine-mt-adapter', () => {
             const mt = smart.mtExternal();
             assert.strictEqual(mt.batchSize, DEFAULT_SMART_BATCH_SIZE);
             assert.strictEqual(DEFAULT_SMART_BATCH_SIZE, 40);
+            assert.strictEqual(mt.timeoutSec, DEFAULT_SMART_TIMEOUT_SEC);
+            assert.strictEqual(DEFAULT_SMART_TIMEOUT_SEC, 1800);
         } finally {
             smart.stop();
         }
@@ -154,8 +202,33 @@ describe('engine-mt-adapter', () => {
             const mt = sakura.mtExternal();
             assert.strictEqual(mt.batchSize, DEFAULT_BATCH_SIZE);
             assert.strictEqual(DEFAULT_BATCH_SIZE, 8);
+            assert.strictEqual(mt.timeoutSec, DEFAULT_TIMEOUT_SEC);
         } finally {
             sakura.stop();
+        }
+    });
+
+    it('queues concurrent /translate instead of hard 429', async () => {
+        const adapter = await startEngineMtAdapter({
+            mode: 'sakura',
+            modelId: 'sakura-1.5b',
+            options: { dryRun: true, engineMtModel: 'sakura-1.5b' },
+        });
+        assert.ok(adapter.ok, adapter.error);
+        try {
+            const mt = adapter.mtExternal({ batchSize: 8, timeoutSec: 60 });
+            const cuesA = [{ id: 0, start: 0, end: 1, text: 'いち' }];
+            const cuesB = [{ id: 1, start: 1, end: 2, text: 'に' }];
+            const [a, b] = await Promise.all([
+                postTranslate(mt.url, mt.headers.Authorization, cuesA),
+                postTranslate(mt.url, mt.headers.Authorization, cuesB),
+            ]);
+            assert.strictEqual(a.status, 200, a.raw);
+            assert.strictEqual(b.status, 200, b.raw);
+            assert.strictEqual(a.json.cues[0].id, 0);
+            assert.strictEqual(b.json.cues[0].id, 1);
+        } finally {
+            adapter.stop();
         }
     });
 

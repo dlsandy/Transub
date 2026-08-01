@@ -1,7 +1,7 @@
 const path = require('path');
 const { MEDIA_EXTENSIONS } = require('../src/js/media-extensions-core');
 
-const EDITABLE_SUBTITLE_EXTS = new Set(['.srt', '.vtt', '.lrc']);
+const EDITABLE_SUBTITLE_EXTS = new Set(['.srt', '.vtt', '.lrc', '.ass', '.ssa']);
 const VIDEO_FILE_EXTS = new Set(MEDIA_EXTENSIONS.map((ext) => `.${ext}`));
 
 function asString(value, maxLen = 8192) {

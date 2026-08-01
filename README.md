@@ -5,7 +5,7 @@ Transub
 **把视频丢进去，字幕就出来了。**  
 在编辑器里改时间轴、修读速、统一专名、跑工作流——从生成到成片，一条龙。
 
-Windows 桌面字幕工具 · 当前版本 **3.0.1**  
+Windows 桌面字幕工具 · 当前版本 **3.0.2**  
 默认转录 / 免费译中由 **Transub Engine** 提供（SenseVoice / Whisper + Opus NMT）；[TransWithAI](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice) 仍可作为可选旧后端。
 
 [下载](https://github.com/dlsandy/Transub/releases)
@@ -59,7 +59,7 @@ Transub 总览：批量生成 + 字幕编辑器
 | 安装门槛     | 需自备 TWAI + 模型 | **自带引擎 runtime** + `whisper-tiny` / `fsmn-vad`；其余按向导下载 |
 
 
-更细的条目见 [CHANGELOG.md](CHANGELOG.md) · `3.0.1`。
+更细的条目见 [CHANGELOG.md](CHANGELOG.md) · `3.0.2`。
 
 ---
 
@@ -224,8 +224,8 @@ Transub 总览：批量生成 + 字幕编辑器
 ## 下载安装
 
 1. 打开 [Releases](https://github.com/dlsandy/Transub/releases)
-2. 推荐 `Transub-3.0.1-win.zip`，解压后运行 `Transub.exe`
-  （或 `Transub-Setup-3.0.1.exe`）  
+2. 推荐 `Transub-3.0.2-win.zip`，解压后运行 `Transub.exe`
+  （或 `Transub-Setup-3.0.2.exe`）  
    解压目录含 **Transub Editor** 快捷方式；安装版还会在桌面与开始菜单创建
 3. 发行包已内置 **Transub Engine**（`transub-engine/runtime`，无需本机 Python），并附带 `whisper-tiny`（语种探测）与 `fsmn-vad`（默认 VAD）。其余模型在设置 → 环境或向导中按需下载；FFmpeg 使用软件自带 `_internal/bin`
 4. **首次使用请走设置向导**（主界面或设置页入口；无配置时也会自动弹出）：按硬件与用途勾选设备 / 档位 / 模型并一键下载，比手工翻「环境」页更省事

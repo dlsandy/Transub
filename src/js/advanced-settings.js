@@ -26,6 +26,12 @@
         sourceByok: () => document.getElementById('advancedLlmSourceByok'),
         sourceManaged: () => document.getElementById('advancedLlmSourceManaged'),
         managedRuntime: () => document.getElementById('advancedManagedRuntimeStatus'),
+        managedRuntimeBackendWrap: () => document.getElementById('advancedManagedRuntimeBackendWrap'),
+        managedRuntimeBackendSelect: () => document.getElementById('advancedManagedRuntimeBackendSelect'),
+        llamaServerActionStatus: () => document.getElementById('advancedLlamaServerActionStatus'),
+        llamaServerProgressWrap: () => document.getElementById('advancedLlamaServerProgressWrap'),
+        llamaServerProgressBar: () => document.getElementById('advancedLlamaServerProgressBar'),
+        llamaServerProgressText: () => document.getElementById('advancedLlamaServerProgressText'),
         smartTranslateSelect: () => document.getElementById('advancedSmartTranslateModelSelect'),
         inferenceSelect: () => document.getElementById('advancedInferenceModelSelect'),
         catalogSearch: () => document.getElementById('advancedManagedSearch'),
@@ -313,6 +319,9 @@
             if (item.translateOnly) badges.push('<span class="engine-model-badge is-warn">仅译中</span>');
             if (item.proScale) badges.push('<span class="engine-model-badge is-pro">Pro</span>');
             if (item.installed) badges.push('<span class="engine-model-badge is-ok">已下载</span>');
+            else if (item.present && item.installError) {
+                badges.push('<span class="engine-model-badge is-warn">文件异常</span>');
+            }
             if (item.smartTranslate) badges.push('<span class="engine-model-badge is-use">智能翻译</span>');
             if (item.active) badges.push('<span class="engine-model-badge is-use">推理</span>');
             if (item.ramTight) badges.push('<span class="engine-model-badge is-warn">内存紧张</span>');
@@ -321,6 +330,9 @@
             const ramClass = item.ramTight ? ' is-ram-tight' : '';
             const scaleLabel = item.paramBillion ? `${item.paramBillion}B` : '';
             const disabled = catalogBusy ? ' disabled' : '';
+            const installNote = (!item.installed && item.installError)
+                ? `<p class="engine-model-card-note">${escapeHtml(item.installError)}</p>`
+                : '';
             return `
                 <article class="engine-model-card${selected}${ramClass}" data-model-id="${escapeHtml(item.id)}">
                     <div class="engine-model-card-top">
@@ -331,6 +343,7 @@
                         <div class="engine-model-card-badges">${badges.join('')}</div>
                     </div>
                     ${item.note ? `<p class="engine-model-card-note">${escapeHtml(item.note)}</p>` : ''}
+                    ${installNote}
                     <div class="engine-model-card-actions">
                         <button type="button" class="btn btn-primary" data-action="use-smart" data-model-id="${escapeHtml(item.id)}"${disabled}>
                             ${item.smartTranslate ? '已用作智能翻译' : '用作智能翻译'}
@@ -339,7 +352,10 @@
                             ${item.active ? '已用作推理' : '用作 LLM 推理'}
                         </button>
                         <button type="button" class="btn" data-action="pull" data-model-id="${escapeHtml(item.id)}"${disabled}>
-                            ${item.installed ? '重新下载' : '下载'}
+                            ${item.installed ? '重新下载' : (item.present ? '重新下载（修复）' : '下载')}
+                        </button>
+                        <button type="button" class="btn" data-action="manual" data-model-id="${escapeHtml(item.id)}"${disabled} title="浏览器下载 GGUF 后放到指定目录">
+                            手动下载
                         </button>
                     </div>
                 </article>
@@ -352,6 +368,43 @@
         renderCatalogList();
     }
 
+    function applyRuntimeBackendSelect(managed) {
+        const wrap = els.managedRuntimeBackendWrap();
+        const select = els.managedRuntimeBackendSelect();
+        if (!wrap || !select) return;
+        const runtime = managed?.runtime || {};
+        const choices = Array.isArray(runtime.choices) ? runtime.choices : [];
+        const show = choices.length > 1;
+        wrap.classList.toggle('hidden', !show);
+        if (!show) return;
+
+        const preferCuda = !!runtime.preferCuda;
+        const preferred = String(
+            managed?.managedLlm?.runtimeId
+            || runtime.preferredPackageId
+            || choices[0]?.id
+            || '',
+        ).trim();
+        const html = choices.map((c) => {
+            const id = String(c.id || '').trim();
+            if (!id) return '';
+            const label = String(c.label || id).trim();
+            const isDefault = preferCuda
+                ? c.backend === 'cuda'
+                : c.backend === 'vulkan' || (!c.backend && id.includes('vulkan'));
+            const bits = [];
+            if (isDefault) bits.push('默认');
+            if (c.sizeHint) bits.push(String(c.sizeHint));
+            const hint = bits.length ? ` · ${bits.join(' · ')}` : '';
+            return `<option value="${escapeHtml(id)}">${escapeHtml(label)}${escapeHtml(hint)}</option>`;
+        }).filter(Boolean).join('');
+        if (html) select.innerHTML = html;
+        if (preferred && [...select.options].some((o) => o.value === preferred)) {
+            select.value = preferred;
+        }
+        select.classList.toggle('border-amber-400', !!runtime.mismatch);
+    }
+
     function applyManagedStatus(managed) {
         if (!managed) return;
         managedSnapshot = enrichManagedCatalog(managed);
@@ -362,6 +415,7 @@
                 ? (runtime.message || 'llama-server 可用')
                 : (runtime.message || '尚未安装运行时。请先点击「安装 / 更新运行时」。'),
         );
+        applyRuntimeBackendSelect(managedSnapshot);
         renderModelSelects(managedSnapshot);
         renderCatalog();
     }
@@ -373,6 +427,207 @@
             || null;
         if (typeof fn === 'function') return fn(opts);
         return Promise.resolve(window.confirm(String(opts.message || opts.title || '确认？')));
+    }
+
+    /**
+     * @returns {Promise<'primary'|'secondary'|'tertiary'>}
+     */
+    function askConfirmChoice(options) {
+        const opts = options && typeof options === 'object' ? options : { message: String(options || '') };
+        const fn = (typeof globalThis !== 'undefined' && globalThis.TransubAppConfirmChoice)
+            || (typeof window !== 'undefined' && window.TransubAppConfirmChoice)
+            || null;
+        if (typeof fn === 'function') return fn(opts);
+        const ok = window.confirm(String(opts.message || opts.title || '确认？'));
+        return Promise.resolve(ok ? 'primary' : 'secondary');
+    }
+
+    function buildManualGgufHint(info = {}) {
+        const name = String(info.name || info.modelId || '模型').trim();
+        const fileName = String(info.fileName || '').trim();
+        const folder = String(info.folder || '').trim();
+        const sizeHint = String(info.sizeHint || '').trim();
+        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
+        return (
+            `将在浏览器打开「${name}」的 GGUF 下载链接。${sizeLine}\n\n`
+            + `下载完成后，请将文件保存为：\n${fileName || '（见模型卡片上的文件名）'}\n\n`
+            + `并放到以下目录（文件名需完全一致）：\n${folder || '（软件目录）/advanced-llm/models'}`
+        );
+    }
+
+    function buildManualRuntimeHint(info = {}) {
+        const label = String(info.runtimeLabel || info.runtimeId || 'llama-server').trim();
+        const sizeHint = String(info.sizeHint || '').trim();
+        const archive = String(info.runtimeArchiveName || '').trim();
+        const companion = String(info.runtimeCompanionArchiveName || '').trim();
+        const folder = String(info.folder || '').trim();
+        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
+        const files = companion
+            ? `需下载两个文件：\n1) ${archive || '主程序 zip'}\n2) ${companion}`
+            : `需下载：\n${archive || '运行时 zip'}`;
+        return (
+            `将在浏览器打开「${label}」下载链接。${sizeLine}\n\n`
+            + `${files}\n\n`
+            + `下载完成后请点「选择 zip 安装」，由软件解压到：\n`
+            + `${folder || '（软件目录）/advanced-llm/runtime'}\n\n`
+            + `也可自行解压到上述目录后点「检测」。`
+        );
+    }
+
+    function currentRuntimeId() {
+        return String(
+            els.managedRuntimeBackendSelect()?.value
+            || managedSnapshot?.managedLlm?.runtimeId
+            || managedSnapshot?.runtime?.preferredPackageId
+            || '',
+        ).trim();
+    }
+
+    async function offerManualRuntimeAfterFailure(errorText = '') {
+        const detail = String(errorText || '').trim();
+        const proceed = await askConfirm({
+            title: '运行时自动下载失败',
+            message: (
+                (detail ? `${detail}\n\n` : '')
+                + '是否改为浏览器手动下载，再选择本机 zip 安装？'
+            ),
+            primaryLabel: '手动下载',
+            secondaryLabel: '取消',
+        });
+        if (!proceed) return false;
+        await manualDownloadRuntime();
+        return true;
+    }
+
+    async function importRuntimeFromLocalZips(runtimeId) {
+        const id = String(runtimeId || currentRuntimeId()).trim();
+        if (!electron.transubAdvancedManagedLlmImportRuntime) {
+            return { ok: false, error: '当前环境不支持从 zip 安装' };
+        }
+        const res = await electron.transubAdvancedManagedLlmImportRuntime({
+            runtimeId: id || undefined,
+        });
+        if (res?.ok && res.managed) applyManagedStatus(res.managed);
+        else if (res?.ok) await refreshManaged();
+        return res;
+    }
+
+    async function verifyManualRuntime(info = null) {
+        const runtimeId = String(info?.runtimeId || currentRuntimeId()).trim();
+        const res = await electron.transubAdvancedManagedLlmVerifyManual?.({
+            kind: 'runtime',
+            runtimeId: runtimeId || undefined,
+        });
+        if (res?.ok) {
+            if (res.managed) applyManagedStatus(res.managed);
+            else await refreshManaged();
+            return res;
+        }
+        return res || { ok: false, error: '未检测到本地运行时' };
+    }
+
+    async function manualDownloadRuntime() {
+        if (!electron.transubAdvancedManagedLlmDownloadInfo || !electron.transubAdvancedManagedLlmOpenManual) {
+            return { ok: false, error: '当前环境不支持手动下载' };
+        }
+        const runtimeId = currentRuntimeId();
+        let infoRes;
+        try {
+            infoRes = await electron.transubAdvancedManagedLlmDownloadInfo({
+                kind: 'runtime',
+                runtimeId: runtimeId || undefined,
+            });
+        } catch (err) {
+            return { ok: false, error: err?.message || '无法获取下载信息' };
+        }
+        if (!infoRes?.ok) {
+            return { ok: false, error: infoRes?.error || '无法获取下载信息' };
+        }
+        const info = infoRes.info || {};
+        await new Promise((r) => setTimeout(r, 50));
+        const choice = await askConfirmChoice({
+            title: '手动下载运行时',
+            message: buildManualRuntimeHint(info),
+            primaryLabel: '打开下载链接',
+            tertiaryLabel: '选择 zip 安装',
+            secondaryLabel: '取消',
+        });
+        if (choice === 'secondary') {
+            return { ok: true, cancelled: true, message: '已取消手动下载' };
+        }
+        if (choice === 'tertiary') {
+            const imported = await importRuntimeFromLocalZips(info.runtimeId || runtimeId);
+            if (imported?.cancelled) return { ok: true, cancelled: true, message: '已取消' };
+            return imported?.ok
+                ? { ok: true, message: imported.message || '运行时安装完成' }
+                : (imported || { ok: false, error: '从 zip 安装失败' });
+        }
+
+        try {
+            // 优先官方 GitHub；镜像失败时用户可再试
+            const openRes = await electron.transubAdvancedManagedLlmOpenManual({
+                kind: 'runtime',
+                runtimeId: info.runtimeId || runtimeId || undefined,
+                which: info.needsCompanion ? 'all-official' : 'official',
+            });
+            if (!openRes?.ok) {
+                return { ok: false, error: openRes?.error || '无法打开下载链接' };
+            }
+        } catch (err) {
+            return { ok: false, error: err?.message || '无法打开下载链接' };
+        }
+
+        const after = await askConfirmChoice({
+            title: '下载完成后',
+            message: (
+                `${buildManualRuntimeHint(info)}\n\n`
+                + '浏览器下载完成后，请选择本机 zip 让软件自动解压安装。'
+            ),
+            primaryLabel: '选择 zip 安装',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '稍后检测',
+        });
+        if (after === 'tertiary') {
+            try {
+                await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'runtime' });
+            } catch (_) { /* ignore */ }
+            const again = await askConfirmChoice({
+                title: '手动安装运行时',
+                message: '目录已打开。是否选择已下载的 zip 安装？',
+                primaryLabel: '选择 zip 安装',
+                tertiaryLabel: '我已解压，检测',
+                secondaryLabel: '稍后',
+            });
+            if (again === 'primary') {
+                const imported = await importRuntimeFromLocalZips(info.runtimeId || runtimeId);
+                if (imported?.cancelled) return { ok: true, cancelled: true, message: '已取消' };
+                return imported?.ok
+                    ? { ok: true, message: imported.message || '运行时安装完成' }
+                    : (imported || { ok: false, error: '从 zip 安装失败' });
+            }
+            if (again === 'tertiary') {
+                const verified = await verifyManualRuntime(info);
+                return verified?.ok
+                    ? { ok: true, message: verified.message || '已检测到本地运行时' }
+                    : (verified || { ok: false, error: '未检测到本地运行时' });
+            }
+            return { ok: true, message: '已打开下载页，稍后可点「手动下载运行时」继续' };
+        }
+        if (after === 'primary') {
+            const imported = await importRuntimeFromLocalZips(info.runtimeId || runtimeId);
+            if (imported?.cancelled) return { ok: true, cancelled: true, message: '已取消' };
+            return imported?.ok
+                ? { ok: true, message: imported.message || '运行时安装完成' }
+                : (imported || { ok: false, error: '从 zip 安装失败' });
+        }
+        if (after === 'secondary') {
+            const verified = await verifyManualRuntime(info);
+            if (verified?.ok) {
+                return { ok: true, message: verified.message || '已检测到本地运行时' };
+            }
+            return { ok: true, message: '已打开下载页，放入文件后请再点「手动下载运行时」检测' };
+        }
+        return { ok: true, message: '已打开下载页' };
     }
 
     async function confirmTranslateOnlyIfNeeded(item, role) {
@@ -402,7 +657,7 @@
     }
 
     /**
-     * @returns {Promise<boolean>}
+     * @returns {Promise<boolean|null>} true 成功；false 失败；null 已取消
      */
     async function pullCatalogModel(modelId, { statusPrefix = '正在下载模型…' } = {}) {
         setCatalogStatus(statusPrefix);
@@ -416,7 +671,7 @@
             }
             if (res?.cancelled) {
                 setCatalogStatus(res.error || '已取消下载');
-                return false;
+                return null;
             }
             setCatalogStatus(res?.error || '模型下载失败', 'err');
             return false;
@@ -475,10 +730,142 @@
         catalogBusy = true;
         renderCatalogList();
         try {
-            await pullCatalogModel(modelId);
+            const pulled = await pullCatalogModel(modelId);
+            if (pulled === false) {
+                const proceed = await askConfirm({
+                    title: '模型下载失败',
+                    message: '应用内下载未完成。是否改为浏览器手动下载 GGUF，并按提示放到模型目录？',
+                    primaryLabel: '手动下载',
+                    secondaryLabel: '取消',
+                });
+                if (proceed) {
+                    catalogBusy = false;
+                    renderCatalogList();
+                    await manualDownloadCatalogModel(modelId);
+                }
+            }
         } finally {
             catalogBusy = false;
             renderCatalogList();
+        }
+    }
+
+    async function verifyManualCatalogModel(modelId, info = null) {
+        const res = await electron.transubAdvancedManagedLlmVerifyManual?.({ modelId, kind: 'model' });
+        if (res?.ok) {
+            if (res.managed) applyManagedStatus(res.managed);
+            else await refreshManaged();
+            setCatalogStatus(res.message || '已检测到本地 GGUF', 'ok');
+            return true;
+        }
+        const folder = res?.folder || info?.folder || '';
+        const fileName = res?.fileName || info?.fileName || '';
+        const detail = [res?.error || '未检测到有效的模型文件', fileName && folder ? `请确认 ${fileName} 已放在：${folder}` : '']
+            .filter(Boolean)
+            .join('\n');
+        setCatalogStatus(detail, 'err');
+        return false;
+    }
+
+    async function manualDownloadCatalogModel(modelId) {
+        if (!modelId || catalogBusy) return;
+        if (!electron.transubAdvancedManagedLlmDownloadInfo || !electron.transubAdvancedManagedLlmOpenManual) {
+            setCatalogStatus('当前环境不支持手动下载', 'err');
+            return;
+        }
+        setCatalogStatus('正在准备手动下载说明…');
+        let infoRes;
+        try {
+            infoRes = await electron.transubAdvancedManagedLlmDownloadInfo({ modelId, kind: 'model' });
+        } catch (err) {
+            setCatalogStatus(err?.message || '无法获取下载信息', 'err');
+            return;
+        }
+        if (!infoRes?.ok) {
+            setCatalogStatus(infoRes?.error || '无法获取下载信息', 'err');
+            return;
+        }
+        const info = infoRes.info || {};
+        // Let the opening click settle so confirm「打开下载链接」won't receive the same mouseup.
+        await new Promise((r) => setTimeout(r, 50));
+        const choice = await askConfirmChoice({
+            title: '手动下载 GGUF',
+            message: buildManualGgufHint(info),
+            primaryLabel: '打开下载链接',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '取消',
+        });
+        if (choice === 'secondary') {
+            setCatalogStatus('已取消手动下载');
+            return;
+        }
+        if (choice === 'tertiary') {
+            try {
+                const folderRes = await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'model' });
+                if (folderRes?.ok) {
+                    setCatalogStatus(`已打开存放目录：${folderRes.folder || info.folder || ''}`);
+                } else {
+                    setCatalogStatus(folderRes?.error || '无法打开存放目录', 'err');
+                }
+            } catch (err) {
+                setCatalogStatus(err?.message || '无法打开存放目录', 'err');
+            }
+            const again = await askConfirmChoice({
+                title: '手动下载 GGUF',
+                message: `${buildManualGgufHint(info)}\n\n目录已打开。是否继续打开下载链接？`,
+                primaryLabel: '打开下载链接',
+                secondaryLabel: '稍后',
+            });
+            if (again !== 'primary') return;
+        }
+        try {
+            const openRes = await electron.transubAdvancedManagedLlmOpenManual({
+                modelId,
+                kind: 'model',
+                which: 'mirror',
+            });
+            if (!openRes?.ok) {
+                setCatalogStatus(openRes?.error || '无法打开下载链接', 'err');
+                return;
+            }
+        } catch (err) {
+            setCatalogStatus(err?.message || '无法打开下载链接', 'err');
+            return;
+        }
+        const folder = String(info.folder || '').trim();
+        const fileName = String(info.fileName || '').trim();
+        setCatalogStatus(
+            fileName && folder
+                ? `已打开下载页。请将 ${fileName} 放到：${folder}`
+                : '已打开下载页。请按提示将 GGUF 放到 advanced-llm/models 目录',
+        );
+        const verifyChoice = await askConfirmChoice({
+            title: '检测本地文件',
+            message: (
+                `若已将文件放到指定目录，可立即检测是否可用。\n\n`
+                + (fileName ? `文件名：${fileName}\n` : '')
+                + (folder ? `目录：${folder}` : '')
+            ),
+            primaryLabel: '我已放入，检测',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '稍后',
+        });
+        if (verifyChoice === 'tertiary') {
+            try {
+                await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'model' });
+            } catch (_) { /* ignore */ }
+            const retry = await askConfirm({
+                title: '检测本地文件',
+                message: '文件放好后，是否现在检测？',
+                primaryLabel: '检测',
+                secondaryLabel: '稍后',
+            });
+            if (!retry) return;
+            await verifyManualCatalogModel(modelId, info);
+            return;
+        }
+        if (verifyChoice === 'primary') {
+            await verifyManualCatalogModel(modelId, info);
         }
     }
 
@@ -564,7 +951,8 @@
             const res = await electron.transubAdvancedGetStatus();
             if (res?.ok) {
                 applyStatus(res.status);
-                if (res.status?.llmSource === 'managed') await refreshManaged();
+                // llama-server 在「运行环境」页，与是否选用软件内模型无关，始终刷新
+                await refreshManaged();
             } else {
                 setText(els.status(), res?.error || '无法读取许可状态');
             }
@@ -593,19 +981,35 @@
     }
 
     function setPullProgress(info) {
-        const wrap = els.progressWrap();
-        if (!wrap) return;
+        const isRuntime = String(info?.kind || '').trim() === 'runtime';
+        const wrap = isRuntime
+            ? (els.llamaServerProgressWrap() || els.progressWrap())
+            : els.progressWrap();
+        const bar = isRuntime
+            ? (els.llamaServerProgressBar() || els.progressBar())
+            : els.progressBar();
+        const textEl = isRuntime
+            ? (els.llamaServerProgressText() || els.progressText())
+            : els.progressText();
+        const statusEl = isRuntime ? els.llamaServerActionStatus() : null;
+        if (!wrap) {
+            if (info?.message && statusEl) setText(statusEl, info.message);
+            return;
+        }
         if (!info) {
             wrap.classList.add('hidden');
             return;
         }
         wrap.classList.remove('hidden');
         const pct = Number(info.pct);
-        if (els.progressBar() && Number.isFinite(pct)) {
-            els.progressBar().style.width = `${Math.max(0, Math.min(100, pct))}%`;
+        if (bar && Number.isFinite(pct)) {
+            bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
         }
-        setText(els.progressText(), info.message || '');
-        if (info.message) setCatalogStatus(info.message);
+        setText(textEl, info.message || '');
+        if (info.message) {
+            if (isRuntime) setText(statusEl, info.message);
+            else setCatalogStatus(info.message);
+        }
         if (info.phase === 'done' || info.phase === 'cancelled') {
             setTimeout(() => wrap.classList.add('hidden'), 1200);
             void refreshManaged();
@@ -757,6 +1161,7 @@
             if (action === 'use-smart') void selectCatalogModel(modelId, 'smartTranslate');
             if (action === 'use-infer') void selectCatalogModel(modelId, 'inference');
             if (action === 'pull') void downloadCatalogModel(modelId);
+            if (action === 'manual') void manualDownloadCatalogModel(modelId);
         });
         document.getElementById('advancedManagedCatalogRefreshBtn')?.addEventListener('click', () => {
             void withAction(els.byokStatus(), async () => {
@@ -770,18 +1175,110 @@
                 return { ok: true, message: '已刷新' };
             });
         });
+        const runtimeStatusEl = () => els.llamaServerActionStatus() || els.byokStatus();
+
+        document.getElementById('advancedManagedRuntimeRefreshBtn')?.addEventListener('click', () => {
+            void withAction(runtimeStatusEl(), async () => {
+                await refreshManaged();
+                return { ok: true, message: '已刷新运行时状态' };
+            });
+        });
         document.getElementById('advancedManagedInstallRuntimeBtn')?.addEventListener('click', () => {
-            void withAction(els.byokStatus(), async () => {
-                const res = await electron.transubAdvancedManagedLlmInstallRuntime?.({ force: true });
+            void withAction(runtimeStatusEl(), async () => {
+                const runtimeId = String(els.managedRuntimeBackendSelect()?.value || '').trim();
+                const choice = (managedSnapshot?.runtime?.choices || [])
+                    .find((c) => c.id === runtimeId);
+                const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
+                if (runtimeId === 'win-cuda12-x64' || choice?.backend === 'cuda') {
+                    const ok = await askConfirm({
+                        title: '安装 CUDA 运行时',
+                        message: `将下载 NVIDIA CUDA 版 llama-server（含运行库）。${sizeHint}\n\n需要较新的 NVIDIA 驱动；若安装失败可改回 Vulkan 或改用「手动下载运行时」。\n若该后端已安装且版本匹配，将跳过下载。`,
+                        primaryLabel: '继续安装',
+                        secondaryLabel: '取消',
+                    });
+                    if (!ok) return { ok: false, error: '已取消' };
+                }
+                const res = await electron.transubAdvancedManagedLlmInstallRuntime?.({
+                    force: true,
+                    runtimeId: runtimeId || undefined,
+                });
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
                     return { ok: true, message: res.message || '运行时安装完成' };
                 }
+                await offerManualRuntimeAfterFailure(res?.error || '运行时安装失败');
                 return res || { ok: false, error: '运行时安装失败' };
             });
         });
+        document.getElementById('advancedManagedManualRuntimeBtn')?.addEventListener('click', () => {
+            void withAction(runtimeStatusEl(), async () => {
+                const res = await manualDownloadRuntime();
+                if (res?.cancelled) return { ok: true, message: res.message || '已取消' };
+                return res || { ok: false, error: '手动下载失败' };
+            });
+        });
+        els.managedRuntimeBackendSelect()?.addEventListener('change', () => {
+            void withAction(runtimeStatusEl(), async () => {
+                const select = els.managedRuntimeBackendSelect();
+                const runtimeId = String(select?.value || '').trim();
+                if (!runtimeId) return { ok: false, error: '请选择运行时后端' };
+                const prevId = String(
+                    managedSnapshot?.managedLlm?.runtimeId
+                    || managedSnapshot?.runtime?.preferredPackageId
+                    || '',
+                ).trim();
+                const choice = (managedSnapshot?.runtime?.choices || [])
+                    .find((c) => c.id === runtimeId);
+                const prevChoice = (managedSnapshot?.runtime?.choices || [])
+                    .find((c) => c.id === prevId);
+                const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
+                const cudaNote = (runtimeId === 'win-cuda12-x64' || choice?.backend === 'cuda')
+                    ? '\n需较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用手动下载。'
+                    : '';
+                const confirmed = await askConfirm({
+                    title: '切换 llama-server 后端',
+                    message: `确定从「${prevChoice?.label || prevId || '当前'}」切换为「${choice?.label || runtimeId}」吗？\n\n确认后将自动安装/更新运行时；若目标后端已就绪则跳过下载。${sizeHint}${cudaNote}`,
+                    primaryLabel: '确认切换',
+                    secondaryLabel: '取消',
+                });
+                if (!confirmed) {
+                    if (prevId && select) select.value = prevId;
+                    return { ok: true, message: '已取消切换' };
+                }
+                const installed = await electron.transubAdvancedManagedLlmInstallRuntime?.({
+                    force: true,
+                    runtimeId,
+                });
+                if (installed?.ok) {
+                    if (installed.managed) applyManagedStatus(installed.managed);
+                    return {
+                        ok: true,
+                        message: installed.message || (installed.already
+                            ? '运行时已就绪，无需重复下载'
+                            : '运行时安装完成'),
+                    };
+                }
+                // 自动安装失败：保留新偏好，引导手动下载
+                try {
+                    await electron.transubAdvancedManagedLlmSetRuntime?.({ runtimeId });
+                } catch (_) { /* ignore */ }
+                const wentManual = await offerManualRuntimeAfterFailure(
+                    installed?.error || '运行时安装失败',
+                );
+                if (wentManual) {
+                    await refreshManaged();
+                    return { ok: true, message: '请按手动下载流程完成安装' };
+                }
+                if (prevId && select) select.value = prevId;
+                try {
+                    await electron.transubAdvancedManagedLlmSetRuntime?.({ runtimeId: prevId });
+                    await refreshManaged();
+                } catch (_) { /* ignore */ }
+                return installed || { ok: false, error: '运行时安装失败' };
+            });
+        });
         document.getElementById('advancedManagedStopServerBtn')?.addEventListener('click', () => {
-            void withAction(els.byokStatus(), async () => {
+            void withAction(runtimeStatusEl(), async () => {
                 const res = await electron.transubAdvancedManagedLlmStopServer?.();
                 if (res?.ok) await refreshManaged();
                 return res?.ok
@@ -797,8 +1294,8 @@
             });
         });
         document.getElementById('advancedManagedPerfTestBtn')?.addEventListener('click', () => {
-            void withAction(els.byokStatus(), async () => {
-                setText(els.byokStatus(), '性能测试进行中（首次可能较慢）…');
+            void withAction(runtimeStatusEl(), async () => {
+                setText(runtimeStatusEl(), '性能测试进行中（首次可能较慢）…');
                 const res = await electron.transubAdvancedManagedLlmPerfTest?.({});
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
@@ -838,19 +1335,20 @@
         }
         if (!unsubModelChanged && electron.onAdvancedLlmModelChanged) {
             unsubModelChanged = electron.onAdvancedLlmModelChanged(() => {
-                if (currentLlmSource() === 'managed') void refreshManaged();
+                void refreshManaged();
             });
         }
 
         document.querySelectorAll('.params-tab-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const tab = btn.getAttribute('data-tab');
-                if (tab === 'pro' || tab === 'pro-llm' || tab === 'pro-reconstruct') {
-                    void refresh().then(() => {
-                        if ((tab === 'pro-llm' || tab === 'pro') && currentLlmSource() === 'managed') {
-                            void refreshManaged();
-                        }
-                    });
+                if (
+                    tab === 'install'
+                    || tab === 'pro'
+                    || tab === 'pro-llm'
+                    || tab === 'pro-reconstruct'
+                ) {
+                    void refresh();
                 }
             });
         });

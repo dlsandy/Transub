@@ -229,6 +229,27 @@ describe('sakura-translate-core', () => {
         assert.deepStrictEqual(blank, [0]);
     });
 
+    it('treats filler-only soft omissions as blank for retry', () => {
+        assert.ok(sakuraCore.isBlankOrPunctTranslation('嗯，', 'うんちょっと結構緊張しちゃって'));
+        assert.ok(sakuraCore.isBlankOrPunctTranslation('请', 'そうするならあってください。'));
+        const blank = sakuraCore.collectBlankTranslationIndexes(
+            [
+                { index: 0, text: 'うんちょっと結構緊張しちゃって' },
+                { index: 1, text: 'あんまり集中できなかったです。' },
+            ],
+            [
+                { index: 0, text: '嗯，' },
+                { index: 1, text: '集中不了' },
+            ],
+        );
+        assert.deepStrictEqual(blank, [0]);
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'テスト' }],
+            { sakuraNsfwPrompt: true },
+        );
+        assert.ok(msgs[1].content.includes('禁止只输出语气词'));
+    });
+
     it('collects blank translation indexes for non-empty sources', () => {
         const blank = sakuraCore.collectBlankTranslationIndexes(
             [

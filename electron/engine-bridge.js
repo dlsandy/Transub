@@ -1001,6 +1001,41 @@ function stopEngineProcess() {
     engineProc = null;
 }
 
+/**
+ * After failed / cancelled work, stop managed Python serve and any orphan on the port.
+ * Successful batches keep the engine hot for the next job.
+ */
+function stopEngineProcessAndPort() {
+    stopEngineProcess();
+    try {
+        const { port } = parseHostPort(engineBaseUrl || DEFAULT_ENGINE_URL);
+        killListenersOnPort(port);
+    } catch { /* ignore */ }
+}
+
+function stopLlamaServerQuiet() {
+    try {
+        require('./advanced-llama-server').stopLlamaServer();
+    } catch { /* ignore */ }
+}
+
+/**
+ * Reclaim background compute after an engine batch ends.
+ * - External MT always stops llama-server (same as TWAI smart-translate batch).
+ * - Failed / cancelled batches also stop the Python engine so it cannot linger.
+ */
+function reclaimLocalComputeAfterEngineBatch({ usedExternalMt = false, failedOrCancelled = false } = {}) {
+    if (usedExternalMt || failedOrCancelled) {
+        stopLlamaServerQuiet();
+    }
+    if (failedOrCancelled) {
+        stopEngineProcessAndPort();
+        appendEngineLogLine('[engine] 任务失败或已中断 · 已停止引擎与本地 LLM 进程');
+    } else if (usedExternalMt) {
+        appendEngineLogLine('[engine] 批次结束 · 已停止本地 LLM（llama-server）');
+    }
+}
+
 /** Kill whatever is listening on the engine HTTP port (orphan serve after failed respawn). */
 function killListenersOnPort(port) {
     const p = Number(port) || 8765;
@@ -1443,6 +1478,13 @@ async function ensureEngineRunning(options = {}) {
         engineProc.on('exit', (code, signal) => {
             appendEngineLogLine(`[engine] 进程退出 code=${code} signal=${signal || ''}`);
             engineProc = null;
+            // Unexpected exit can leave a sibling listener on the port (respawn race).
+            if (code !== 0 && code != null) {
+                try {
+                    const { port } = parseHostPort(engineBaseUrl || DEFAULT_ENGINE_URL);
+                    killListenersOnPort(port);
+                } catch { /* ignore */ }
+            }
         });
     } catch (err) {
         return { ok: false, error: `无法启动引擎: ${err.message || err}` };
@@ -1461,6 +1503,7 @@ async function ensureEngineRunning(options = {}) {
         };
     }
     if (!isApiCompatible(ready.data?.apiVersion)) {
+        stopEngineProcessAndPort();
         return {
             ok: false,
             error: `引擎 API 主版本不兼容（got ${ready.data?.apiVersion}）`,
@@ -1879,10 +1922,15 @@ async function runEngineBatchLocked({
     let generated = 0;
     let failed = 0;
     let skipped = 0;
+    const usedExternalMt = usesExternalMt({
+        smartTranslate: batchWantsSmart,
+        sakuraMt: batchWantsSakura,
+    });
+    let batchFailedOrCancelled = false;
     /** @type {{ ok: boolean, stop?: function, mtExternal?: function, mode?: string, url?: string } | null} */
     let mtAdapter = null;
     try {
-        if (usesExternalMt({ smartTranslate: batchWantsSmart, sakuraMt: batchWantsSakura })) {
+        if (usedExternalMt) {
             const sakuraNsfwFromItems = list.some((item) => {
                 const o = item?.optionOverrides || {};
                 return o.sakuraNsfwPrompt === true;
@@ -1920,6 +1968,7 @@ async function runEngineBatchLocked({
             });
             if (!mtAdapter?.ok) {
                 const errMsg = mtAdapter?.error || '外部 MT 适配器启动失败';
+                batchFailedOrCancelled = true;
                 const finished = {
                     ok: false,
                     cancelled: false,
@@ -2124,14 +2173,15 @@ async function runEngineBatchLocked({
                         mtBackend: 'external',
                         mtExternal: mtAdapter.mtExternal(
                             useSmartTranslate
-                                ? { batchSize: 40 }
-                                : { batchSize: 8 },
+                                ? { batchSize: 40, timeoutSec: 1800 }
+                                : { batchSize: 8, timeoutSec: 600 },
                         ),
                     }
                     : buildExternalMtJobFields({
                         url: mtAdapter.url,
                         token: mtAdapter.token,
                         batchSize: useSmartTranslate ? 40 : 8,
+                        timeoutSec: useSmartTranslate ? 1800 : 600,
                     }))
                 : null;
 
@@ -2144,6 +2194,18 @@ async function runEngineBatchLocked({
                 mtModel: jobMtModel,
                 subFormats,
                 dualAss,
+                dualLineOrder: (() => {
+                    const raw = fileMerged.dualLineOrder;
+                    if (raw == null || String(raw).trim() === '') return 'target-first';
+                    try {
+                        const dualCore = require('../src/js/dual-subtitle-core');
+                        return dualCore.normalizeDualLineOrder(raw);
+                    } catch {
+                        const order = String(raw).trim().toLowerCase();
+                        if (order === 'source-first' || order === 'source') return 'source-first';
+                        return 'target-first';
+                    }
+                })(),
                 device: mapDeviceForEngine(fileMerged.device),
                 beamSize: Math.max(1, Math.min(20, Number(fileMerged.beamSize) || 5)),
                 vad: buildVadJobOptions(fileMerged),
@@ -2436,7 +2498,7 @@ async function runEngineBatchLocked({
             }
 
             // Optional: keep only merged dual when user asked to delete source tracks after merge.
-            // Always leave an editable SRT for post-batch / editor (ASS alone is not editable).
+            // Prefer an editable merged SRT when deleting source tracks; ASS remains editable as fallback.
             if (
                 merged.mergeBilingualSubtitles
                 && merged.deleteSourcesAfterMergeBilingual
@@ -2506,6 +2568,7 @@ async function runEngineBatchLocked({
             failed: cancelled ? failed + (list.length - results.length) : failed,
             results,
         };
+        batchFailedOrCancelled = !finished.ok || !!finished.cancelled;
         recordEngineBatchHistory({
             list,
             merged,
@@ -2536,6 +2599,7 @@ async function runEngineBatchLocked({
         }
         return finished;
     } catch (err) {
+        batchFailedOrCancelled = true;
         const finished = {
             ok: false,
             cancelled: false,
@@ -2560,6 +2624,12 @@ async function runEngineBatchLocked({
             mtAdapter?.stop?.();
         } catch { /* ignore */ }
         abortBatchMtAdapter();
+        try {
+            reclaimLocalComputeAfterEngineBatch({
+                usedExternalMt,
+                failedOrCancelled: batchFailedOrCancelled || batchCancelled,
+            });
+        } catch { /* ignore */ }
         batchRunning = false;
         currentJobId = '';
     }
@@ -4115,11 +4185,10 @@ function stopEngineJobs() {
     if (jobId && engineBaseUrl) {
         cancelJob(engineBaseUrl, jobId).catch(() => {});
     }
-    if (engineProc) {
-        try {
-            stopEngineProcess();
-        } catch { /* ignore */ }
-    }
+    try {
+        stopEngineProcessAndPort();
+    } catch { /* ignore */ }
+    stopLlamaServerQuiet();
 }
 
 function setupComputeTaskStatusIpc(register) {

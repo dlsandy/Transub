@@ -8,6 +8,14 @@ function entitlementCore() {
     return require('../src/js/advanced-entitlement-core');
 }
 
+function runtimePreferHints() {
+    try {
+        return require('./advanced-runtime-prefer').getHints();
+    } catch (_) {
+        return {};
+    }
+}
+
 function getAdvancedFilePath() {
     return path.join(getWritableRoot(), ADVANCED_FILE_NAME);
 }
@@ -15,19 +23,30 @@ function getAdvancedFilePath() {
 function readAdvancedDoc() {
     const filePath = getAdvancedFilePath();
     const { emptyAdvancedDoc, normalizeAdvancedDoc } = entitlementCore();
+    const hints = runtimePreferHints();
     if (!fs.existsSync(filePath)) {
-        return { ok: true, path: filePath, doc: emptyAdvancedDoc(), exists: false };
+        return {
+            ok: true,
+            path: filePath,
+            doc: normalizeAdvancedDoc(emptyAdvancedDoc(), hints),
+            exists: false,
+        };
     }
     try {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         return {
             ok: true,
             path: filePath,
-            doc: normalizeAdvancedDoc(parsed),
+            doc: normalizeAdvancedDoc(parsed, hints),
             exists: true,
         };
     } catch (err) {
-        return { ok: false, error: err.message || String(err), path: filePath, doc: emptyAdvancedDoc() };
+        return {
+            ok: false,
+            error: err.message || String(err),
+            path: filePath,
+            doc: normalizeAdvancedDoc(emptyAdvancedDoc(), hints),
+        };
     }
 }
 
@@ -39,7 +58,7 @@ function writeAdvancedDoc(doc) {
             ...doc,
             version: ADVANCED_DOC_VERSION,
             updatedAt: new Date().toISOString(),
-        });
+        }, runtimePreferHints());
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
         return { ok: true, path: filePath, doc: payload };

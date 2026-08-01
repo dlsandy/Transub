@@ -91,7 +91,7 @@ function readSubtitleDocument(filePath) {
         const raw = fs.readFileSync(resolved, 'utf8');
         const format = detectFormat(resolved, raw);
         if (!isEditableFormat(format)) {
-            return { ok: false, error: `暂不支持编辑 ${format.toUpperCase()} 格式，请使用 SRT / VTT / LRC` };
+            return { ok: false, error: `暂不支持编辑 ${format.toUpperCase()} 格式，请使用 SRT / VTT / LRC / ASS` };
         }
         const parsed = parseSubtitle(raw, format);
         return {
@@ -1677,7 +1677,7 @@ function setupExtensionsBridge(api, deps) {
                     ? ['openFile', 'multiSelections']
                     : ['openFile'],
                 filters: [
-                    { name: '字幕 (SRT / VTT / LRC)', extensions: ['srt', 'vtt', 'lrc'] },
+                    { name: '字幕 (SRT / VTT / LRC / ASS)', extensions: ['srt', 'vtt', 'lrc', 'ass', 'ssa'] },
                     { name: '所有文件', extensions: ['*'] },
                 ],
                 defaultPath: defaultPath || undefined,

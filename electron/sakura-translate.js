@@ -189,14 +189,6 @@ async function runSakuraTranslateBody(payload = {}) {
 
     let endpoint = { ok: true, apiKey: 'local', baseUrl: '', model: modelId, source: 'mock' };
     const dryRun = !!p.dryRun || isMockMode();
-    if (!dryRun) {
-        endpoint = await sakuraMt.resolveSakuraEndpoint({
-            modelId,
-            onProgress: send,
-            signal: p.signal,
-        });
-        if (!endpoint.ok) return endpoint;
-    }
 
     // Per-chunk timeout: keep batch responsive; full-job 180s was masking runaway generation.
     // Engine external MT already sends small batches (≈8 cues) and may cold-start llama —
@@ -209,6 +201,14 @@ async function runSakuraTranslateBody(payload = {}) {
     });
 
     try {
+        if (!dryRun) {
+            endpoint = await sakuraMt.resolveSakuraEndpoint({
+                modelId,
+                onProgress: send,
+                signal: p.signal,
+            });
+            if (!endpoint.ok) return endpoint;
+        }
         const glossaryTerms = extractGlossaryTerms(p.glossary);
         const nsfwOn = core.shouldUseNsfwPrompt(p);
         const chunks = core.chunkCues(cues, {
@@ -474,8 +474,14 @@ async function runSakuraTranslateBody(payload = {}) {
             },
         };
     } finally {
-        if (endpoint.source === 'sakura') {
-            llamaServer.scheduleIdleStop();
+        // Engine/TWAI batch owns llama lifecycle; single jobs arm idle stop for local endpoints.
+        if (!(p._batchMode || p._engineExternalMt)
+            && (endpoint.source === 'sakura' || endpoint.source === 'managed')) {
+            if (p.signal?.aborted) {
+                try { llamaServer.stopLlamaServer(); } catch (_) { /* ignore */ }
+            } else {
+                llamaServer.scheduleIdleStop();
+            }
         }
     }
 }
@@ -579,12 +585,15 @@ async function sakuraTranslateSubtitleFile(options = {}) {
 let sakuraTranslateAbort = null;
 
 function cancelSakuraTranslate() {
+    let cancelled = false;
     if (sakuraTranslateAbort) {
         try { sakuraTranslateAbort.abort(); } catch (_) { /* ignore */ }
         sakuraTranslateAbort = null;
-        return { ok: true, cancelled: true };
+        cancelled = true;
     }
-    return { ok: true, cancelled: false };
+    // Abort alone may not reach finally quickly; reclaim llama on cancel.
+    try { llamaServer.stopLlamaServer(); } catch (_) { /* ignore */ }
+    return { ok: true, cancelled };
 }
 
 /**

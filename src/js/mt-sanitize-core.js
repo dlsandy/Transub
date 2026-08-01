@@ -30,18 +30,26 @@
     } catch (_) {
         nsfwLex = null;
     }
-    const api = factory(fluency, glossaryCore, jaNames, nsfwLex);
+    let mtOpaque = null;
+    try {
+        mtOpaque = (typeof module !== 'undefined' && module.exports)
+            ? require('./mt-opaque-strings')
+            : (global && global.TransubMtOpaque);
+    } catch (_) {
+        mtOpaque = null;
+    }
+    const api = factory(fluency, glossaryCore, jaNames, nsfwLex, mtOpaque);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubMtSanitize = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function mtSanitizeCoreFactory(fluency, glossaryCore, jaNames, nsfwLex) {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function mtSanitizeCoreFactory(fluency, glossaryCore, jaNames, nsfwLex, mtOpaque) {
     /** Engine protect placeholders + accidental "Gloss1234" / "GLOS2658克" leaks. */
     const GLOSS_TOKEN_RE = /__GLOSS\d*__|__GLOS\d*__|Gloss#{0,4}\d+_*/gi;
-    /** Bare glossary ids the model invents without underscores (GLOS2658克 / GLOSS12). */
-    const BARE_GLOSS_TOKEN_RE = /GLOS?S?\d{2,8}(?:克|[gG])?/gi;
+    /** Bare glossary ids the model invents without underscores (GLOS2658克 / GLOSS12 / GLOSSES2152). */
+    const BARE_GLOSS_TOKEN_RE = /GLOS[A-Z]*\d{2,8}(?:克|[gG])?/gi;
     /** Any double-underscore LLM/meta placeholder (e.g. __香水的代号__). */
     const GENERIC_PLACEHOLDER_RE = /__([^_\n]{1,64})__/g;
 
@@ -52,6 +60,8 @@
         '好的', '是的', '不是', '没有', '可以', '不行', '没事', '对不起', '抱歉',
         '谢谢', '再见', '加油', '真的', '当然', '怎么', '什么', '哪里', '为什么',
         '好吧', '好啦', '嗯嗯', '啊啊', '哈哈', '呵呵', '唉呀', '哎呀',
+        '要去了', '好舒服', '舒服吗', '好开心', '也亲亲我', '亲一下',
+        '别哭', '超棒', '好纠结', '振作起来', '别捣乱', '恰皮', '鸡巴',
         '用那种心情', '再慢一点等我', '又消失了呢',
     ]);
 
@@ -129,9 +139,10 @@
     const ZH_HONORIFIC_SUFFIX_RE = /(?:同学|小姐|先生|桑|君|酱|大人|老师)$/;
 
     /**
-     * JA AV / メンエス ASR mishears → correct Japanese before MT.
+     * JA mens-esthe / soft-AV ASR mishears → correct Japanese before MT.
      * Longest-first; keep conservative (high-confidence only).
-     * SSOT string pairs live in shared/ja-asr-domain-fixes.json (Node loads; browser uses fallback).
+     * Non-sensitive pairs: shared/ja-asr-domain-fixes.json (+ browser fallback).
+     * Sensitive adult pairs: mt-opaque-strings (merged at load).
      */
     const JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK = Object.freeze([
         { from: '免税しては', to: 'メンエスは' },
@@ -193,12 +204,6 @@
         { from: 'アイルたくさん', to: 'オイルたくさん' },
         { from: 'あいみょんのせい', to: 'オイルのせい' },
         { from: 'あいみょん', to: 'オイル' },
-        { from: '大好きなアップル', to: '大好きなおっぱい' },
-        { from: '大好きなアップで挟', to: '大好きなおっぱいで挟' },
-        { from: 'アップルで挟', to: 'おっぱいで挟' },
-        { from: 'アップで挟', to: 'おっぱいで挟' },
-        { from: 'あっぱいで挟', to: 'おっぱいで挟' },
-        { from: 'ほっぱい', to: 'おっぱい' },
         { from: 'お手紙できますか', to: '仰向けできますか' },
         { from: '前向けになって', to: '仰向けになって' },
         { from: '前向けも', to: '仰向けも' },
@@ -216,22 +221,37 @@
         { from: '下半戦', to: '下半身' },
         { from: '肩膀を', to: '肩を' },
         { from: 'トロックになって', to: 'トロトロになって' },
-        { from: 'マイクロビッキン', to: 'マイクロビキニ' },
-        { from: 'お正気', to: 'お仕置き' },
         { from: 'お客様のペースが柔らかい', to: 'お客様の肌が柔らかい' },
-        { from: '祖父とは違います', to: '風俗とは違います' },
-        { from: '購入しててください', to: '興奮しててください' },
+        { from: 'サイジ', to: 'サイズ' },
+        { from: '張りつ舞って', to: '張りつめて' },
+        { from: '基礎してください', to: 'キスしてください' },
     ]);
 
     function loadJaAsrDomainFixPairs() {
+        let base = JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
         if (typeof module !== 'undefined' && module.exports) {
             try {
                 const path = require('path');
                 const pairs = require(path.join(__dirname, '..', '..', 'shared', 'ja-asr-domain-fixes.json'));
-                if (Array.isArray(pairs) && pairs.length) return pairs;
+                if (Array.isArray(pairs) && pairs.length) base = pairs;
             } catch (_) { /* fall through */ }
         }
-        return JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
+        const adult = (typeof mtOpaque?.getAsrAdultDomainPairs === 'function')
+            ? mtOpaque.getAsrAdultDomainPairs()
+            : [];
+        const seen = new Set();
+        const merged = [];
+        for (const p of [...base, ...adult]) {
+            const from = String(p?.from || '');
+            const to = String(p?.to || '');
+            if (!from || !to || seen.has(from)) continue;
+            seen.add(from);
+            merged.push({ from, to });
+        }
+        // Longest-first so overlapping mishears (e.g. 大好きなアップで挟) win.
+        merged.sort((a, b) => Array.from(b.from).length - Array.from(a.from).length
+            || String(a.from).localeCompare(String(b.from), 'ja'));
+        return merged;
     }
 
     const JA_ASR_DOMAIN_FIX_PAIRS = Object.freeze(loadJaAsrDomainFixPairs().map((p) => ({
@@ -254,9 +274,9 @@
     /** Standalone mid-scene greetings Whisper often invents in soft AV. */
     const JA_FAKE_GREETING_RE = /^(?:おはようございます|おはようございま[すっ]|おはよう)[。．!！?？\s]*$/;
     const ZH_MORNING_GREETING_RE = /^(?:早上好|早安|早上好[。．!！]?|早安[。．!！]?)[。．!！?？\s]*$/;
-    const JA_ORGASM_HINT_RE = /イッ|イキ|絶頂|オーガズム|高潮|射精|出ちゃ|出そう|イっ/;
-    const JA_GENITAL_HINT_RE = /まんこ|おまんこ|まんまん|おまん|ちんちん|おちん|ちんぽ|チンコ|ペニス|穴/;
-    const JA_INTRO_HINT_RE = /本日担当|担当させて|担当いたします|メンズエ|メンエス|初めてご利用|風俗ではありません|性的なサービス/;
+    // Adult-aware intro hints: opaque (fallback keeps mens-esthe duty phrasing only).
+    const JA_INTRO_HINT_RE = mtOpaque?.RE?.introHint
+        || /本日担当|担当させて|担当いたします|メンズエ|メンエス|初めてご利用/;
     const ZH_MOAN_REFUSAL_ONLY_RE = /^(?:[哈啊嗯唔呼呵哦噢欸诶呀哟哇呜嘻呵…]|[不行可以]|[\s…·・，,。.！!？?～~─—-])+$/;
 
     function textLen(text) {
@@ -366,21 +386,17 @@
         let cur = String(text ?? '');
         const src = String(sourceText || '');
         const flags = [];
-        if (!cur || !src) return { text: cur, changed: false, flags };
+        if (!src) return { text: cur, changed: false, flags };
+        // Allow empty / ellipsis ZH through — recovery rules (おかえり, synopsis wipe) need it.
 
         const mark = (flag) => {
             if (!flags.includes(flag)) flags.push(flag);
         };
 
-        // High-confidence semantic inversions / disclaimer collapses (before blanking)
-        if (/性的なサービスはできません|性的サービスはできません/.test(src) && /放过|不会放过/.test(cur)) {
-            cur = '不能提供性服务，';
-            mark('domain_term');
-        }
-        if (/風俗ではありません/.test(src)
-            && (/^(?:不可以…?)+$/.test(cur.replace(/\s+/g, '')) || /放过/.test(cur))) {
-            cur = '这里不是风俗店。';
-            mark('domain_term');
+        // High-confidence adult semantic inversions (opaque tokens)
+        if (mtOpaque?.applyAdultSemanticFixes) {
+            const adult = mtOpaque.applyAdultSemanticFixes(cur, src, mark);
+            if (adult.changed) cur = adult.text;
         }
 
         // Intro / disclaimer hallucinated into moans or inverted refusals
@@ -433,6 +449,20 @@
         // さつき truncated / mangled name
         if (/(?:さつき|サツキ)/.test(src) && /(?:我叫作沙|叫作沙|作沙)/.test(cur)) {
             cur = cur.replace(/我叫作沙/g, '我叫皐月').replace(/叫作沙/g, '叫皐月').replace(/作沙/g, '皐月');
+            mark('domain_term');
+        }
+
+        // 泣かないで misread as「哭了」(dropped negation)
+        if (/泣かないで/.test(src) && /哭了/.test(cur) && !/泣いた|泣いて/.test(src)) {
+            cur = cur.replace(/别哭了/g, '别哭').replace(/哭了/g, '别哭');
+            mark('domain_term');
+        }
+        // めっちゃいい collapsed to bare「好的」
+        if (
+            /めっちゃいい|すごくいい|超いい|超イイ/.test(src)
+            && /^(?:好的|好)[。．.!！?？\s]*$/.test(cur.trim())
+        ) {
+            cur = '超棒';
             mark('domain_term');
         }
 
@@ -530,18 +560,7 @@
             mark('domain_term');
         }
 
-        // おむけ / 仰向け → sexual organ hallucination
-        if (/(?:おむけ|仰向け)/.test(src) && !JA_GENITAL_HINT_RE.test(src) && /小穴/.test(cur)) {
-            cur = cur.replace(/小穴/g, '仰躺');
-            mark('domain_term');
-        }
-
-        // ほぐす / はぐす → 高潮 (massage loosen ≠ orgasm)
-        if (/(?:ほぐ|はぐして|はぐして|はぐしていく)/.test(src) && /高潮/.test(cur) && !JA_ORGASM_HINT_RE.test(src)) {
-            cur = cur.replace(/保持着高潮/g, '认真推拿')
-                .replace(/高潮/g, '放松');
-            mark('domain_term');
-        }
+        // Adult anatomy / climax / atmosphere hallucinations → mtOpaque.applyAdultSemanticFixes (above)
 
         // 凝ってる → 集中力
         if (/凝[って]|凝って/.test(src) && /集中力/.test(cur)) {
@@ -551,18 +570,139 @@
             mark('domain_term');
         }
 
-        // メンエスはわびさび / ギリギリ → sex-atmosphere hallucination
-        if (/(?:メンエース|メンエス).{0,12}(?:わびさび|塩梅|ギリギリ)/.test(src)
-            || /わびさび|ギリギリの塩梅/.test(src)) {
-            if (/做爱是需要气氛|需要气氛/.test(cur)) {
-                cur = '男士按摩讲究的是分寸感哦';
+        // feel-good misread as itch (surface forms kept generic in comments)
+        if (
+            /気持ちい|きもちい|キモチイ/.test(src)
+            && /痒/.test(cur)
+            && !/痒い|かゆい|かゆ|ムズムズ/.test(src)
+        ) {
+            const next = cur
+                .replace(/好痒了?/g, '好舒服')
+                .replace(/好痒/g, '好舒服')
+                .replace(/痒啊/g, '舒服啊')
+                .replace(/痒[!！]/g, '舒服！')
+                .replace(/很痒/g, '很舒服');
+            if (next !== cur) {
+                cur = next;
                 mark('domain_term');
             }
         }
 
-        // アップル ASR leftover → 苹果 when source is breast context
-        if (/アップル|おっぱい/.test(src) && /苹果/.test(cur) && !/林檎|りんご/.test(src)) {
-            cur = cur.replace(/苹果/g, '奶子');
+        // おかえり / ただいま / お帰り — including「クロちゃん、おかえり」
+        {
+            const srcTrim = src.trim();
+            const compactLen = Array.from(srcTrim.replace(/\s/g, '')).length;
+            if (/お帰り|おかえり/.test(srcTrim) && compactLen <= 16) {
+                if (
+                    !/欢迎回来/.test(cur)
+                    || /^(?:回家了|喂)[。．!！?？\s]*$/.test(cur.trim())
+                    || /^(?:啊[，,、]?\s*)+$/.test(cur.trim())
+                    || /^[…·•.\s]*$/.test(cur.trim())
+                ) {
+                    const nick = srcTrim.match(
+                        /^([ァ-ヶーぁ-ん一-龯]{1,8}?)(?:ちゃん|くん|さん)[、,，\s]*(?:おかえり|お帰り)/,
+                    );
+                    if (nick) {
+                        let zhName = nick[1];
+                        if (jaNames?.CAST_CANONICAL_ZH?.[zhName]) {
+                            zhName = jaNames.CAST_CANONICAL_ZH[zhName];
+                        } else if (jaNames?.resolveCanonicalZhPersonName) {
+                            zhName = jaNames.resolveCanonicalZhPersonName(zhName) || zhName;
+                        }
+                        if (/[ぁ-んァ-ン]/.test(zhName)) {
+                            cur = '欢迎回来。';
+                        } else {
+                            cur = `${zhName}，欢迎回来。`;
+                        }
+                    } else if (/^あ[ぁあ]?[、，,]?\s*/.test(srcTrim)) {
+                        cur = '啊，欢迎回来。';
+                    } else {
+                        cur = '欢迎回来。';
+                    }
+                    mark('domain_term');
+                }
+            } else if (/^ただいま[。．!！?？\s]*$/.test(srcTrim)) {
+                if (!/我回来了|回来了/.test(cur) || /^(?:喂|回家了)[。．!！?？\s]*$/.test(cur.trim())) {
+                    cur = '我回来了。';
+                    mark('domain_term');
+                }
+            }
+        }
+
+        // Tiny JA scrap with synopsis/essay ZH (film-brief bleed into cue 0)
+        if (textLen(src) > 0 && textLen(src) <= 3 && textLen(cur) >= 20) {
+            cur = '';
+            mark('synopsis_bleed');
+            return { text: cur, changed: true, flags };
+        }
+
+        // Adult-domain training fixes (opaque tokens — see mt-opaque-strings.js)
+        if (mtOpaque?.applyTrainingDomainFixes) {
+            const trained = mtOpaque.applyTrainingDomainFixes(cur, src, mark);
+            if (trained.changed) cur = trained.text;
+        }
+
+        // 「Xちゃん」≠「X小姐」
+        if (
+            /[ぁ-んァ-ン一-龯A-Za-z]{1,10}ちゃん/.test(src)
+            && /小姐/.test(cur)
+            && !/お嬢様|お嬢さん/.test(src)
+        ) {
+            const next = cur.replace(/([A-Za-z\u4e00-\u9fff]{1,12})小姐/g, '$1');
+            if (next !== cur) {
+                cur = next;
+                mark('chan_honorific');
+            }
+        }
+
+        // Model invents censorship meta for 「…」/ adult lines
+        if (/省略或遮挡的内容|表示省略或遮挡/.test(cur) || /省略了/.test(cur)) {
+            const next = cur
+                .replace(/表示省略或遮挡的内容/g, '')
+                .replace(/省略或遮挡的内容/g, '')
+                .replace(/省略了/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .replace(/([，,、]){2,}/g, '$1')
+                .trim();
+            if (next !== cur) {
+                cur = next;
+                mark('meta_ellipsis');
+            }
+        }
+
+        // Nickname ミッキー ≠ Disney 米老鼠
+        if (/ミッキー/.test(src) && /米老鼠/.test(cur)) {
+            cur = cur.replace(/米老鼠/g, '米奇');
+            mark('domain_term');
+        }
+
+        // Meta “主人公” bleed (not in JA source)
+        if (/主人公/.test(cur) && !/主人公/.test(src)) {
+            const next = cur
+                .replace(/即?主人公的前上司[，,、]*/g, '')
+                .replace(/主人公的?/g, '')
+                .replace(/即死者[。．.\s]*/g, '')
+                .replace(/([，,、。．.]){2,}/g, '$1')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+            if (next !== cur) {
+                cur = next;
+                mark('domain_term');
+            }
+        }
+
+        // ひびき / 響 as bare given name — strip fansub「响小姐」
+        if (/ひびき|ヒビキ|響/.test(src) && /响小姐/.test(cur) && !/お嬢様|お嬢さん/.test(src)) {
+            cur = cur.replace(/响小姐/g, '响');
+            mark('domain_term');
+        }
+
+        // Blanked nickname vocative (まーくん → …)
+        if (
+            /^まーくん[。．!！?？\s]*$/.test(src.trim())
+            && /^[…·•.\s]*$/.test(cur.trim())
+        ) {
+            cur = '阿马';
             mark('domain_term');
         }
 
@@ -659,8 +799,14 @@
             }
             return name;
         });
-        // Consistency-pass meta: "うちわら小姐\n改成：うちわら小姐"
+        // Consistency-pass meta: "うちわら小姐\n改成：うちわら小姐" / "旧译→新译"
         next = next.replace(/(?:^|\n)\s*改成[：:]\s*[^\n]*/g, '');
+        if (/→/.test(next) && next.length <= 120 && !/https?:/.test(next)) {
+            const parts = next.split('→').map((s) => s.trim()).filter(Boolean);
+            if (parts.length === 2 && parts[0].length >= 2 && parts[1].length >= 2) {
+                next = parts[1];
+            }
+        }
         next = next.replace(/[^\S\n]{2,}/g, ' ').replace(/^[^\S\n]+|[^\S\n]+$/g, '');
         // Orphan closing quotes with no opener (e.g. 「……。 」)
         if (!/[「『"“]/.test(next) && /[」』"”]/.test(next)) {
@@ -957,6 +1103,7 @@
 
     /**
      * Collapse「真琴小姐…小姐」「内村小姐…小姐…小姐」honorific stutter from weak LLMs.
+     * Also collapses adjacent doubles: 美羽小姐小姐 → 美羽小姐.
      */
     function collapseHonorificEchoes(text) {
         let cur = String(text ?? '');
@@ -965,21 +1112,123 @@
         // Name + honorific + repeated honorifics: 悠奈小姐…小姐 → 悠奈小姐
         cur = cur.replace(
             new RegExp(
-                `([\\u4e00-\\u9fffぁ-んァ-ンー]{1,12})(${honor})(?:[\\s…·・.。]{1,8}\\2)+`,
+                `([\\u4e00-\\u9fffぁ-んァ-ンー]{1,12})(${honor})(?:[\\s…·・.。]{0,8}\\2)+`,
                 'g',
             ),
             '$1$2',
         );
-        // Bare honorific stutter: 小姐…小姐…小姐 → 小姐
+        // Bare honorific stutter: 小姐…小姐…小姐 / 小姐小姐 → 小姐
         cur = cur.replace(
-            new RegExp(`(${honor})(?:[\\s…·・.。]{1,8}\\1)+`, 'g'),
+            new RegExp(`(${honor})(?:[\\s…·・.。]{0,8}\\1)+`, 'g'),
             '$1',
         );
         return { text: cur, changed: cur !== before };
     }
 
     /**
-     * Kinship mistranslations: お母さん → 母小姐 / 父小姐.
+     * Strip LLM name debris: 「到的美羽小姐」「亲爱的奥小姐」when unjustified.
+     */
+    function stripSpuriousNamePrefixes(text, sourceText = '') {
+        let cur = String(text ?? '');
+        const src = String(sourceText || '');
+        const before = cur;
+        // 「到的X / 到的X小姐」— classic Qwen glue from だけ/敬語 misalign
+        cur = cur.replace(/到的(?=[\u4e00-\u9fffぁ-んァ-ンー]{1,6}(?:小姐|先生|同学|桑|君|酱)?)/g, '');
+        // お兄さん / お姉さま → must not stay as 奥小姐 / 亲爱的奥小姐
+        if (/お兄|姉さん|お姉|兄さん/.test(src)) {
+            cur = cur.replace(/亲爱的奥小姐/g, '哥哥');
+            cur = cur.replace(/奥小姐/g, () => (/お姉|姉さん/.test(src) ? '姐姐' : '哥哥'));
+            cur = cur.replace(/兄小姐/g, '哥哥');
+            cur = cur.replace(/姉小姐/g, '姐姐');
+        }
+        return { text: cur, changed: cur !== before };
+    }
+
+    /**
+     * Drop leftover JA kana glued into mostly-Chinese MT (信じたく小姐 / さあゆう小姐).
+     */
+    function stripResidualJaInZh(text, sourceText = '') {
+        let cur = String(text ?? '');
+        const before = cur;
+        const zhChars = (cur.match(/[\u4e00-\u9fff]/g) || []).length;
+        const jaChars = (cur.match(/[\u3040-\u30ff]/g) || []).length;
+        if (!jaChars || zhChars < 1) return { text: cur, changed: false };
+        // Keep short moan / onomatopoeia-only lines
+        if (zhChars <= 1 && jaChars <= 4) return { text: cur, changed: false };
+        // Fake-name token that contains kana (do not eat preceding pure-ZH words like 老婆)
+        // さあゆう小姐 / タイみな小姐 / ゆう先生；信じたく小姐（≤2 汉字头）
+        const honor = '小姐|先生|同学|桑|君|酱';
+        cur = cur.replace(new RegExp(`[ぁ-んァ-ンー]{2,12}(?:${honor})`, 'g'), '');
+        cur = cur.replace(new RegExp(`[\\u4e00-\\u9fff]{1,2}[ぁ-んァ-ンー]{2,10}(?:${honor})`, 'g'), '');
+        // Mid-line JA island inside Chinese (…老婆さあゆう…)
+        if (zhChars >= 2) {
+            cur = cur.replace(/(?<=[\u4e00-\u9fff])[ぁ-んァ-ンー]{2,16}(?=[\u4e00-\u9fff])/g, '');
+            cur = cur.replace(/[ぁ-んァ-ンー]{2,16}(?=[\u4e00-\u9fff]{2,})/g, '');
+            cur = cur.replace(/(?<=[\u4e00-\u9fff，,、])[ぁ-んァ-ンー]{2,16}$/g, '');
+        }
+        // Orphan honorific after wiping JA stem (keep「美羽小姐」; drop bare「小姐」/「的小姐」)
+        cur = cur.replace(/的(?:小姐|先生|同学|桑|君|酱)(?=[\s，,、。！？!…]|$)/g, '');
+        cur = cur.replace(
+            /(?<![\u4e00-\u9fff])(?:小姐|先生|同学|桑|君|酱)(?=[\s，,、。！？!…]|$)/g,
+            '',
+        );
+        // Moan kana leftover glued to ZH interjections: 啊ん → 啊
+        cur = cur.replace(/([啊嗯哈呼哦噢欸诶])ん/g, '$1');
+        cur = cur.replace(/\s{2,}/g, ' ').replace(/^[，,、\s]+|[，,、\s]+$/g, '').trim();
+        // If we wiped almost everything but source was dialogue, leave empty for retry
+        if (!cur && String(sourceText || '').trim()) {
+            cur = '';
+        }
+        return { text: cur, changed: cur !== before };
+    }
+
+    /**
+     * 「Xさん」is gender-neutral — strip fansub「X小姐／先生」back to the bare name.
+     * Keep 小姐 only when source is お嬢様 / お嬢さん.
+     */
+    function normalizeZhHonorificFromJaSan(text, sourceText = '') {
+        let cur = String(text ?? '');
+        const src = String(sourceText || '');
+        const before = cur;
+        if (!cur || !src) return { text: cur, changed: false };
+        if (/お嬢様|お嬢さん|嬢様/.test(src)) return { text: cur, changed: false };
+
+        const names = new Set();
+        const pushName = (stem, honorific) => {
+            const s = String(stem || '').trim();
+            if (!s || Array.from(s).length < 1) return;
+            names.add(s);
+            if (jaNames?.resolveCanonicalZhPersonName) {
+                const zh = jaNames.resolveCanonicalZhPersonName(s, { honorific });
+                if (zh) names.add(zh);
+            }
+        };
+
+        if (jaNames?.extractJaPersonRefs) {
+            for (const r of jaNames.extractJaPersonRefs(src)) {
+                if (r.via !== 'honorific') continue;
+                if (!/^(?:さん|ちゃん|くん|君)$/.test(String(r.honorific || ''))) continue;
+                pushName(r.stem, r.honorific);
+            }
+        } else {
+            const re = /([一-龯ぁ-んァ-ンー]{1,4})(さん|ちゃん|くん|君)/g;
+            let m = re.exec(src);
+            while (m) {
+                pushName(m[1], m[2]);
+                m = re.exec(src);
+            }
+        }
+
+        for (const name of names) {
+            if (/[ぁ-んァ-ン]/.test(name)) continue; // never leave kana+honorific as target
+            const esc = escapeRegExp(name);
+            cur = cur.replace(new RegExp(`${esc}(?:小姐|先生|同学)`, 'g'), name);
+        }
+        return { text: cur, changed: cur !== before };
+    }
+
+    /**
+     * Kinship mistranslations: お母さん→母小姐 / 奥さん→奥小姐 / 旦那さん→旦那小姐.
      */
     function fixKinshipHonorificMistranslations(text, sourceText = '') {
         let cur = String(text ?? '');
@@ -991,11 +1240,35 @@
         if (/お父|とうさん|父さん/.test(src) || /^お父さん/.test(src.trim())) {
             cur = cur.replace(/父小姐/g, '爸爸').replace(/爸爸小姐/g, '爸爸');
         }
+        // 旦那さん = husband — never「旦那小姐」
+        // If source is 奥さん but model wrote 旦那小姐, prefer 太太 (gender from source).
+        if (/奥さん|おくさん/.test(src)) {
+            cur = cur.replace(/旦那小姐/g, '太太');
+        }
+        if (/旦那小姐/.test(cur) && (/旦那|だんな/.test(src) || !/奥さん|おくさん/.test(src))) {
+            cur = cur.replace(/旦那小姐/g, '老公');
+            cur = cur.replace(/(老公)(?:\s*\1)+/g, '$1');
+        }
+        // 奥さん = (someone's) wife — never a person name「奥小姐」
+        // Also fix hallucinated 奥小姐 when source has no brother context
+        if (/奥さん|おくさん/.test(src) || (/奥小姐/.test(cur) && !/お兄|お姉|姉さん|兄さん/.test(src))) {
+            cur = cur.replace(/亲爱的奥小姐/g, '太太');
+            cur = cur.replace(/奥小姐/g, '太太');
+            cur = cur.replace(/(太太)(?:\s*\1)+/g, '$1');
+            cur = cur.replace(/找太太回去找太太/g, '找太太');
+            cur = cur.replace(/部长和部长和太太/g, '部长和太太');
+        }
         if (/おばあちゃん|祖母/.test(src)) {
             cur = cur.replace(/祖母小姐|外婆小姐|奶奶小姐/g, (m) => m.replace(/小姐$/, ''));
         }
         if (/おじいちゃん|祖父/.test(src)) {
             cur = cur.replace(/祖父小姐|外公小姐|爷爷小姐/g, (m) => m.replace(/小姐$/, ''));
+        }
+        if (/お兄|兄さん/.test(src) && !/奥さん|おくさん/.test(src)) {
+            cur = cur.replace(/兄小姐|奥小姐|亲爱的奥小姐/g, '哥哥');
+        }
+        if (/お姉|姉さん/.test(src)) {
+            cur = cur.replace(/姉小姐|姐小姐/g, '姐姐');
         }
         // Standalone kinship cue
         if (/^お母さん[。．!！?？\s]*$/.test(src.trim()) && /母小姐|妈妈小姐/.test(cur)) {
@@ -1376,8 +1649,8 @@
         '我有好好地在工作',
         '我有好好地在工作。',
     ]);
-    // Long stuck NSFW template pasted onto unrelated moans / laughs
-    const ORPHAN_STUCK_ZH_RE = /^哥哥的肉棒好舒服[，,]?嗯?啊*！?$/;
+    // Long stuck NSFW template (pattern opaque)
+    const ORPHAN_STUCK_ZH_RE = mtOpaque?.RE?.orphanStuckZh || /$a/;
 
     function jaNormKey(text) {
         return String(text || '')
@@ -1395,10 +1668,50 @@
         const s = String(ja || '').trim();
         if (!s) return null;
         const bare = s.replace(/[。．.!！]+$/g, '');
-        if (/^あはは|^ははは/.test(s)) return '哈哈';
+        if (/^あはは|^ははは/.test(s)) {
+            if (/(?:イッちゃう|いっちゃう|イキそう)/.test(s)) {
+                return /[?？]/.test(s)
+                    ? (mtOpaque?.T?.ahahaIkuQZh || '哈哈，要去了吗？')
+                    : (mtOpaque?.T?.ahahaIkuZh || '哈哈，要去了');
+            }
+            if (/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ|きもち/.test(s)) {
+                return mtOpaque?.T?.ahahaFeelZh || '哈哈，好舒服';
+            }
+            return '哈哈';
+        }
         if (/^はい$/.test(bare)) return '好的';
         if (/^うん$/.test(bare)) return '嗯';
-        if (/気持ちいい/.test(s)) return /[?？]/.test(s) ? '舒服吗？' : '好舒服';
+        if (/うれしい|嬉し[いっ]/.test(s) && textLen(s) <= 12) return '好开心';
+        if (/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ/.test(s)) {
+            return /[?？]/.test(s) ? '舒服吗？' : '好舒服';
+        }
+        if (/(?:イッちゃう|いっちゃう|イク[っっ]|イキそう|イッちゃ)/.test(s) && textLen(s) <= 20) {
+            return '要去了';
+        }
+        if (/ちゅ[ーう]|チュー|ちゅうして/.test(s) && textLen(s) <= 16) {
+            return /もして/.test(s) ? '也亲亲我' : '亲一下';
+        }
+        if (/泣かないで/.test(s) && textLen(s) <= 12) return '别哭';
+        if (/^めっちゃいい|^すごくいい|^超[いイ]い/.test(s) && textLen(s) <= 12) return '超棒';
+        if (/悩ましい/.test(s) && textLen(s) <= 10) return '好纠结';
+        if (/元気になって/.test(s)) {
+            if (/ほら/.test(s)) return '来，振作起来呀';
+            if (/お兄ちゃん|おにいちゃん/.test(s)) return '哥哥，振作起来';
+            return '振作起来';
+        }
+        if (/(?:お兄ちゃん|おにいちゃん).{0,4}いたずら/.test(s)) return '哥哥，别捣乱';
+        if (/やばい/.test(s) && /重なって/.test(s)) return '糟了，叠得超级厉害';
+        if (/未来行きたい/.test(s) && textLen(s) <= 14) return '可能想去未来';
+        if (/気持ちいいよ/.test(s) && textLen(s) <= 12) return '好舒服呀';
+        if (/ありがとう/.test(s) && /チャッピ|ちゃっぴ|チャピ/.test(s) && textLen(s) <= 20) {
+            return '谢谢，恰皮';
+        }
+        if (/^ねえ[、,，]?\s*(?:ちゃっぴー|チャッピー|チャッピ)/.test(s) && textLen(s) <= 16) {
+            return '喂，恰皮';
+        }
+        if (/ちょっと/.test(s) && /おちんちん|おはちんちん/.test(s) && textLen(s) <= 16) {
+            return '等等，鸡巴';
+        }
         if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡]+$/.test(s)) {
             if (/[はハ]/.test(s) && !/[あァぁあんン]/.test(s.replace(/[はハ]/g, ''))) {
                 return /[!！]/.test(s) ? '哈——！' : '哈啊';
@@ -1410,6 +1723,30 @@
             return /[!！]/.test(s) ? '啊——！' : '啊……';
         }
         return null;
+    }
+
+    /** Recover ZH stubs like「啊，」/「哈哈」when JA clearly carries feel-good / climax content. */
+    function polishTruncatedReactiveZh(text, sourceText = '') {
+        const cur = String(text || '').trim();
+        const src = String(sourceText || '');
+        if (!cur || !src) return { text: cur, changed: false };
+        if (!/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|好|好的|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
+            // Trailing climax stub:「…啊，」after anatomy when JA has イッちゃう
+            if (
+                /(?:啊[，,]|啊)$/.test(cur)
+                && /(?:イッちゃう|いっちゃう|イッちゃ)/.test(src)
+                && textLen(cur) <= textLen(src) + 2
+                && textLen(cur) >= 3
+            ) {
+                const next = cur.replace(/(?:啊[，,]|啊)$/, '要去了');
+                if (next !== cur) return { text: next, changed: true };
+            }
+            return { text: cur, changed: false };
+        }
+        if (textLen(src) < 4) return { text: cur, changed: false };
+        const remapped = remapZhFromJaSimple(src);
+        if (remapped == null || remapped === cur) return { text: cur, changed: false };
+        return { text: remapped, changed: true };
     }
 
     function polishOrphanStuckZh(text, sourceText = '') {
@@ -1424,8 +1761,10 @@
             }
         }
         if (ORPHAN_STUCK_ZH_RE.test(cur) || ORPHAN_STUCK_ZH_RE.test(bare)) {
-            // Keep only when JA actually mentions penis / feeling good
-            if (!/お?ちん|ちんぽ|ちんこ|肉棒|気持ちいい|きもちいい/.test(src)) {
+            const keep = mtOpaque?.shouldKeepOrphanStuckZh
+                ? mtOpaque.shouldKeepOrphanStuckZh(src)
+                : false;
+            if (!keep) {
                 const remapped = remapZhFromJaSimple(src);
                 return { text: remapped != null ? remapped : '…', changed: true };
             }
@@ -1534,6 +1873,13 @@
             flags.push('orphan_stuck_zh');
         }
 
+        const truncReact = polishTruncatedReactiveZh(cur, loopStrippedSource || sourceText);
+        if (truncReact.changed) {
+            cur = truncReact.text;
+            changed = true;
+            flags.push('truncated_reactive');
+        }
+
         const stripped = stripMtArtifacts(cur);
         if (stripped.changed) {
             cur = stripped.text;
@@ -1594,11 +1940,32 @@
             flags.push('honorific_echo');
         }
 
+        const namePrefix = stripSpuriousNamePrefixes(cur, loopStrippedSource || sourceText);
+        if (namePrefix.changed) {
+            cur = namePrefix.text;
+            changed = true;
+            flags.push('name_prefix');
+        }
+
+        const residualJa = stripResidualJaInZh(cur, loopStrippedSource || sourceText);
+        if (residualJa.changed) {
+            cur = residualJa.text;
+            changed = true;
+            flags.push('residual_ja');
+        }
+
         const kinship = fixKinshipHonorificMistranslations(cur, loopStrippedSource || sourceText);
         if (kinship.changed) {
             cur = kinship.text;
             changed = true;
             flags.push('kinship');
+        }
+
+        const sanHonor = normalizeZhHonorificFromJaSan(cur, loopStrippedSource || sourceText);
+        if (sanHonor.changed) {
+            cur = sanHonor.text;
+            changed = true;
+            flags.push('san_honorific');
         }
 
         // Leftover NSFW kana in ZH when source had the same form (optional; AV paths enable)
@@ -1617,7 +1984,7 @@
             }
         }
 
-        // Mens-esthe / soft-AV domain mistranslations (オイル→防晒油, おむけ→小穴, …)
+        // Mens-esthe / soft-AV domain mistranslations (オイル→防晒油, posture hallucinations, …)
         const domain = correctZhDomainMistranslations(cur, loopStrippedSource || sourceText, {
             ...options,
             cueIndex: options.cueIndex,
@@ -1672,6 +2039,14 @@
             flags.push('length_cap');
         }
 
+        // Model refused / echoed JA / wrote «…» for clear adult dialogue → recover
+        const blankAdult = recoverBlankedAdultZh(cur, loopStrippedSource || sourceText, options);
+        if (blankAdult.changed) {
+            cur = blankAdult.text;
+            changed = true;
+            flags.push('blank_adult_recover');
+        }
+
         // Never leave a dialogue source with a totally empty ZH (engine/post may drop the cue)
         if (!String(cur).trim() && String(sourceText || '').trim()) {
             cur = '…';
@@ -1680,6 +2055,42 @@
         }
 
         return { text: cur, changed, flags };
+    }
+
+    function isEllipsisOrEmptyZh(text) {
+        const t = String(text || '').trim();
+        if (!t) return true;
+        if (/^(?:\.\.\.|……)$/.test(t)) return true;
+        if (/^[。．.、，,\s…·•\-—_~～]+$/.test(t)) return true;
+        if (/^[（(]\s*省略\s*[)）]$/.test(t)) return true;
+        return false;
+    }
+
+    /**
+     * When MT blanks adult dialogue to «…», recover a high-confidence ZH gloss.
+     * Intentional mid-scene fake おはよう blanks are left alone.
+     */
+    function recoverBlankedAdultZh(text, sourceText = '', options = {}) {
+        const cur = String(text || '').trim();
+        const src = String(sourceText || '');
+        if (!isEllipsisOrEmptyZh(cur)) return { text: cur, changed: false };
+        if (!src.trim()) return { text: cur, changed: false };
+        if (
+            shouldBlankFakeGreeting(options)
+            && JA_FAKE_GREETING_RE.test(src.trim())
+        ) {
+            return { text: cur, changed: false };
+        }
+        const recovered = mtOpaque?.recoverBlankAdultDialogue?.(src);
+        if (recovered) return { text: recovered, changed: true };
+        // Soft/AV conversational lines the model blanked (non-sex)
+        if (textLen(src) >= 6) {
+            const remapped = remapZhFromJaSimple(src);
+            if (remapped && !isEllipsisOrEmptyZh(remapped) && remapped !== cur) {
+                return { text: remapped, changed: true };
+            }
+        }
+        return { text: cur, changed: false };
     }
 
     /**
@@ -1782,6 +2193,68 @@
         };
     }
 
+    /**
+     * JA that is mostly moans / sfx — short ZH glosses are acceptable.
+     */
+    function isMoanOrSfxHeavyJa(sourceText = '') {
+        const s = String(sourceText || '').trim();
+        if (!s) return false;
+        if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡♥❤ク]+$/i.test(s)) return true;
+        let rest = s
+            .replace(/[はハはぁアァうぅウゥんンー〜～っッ!！?？…。．.\s♡♥❤、，,。.]+/g, '')
+            .replace(/(?:あんっ?|あっ|んっ|はぁ+|ふぅ+|イッ+|イク|いっちゃう|ちゅ[うっぷ]*|んふ|だめっ?)+/gi, '');
+        const sl = textLen(s);
+        return sl >= 4 && textLen(rest) <= Math.max(2, Math.floor(sl * 0.25));
+    }
+
+    /**
+     * ZH that is only a filler / interjection stub (嗯，/啊/请…).
+     * Intentionally excludes legitimate short replies like 谢谢/是的/好的.
+     */
+    function isFillerOnlyZh(text = '') {
+        const t = String(text || '').trim();
+        if (!t) return false;
+        if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|请|来|完了|不过|不对[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?|…+)$/.test(t)) {
+            return true;
+        }
+        const bare = t.replace(/[。．.、，,\s…·•\-—_~～！!？?]+/g, '');
+        if (!bare) return true;
+        return /^(?:嗯+|啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|请|来|完了|不过|不对|哎呀|嗨|嘿)+$/.test(bare);
+    }
+
+    /**
+     * True when ZH is a soft-omission vs substantive JA (caller should retry).
+     * Timing-aligned short fillers like「嗯，」「请」used to pass blank checks.
+     */
+    function isSeverelyUnderTranslated(text, sourceText = '') {
+        const t = String(text || '').trim();
+        const src = String(sourceText || '').trim();
+        if (!t || !src) return false;
+        const sl = textLen(src);
+        const tl = textLen(t);
+        if (sl < 6) return false;
+        if (isMoanOrSfxHeavyJa(src)) return false;
+        // Pure JA interjection/greeting of similar brevity — allow short ZH.
+        if (
+            sl <= 8
+            && /^(?:うん|ええ|はい|ああ|あっ|ねえ|はぁ|ふぅ|そう|よし)[。．!！?？\s…ー〜～]*$/i.test(src)
+        ) {
+            return false;
+        }
+        if (isFillerOnlyZh(t)) return true;
+        // Long dialogue collapsed into a tiny remnant (with or without trailing comma).
+        if (sl >= 10 && tl > 0 && tl < Math.max(2, Math.floor(sl / 5))) return true;
+        if (
+            sl >= 6
+            && tl >= 1
+            && tl < Math.max(4, Math.floor(sl * 0.45))
+            && /[，、,]$/.test(t)
+        ) {
+            return true;
+        }
+        return false;
+    }
+
     function isBlankOrPunctTranslation(text, sourceText = '') {
         const t = String(text || '').trim();
         if (!t) return true;
@@ -1789,6 +2262,7 @@
         if (looksLikePromptLeak(t)) return true;
         if (looksLikeSourceEcho(t, sourceText)) return true;
         if (isMostlyUntranslatedJa(t)) return true;
+        if (isSeverelyUnderTranslated(t, sourceText)) return true;
         return false;
     }
 
@@ -1803,6 +2277,7 @@
         if (!tLen) return false;
         if (looksLikePromptLeak(t)) return true;
         if (looksLikeSourceEcho(t, sourceText)) return true;
+        if (isSeverelyUnderTranslated(t, sourceText)) return true;
         const maxMul = Math.max(3, Number(options.pathologicalMul) || 5);
         if (srcLen > 0 && tLen > Math.max(60, srcLen * maxMul)) return true;
         if (fluency?.hasHeavyRepetition?.(t) && tLen > Math.max(30, srcLen * 2)) return true;
@@ -1830,6 +2305,9 @@
         stripUnjustifiedPollutionNames,
         collapseDePhraseEchoes,
         collapseHonorificEchoes,
+        stripSpuriousNamePrefixes,
+        stripResidualJaInZh,
+        normalizeZhHonorificFromJaSan,
         fixKinshipHonorificMistranslations,
         sourceJustifiesZhName,
         capPathologicalLength,
@@ -1841,12 +2319,17 @@
         sanitizeMtCueText,
         sanitizeMtCues,
         polishOrphanStuckZh,
+        polishTruncatedReactiveZh,
+        recoverBlankedAdultZh,
         unstickCrossCueZh,
         correctJaAsrDomainMishears,
         correctJaAsrDomainMishearsInCues,
         correctZhDomainMistranslations,
         isBlankOrPunctTranslation,
         isPathologicalMtText,
+        isSeverelyUnderTranslated,
+        isFillerOnlyZh,
+        isMoanOrSfxHeavyJa,
         isAvSoftContext,
         shouldBlankFakeGreeting,
         textLen,

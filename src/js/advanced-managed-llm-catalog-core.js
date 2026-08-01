@@ -91,21 +91,39 @@
     }
 
     /**
-     * 固定版本的 llama.cpp 预编译包（按平台选择）。
-     * Windows 默认 Vulkan（兼容多数 GPU，无需单独装 CUDA）。
+     * 固定版本的 llama.cpp 预编译包。
+     * Windows x64：静态回退为 Vulkan；有 NVIDIA（驱动 CUDA≥12）时由 preferCuda 将默认切到 CUDA 12。
      */
+    const WIN_VULKAN_X64 = Object.freeze({
+        id: 'win-vulkan-x64',
+        label: 'Windows x64 · Vulkan',
+        backend: 'vulkan',
+        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-vulkan-x64.zip`,
+        archive: 'zip',
+        exeName: 'llama-server.exe',
+        sizeHint: '约 32 MB',
+        note: '兼容多数 GPU，无需单独安装 CUDA',
+    });
+    const WIN_CUDA12_X64 = Object.freeze({
+        id: 'win-cuda12-x64',
+        label: 'Windows x64 · CUDA 12（NVIDIA）',
+        backend: 'cuda',
+        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-cuda-12.4-x64.zip`,
+        /** 官方 CUDA 运行库 DLL，需解压到与 llama-server 同目录 */
+        companionUrl: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/cudart-llama-bin-win-cuda-12.4-x64.zip`,
+        archive: 'zip',
+        exeName: 'llama-server.exe',
+        sizeHint: '约 630 MB（含 CUDA 运行库）',
+        note: '需 NVIDIA 驱动；通常比 Vulkan 更快',
+    });
+
+    /** 平台默认包（向后兼容 RUNTIME_PACKAGES[platformKey]） */
     const RUNTIME_PACKAGES = Object.freeze({
-        'win32-x64': Object.freeze({
-            id: 'win-vulkan-x64',
-            label: 'Windows x64 · Vulkan',
-            url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-vulkan-x64.zip`,
-            archive: 'zip',
-            exeName: 'llama-server.exe',
-            sizeHint: '约 32 MB',
-        }),
+        'win32-x64': WIN_VULKAN_X64,
         'win32-arm64': Object.freeze({
             id: 'win-cpu-arm64',
             label: 'Windows arm64 · CPU',
+            backend: 'cpu',
             url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-cpu-arm64.zip`,
             archive: 'zip',
             exeName: 'llama-server.exe',
@@ -114,6 +132,7 @@
         'darwin-arm64': Object.freeze({
             id: 'macos-arm64',
             label: 'macOS Apple Silicon',
+            backend: 'metal',
             url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-macos-arm64.tar.gz`,
             archive: 'tar.gz',
             exeName: 'llama-server',
@@ -122,6 +141,7 @@
         'darwin-x64': Object.freeze({
             id: 'macos-x64',
             label: 'macOS Intel',
+            backend: 'cpu',
             url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-macos-x64.tar.gz`,
             archive: 'tar.gz',
             exeName: 'llama-server',
@@ -130,12 +150,32 @@
         'linux-x64': Object.freeze({
             id: 'ubuntu-vulkan-x64',
             label: 'Linux x64 · Vulkan',
+            backend: 'vulkan',
             url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-ubuntu-vulkan-x64.tar.gz`,
             archive: 'tar.gz',
             exeName: 'llama-server',
             sizeHint: '约 31 MB',
         }),
     });
+
+    /** 同平台可选变体（仅列出可切换的；缺省回退 RUNTIME_PACKAGES） */
+    const RUNTIME_PACKAGE_VARIANTS = Object.freeze({
+        'win32-x64': Object.freeze([WIN_VULKAN_X64, WIN_CUDA12_X64]),
+    });
+
+    /** id → 包（含变体） */
+    const RUNTIME_PACKAGE_BY_ID = Object.freeze((() => {
+        const map = {};
+        for (const pkg of Object.values(RUNTIME_PACKAGES)) {
+            if (pkg?.id) map[pkg.id] = pkg;
+        }
+        for (const list of Object.values(RUNTIME_PACKAGE_VARIANTS)) {
+            for (const pkg of list) {
+                if (pkg?.id) map[pkg.id] = pkg;
+            }
+        }
+        return map;
+    })());
 
     /**
      * 精选 GGUF（bartowski 量化）。family 用于选择窗口分组筛选。
@@ -601,12 +641,88 @@
         ...buildSakuraManagedEntries(),
     ]);
 
-    function platformKey(platform = process.platform, arch = process.arch) {
+    function detectPlatform() {
+        try {
+            if (typeof process !== 'undefined' && process.platform) return process.platform;
+        } catch (_) { /* ignore */ }
+        return 'win32';
+    }
+
+    function detectArch() {
+        try {
+            if (typeof process !== 'undefined' && process.arch) return process.arch;
+        } catch (_) { /* ignore */ }
+        return 'x64';
+    }
+
+    function platformKey(platform = detectPlatform(), arch = detectArch()) {
         return `${platform}-${arch}`;
     }
 
-    function getRuntimePackage(platform = process.platform, arch = process.arch) {
-        return RUNTIME_PACKAGES[platformKey(platform, arch)] || null;
+    /**
+     * @param {string} [platform]
+     * @param {string} [arch]
+     * @param {{ preferCuda?: boolean }} [hints]
+     */
+    function getDefaultRuntimeId(platform = detectPlatform(), arch = detectArch(), hints = {}) {
+        const key = platformKey(platform, arch);
+        if (key === 'win32-x64' && hints && hints.preferCuda && RUNTIME_PACKAGE_BY_ID['win-cuda12-x64']) {
+            return 'win-cuda12-x64';
+        }
+        return RUNTIME_PACKAGES[key]?.id || '';
+    }
+
+    function listRuntimePackages(platform = detectPlatform(), arch = detectArch(), hints = {}) {
+        const key = platformKey(platform, arch);
+        const variants = RUNTIME_PACKAGE_VARIANTS[key];
+        let list;
+        if (Array.isArray(variants) && variants.length) {
+            list = variants.map((p) => ({ ...p }));
+        } else {
+            const def = RUNTIME_PACKAGES[key];
+            list = def ? [{ ...def }] : [];
+        }
+        if (hints && hints.preferCuda && key === 'win32-x64' && list.length > 1) {
+            list.sort((a, b) => {
+                const ac = a.backend === 'cuda' ? 0 : 1;
+                const bc = b.backend === 'cuda' ? 0 : 1;
+                return ac - bc;
+            });
+        }
+        return list;
+    }
+
+    /**
+     * @param {string} [platform]
+     * @param {string} [arch]
+     * @param {string} [runtimeId] 偏好包 id（如 win-cuda12-x64）；无效则回退平台默认
+     * @param {{ preferCuda?: boolean }} [hints]
+     */
+    function getRuntimePackage(platform = detectPlatform(), arch = detectArch(), runtimeId = '', hints = {}) {
+        const key = platformKey(platform, arch);
+        const want = String(runtimeId || '').trim();
+        if (want) {
+            const byId = RUNTIME_PACKAGE_BY_ID[want];
+            if (byId) {
+                const variants = RUNTIME_PACKAGE_VARIANTS[key];
+                if (Array.isArray(variants) && variants.some((p) => p.id === want)) {
+                    return byId;
+                }
+                // 非本平台变体：仅当恰好是平台默认 id 时返回
+                if (RUNTIME_PACKAGES[key]?.id === want) return byId;
+            }
+        }
+        const defaultId = getDefaultRuntimeId(platform, arch, hints);
+        if (defaultId && RUNTIME_PACKAGE_BY_ID[defaultId]) {
+            return RUNTIME_PACKAGE_BY_ID[defaultId];
+        }
+        return RUNTIME_PACKAGES[key] || null;
+    }
+
+    /** 规范化运行时偏好；空/非法 → 平台默认 id（hints.preferCuda 时 Windows 默认 CUDA 12） */
+    function normalizeRuntimeId(runtimeId, platform = detectPlatform(), arch = detectArch(), hints = {}) {
+        const pkg = getRuntimePackage(platform, arch, runtimeId, hints);
+        return pkg?.id || '';
     }
 
     function listCatalog() {
@@ -732,9 +848,18 @@
         return { modelId, requestedId: requested, fallbackFrom };
     }
 
-    function normalizeManagedLlm(raw) {
+    /**
+     * @param {object} [raw]
+     * @param {{ preferCuda?: boolean }} [hints]
+     */
+    function normalizeManagedLlm(raw, hints = {}) {
         const base = emptyManagedLlm();
-        if (!raw || typeof raw !== 'object') return base;
+        if (!raw || typeof raw !== 'object') {
+            return {
+                ...base,
+                runtimeId: normalizeRuntimeId('', detectPlatform(), detectArch(), hints),
+            };
+        }
         const pulledRaw = Array.isArray(raw.pulledIds)
             ? raw.pulledIds.map((x) => String(x || '').trim()).filter(Boolean)
             : [];
@@ -757,7 +882,12 @@
                 : DEFAULT_SERVER_PORT,
             ollamaBaseUrl: String(raw.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL).trim() || DEFAULT_OLLAMA_BASE_URL,
             pulledIds: pulled,
-            runtimeId: String(raw.runtimeId || '').trim().slice(0, 64),
+            runtimeId: normalizeRuntimeId(
+                String(raw.runtimeId || '').trim().slice(0, 64),
+                detectPlatform(),
+                detectArch(),
+                hints,
+            ),
             nGpuLayers: Number.isFinite(nGpu) ? Math.max(0, Math.min(999, Math.round(nGpu))) : 99,
             contextSize: Number.isFinite(ctx) ? Math.max(512, Math.min(131072, Math.round(ctx))) : 8192,
         };
@@ -863,9 +993,14 @@
         OLLAMA_DOWNLOAD_URL,
         FREE_PIPELINE_TRANSLATE_MAX_B,
         RUNTIME_PACKAGES,
+        RUNTIME_PACKAGE_VARIANTS,
+        RUNTIME_PACKAGE_BY_ID,
         CATALOG,
         platformKey,
+        getDefaultRuntimeId,
         getRuntimePackage,
+        listRuntimePackages,
+        normalizeRuntimeId,
         listCatalog,
         listCatalogVisible,
         listFamilies,

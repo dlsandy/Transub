@@ -1533,7 +1533,7 @@
                         </button>
                         <span class="settings-tip tip-up tip-end">
                             <button type="button" class="settings-tip-btn" title="" aria-label="智能感知说明">?</button>
-                            <span class="settings-tip-bubble" role="tooltip">智能感知：拖入后分析每项素材并匹配参数（默认采纳）。推荐新手开启使用，可自动匹配语种与模型，少动手调参。</span>
+                            <span class="settings-tip-bubble" role="tooltip">智能感知：拖入后分析每项素材并匹配参数（默认采纳）。未识别时会自动加强深入感知。推荐新手开启，可自动匹配语种与模型，少动手调参。</span>
                         </span>
                     </span>
                     <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
@@ -1814,7 +1814,7 @@
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 自动感知记忆
-                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主界面「智能感知」开启后，采纳/不采纳会按目录与厂牌番号记住偏好，下次同目录/同厂牌自动抬升或避免自动采纳。清空后不影响当前列表里已有的感知结果。</span></span>
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主界面「智能感知」开启后，点击文件名旁魔术棒可切换采纳/不采纳；偏好会按目录与厂牌番号记住，下次同目录/同厂牌自动抬升或避免自动采纳。清空后不影响当前列表里已有的感知结果。</span></span>
                             </legend>
                             <p id="senseMemoryStatus" class="text-xs text-gray-500 leading-relaxed">记忆条目：—</p>
                             <div class="flex flex-wrap items-center gap-2 mt-2">
@@ -1823,7 +1823,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="install" data-settings-search="运行环境 环境 引擎 Engine 安装 GPU ASR MT LLM VAD 语音识别 机器翻译 推理翻译 语音活动检测 模型选择">
+                    <div class="params-tab-panel" data-tab-panel="install" data-settings-search="运行环境 环境 引擎 Engine 安装 GPU ASR MT LLM VAD 语音识别 机器翻译 推理翻译 语音活动检测 模型选择 llama-server Vulkan CUDA 运行时">
                         <fieldset class="settings-section settings-section-env">
                             <legend class="settings-section-title">当前选用模型</legend>
                             <p class="text-xs text-gray-500 leading-relaxed">仅列出本机已下载的模型；未下载的请到「处理模型」页下载。</p>
@@ -1887,6 +1887,36 @@
                                 <p id="engineStatus" class="text-xs text-gray-500 min-h-[1.25rem]"></p>
                             </div>
                         </fieldset>
+                        <fieldset class="settings-section settings-section-env">
+                            <legend class="settings-section-title">llama-server 运行时</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed">供推理翻译（Sakura 等）与软件内大模型使用。模型选用仍在「Pro → 大模型」。检测到 NVIDIA（驱动 CUDA 12+）时默认安装 CUDA 12，否则默认 Vulkan。</p>
+                            <p id="advancedManagedRuntimeStatus" class="text-xs text-gray-600 leading-relaxed mt-2">检测本地运行时…</p>
+                            <label id="advancedManagedRuntimeBackendWrap" class="block text-sm mt-2 hidden">
+                                <span class="settings-label font-medium text-gray-700">
+                                    llama-server 后端
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有 NVIDIA 且驱动支持 CUDA 12+ 时默认 CUDA 12（通常更快，约 630MB 含运行库）；否则默认 Vulkan（兼容面广、体积小）。切换时会弹窗确认并自动安装；失败可用「手动下载运行时」。</span></span>
+                                </span>
+                                <select id="advancedManagedRuntimeBackendSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="win-cuda12-x64">CUDA 12（NVIDIA）</option>
+                                    <option value="win-vulkan-x64">Vulkan（兼容多数 GPU）</option>
+                                </select>
+                                <span class="block text-xs text-gray-500 mt-1">切换时会确认；确认后自动安装。自动下载失败时可改用「手动下载」。已就绪则跳过下载。</span>
+                            </label>
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                <button type="button" id="advancedManagedInstallRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">安装 / 更新运行时</button>
+                                <button type="button" id="advancedManagedManualRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="浏览器下载 zip 后选择文件安装">手动下载运行时</button>
+                                <button type="button" id="advancedManagedRuntimeRefreshBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">刷新状态</button>
+                                <button type="button" id="advancedManagedPerfTestBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="启动本地服务并测生成速度（tok/s）">性能测试</button>
+                                <button type="button" id="advancedManagedStopServerBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">停止本地服务</button>
+                            </div>
+                            <div id="advancedLlamaServerProgressWrap" class="hidden mt-2 space-y-1">
+                                <div class="h-2 rounded-full bg-violet-100 overflow-hidden">
+                                    <div id="advancedLlamaServerProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
+                                </div>
+                                <p id="advancedLlamaServerProgressText" class="text-xs text-gray-500"></p>
+                            </div>
+                            <p id="advancedLlamaServerActionStatus" class="text-xs text-gray-500 min-h-[1.25rem] mt-2"></p>
+                        </fieldset>
                     </div>
 
                     <div class="params-tab-panel" data-tab-panel="models" data-settings-search="处理模型 模型 ASR MT LLM VAD Demucs 人声分离 下载 列表 库">
@@ -1913,7 +1943,7 @@
                                     <div class="engine-model-foot-row">
                                         <button type="button" id="engineCancelDownloadBtn" class="btn btn-danger" disabled>取消</button>
                                     </div>
-                                    <p id="engineModelsSelectedHint" class="engine-model-status">点卡片上的「下载」获取模型 · 任务选用请到「运行环境」页设置</p>
+                                        <p id="engineModelsSelectedHint" class="engine-model-status">点卡片上的「下载」获取模型；LLM GGUF 可「手动下载」到 advanced-llm/models · 任务选用请到「运行环境」页设置</p>
                                     <div id="engineDownloadProgress" class="hidden space-y-1.5">
                                         <div class="h-2 rounded-full bg-indigo-100 overflow-hidden">
                                             <div id="engineDownloadProgressBar" class="h-full w-0 rounded-full bg-indigo-500 transition-[width] duration-150"></div>
@@ -2006,7 +2036,7 @@
                                 <input type="checkbox" id="autoDeepSenseCheck" class="rounded">
                                 <span class="settings-label font-medium text-gray-700">
                                     拖入音视频后自动深度感知
-                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。仅在智能感知开启时生效。开启后，拖入/添加的文件会直接跑深入感知（短窗语种、声学分析等），更准但更慢；关闭时仍为快速感知。</span></span>
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。仅在智能感知开启时生效。开启后，拖入/添加的文件会直接跑深入感知（短窗语种、声学分析等），更准但更慢；关闭时仍为快速感知——若快速结果为「未识别」，会自动加强一次深入感知。</span></span>
                                 </span>
                             </label>
                         </fieldset>
@@ -2524,7 +2554,7 @@
                             </div>
 
                             <div id="advancedManagedPanel" class="space-y-3 mt-3 hidden">
-                                <p id="advancedManagedRuntimeStatus" class="text-xs text-gray-600 leading-relaxed">检测本地运行时…</p>
+                                <p class="text-xs text-gray-500 leading-relaxed">llama-server 后端与安装请到「运行环境」页管理。此处仅选用智能翻译 / LLM 推理模型并下载 GGUF。</p>
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <label class="block text-sm">
                                         <span class="settings-label font-medium text-gray-700">
@@ -2546,11 +2576,8 @@
                                     </label>
                                 </div>
                                 <div class="flex flex-wrap gap-2">
-                                    <button type="button" id="advancedManagedInstallRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">安装 / 更新运行时</button>
                                     <button type="button" id="advancedManagedRefreshBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">刷新状态</button>
                                     <button type="button" id="advancedTestManagedBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">测试连接</button>
-                                    <button type="button" id="advancedManagedPerfTestBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="启动本地服务并测生成速度（tok/s）">性能测试</button>
-                                    <button type="button" id="advancedManagedStopServerBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">停止本地服务</button>
                                 </div>
                                 <div id="advancedManagedCatalog" class="engine-model-pick">
                                     <div class="engine-model-toolbar">
@@ -2565,7 +2592,7 @@
                                     </div>
                                     <div id="advancedManagedList" class="engine-model-cards" aria-label="软件内模型目录"></div>
                                     <div class="engine-model-foot">
-                                        <p id="advancedManagedCatalogStatus" class="engine-model-status">在卡片上选用智能翻译 / LLM 推理模型，或下载 GGUF</p>
+                                        <p id="advancedManagedCatalogStatus" class="engine-model-status">在卡片上选用智能翻译 / LLM 推理模型；网络不佳时可「手动下载」GGUF 到 advanced-llm/models</p>
                                         <div class="hidden" id="advancedManagedProgressWrap">
                                             <div class="h-1.5 rounded bg-violet-100 overflow-hidden">
                                                 <div id="advancedManagedProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
@@ -2684,7 +2711,7 @@
                             <label class="block text-sm mt-2">
                                 <span class="settings-label text-gray-700 font-medium">
                                     自动检查更新
-                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率在后台检查 GitHub 发布页。发现新版本时会提示是否升级；不会自动下载安装。改后点「保存设置」生效。</span></span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率在后台检查 GitHub / Codeberg 发布页。下载更新前会测速并自动选择较快线路。发现新版本时会提示是否升级；不会自动下载安装。改后点「保存设置」生效。</span></span>
                                 </span>
                                 <select id="autoUpdateCheckIntervalSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm max-w-xs">
                                     <option value="off">不检查</option>

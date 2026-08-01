@@ -57,11 +57,13 @@ describe('transwithai-options', () => {
             task: 'dual',
             dualTargetSuffix: 'zh',
             mergeBilingualSubtitles: true,
+            dualLineOrder: 'source-first',
         });
         assert.strictEqual(opts.task, 'dual');
         assert.strictEqual(opts.dualTargetSuffix, 'zh');
         assert.strictEqual(opts.mergeBilingualSubtitles, true);
         assert.strictEqual(opts.deleteSourcesAfterMergeBilingual, false);
+        assert.strictEqual(opts.dualLineOrder, 'source-first');
     });
 
     it('preserves delete-sources-after-merge flag', () => {

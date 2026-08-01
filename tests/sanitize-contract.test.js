@@ -2,17 +2,35 @@ const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
 const mtSanitize = require('../src/js/mt-sanitize-core');
+const opaque = require('../src/js/mt-opaque-strings');
 
 describe('sanitize contracts', () => {
     const ssotPath = path.join(__dirname, '..', 'shared', 'ja-asr-domain-fixes.json');
     const ssot = JSON.parse(fs.readFileSync(ssotPath, 'utf8'));
+    const adult = opaque.getAsrAdultDomainPairs();
 
-    it('JS ASR domain pairs match shared SSOT', () => {
+    function mergeExpected(base, extra) {
+        const seen = new Set();
+        const merged = [];
+        for (const p of [...base, ...extra]) {
+            const from = String(p?.from || '');
+            const to = String(p?.to || '');
+            if (!from || !to || seen.has(from)) continue;
+            seen.add(from);
+            merged.push({ from, to });
+        }
+        merged.sort((a, b) => Array.from(b.from).length - Array.from(a.from).length
+            || String(a.from).localeCompare(String(b.from), 'ja'));
+        return merged;
+    }
+
+    it('JS ASR domain pairs match shared SSOT + opaque adult pairs (longest-first)', () => {
+        const expected = mergeExpected(ssot, adult);
         const pairs = mtSanitize.JA_ASR_DOMAIN_FIX_PAIRS || [];
-        assert.strictEqual(pairs.length, ssot.length);
-        for (let i = 0; i < ssot.length; i += 1) {
-            assert.strictEqual(pairs[i].from, ssot[i].from);
-            assert.strictEqual(pairs[i].to, ssot[i].to);
+        assert.strictEqual(pairs.length, expected.length);
+        for (let i = 0; i < expected.length; i += 1) {
+            assert.strictEqual(pairs[i].from, expected[i].from);
+            assert.strictEqual(pairs[i].to, expected[i].to);
         }
     });
 

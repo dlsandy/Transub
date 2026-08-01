@@ -64,24 +64,77 @@ async function isServerHealthy(port) {
     return false;
 }
 
-function getRuntimeStatus() {
-    const pkg = catalog.getRuntimePackage();
+function runtimePreferHints() {
+    try {
+        return require('./advanced-runtime-prefer').getHints();
+    } catch (_) {
+        return {};
+    }
+}
+
+/**
+ * 解析偏好运行时包 id：显式参数 → 高级设置 → 硬件默认（NVIDIA→CUDA 12，否则 Vulkan）。
+ * @param {string} [explicit]
+ */
+function resolvePreferredRuntimeId(explicit = '') {
+    const hints = runtimePreferHints();
+    const fromOpt = String(explicit || '').trim();
+    if (fromOpt) {
+        const pkg = catalog.getRuntimePackage(process.platform, process.arch, fromOpt, hints);
+        if (pkg) return pkg.id;
+    }
+    try {
+        const { readAdvancedDoc } = require('./advanced-license-data');
+        const managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm, hints);
+        if (managed.runtimeId) {
+            const pkg = catalog.getRuntimePackage(
+                process.platform,
+                process.arch,
+                managed.runtimeId,
+                hints,
+            );
+            if (pkg) return pkg.id;
+        }
+    } catch (_) { /* ignore */ }
+    return catalog.getDefaultRuntimeId(process.platform, process.arch, hints)
+        || catalog.getRuntimePackage(process.platform, process.arch, '', hints)?.id
+        || '';
+}
+
+function getRuntimeStatus(options = {}) {
+    const opts = asPlainObject(options);
+    const hints = runtimePreferHints();
+    const preferredId = resolvePreferredRuntimeId(opts.runtimeId || opts.packageId);
+    const pkg = catalog.getRuntimePackage(process.platform, process.arch, preferredId, hints);
     const meta = llmFs.readRuntimeMeta();
     const exe = llmFs.resolveServerExe(meta);
     const installed = !!exe && fs.existsSync(exe);
+    const installedId = String(meta?.packageId || '').trim();
+    const mismatch = !!(installed && preferredId && installedId && installedId !== preferredId);
+    const choices = catalog.listRuntimePackages(process.platform, process.arch, hints);
+    let message = !pkg
+        ? `当前平台暂不支持内置运行时（${process.platform}-${process.arch}）`
+        : (installed
+            ? `llama-server 已就绪（${meta?.tag || catalog.LLAMA_CPP_TAG}${installedId ? ` · ${installedId}` : ''}）`
+            : `尚未安装运行时（llama.cpp ${catalog.LLAMA_CPP_TAG} · ${pkg.label}）`);
+    if (mismatch) {
+        const preferLabel = pkg?.label || preferredId;
+        const installedLabel = meta?.label || installedId;
+        message = `${message} · 偏好「${preferLabel}」，当前为「${installedLabel}」，请重新安装运行时`;
+    }
     return {
         kind: 'llama-server',
         supported: !!pkg,
         package: pkg,
+        preferredPackageId: preferredId || pkg?.id || '',
+        installedPackageId: installedId,
+        mismatch,
+        choices,
         installed,
         exePath: installed ? exe : '',
         meta,
         tag: catalog.LLAMA_CPP_TAG,
-        message: !pkg
-            ? `当前平台暂不支持内置运行时（${process.platform}-${process.arch}）`
-            : (installed
-                ? `llama-server 已就绪（${meta?.tag || catalog.LLAMA_CPP_TAG}${meta?.packageId ? ` · ${meta.packageId}` : ''}）`
-                : `尚未安装运行时（llama.cpp ${catalog.LLAMA_CPP_TAG} · ${pkg.label}）`),
+        message,
     };
 }
 
@@ -94,12 +147,62 @@ function cancelRuntimeInstall() {
     return { ok: true, cancelled: false };
 }
 
+function flattenStagingRoot(staging) {
+    const stagedEntries = fs.readdirSync(staging);
+    let sourceRoot = staging;
+    if (stagedEntries.length === 1) {
+        const only = path.join(staging, stagedEntries[0]);
+        if (fs.statSync(only).isDirectory()) sourceRoot = only;
+    }
+    return sourceRoot;
+}
+
+function replaceRuntimeDir(runtimeDir, stamp) {
+    const cleared = downloader.rimrafSafe(runtimeDir);
+    if (!cleared.ok && fs.existsSync(runtimeDir)) {
+        const bypass = `${runtimeDir}.old-${stamp}`;
+        try {
+            fs.renameSync(runtimeDir, bypass);
+            downloader.rimrafSafe(bypass);
+        } catch (err) {
+            return {
+                ok: false,
+                error: `无法替换旧运行时目录：${err.message || err}`,
+                code: 'runtime_busy',
+            };
+        }
+    }
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    return { ok: true };
+}
+
+function writeInstalledRuntimeMeta(pkg, exePath, extra = {}) {
+    const meta = {
+        tag: catalog.LLAMA_CPP_TAG,
+        packageId: pkg.id,
+        label: pkg.label,
+        backend: pkg.backend || '',
+        exeName: pkg.exeName,
+        exePath,
+        installedAt: new Date().toISOString(),
+        ...extra,
+    };
+    llmFs.writeRuntimeMeta(meta);
+    return meta;
+}
+
 /**
- * 下载并解压 llama-server 运行时。
+ * 从本机已下载的 zip/tar 安装运行时（手动下载后选用）。
+ * @param {{ runtimeId?: string, archivePath: string, companionPath?: string, onProgress?: Function }} options
  */
-async function ensureRuntimeInstalled(options = {}) {
+async function installRuntimeFromLocalArchives(options = {}) {
     const opts = asPlainObject(options);
-    const pkg = catalog.getRuntimePackage();
+    try {
+        await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+    } catch (_) { /* ignore */ }
+    const hints = runtimePreferHints();
+    const preferredId = resolvePreferredRuntimeId(opts.runtimeId || opts.packageId);
+    const pkg = catalog.getRuntimePackage(process.platform, process.arch, preferredId, hints);
     if (!pkg) {
         return {
             ok: false,
@@ -108,19 +211,145 @@ async function ensureRuntimeInstalled(options = {}) {
         };
     }
 
-    const existing = getRuntimeStatus();
-    if (existing.installed && !opts.force) {
-        const meta = llmFs.readRuntimeMeta();
-        if (meta?.tag === catalog.LLAMA_CPP_TAG && meta?.packageId === pkg.id) {
-            return { ok: true, already: true, exePath: existing.exePath, meta };
+    const archivePath = path.resolve(String(opts.archivePath || '').trim());
+    if (!archivePath || !fs.existsSync(archivePath)) {
+        return { ok: false, error: '未找到运行时压缩包', code: 'archive_missing' };
+    }
+    const companionPath = String(opts.companionPath || '').trim()
+        ? path.resolve(String(opts.companionPath).trim())
+        : '';
+    if (pkg.companionUrl && !companionPath) {
+        return {
+            ok: false,
+            error: `「${pkg.label}」还需选择 CUDA 运行库压缩包（cudart-*.zip）`,
+            code: 'companion_missing',
+        };
+    }
+    if (companionPath && !fs.existsSync(companionPath)) {
+        return { ok: false, error: '未找到 CUDA 运行库压缩包', code: 'companion_missing' };
+    }
+
+    stopLlamaServer();
+    llmFs.ensureDirs();
+    const runtimeDir = llmFs.getRuntimeDir();
+    const stamp = `${Date.now()}-${process.pid}`;
+    const staging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-staging-${stamp}`);
+    const companionStaging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-${stamp}`);
+
+    try {
+        sendProgress(opts.onProgress, {
+            phase: 'extracting',
+            kind: 'runtime',
+            message: `正在从本地压缩包安装 ${pkg.label}…`,
+            pct: 10,
+        });
+        fs.mkdirSync(staging, { recursive: true });
+        downloader.extractArchive(archivePath, staging, pkg.archive);
+
+        const replaced = replaceRuntimeDir(runtimeDir, stamp);
+        if (!replaced.ok) return replaced;
+
+        copyDirRecursive(flattenStagingRoot(staging), runtimeDir);
+
+        if (companionPath) {
+            sendProgress(opts.onProgress, {
+                phase: 'extracting',
+                kind: 'runtime',
+                message: '正在解压 CUDA 运行库…',
+                pct: 70,
+            });
+            fs.mkdirSync(companionStaging, { recursive: true });
+            downloader.extractArchive(companionPath, companionStaging, pkg.archive);
+            copyDirRecursive(flattenStagingRoot(companionStaging), runtimeDir);
         }
-        // 旧版本仍可用，除非 force
-        if (existing.exePath && !opts.force) {
-            return { ok: true, already: true, exePath: existing.exePath, meta, outdated: meta?.tag !== catalog.LLAMA_CPP_TAG };
+
+        const exe = llmFs.findFileRecursive(runtimeDir, pkg.exeName, 5);
+        if (!exe) {
+            return { ok: false, error: `解压后未找到 ${pkg.exeName}`, code: 'exe_missing' };
         }
+        if (process.platform !== 'win32') {
+            try { fs.chmodSync(exe, 0o755); } catch (_) { /* ignore */ }
+        }
+
+        if (pkg.backend === 'cuda') {
+            const cudaDll = llmFs.findFileRecursive(runtimeDir, 'ggml-cuda.dll', 4)
+                || llmFs.findFileRecursive(runtimeDir, 'cudart64_12.dll', 4);
+            if (!cudaDll) {
+                return {
+                    ok: false,
+                    error: '解压后未找到 CUDA 组件（ggml-cuda.dll / cudart）。请确认同时选择了主程序 zip 与 cudart zip。',
+                    code: 'cuda_dll_missing',
+                };
+            }
+        }
+
+        const meta = writeInstalledRuntimeMeta(pkg, exe, { source: 'manual-zip' });
+        sendProgress(opts.onProgress, {
+            phase: 'done',
+            kind: 'runtime',
+            message: `运行时安装完成（${pkg.label}）`,
+            pct: 100,
+        });
+        return { ok: true, exePath: exe, meta };
+    } catch (err) {
+        return {
+            ok: false,
+            error: downloader.formatError(err),
+            code: 'runtime_import_failed',
+        };
+    } finally {
+        downloader.rimrafSafe(staging);
+        downloader.rimrafSafe(companionStaging);
+    }
+}
+
+/**
+ * 下载并解压 llama-server 运行时。
+ * @param {{ force?: boolean, runtimeId?: string, packageId?: string, signal?: AbortSignal, onProgress?: Function }} [options]
+ */
+async function ensureRuntimeInstalled(options = {}) {
+    const opts = asPlainObject(options);
+    try {
+        await require('./advanced-runtime-prefer').ensurePreferCudaReady();
+    } catch (_) { /* ignore */ }
+    const hints = runtimePreferHints();
+    const preferredId = resolvePreferredRuntimeId(opts.runtimeId || opts.packageId);
+    const pkg = catalog.getRuntimePackage(process.platform, process.arch, preferredId, hints);
+    if (!pkg) {
+        return {
+            ok: false,
+            error: `当前平台暂不支持内置 llama-server（${process.platform}-${process.arch}）`,
+            code: 'platform_unsupported',
+        };
+    }
+
+    const existing = getRuntimeStatus({ runtimeId: pkg.id });
+    const meta = llmFs.readRuntimeMeta();
+    const samePackage = !!(
+        existing.installed
+        && existing.exePath
+        && meta?.packageId === pkg.id
+        && meta?.tag === catalog.LLAMA_CPP_TAG
+    );
+    // 已是目标后端且版本匹配：即使 force 也不重复下载（除非显式 reinstall）
+    if (samePackage && !opts.reinstall) {
+        return { ok: true, already: true, exePath: existing.exePath, meta };
+    }
+    if (existing.installed && existing.exePath && !opts.force && !opts.reinstall) {
+        // 已装其它后端 / 旧版本：任务中途不自动切换，除非 force
+        return {
+            ok: true,
+            already: true,
+            exePath: existing.exePath,
+            meta,
+            outdated: meta?.tag !== catalog.LLAMA_CPP_TAG,
+            mismatch: meta?.packageId !== pkg.id,
+        };
     }
 
     cancelRuntimeInstall();
+    // 替换目录前先停掉占用 exe 的进程
+    stopLlamaServer();
     const controller = new AbortController();
     installAbort = controller;
     if (opts.signal) {
@@ -134,29 +363,67 @@ async function ensureRuntimeInstalled(options = {}) {
     const runtimeDir = llmFs.getRuntimeDir();
     const stamp = `${Date.now()}-${process.pid}`;
     const staging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-staging-${stamp}`);
+    const companionStaging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-${stamp}`);
+    const archiveExt = pkg.archive === 'zip' ? 'zip' : 'tar.gz';
     const archivePath = path.join(
         llmFs.getAdvancedLlmRoot(),
-        `_runtime-${pkg.id}-${stamp}.${pkg.archive === 'zip' ? 'zip' : 'tar.gz'}`,
+        `_runtime-${pkg.id}-${stamp}.${archiveExt}`,
     );
+    const companionUrl = String(pkg.companionUrl || '').trim();
+    const companionPath = companionUrl
+        ? path.join(llmFs.getAdvancedLlmRoot(), `_runtime-${pkg.id}-cudart-${stamp}.${archiveExt}`)
+        : '';
 
     try {
         sendProgress(opts.onProgress, {
             phase: 'start',
             kind: 'runtime',
-            message: `开始下载运行时 ${pkg.label}…`,
+            message: `开始下载运行时 ${pkg.label}${pkg.sizeHint ? `（${pkg.sizeHint}）` : ''}…`,
             pct: 0,
         });
 
         fs.mkdirSync(staging, { recursive: true });
 
+        const mainWeight = companionUrl ? 55 : 100;
         await downloader.downloadFile(pkg.url, archivePath, {
             signal: controller.signal,
-            onProgress: (p) => sendProgress(opts.onProgress, {
-                ...p,
-                kind: 'runtime',
-                message: p.message || '下载运行时…',
-            }),
+            onProgress: (p) => {
+                const rawPct = Number(p.pct);
+                const pct = Number.isFinite(rawPct)
+                    ? Math.round((rawPct / 100) * mainWeight)
+                    : undefined;
+                sendProgress(opts.onProgress, {
+                    ...p,
+                    kind: 'runtime',
+                    pct,
+                    message: p.message || `下载运行时（${pkg.label}）…`,
+                });
+            },
         });
+
+        if (companionUrl && companionPath) {
+            sendProgress(opts.onProgress, {
+                phase: 'start',
+                kind: 'runtime',
+                message: '下载 CUDA 运行库（cudart）…',
+                pct: mainWeight,
+            });
+            await downloader.downloadFile(companionUrl, companionPath, {
+                signal: controller.signal,
+                onProgress: (p) => {
+                    const rawPct = Number(p.pct);
+                    const pct = Number.isFinite(rawPct)
+                        ? Math.round(mainWeight + (rawPct / 100) * (98 - mainWeight))
+                        : undefined;
+                    sendProgress(opts.onProgress, {
+                        ...p,
+                        kind: 'runtime',
+                        pct,
+                        message: p.message || '下载 CUDA 运行库…',
+                    });
+                },
+            });
+        }
 
         sendProgress(opts.onProgress, {
             phase: 'extracting',
@@ -166,31 +433,22 @@ async function ensureRuntimeInstalled(options = {}) {
         });
         downloader.extractArchive(archivePath, staging, pkg.archive);
 
-        // 清空旧 runtime 再迁入（保留 models）；删不干净则换旁路目录
-        const cleared = downloader.rimrafSafe(runtimeDir);
-        if (!cleared.ok && fs.existsSync(runtimeDir)) {
-            const bypass = `${runtimeDir}.old-${stamp}`;
-            try {
-                fs.renameSync(runtimeDir, bypass);
-                downloader.rimrafSafe(bypass);
-            } catch (err) {
-                return {
-                    ok: false,
-                    error: `无法替换旧运行时目录：${err.message || err}`,
-                    code: 'runtime_busy',
-                };
-            }
-        }
-        fs.mkdirSync(runtimeDir, { recursive: true });
+        const replaced = replaceRuntimeDir(runtimeDir, stamp);
+        if (!replaced.ok) return replaced;
 
-        // 若解压根目录仅有一层文件夹，提升内容
-        const stagedEntries = fs.readdirSync(staging);
-        let sourceRoot = staging;
-        if (stagedEntries.length === 1) {
-            const only = path.join(staging, stagedEntries[0]);
-            if (fs.statSync(only).isDirectory()) sourceRoot = only;
+        copyDirRecursive(flattenStagingRoot(staging), runtimeDir);
+
+        if (companionUrl && companionPath) {
+            sendProgress(opts.onProgress, {
+                phase: 'extracting',
+                kind: 'runtime',
+                message: '正在解压 CUDA 运行库…',
+                pct: 99,
+            });
+            fs.mkdirSync(companionStaging, { recursive: true });
+            downloader.extractArchive(companionPath, companionStaging, pkg.archive);
+            copyDirRecursive(flattenStagingRoot(companionStaging), runtimeDir);
         }
-        copyDirRecursive(sourceRoot, runtimeDir);
 
         const exe = llmFs.findFileRecursive(runtimeDir, pkg.exeName, 5);
         if (!exe) {
@@ -200,20 +458,12 @@ async function ensureRuntimeInstalled(options = {}) {
             try { fs.chmodSync(exe, 0o755); } catch (_) { /* ignore */ }
         }
 
-        const meta = {
-            tag: catalog.LLAMA_CPP_TAG,
-            packageId: pkg.id,
-            label: pkg.label,
-            exeName: pkg.exeName,
-            exePath: exe,
-            installedAt: new Date().toISOString(),
-        };
-        llmFs.writeRuntimeMeta(meta);
+        const meta = writeInstalledRuntimeMeta(pkg, exe, { source: 'download' });
 
         sendProgress(opts.onProgress, {
             phase: 'done',
             kind: 'runtime',
-            message: '运行时安装完成',
+            message: `运行时安装完成（${pkg.label}）`,
             pct: 100,
         });
         return { ok: true, exePath: exe, meta };
@@ -229,13 +479,18 @@ async function ensureRuntimeInstalled(options = {}) {
     } finally {
         installAbort = null;
         try { fs.unlinkSync(archivePath); } catch (_) { /* ignore */ }
+        if (companionPath) {
+            try { fs.unlinkSync(companionPath); } catch (_) { /* ignore */ }
+        }
         downloader.rimrafSafe(staging);
+        downloader.rimrafSafe(companionStaging);
         // 顺带清理历史残留 staging / 旁路目录（失败不影响安装结果）
         try {
             const root = llmFs.getAdvancedLlmRoot();
             for (const name of fs.readdirSync(root)) {
                 const shouldClean = name === '_runtime-staging'
                     || name.startsWith('_runtime-staging-')
+                    || name.startsWith('_runtime-cudart-')
                     || name.startsWith('runtime.old-')
                     || /\.trash-\d+/.test(name)
                     || (name.startsWith('_runtime-') && (name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.partial')));
@@ -351,6 +606,7 @@ async function ensureLlamaServer(options = {}) {
 
     const runtime = await ensureRuntimeInstalled({
         force: false,
+        runtimeId: opts.runtimeId || opts.packageId,
         onProgress: opts.onProgress,
         signal: opts.signal,
     });
@@ -540,8 +796,10 @@ async function ensureLlamaServer(options = {}) {
 }
 
 module.exports = {
+    resolvePreferredRuntimeId,
     getRuntimeStatus,
     ensureRuntimeInstalled,
+    installRuntimeFromLocalArchives,
     cancelRuntimeInstall,
     ensureLlamaServer,
     stopLlamaServer,

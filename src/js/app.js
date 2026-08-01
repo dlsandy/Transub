@@ -1063,6 +1063,7 @@
             'transcribeModelPathInput', 'translateModelPathInput',
             'transcribeModelBrowseBtn', 'translateModelBrowseBtn',
             'deviceSelect', 'taskSelect', 'overwriteCheck', 'mergeBilingualCheck', 'mergeBilingualWrap', 'mergeBilingualHint',
+            'mergeBilingualOrderSelect', 'mergeBilingualOrderWrap',
             'smartTranslateCheck', 'smartTranslateWrap',
             'smartTranslateFaithfulCheck', 'smartTranslateFaithfulWrap',
             'filmAudioEnhanceCheck', 'filmAudioEnhanceWrap',
@@ -2016,6 +2017,26 @@
         }
     }
 
+    function readDualLineOrderFromForm() {
+        const raw = els.mergeBilingualOrderSelect?.value || 'translation-first';
+        if (typeof TransubDualSubtitle?.normalizeDualLineOrder === 'function') {
+            return TransubDualSubtitle.normalizeDualLineOrder(raw);
+        }
+        if (raw === 'source-first' || raw === 'source') return 'source-first';
+        return 'target-first';
+    }
+
+    function applyDualLineOrderToForm(value) {
+        if (!els.mergeBilingualOrderSelect) return;
+        const order = typeof TransubDualSubtitle?.normalizeDualLineOrder === 'function'
+            ? TransubDualSubtitle.normalizeDualLineOrder(value)
+            : (value === 'source-first' || value === 'source' ? 'source-first' : 'target-first');
+        // UI uses translation-first / source-first; runtime stores target-first / source-first.
+        els.mergeBilingualOrderSelect.value = order === 'source-first'
+            ? 'source-first'
+            : 'translation-first';
+    }
+
     function syncMergeBilingualUi() {
         const isDual = readTaskFromForm() === 'dual';
         if (els.mergeBilingualCheck) els.mergeBilingualCheck.disabled = !isDual;
@@ -2024,6 +2045,11 @@
             els.mergeBilingualWrap.classList.toggle('opacity-50', !isDual);
         }
         const mergeOn = isDual && !!els.mergeBilingualCheck?.checked;
+        if (els.mergeBilingualOrderSelect) els.mergeBilingualOrderSelect.disabled = !mergeOn;
+        if (els.mergeBilingualOrderWrap) {
+            els.mergeBilingualOrderWrap.classList.toggle('hidden', !isDual);
+            els.mergeBilingualOrderWrap.classList.toggle('opacity-50', !mergeOn);
+        }
         if (els.deleteSourcesAfterMergeCheck) {
             els.deleteSourcesAfterMergeCheck.disabled = !mergeOn;
             if (!mergeOn) els.deleteSourcesAfterMergeCheck.checked = false;
@@ -2671,7 +2697,12 @@
                     confidence: conf,
                 };
                 // Compete against the strongest path/meta prior (weak en must not lock sniff out)
-                if (profileApi?.shouldPreferSniffLanguage?.(sniff, pathPrior, { skippedIntro })) {
+                const avLikely = !!senseHints.strongAv
+                    || /AV/.test(String(pathPrior?.reason || ''));
+                if (profileApi?.shouldPreferSniffLanguage?.(sniff, pathPrior, {
+                    skippedIntro,
+                    avLikely,
+                })) {
                     const winNote = sniffWin.reason && sniffWin.startSec > 0
                         ? `，${sniffWin.reason}`
                         : '';
@@ -2708,6 +2739,7 @@
     function finalizeSenseResult(item, resolved, langPrior, senseBase, {
         depth = 'quick',
         refineModels = true,
+        quietSkip = false,
     } = {}) {
         const profileApi = global.TransubContentProfile;
         let overrides = { ...(resolved.overrides || {}) };
@@ -2804,7 +2836,7 @@
         }
         if (item.sense.message) {
             appendLog(item.sense.message, item.sense.adopted ? 'info' : 'warn');
-        } else if (resolved.action === 'skip') {
+        } else if (resolved.action === 'skip' && !quietSkip) {
             appendLog(`感知完成：${basename(item.path)} · 未识别明确类型`, 'info');
         }
         if (item.sense.adopted && item.sense.classification?.profile) {
@@ -2862,7 +2894,7 @@
         });
         appendLog(
             `番号即感：${basename(item.path)} · ${nameClassification.label}`
-            + ` ${Math.round((nameClassification.confidence || 0) * 100)}%（深入感知请点重感知）`,
+            + ` ${Math.round((nameClassification.confidence || 0) * 100)}%（深入感知请点深度感知）`,
             'info',
         );
         return true;
@@ -2932,7 +2964,7 @@
                 appendLog(
                     `文件名已确信「${nameClassification.label || nameClassification.profile}」`
                     + ` ${Math.round((nameClassification.confidence || 0) * 100)}%`
-                    + `，拖入快感完成（深入请点重感知）`,
+                    + `，拖入快感完成（深入请点深度感知）`,
                     'info',
                 );
             }
@@ -3052,12 +3084,68 @@
                 } catch { /* ignore */ }
             }
 
+            // Deep path: filename still 未识别 → promote from acoustic / LID / duration
+            if (wantDeep
+                && profileApi.promoteClassificationFromEvidence
+                && profileApi.resolveSenseFromClassification) {
+                const promo = profileApi.promoteClassificationFromEvidence(
+                    resolved.classification,
+                    {
+                        acoustic: item.senseAcoustic || null,
+                        language: overrides.language || senseBase.language || langPrior?.language,
+                        languageConfidence: langPrior?.confidence || 0,
+                        durationSec: item.duration || 0,
+                        path: item.path,
+                        strongAv: !!resolved.classification?.strongAv,
+                        avLikely: !!resolved.classification?.strongAv
+                            || /番号|AV/.test(String(resolved.classification?.reasons?.join(' ') || ''))
+                            || /AV/.test(String(langPrior?.reason || '')),
+                    },
+                );
+                if (promo?.promoted && promo.classification) {
+                    const promoted = profileApi.resolveSenseFromClassification(
+                        promo.classification,
+                        senseBase,
+                        { autoSense: true, advancedEntitled },
+                    );
+                    // Keep language / acoustic tweaks already gathered
+                    const keptLang = overrides.language;
+                    overrides = { ...(promoted.overrides || {}), ...overrides };
+                    if (keptLang) overrides.language = keptLang;
+                    resolved.action = promoted.action;
+                    resolved.adopted = promoted.adopted;
+                    resolved.classification = promo.classification;
+                    resolved.message = promoted.message || resolved.message;
+                    if (promo.notes?.length) {
+                        appendLog(`加强识别：${basename(item.path)} · ${promo.notes.join('；')}`, 'info');
+                    }
+                }
+            }
+
+            // Quick sense → 未识别：自动加深（短窗语种 / 声学 / 记忆）
+            const willEscalate = !wantDeep
+                && isAutoSenseEnabled()
+                && profileApi.shouldEscalateSenseDepth?.(resolved.classification, {
+                    depth: 'quick',
+                    alreadyEscalated: !!item.senseEscalated,
+                });
+
             // Re-attach acoustic-adjusted overrides before finalize
             resolved.overrides = overrides;
             finalizeSenseResult(item, resolved, langPrior, senseBase, {
                 depth: wantDeep ? 'deep' : 'quick',
                 refineModels: true,
+                quietSkip: willEscalate,
             });
+
+            if (willEscalate) {
+                item.senseEscalated = true;
+                appendLog(
+                    `未识别明确类型，加强感知：${basename(item.path)}`,
+                    'info',
+                );
+                enqueueSense(item, { deep: true, escalate: true });
+            }
         } catch (err) {
             item.sense = {
                 status: 'error',
@@ -3232,6 +3320,15 @@
         appendLog(`采纳感知：${basename(item.path)}`, 'info');
     }
 
+    function toggleItemSenseAdopt(item) {
+        if (!item?.sense || item.sense.status !== 'done' || state.running) return;
+        if (item.sense.adopted) {
+            rejectItemSense(item);
+            return;
+        }
+        adoptItemSense(item);
+    }
+
     function resenseItem(item) {
         if (!item || state.running) return;
         item.sense = {
@@ -3326,6 +3423,7 @@
         if (els.mergeBilingualCheck) {
             els.mergeBilingualCheck.checked = !!options.mergeBilingualSubtitles;
         }
+        applyDualLineOrderToForm(options.dualLineOrder || 'target-first');
         if (els.smartTranslateCheck) {
             els.smartTranslateCheck.checked = !!options.smartTranslate;
         }
@@ -3532,6 +3630,7 @@
             task: readTaskFromForm(),
             overwrite: !!els.overwriteCheck?.checked,
             mergeBilingualSubtitles: readTaskFromForm() === 'dual' && !!els.mergeBilingualCheck?.checked,
+            dualLineOrder: readDualLineOrderFromForm(),
             smartTranslate: translateTask && !!els.smartTranslateCheck?.checked,
             smartTranslateFaithfulTone: translateTask && !!els.smartTranslateFaithfulCheck?.checked,
             // Advanced-only: never persist while not entitled (disabled checkboxes can stay checked).
@@ -4136,7 +4235,7 @@
         const seen = new Set();
         const push = (p) => {
             const v = String(p || '').trim();
-            // Editor / postprocess only support editable text formats (not ASS).
+            // Post-batch Chinese/CPS cleanup targets plain text tracks (ASS styles skip).
             if (!v || seen.has(v) || !/\.(srt|vtt|lrc)$/i.test(v)) return;
             seen.add(v);
             paths.push(v);
@@ -4860,6 +4959,9 @@
                                 ? '补齐 CUDA PyTorch'
                                 : (item.installed ? '重新下载' : '下载')}
                         </button>
+                        ${(item.source === 'managed' || item.source === 'sakura' || isManagedLlmDownloadId(item.id, item.source))
+                            ? `<button type="button" class="btn" data-model-action="manual" data-model-id="${esc(item.id)}" ${engineModelsBusy ? 'disabled' : ''} title="浏览器下载 GGUF 后放到指定目录">手动下载</button>`
+                            : ''}
                     </div>
                 </article>`;
         }).join('');
@@ -5524,6 +5626,148 @@
         };
     }
 
+    function buildManualGgufHint(info = {}) {
+        const name = String(info.name || info.modelId || '模型').trim();
+        const fileName = String(info.fileName || '').trim();
+        const folder = String(info.folder || '').trim();
+        const sizeHint = String(info.sizeHint || '').trim();
+        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
+        return (
+            `将在浏览器打开「${name}」的 GGUF 下载链接。${sizeLine}\n\n`
+            + `下载完成后，请将文件保存为：\n${fileName || '（见模型卡片）'}\n\n`
+            + `并放到以下目录（文件名需完全一致）：\n${folder || '（软件目录）/advanced-llm/models'}`
+        );
+    }
+
+    async function verifyManualManagedLlmModel(modelId, info = null) {
+        const res = await electron?.transubAdvancedManagedLlmVerifyManual?.({ modelId, kind: 'model' });
+        if (res?.ok) {
+            const msg = res.message || '已检测到本地 GGUF';
+            appendLog(msg, 'ok');
+            setEngineStatusText(msg, 'ok');
+            await refreshEngineModels({ silent: true });
+            return { ok: true, message: msg };
+        }
+        const folder = res?.folder || info?.folder || '';
+        const fileName = res?.fileName || info?.fileName || '';
+        const err = [res?.error || '未检测到有效的模型文件', fileName && folder ? `请确认 ${fileName} 已放在：${folder}` : '']
+            .filter(Boolean)
+            .join('\n');
+        appendLog(err, 'err');
+        setEngineStatusText(err, 'err');
+        return { ok: false, error: err };
+    }
+
+    /**
+     * 单文件 GGUF：浏览器手动下载，并提示放到 advanced-llm/models。
+     */
+    async function manualManagedLlmDownload(modelId) {
+        const id = String(modelId || '').trim();
+        if (!id) return { ok: false, error: '未选择模型' };
+        if (engineModelsBusy) return { ok: false, error: 'busy' };
+        if (!electron?.transubAdvancedManagedLlmDownloadInfo || !electron?.transubAdvancedManagedLlmOpenManual) {
+            setEngineStatusText('当前环境不支持手动下载 GGUF', 'err');
+            return { ok: false, error: 'unsupported' };
+        }
+        setEngineStatusText('正在准备手动下载说明…', 'busy');
+        let infoRes;
+        try {
+            infoRes = await electron.transubAdvancedManagedLlmDownloadInfo({ modelId: id, kind: 'model' });
+        } catch (err) {
+            const msg = err?.message || '无法获取下载信息';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        if (!infoRes?.ok) {
+            const msg = infoRes?.error || '无法获取下载信息';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        const info = infoRes.info || {};
+        await new Promise((r) => setTimeout(r, 50));
+        const choice = await appConfirmChoice({
+            title: '手动下载 GGUF',
+            message: buildManualGgufHint(info),
+            primaryLabel: '打开下载链接',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '取消',
+        });
+        if (choice === 'secondary') {
+            setEngineStatusText('已取消手动下载', 'warn');
+            return { ok: false, cancelled: true };
+        }
+        if (choice === 'tertiary') {
+            try {
+                const folderRes = await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'model' });
+                if (folderRes?.ok) {
+                    setEngineStatusText(`已打开存放目录：${folderRes.folder || info.folder || ''}`, 'info');
+                } else {
+                    setEngineStatusText(folderRes?.error || '无法打开存放目录', 'err');
+                }
+            } catch (err) {
+                setEngineStatusText(err?.message || '无法打开存放目录', 'err');
+            }
+            const again = await appConfirmChoice({
+                title: '手动下载 GGUF',
+                message: `${buildManualGgufHint(info)}\n\n目录已打开。是否继续打开下载链接？`,
+                primaryLabel: '打开下载链接',
+                secondaryLabel: '稍后',
+            });
+            if (again !== 'primary') return { ok: true, folderOnly: true };
+        }
+        try {
+            const openRes = await electron.transubAdvancedManagedLlmOpenManual({
+                modelId: id,
+                kind: 'model',
+                which: 'mirror',
+            });
+            if (!openRes?.ok) {
+                const msg = openRes?.error || '无法打开下载链接';
+                setEngineStatusText(msg, 'err');
+                return { ok: false, error: msg };
+            }
+        } catch (err) {
+            const msg = err?.message || '无法打开下载链接';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        const folder = String(info.folder || '').trim();
+        const fileName = String(info.fileName || '').trim();
+        const placedMsg = fileName && folder
+            ? `已打开下载页。请将 ${fileName} 放到：${folder}`
+            : '已打开下载页。请按提示将 GGUF 放到 advanced-llm/models 目录';
+        appendLog(placedMsg, 'info');
+        setEngineStatusText(placedMsg, 'info');
+        const verifyChoice = await appConfirmChoice({
+            title: '检测本地文件',
+            message: (
+                `若已将文件放到指定目录，可立即检测是否可用。\n\n`
+                + (fileName ? `文件名：${fileName}\n` : '')
+                + (folder ? `目录：${folder}` : '')
+            ),
+            primaryLabel: '我已放入，检测',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '稍后',
+        });
+        if (verifyChoice === 'tertiary') {
+            try {
+                await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'model' });
+            } catch (_) { /* ignore */ }
+            const retry = await appConfirm({
+                title: '检测本地文件',
+                message: '文件放好后，是否现在检测？',
+                primaryLabel: '检测',
+                secondaryLabel: '稍后',
+            });
+            if (!retry) return { ok: true, opened: true, message: placedMsg };
+            return verifyManualManagedLlmModel(id, info);
+        }
+        if (verifyChoice === 'primary') {
+            return verifyManualManagedLlmModel(id, info);
+        }
+        return { ok: true, opened: true, message: placedMsg };
+    }
+
     async function openEngineModelHubLinks(modelIds) {
         const ids = (Array.isArray(modelIds) ? modelIds : []).filter(Boolean);
         if (!ids.length || !electron?.transubEngineDownloadInfo) {
@@ -5687,6 +5931,16 @@
                     appendEngineDownloadLog(err);
                     appendLog(err, 'err');
                     setEngineStatusText(err, 'err');
+                    setEngineDownloadBusy(false);
+                    const proceed = await appConfirm({
+                        title: '模型下载失败',
+                        message: `${String(err).slice(0, 500)}\n\n是否改为浏览器手动下载 GGUF，并按提示放到模型目录？`,
+                        primaryLabel: '手动下载',
+                        secondaryLabel: '取消',
+                    });
+                    if (proceed) {
+                        await manualManagedLlmDownload(id);
+                    }
                     return res || { ok: false, error: err };
                 }
                 appendEngineDownloadLog(res.message || `${id} 下载完成`);
@@ -5707,6 +5961,19 @@
             appendEngineDownloadLog(msg);
             appendLog(msg, 'err');
             setEngineStatusText(msg, 'err');
+            setEngineDownloadBusy(false);
+            const failedId = ids[0] || '';
+            if (failedId) {
+                const proceed = await appConfirm({
+                    title: '模型下载失败',
+                    message: `${String(msg).slice(0, 500)}\n\n是否改为浏览器手动下载 GGUF，并按提示放到模型目录？`,
+                    primaryLabel: '手动下载',
+                    secondaryLabel: '取消',
+                });
+                if (proceed) {
+                    await manualManagedLlmDownload(failedId);
+                }
+            }
             return { ok: false, error: msg };
         } finally {
             setEngineDownloadBusy(false);
@@ -5963,6 +6230,10 @@
             const acousticLabel = acousticHint === 'music' ? '配乐'
                 : acousticHint === 'soft' ? '软声'
                     : acousticHint === 'noisy' ? '底噪' : '';
+            const hasSenseOverrides = !!(sense.overrides && Object.keys(sense.overrides).length);
+            const canToggleAdopt = sense.status === 'done'
+                && !state.running
+                && (sense.adopted || hasSenseOverrides);
             const tipParts = [
                 sense.adopted ? '将使用感知参数' : (autoOn ? '感知未采纳' : '感知已关'),
                 hit?.label || badge || '未识别',
@@ -5973,6 +6244,9 @@
                 sense.overrides?.engineMtModel || '',
                 acousticLabel ? `声学·${acousticLabel}` : '',
                 ...(hit?.reasons || []).slice(0, 2),
+                canToggleAdopt
+                    ? (sense.adopted ? '点击改为不采纳' : '点击采纳')
+                    : '',
             ].filter(Boolean);
             const tip = tipParts.join(' · ') || sense.message || '';
             const rejectedCls = !sense.adopted ? ' is-rejected' : '';
@@ -5982,25 +6256,22 @@
                 ? ` profile-${esc(hit.profile)}`
                 : '';
             const aria = sense.adopted
-                ? `将使用感知参数：${badge || hit?.label || '已采纳'}`
-                : (badge || hit?.label || '感知结果');
-            profileBadgeHtml = `<span class="file-sense-icon${profileCls}${adoptedCls}${rejectedCls}${suggestCls}" title="${esc(tip)}" aria-label="${esc(aria)}"><i class="fa fa-magic" aria-hidden="true"></i></span>`;
+                ? `已采纳感知参数：${badge || hit?.label || '已采纳'}（点击不采纳）`
+                : (canToggleAdopt
+                    ? `未采纳：${badge || hit?.label || '感知结果'}（点击采纳）`
+                    : (badge || hit?.label || '感知结果'));
+            const toggleAttrs = canToggleAdopt
+                ? ` type="button" data-sense-toggle="${idx}"`
+                : ' type="button" disabled';
+            profileBadgeHtml = `<button${toggleAttrs} class="file-sense-icon${profileCls}${adoptedCls}${rejectedCls}${suggestCls}" title="${esc(tip)}" aria-label="${esc(aria)}"><i class="fa fa-magic" aria-hidden="true"></i></button>`;
         } else if (!autoOn && sense?.status === 'off') {
             profileBadgeHtml = '';
         }
 
         let senseBtns = '';
         if (!state.running && sense && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')) {
-            const canAdopt = sense.status === 'done'
-                && !sense.adopted
-                && sense.overrides
-                && Object.keys(sense.overrides).length > 0;
-            const adoptOrRejectBtn = sense.adopted && sense.status === 'done'
-                ? `<button type="button" data-sense-reject="${idx}" class="row-sense-pill row-sense-pill-reject" title="改用表单参数，并记住此偏好（同目录/厂牌）" aria-label="不采纳">不采纳</button>`
-                : `<button type="button" data-sense-adopt="${idx}" class="row-sense-pill row-sense-pill-adopt" title="采用感知匹配的语种与模型" aria-label="采纳感知方案" ${canAdopt ? '' : 'disabled'}>采纳</button>`;
             senseBtns = `<span class="row-sense-actions">
-                    <button type="button" data-sense-resense="${idx}" class="row-sense-pill row-sense-pill-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="重新感知" ${sense.status === 'sensing' ? 'disabled' : ''}>重感知</button>
-                    ${adoptOrRejectBtn}
+                    <button type="button" data-sense-resense="${idx}" class="row-sense-pill row-sense-pill-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="深度感知" ${sense.status === 'sensing' ? 'disabled' : ''}>深度感知</button>
                 </span>`;
         }
         let qcCell = '<span class="text-gray-300">—</span>';
@@ -6668,9 +6939,20 @@
             return;
         }
 
+        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
+        const confirmMsg = onlyItem
+            ? `确定对「${basename(onlyItem.path)}」一键修复 QC 问题吗？\n将写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`
+            : `确定一键修复 QC 问题吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`;
+        const yes = await appConfirm({
+            title: '一键修复 QC',
+            message: confirmMsg,
+            primaryLabel: '一键修复',
+            secondaryLabel: '取消',
+        });
+        if (!yes) return;
+
         state.qcFixing = true;
         updateQcBanner();
-        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
         els.progressLabel.textContent = '一键修复 QC…';
         appendLog(`开始一键修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`, 'info');
         let written = 0;
@@ -7363,18 +7645,11 @@
                 resenseItem(state.items[Number(resenseBtn.dataset.senseResense)]);
                 return;
             }
-            const rejectBtn = e.target.closest('[data-sense-reject]');
-            if (rejectBtn) {
+            const toggleSenseBtn = e.target.closest('[data-sense-toggle]');
+            if (toggleSenseBtn) {
                 e.preventDefault();
                 e.stopPropagation();
-                rejectItemSense(state.items[Number(rejectBtn.dataset.senseReject)]);
-                return;
-            }
-            const adoptBtn = e.target.closest('[data-sense-adopt]');
-            if (adoptBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                adoptItemSense(state.items[Number(adoptBtn.dataset.senseAdopt)]);
+                toggleItemSenseAdopt(state.items[Number(toggleSenseBtn.dataset.senseToggle)]);
                 return;
             }
             const retryBtn = e.target.closest('[data-retry-idx]');
@@ -7770,6 +8045,8 @@
             if (!id) return;
             if (action === 'download') {
                 void downloadEngineModels({ modelIds: [id] });
+            } else if (action === 'manual') {
+                void manualManagedLlmDownload(id);
             }
         });
         els.engineEnsureGpuBtn?.addEventListener('click', () => {
@@ -7873,6 +8150,9 @@
         });
         els.mergeBilingualCheck?.addEventListener('change', () => {
             syncMergeBilingualUi();
+            updateParamsSummary();
+        });
+        els.mergeBilingualOrderSelect?.addEventListener('change', () => {
             updateParamsSummary();
         });
         els.filmAudioEnhanceCheck?.addEventListener('change', () => {

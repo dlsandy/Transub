@@ -20,6 +20,34 @@ function loadMerge() {
     throw new Error('无法加载 zip-update-merge');
 }
 
+function loadStatusWriter() {
+    try {
+        return require('./zip-update-status');
+    } catch {
+        /* fall through */
+    }
+    // Minimal fallback if sibling module is unavailable outside asar.
+    return {
+        writeZipUpdateStatus(statusPath, patch = {}) {
+            if (!statusPath) return;
+            try {
+                fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+                fs.writeFileSync(
+                    statusPath,
+                    `${JSON.stringify({
+                        phase: patch.phase || 'working',
+                        message: patch.message || '',
+                        percent: Number(patch.percent) || 0,
+                        error: patch.error || '',
+                        updatedAt: new Date().toISOString(),
+                    }, null, 2)}\n`,
+                    'utf8',
+                );
+            } catch { /* ignore */ }
+        },
+    };
+}
+
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
@@ -35,12 +63,15 @@ function isPidAlive(pid) {
     }
 }
 
-async function waitForPidExit(pid, timeoutMs = 120000) {
+async function waitForPidExit(pid, timeoutMs = 120000, onTick) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         if (!isPidAlive(pid)) {
             await sleep(800);
             return;
+        }
+        if (typeof onTick === 'function') {
+            try { onTick(); } catch { /* ignore */ }
         }
         await sleep(400);
     }
@@ -85,17 +116,44 @@ async function main() {
     }
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     const logPath = meta.logPath || '';
+    const statusPath = meta.statusPath || '';
+    const { writeZipUpdateStatus } = loadStatusWriter();
+    const setStatus = (patch) => writeZipUpdateStatus(statusPath, patch);
     const merge = loadMerge();
 
     appendLog(logPath, `start waitPid=${meta.waitPid} install=${meta.installRoot}`);
+    setStatus({
+        phase: 'waiting',
+        message: '正在等待主程序退出…',
+        percent: 4,
+    });
 
-    await waitForPidExit(meta.waitPid, Number(meta.waitTimeoutMs) || 120000);
+    await waitForPidExit(meta.waitPid, Number(meta.waitTimeoutMs) || 120000, () => {
+        setStatus({
+            phase: 'waiting',
+            message: '正在等待主程序退出（请勿强制结束进程）…',
+            percent: 6,
+        });
+    });
     appendLog(logPath, 'app exited, applying merge');
+    setStatus({
+        phase: 'preparing',
+        message: '主程序已退出，开始安装更新…',
+        percent: 10,
+    });
 
     const result = merge.applyZipUpdateMerge({
         installRoot: meta.installRoot,
         packageRoot: meta.packageRoot,
         preserveRelPaths: meta.preserveRelPaths,
+        onProgress: (info) => {
+            setStatus({
+                phase: info.phase || 'copying',
+                message: info.message || '正在安装更新…',
+                percent: info.percent,
+            });
+            appendLog(logPath, `${info.phase || 'progress'} ${info.percent || 0}% ${info.message || ''}`);
+        },
     });
     appendLog(logPath, `merge ok preserved=${(result.preserved || []).length}`);
 
@@ -103,10 +161,24 @@ async function main() {
     if (!fs.existsSync(exePath)) {
         throw new Error(`安装后未找到可执行文件: ${exePath}`);
     }
+
+    setStatus({
+        phase: 'relaunching',
+        message: '即将重新启动 Transub…',
+        percent: 97,
+    });
     launchExe(exePath, meta.installRoot);
     appendLog(logPath, `relaunched ${exePath}`);
 
-    cleanupPaths([...(meta.cleanupPaths || []), metaPath], merge);
+    setStatus({
+        phase: 'done',
+        message: '升级完成，正在启动新版本…',
+        percent: 100,
+    });
+
+    // Keep status file briefly for the progress UI; do not delete it with cleanupPaths.
+    const cleanup = [...(meta.cleanupPaths || []), metaPath].filter((p) => p && p !== statusPath);
+    cleanupPaths(cleanup, merge);
     appendLog(logPath, 'done');
 }
 
@@ -117,6 +189,15 @@ main().catch((err) => {
         if (metaPath && fs.existsSync(metaPath)) {
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
             appendLog(meta.logPath || '', `ERROR ${msg}`);
+            try {
+                const { writeZipUpdateStatus } = loadStatusWriter();
+                writeZipUpdateStatus(meta.statusPath || '', {
+                    phase: 'error',
+                    message: `升级失败：${msg}`,
+                    percent: 100,
+                    error: msg,
+                });
+            } catch { /* ignore */ }
         }
     } catch {
         /* ignore */

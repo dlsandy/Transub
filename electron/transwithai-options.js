@@ -106,6 +106,8 @@ function mergeTransWithAiOptions(input = {}) {
         dualTargetSuffix: 'zh',
         dualPrimaryTrack: 'target',
         dualDisplayMode: 'both',
+        // Match settings UI default: 译文在上，原文在下
+        dualLineOrder: 'target-first',
         mergeBilingualSubtitles: false,
         deleteSourcesAfterMergeBilingual: false,
         includeWords: false,

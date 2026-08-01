@@ -10,6 +10,18 @@ const {
     mergeTransWithAiOptions,
     stripPostTaskFields,
 } = require('./transwithai-options');
+
+// Zip-update progress UI (must run before single-instance lock / normal boot).
+const {
+    parseZipUpdateProgressArg,
+    runZipUpdateProgressUi,
+} = require('./zip-update-progress-window');
+const zipUpdateProgressPath = parseZipUpdateProgressArg();
+if (zipUpdateProgressPath) {
+    runZipUpdateProgressUi(app, zipUpdateProgressPath);
+    return;
+}
+
 registerMediaScheme();
 
 /** @type {string[]} */
@@ -369,6 +381,8 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-managed-llm-verify-manual': 'advanced',
     'transub-advanced-managed-llm-pull': 'advanced',
     'transub-advanced-managed-llm-install-runtime': 'advanced',
+    'transub-advanced-managed-llm-set-runtime': 'advanced',
+    'transub-advanced-managed-llm-import-runtime': 'advanced',
     'transub-advanced-managed-llm-cancel-pull': 'advanced',
     'transub-advanced-managed-llm-stop-server': 'advanced',
     'transub-advanced-managed-llm-perf-test': 'advanced',
@@ -460,6 +474,10 @@ app.on('second-instance', (_event, commandLine) => {
 
 app.whenReady().then(() => {
     registerMediaProtocolHandler();
+    // 尽早探测 NVIDIA，供 llama-server 默认选 CUDA 12（无独显则仍为 Vulkan）
+    try {
+        require('./advanced-runtime-prefer').refreshPreferCuda().catch(() => {});
+    } catch (_) { /* ignore */ }
     const cliEdit = parseCliEditSubtitle();
     const cliFiles = parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
