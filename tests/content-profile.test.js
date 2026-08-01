@@ -507,12 +507,12 @@ describe('content-profile-core', () => {
         assert.ok(notes.some((n) => /sakura-1\.5b/i.test(n)));
     });
 
-    it('refineSenseModels falls back to Opus when Sakura missing but Opus installed', () => {
-        const { overrides, notes } = refineSenseModels(
+    it('refineSenseModels prefers Sakura over installed Opus for JA AV', () => {
+        const { overrides } = refineSenseModels(
             {
                 language: 'ja',
                 engineAsrModel: 'whisper-large-v3-turbo',
-                engineMtModel: 'opus-mt-en-zh',
+                engineMtModel: 'opus-mt-ja-zh',
                 engineVadModel: 'whisperseg-asmr',
             },
             {
@@ -528,8 +528,20 @@ describe('content-profile-core', () => {
             },
         );
         assert.strictEqual(overrides.engineAsrModel, 'whisper-ja-1.5b');
-        assert.strictEqual(overrides.engineMtModel, 'opus-mt-ja-zh');
-        assert.ok(notes.length >= 1);
+        assert.strictEqual(overrides.engineMtModel, 'sakura-1.5b');
+    });
+
+    it('refineSenseModels declares Sakura for JA when model catalog is empty', () => {
+        const { overrides } = refineSenseModels(
+            { language: 'ja', engineMtModel: 'sakura-1.5b' },
+            {
+                profile: 'av_soft',
+                language: 'ja',
+                task: 'translate',
+                installedModels: [],
+            },
+        );
+        assert.strictEqual(overrides.engineMtModel, 'sakura-1.5b');
     });
 
     it('refineSenseModels prefers general LLM over Opus when Sakura missing (JA)', () => {

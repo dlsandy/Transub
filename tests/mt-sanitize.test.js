@@ -614,4 +614,40 @@ describe('mt-sanitize-core', () => {
         assert.ok(batch.cues[0].text.includes('不是风俗') || batch.cues[0].text === '');
         assert.ok(batch.cues[1].text.includes('按摩油'));
     });
+
+    it('unsticks orphan / cross-cue ZH loops (IPZZ-745)', () => {
+        const orphan = sanitize.polishOrphanStuckZh(
+            '我有好好地在工作',
+            'お兄ちゃん、早くしないと学校遅刻しちゃうよ。',
+        );
+        assert.ok(orphan.changed);
+        assert.strictEqual(orphan.text, '…');
+
+        const batch = sanitize.sanitizeMtCues(
+            [
+                { index: 0, text: '我有好好地在工作' },
+                { index: 1, text: '我有好好地在工作' },
+                { index: 2, text: '我有好好地在工作' },
+                { index: 3, text: '哥哥的肉棒好舒服，嗯啊啊啊！' },
+                { index: 4, text: '哥哥的肉棒好舒服，嗯啊啊啊！' },
+                { index: 5, text: '哥哥的肉棒好舒服，嗯啊啊啊！' },
+            ],
+            [
+                { index: 0, text: 'ユーモア' },
+                { index: 1, text: 'おわり' },
+                { index: 2, text: 'お兄ちゃん、早くしないと学校遅刻しちゃうよ。' },
+                { index: 3, text: 'んぅぅぅっ…!' },
+                { index: 4, text: 'あんっ!' },
+                { index: 5, text: 'あははは' },
+            ],
+            { contentProfile: 'av_soft', skipJaAsrDomain: true },
+        );
+        assert.ok(batch.flags.cross_cue_stuck >= 1 || batch.flags.orphan_stuck_zh >= 1);
+        assert.ok(batch.cues.every((c) => c.text !== '我有好好地在工作'));
+        assert.ok(batch.cues[5].text === '哈哈' || batch.cues[5].text === '…');
+        assert.ok(
+            batch.cues[3].text !== '哥哥的肉棒好舒服，嗯啊啊啊！'
+            || batch.cues[4].text !== '哥哥的肉棒好舒服，嗯啊啊啊！',
+        );
+    });
 });

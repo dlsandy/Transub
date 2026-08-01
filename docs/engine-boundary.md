@@ -13,7 +13,7 @@
 
 - 设置项 `engineBackend` 默认为 `transub`
 - 免费翻译：引擎 **ASR → 本地 Opus NMT（英/日/韩/德/西/芬/瑞典 → 中）**，或可选免费 **推理翻译 / Sakura（日→简中 GGUF，默认 1.5B / 可选 7B）**；Sakura 使用内置 llama-server，**不需** Pro 许可（模型许可为 CC-BY-NC-SA）；「忠实语气」免费可用
-- 免费音频：默认 VAD（可调阈值）、可选「更激进切分」「轻度降噪」；Whisper「灵敏检出」使用 **WhisperSeg ASMR**（`whisperseg-asmr`）外部 VAD → `clip_timestamps`，绕过内置 Silero；引擎敏感预设（JA AV 软声召回）：阈值 `0.18`、最短人声 `60ms`、最小静音 `140ms`、填充 `350ms`、更长片段合并；长片（≥10 分钟）按 ≤7 分钟定长窗口切分（瞬时，不再全片 ffmpeg 静音扫描），WhisperSeg 只解码一次再内存切片；ASR 后轻量剥离括号音效/SDH 标记，保留中等长度呻吟并压缩极端叠字。日语软声 / AV **不要**叠轻度降噪或 Demucs 影视增强。可选 ASR `whisper-ja-1.5b`（日语微调）。WhisperSeg GPU 需安装 **`onnxruntime-gpu`**（与 CPU 包互斥）；ffmpeg 解码仍为 CPU
+- 免费音频：默认 VAD（可调阈值）、可选「更激进切分」「轻度降噪」；Whisper「灵敏检出」使用 **WhisperSeg**（`whisperseg-asmr`）外部 VAD → `clip_timestamps`，绕过内置 Silero；灵敏预设阈值约 `0.18`、最短人声 `60ms`、最小静音 `140ms`、填充 `350ms`、更长片段合并；长片（≥10 分钟）按 ≤7 分钟定长窗口切分（瞬时，不再全片 ffmpeg 静音扫描），WhisperSeg 只解码一次再内存切片；ASR 后轻量剥离括号音效/SDH 标记，并压缩极端叠字。灵敏检出路径不宜叠轻度降噪或 Demucs 影视增强。可选 ASR `whisper-ja-1.5b`（日语微调）。WhisperSeg GPU 需安装 **`onnxruntime-gpu`**（与 CPU 包互斥）；ffmpeg 解码仍为 CPU
 - 推理设备 `device`（auto/cuda/cpu）贯通：人声分离、WhisperSeg、ASR、Opus NMT
 - 短窗语种：`POST /v1/detect-language`（Whisper 编码器，约 12 秒窗口；桌面自动感知默认 `startSec≈60–180` 跳过片头）；桌面「自动感知」在语种为自动且无音轨/文件名强先验时调用；需已安装 Whisper CT2（优先 tiny）；缺少 `faster-whisper`/`numpy` 时会自动 pip 进引擎 runtime
 - 智能翻译（**Pro 专属**）：引擎任务仍为 **`translate_mt` / `dual`**，`mtBackend=external`；适配器侧 **影片简要 → 分块译 → 一致性**；引擎批次约 40 条/窗、窗口 30/重叠 2（推理翻译仍约 8）

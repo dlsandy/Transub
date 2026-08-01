@@ -55,6 +55,20 @@
             flex-shrink: 0;
             border-radius: 0.25rem;
         }
+        /* Solid amber CTA — Tailwind purge may omit bg-amber-600 / text-white combo */
+        #qcBannerFixBtn.qc-banner-fix-btn {
+            border: 1px solid #d97706;
+            background: #d97706;
+            color: #fff;
+        }
+        #qcBannerFixBtn.qc-banner-fix-btn:hover:not(:disabled) {
+            background: #b45309;
+            border-color: #b45309;
+            color: #fff;
+        }
+        #qcBannerFixBtn.qc-banner-fix-btn:disabled {
+            color: #fff;
+        }
         .subtitle-task-table .cell-ellipsis {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -74,6 +88,23 @@
         }
         .subtitle-task-table .file-cell-main > :not(.cell-ellipsis) {
             flex-shrink: 0;
+        }
+        .subtitle-task-table .file-name-link {
+            display: block;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            cursor: pointer;
+            color: #5b21b6;
+            font: inherit;
+            font-weight: 500;
+            max-width: 100%;
+        }
+        .subtitle-task-table .file-name-link:hover {
+            color: #6d28d9;
+            text-decoration: underline;
         }
         .subtitle-task-table .file-cell-main > .file-sense-icon,
         .subtitle-task-table .file-cell-main > .file-sense-status {
@@ -1344,6 +1375,7 @@
         <div id="qcBanner" class="hidden shrink-0 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
             <span id="qcBannerText">有条目存在 QC 问题</span>
             <div class="flex items-center gap-2 shrink-0">
+                <button type="button" id="qcBannerFixBtn" class="qc-banner-fix-btn px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">一键修复QC</button>
                 <button type="button" id="qcBannerViewBtn" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs hover:bg-amber-50 shrink-0">查看第一条</button>
                 <button type="button" id="qcBannerDismissBtn" class="toolbar-icon-btn !w-7 !h-7 shrink-0" title="关闭" aria-label="关闭"><i class="fa fa-times text-xs"></i></button>
             </div>
@@ -2626,7 +2658,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="more" data-settings-search="更多 导出 导入 日志 更新 关于 重置">
+                    <div class="params-tab-panel" data-tab-panel="more" data-settings-search="更多 导出 导入 日志 更新 自动更新 检查更新 关于 重置">
                         
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
@@ -2649,6 +2681,18 @@
                                     <i class="fa fa-refresh w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>检查新版本
                                 </button>
                             </div>
+                            <label class="block text-sm mt-2">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    自动检查更新
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率在后台检查 GitHub 发布页。发现新版本时会提示是否升级；不会自动下载安装。改后点「保存设置」生效。</span></span>
+                                </span>
+                                <select id="autoUpdateCheckIntervalSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm max-w-xs">
+                                    <option value="off">不检查</option>
+                                    <option value="daily">每天检查一次</option>
+                                    <option value="weekly" selected>每周检查一次</option>
+                                    <option value="monthly">每月检查一次</option>
+                                </select>
+                            </label>
                             <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
                         </fieldset>
                         <fieldset class="settings-section">

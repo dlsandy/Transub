@@ -351,13 +351,35 @@
         return { initial_prompt, hotwords, termCount: terms.length };
     }
 
-    /** Mens-esthe / soft-AV JA vocabulary for Whisper (keep didactic text out — model echoes it). */
-    function buildJaAvAsrPromptHints() {
+    /**
+     * Soft-AV JA vocabulary for Whisper (keep didactic text out — model echoes it).
+     * Mens-esthe hotwords help massage titles; school/sibling titles (IPZZ-745)
+     * should use a lighter general prompt via options.hint / mediaPath / title.
+     */
+    function buildJaAvAsrPromptHints(options = {}) {
+        const hint = [
+            options.hint,
+            options.title,
+            options.mediaPath,
+            options.media_path,
+            options.fileName,
+        ].map((x) => String(x || '')).join(' ');
+        const esthe = /メンズエステ|メンエス|massage|esthe|オイルマッサージ|mens[-_]?esthe/i.test(hint);
+        const nonEsthe = /学校|妹|兄|お兄|学園|制服|skirt|sister|brother|\bipzz\b|\bsone\b|\bssis\b|\bsnis\b|\bmide\b/i.test(hint);
+        if (nonEsthe && !esthe) {
+            return {
+                initial_prompt: '日本語の自然な会話。',
+                hotwords: 'お兄ちゃん 気持ちいい だめ エッチ あぁん',
+                termCount: 5,
+                domain: 'soft_av_general',
+            };
+        }
         return {
             // Keep short — long term lists get echoed as cues (JUR-809 / HMN-878).
             initial_prompt: 'メンズエステの店内会話。',
             hotwords: 'メンズエステ メンエス オイル 指圧 半パンツ リンパ ふくらはぎ ほぐして うつ伏せ 仰向け ゲスト',
             termCount: 11,
+            domain: 'mens_esthe',
         };
     }
 

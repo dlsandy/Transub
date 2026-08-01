@@ -101,6 +101,16 @@ function testJaAvAsrPromptHints() {
     assert.ok(hints.hotwords.includes('指圧'));
     assert.ok(!hints.hotwords.includes('ギリギリ'));
     assert.ok(!/人名です|用語：/.test(hints.initial_prompt));
+    assert.strictEqual(hints.domain, 'mens_esthe');
+
+    // School / sibling soft-AV (IPZZ-745): avoid mens-esthe term spam
+    const school = buildJaAvAsrPromptHints({
+        hint: 'IPZZ-745 在学校超受欢迎的小恶魔妹妹',
+    });
+    assert.ok(school.initial_prompt.includes('自然な会話'));
+    assert.ok(school.hotwords.includes('お兄ちゃん'));
+    assert.ok(!school.hotwords.includes('メンズエステ'));
+    assert.strictEqual(school.domain, 'soft_av_general');
 }
 
 describe("subtitle-glossary", () => {

@@ -440,15 +440,15 @@
         const raw = String(text || '').trim();
         if (!raw) return false;
         if (SOUND_EFFECT_RE.test(raw)) return true;
-        // ♪…♫ 纯乐符行
-        if (/^[♪♫♩♬\s·.•…\-—_]+$/.test(raw)) return true;
+        // ♪…♫ / ◆… 纯乐符、章节标记行
+        if (/^[♪♫♩♬◆◇■□★☆●○◎※\s·.•…\-—_]+$/.test(raw)) return true;
         return false;
     }
 
     function isSymbolOnlyCue(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
-        const stripped = raw.replace(/[\s♪♫♩♬·.•…\-—_.,。！？!?，、；;:：【】[\]()（）「」『』"""'']+/g, '');
+        const stripped = raw.replace(/[\s♪♫♩♬◆◇■□★☆●○◎※·.•…\-—_.,。！？!?，、；;:：【】[\]()（）「」『』"""'']+/g, '');
         return !stripped;
     }
 
@@ -468,10 +468,14 @@
         '本集', '本集。',
         '寂寞', '寂寞酷', '寂寞曲', '寂寞笑',
         '好厉害', '准备',
+        // Opening BGM / logo echoes (IPZZ-745)
+        'おわり', 'おわり。', '終わり', '終わり。',
+        'ユーモア', 'ユーモア。',
+        'the end.', 'The End', 'THE END',
     ]);
     // JA YouTube / soft-scene filler often emitted as whole cues by Whisper
     // Single "." / "…" music-bed hallucinations are common on film English ASR.
-    const HALLUCINATION_RE = /^(?:[Oo○〇◯●]{2,}|[・･.。…]{1,}|[♪♫♩♬]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*|ご視聴.*ありがとう.*|チャンネル登録.*|高評価.*|グッドボタン.*|李宗盛.*)$/i;
+    const HALLUCINATION_RE = /^(?:[Oo○〇◯●]{2,}|[・･.。…]{1,}|[♪♫♩♬◆◇■□★☆●○◎※]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*|ご視聴.*ありがとう.*|チャンネル登録.*|高評価.*|グッドボタン.*|李宗盛.*)$/i;
     const PROMPT_LEAK_RE = /人名です|登場人物の名前は|登場人物：|舞は人名|トミーは人名|ダンスではない/;
     const LATIN_CJK_JAM_RE = /[A-Za-z]{2,}[\u3040-\u30ff\u4e00-\u9fff]|[\u3040-\u30ff\u4e00-\u9fff][A-Za-z]{2,}/;
 

@@ -1371,6 +1371,143 @@
         return allowed;
     }
 
+    /** Known Sakura/Opus orphan ZH lines unrelated to JA (IPZZ-745). */
+    const ORPHAN_STUCK_ZH = new Set([
+        '我有好好地在工作',
+        '我有好好地在工作。',
+    ]);
+    // Long stuck NSFW template pasted onto unrelated moans / laughs
+    const ORPHAN_STUCK_ZH_RE = /^哥哥的肉棒好舒服[，,]?嗯?啊*！?$/;
+
+    function jaNormKey(text) {
+        return String(text || '')
+            .replace(/[\s、。.!！?？~～ー…]+/g, '')
+            .trim();
+    }
+
+    function zhNormKey(text) {
+        return String(text || '')
+            .replace(/[\s。．.!！?？~～…，,]+/g, '')
+            .trim();
+    }
+
+    function remapZhFromJaSimple(ja) {
+        const s = String(ja || '').trim();
+        if (!s) return null;
+        const bare = s.replace(/[。．.!！]+$/g, '');
+        if (/^あはは|^ははは/.test(s)) return '哈哈';
+        if (/^はい$/.test(bare)) return '好的';
+        if (/^うん$/.test(bare)) return '嗯';
+        if (/気持ちいい/.test(s)) return /[?？]/.test(s) ? '舒服吗？' : '好舒服';
+        if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡]+$/.test(s)) {
+            if (/[はハ]/.test(s) && !/[あァぁあんン]/.test(s.replace(/[はハ]/g, ''))) {
+                return /[!！]/.test(s) ? '哈——！' : '哈啊';
+            }
+            if (/[んン]/.test(s) && !/[あァぁ]/.test(s)) {
+                return /[!！]/.test(s) ? '嗯——！' : '嗯';
+            }
+            if (/[うぅウゥ]/.test(s) && !/[あァぁ]/.test(s)) return '呜……';
+            return /[!！]/.test(s) ? '啊——！' : '啊……';
+        }
+        return null;
+    }
+
+    function polishOrphanStuckZh(text, sourceText = '') {
+        const cur = String(text || '').trim();
+        const src = String(sourceText || '');
+        if (!cur) return { text: cur, changed: false };
+        const bare = cur.replace(/[。．.]+$/g, '');
+        if (ORPHAN_STUCK_ZH.has(cur) || ORPHAN_STUCK_ZH.has(bare)) {
+            if (!/仕事|働|勤務|バイト/.test(src)) {
+                const remapped = remapZhFromJaSimple(src);
+                return { text: remapped != null ? remapped : '…', changed: true };
+            }
+        }
+        if (ORPHAN_STUCK_ZH_RE.test(cur) || ORPHAN_STUCK_ZH_RE.test(bare)) {
+            // Keep only when JA actually mentions penis / feeling good
+            if (!/お?ちん|ちんぽ|ちんこ|肉棒|気持ちいい|きもちいい/.test(src)) {
+                const remapped = remapZhFromJaSimple(src);
+                return { text: remapped != null ? remapped : '…', changed: true };
+            }
+        }
+        return { text: cur, changed: false };
+    }
+
+    function remapLongZhOnReactiveJa(text, sourceText = '') {
+        const cur = String(text || '').trim();
+        const src = String(sourceText || '').trim();
+        if (!cur || !src) return { text: cur, changed: false };
+        const zk = zhNormKey(cur);
+        if (zk.length < 6) return { text: cur, changed: false };
+        const remapped = remapZhFromJaSimple(src);
+        if (remapped == null) return { text: cur, changed: false };
+        if (
+            /^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡]+$/.test(src)
+            || /^あはは|^ははは/.test(src)
+        ) {
+            return { text: remapped, changed: remapped !== cur };
+        }
+        return { text: cur, changed: false };
+    }
+
+    /**
+     * Break consecutive identical ZH when Japanese sources differ (MT stuck loop).
+     */
+    function unstickCrossCueZh(translatedCues, sourceCues = []) {
+        const zhList = Array.isArray(translatedCues) ? translatedCues.map((c) => ({ ...c })) : [];
+        const srcList = Array.isArray(sourceCues) ? sourceCues : [];
+        let changed = 0;
+        for (let i = 0; i < zhList.length; i += 1) {
+            const src = String(srcList[i]?.text ?? '');
+            let fixed = polishOrphanStuckZh(zhList[i]?.text, src);
+            if (fixed.changed) {
+                zhList[i] = { ...zhList[i], text: fixed.text };
+                changed += 1;
+            }
+            fixed = remapLongZhOnReactiveJa(zhList[i]?.text, src);
+            if (fixed.changed) {
+                zhList[i] = { ...zhList[i], text: fixed.text };
+                changed += 1;
+            }
+        }
+        let i = 0;
+        while (i < zhList.length) {
+            const zk = zhNormKey(zhList[i]?.text);
+            if (!zk || zk.length < 2) {
+                i += 1;
+                continue;
+            }
+            let j = i + 1;
+            while (j < zhList.length && zhNormKey(zhList[j]?.text) === zk) j += 1;
+            const streak = j - i;
+            const minStreak = zk.length >= 6 ? 2 : 3;
+            if (streak >= minStreak) {
+                const jaKeys = [];
+                for (let k = i; k < j; k += 1) {
+                    jaKeys.push(jaNormKey(srcList[k]?.text));
+                }
+                const uniq = new Set(jaKeys.filter(Boolean));
+                if (uniq.size >= Math.min(2, streak)) {
+                    const firstJa = jaKeys[0] || '';
+                    for (let k = i; k < j; k += 1) {
+                        const ja = String(srcList[k]?.text ?? '');
+                        const jk = jaKeys[k - i] || '';
+                        if (k === i && jk === firstJa) continue;
+                        if (jk && jk === firstJa) continue;
+                        const remapped = remapZhFromJaSimple(ja);
+                        const next = remapped != null ? remapped : (zk.length >= 4 ? '…' : zhList[k].text);
+                        if (next !== zhList[k].text) {
+                            zhList[k] = { ...zhList[k], text: next };
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+            i = j;
+        }
+        return { cues: zhList, changed };
+    }
+
     /**
      * Sanitize one MT cue text against its source.
      * @param {string} text
@@ -1389,6 +1526,13 @@
                 : String(sourceText || ''));
         const justifyOpts = { loopStrippedSource };
         const cueOpts = { ...options, justifyOpts };
+
+        const orphanStuck = polishOrphanStuckZh(cur, loopStrippedSource || sourceText);
+        if (orphanStuck.changed) {
+            cur = orphanStuck.text;
+            changed = true;
+            flags.push('orphan_stuck_zh');
+        }
 
         const stripped = stripMtArtifacts(cur);
         if (stripped.changed) {
@@ -1618,6 +1762,16 @@
             }
         }
 
+        // Cross-cue stuck ZH loops (same translation pasted on different JA lines)
+        if (options.unstickCrossCueZh !== false) {
+            const unstuck = unstickCrossCueZh(cues, cleanedSource);
+            if (unstuck.changed) {
+                cues = unstuck.cues;
+                changed += unstuck.changed;
+                flagCounts.cross_cue_stuck = (flagCounts.cross_cue_stuck || 0) + unstuck.changed;
+            }
+        }
+
         return {
             cues,
             changed,
@@ -1686,6 +1840,8 @@
         applyNameConsistency,
         sanitizeMtCueText,
         sanitizeMtCues,
+        polishOrphanStuckZh,
+        unstickCrossCueZh,
         correctJaAsrDomainMishears,
         correctJaAsrDomainMishearsInCues,
         correctZhDomainMistranslations,

@@ -139,6 +139,8 @@ function mergeTransWithAiOptions(input = {}) {
         minimizeToTrayOnStart: false,
         trayNotifyEnabled: false,
         startupWindow: 'generator',
+        autoUpdateCheckInterval: 'weekly',
+        lastAutoUpdateCheckAt: '',
         autoSense: true,
         autoDeepSense: false,
         postBatchQc: true,
@@ -183,6 +185,18 @@ function mergeTransWithAiOptions(input = {}) {
     merged.startupWindow = (startupRaw === 'editor' || startupRaw === 'subtitle-editor')
         ? 'editor'
         : 'generator';
+
+    // Normalize auto update check frequency
+    try {
+        const { normalizeAutoUpdateCheckInterval } = require('./auto-update-check');
+        merged.autoUpdateCheckInterval = normalizeAutoUpdateCheckInterval(merged.autoUpdateCheckInterval);
+    } catch {
+        const raw = String(merged.autoUpdateCheckInterval || '').trim().toLowerCase();
+        merged.autoUpdateCheckInterval = ['off', 'daily', 'weekly', 'monthly'].includes(raw)
+            ? raw
+            : 'weekly';
+    }
+    merged.lastAutoUpdateCheckAt = String(merged.lastAutoUpdateCheckAt || '').trim();
 
     return {
         ...merged,

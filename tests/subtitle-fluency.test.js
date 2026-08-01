@@ -99,6 +99,12 @@ function testHallucinationCleanup() {
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: 'iz磨吉平洋' }));
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: '寂寞笑' }));
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 350, text: '.' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 1600, text: 'おわり' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 1600, text: 'ユーモア' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 1500, text: '◆ ◆ ◆ ◆ ◆ ◆' }));
+    const { isSymbolOnlyCue, isSoundEffectCue } = require('../src/js/subtitle-fluency-core');
+    assert.ok(isSymbolOnlyCue('◆ ◆ ◆ ◆ ◆ ◆'));
+    assert.ok(isSoundEffectCue('◆ ◆ ◆'));
     assert.strictEqual(normalizeAsrText("All right , let ' s do this"), "All right, let's do this");
     assert.strictEqual(normalizeAsrText('and for 1 0 years'), 'and for 10 years');
     assert.strictEqual(normalizeAsrText('▁the rest'), 'the rest');

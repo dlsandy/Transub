@@ -25,6 +25,33 @@ describe('transwithai-options', () => {
         assert.strictEqual(mergeTransWithAiOptions({ startupWindow: 'nope' }).startupWindow, 'generator');
     });
 
+    it('normalizes autoUpdateCheckInterval preference', () => {
+        assert.strictEqual(
+            mergeTransWithAiOptions({}).autoUpdateCheckInterval,
+            'weekly',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ autoUpdateCheckInterval: 'daily' }).autoUpdateCheckInterval,
+            'daily',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ autoUpdateCheckInterval: 'off' }).autoUpdateCheckInterval,
+            'off',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ autoUpdateCheckInterval: 'WEEKLY' }).autoUpdateCheckInterval,
+            'weekly',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ autoUpdateCheckInterval: 'monthly' }).autoUpdateCheckInterval,
+            'monthly',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ autoUpdateCheckInterval: 'hourly' }).autoUpdateCheckInterval,
+            'weekly',
+        );
+    });
+
     it('preserves dual task and dual fields', () => {
         const opts = mergeTransWithAiOptions({
             task: 'dual',
