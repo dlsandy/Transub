@@ -1152,7 +1152,6 @@
             const sakuraHit = firstInstalled(sakuraWanted, installed);
             const generalLlmWanted = listPreferredGeneralLlmMtIds();
             const generalLlmHit = firstInstalled(generalLlmWanted, installed);
-            const opusWanted = OPUS_MT_BY_LANG[lang] || '';
             const curMt = String(out.engineMtModel || '').trim();
             const mtIsSakura = isSakuraMtId(curMt);
             const mtIsOpus = isOpusMtId(curMt);
@@ -1181,13 +1180,10 @@
                     setMt(generalLlmHit, out.engineMtModel
                         ? `Sakura 未装 · 推理 ${out.engineMtModel} → ${generalLlmHit}`
                         : `Sakura 未装 · 推理 → ${generalLlmHit}`);
-                } else if (opusWanted && (!installed.size || installed.has(opusWanted))) {
-                    setMt(opusWanted, out.engineMtModel
-                        ? `推理未装 · MT ${out.engineMtModel} → ${opusWanted}`
-                        : `推理未装 · MT → ${opusWanted}`);
                 } else {
-                    // Keep Sakura as declared target so preflight asks for it (not silent Opus).
-                    const prefer = sakuraWanted[0];
+                    // Never lock JA AV onto Opus from sense — empty catalog / missing Sakura
+                    // used to pick opus-mt-ja-zh and fail at job start. Declare Sakura instead.
+                    const prefer = sakuraWanted[0] || 'sakura-1.5b';
                     setMt(prefer, out.engineMtModel
                         ? `MT ${out.engineMtModel} → ${prefer}（待下载）`
                         : `MT → ${prefer}（待下载）`);

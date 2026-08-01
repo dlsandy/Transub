@@ -752,6 +752,7 @@
         addMenuOpen: false,
         moreMenuOpen: false,
         qcBannerDismissed: false,
+        qcFixing: false,
         postBatchBusy: false,
         /** Cross-window engine / LLM single-slot busy (main process lock). */
         computeBusy: false,
@@ -1032,7 +1033,7 @@
             'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
             'openAboutBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
-            'qcBanner', 'qcBannerText', 'qcBannerViewBtn', 'qcBannerDismissBtn',
+            'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
             'emptyStateEnvHint', 'emptyStateWizardBtn', 'emptyStateEnvBtn',
             'toggleMainThemeBtn', 'toggleMainThemeLabel', 'openShortcutsMenuBtn',
             'paramsModal', 'closeParamsBtn', 'cancelParamsBtn', 'saveAndCloseParamsBtn', 'settingsDirtyBadge',
@@ -1082,7 +1083,7 @@
             'keepTranscriptCheck', 'transcriptKeepDirInput', 'transcriptKeepLimitInput',
             'transcriptKeepDaysInput', 'clearTranscriptCacheBtn', 'historySettingsStatus',
             'trayProgressCheck', 'showTaskResourceUsageCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
-            'startupWindowSelect',
+            'startupWindowSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
@@ -1461,6 +1462,9 @@
         els.qcBannerDismissBtn?.addEventListener('click', () => {
             state.qcBannerDismissed = true;
             updateQcBanner();
+        });
+        els.qcBannerFixBtn?.addEventListener('click', () => {
+            void runPostBatchQcFix();
         });
         els.qcBannerViewBtn?.addEventListener('click', () => {
             openFirstQcIssueItem();
@@ -3461,6 +3465,12 @@
                 ? 'editor'
                 : 'generator';
         }
+        if (els.autoUpdateCheckIntervalSelect) {
+            const interval = String(options.autoUpdateCheckInterval || 'weekly').trim().toLowerCase();
+            els.autoUpdateCheckIntervalSelect.value = ['off', 'daily', 'weekly', 'monthly'].includes(interval)
+                ? interval
+                : 'weekly';
+        }
         if (els.postBatchQcCheck) {
             els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
@@ -3591,6 +3601,11 @@
             minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
             trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
             startupWindow: els.startupWindowSelect?.value === 'editor' ? 'editor' : 'generator',
+            autoUpdateCheckInterval: ['off', 'daily', 'weekly', 'monthly'].includes(
+                els.autoUpdateCheckIntervalSelect?.value,
+            )
+                ? els.autoUpdateCheckIntervalSelect.value
+                : 'weekly',
             autoSense: isAutoSenseEnabled(),
             autoDeepSense: !!els.autoDeepSenseCheck?.checked,
             postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
@@ -4162,7 +4177,13 @@
             return;
         }
         if (els.qcBannerText) {
-            els.qcBannerText.textContent = `${n} 条字幕有 QC 问题，可在编辑器中查看并修复`;
+            els.qcBannerText.textContent = state.qcFixing
+                ? `正在一键修复 QC（${n} 条有问题）…`
+                : `${n} 条字幕有 QC 问题，可一键修复或在编辑器中查看`;
+        }
+        if (els.qcBannerFixBtn) {
+            els.qcBannerFixBtn.disabled = !!state.running || !!state.qcFixing;
+            els.qcBannerFixBtn.textContent = state.qcFixing ? '修复中…' : '一键修复QC';
         }
         els.qcBanner.classList.remove('hidden');
     }
@@ -5994,6 +6015,12 @@
         }
         const editBtn = subPath
             ? `<button type="button" data-edit-sub="${esc(subPath)}" data-edit-video="${esc(item.path)}" class="row-action-btn text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="编辑字幕"><i class="fa fa-pencil text-xs"></i></button>` : '';
+        const canQcFix = !state.running && !state.qcFixing
+            && Number(item.qcIssueCount) > 0
+            && getPostBatchPathsForItem(item).length > 0;
+        const qcFixBtn = canQcFix
+            ? `<button type="button" data-qc-fix="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="一键修复QC" aria-label="一键修复QC"><i class="fa fa-wrench text-xs"></i></button>`
+            : '';
         const retryBtn = (item.status === 'failed' || item.status === 'error') && !state.running
             ? `<button type="button" data-retry-idx="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="重试本条" aria-label="重试本条"><i class="fa fa-repeat text-xs"></i></button>`
             : '';
@@ -6025,10 +6052,18 @@
         } else if (item.status === 'failed') {
             progressCell = `<span class="text-xs text-gray-400 tabular-nums" title="已用 ${esc(elapsed)}">${pct ? `${pct}%` : '—'}</span>`;
         }
+        const canOpenByName = !!subPath
+            && (item.status === 'done' || item.status === 'skipped');
+        const nameTitle = canOpenByName
+            ? `打开字幕编辑器：${basename(item.path)}`
+            : item.path;
+        const nameHtml = canOpenByName
+            ? `<button type="button" class="cell-ellipsis file-name-link" data-open-editor="${idx}" title="${esc(nameTitle)}">${esc(basename(item.path))}</button>`
+            : `<span class="cell-ellipsis font-medium text-gray-800">${esc(basename(item.path))}</span>`;
         return `
             <tr class="task-row hover:bg-gray-50/80" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
                 <td class="px-2 py-1.5"><input type="checkbox" data-row-check ${item.selected ? 'checked' : ''} ${state.running ? 'disabled' : ''}></td>
-                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}"><span class="cell-ellipsis font-medium text-gray-800">${esc(basename(item.path))}</span>${subBadge}${profileBadgeHtml}</div></td>
+                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${profileBadgeHtml}</div></td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
                 <td class="px-2 py-1.5 col-progress">${progressCell}</td>
                 <td class="px-2 py-1.5 text-xs col-status">
@@ -6040,6 +6075,7 @@
                     <div class="row-actions">
                     ${senseBtns}
                     ${retryBtn}
+                    ${qcFixBtn}
                     ${editBtn}
                     <button type="button" data-show-folder="${esc(revealPath)}" data-idx="${idx}"
                         class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100 disabled:opacity-30"
@@ -6340,7 +6376,26 @@
         state.itemDualPhase = null;
 
         const paths = Array.isArray(payload?.items) ? payload.items : [];
-        state.items = buildItemsFromPaths(paths);
+        // Reset only items in this job; keep unchecked / non-job rows in the list.
+        const jobItems = buildItemsFromPaths(paths);
+        const jobByPath = new Map(jobItems.map((i) => [normPath(i.path), i]));
+        const next = [];
+        const seenJob = new Set();
+        for (const item of state.items) {
+            const key = normPath(item.path);
+            const jobItem = jobByPath.get(key);
+            if (jobItem) {
+                next.push(jobItem);
+                seenJob.add(key);
+            } else {
+                next.push(item);
+            }
+        }
+        for (const jobItem of jobItems) {
+            const key = normPath(jobItem.path);
+            if (!seenJob.has(key)) next.push(jobItem);
+        }
+        state.items = next;
         resetVideoProgress();
 
         if (els.logHost) els.logHost.innerHTML = '';
@@ -6536,22 +6591,24 @@
         if (changed) renderList();
     }
 
-    async function runPostBatchQcScan() {
-        if (!els.postBatchQcCheck?.checked) return;
-        if (!electron?.transubScanSubtitleQc) return;
-        const targets = state.items.filter((item) => {
+    async function scanQcForItems(targets, { quiet = false } = {}) {
+        if (!electron?.transubScanSubtitleQc) return { withIssues: 0, scanned: 0 };
+        const list = (Array.isArray(targets) ? targets : []).filter((item) => {
+            if (!item) return false;
             if (item.status !== 'done' && item.status !== 'skipped') return false;
             return !!getSubtitlePathForItem(item);
         });
-        if (!targets.length) return;
+        if (!list.length) return { withIssues: 0, scanned: 0 };
 
-        els.progressLabel.textContent = 'QC 检测中…';
-        appendLog(`开始 QC 检测（${targets.length} 个字幕）…`, 'info');
+        if (!quiet) {
+            els.progressLabel.textContent = 'QC 检测中…';
+            appendLog(`开始 QC 检测（${list.length} 个字幕）…`, 'info');
+        }
         let withIssues = 0;
-        for (let i = 0; i < targets.length; i += 1) {
-            const item = targets[i];
+        for (let i = 0; i < list.length; i += 1) {
+            const item = list[i];
             const subPath = getSubtitlePathForItem(item);
-            els.progressLabel.textContent = `QC 检测中… ${i + 1}/${targets.length}`;
+            if (!quiet) els.progressLabel.textContent = `QC 检测中… ${i + 1}/${list.length}`;
             try {
                 const res = await electron.transubScanSubtitleQc({ path: subPath });
                 if (res?.ok) {
@@ -6569,16 +6626,110 @@
             }
             refreshListRow(item);
         }
+        return { withIssues, scanned: list.length };
+    }
+
+    async function runPostBatchQcScan() {
+        if (!els.postBatchQcCheck?.checked) return;
+        if (!electron?.transubScanSubtitleQc) return;
+        const targets = state.items.filter((item) => {
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            return !!getSubtitlePathForItem(item);
+        });
+        if (!targets.length) return;
+
+        const { withIssues, scanned } = await scanQcForItems(targets);
         appendLog(
             withIssues > 0
-                ? `QC 完成：${withIssues}/${targets.length} 个字幕存在问题（仅标记，未自动修复）`
-                : `QC 完成：${targets.length} 个字幕均未发现问题`,
+                ? `QC 完成：${withIssues}/${scanned} 个字幕存在问题（仅标记，未自动修复）`
+                : `QC 完成：${scanned} 个字幕均未发现问题`,
             withIssues > 0 ? 'warn' : 'ok',
         );
         els.progressLabel.textContent = withIssues > 0 ? 'QC 完成（有问题项）' : 'QC 完成';
         if (withIssues > 0) state.qcBannerDismissed = false;
         renderList();
         updateQcBanner();
+    }
+
+    async function runPostBatchQcFix(onlyItem = null) {
+        if (state.running || state.qcFixing) return;
+        if (!electron?.transubApplySubtitlePostprocess) {
+            appendLog('当前环境不支持字幕后处理，无法一键修复 QC', 'err');
+            return;
+        }
+        const targets = state.items.filter((item) => {
+            if (onlyItem && item !== onlyItem) return false;
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            if (!(Number(item.qcIssueCount) > 0)) return false;
+            return getPostBatchPathsForItem(item).length > 0;
+        });
+        if (!targets.length) {
+            appendLog('没有可写回修复的 QC 条目（需为 .srt/.vtt/.lrc）', 'info');
+            return;
+        }
+
+        state.qcFixing = true;
+        updateQcBanner();
+        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
+        els.progressLabel.textContent = '一键修复 QC…';
+        appendLog(`开始一键修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`, 'info');
+        let written = 0;
+        let fileTotal = 0;
+        try {
+            for (let i = 0; i < targets.length; i += 1) {
+                const item = targets[i];
+                const paths = getPostBatchPathsForItem(item);
+                for (const subPath of paths) {
+                    fileTotal += 1;
+                    els.progressLabel.textContent = `一键修复 QC… ${fileTotal}/${pathCount}`;
+                    try {
+                        const res = await electron.transubApplySubtitlePostprocess({
+                            path: subPath,
+                            options: {
+                                cpsSplit: true,
+                                fixOverlap: true,
+                                fixCpsByExtend: true,
+                                enforceMinDur: true,
+                                enforceMaxDur: true,
+                                maxCps: 18,
+                                maxSec: 10,
+                                backupMode: 'off',
+                            },
+                        });
+                        if (res?.ok && res.written) {
+                            written += 1;
+                            appendLog(`${basename(subPath)}：${res.summary || '已修复 QC'}`, 'ok');
+                        } else if (res?.ok) {
+                            appendLog(`${basename(subPath)}：${res.summary || '无需写回'}`, 'info');
+                        } else {
+                            appendLog(`${basename(subPath)}：${res?.error || 'QC 修复失败'}`, 'err');
+                        }
+                    } catch (err) {
+                        appendLog(`${basename(subPath)}：${err?.message || 'QC 修复失败'}`, 'err');
+                    }
+                }
+            }
+            appendLog(
+                written > 0
+                    ? `QC 修复写回完成：${written}/${fileTotal} 个字幕；正在复查…`
+                    : `QC 修复完成：${fileTotal} 个字幕均无需写回；正在复查…`,
+                written > 0 ? 'ok' : 'info',
+            );
+            const { withIssues, scanned } = await scanQcForItems(targets, { quiet: true });
+            appendLog(
+                withIssues > 0
+                    ? `QC 复查：仍有 ${withIssues}/${scanned} 个字幕存在问题`
+                    : `QC 复查：${scanned} 个字幕已通过`,
+                withIssues > 0 ? 'warn' : 'ok',
+            );
+            els.progressLabel.textContent = withIssues > 0 ? 'QC 修复完成（仍有问题）' : 'QC 修复完成';
+            if (withIssues > 0) state.qcBannerDismissed = false;
+            else state.qcBannerDismissed = true;
+            renderList();
+        } finally {
+            state.qcFixing = false;
+            updateQcBanner();
+        }
     }
 
     async function runPostBatchAutoFix() {
@@ -7241,6 +7392,20 @@
                 if (expandedErrorRows.has(idx)) expandedErrorRows.delete(idx);
                 else expandedErrorRows.add(idx);
                 refreshListRowByIndex(idx);
+                return;
+            }
+            const qcFixRowBtn = e.target.closest('[data-qc-fix]');
+            if (qcFixRowBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                void runPostBatchQcFix(state.items[Number(qcFixRowBtn.dataset.qcFix)]);
+                return;
+            }
+            const openEditorBtn = e.target.closest('[data-open-editor]');
+            if (openEditorBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                openItemEditor(state.items[Number(openEditorBtn.dataset.openEditor)]);
                 return;
             }
             const qcBtn = e.target.closest('[data-qc-open]');

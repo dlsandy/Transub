@@ -128,7 +128,7 @@ Short-window spoken language ID (Whisper encoder only — no full transcription 
 }
 ```
 
-Samples ~`durationSec` seconds (3–30) starting at `startSec` (default `0`). Prefer `startSec` ≥ ~60 on feature/AV media so opening titles/BGM are skipped; if the seek window is empty the engine falls back to the file head. Picks an installed Whisper CT2 model (`asrModel` if Whisper, else `whisper-tiny` → turbo → …). If `faster-whisper` / `numpy` are missing, the endpoint installs them into the engine runtime before detecting. Returns:
+Samples ~`durationSec` seconds (3–30) starting at `startSec` (default `0`). Prefer `startSec` ≥ ~60 on feature-length media so opening titles/BGM are skipped; if the seek window is empty the engine falls back to the file head. Picks an installed Whisper CT2 model (`asrModel` if Whisper, else `whisper-tiny` → turbo → …). If `faster-whisper` / `numpy` are missing, the endpoint installs them into the engine runtime before detecting. Returns:
 
 ```json
 {
@@ -267,7 +267,7 @@ Poll-based (portable on Windows). With `seedExisting: true` (default), existing 
 `glossary` (optional): list of `{ "src", "tgt" }` (also accepts `source`/`target`, `from`/`to`, or `[src, tgt]`).
 
 - **MT** (`translate_mt` / `dual`, default): source terms are protected with placeholders before Opus MT and restored as target terms afterward. Latin terms use whole-word, case-insensitive matching.
-- **ASR** (source correction): tag entries with `"stage": "asr"` (or `wrong`/`correct` keys), or pass a dedicated `asrGlossary` list. After transcription, misheard forms are replaced on source cues (e.g. `{ "wrong": "マイ", "correct": "舞" }` for JA AV name fixes). Short JA name tokens are expanded (`マイちゃん`→`舞ちゃん`, `彼女のマイ`→`彼女の舞`, `マイ大丈夫`→`舞大丈夫`) and **loanword-safe** (will not turn `マイク` / `マイペース` / `トラマイ` / `オーマイガスター` into `舞…`).
+- **ASR** (source correction): tag entries with `"stage": "asr"` (or `wrong`/`correct` keys), or pass a dedicated `asrGlossary` list. After transcription, misheard forms are replaced on source cues (e.g. `{ "wrong": "マイ", "correct": "舞" }` for Japanese name fixes). Short JA name tokens are expanded (`マイちゃん`→`舞ちゃん`, `彼女のマイ`→`彼女の舞`, `マイ大丈夫`→`舞大丈夫`) and **loanword-safe** (will not turn `マイク` / `マイペース` / `トラマイ` / `オーマイガスター` into `舞…`).
 
 `asrGlossary` / `sourceGlossary` (optional): same shapes as `glossary`, but every untagged pair is treated as ASR correction.
 
@@ -284,11 +284,11 @@ MT language → model map: optional override file `{data}/mt_language_map.json` 
 | Field | Meaning |
 |-------|---------|
 | `enabled` | Use VAD (default true) |
-| `model` | Catalog id: `fsmn-vad` (SenseVoice), `silero-vad` (Whisper built-in), `whisperseg-asmr` (JA soft-speech ONNX → `clip_timestamps`) |
+| `model` | Catalog id: `fsmn-vad` (SenseVoice), `silero-vad` (Whisper built-in), `whisperseg-asmr` (WhisperSeg sensitive ONNX → `clip_timestamps`) |
 | `threshold` | Speech probability threshold (default `0.5`; film default `0.5`; WhisperSeg sensitive ≈`0.25`) |
 | `minSpeechMs` / `minSilenceMs` / `speechPadMs` | Timing knobs (Silero / SenseVoice; WhisperSeg uses own presets when sensitive/aggressive) |
 | `aggressive` | Free preset: higher threshold / cleaner cuts |
-| `sensitive` | For Whisper: force `whisperseg-asmr` external VAD → `clip_timestamps` (WhisperJAV-style). Long media (≥10 min) gets **fixed ≤7 min windows** (instant; no ffmpeg silence scan), then WhisperSeg with a single decode + in-memory slices; empty long-media → full-audio failover. Wins over `aggressive`. WhisperSeg uses the job `device` (CUDA via `onnxruntime-gpu`; CPU package falls back with a progress note). |
+| `sensitive` | For Whisper: force `whisperseg-asmr` external VAD → `clip_timestamps`. Long media (≥10 min) gets **fixed ≤7 min windows** (instant; no ffmpeg silence scan), then WhisperSeg with a single decode + in-memory slices; empty long-media → full-audio failover. Wins over `aggressive`. WhisperSeg uses the job `device` (CUDA via `onnxruntime-gpu`; CPU package falls back with a progress note). |
 | `hallucinationSilenceThreshold` | Optional Whisper-only: skip long silences (seconds). Omit or `≤0` = off (default). |
 
 `device`: `auto` | `cuda` | `cpu` — applied to Demucs, WhisperSeg ONNX, ASR (Whisper/SenseVoice), and Opus CT2 MT. ffmpeg decode / scene silence-detect remain CPU (no GPU path).
@@ -308,7 +308,7 @@ Progress stages may include `denoise` / `separate` / `scene` / `vad` / `vad_fail
 
 After ASR, Engine applies:
 
-1. Light cue cleanup (WhisperJAV `regexp_v09` subset): bracketed SFX/SDH markers, music tokens; empty cues are dropped.
+1. Light cue cleanup (bracketed SFX/SDH markers, music tokens); empty cues are dropped.
 2. Hallucination filter (`quality.filter_hallucinated_cues`): loop/streak detection, plus whole-cue YouTube / soft-scene filler phrases (e.g. 「ご視聴ありがとうございました」「お疲れ様でした」「バイバイ」). Bare 「ありがとうございました」 is kept (real dialogue).
 3. **ASR name-loop strip** (`asr_name_loops`): consecutive CJK cast/filler runs such as 「玲奈玲奈」「葵葵葵」and whole-cue name debris are removed **before** Opus / external MT so hallucinations are not translated.
 4. For **Opus** JA→ZH, light post-MT cast-tag sanitize strips trailing / mid-cue pollution names (佳奈 / 玲奈 / 美咲桑…) that are not justified by the (loop-cleaned) source. External LLM backends rely on the desktop adapter sanitize.

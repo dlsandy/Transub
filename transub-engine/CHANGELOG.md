@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local ASR + Opus NMT engine with HTTP `/v1/*` API and CLI (`serve`, `run`, `models`, batch/watch).
 - ASR backends: SenseVoice, faster-whisper (incl. Whisper-JA 1.5B / large-v3-turbo).
 - MT: Opus-CT2 (ja/en/ko→zh) and optional external HTTP adapter.
-- VAD: Silero / fsmn-vad / WhisperSeg ASMR sensitive mode.
+- VAD: Silero / fsmn-vad / WhisperSeg sensitive mode.
 - Audio: light denoise, optional Demucs film enhance, clip windowing.
 - JA→ZH polish, built-in name lexicon, glossary / cast-name bias, ASR name-loop cleanup.
 - Drag-drop CLI `.bat` presets for common GPU/CPU / VAD / perf profiles.

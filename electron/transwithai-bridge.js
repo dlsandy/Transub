@@ -488,6 +488,16 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             const raw = String(merged.startupWindow || '').trim().toLowerCase();
             return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
         })(),
+        autoUpdateCheckInterval: (() => {
+            try {
+                const { normalizeAutoUpdateCheckInterval } = require('./auto-update-check');
+                return normalizeAutoUpdateCheckInterval(merged.autoUpdateCheckInterval);
+            } catch {
+                const raw = String(merged.autoUpdateCheckInterval || '').trim().toLowerCase();
+                return ['off', 'daily', 'weekly', 'monthly'].includes(raw) ? raw : 'weekly';
+            }
+        })(),
+        lastAutoUpdateCheckAt: String(merged.lastAutoUpdateCheckAt || '').trim(),
         postBatchQc: merged.postBatchQc !== false,
         autoSense: (() => {
             if (Object.prototype.hasOwnProperty.call(merged, 'autoSense')) {
@@ -586,10 +596,20 @@ function resolveGenerationConfigPath(installPath, options = {}, getUserDataPath)
             // Only inject mens-esthe bias for av_soft — all-JA injection polluted drama (JUR-809).
             const wantDomain = /av[_-]?soft|ja[_-]?av|^av$/.test(profile);
             if (wantDomain && typeof buildJaAvAsrPromptHints === 'function') {
-                const domain = buildJaAvAsrPromptHints();
+                const domain = buildJaAvAsrPromptHints({
+                    hint: [
+                        normalized.mediaPath,
+                        normalized.inputPath,
+                        normalized.title,
+                        normalized.fileName,
+                        merged.media_path,
+                    ].filter(Boolean).join(' '),
+                    title: normalized.title,
+                    mediaPath: normalized.mediaPath || normalized.inputPath,
+                });
                 if (domain.initial_prompt) {
                     const cur = String(merged.initial_prompt || '');
-                    if (!/メンズエステ|メンエス/.test(cur)) {
+                    if (!/メンズエステ|メンエス|自然な会話/.test(cur)) {
                         merged.initial_prompt = cur
                             ? `${domain.initial_prompt}${cur}`
                             : domain.initial_prompt;
@@ -663,6 +683,7 @@ async function saveTransWithAiOptions(getAppRoot, patch) {
     saveSettings(getAppRoot, next);
     syncTrayNotifyFromOptions(next);
     syncMinimizeToTrayFromOptions(next);
+    syncAutoUpdateCheckFromSavedOptions(next);
     try {
         const { applyProxyFromSettings } = require('./proxy-settings');
         const { session } = require('electron');
@@ -671,6 +692,14 @@ async function saveTransWithAiOptions(getAppRoot, patch) {
         console.warn('[proxy] apply on save failed:', err?.message || err);
     }
     broadcastSettingsUpdated(next);
+}
+
+function syncAutoUpdateCheckFromSavedOptions(options = {}) {
+    try {
+        const { syncAutoUpdateCheckFromOptions } = require('./auto-update-check');
+        const { app } = require('electron');
+        syncAutoUpdateCheckFromOptions(app, options);
+    } catch { /* ignore */ }
 }
 
 function broadcastSettingsUpdated(options = {}) {
@@ -2489,7 +2518,9 @@ function setupTransWithAiBridge(api, deps) {
                 'smartSplitWithVad', 'targetChunkDurationS',
                 'retranscribeWarmLight', 'subtitleBakMode',
                 'keepTranscript', 'transcriptKeepDir', 'transcriptKeepLimit', 'transcriptKeepDays',
-                'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow', 'postBatchQc',
+                'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow',
+                'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
+                'postBatchQc',
                 'autoSense', 'autoDeepSense',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath', 'settingsUiMode',
             ]

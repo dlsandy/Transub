@@ -507,6 +507,15 @@ app.whenReady().then(() => {
             } catch (err) {
                 console.warn('[main] proxy apply failed:', err.message || err);
             }
+            try {
+                const { scheduleAutoUpdateChecks } = require('./auto-update-check');
+                scheduleAutoUpdateChecks(app, {
+                    getAppRoot: () => getAppRoot(app),
+                    getParentWindow: () => windowManager.getMainWindow?.() || null,
+                });
+            } catch (err) {
+                console.warn('[main] auto update schedule failed:', err.message || err);
+            }
         } catch (err) {
             console.warn('[main] user data migration failed:', err.message || err);
         }
@@ -520,6 +529,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
     windowManager.setQuitting(true);
+    try {
+        const { stopAutoUpdateChecks } = require('./auto-update-check');
+        stopAutoUpdateChecks();
+    } catch { /* ignore */ }
     try {
         const { closeAllSubtitleEditorWindows } = require('./subtitle-editor-window');
         closeAllSubtitleEditorWindows();
