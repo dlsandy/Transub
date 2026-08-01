@@ -79,6 +79,8 @@ jufe
 wanz
 abp
 ssis
+mngs mngd maki
+juq jur jux
 `.split(/\s+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 const SOURCES = {

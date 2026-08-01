@@ -1,8 +1,8 @@
 /**
- * Windows app update via GitHub Releases.
- * - Zip / win-unpacked: download zip, merge in place (preserve models + GPU/Demucs + Advanced LLM), relaunch
+ * Windows app update via GitHub + Codeberg Releases.
+ * - Zip / win-unpacked: download zip (speed-probe GitHub/Codeberg), merge in place, relaunch
  * - NSIS: electron-updater when latest.yml is present (installer.nsh stashes the same user data on update)
- * - Portable / unpackaged: GitHub Releases API + open download page
+ * - Portable / unpackaged: release APIs + open download page
  * Code signing is not used (no free Authenticode cert).
  */
 const fs = require('fs');
@@ -18,8 +18,12 @@ const {
 
 const GITHUB_OWNER = 'dlsandy';
 const GITHUB_REPO = 'Transub';
+const CODEBERG_OWNER = 'flyforyou';
+const CODEBERG_REPO = 'Transub';
 const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+const CODEBERG_RELEASES_URL = `https://codeberg.org/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases`;
 const LATEST_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+const CODEBERG_LATEST_API = `https://codeberg.org/api/v1/repos/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases/latest`;
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
 
 /** @type {import('electron-updater').AppUpdater | null} */
@@ -29,7 +33,9 @@ let updateReady = false;
  *   version: string,
  *   releaseNotes?: string,
  *   downloadUrl?: string,
+ *   downloadUrls?: string[],
  *   downloadName?: string,
+ *   preferredSource?: string,
  *   mode?: 'nsis'|'zip',
  * } | null} */
 let pendingUpdate = null;
@@ -164,18 +170,151 @@ function compareVersions(a, b) {
     return 0;
 }
 
-async function fetchGithubLatestRelease() {
-    const res = await fetch(LATEST_API, {
-        headers: {
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'Transub-Updater',
-            'X-GitHub-Api-Version': '2022-11-28',
-        },
-    });
+/**
+ * Normalize electron-updater / GitHub release notes into plain text for the UI.
+ * @param {unknown} notes
+ * @param {number} [maxLen]
+ */
+function normalizeReleaseNotes(notes, maxLen = 8000) {
+    let text = '';
+    if (typeof notes === 'string') {
+        text = notes;
+    } else if (Array.isArray(notes)) {
+        text = notes.map((item) => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') {
+                const version = String(item.version || '').trim();
+                const body = String(item.note || item.notes || item.body || '').trim();
+                if (version && body) return `## ${version}\n${body}`;
+                return body || (version ? `## ${version}` : '');
+            }
+            return '';
+        }).filter(Boolean).join('\n\n');
+    } else if (notes != null && typeof notes === 'object') {
+        text = String(notes.note || notes.notes || notes.body || '');
+    }
+    return asString(text, maxLen).trim();
+}
+
+async function fetchGithubReleaseNotes() {
+    try {
+        const dual = await fetchDualHostLatestReleases();
+        return normalizeReleaseNotes(dual.primaryRelease?.body || '');
+    } catch {
+        return '';
+    }
+}
+
+function releaseVersion(release) {
+    return String(release?.tag_name || release?.name || '').replace(/^v/i, '').trim();
+}
+
+/**
+ * @param {string} apiUrl
+ * @param {{ github?: boolean }} [opts]
+ */
+async function fetchLatestReleaseJson(apiUrl, opts = {}) {
+    const headers = {
+        Accept: opts.github ? 'application/vnd.github+json' : 'application/json',
+        'User-Agent': 'Transub-Updater',
+    };
+    if (opts.github) headers['X-GitHub-Api-Version'] = '2022-11-28';
+    const res = await fetch(apiUrl, { headers });
     if (!res.ok) {
-        throw new Error(`GitHub API ${res.status}`);
+        throw new Error(`Release API ${res.status}`);
     }
     return res.json();
+}
+
+async function fetchGithubLatestRelease() {
+    return fetchLatestReleaseJson(LATEST_API, { github: true });
+}
+
+async function fetchCodebergLatestRelease() {
+    return fetchLatestReleaseJson(CODEBERG_LATEST_API);
+}
+
+/**
+ * Collect zip/setup asset URLs from GitHub + Codeberg for the same latest version.
+ * @returns {Promise<{
+ *   github: object|null,
+ *   codeberg: object|null,
+ *   latestVersion: string,
+ *   primaryRelease: object|null,
+ *   zipUrls: string[],
+ *   setupUrls: string[],
+ *   zipName: string,
+ *   setupName: string,
+ * }>}
+ */
+async function fetchDualHostLatestReleases() {
+    const settled = await Promise.allSettled([
+        fetchGithubLatestRelease(),
+        fetchCodebergLatestRelease(),
+    ]);
+    const github = settled[0].status === 'fulfilled' ? settled[0].value : null;
+    const codeberg = settled[1].status === 'fulfilled' ? settled[1].value : null;
+    if (!github && !codeberg) {
+        const err = settled.find((r) => r.status === 'rejected')?.reason;
+        throw new Error(err?.message || '无法连接 GitHub / Codeberg 发布接口');
+    }
+
+    const ghVer = github ? releaseVersion(github) : '';
+    const cbVer = codeberg ? releaseVersion(codeberg) : '';
+    let latestVersion = ghVer || cbVer;
+    let primaryRelease = github || codeberg;
+    if (ghVer && cbVer) {
+        const cmp = compareVersions(cbVer, ghVer);
+        if (cmp > 0) {
+            latestVersion = cbVer;
+            primaryRelease = codeberg;
+        } else if (cmp < 0) {
+            latestVersion = ghVer;
+            primaryRelease = github;
+        } else {
+            latestVersion = ghVer;
+            primaryRelease = github;
+        }
+    }
+
+    const zipUrls = [];
+    const setupUrls = [];
+    let zipName = '';
+    let setupName = '';
+    const hosts = [
+        { release: github, ver: ghVer },
+        { release: codeberg, ver: cbVer },
+    ];
+    for (const { release, ver } of hosts) {
+        if (!release || !ver || compareVersions(ver, latestVersion) !== 0) continue;
+        const zip = pickZipAsset(release);
+        const setup = pickSetupAsset(release);
+        if (zip?.browser_download_url) {
+            zipUrls.push(String(zip.browser_download_url));
+            if (!zipName) zipName = String(zip.name || '');
+        }
+        if (setup?.browser_download_url) {
+            setupUrls.push(String(setup.browser_download_url));
+            if (!setupName) setupName = String(setup.name || '');
+        }
+    }
+
+    return {
+        github,
+        codeberg,
+        latestVersion,
+        primaryRelease,
+        zipUrls: [...new Set(zipUrls)],
+        setupUrls: [...new Set(setupUrls)],
+        zipName,
+        setupName,
+        githubError: settled[0].status === 'rejected'
+            ? String(settled[0].reason?.message || settled[0].reason || '')
+            : '',
+        codebergError: settled[1].status === 'rejected'
+            ? String(settled[1].reason?.message || settled[1].reason || '')
+            : '',
+    };
 }
 
 function pickSetupAsset(release) {
@@ -212,7 +351,7 @@ function getUpdater() {
     autoUpdater.on('update-available', (info) => {
         pendingUpdate = {
             version: info.version,
-            releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '',
+            releaseNotes: normalizeReleaseNotes(info.releaseNotes),
             mode: 'nsis',
         };
     });
@@ -232,62 +371,84 @@ function getUpdater() {
 
 async function checkViaGithubApi() {
     const currentVersion = getCurrentVersion();
-    const release = await fetchGithubLatestRelease();
-    const latestVersion = String(release.tag_name || release.name || '').replace(/^v/i, '');
-    if (!latestVersion) {
+    const dual = await fetchDualHostLatestReleases();
+    const latestVersion = dual.latestVersion;
+    const release = dual.primaryRelease;
+    if (!latestVersion || !release) {
         return {
             ok: true,
             currentVersion,
             updateAvailable: false,
-            mode: 'github-api',
+            mode: 'release-api',
             installKind: getInstallKind(),
             releasesUrl: RELEASES_URL,
+            codebergReleasesUrl: CODEBERG_RELEASES_URL,
             transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
             message: '无法解析最新版本号',
         };
     }
     const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
     const installKind = getInstallKind();
-    const zipAsset = pickZipAsset(release);
-    const setup = installKind === 'zip' && zipAsset ? zipAsset : pickSetupAsset(release);
     const electronApp = getElectronApp();
+    const zipUrls = dual.zipUrls;
+    const setupUrls = dual.setupUrls;
+    const preferredZip = zipUrls[0] || '';
+    const preferredSetup = setupUrls[0] || '';
     const zipAuto = Boolean(
         updateAvailable
         && installKind === 'zip'
-        && zipAsset
-        && /\.zip$/i.test(zipAsset.name || ''),
+        && preferredZip
+        && /\.zip$/i.test(dual.zipName || preferredZip),
     );
+
+    const releaseNotes = normalizeReleaseNotes(release.body || '');
+    const sources = [];
+    if (dual.github) sources.push('GitHub');
+    if (dual.codeberg) sources.push('Codeberg');
 
     if (zipAuto) {
         pendingUpdate = {
             version: latestVersion,
-            releaseNotes: asString(release.body || '', 8000),
-            downloadUrl: zipAsset.browser_download_url,
-            downloadName: zipAsset.name || '',
+            releaseNotes,
+            downloadUrl: preferredZip,
+            downloadUrls: zipUrls,
+            downloadName: dual.zipName || '',
             mode: 'zip',
         };
     }
+
+    const pageUrl = release.html_url
+        || (dual.github?.html_url)
+        || (dual.codeberg?.html_url)
+        || RELEASES_URL;
 
     return {
         ok: true,
         currentVersion,
         latestVersion,
         updateAvailable,
-        mode: 'github-api',
+        mode: 'release-api',
         installKind,
         releaseName: release.name || `v${latestVersion}`,
-        releaseNotes: asString(release.body || '', 8000),
-        releasesUrl: release.html_url || RELEASES_URL,
-        downloadUrl: setup?.browser_download_url || release.html_url || RELEASES_URL,
-        downloadName: setup?.name || '',
+        releaseNotes,
+        releasesUrl: dual.github?.html_url || RELEASES_URL,
+        codebergReleasesUrl: dual.codeberg?.html_url || CODEBERG_RELEASES_URL,
+        downloadUrl: (installKind === 'zip' && preferredZip)
+            ? preferredZip
+            : (preferredSetup || pageUrl),
+        downloadUrls: installKind === 'zip' ? zipUrls : setupUrls,
+        downloadName: (installKind === 'zip' ? dual.zipName : dual.setupName) || '',
+        updateSources: sources,
         portable: isPortableBuild(),
         packaged: Boolean(electronApp?.isPackaged),
         canAutoInstall: zipAuto,
         preservesEngineData: zipAuto,
         transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
+        githubError: dual.githubError || '',
+        codebergError: dual.codebergError || '',
         message: updateAvailable
             ? (zipAuto
-                ? `发现新版本 v${latestVersion}（可在应用内更新，将保留已下载的模型、支持库与 Advanced LLM）`
+                ? `发现新版本 v${latestVersion}（将测速 GitHub / Codeberg 后下载；已下载的模型、支持库与 Advanced LLM 会保留）`
                 : `发现新版本 v${latestVersion}`)
             : `已是最新版本 v${currentVersion}`,
     };
@@ -309,10 +470,15 @@ async function checkViaElectronUpdater() {
             return checkViaGithubApi();
         }
         const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+        let releaseNotes = normalizeReleaseNotes(info?.releaseNotes)
+            || normalizeReleaseNotes(pendingUpdate?.releaseNotes);
+        if (updateAvailable && !releaseNotes) {
+            releaseNotes = await fetchGithubReleaseNotes();
+        }
         if (updateAvailable) {
             pendingUpdate = {
                 version: latestVersion,
-                releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
+                releaseNotes,
                 mode: 'nsis',
             };
         }
@@ -323,7 +489,7 @@ async function checkViaElectronUpdater() {
             updateAvailable,
             mode: 'electron-updater',
             installKind: 'nsis',
-            releaseNotes: pendingUpdate?.releaseNotes || '',
+            releaseNotes,
             releasesUrl: RELEASES_URL,
             portable: false,
             packaged: true,
@@ -382,17 +548,23 @@ async function downloadZipUpdate() {
         return { ok: false, error: '当前不是 zip 解压版，无法应用内更新' };
     }
     let downloadUrl = String(pendingUpdate?.downloadUrl || '').trim();
+    let downloadUrls = Array.isArray(pendingUpdate?.downloadUrls)
+        ? pendingUpdate.downloadUrls.map((u) => String(u || '').trim()).filter(Boolean)
+        : [];
     let version = String(pendingUpdate?.version || '').trim();
     let downloadName = String(pendingUpdate?.downloadName || '').trim();
 
     const looksLikeZip = /\.zip(\?|#|$)/i.test(downloadUrl) || /\.zip$/i.test(downloadName);
     if (!downloadUrl || !looksLikeZip) {
-        // Refresh from GitHub so a stale pendingUpdate does not block install
+        // Refresh from GitHub / Codeberg so a stale pendingUpdate does not block install
         const check = await checkViaGithubApi();
         if (!check.updateAvailable || !check.canAutoInstall) {
             return { ok: false, error: check.message || '没有可下载的 zip 更新' };
         }
         downloadUrl = String(check.downloadUrl || '').trim();
+        downloadUrls = Array.isArray(check.downloadUrls)
+            ? check.downloadUrls.map((u) => String(u || '').trim()).filter(Boolean)
+            : [];
         version = String(check.latestVersion || '').trim();
         downloadName = String(check.downloadName || '').trim();
     }
@@ -401,6 +573,7 @@ async function downloadZipUpdate() {
         return { ok: false, error: '缺少有效的 zip 下载地址' };
     }
 
+    const extraUrls = downloadUrls.filter((u) => u && u !== downloadUrl && /^https:\/\//i.test(u));
     const downloader = require('./advanced-llm-download');
     clearPendingZipArtifacts();
 
@@ -420,32 +593,73 @@ async function downloadZipUpdate() {
             transferred: 0,
             total: 0,
             bytesPerSecond: 0,
+            phase: 'probe',
+            message: extraUrls.length
+                ? '正在测速 GitHub / Codeberg 下载源…'
+                : '正在准备下载…',
         });
 
+        let preferredSource = '';
         await downloader.downloadFile(downloadUrl, zipPath, {
+            extraUrls,
             onProgress: (p) => {
+                const phase = String(p.phase || '').trim();
+                const message = String(p.message || '').trim();
+                if (phase === 'probe' || phase === 'retry') {
+                    emitDownloadProgress({
+                        percent: 0,
+                        transferred: 0,
+                        total: 0,
+                        bytesPerSecond: 0,
+                        phase: phase || 'probe',
+                        message: message || '正在测速下载源…',
+                    });
+                    if (p.preferredUrl) {
+                        preferredSource = downloader.downloadSourceLabel(
+                            p.preferredUrl,
+                            downloadUrl,
+                        );
+                    }
+                    return;
+                }
                 const received = Number(p.received || p.downloadedBytes || 0);
                 const total = Number(p.total || p.totalBytes || 0);
                 const pct = Number(p.pct);
                 emitDownloadProgress({
                     percent: Number.isFinite(pct)
-                        ? pct
-                        : (total > 0 ? Math.min(99, (received / total) * 100) : 0),
+                        ? Math.min(90, pct)
+                        : (total > 0 ? Math.min(90, (received / total) * 100) : 0),
                     transferred: received,
                     total,
                     bytesPerSecond: Number(p.bytesPerSecond) || 0,
+                    phase: 'download',
+                    message: preferredSource
+                        ? `正在从 ${preferredSource} 下载…`
+                        : (message || ''),
                 });
             },
         });
 
         emitDownloadProgress({
-            percent: 99,
+            percent: 92,
             transferred: 0,
             total: 0,
             bytesPerSecond: 0,
+            phase: 'extracting',
+            message: '下载完成，正在解压更新包…',
         });
 
         downloader.extractArchive(zipPath, extractDir, 'zip');
+
+        emitDownloadProgress({
+            percent: 96,
+            transferred: 0,
+            total: 0,
+            bytesPerSecond: 0,
+            phase: 'preparing',
+            message: '正在准备安装（扫描需保留的模型与支持库）…',
+        });
+
         const packageRoot = findPackageRoot(extractDir);
         const installRoot = getInstallRootSafe();
         const preserveRelPaths = collectPreserveRelPaths(installRoot);
@@ -463,7 +677,9 @@ async function downloadZipUpdate() {
             ...(pendingUpdate || {}),
             version,
             downloadUrl,
+            downloadUrls: [downloadUrl, ...extraUrls],
             downloadName: zipName,
+            preferredSource,
             mode: 'zip',
         };
         updateReady = true;
@@ -473,6 +689,10 @@ async function downloadZipUpdate() {
             transferred: 0,
             total: 0,
             bytesPerSecond: 0,
+            phase: 'ready',
+            message: preferredSource
+                ? `已从 ${preferredSource} 下载完成，可点击「重启安装」`
+                : '更新已就绪，可点击「重启安装」',
         });
 
         return {
@@ -480,11 +700,12 @@ async function downloadZipUpdate() {
             updateReady: true,
             version,
             mode: 'zip',
+            preferredSource,
             preservesEngineData: true,
             preservedCount: preserveRelPaths.length,
             message: preserveRelPaths.length
-                ? '更新已下载，重启后完成安装（将保留已下载的模型、支持库与 Advanced LLM）'
-                : '更新已下载，重启后完成安装',
+                ? `更新已下载${preferredSource ? `（${preferredSource}）` : ''}，重启后完成安装（将保留已下载的模型、支持库与 Advanced LLM）`
+                : `更新已下载${preferredSource ? `（${preferredSource}）` : ''}，重启后完成安装`,
         };
     } catch (err) {
         clearPendingZipArtifacts();
@@ -531,6 +752,11 @@ function stopEngineBeforeUpdate() {
     } catch (err) {
         console.warn('[app-updater] stop engine:', err?.message || err);
     }
+    try {
+        require('./advanced-llama-server').stopLlamaServer();
+    } catch (err) {
+        console.warn('[app-updater] stop llama-server:', err?.message || err);
+    }
 }
 
 function quitAndInstallZipUpdate() {
@@ -548,14 +774,25 @@ function quitAndInstallZipUpdate() {
     const hostExe = path.join(stagingDir, 'transub-update-host.exe');
     const metaPath = path.join(stagingDir, 'update-meta.json');
     const logPath = path.join(stagingDir, 'update.log');
+    const statusPath = path.join(stagingDir, 'update-status.json');
     const applyScript = path.join(__dirname, 'zip-update-apply.js');
     const mergeScript = path.join(__dirname, 'zip-update-merge.js');
+    const statusWriterPath = path.join(__dirname, 'zip-update-status.js');
 
     try {
         fs.copyFileSync(process.execPath, hostExe);
     } catch (err) {
         return { ok: false, error: `无法准备更新宿主: ${err.message || err}` };
     }
+
+    try {
+        const { writeZipUpdateStatus } = require('./zip-update-status');
+        writeZipUpdateStatus(statusPath, {
+            phase: 'waiting',
+            message: '正在启动升级程序，请稍候…',
+            percent: 2,
+        });
+    } catch { /* ignore */ }
 
     const payload = {
         waitPid: process.pid,
@@ -565,12 +802,34 @@ function quitAndInstallZipUpdate() {
         preserveRelPaths: meta.preserveRelPaths,
         exePath: path.join(meta.installRoot, 'Transub.exe'),
         logPath,
+        statusPath,
         cleanupPaths: [meta.workDir],
     };
     fs.writeFileSync(metaPath, JSON.stringify(payload, null, 2), 'utf8');
 
+    // Progress UI must outlive this process; skip single-instance by using a dedicated argv.
     try {
-        const child = spawn(hostExe, [applyScript, metaPath, mergeScript], {
+        if (typeof electronApp.releaseSingleInstanceLock === 'function') {
+            electronApp.releaseSingleInstanceLock();
+        }
+    } catch { /* ignore */ }
+
+    try {
+        const progressUi = spawn(process.execPath, [`--zip-update-progress=${statusPath}`], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+            env: {
+                ...process.env,
+            },
+        });
+        progressUi.unref();
+    } catch (err) {
+        console.warn('[app-updater] progress UI failed:', err?.message || err);
+    }
+
+    try {
+        const child = spawn(hostExe, [applyScript, metaPath, mergeScript, statusWriterPath], {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
@@ -591,7 +850,7 @@ function quitAndInstallZipUpdate() {
             console.warn('[app-updater] quit failed', err?.message || err);
         }
     });
-    return { ok: true, mode: 'zip' };
+    return { ok: true, mode: 'zip', statusPath };
 }
 
 function quitAndInstallUpdate() {
@@ -604,9 +863,14 @@ function quitAndInstallUpdate() {
     const autoUpdater = getUpdater();
     if (!autoUpdater) return { ok: false, error: '更新器不可用' };
     stopEngineBeforeUpdate();
-    setImmediate(() => {
-        autoUpdater.quitAndInstall(false, true);
-    });
+    // NSIS installer shows its own UI; give the in-app window a moment to display a tip.
+    setTimeout(() => {
+        try {
+            autoUpdater.quitAndInstall(false, true);
+        } catch (err) {
+            console.warn('[app-updater] quitAndInstall failed', err?.message || err);
+        }
+    }, 400);
     return { ok: true, mode: 'nsis' };
 }
 
@@ -634,8 +898,13 @@ async function openUpdateDownload(url) {
 module.exports = {
     GITHUB_OWNER,
     GITHUB_REPO,
+    CODEBERG_OWNER,
+    CODEBERG_REPO,
     RELEASES_URL,
+    CODEBERG_RELEASES_URL,
     compareVersions,
+    normalizeReleaseNotes,
+    releaseVersion,
     getCurrentVersion,
     isPortableBuild,
     getInstallKind,

@@ -549,7 +549,7 @@
 
     function ms(n) {
         const r = String(n || "").toLowerCase();
-        return [".srt", ".vtt", ".lrc"].some(i => r.endsWith(i))
+        return [".srt", ".vtt", ".lrc", ".ass", ".ssa"].some(i => r.endsWith(i))
     }
     async function Pa(n) {
         const r = n?.files;
@@ -570,7 +570,7 @@
             }
         }
         if (!i) {
-            d("\u8BF7\u62D6\u653E SRT / VTT / LRC \u5B57\u5E55\u6587\u4EF6", "err");
+            d("\u8BF7\u62D6\u653E SRT / VTT / LRC / ASS \u5B57\u5E55\u6587\u4EF6", "err");
             return
         }
         await fn(i, "")

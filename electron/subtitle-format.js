@@ -1,14 +1,22 @@
 const path = require('path');
 
-const EDITABLE_FORMATS = new Set(['srt', 'vtt', 'lrc']);
+const EDITABLE_FORMATS = new Set(['srt', 'vtt', 'lrc', 'ass']);
+
+const DEFAULT_ASS_EVENT_FIELDS = [
+    'Layer', 'Start', 'End', 'Style', 'Name', 'MarginL', 'MarginR', 'MarginV', 'Effect', 'Text',
+];
 
 function detectFormat(filePath, rawContent = '') {
     const ext = path.extname(String(filePath || '')).slice(1).toLowerCase();
+    if (ext === 'ssa') return 'ass';
     if (EDITABLE_FORMATS.has(ext)) return ext;
-    const head = String(rawContent || '').trimStart().slice(0, 32).toUpperCase();
-    if (head.startsWith('WEBVTT')) return 'vtt';
-    if (/^\[\d{2}:/.test(String(rawContent || '').trim())) return 'lrc';
-    if (/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(String(rawContent || ''))) return 'srt';
+    const raw = String(rawContent || '');
+    const head = raw.trimStart().slice(0, 64);
+    if (/^\[Script Info\]/i.test(head) || /^Dialogue:\s*\d/im.test(raw)) return 'ass';
+    const headUpper = head.slice(0, 32).toUpperCase();
+    if (headUpper.startsWith('WEBVTT')) return 'vtt';
+    if (/^\[\d{2}:/.test(raw.trim())) return 'lrc';
+    if (/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(raw)) return 'srt';
     return ext || 'srt';
 }
 
@@ -78,15 +86,29 @@ function formatLrcTimeMs(ms) {
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 }
 
+function parseAssTimeMs(str) {
+    const m = String(str || '').trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{1,2})$/);
+    if (!m) return null;
+    const cs = Number(String(m[4]).padEnd(2, '0').slice(0, 2));
+    return (
+        Number(m[1]) * 3600000
+        + Number(m[2]) * 60000
+        + Number(m[3]) * 1000
+        + cs * 10
+    );
+}
+
 function parseTimeToMs(str, format) {
     if (format === 'vtt') return parseVttTimeMs(str);
     if (format === 'lrc') return parseLrcTimeMs(str);
+    if (format === 'ass' || format === 'ssa') return parseAssTimeMs(str);
     return parseSrtTimeMs(str);
 }
 
 function formatTimeMs(ms, format) {
     if (format === 'vtt') return formatVttTimeMs(ms);
     if (format === 'lrc') return formatLrcTimeMs(ms);
+    if (format === 'ass' || format === 'ssa') return formatAssTimeMs(ms);
     return formatSrtTimeMs(ms);
 }
 
@@ -213,8 +235,151 @@ function parseLrc(raw) {
     return { cues: normalizeCues(cues, 'lrc'), header };
 }
 
+function splitAssEventFields(body, fieldCount) {
+    const parts = [];
+    let start = 0;
+    const src = String(body || '');
+    const maxSplits = Math.max(1, fieldCount) - 1;
+    for (let i = 0; i < maxSplits; i += 1) {
+        const idx = src.indexOf(',', start);
+        if (idx < 0) {
+            parts.push(src.slice(start));
+            return parts;
+        }
+        parts.push(src.slice(start, idx));
+        start = idx + 1;
+    }
+    parts.push(src.slice(start));
+    return parts;
+}
+
+function fieldMapFromAssParts(parts, formatFields) {
+    const map = {};
+    for (let i = 0; i < formatFields.length; i += 1) {
+        map[formatFields[i].toLowerCase()] = parts[i] != null ? parts[i] : '';
+    }
+    return map;
+}
+
+function defaultAssHeaderLines(title = 'Transub') {
+    const safeTitle = String(title || 'Transub').replace(/[\r\n]/g, ' ');
+    return [
+        '[Script Info]',
+        `Title: ${safeTitle}`,
+        'ScriptType: v4.00+',
+        'PlayResX: 1920',
+        'PlayResY: 1080',
+        'WrapStyle: 0',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        'Style: Default,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1',
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    ];
+}
+
+function parseAss(raw) {
+    const text = stripBom(raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n');
+    let formatFields = [...DEFAULT_ASS_EVENT_FIELDS];
+    let inEvents = false;
+    const header = [];
+    const cues = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^\[Events\]/i.test(trimmed)) {
+            inEvents = true;
+            header.push(line);
+            continue;
+        }
+        if (/^\[[^\]]+\]/.test(trimmed)) {
+            if (inEvents) break;
+            header.push(line);
+            continue;
+        }
+        if (!inEvents) {
+            header.push(line);
+            continue;
+        }
+        if (/^Format:/i.test(trimmed)) {
+            const fields = trimmed.slice(7).split(',').map((s) => s.trim()).filter(Boolean);
+            if (fields.length) formatFields = fields;
+            header.push(line);
+            continue;
+        }
+        if (!/^Dialogue:/i.test(trimmed)) continue;
+        const body = trimmed.slice('Dialogue:'.length).replace(/^\s*/, '');
+        const parts = splitAssEventFields(body, formatFields.length);
+        const fields = fieldMapFromAssParts(parts, formatFields);
+        const startMs = parseAssTimeMs(fields.start);
+        const endMs = parseAssTimeMs(fields.end);
+        if (startMs == null) continue;
+        const textRaw = fields.text != null ? fields.text : '';
+        cues.push({
+            index: cues.length + 1,
+            startMs,
+            endMs: endMs == null ? null : endMs,
+            text: String(textRaw).replace(/\\N/gi, '\n'),
+            ass: {
+                layer: fields.layer != null && fields.layer !== '' ? fields.layer : (fields.marked || '0'),
+                style: fields.style || 'Default',
+                name: fields.name || '',
+                marginL: fields.marginl || '0',
+                marginR: fields.marginr || '0',
+                marginV: fields.marginv || '0',
+                effect: fields.effect || '',
+            },
+        });
+    }
+
+    const ensuredHeader = header.some((l) => /^\[Events\]/i.test(String(l).trim()))
+        ? header
+        : defaultAssHeaderLines();
+    return { cues: normalizeCues(cues, 'ass'), header: ensuredHeader };
+}
+
+function serializeAssDocument(cues, header) {
+    const headLines = Array.isArray(header) && header.length
+        ? header.map((l) => String(l ?? ''))
+        : defaultAssHeaderLines();
+    while (headLines.length && headLines[headLines.length - 1] === '') headLines.pop();
+    const evIdx = headLines.findIndex((l) => /^\[Events\]/i.test(String(l).trim()));
+    if (evIdx < 0) {
+        headLines.push('', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text');
+    } else {
+        const hasFormatAfter = headLines.slice(evIdx + 1).some((l) => /^Format:/i.test(String(l).trim()));
+        if (!hasFormatAfter) {
+            headLines.splice(evIdx + 1, 0, 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text');
+        }
+    }
+
+    const events = (Array.isArray(cues) ? cues : []).map((cue) => {
+        const start = formatAssTimeMs(cue.startMs);
+        const end = formatAssTimeMs(cue.endMs != null ? cue.endMs : cue.startMs + 2000);
+        const meta = cue.ass && typeof cue.ass === 'object' ? cue.ass : {};
+        const layer = meta.layer != null && meta.layer !== '' ? meta.layer : '0';
+        const style = String(meta.style || 'Default').replace(/,/g, ' ');
+        const name = escapeAssName(meta.name || '');
+        const marginL = meta.marginL != null && meta.marginL !== '' ? meta.marginL : '0';
+        const marginR = meta.marginR != null && meta.marginR !== '' ? meta.marginR : '0';
+        const marginV = meta.marginV != null && meta.marginV !== '' ? meta.marginV : '0';
+        const effect = String(meta.effect || '').replace(/,/g, ' ');
+        const text = String(cue.text || '').replace(/\r?\n/g, '\\N');
+        return `Dialogue: ${layer},${start},${end},${style},${name},${marginL},${marginR},${marginV},${effect},${text}`;
+    });
+
+    return `${headLines.join('\n')}\n${events.join('\n')}${events.length ? '\n' : ''}`;
+}
+
 function parseSubtitle(raw, formatHint) {
     const format = formatHint || detectFormat('', raw);
+    if (format === 'ass' || format === 'ssa') {
+        const parsed = parseAss(raw);
+        return { format: 'ass', cues: parsed.cues, header: parsed.header };
+    }
     if (format === 'vtt') {
         return { format: 'vtt', cues: parseVtt(raw), header: ['WEBVTT', ''] };
     }
@@ -282,9 +447,15 @@ function serializeAss(cues, options = {}) {
         );
     });
     if (dualApi) {
-        // Alignment 2 = bottom-center; larger MarginV stacks Source above ZH (like bilingual SRT)
+        // Alignment 2 = bottom-center; larger MarginV sits higher.
+        // Default matches settings merge UI: 译文在上 (target-first) → Source lower.
+        const order = String(options.lineOrder || options.dualLineOrder || 'target-first')
+            .trim()
+            .toLowerCase();
+        const sourceFirst = order === 'source-first' || order === 'source';
+        const srcMarginV = sourceFirst ? 112 : 56;
         styleLines.push(
-            'Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,112,1',
+            `Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${srcMarginV},1`,
         );
     }
 
@@ -345,8 +516,15 @@ function escapeAssName(name) {
 
 function serializeSubtitle({ format, cues, header, assOptions }) {
     const fmt = String(format || 'srt').toLowerCase();
-    if (fmt === 'ass') {
-        return serializeAss(cues, assOptions || {});
+    if (fmt === 'ass' || fmt === 'ssa') {
+        // Prefer round-trip when opening an existing ASS (preserve Script Info / Styles).
+        if (Array.isArray(header) && header.some((l) => /^\[(?:Script Info|V4\+? Styles|Events)\]/i.test(String(l).trim()))) {
+            return serializeAssDocument(cues, header);
+        }
+        if (assOptions && typeof assOptions === 'object') {
+            return serializeAss(cues, assOptions);
+        }
+        return serializeAssDocument(cues, header);
     }
     const normalized = normalizeCues(cues.map((c) => ({ ...c })), format);
     if (format === 'vtt') return serializeVtt(normalized, header);
@@ -364,6 +542,7 @@ module.exports = {
     parseSubtitle,
     serializeSubtitle,
     serializeAss,
+    parseAss,
     parseTimeToMs,
     formatTimeMs,
     isEditableFormat,

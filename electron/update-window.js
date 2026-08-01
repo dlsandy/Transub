@@ -33,10 +33,10 @@ function openUpdateWindow(app, { parent, autoCheck = true } = {}) {
 
     const parentWin = parent && !parent.isDestroyed() ? parent : undefined;
     const win = new BrowserWindow({
-        width: 440,
-        height: 360,
-        minWidth: 380,
-        minHeight: 300,
+        width: 500,
+        height: 560,
+        minWidth: 420,
+        minHeight: 380,
         resizable: true,
         maximizable: false,
         title: '检查更新',

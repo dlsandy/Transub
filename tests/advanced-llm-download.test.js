@@ -51,5 +51,13 @@ describe('advanced-llm-download mirrors', () => {
         assert.strictEqual(downloadSourceLabel('https://hf-mirror.com/x', official), 'HF 镜像');
         assert.strictEqual(downloadSourceLabel('https://ghfast.top/https://github.com/a', official), 'ghfast');
         assert.strictEqual(downloadSourceLabel(official, official), '官方源');
+        assert.strictEqual(
+            downloadSourceLabel('https://codeberg.org/flyforyou/Transub/releases/download/v1/a.zip'),
+            'Codeberg',
+        );
+        assert.strictEqual(
+            downloadSourceLabel('https://github.com/dlsandy/Transub/releases/download/v1/a.zip'),
+            'GitHub',
+        );
     });
 });

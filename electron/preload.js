@@ -255,6 +255,8 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubAdvancedManagedLlmVerifyManual: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-verify-manual', payload || {}),
     transubAdvancedManagedLlmPull: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-pull', payload || {}),
     transubAdvancedManagedLlmInstallRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-install-runtime', payload || {}),
+    transubAdvancedManagedLlmSetRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-set-runtime', payload || {}),
+    transubAdvancedManagedLlmImportRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-import-runtime', payload || {}),
     transubAdvancedManagedLlmCancelPull: () => ipcRenderer.invoke('transub-advanced-managed-llm-cancel-pull'),
     transubAdvancedManagedLlmStopServer: () => ipcRenderer.invoke('transub-advanced-managed-llm-stop-server'),
     transubAdvancedManagedLlmPerfTest: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-perf-test', payload || {}),

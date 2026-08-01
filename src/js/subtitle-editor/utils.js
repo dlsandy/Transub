@@ -60,6 +60,7 @@
             startMs: c.startMs,
             endMs: c.endMs,
             text: c.text ?? '',
+            ...(c.ass && typeof c.ass === 'object' ? { ass: { ...c.ass } } : {}),
         }));
     }
 

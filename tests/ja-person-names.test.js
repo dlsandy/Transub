@@ -48,11 +48,33 @@ describe('ja-person-names-core', () => {
         );
         assert.ok(!kousui.some((r) => /勤/.test(r.stem)), JSON.stringify(kousui));
         assert.strictEqual(jaNames.resolveCanonicalZhPersonName('香水'), '香水纯');
+        // さん must NOT become 小姐 (gender-neutral JA honorific)
+        assert.strictEqual(jaNames.resolveCanonicalZhPersonName('美羽', { honorific: 'さん' }), '美羽');
+        assert.strictEqual(jaNames.resolveCanonicalZhPersonName('北野', { honorific: 'くん' }), '北野');
         const cast = jaNames.harvestHonorificCastTerms([
             { text: '香水さんがうまくやってくれたおかげで' },
             { text: 'こちらは取引先の会社に勤めている香水さん。' },
         ]);
         assert.ok(cast.some((t) => t.term === '香水' && t.translation === '香水纯'), JSON.stringify(cast));
+        const miu = jaNames.harvestHonorificCastTerms([
+            { text: '美羽さん、お疲れさま' },
+            { text: '美羽さんも来てるよ' },
+        ]);
+        assert.ok(miu.some((t) => t.term === '美羽' && t.translation === '美羽'), JSON.stringify(miu));
+        assert.ok(!miu.some((t) => String(t.translation).includes('小姐')), JSON.stringify(miu));
+
+        // Kinship / ASR glue must not enter cast glossary
+        assert.ok(!jaNames.isPlausibleHonorificStem('父'));
+        assert.ok(!jaNames.isPlausibleHonorificStem('兄'));
+        assert.ok(!jaNames.isPlausibleHonorificStem('奥'));
+        assert.ok(!jaNames.isPlausibleHonorificStem('信じたく'));
+        assert.ok(!jaNames.isPlausibleHonorificStem('さあゆう'));
+        const junk = jaNames.harvestHonorificCastTerms([
+            { text: '信じたくさん食べなさいね。' },
+            { text: 'お父さんありがとう。お母さんも。お兄さんどうぞ。' },
+            { text: 'さあゆうさん丸' },
+        ], { minCount: 1 });
+        assert.ok(!junk.some((t) => /信じ|父|母|兄|奥|さあゆう/.test(t.term)), JSON.stringify(junk));
 
         const b = jaNames.extractJaPersonRefs('あたし、はるなです');
         assert.ok(b.some((r) => r.stem.includes('はるな') || r.via === 'intro' || r.via === 'lexicon'));

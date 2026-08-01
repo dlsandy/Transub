@@ -419,6 +419,12 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         dualTargetSuffix: dualCore.normalizeDualTargetSuffix(merged.dualTargetSuffix),
         dualPrimaryTrack: dualCore.normalizeDualPrimaryTrack(merged.dualPrimaryTrack),
         dualDisplayMode: dualCore.normalizeDualDisplayMode(merged.dualDisplayMode),
+        // Empty / missing → target-first (settings default 译文在上); editor preview may use source-first separately.
+        dualLineOrder: (() => {
+            const raw = merged.dualLineOrder;
+            if (raw == null || String(raw).trim() === '') return 'target-first';
+            return dualCore.normalizeDualLineOrder(raw);
+        })(),
         mergeBilingualSubtitles: !!merged.mergeBilingualSubtitles && normalizeTask(merged.task) === 'dual',
         deleteSourcesAfterMergeBilingual: !!merged.deleteSourcesAfterMergeBilingual
             && !!merged.mergeBilingualSubtitles
@@ -1688,7 +1694,7 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
                         if (!tgt) continue;
                         mergedPaths.push(writeMergedBilingualSubtitleFiles(src, tgt, {
                             primaryTrack: options.dualPrimaryTrack,
-                            lineOrder: 'target-first',
+                            lineOrder: options.dualLineOrder || 'target-first',
                             nameAsVideoStem,
                         }));
                     }
@@ -2504,7 +2510,7 @@ function setupTransWithAiBridge(api, deps) {
                 'noSpeechThreshold', 'logProbThreshold', 'compressionRatioThreshold',
                 'hallucinationSilenceThreshold', 'glossaryPromptEnabled', 'glossaryMtEnabled',
                 'chineseSubtitleVariant',
-                'dualTargetSuffix', 'dualPrimaryTrack', 'dualDisplayMode',
+                'dualTargetSuffix', 'dualPrimaryTrack', 'dualDisplayMode', 'dualLineOrder',
                 'mergeBilingualSubtitles', 'deleteSourcesAfterMergeBilingual',
                 'includeWords', 'karaokeVtt', 'releaseGpuAfter',
                 'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',

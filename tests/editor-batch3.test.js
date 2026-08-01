@@ -75,6 +75,7 @@ describe('serializeAss', () => {
         const ass = serializeAss(cues, {
             title: 'Dual',
             pairCues: [{ startMs: 0, endMs: 1000, text: 'source' }],
+            lineOrder: 'source-first',
         });
         const sourceStyle = ass.split('\n').find((line) => line.startsWith('Style: Source,'));
         assert.ok(sourceStyle, 'expected Style: Source');
@@ -83,6 +84,19 @@ describe('serializeAss', () => {
         assert.strictEqual(parts[18], '2', 'Alignment should be bottom-center like SRT');
         assert.ok(Number(parts[21]) > 56, 'Source MarginV should sit above ZH');
         assert.ok(!/,8,40,40,40,1$/.test(sourceStyle), 'must not use top-center Alignment 8');
+    });
+
+    it('places Source below ZH for target-first line order (default)', () => {
+        const cues = [{ startMs: 0, endMs: 1000, text: '译文' }];
+        const ass = serializeAss(cues, {
+            title: 'Dual',
+            pairCues: [{ startMs: 0, endMs: 1000, text: 'source' }],
+        });
+        const sourceStyle = ass.split('\n').find((line) => line.startsWith('Style: Source,'));
+        assert.ok(sourceStyle, 'expected Style: Source');
+        const parts = sourceStyle.split(',');
+        assert.strictEqual(parts[18], '2', 'Alignment should be bottom-center');
+        assert.strictEqual(Number(parts[21]), 56, 'Source MarginV should sit below ZH when 译文在上');
     });
 });
 

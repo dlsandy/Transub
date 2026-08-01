@@ -161,22 +161,27 @@
         return v === 'managed' ? 'managed' : 'byok';
     }
 
-    function normalizeManagedLlm(raw) {
+    function normalizeManagedLlm(raw, hints) {
         if (typeof managedCatalog.normalizeManagedLlm === 'function') {
-            return managedCatalog.normalizeManagedLlm(raw);
+            return managedCatalog.normalizeManagedLlm(raw, hints);
         }
         return emptyAdvancedDoc().managedLlm;
     }
 
-    function normalizeAdvancedDoc(raw) {
+    function normalizeAdvancedDoc(raw, hints) {
         const doc = emptyAdvancedDoc();
-        if (!raw || typeof raw !== 'object') return doc;
+        if (!raw || typeof raw !== 'object') {
+            return {
+                ...doc,
+                managedLlm: normalizeManagedLlm(doc.managedLlm, hints),
+            };
+        }
         return {
             version: ADVANCED_DOC_VERSION,
             license: normalizeLicenseState(raw.license),
             byok: normalizeByok(raw.byok),
             llmSource: normalizeLlmSource(raw.llmSource),
-            managedLlm: normalizeManagedLlm(raw.managedLlm),
+            managedLlm: normalizeManagedLlm(raw.managedLlm, hints),
             byokKeyBlob: String(raw.byokKeyBlob || '').trim(),
             reconstructMock: !!raw.reconstructMock,
             licenseServerUrl: String(raw.licenseServerUrl || '').trim(),

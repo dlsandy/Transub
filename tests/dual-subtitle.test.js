@@ -198,8 +198,22 @@ describe('normalize dual task options', () => {
         assert.strictEqual(opts.dualTargetSuffix, 'zh');
         assert.strictEqual(opts.dualPrimaryTrack, 'target');
         assert.strictEqual(opts.dualDisplayMode, 'both');
+        assert.strictEqual(opts.dualLineOrder, 'target-first');
         assert.strictEqual(opts.mergeBilingualSubtitles, false);
         assert.strictEqual(opts.deleteSourcesAfterMergeBilingual, false);
+    });
+
+    it('normalizes dualLineOrder from translation-first alias', () => {
+        const opts = normalizeTransWithAiRuntimeOptions({
+            task: 'dual',
+            dualLineOrder: 'translation-first',
+        });
+        assert.strictEqual(opts.dualLineOrder, 'target-first');
+        const sourceFirst = normalizeTransWithAiRuntimeOptions({
+            task: 'dual',
+            dualLineOrder: 'source-first',
+        });
+        assert.strictEqual(sourceFirst.dualLineOrder, 'source-first');
     });
 
     it('enables merge bilingual only for dual task', () => {

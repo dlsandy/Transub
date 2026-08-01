@@ -384,7 +384,21 @@
     const JA_INTRO_SEP = '(?:^|[はがをにとのもやへ、。！？!?\\s　「『(\\[])';
 
     /**
+     * Kinship / pronoun stems that appear as Xさん but are NOT cast given names.
+     * Harvesting these poisons smart-translate glossaries (父→父小姐, 兄→兄小姐).
+     */
+    const KINSHIP_HONORIFIC_STEMS = new Set([
+        '父', '母', '兄', '姉', '弟', '妹', '子', '娘', '息子',
+        '俺', '僕', '私', 'あたし', 'わたし', 'お前', 'あんた', '君',
+        'お', 'おばあ', 'おじい', 'おと', 'ねえ', 'にい',
+        'お兄', 'お姉', '伯父', '叔父', '伯母', '叔母',
+        '主人', '旦那', '嫁', '婿', '家内', '奥さん', '奥',
+        '何', '誰', '皆', 'みんな', '方', '人',
+    ]);
+
+    /**
      * Reject verb chunks wrongly attached before さん (勤めている香水 → keep 香水).
+     * Also reject kinship, mid-particle ASR glue, and non-lexicon pure hiragana.
      * @param {string} stem
      * @returns {boolean}
      */
@@ -394,10 +408,21 @@
         const len = Array.from(s).length;
         if (len < 1 || len > 4) return false;
         if (/^[とのにへがをはもや]+$/.test(s)) return false;
+        if (KINSHIP_HONORIFIC_STEMS.has(s)) return false;
+        // Mid-stem particles ⇒ ASR glued dialogue (物もたく / だよゆう / さあゆう)
+        if (len >= 2 && /[はがをにとのもやへ]/.test(s)) return false;
         if (/(?:て(?:い)?る|てた|ました|ます|です|した|して|ある|ない|れる|せる|いる)$/.test(s)) {
             return false;
         }
         if (/ている|てる|ました|ます|です/.test(s)) return false;
+        // Sentence-final / filler glued before さん (いんだよ / 信じたく / っと)
+        if (/(?:だよ|だね|だわ|だぞ|んだ|んよ|たく|っと)$/.test(s)) return false;
+        if (/^[ぁ-んー]{1,4}$/.test(s)) {
+            // Pure hiragana: only keep known given-name lexicon forms
+            if (!LEXICON.kana.has(s)) return false;
+        }
+        // Single-char kanji: require lexicon / surname-like whitelist (avoid 奥/何/兄)
+        if (len === 1 && /^[一-龯]$/.test(s) && !LEXICON.kanji.has(s)) return false;
         return true;
     }
 
@@ -726,10 +751,14 @@
         香水ジュン: '香水纯',
         香水純: '香水纯',
         香水纯: '香水纯',
+        アリス: '爱丽丝',
+        ありす: '爱丽丝',
+        クロ: '小黑',
     });
 
     /**
      * Preferred ZH surface for a JA person stem (cast table → lexicon → stem).
+     * 「さん」is gender-neutral — do NOT append 小姐/先生 (fansub anti-pattern).
      * @param {string} stem
      * @param {{ honorific?: string }} [options]
      * @returns {string}
@@ -747,13 +776,7 @@
             }
             return s;
         }
-        const honorific = String(options.honorific || '');
-        if (honorific === 'さん' || honorific === 'ちゃん') {
-            return `${s}小姐`;
-        }
-        if (honorific === 'くん' || honorific === '君') {
-            return `${s}先生`;
-        }
+        // さん/くん/ちゃん/君/様 → bare ZH name (様 may stay as-is; caller prompts handle 大人)
         return s;
     }
 
@@ -764,12 +787,14 @@
      * @returns {Array<{term:string,translation:string,info:string,aliases?:string[]}>}
      */
     function harvestHonorificCastTerms(cues, options = {}) {
-        const minCount = Math.max(1, Number(options.minCount) || 1);
+        // Default 2: single-hit ASR mishears (信じたくさん) must not enter the glossary.
+        const minCount = Math.max(1, Number(options.minCount) || 2);
         /** @type {Map<string, { count: number, honorific: string }>} */
         const tallies = new Map();
         for (const c of cues || []) {
             const refs = extractJaPersonRefs(c?.text).filter((r) => r.via === 'honorific');
             for (const r of refs) {
+                if (!isPlausibleHonorificStem(r.stem)) continue;
                 const prev = tallies.get(r.stem) || { count: 0, honorific: r.honorific };
                 tallies.set(r.stem, {
                     count: prev.count + 1,
@@ -780,8 +805,13 @@
         const out = [];
         for (const [stem, info] of tallies) {
             if (info.count < minCount) continue;
+            if (!isPlausibleHonorificStem(stem)) continue;
             const zh = resolveCanonicalZhPersonName(stem, { honorific: info.honorific });
             if (!zh) continue;
+            // Reject glossary rows that still look like JA debris + honorific
+            if (/[ぁ-んァ-ン]/.test(zh) && zh !== stem) continue;
+            // Pure kana cast with no ZH reading teaches the model nothing useful
+            if (/^[ぁ-んァ-ンー]+$/.test(zh)) continue;
             const aliases = [];
             if (zh !== stem) aliases.push(stem);
             if (zh === '香水纯') {
@@ -805,6 +835,7 @@
         SOURCE_NAME_HINTS,
         POLLUTION_NAME_STEMS,
         CAST_CANONICAL_ZH,
+        KINSHIP_HONORIFIC_STEMS,
         LEXICON,
         buildJaFormRegex,
         buildSourceNameHints,
