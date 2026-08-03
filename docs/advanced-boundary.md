@@ -75,12 +75,12 @@ set TRANSUB_ADVANCED_DEV_UNLOCK=1
 | 推荐激活  | 付款后复制订单号 → 设置 → Pro → **领取并激活**（查单校验后签发并本机绑定）                                                                    |
 | 备用激活  | 粘贴 `TSUB1.…` 密钥 → **激活**（兑换码池 / 人工发货仍可用）                                                                         |
 | 覆盖范围  | 本主版本（如 3.x）内 Pro 功能；下一主版本需另行购买（以爱发电商品说明为准）                                                                       |
-| 自动发货  | Cloudflare Worker：`[services/afdian-fulfillment/](../services/afdian-fulfillment/)`；Webhook + `/redeem`；KV 按订单幂等 |
+| 自动发货  | Cloudflare Worker（私有部署，不在本仓库）；Webhook + `/redeem`；KV 按订单幂等 |
 | 设备硬限制 | Worker KV `lic:<licenseId>`：**同时 1 台**；换机冷却 30 天；激活/换机/复核/清除许可均联网同步；开发解锁跳过服务端                                    |
 | 许可复核  | 联网复核走 Worker `/license/revalidate`（校验本机仍在绑定列表）                                                                   |
 
 
-Worker 部署与 Secrets 见 `[services/afdian-fulfillment/README.md](../services/afdian-fulfillment/README.md)`。生产领取基址：`https://pay.kimtem.net`（Webhook：`/webhook/afdian`）。私钥仅放本机 / Worker Secret，勿提交仓库。
+生产领取基址：`https://pay.kimtem.net`（Webhook：`/webhook/afdian`）。Worker 源码与 Secrets 仅本机 / Cloudflare Secret，勿提交公开仓库。
 
 ## 大模型双通道
 
