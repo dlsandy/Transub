@@ -121,6 +121,8 @@ describe('transwithai-bridge post-task export', () => {
         const bridge = require('../electron/transwithai-bridge');
         assert.strictEqual(typeof bridge.runPostSubtitleTaskActions, 'function');
         assert.strictEqual(typeof bridge.setSessionPostTaskOptions, 'function');
+        assert.strictEqual(typeof bridge.deferBatchFinalize, 'function');
+        assert.strictEqual(typeof bridge.flushDeferredBatchFinalize, 'function');
     });
 
     it('keeps session shutdown when lastOutputDir is updated', () => {

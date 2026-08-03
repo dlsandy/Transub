@@ -5,6 +5,10 @@ const {
     convertCues,
     summarizeConversion,
     normalizeDirection,
+    normalizeLocale,
+    normalizeVariant,
+    isTraditionalVariant,
+    variantToConvertOptions,
     directionLabel,
     stripTranslatePromptLeakage,
     ensureSpaceAfterChinesePunctuation,
@@ -18,14 +22,30 @@ function testNormalizeDirection() {
     assert.strictEqual(normalizeDirection('nope'), 's2t');
 }
 
+function testNormalizeVariantAndLocale() {
+    assert.strictEqual(normalizeVariant('traditional'), 'traditional');
+    assert.strictEqual(normalizeVariant('traditional-tw'), 'traditional-tw');
+    assert.strictEqual(normalizeVariant('traditional-hk'), 'traditional-hk');
+    assert.strictEqual(normalizeVariant('simplified'), 'simplified');
+    assert.ok(isTraditionalVariant('traditional'));
+    assert.ok(isTraditionalVariant('traditional-hk'));
+    assert.ok(!isTraditionalVariant('simplified'));
+    assert.deepStrictEqual(variantToConvertOptions('traditional'), { direction: 's2t', locale: 'twp' });
+    assert.deepStrictEqual(variantToConvertOptions('traditional-tw'), { direction: 's2t', locale: 'tw' });
+    assert.deepStrictEqual(variantToConvertOptions('traditional-hk'), { direction: 's2t', locale: 'hk' });
+    assert.deepStrictEqual(variantToConvertOptions('simplified'), { direction: 't2s', locale: 'twp' });
+    assert.strictEqual(normalizeLocale('tw'), 'tw');
+    assert.strictEqual(normalizeLocale('nope'), 'twp');
+}
+
 function testConvertTextS2T() {
     const { text, changed } = convertText('中国软件发展', 's2t');
-    assert.strictEqual(text, '中國軟件發展');
+    assert.strictEqual(text, '中國軟體發展');
     assert.ok(changed >= 3);
 }
 
 function testConvertTextT2S() {
-    const { text, changed } = convertText('中國軟件發展', 't2s');
+    const { text, changed } = convertText('中國軟體發展', 't2s');
     assert.strictEqual(text, '中国软件发展');
     assert.ok(changed >= 3);
 }
@@ -48,7 +68,7 @@ function testConvertCuesAll() {
     const result = convertCues(cues, { direction: 's2t' });
     assert.strictEqual(result.stats.cueTouched, 2);
     assert.ok(result.stats.charChanged >= 4);
-    assert.strictEqual(result.cues[0].text, '打開軟件');
+    assert.strictEqual(result.cues[0].text, '開啟軟體');
     assert.strictEqual(result.cues[1].text, 'OK');
     assert.strictEqual(result.cues[2].text, '國家發展');
     assert.strictEqual(cues[0].text, '打开软件', 'input unchanged');
@@ -68,14 +88,14 @@ function testConvertCuesSelectedIndexes() {
 
 function testRoundTripCommonChars() {
     const sample = '学习汉字与计算机网络';
-    const trad = convertText(sample, 's2t').text;
-    const back = convertText(trad, 't2s').text;
+    const trad = convertText(sample, 's2t', { locale: 'tw' }).text;
+    const back = convertText(trad, 't2s', { locale: 'tw' }).text;
     assert.strictEqual(back, sample);
 }
 
 function testDirectionLabel() {
-    assert.strictEqual(directionLabel('s2t'), '简体 → 繁体');
-    assert.strictEqual(directionLabel('t2s'), '繁体 → 简体');
+    assert.ok(directionLabel('s2t', 'twp').includes('繁体'));
+    assert.ok(directionLabel('t2s').includes('简体'));
 }
 
 function testNoopWhenAlreadyTarget() {
@@ -91,9 +111,19 @@ function testConvertPhraseLongestMatch() {
     assert.ok(changed >= 1);
 }
 
+function testConvertAmbiguousPhrasesAndTwPhrases() {
+    assert.strictEqual(convertText('皇后后来发现头发干燥', 's2t').text, '皇后後來發現頭髮乾燥');
+    assert.strictEqual(convertText('闹钟响了', 's2t').text, '鬧鐘響了');
+    assert.strictEqual(convertText('复制复杂文件', 's2t').text, '複製複雜檔案');
+    assert.strictEqual(convertText('为了里面的面包', 's2t').text, '為了裡面的麵包');
+    assert.strictEqual(convertText('台风干旱', 's2t').text, '颱風乾旱');
+    assert.strictEqual(convertText('软件网络视频信息', 's2t').text, '軟體網路影片資訊');
+    assert.strictEqual(convertText('软件网络', 's2t', { locale: 'tw' }).text, '軟件網絡');
+}
+
 function testProtectTermsKeepsGlossaryForms() {
     const { text } = convertText('中国软件发展', 's2t', { protectTerms: ['中国'] });
-    assert.strictEqual(text, '中国軟件發展');
+    assert.strictEqual(text, '中国軟體發展');
 }
 
 function testConvertCuesWithProtectTerms() {
@@ -104,7 +134,7 @@ function testConvertCuesWithProtectTerms() {
     });
     assert.strictEqual(result.cues[0].text, '中國软件');
     assert.strictEqual(result.stats.cueTouched, 1);
-    assert.ok(!result.cues[0].text.includes('軟件'));
+    assert.ok(!result.cues[0].text.includes('軟體'));
 }
 
 function testStripTranslatePromptLeakage() {
@@ -135,6 +165,9 @@ describe('subtitle-chinese', () => {
     it('normalize direction', () => {
         testNormalizeDirection();
     });
+    it('normalize variant and locale', () => {
+        testNormalizeVariantAndLocale();
+    });
     it('convert text s2t', () => {
         testConvertTextS2T();
     });
@@ -161,6 +194,9 @@ describe('subtitle-chinese', () => {
     });
     it('converts phrases with longest match', () => {
         testConvertPhraseLongestMatch();
+    });
+    it('handles ambiguous phrases and Taiwan lexicon', () => {
+        testConvertAmbiguousPhrasesAndTwPhrases();
     });
     it('protectTerms keeps protected substrings', () => {
         testProtectTermsKeepsGlossaryForms();

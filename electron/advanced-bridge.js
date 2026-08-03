@@ -12,6 +12,7 @@ const { loadAdvancedModule, getAdvancedModuleInfo } = require('./advanced-module
 const managedCatalog = require('../src/js/advanced-managed-llm-catalog-core');
 const managedLlm = require('./advanced-managed-llm');
 const { resolveAdvancedLlmConfig } = require('./advanced-llm-resolve');
+const { logAdvancedLlmToEngine } = require('./advanced-llm-log');
 const {
     broadcastManagedLlmProgress,
 } = require('./download-window');
@@ -40,6 +41,12 @@ function isDevUnlockEnabled() {
         if (app && typeof app.isPackaged === 'boolean' && !app.isPackaged) return true;
     } catch (_) { /* ignore */ }
     return false;
+}
+
+/** Real keys use Worker hard-limit unless explicitly skipped (local offline tests). */
+function shouldUseLicenseServer() {
+    const skip = String(process.env.TRANSUB_LICENSE_SKIP_SERVER || '').trim().toLowerCase();
+    return !(skip === '1' || skip === 'true' || skip === 'yes');
 }
 
 /** Pro reconstruct algorithms: packaged installs must use `_advanced` (closed module). */
@@ -165,9 +172,10 @@ function persistLicense(doc, license) {
 }
 
 /**
- * 本地验签激活；若配置了 licenseServerUrl，预留服务端同步（当前仍以本地绑定为准）。
+ * 本地验签 + 服务端设备硬限制（Worker KV）。
+ * 开发解锁跳过服务端绑定。
  */
-function activateWithKey(licenseKey, { transfer = false } = {}) {
+async function activateWithKey(licenseKey, { transfer = false } = {}) {
     const deviceId = getAdvancedDeviceId();
     const label = getDeviceLabel();
     const now = Date.now();
@@ -189,7 +197,6 @@ function activateWithKey(licenseKey, { transfer = false } = {}) {
         product: verified.payload.product,
     });
 
-    // 更换不同许可时清空设备绑定
     if (doc.license?.licenseId && doc.license.licenseId !== verified.payload.licenseId) {
         license.devices = [];
         license.lastTransferAt = null;
@@ -197,6 +204,40 @@ function activateWithKey(licenseKey, { transfer = false } = {}) {
         license.lastValidatedAt = null;
     }
 
+    if (shouldUseLicenseServer()) {
+        const afdian = require('./advanced-afdian');
+        const remote = transfer
+            ? await afdian.transferLicenseDevice({ licenseKey: verified.key, deviceId, label })
+            : await afdian.bindLicenseDevice({ licenseKey: verified.key, deviceId, label });
+        if (!remote.ok) {
+            return {
+                ok: false,
+                error: remote.error || (transfer ? '换机失败' : '激活失败'),
+                code: remote.code,
+                hint: remote.hint,
+                retryAt: remote.retryAt,
+                retryInMs: remote.retryInMs,
+            };
+        }
+        license.devices = Array.isArray(remote.devices) ? remote.devices : license.devices;
+        if (remote.lastTransferAt) license.lastTransferAt = remote.lastTransferAt;
+        if (!license.activatedAt) license.activatedAt = new Date(now).toISOString();
+        license = entitlement.markValidated(license, now);
+        const saved = persistLicense(doc, license);
+        if (!saved.ok) return { ok: false, error: saved.error };
+        const status = publicStatus(saved.doc, deviceId);
+        syncMainWindowTitle();
+        try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
+        return {
+            ok: true,
+            transferred: !!transfer && !!remote.transferred,
+            alreadyBound: !!remote.alreadyBound,
+            status,
+            serverBound: true,
+        };
+    }
+
+    // Offline / TRANSUB_LICENSE_SKIP_SERVER=1: local-only bind
     let bindResult;
     if (transfer) {
         bindResult = entitlement.transferToDevice(license, deviceId, { now, label });
@@ -227,15 +268,17 @@ function activateWithKey(licenseKey, { transfer = false } = {}) {
 
     const status = publicStatus(saved.doc, deviceId);
     syncMainWindowTitle();
+    try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
     return {
         ok: true,
         transferred: !!transfer && !bindResult.alreadyBound,
         alreadyBound: !!bindResult.alreadyBound,
         status,
+        serverBound: false,
     };
 }
 
-function revalidateLicense() {
+async function revalidateLicense() {
     const deviceId = getAdvancedDeviceId();
     const current = readAdvancedDoc();
     const doc = current.doc;
@@ -258,31 +301,94 @@ function revalidateLicense() {
     if (!verified.ok) {
         return { ok: false, error: verified.error || '许可无效' };
     }
-    if (!entitlement.isDeviceBound(lic, deviceId)) {
-        return { ok: false, error: '本机未绑定，请先激活或换机', code: 'device_unbound' };
+
+    if (shouldUseLicenseServer()) {
+        const afdian = require('./advanced-afdian');
+        const remote = await afdian.revalidateLicenseDevice({
+            licenseKey: verified.key,
+            deviceId,
+        });
+        if (!remote.ok) {
+            if (remote.code === 'device_unbound') {
+                const unbound = entitlement.normalizeLicenseState({
+                    ...lic,
+                    devices: Array.isArray(remote.devices) ? remote.devices : [],
+                    lastTransferAt: remote.lastTransferAt || lic.lastTransferAt,
+                });
+                const savedUnbound = persistLicense(doc, unbound);
+                try { require('./tdp-runtime').clearAppliedOverlay(); } catch { /* ignore */ }
+                syncMainWindowTitle();
+                return {
+                    ok: false,
+                    error: remote.error || '本机未绑定，请先激活或换机',
+                    code: 'device_unbound',
+                    status: publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId),
+                };
+            }
+            return {
+                ok: false,
+                error: remote.error || '联网复核失败',
+                code: remote.code,
+                status: publicStatus(doc, deviceId),
+            };
+        }
+        const merged = entitlement.normalizeLicenseState({
+            ...lic,
+            devices: Array.isArray(remote.devices) ? remote.devices : lic.devices,
+            lastTransferAt: remote.lastTransferAt || lic.lastTransferAt,
+        });
+        if (!entitlement.isDeviceBound(merged, deviceId)) {
+            // Persist server view so local entitlement matches unbound state.
+            const savedUnbound = persistLicense(doc, merged);
+            try { require('./tdp-runtime').clearAppliedOverlay(); } catch { /* ignore */ }
+            syncMainWindowTitle();
+            return {
+                ok: false,
+                error: '本机未绑定，请先激活或换机',
+                code: 'device_unbound',
+                status: publicStatus(savedUnbound.ok ? savedUnbound.doc : doc, deviceId),
+            };
+        }
+        const license = entitlement.markValidated(merged, Date.now());
+        const saved = persistLicense(doc, license);
+        if (!saved.ok) return { ok: false, error: saved.error };
+        syncMainWindowTitle();
+        try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
+        return { ok: true, status: publicStatus(saved.doc, deviceId), serverBound: true };
     }
 
-    // 若配置了服务端 URL，此处可扩展为 HTTP 复核；当前本地验签通过即刷新时间戳
-    const serverUrl = String(doc.licenseServerUrl || '').trim();
-    if (serverUrl) {
-        // 预留：未来 POST /v1/revalidate { licenseId, deviceId }
-        // 失败时不刷新 lastValidatedAt
+    if (!entitlement.isDeviceBound(lic, deviceId)) {
+        try { require('./tdp-runtime').clearAppliedOverlay(); } catch { /* ignore */ }
+        return { ok: false, error: '本机未绑定，请先激活或换机', code: 'device_unbound' };
     }
 
     const license = entitlement.markValidated(lic, Date.now());
     const saved = persistLicense(doc, license);
     if (!saved.ok) return { ok: false, error: saved.error };
     syncMainWindowTitle();
+    try { require('./tdp-runtime').syncAppliedState(); } catch { /* ignore */ }
     return { ok: true, status: publicStatus(saved.doc, deviceId) };
 }
 
-function deactivateLicense() {
+async function deactivateLicense() {
     const deviceId = getAdvancedDeviceId();
     const current = readAdvancedDoc();
     const doc = current.doc;
+    const prevKey = String(doc.license?.key || '').trim();
+
+    if (prevKey && shouldUseLicenseServer()) {
+        try {
+            const afdian = require('./advanced-afdian');
+            await afdian.unbindLicenseDevice({ licenseKey: prevKey, deviceId });
+        } catch (_) { /* best-effort */ }
+    }
+
     const license = entitlement.emptyLicenseState();
     const saved = persistLicense(doc, license);
     if (!saved.ok) return { ok: false, error: saved.error };
+    try {
+        require('./tdp-runtime').clearAppliedOverlay();
+    } catch { /* ignore */ }
     syncMainWindowTitle();
     return { ok: true, status: publicStatus(saved.doc, deviceId) };
 }
@@ -534,6 +640,12 @@ async function installManagedRuntimeJob(event, payload = {}) {
         await require('./advanced-runtime-prefer').ensurePreferCudaReady();
     } catch (_) { /* ignore */ }
     const hints = runtimePreferHints();
+    // When installing without an explicit package, align preference to detected CUDA 12/13.
+    if (!String(patch.runtimeId || patch.packageId || '').trim() && hints.preferCuda) {
+        try {
+            managedLlm.syncRuntimePreferenceToHardware({ force: true });
+        } catch (_) { /* ignore */ }
+    }
     const deviceId = getAdvancedDeviceId();
     const docBefore = readAdvancedDoc().doc;
     const managedBefore = entitlement.normalizeManagedLlm(docBefore.managedLlm, hints);
@@ -916,6 +1028,7 @@ function verifyManualPlacement(payload = {}) {
         }
         if (pkg?.backend === 'cuda') {
             const cudaDll = llmFs.findFileRecursive(llmFs.getRuntimeDir(), 'ggml-cuda.dll', 4)
+                || llmFs.findFileRecursive(llmFs.getRuntimeDir(), 'cudart64_13.dll', 4)
                 || llmFs.findFileRecursive(llmFs.getRuntimeDir(), 'cudart64_12.dll', 4);
             if (!cudaDll) {
                 return {
@@ -928,8 +1041,15 @@ function verifyManualPlacement(payload = {}) {
         }
         if (pkg) {
             try {
+                const probedTag = String(
+                    runtime.installedTag
+                    || managedLlm.probeLlamaServerTag?.(runtime.exePath)
+                    || '',
+                ).trim();
                 llmFs.writeRuntimeMeta({
-                    tag: managedCatalog.LLAMA_CPP_TAG,
+                    // 写入二进制真实构建号；探测失败才回退目录目标 tag
+                    tag: probedTag || managedCatalog.LLAMA_CPP_TAG,
+                    probedTag: probedTag || undefined,
                     packageId: pkg.id,
                     label: pkg.label,
                     backend: pkg.backend || '',
@@ -1104,6 +1224,9 @@ async function runContextReconstructBody(payload = {}, event = null) {
         if (!dryRun) {
             llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
             if (!llm.ok) return llm;
+            logAdvancedLlmToEngine(llm, {
+                feature: asString(input._llmLogFeature, 64).trim() || '语境重构',
+            });
         }
         const sendProgress = (info) => {
             const payloadOut = {
@@ -1167,6 +1290,859 @@ async function runContextReconstructBody(payload = {}, event = null) {
 }
 
 /**
+ * QC 智能处理门控：qcSmartFix，或兼容 contextReconstruct / *。
+ */
+function requireQcSmartFix() {
+    const primary = requireFeature(entitlement.FEATURE_QC_SMART_FIX);
+    if (primary.ok) return primary;
+    return requireFeature(entitlement.FEATURE_CONTEXT_RECONSTRUCT);
+}
+
+/**
+ * QC 智能修复：规则修复 →（可选）局部重转写 → 语境重构润色 → 写回。
+ * 重转写走引擎锁，LLM 润色走 Pro 锁，避免嵌套互斥。
+ */
+async function runQcSmartFix(payload = {}, event = null) {
+    const gate = requireQcSmartFix();
+    if (!gate.ok) return gate;
+
+    const input = asPlainObject(payload);
+    const prepared = await prepareQcSmartFixState(input, event);
+    if (!prepared?.ok) return prepared;
+    if (prepared.done) return prepared.result;
+
+    const computeLock = require('./compute-task-lock');
+    return computeLock.runWithComputeLockUnlessNested({
+        kind: 'advanced_qc_smart_fix',
+        owner: 'Pro',
+        source: 'runQcSmartFix',
+    }, payload, () => finishQcSmartFixWithLlm(prepared, input, event));
+}
+
+function sendQcSmartProgress(event, input, info) {
+    try {
+        event?.sender?.send?.('transub-advanced-reconstruct-progress', {
+            mode: 'qc-smart',
+            ...info,
+        });
+    } catch (_) { /* ignore */ }
+    if (typeof input.onProgress === 'function') {
+        try { input.onProgress(info); } catch (_) { /* ignore */ }
+    }
+}
+
+/**
+ * LLM 智能断句（in-memory）：对高 CPS / 连续文本给出 breakIndices。
+ */
+async function runQcLlmSplitRequest(payload = {}, event = null) {
+    const gate = requireQcSmartFix();
+    if (!gate.ok) return gate;
+
+    const input = asPlainObject(payload);
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    const items = Array.isArray(input.cues) ? input.cues : [];
+    if (!items.length) {
+        return { ok: true, splits: [], skipped: true, summary: '无断句目标' };
+    }
+
+    const doc = readAdvancedDoc().doc;
+    const dryRun = !!input.dryRun
+        || !!doc.reconstructMock
+        || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim() === '1'
+        || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim().toLowerCase() === 'true';
+
+    sendQcSmartProgress(event, input, {
+        phase: 'llm-split',
+        message: `智能断句 ${items.length} 条…`,
+        pct: 20,
+        targetCount: items.length,
+    });
+
+    if (dryRun) {
+        const mocked = smartCore.mockLlmSplitCues(items);
+        return {
+            ok: true,
+            splits: mocked.splits || [],
+            via: 'mock',
+            summary: `智能断句（模拟） ${mocked.splits?.length || 0} 条`,
+        };
+    }
+
+    let llm;
+    try {
+        llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
+        if (!llm.ok) return llm;
+        logAdvancedLlmToEngine(llm, { feature: '智能断句' });
+        const { chatCompletions } = require('./advanced-llm-client');
+        const messages = smartCore.buildLlmSplitChatMessages(items);
+        const res = await chatCompletions({
+            apiKey: llm.apiKey,
+            baseUrl: llm.baseUrl,
+            model: llm.model,
+            messages,
+            temperature: 0.2,
+            timeoutMs: 120000,
+            signal: input.signal,
+            disableThinking: true,
+        });
+        if (!res?.ok) return res;
+        const content = res.content || res.text || res.message || '';
+        const parsed = smartCore.parseLlmSplitResponse(
+            content,
+            items.map((c) => c.index),
+        );
+        if (!parsed.ok) return parsed;
+        return {
+            ok: true,
+            splits: parsed.splits,
+            via: llm.source || 'llm',
+            llmSource: llm.source,
+            summary: `智能断句 ${parsed.splits.length} 条`,
+        };
+    } finally {
+        try {
+            releaseManagedLlmAfterJob(llm, input);
+        } catch (_) { /* ignore */ }
+    }
+}
+
+async function runQcLlmSplitOnCues(cues, issues, input, event) {
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    if (input.llmSplit === false) {
+        return { cues, stats: { skipped: true, reason: 'disabled' } };
+    }
+    const targets = smartCore.selectQcLlmSplitTargets(issues, {
+        maxTargets: Number(input.maxLlmSplitTargets) || smartCore.DEFAULT_MAX_LLM_SPLIT,
+        types: input.llmSplitTypes,
+    });
+    if (!targets.length) {
+        return {
+            cues,
+            stats: {
+                skipped: true,
+                reason: 'no_targets',
+                plan: smartCore.summarizeQcLlmSplitPlan(targets),
+            },
+        };
+    }
+
+    const items = smartCore.buildQcLlmSplitPayload(cues, targets, {
+        smartMaxChars: Number(input.smartMaxChars) || 20,
+    });
+    const computeLock = require('./compute-task-lock');
+    const llmRes = await computeLock.runWithComputeLockUnlessNested({
+        kind: 'advanced_qc_llm_split',
+        owner: 'Pro',
+        source: 'runQcLlmSplitOnCues',
+    }, input, () => runQcLlmSplitRequest({
+        ...input,
+        cues: items,
+    }, event));
+
+    if (!llmRes?.ok) {
+        return {
+            cues,
+            stats: {
+                skipped: false,
+                failed: true,
+                error: llmRes?.error || '智能断句失败',
+                plan: smartCore.summarizeQcLlmSplitPlan(targets),
+            },
+        };
+    }
+
+    const applied = smartCore.applyQcLlmSplitResults(cues, llmRes.splits || [], {
+        targetCps: Number(input.targetCps) || 3,
+        minSec: Number(input.minSec) || 0.5,
+        useCpsTime: input.useCpsTime !== false,
+    });
+
+    if (applied.splitCount > 0) {
+        const qc = require('../src/js/subtitle-qc-core');
+        qc.applySmartAdjustToCues(applied.cues, {
+            fixOverlap: true,
+            fixCps: false,
+            enforceMinDur: false,
+            enforceMaxDur: false,
+            gapMs: Number(input.gapMs) >= 0 ? Number(input.gapMs) : 1,
+        });
+    }
+
+    return {
+        cues: applied.cues,
+        stats: {
+            skipped: false,
+            splitCount: applied.splitCount,
+            added: applied.added,
+            targetCount: targets.length,
+            via: llmRes.via,
+            plan: smartCore.summarizeQcLlmSplitPlan(targets, {
+                maxTargets: Number(input.maxLlmSplitTargets) || smartCore.DEFAULT_MAX_LLM_SPLIT,
+            }),
+        },
+    };
+}
+
+async function runQcRetranscribeOnCues(cues, issues, input, event) {
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    const meta = require('../src/js/subtitle-meta-core');
+    const qc = require('../src/js/subtitle-qc-core');
+    const mediaPath = asString(input.mediaPath || input.videoPath, 4096).trim();
+    if (!mediaPath || input.retranscribeConnected === false) {
+        return { cues, stats: { skipped: true, reason: mediaPath ? 'disabled' : 'no_media' } };
+    }
+
+    const targets = smartCore.selectQcRetranscribeTargets(issues, {
+        maxTargets: Number(input.maxRetranscribeTargets) || 24,
+    });
+    const ranges = smartCore.buildQcRetranscribeRanges(cues, targets.map((t) => t.index), {
+        maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
+        maxDurationSec: Number(input.maxRetranscribeSec) || smartCore.DEFAULT_MAX_RANGE_SEC,
+        mergeAdjacentGapMs: Number(input.mergeAdjacentGapMs) || smartCore.DEFAULT_MERGE_GAP_MS,
+    });
+    if (!ranges.length) {
+        return { cues, stats: { skipped: true, reason: 'no_ranges', plan: smartCore.summarizeQcRetranscribePlan(ranges) } };
+    }
+
+    let working = cues;
+    let okCount = 0;
+    let failCount = 0;
+    let replaced = 0;
+    const { transcribeRangeWithEngine } = require('./engine-bridge');
+
+    for (let i = 0; i < ranges.length; i += 1) {
+        const range = ranges[i];
+        sendQcSmartProgress(event, input, {
+            phase: 'retranscribe',
+            message: `局部重转写 ${i + 1}/${ranges.length}…`,
+            pct: Math.round(8 + (i / Math.max(1, ranges.length)) * 22),
+            range: i + 1,
+            totalRanges: ranges.length,
+        });
+        try {
+            const res = await transcribeRangeWithEngine({
+                mediaPath,
+                startMs: range.startMs,
+                endMs: range.endMs,
+                padMs: Number(input.padMs) >= 0 ? Number(input.padMs) : smartCore.DEFAULT_PAD_MS,
+                options: { task: 'transcribe', mergeSegments: false, subFormats: 'srt' },
+            }, {
+                onProgress: (info) => sendQcSmartProgress(event, input, {
+                    phase: 'retranscribe',
+                    message: info?.detail || info?.message || `局部重转写 ${i + 1}/${ranges.length}`,
+                    pct: Math.round(8 + ((i + 0.5) / Math.max(1, ranges.length)) * 22),
+                    stage: info?.stage,
+                }),
+            });
+            if (!res?.ok || !Array.isArray(res.cues)) {
+                failCount += 1;
+                const why = String(res?.error || '重转写失败').trim();
+                try {
+                    console.warn(`[qc-smart] 局部重转写 ${i + 1}/${ranges.length} 失败: ${why}`);
+                } catch { /* ignore */ }
+                continue;
+            }
+            const replacedDoc = meta.replaceCuesInTimeRange(
+                working,
+                range.startMs,
+                range.endMs,
+                res.cues,
+            );
+            working = replacedDoc.cues;
+            replaced += Number(replacedDoc.replaced) || 0;
+            okCount += 1;
+        } catch (err) {
+            failCount += 1;
+            try {
+                console.warn(
+                    `[qc-smart] 局部重转写 ${i + 1}/${ranges.length} 异常: ${err?.message || err}`,
+                );
+            } catch { /* ignore */ }
+        }
+    }
+
+    if (okCount > 0) {
+        const adj = qc.applySmartAdjustToCues(working, {
+            fixOverlap: true,
+            fixCps: false,
+            enforceMinDur: false,
+            enforceMaxDur: false,
+            gapMs: Number(input.gapMs) >= 0 ? Number(input.gapMs) : 1,
+        });
+        void adj;
+    }
+
+    return {
+        cues: working,
+        stats: {
+            skipped: false,
+            okCount,
+            failCount,
+            replaced,
+            rangeCount: ranges.length,
+            plan: smartCore.summarizeQcRetranscribePlan(ranges, {
+                maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
+            }),
+        },
+    };
+}
+
+function resolveQcSmartProfile(input = {}) {
+    const contentProfile = (() => {
+        try { return require('../src/js/content-profile-core'); } catch { return null; }
+    })();
+    const explicit = asString(input.profile, 64).trim();
+    if (explicit) return { profile: explicit, contentProfile };
+    const mediaPath = asString(input.mediaPath || input.videoPath, 4096).trim();
+    if (mediaPath && contentProfile?.classifyContentProfile) {
+        try {
+            const c = contentProfile.classifyContentProfile({ path: mediaPath });
+            if (c?.profile) return { profile: c.profile, contentProfile };
+        } catch (_) { /* ignore */ }
+    }
+    return { profile: 'unknown', contentProfile };
+}
+
+/**
+ * QC 联动：对问题条做双语语义审阅，可选采纳 suggestedTarget。
+ */
+async function runQcSemanticReviewOnCues(cues, issues, input, event, extra = {}) {
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    const pairCues = Array.isArray(input.pairCues) ? input.pairCues : [];
+    if (!pairCues.length) return { ok: true, skipped: true, reason: 'no_pair' };
+
+    const indexes = smartCore.selectQcSemanticIndexes(issues, {
+        maxPairs: input.maxSemanticPairs || 40,
+        preferIndexes: extra.preferIndexes,
+    });
+    if (!indexes.length) return { ok: true, skipped: true, reason: 'no_targets' };
+
+    let dualApi = null;
+    try {
+        dualApi = require('../src/js/dual-subtitle-core');
+    } catch (_) { /* optional */ }
+
+    const pairs = smartCore.buildQcSemanticPairs(cues, pairCues, indexes, dualApi);
+    if (!pairs.length) return { ok: true, skipped: true, reason: 'empty_pairs' };
+
+    sendQcSmartProgress(event, input, {
+        phase: 'semantic',
+        message: `语义审阅 ${pairs.length} 条…`,
+        pct: 88,
+    });
+
+    const review = await runBilingualSemanticReviewBody({
+        pairs,
+        note: input.semanticNote || smartCore.QC_SEMANTIC_NOTE || '',
+        suggestFixes: input.suggestSemanticFixes !== false,
+        dryRun: input.dryRun,
+        signal: input.signal,
+        _keepManagedServer: input._keepManagedServer,
+        maxPairs: input.maxSemanticPairs || 40,
+    }, event);
+
+    if (!review?.ok) {
+        return {
+            ok: false,
+            skipped: false,
+            error: review?.error || '语义审阅失败',
+            code: review?.code,
+            cues,
+            changed: 0,
+        };
+    }
+
+    const issueList = Array.isArray(review.issues) ? review.issues : [];
+    const autoApply = input.autoApplySemantic !== false;
+    let next = cues;
+    let changed = 0;
+    let changedIndexes = [];
+    if (autoApply && issueList.some((it) => it.suggestedTarget)) {
+        const applied = smartCore.applyQcSemanticSuggestions(cues, issueList);
+        next = applied.cues;
+        changed = applied.changed;
+        changedIndexes = applied.changedIndexes;
+    }
+
+    return {
+        ok: true,
+        skipped: false,
+        cues: next,
+        changed,
+        changedIndexes,
+        issueCount: issueList.length,
+        suggestions: issueList.filter((it) => it.suggestedTarget).length,
+        issues: issueList,
+        summary: review.summary,
+        via: review.via,
+    };
+}
+
+/** 批次内复用同一原文轨，避免每个译文文件都重读盘 */
+const qcPairCueCache = new Map();
+const QC_PAIR_CACHE_MAX = 12;
+
+function loadQcPairCuesFromInput(input) {
+    if (Array.isArray(input.pairCues) && input.pairCues.length) {
+        return {
+            pairCues: input.pairCues.map((c) => ({
+                startMs: c?.startMs,
+                endMs: c?.endMs,
+                text: c?.text ?? '',
+            })),
+            pairPath: asString(input.pairPath || input.sourcePath, 4096).trim() || null,
+        };
+    }
+    const pairPath = asString(input.pairPath || input.sourcePath, 4096).trim();
+    if (!pairPath) return { pairCues: [], pairPath: '' };
+    const cached = qcPairCueCache.get(pairPath);
+    if (cached) return { pairPath, pairCues: cached };
+    try {
+        const { readSubtitleDocument } = require('./extensions-bridge');
+        const doc = readSubtitleDocument(pairPath);
+        if (!doc?.ok || !Array.isArray(doc.cues)) return { pairCues: [], pairPath };
+        const pairCues = doc.cues.map((c) => ({
+            startMs: c?.startMs,
+            endMs: c?.endMs,
+            text: c?.text ?? '',
+        }));
+        if (qcPairCueCache.size >= QC_PAIR_CACHE_MAX) {
+            const oldest = qcPairCueCache.keys().next().value;
+            if (oldest != null) qcPairCueCache.delete(oldest);
+        }
+        qcPairCueCache.set(pairPath, pairCues);
+        return { pairPath, pairCues };
+    } catch (_) {
+        return { pairCues: [], pairPath };
+    }
+}
+
+async function prepareQcSmartFixState(input, event) {
+    const filePath = asString(input.path || input.filePath, 4096).trim();
+    if (!filePath) return { ok: false, error: '缺少字幕路径' };
+
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    const qc = require('../src/js/subtitle-qc-core');
+    const { readSubtitleDocument, writeSubtitleDocument } = require('./extensions-bridge');
+    const { profile, contentProfile } = resolveQcSmartProfile(input);
+    const pairLoaded = loadQcPairCuesFromInput(input);
+    if (pairLoaded.pairCues.length) {
+        input.pairCues = pairLoaded.pairCues;
+        if (pairLoaded.pairPath) input.pairPath = pairLoaded.pairPath;
+        // 有对照轨时默认开启语义审阅（画像 unknown 的 false 会被这里抬起）
+        if (input.semanticReview == null) input.semanticReview = true;
+    }
+    const merged = contentProfile?.mergeQcOptsWithProfile
+        ? contentProfile.mergeQcOptsWithProfile(input, profile)
+        : { ...input };
+    // 回写画像填充后的字段，供后续润色 / 语义阶段使用
+    Object.assign(input, {
+        profile,
+        maxCps: merged.maxCps,
+        removeNoise: merged.removeNoise,
+        removeDuplicates: merged.removeDuplicates,
+        compressRepetition: merged.compressRepetition,
+        llmSplit: merged.llmSplit,
+        retranscribeConnected: merged.retranscribeConnected,
+        intensity: merged.intensity,
+        maxSmartCues: merged.maxSmartCues,
+        maxLlmSplitTargets: merged.maxLlmSplitTargets,
+        semanticReview: pairLoaded.pairCues.length
+            ? (merged.semanticReview !== false)
+            : !!merged.semanticReview,
+    });
+
+    let doc;
+    try {
+        doc = readSubtitleDocument(filePath);
+    } catch (err) {
+        return { ok: false, error: err.message || '读取字幕失败', path: filePath };
+    }
+    if (!doc?.ok) return { ok: false, error: doc?.error || '读取字幕失败', path: filePath };
+
+    let cues = Array.isArray(doc.cues) ? doc.cues.map((c) => ({
+        startMs: c.startMs,
+        endMs: c.endMs,
+        text: c.text ?? '',
+    })) : [];
+    if (!cues.length) {
+        return {
+            ok: true,
+            done: true,
+            result: { ok: true, skipped: true, path: filePath, summary: '无字幕条目' },
+        };
+    }
+
+    const ruleOpts = {
+        fixOverlap: input.fixOverlap !== false,
+        fixCpsBySplit: input.fixCpsBySplit !== false,
+        fixCpsByExtend: input.fixCpsByExtend !== false,
+        enforceMinDur: input.enforceMinDur !== false,
+        enforceMaxDur: input.enforceMaxDur !== false,
+        fixInvalid: input.fixInvalid !== false,
+        compressRepetition: input.compressRepetition !== false,
+        removeNoise: input.removeNoise !== false,
+        removeDuplicates: input.removeDuplicates !== false,
+        removeHallucinations: input.removeHallucinations !== false,
+        maxCps: Number(input.maxCps) || 18,
+        maxSec: Number(input.maxSec) || 10,
+        gapMs: Number(input.gapMs) >= 0 ? Number(input.gapMs) : 1,
+        smartMaxChars: Number(input.smartMaxChars) || 20,
+        smartLineChars: Number(input.smartLineChars) || 18,
+        targetCps: Number(input.targetCps) || 3,
+    };
+
+    const structuralScanOpts = { ...ruleOpts, checkFluency: false };
+
+    let ruleResult = null;
+    /** @type {{ issues: any[], summary: any }|null} */
+    let workingScan = null;
+    let scanIsFull = false;
+
+    if (input.skipRuleFix !== true) {
+        sendQcSmartProgress(event, input, {
+            phase: 'rule',
+            message: '规则修复中…',
+            pct: 3,
+        });
+        ruleResult = qc.applyQcFixes(cues, ruleOpts);
+        cues = ruleResult.cues;
+        if (ruleResult.scan) {
+            workingScan = ruleResult.scan;
+            scanIsFull = true;
+        }
+    }
+    if (!workingScan) {
+        workingScan = qc.scanCueIssues(cues, ruleOpts);
+        scanIsFull = true;
+    }
+
+    let llmSplit = { stats: { skipped: true } };
+    let retranscribe = { stats: { skipped: true } };
+    if (input.llmSplit !== false) {
+        llmSplit = await runQcLlmSplitOnCues(cues, workingScan.issues, input, event);
+        cues = llmSplit.cues;
+        if (llmSplit?.stats && !llmSplit.stats.skipped && llmSplit.stats.splitCount > 0) {
+            // 断句改索引：重转写只需结构类问题，跳过通顺度
+            workingScan = qc.scanCueIssues(cues, structuralScanOpts);
+            scanIsFull = false;
+        }
+    }
+    if (input.retranscribeConnected !== false && asString(input.mediaPath || input.videoPath, 4096).trim()) {
+        retranscribe = await runQcRetranscribeOnCues(cues, workingScan.issues, input, event);
+        cues = retranscribe.cues;
+        if (retranscribe?.stats && !retranscribe.stats.skipped && retranscribe.stats.okCount > 0) {
+            workingScan = qc.scanCueIssues(cues, ruleOpts);
+            scanIsFull = true;
+        }
+    }
+    // 润色目标需要 fluency；若上一趟是结构扫则补一次完整扫
+    if (!scanIsFull) {
+        workingScan = qc.scanCueIssues(cues, ruleOpts);
+        scanIsFull = true;
+    }
+
+    const beforeSmartScan = workingScan;
+    const targets = smartCore.selectQcSmartTargets(beforeSmartScan.issues, {
+        maxSmartCues: input.maxSmartCues,
+        types: input.smartTypes,
+    });
+
+    const changedByRule = !!(ruleResult?.stats?.affected);
+    const changedByLlmSplit = !!(llmSplit?.stats && !llmSplit.stats.skipped && llmSplit.stats.splitCount > 0);
+    const changedByRetranscribe = !!(retranscribe?.stats && !retranscribe.stats.skipped && retranscribe.stats.okCount > 0);
+
+    const wantSemantic = !!(input.semanticReview && Array.isArray(input.pairCues) && input.pairCues.length);
+
+    if (!targets.length && !wantSemantic) {
+        const remainingText = typeof qc.summarizeRemaining === 'function'
+            ? qc.summarizeRemaining(beforeSmartScan.summary)
+            : '';
+        const parts = [];
+        if (ruleResult?.summary) parts.push(ruleResult.summary);
+        if (llmSplit?.stats?.splitCount) {
+            parts.push(`智能断句 ${llmSplit.stats.splitCount} 条(+${llmSplit.stats.added || 0})`);
+        }
+        if (retranscribe?.stats?.plan && !retranscribe.stats.skipped) {
+            const failN = Number(retranscribe.stats.failCount) || 0;
+            parts.push(
+                failN > 0
+                    ? `局部重转写 ${retranscribe.stats.okCount}/${retranscribe.stats.rangeCount} 窗（失败 ${failN}）`
+                    : `局部重转写 ${retranscribe.stats.okCount}/${retranscribe.stats.rangeCount} 窗`,
+            );
+        } else if (retranscribe?.stats?.skipped && retranscribe.stats.reason === 'disabled') {
+            parts.push('已跳过局部重转写');
+        }
+        parts.push('无需智能润色');
+        if (remainingText) parts.push(remainingText);
+
+        if (changedByRule || changedByLlmSplit || changedByRetranscribe || cues.length !== doc.cues.length) {
+            const written = writeSubtitleDocument(filePath, {
+                cues,
+                format: doc.format,
+                header: doc.header,
+                backupMode: input.backupMode || 'off',
+            });
+            if (!written.ok) return written;
+            return {
+                ok: true,
+                done: true,
+                result: {
+                    ok: true,
+                    path: filePath,
+                    written: true,
+                    smartSkipped: true,
+                    profile,
+                    rule: ruleResult,
+                    llmSplit: llmSplit.stats,
+                    retranscribe: retranscribe.stats,
+                    remaining: beforeSmartScan.summary,
+                    summary: parts.join('；'),
+                },
+            };
+        }
+        return {
+            ok: true,
+            done: true,
+            result: {
+                ok: true,
+                path: filePath,
+                written: false,
+                smartSkipped: true,
+                profile,
+                rule: ruleResult,
+                llmSplit: llmSplit.stats,
+                retranscribe: retranscribe.stats,
+                remaining: beforeSmartScan.summary,
+                summary: parts.join('；'),
+            },
+        };
+    }
+
+    return {
+        ok: true,
+        done: false,
+        filePath,
+        doc,
+        cues,
+        ruleOpts,
+        ruleResult,
+        llmSplit: llmSplit.stats,
+        retranscribe: retranscribe.stats,
+        beforeSmartScan,
+        targets,
+        profile,
+        skipPolish: !targets.length,
+        changedByRule,
+        changedByLlmSplit,
+        changedByRetranscribe,
+    };
+}
+
+async function finishQcSmartFixWithLlm(prepared, input, event) {
+    const smartCore = require('../src/js/subtitle-qc-smart-core');
+    const qc = require('../src/js/subtitle-qc-core');
+    const { writeSubtitleDocument } = require('./extensions-bridge');
+
+    let cues = prepared.cues;
+    const { filePath, doc, ruleOpts, ruleResult, targets, beforeSmartScan } = prepared;
+    const targetIndexes = (Array.isArray(targets) ? targets : []).map((t) => t.index);
+    let applied = { changed: 0, changedIndexes: [] };
+    let recon = { ok: true, via: 'skipped', llmSource: '' };
+
+    if (!prepared.skipPolish && targetIndexes.length) {
+        const payloadIndexes = smartCore.expandIndexesWithNeighbors(
+            targetIndexes,
+            cues.length,
+            input.neighborRadius,
+        );
+        const reconstructOpts = smartCore.buildQcSmartReconstructOptions(input);
+        const cuePayload = smartCore.buildQcSmartCuePayload(cues, payloadIndexes);
+
+        sendQcSmartProgress(event, input, {
+            phase: 'start',
+            message: `QC 智能润色 ${targets.length} 条…`,
+            pct: 35,
+            targetCount: targets.length,
+        });
+
+        recon = await runContextReconstructBody({
+            cues: cuePayload,
+            preserveTiming: reconstructOpts.preserveTiming,
+            intensity: reconstructOpts.intensity,
+            windowCues: reconstructOpts.windowCues,
+            note: reconstructOpts.note,
+            userNote: reconstructOpts.userNote,
+            dryRun: input.dryRun,
+            signal: input.signal,
+            _keepManagedServer: input._keepManagedServer,
+            _llmLogFeature: 'QC智能润色',
+            onProgress: (info) => {
+                sendQcSmartProgress(event, input, {
+                    ...info,
+                    targetCount: targets.length,
+                });
+            },
+        }, event);
+
+        if (!recon?.ok) {
+            if (prepared.changedByRule || prepared.changedByLlmSplit || prepared.changedByRetranscribe) {
+                const written = writeSubtitleDocument(filePath, {
+                    cues,
+                    format: doc.format,
+                    header: doc.header,
+                    backupMode: input.backupMode || 'off',
+                });
+                return {
+                    ok: false,
+                    error: recon?.error || 'QC 智能处理失败',
+                    code: recon?.code,
+                    path: filePath,
+                    ruleWritten: !!written?.ok,
+                    rule: ruleResult,
+                    llmSplit: prepared.llmSplit,
+                    retranscribe: prepared.retranscribe,
+                };
+            }
+            return {
+                ok: false,
+                error: recon?.error || 'QC 智能处理失败',
+                code: recon?.code,
+                path: filePath,
+            };
+        }
+
+        const updates = Array.isArray(recon.cues) ? recon.cues : [];
+        applied = smartCore.applyQcSmartUpdates(cues, updates, {
+            allowIndexes: targetIndexes,
+        });
+        cues = applied.cues;
+    }
+
+    let workingScan = prepared.beforeSmartScan;
+    let semantic = { skipped: true };
+    if (input.semanticReview && Array.isArray(input.pairCues) && input.pairCues.length) {
+        if (applied.changed > 0) {
+            workingScan = qc.scanCueIssues(cues, ruleOpts);
+        }
+        semantic = await runQcSemanticReviewOnCues(
+            cues,
+            workingScan.issues,
+            input,
+            event,
+            { preferIndexes: applied.changedIndexes || targetIndexes },
+        );
+        if (semantic?.ok && !semantic.skipped) {
+            cues = semantic.cues;
+        }
+    }
+
+    const semanticChanged = !!(semantic?.ok && semantic.changed > 0);
+    // 润色后已刷新 workingScan；仅语义写回时再扫
+    const afterScan = semanticChanged
+        ? qc.scanCueIssues(cues, ruleOpts)
+        : workingScan;
+    const remainingText = typeof qc.summarizeRemaining === 'function'
+        ? qc.summarizeRemaining(afterScan.summary)
+        : '';
+    const shouldWrite = applied.changed > 0
+        || prepared.changedByRule
+        || prepared.changedByLlmSplit
+        || prepared.changedByRetranscribe
+        || semanticChanged
+        || cues.length !== doc.cues.length;
+
+    const parts = [];
+    if (ruleResult?.summary) parts.push(ruleResult.summary);
+    if (prepared.llmSplit?.splitCount) {
+        parts.push(`智能断句 ${prepared.llmSplit.splitCount} 条(+${prepared.llmSplit.added || 0})`);
+    }
+    if (prepared.retranscribe && !prepared.retranscribe.skipped) {
+        const failN = Number(prepared.retranscribe.failCount) || 0;
+        const okN = Number(prepared.retranscribe.okCount) || 0;
+        const totalN = Number(prepared.retranscribe.rangeCount) || 0;
+        if (okN > 0 || failN > 0) {
+            parts.push(
+                failN > 0
+                    ? `局部重转写 ${okN}/${totalN} 窗（失败 ${failN}）`
+                    : `局部重转写 ${okN}/${totalN} 窗`,
+            );
+        }
+    } else if (prepared.retranscribe?.skipped && prepared.retranscribe.reason === 'disabled') {
+        parts.push('已跳过局部重转写');
+    }
+    if (!prepared.skipPolish && targetIndexes.length) {
+        parts.push(`智能润色 ${applied.changed}/${targets.length} 条`);
+    } else if (prepared.skipPolish) {
+        parts.push('无需智能润色');
+    }
+    if (semanticChanged) {
+        parts.push(`语义采纳 ${semantic.changed}/${semantic.suggestions || semantic.changed} 条`);
+    } else if (semantic?.ok && semantic.issueCount) {
+        parts.push(`语义审阅 ${semantic.issueCount} 处`);
+    } else if (semantic && !semantic.ok && !semantic.skipped) {
+        parts.push(semantic.error || '语义审阅失败');
+    }
+    if (remainingText) parts.push(remainingText);
+
+    if (!shouldWrite) {
+        return {
+            ok: true,
+            path: filePath,
+            written: false,
+            smartChanged: 0,
+            targets: targets.length,
+            profile: prepared.profile,
+            rule: ruleResult,
+            llmSplit: prepared.llmSplit,
+            retranscribe: prepared.retranscribe,
+            semantic,
+            remaining: afterScan.summary,
+            summary: '智能处理无文本变更',
+            via: recon.via,
+            llmSource: recon.llmSource,
+        };
+    }
+
+    const written = writeSubtitleDocument(filePath, {
+        cues,
+        format: doc.format,
+        header: doc.header,
+        backupMode: input.backupMode || 'off',
+    });
+    if (!written.ok) return written;
+
+    sendQcSmartProgress(event, input, {
+        phase: 'done',
+        message: 'QC 智能处理完成',
+        pct: 100,
+        changed: applied.changed + (semantic.changed || 0),
+    });
+
+    return {
+        ok: true,
+        path: filePath,
+        written: true,
+        smartChanged: applied.changed,
+        changedIndexes: applied.changedIndexes,
+        targets: targets.length,
+        targetIndexes,
+        profile: prepared.profile,
+        rule: ruleResult,
+        llmSplit: prepared.llmSplit,
+        retranscribe: prepared.retranscribe,
+        semantic,
+        beforeSmart: beforeSmartScan.summary,
+        remaining: afterScan.summary,
+        remainingText,
+        summary: parts.join('；'),
+        via: recon.via,
+        llmSource: recon.llmSource,
+        plan: smartCore.summarizeQcSmartPlan(targets, { maxSmartCues: input.maxSmartCues }),
+    };
+}
+
+/**
  * 双语语义审阅（Advanced）。
  */
 async function runBilingualSemanticReview(payload = {}, event = null) {
@@ -1196,6 +2172,7 @@ async function runBilingualSemanticReviewBody(payload = {}, event = null) {
         if (!dryRun) {
             llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
             if (!llm.ok) return llm;
+            logAdvancedLlmToEngine(llm, { feature: '语义审阅' });
         }
         const sendProgress = (info) => {
             const payloadOut = { mode: 'semantic-review', llmSource: llm.source, ...info };
@@ -1281,6 +2258,7 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
         if (!dryRun) {
             llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
             if (!llm.ok) return llm;
+            logAdvancedLlmToEngine(llm, { feature: '影片理解' });
         }
         const sendProgress = (info) => {
             const payloadOut = {
@@ -1402,6 +2380,7 @@ async function runSmartTranslateBody(payload = {}, event = null) {
                 requireSmartTranslateCapable: true,
             });
             if (!llm.ok) return llm;
+            logAdvancedLlmToEngine(llm, { feature: '智能翻译' });
         }
         const sendProgress = (info) => {
             const payloadOut = {
@@ -1687,7 +2666,7 @@ async function runBatchContextReconstructJobLocked(event, payload = {}) {
                 _batchMode: true,
                 onProgress: (chunkInfo) => {
                     const fileLabel = cuePayload._fileName
-                        ? `�?{cuePayload._fileName}」`
+                        ? `「${cuePayload._fileName}」`
                         : `文件 ${cuePayload._fileIndex}/${files.length}`;
                     const baseMsg = chunkInfo.message || '';
                     sendProgress({
@@ -1709,7 +2688,7 @@ async function runBatchContextReconstructJobLocked(event, payload = {}) {
                         fileIndex: fileInfo.index,
                         fileTotal: fileInfo.total,
                         fileName: fileInfo.name,
-                        message: `文件 ${fileInfo.index}/${fileInfo.total}�?{fileInfo.name}`,
+                        message: `文件 ${fileInfo.index}/${fileInfo.total}「${fileInfo.name}」`,
                         pct: filePct,
                     });
                 } else {
@@ -1764,7 +2743,7 @@ function setupAdvancedBridge(api, deps = {}) {
         if (!redeemed.ok) {
             return { ok: false, error: redeemed.error || '领取失败', code: redeemed.code };
         }
-        const activated = activateWithKey(redeemed.licenseKey, { transfer: false });
+        const activated = await activateWithKey(redeemed.licenseKey, { transfer: false });
         if (!activated.ok) return activated;
         return {
             ...activated,
@@ -1868,6 +2847,39 @@ function setupAdvancedBridge(api, deps = {}) {
         const featureId = asString(payload.featureId || payload.feature, 128).trim();
         if (!featureId) return { ok: false, error: '缺少 featureId' };
         return requireFeature(featureId);
+    });
+
+    register('transub-advanced-qc-smart-fix', async (event, payload = {}) => {
+        cancelContextReconstruct();
+        await waitForComputeLockIdle();
+        singleAbortController = new AbortController();
+        try {
+            return await runQcSmartFix({
+                ...asPlainObject(payload),
+                signal: singleAbortController.signal,
+            }, event);
+        } finally {
+            singleAbortController = null;
+        }
+    });
+
+    register('transub-advanced-qc-llm-split', async (event, payload = {}) => {
+        cancelContextReconstruct();
+        await waitForComputeLockIdle();
+        singleAbortController = new AbortController();
+        try {
+            const computeLock = require('./compute-task-lock');
+            return await computeLock.runWithComputeLockUnlessNested({
+                kind: 'advanced_qc_llm_split',
+                owner: 'Pro',
+                source: 'transub-advanced-qc-llm-split',
+            }, payload, () => runQcLlmSplitRequest({
+                ...asPlainObject(payload),
+                signal: singleAbortController.signal,
+            }, event));
+        } finally {
+            singleAbortController = null;
+        }
     });
 
     register('transub-advanced-context-reconstruct', async (event, payload = {}) => {
@@ -2005,6 +3017,38 @@ function setupAdvancedBridge(api, deps = {}) {
         const info = getAdvancedModuleInfo();
         return { ok: true, module: info };
     });
+
+    // Language data pack (TDP) — CDN open download; Pro-only apply
+    try {
+        const tdpRuntime = require('./tdp-runtime');
+        try {
+            tdpRuntime.syncAppliedState();
+        } catch (syncErr) {
+            console.warn('[tdp] sync on bridge setup failed:', syncErr?.message || syncErr);
+        }
+
+        register('transub-tdp-get-status', async () => ({
+            ok: true,
+            tdp: tdpRuntime.localStatus(),
+        }));
+
+        register('transub-tdp-check', async () => tdpRuntime.checkForUpdate());
+
+        register('transub-tdp-pull', async (event) => {
+            const sendProgress = (info) => {
+                try {
+                    event.sender.send('transub-tdp-progress', info);
+                } catch { /* ignore */ }
+            };
+            return tdpRuntime.pullUpdate({ onProgress: sendProgress });
+        });
+
+        register('transub-tdp-cancel-pull', async () => tdpRuntime.cancelPull());
+
+        register('transub-tdp-sync', async () => tdpRuntime.syncAppliedState());
+    } catch (err) {
+        console.warn('[tdp] bridge setup skipped:', err?.message || err);
+    }
 }
 
 module.exports = {
@@ -2012,9 +3056,12 @@ module.exports = {
     requireFeature,
     requireFilmAudioEnhance,
     requireSmartTranslate,
+    requireQcSmartFix,
     runContextReconstruct,
     runFilmContextReconstruct,
     runBilingualSemanticReview,
+    runQcSmartFix,
+    runQcLlmSplitRequest,
     runSmartTranslate,
     smartTranslateSubtitleFile,
     runBatchContextReconstructJob,

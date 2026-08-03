@@ -509,9 +509,9 @@ async function buildEngineDownloadInfo(payload = {}) {
                 kind: 'sensevoice',
                 title: '手动安装 SenseVoice 运行库',
                 folder,
-                pipCommand: `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite torch torchaudio funasr`,
-                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba。请用下方直链下载 .whl（勿装 numpy 2.5+，否则 numba 会源码编译失败）。',
-                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite，再装 torch / funasr。可多选后一次安装。',
+                pipCommand: `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba torch torchaudio funasr`,
+                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。请用下方直链下载 .whl（勿装 numpy 2.5+，否则 numba 会源码编译失败）。',
+                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite/scipy，再装 torch / funasr。可多选后一次安装。',
                 items: SENSEVOICE_MANUAL_PACKAGES.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
@@ -990,6 +990,7 @@ function stopEngineProcess() {
             spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
                 windowsHide: true,
                 stdio: 'ignore',
+                timeout: 15000,
             });
         } else {
             engineProc.kill('SIGTERM');
@@ -1465,6 +1466,10 @@ async function ensureEngineRunning(options = {}) {
     if (!env.TRANSUB_ENGINE_HOME && opts.engineInstallPath) {
         env.TRANSUB_ENGINE_HOME = path.resolve(String(opts.engineInstallPath));
     }
+    try {
+        const tdpFs = require('./tdp-fs');
+        env.TRANSUB_TDP_DIR = tdpFs.getTdpRoot();
+    } catch { /* optional */ }
     try {
         resetEngineLogFile();
         engineProc = spawn(entry.command, args, {
@@ -1996,6 +2001,46 @@ async function runEngineBatchLocked({
                 `[engine] 外部翻译适配器 · ${mtModeZh} · ${mtAdapter.url}`,
                 invokeSender,
             );
+            // Preview LLM source from settings only (do not resolve/start managed server before ASR).
+            if (mtAdapter.mode === 'smart') {
+                try {
+                    const { readAdvancedDoc } = require('./advanced-license-data');
+                    const {
+                        formatAdvancedLlmEngineLogLine,
+                        llmHostHint,
+                    } = require('./advanced-llm-log');
+                    const entitlement = require('../src/js/advanced-entitlement-core');
+                    const managedCatalog = require('../src/js/advanced-managed-llm-catalog-core');
+                    const advDoc = readAdvancedDoc().doc;
+                    const src = entitlement.normalizeLlmSource(advDoc?.llmSource);
+                    let preview = { ok: true, source: src, model: '', baseUrl: '' };
+                    if (src === 'byok') {
+                        const byokCfg = entitlement.normalizeByok(advDoc?.byok);
+                        preview = {
+                            ok: true,
+                            source: 'byok',
+                            model: byokCfg.model || '',
+                            baseUrl: byokCfg.baseUrl || '',
+                        };
+                    } else {
+                        const choice = managedCatalog.resolveSmartTranslateModelChoice(
+                            advDoc?.managedLlm,
+                        );
+                        preview = {
+                            ok: true,
+                            source: 'managed',
+                            modelId: choice.modelId || '',
+                            model: choice.modelId || '',
+                            baseUrl: '',
+                        };
+                    }
+                    const line = formatAdvancedLlmEngineLogLine(preview, { feature: '智能翻译' });
+                    // Include host hint even when empty so line stays stable; skip empty model noise.
+                    if (preview.model || preview.modelId || llmHostHint(preview.baseUrl)) {
+                        appendEngineLogLine(line, invokeSender);
+                    }
+                } catch (_) { /* optional */ }
+            }
         }
 
         for (let i = 0; i < list.length; i += 1) {
@@ -2146,8 +2191,16 @@ async function runEngineBatchLocked({
                     invokeSender,
                 );
             } else if (useSmartTranslate) {
+                let smartBackend = '智能翻译';
+                try {
+                    const { readAdvancedDoc } = require('./advanced-license-data');
+                    const { llmSourceLabel } = require('./advanced-llm-log');
+                    const entitlement = require('../src/js/advanced-entitlement-core');
+                    const src = entitlement.normalizeLlmSource(readAdvancedDoc().doc?.llmSource);
+                    smartBackend = `智能翻译（${llmSourceLabel(src)}）`;
+                } catch (_) { /* keep default */ }
                 appendEngineLogLine(
-                    `[engine] #${index1}/${list.length} 翻译后端 · 智能翻译`,
+                    `[engine] #${index1}/${list.length} 翻译后端 · ${smartBackend}`,
                     invokeSender,
                 );
             }
@@ -2580,22 +2633,27 @@ async function runEngineBatchLocked({
         if (!cancelled) {
             try {
                 deferredEnsureTwai();
-                const { setSessionPostTaskOptions, runPostSubtitleTaskActions } = require('./transwithai-bridge');
+                const {
+                    setSessionPostTaskOptions,
+                    deferBatchFinalize,
+                } = require('./transwithai-bridge');
                 if (typeof setSessionPostTaskOptions !== 'function'
-                    || typeof runPostSubtitleTaskActions !== 'function') {
-                    throw new Error('runPostSubtitleTaskActions is not available');
+                    || typeof deferBatchFinalize !== 'function') {
+                    throw new Error('deferBatchFinalize is not available');
                 }
                 if (lastOutputDir) {
                     setSessionPostTaskOptions({ lastOutputDir });
                 }
-                try {
-                    const { notifyBatchComplete } = require('./subtitle-batch-lifecycle');
-                    notifyBatchComplete(merged, finished);
-                } catch { /* ignore */ }
-                runPostSubtitleTaskActions(merged, finished, engineUiWindowManager);
+                // Tray notify / sound / shutdown wait until UI finishes post-batch (incl. QC fix).
+                deferBatchFinalize(merged, finished, engineUiWindowManager);
             } catch (err) {
-                console.warn('[engine] post-task failed:', err?.message || err);
+                console.warn('[engine] defer batch finalize failed:', err?.message || err);
             }
+        } else {
+            try {
+                const { clearDeferredBatchFinalize } = require('./transwithai-bridge');
+                clearDeferredBatchFinalize?.();
+            } catch { /* ignore */ }
         }
         return finished;
     } catch (err) {
@@ -4071,7 +4129,6 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                 payload.options?.task === 'translate' ? 'translate' : 'transcribe',
                 { smartTranslate: false },
             );
-            onProgress?.({ stage: 'transcribe', detail: '引擎推理中' });
             // Never pass Sakura/smart ids as native Engine Opus mtModel.
             const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
             let mtModel = options.engineMtModel || null;
@@ -4084,84 +4141,147 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             ) {
                 mtModel = String(options.engineOpusMtModel || '').trim() || null;
             }
-            const created = await createJob(ensure.baseUrl, {
-                task,
-                mediaPath: clipPath,
-                outputDir,
-                language: options.language || 'auto',
-                asrModel: options.engineAsrModel || 'sensevoice-small',
-                mtModel,
-                subFormats: ['srt'],
-                device: mapDeviceForEngine(options.device),
-                beamSize: Math.max(1, Math.min(20, Number(options.beamSize) || 5)),
-                vad: buildVadJobOptions(options),
-                // Short editor clips: keep VAD/denoise, skip Demucs (too heavy for range retranscribe)
-                audio: buildAudioJobOptions({
-                    audioLightDenoise: options.audioLightDenoise,
-                    filmAudioEnhance: false,
-                    filmVadPreset: false,
-                }, { entitled: false }),
-                contentProfile: options.contentProfile || options.senseProfile || undefined,
-                senseProfile: options.senseProfile || options.contentProfile || undefined,
-                castNames: options.castNames || options.cast_names || undefined,
-                releaseGpuAfter: true,
-                sync: false,
-            }, { timeoutMs: 600000 });
-            if (!created.ok || !created.data?.id) {
-                return {
-                    ok: false,
-                    cancelled: !!created.cancelled,
-                    error: friendlyEngineError(
-                        created.error || created.data?.message || created.data?.error || '创建引擎任务失败',
-                    ),
-                    code: created.code,
-                };
-            }
-            // Track job so Esc → transub-engine-cancel can cancelJob(currentJobId).
-            currentJobId = created.data.id;
-            const waited = await waitJob(ensure.baseUrl, created.data.id, {
-                shouldStop: () => batchCancelled,
-            });
-            currentJobId = '';
-            if (!waited.ok) {
-                return {
-                    ok: false,
-                    cancelled: !!waited.cancelled || batchCancelled,
-                    error: friendlyEngineError(waited.error || '引擎任务失败'),
-                    code: (waited.cancelled || batchCancelled) ? 'cancelled' : undefined,
-                };
-            }
-            const outputs = waited.data?.result?.outputs || [];
-            const outPath = outputs[0]?.path || '';
-            if (!outPath || !fs.existsSync(outPath)) {
-                return { ok: false, error: '重转写未生成字幕文件' };
-            }
-            const raw = fs.readFileSync(outPath, 'utf8');
-            const { parseSubtitle } = require('./subtitle-format');
-            const parsed = parseSubtitle(raw, 'srt');
-            const cues = (parsed.cues || []).map((cue) => ({
-                startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
-                endMs: Math.max(
-                    0,
-                    Math.round((cue.endMs != null ? cue.endMs : (Number(cue.startMs) || 0) + 1000) + clipStartMs),
-                ),
-                text: String(cue.text || '').trim(),
-            })).filter((cue) => cue.text);
-            if (!cues.length) {
-                return { ok: false, error: '重转写结果为空' };
-            }
-            onProgress?.({ stage: 'done', detail: '重转写完成' });
-            return {
-                ok: true,
-                cues,
-                clipStartMs,
-                clipEndMs,
-                padMs,
-                sourceStartMs: startMs,
-                sourceEndMs: endMs,
-                result: waited.data?.result,
-                task,
+
+            const primaryAsr = String(
+                payload.asrModel || options.engineAsrModel || 'sensevoice-small',
+            ).trim() || 'sensevoice-small';
+            const isSenseVoice = /sensevoice/i.test(primaryAsr);
+            // SenseVoice 对短窗/AV 常空：有必要时再换 Whisper 试一次（未安装则原样失败）
+            const asrCandidates = isSenseVoice
+                ? [primaryAsr, 'whisper-large-v3-turbo', 'whisper-tiny']
+                : [primaryAsr];
+
+            const isEmptyAsrFail = (res) => {
+                const code = String(res?.code || '');
+                const msg = String(res?.error || '');
+                return code === 'ASR_EMPTY'
+                    || /未识别到有效字幕|重转写结果为空|结果为空/i.test(msg);
             };
+            const isRetryableAsrFail = (res) => {
+                if (isEmptyAsrFail(res)) return true;
+                const msg = String(res?.error || '');
+                // Fallback model missing → try next candidate
+                return /not installed|未安装|model not found|找不到.*模型/i.test(msg);
+            };
+
+            const runAsrOnce = async (asrModel) => {
+                onProgress?.({
+                    stage: 'transcribe',
+                    detail: asrModel === primaryAsr
+                        ? '引擎推理中'
+                        : `${primaryAsr} 无结果，改用 ${asrModel}…`,
+                });
+                const created = await createJob(ensure.baseUrl, {
+                    task,
+                    mediaPath: clipPath,
+                    outputDir,
+                    language: options.language || 'auto',
+                    asrModel,
+                    mtModel,
+                    subFormats: ['srt'],
+                    device: mapDeviceForEngine(options.device),
+                    beamSize: Math.max(1, Math.min(20, Number(options.beamSize) || 5)),
+                    vad: buildVadJobOptions(options),
+                    // Short editor clips: keep VAD/denoise, skip Demucs (too heavy for range retranscribe)
+                    audio: buildAudioJobOptions({
+                        audioLightDenoise: options.audioLightDenoise,
+                        filmAudioEnhance: false,
+                        filmVadPreset: false,
+                    }, { entitled: false }),
+                    contentProfile: options.contentProfile || options.senseProfile || undefined,
+                    senseProfile: options.senseProfile || options.contentProfile || undefined,
+                    castNames: options.castNames || options.cast_names || undefined,
+                    releaseGpuAfter: true,
+                    sync: false,
+                }, { timeoutMs: 600000 });
+                if (!created.ok || !created.data?.id) {
+                    return {
+                        ok: false,
+                        cancelled: !!created.cancelled,
+                        error: friendlyEngineError(
+                            created.error || created.data?.message || created.data?.error || '创建引擎任务失败',
+                        ),
+                        code: created.code,
+                    };
+                }
+                // Track job so Esc → transub-engine-cancel can cancelJob(currentJobId).
+                currentJobId = created.data.id;
+                const waited = await waitJob(ensure.baseUrl, created.data.id, {
+                    shouldStop: () => batchCancelled,
+                });
+                currentJobId = '';
+                if (!waited.ok) {
+                    const errMsg = waited.error || waited.data?.error?.message || '引擎任务失败';
+                    const errCode = waited.data?.error?.code
+                        || ((waited.cancelled || batchCancelled) ? 'cancelled' : undefined);
+                    return {
+                        ok: false,
+                        cancelled: !!waited.cancelled || batchCancelled,
+                        error: friendlyEngineError(errMsg),
+                        code: errCode,
+                    };
+                }
+                const outputs = waited.data?.result?.outputs || [];
+                const outPath = outputs[0]?.path || '';
+                if (!outPath || !fs.existsSync(outPath)) {
+                    return { ok: false, error: '重转写未生成字幕文件', code: 'ASR_EMPTY' };
+                }
+                const raw = fs.readFileSync(outPath, 'utf8');
+                const { parseSubtitle } = require('./subtitle-format');
+                const parsed = parseSubtitle(raw, 'srt');
+                const cues = (parsed.cues || []).map((cue) => ({
+                    startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
+                    endMs: Math.max(
+                        0,
+                        Math.round((cue.endMs != null ? cue.endMs : (Number(cue.startMs) || 0) + 1000) + clipStartMs),
+                    ),
+                    text: String(cue.text || '').trim(),
+                })).filter((cue) => cue.text);
+                if (!cues.length) {
+                    return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
+                }
+                onProgress?.({ stage: 'done', detail: '重转写完成' });
+                return {
+                    ok: true,
+                    cues,
+                    clipStartMs,
+                    clipEndMs,
+                    padMs,
+                    sourceStartMs: startMs,
+                    sourceEndMs: endMs,
+                    result: waited.data?.result,
+                    task,
+                    asrModel,
+                };
+            };
+
+            let lastFail = null;
+            for (let i = 0; i < asrCandidates.length; i += 1) {
+                const asrModel = asrCandidates[i];
+                if (batchCancelled) {
+                    return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
+                }
+                // Avoid reusing stale SRT from a previous empty attempt
+                try {
+                    for (const name of fs.readdirSync(outputDir)) {
+                        fs.rmSync(path.join(outputDir, name), { force: true });
+                    }
+                } catch { /* ignore */ }
+                const outcome = await runAsrOnce(asrModel);
+                if (outcome.ok) return outcome;
+                lastFail = outcome;
+                if (outcome.cancelled) return outcome;
+                // Empty SenseVoice / missing Whisper → try next ASR candidate
+                if (!isRetryableAsrFail(outcome)) return outcome;
+                if (i < asrCandidates.length - 1) {
+                    try {
+                        console.warn(
+                            `[engine] 局部重转写 ${asrModel} 未成功（${outcome.error || 'unknown'}），尝试 ${asrCandidates[i + 1]}`,
+                        );
+                    } catch { /* ignore */ }
+                }
+            }
+            return lastFail || { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
         } catch (err) {
             return {
                 ok: false,
@@ -4210,4 +4330,5 @@ module.exports = {
     resolveEngineEntrypoints,
     resolveEngineInstallPath,
     getBundledEnginePath,
+    appendEngineLogLine,
 };

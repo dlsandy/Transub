@@ -177,31 +177,64 @@ function ensureExtraRemoteFiles(remoteMap) {
 function buildChangelogNotes() {
     const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
     const verEsc = VERSION.replace(/\./g, '\\.');
-    const m = changelog.match(new RegExp(`## ${verEsc}\\n([\\s\\S]*?)(?=\\n## |$)`));
+    // Accept CRLF (Windows) or LF; fall back without notes only if section missing.
+    const m = changelog.match(new RegExp(`## ${verEsc}\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`));
     if (!m) return `Transub ${TAG}`;
     return `## Transub ${TAG}\n\n${m[1].trim()}\n`;
 }
 
 function findDistZip() {
-    const preferred = path.join(ROOT, 'dist', `Transub-${VERSION}-win.zip`);
+    const { standardZipName, legacyStandardZipName, isAutoUpdateFullZipName } = require('./win-edition-wheels');
+    const preferred = path.join(ROOT, 'dist', standardZipName(VERSION));
     if (fs.existsSync(preferred)) return preferred;
+    const legacy = path.join(ROOT, 'dist', legacyStandardZipName(VERSION));
+    if (fs.existsSync(legacy)) return legacy;
     const distDir = path.join(ROOT, 'dist');
     if (!fs.existsSync(distDir)) return null;
     const match = fs.readdirSync(distDir).find((name) => (
-        name.endsWith('.zip')
-        && name.includes(VERSION)
-        && /transub/i.test(name)
+        name.includes(VERSION) && isAutoUpdateFullZipName(name)
     ));
     return match ? path.join(distDir, match) : null;
 }
 
 function resolveReleaseAssets() {
-    // Release assets: zip + NSIS Setup only (no latest.yml / .blockmap).
+    // Zip-only: *-win.zip + manifest + delta/block zips.
+    // CPU/CUDA first-install editions are no longer published.
+    const { standardZipName, legacyStandardZipName } = require('./win-edition-wheels');
     const zip = findDistZip();
-    const setup = path.join(ROOT, 'dist', `Transub-Setup-${VERSION}.exe`);
-    if (!zip) throw new Error(`Missing release asset: Transub-${VERSION}-win.zip`);
-    if (!fs.existsSync(setup)) throw new Error(`Missing release asset: ${setup}`);
-    return [zip, setup];
+    if (!zip) {
+        throw new Error(`Missing release asset: ${standardZipName(VERSION)}`);
+    }
+
+    const distDir = path.join(ROOT, 'dist');
+    const assets = [zip];
+    // Optional leftover Chinese-named zip from older build trees (do not require).
+    const oldChinesePath = path.join(distDir, legacyStandardZipName(VERSION));
+    if (fs.existsSync(oldChinesePath) && path.resolve(oldChinesePath) !== path.resolve(zip)) {
+        assets.push(oldChinesePath);
+    }
+    const manifestPreferred = path.join(distDir, `Transub-${VERSION}-update-manifest.json`);
+    const manifestAlias = path.join(distDir, 'update-manifest.json');
+    if (fs.existsSync(manifestPreferred)) assets.push(manifestPreferred);
+    else if (fs.existsSync(manifestAlias)) assets.push(manifestAlias);
+    else {
+        throw new Error(`Missing update manifest (run tools/generate-update-manifest.js)`);
+    }
+
+    const deltaZip = path.join(distDir, `Transub-${VERSION}-win-delta.zip`);
+    if (fs.existsSync(deltaZip)) assets.push(deltaZip);
+
+    const componentRe = new RegExp(
+        `^Transub-${VERSION.replace(/\./g, '\\.')}-win-(shell|app|engine|other|electron|internal|misc)\\.zip$`,
+        'i',
+    );
+    for (const name of fs.readdirSync(distDir)) {
+        if (componentRe.test(name)) {
+            const abs = path.join(distDir, name);
+            if (!assets.includes(abs)) assets.push(abs);
+        }
+    }
+    return assets;
 }
 
 function createRelease(commitSha) {

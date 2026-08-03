@@ -140,6 +140,12 @@
         confirmPrimary.className = options.danger
             ? 'px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-700 text-white'
             : 'px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white';
+        // 仅展示结果时隐藏「取消」，保留「确定 / 关闭」
+        if (options.hideSecondary) {
+            confirmSecondary.classList.add('hidden');
+        } else {
+            confirmSecondary.classList.remove('hidden');
+        }
 
         if (options.tertiaryLabel) {
             confirmTertiary.textContent = options.tertiaryLabel;

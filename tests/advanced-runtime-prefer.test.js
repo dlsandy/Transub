@@ -6,7 +6,7 @@ describe('advanced-runtime-prefer', () => {
         prefer._resetForTests();
     });
 
-    it('prefers CUDA 12 when nvidia-smi reports CUDA 12+', () => {
+    it('prefers CUDA when nvidia-smi reports CUDA 12+', () => {
         assert.strictEqual(prefer.shouldPreferCuda12({
             vendor: 'nvidia',
             detected: true,
@@ -17,6 +17,18 @@ describe('advanced-runtime-prefer', () => {
             detected: true,
             cudaVersion: '13.0',
         }), true);
+    });
+
+    it('exposes cudaVersion in hints for catalog CUDA 12/13 default', () => {
+        prefer._resetForTests({
+            preferCuda: true,
+            ready: true,
+            gpuName: 'RTX 5090',
+            cudaVersion: '13.3',
+        });
+        const hints = prefer.getHints();
+        assert.strictEqual(hints.preferCuda, true);
+        assert.strictEqual(hints.cudaVersion, '13.3');
     });
 
     it('does not prefer CUDA when driver CUDA is below 12', () => {
@@ -38,11 +50,16 @@ describe('advanced-runtime-prefer', () => {
         }), false);
     });
 
-    it('exposes cached hints after reset/apply via refresh mock state', () => {
-        prefer._resetForTests({ preferCuda: true, ready: true, gpuName: 'RTX 3060', cudaVersion: '12.6' });
-        const hints = prefer.getHints();
+    it('applyGpuInfo caches preferCuda and cudaVersion', () => {
+        const hints = prefer.applyGpuInfo({
+            vendor: 'nvidia',
+            detected: true,
+            gpuName: 'RTX 4070',
+            cudaVersion: '12.7',
+        });
         assert.strictEqual(hints.preferCuda, true);
-        assert.strictEqual(hints.ready, true);
-        assert.strictEqual(hints.gpuName, 'RTX 3060');
+        assert.strictEqual(hints.cudaVersion, '12.7');
+        assert.strictEqual(hints.gpuName, 'RTX 4070');
+        assert.strictEqual(prefer.getHints().preferCuda, true);
     });
 });

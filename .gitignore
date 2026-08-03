@@ -13,6 +13,9 @@ tools/tmp-release/
 _internal/bin/*.exe
 _internal/bin/*.dll
 
+# Cached wheels for first-install CPU/CUDA edition builds (tools/build-win-editions.js)
+transub-engine/wheels-edition/
+
 # Engine local caches / heavy weights (standalone runtime/ is vendored)
 transub-engine/.venv/
 transub-engine/venv/
@@ -93,8 +96,18 @@ tests/advanced-smart-translate.test.js
 
 # Advanced license private key & generated redeem codes (never commit)
 .advanced-license-private.b64
+.tdp-private.b64
 keys.txt
 *.license-keys.txt
+
+# TDP CDN staging (commit only tdp-bundled.tpack)
+shared/tdp/packs/
+shared/tdp/tdp-*.tpack
+!shared/tdp/tdp-bundled.tpack
+shared/tdp/manifest.json
+
+# Dev/runtime TDP overlay under project writable root (active/*.df1, current.tpack, …)
+/tdp/
 
 # Local subtitle work samples (not part of the product tree)
 subtitles/

@@ -22,7 +22,7 @@ function focusUpdateWindow() {
  * @param {import('electron').App} app
  * @param {{ parent?: import('electron').BrowserWindow|null, autoCheck?: boolean }} [options]
  */
-function openUpdateWindow(app, { parent, autoCheck = true } = {}) {
+function openUpdateWindow(app, { parent: _parent, autoCheck = true } = {}) {
     const existing = focusUpdateWindow();
     if (existing) {
         if (autoCheck) {
@@ -31,7 +31,6 @@ function openUpdateWindow(app, { parent, autoCheck = true } = {}) {
         return { ok: true };
     }
 
-    const parentWin = parent && !parent.isDestroyed() ? parent : undefined;
     const win = new BrowserWindow({
         width: 500,
         height: 560,
@@ -44,7 +43,8 @@ function openUpdateWindow(app, { parent, autoCheck = true } = {}) {
         autoHideMenuBar: true,
         backgroundColor: '#f9fafb',
         show: false,
-        parent: parentWin,
+        // Intentionally no `parent`: on Windows, closing an owned child often
+        // minimizes the owner, and the main window treats minimize as hide-to-tray.
         modal: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),

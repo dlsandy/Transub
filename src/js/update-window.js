@@ -117,7 +117,7 @@
             if (message) {
                 label.textContent = message;
             } else if (phase === 'probe') {
-                label.textContent = '正在测速 GitHub / Codeberg…';
+                label.textContent = '正在测速 GitHub / Codeberg / 官网…';
             } else if (phase === 'extracting') {
                 label.textContent = version ? `正在解压 v${version}…` : '正在解压更新包…';
             } else if (phase === 'preparing' || phase === 'ready') {
@@ -141,7 +141,7 @@
             ) {
                 detail.textContent = message
                     || (phase === 'probe'
-                        ? '比较 GitHub 与 Codeberg 速度，自动选择较快线路'
+                        ? '比较 GitHub、Codeberg 与官网速度，自动选择较快线路'
                         : '请稍候，此阶段可能需要一段时间…');
             } else {
                 const parts = [];
@@ -198,10 +198,13 @@
             showEl('downloadBtn', true);
             const btn = document.getElementById('downloadBtn');
             if (btn) btn.disabled = false;
-            if (res.preservesEngineData || res.installKind === 'zip' || res.installKind === 'nsis') {
-                setMeta(`${sourceHint}下载前会测速并自动选择较快线路。已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。`);
+            if (res.preservesEngineData || res.installKind === 'zip') {
+                const incr = res.incrementalLikely
+                    ? '检测到本地基线，将按区块摘要增量更新。'
+                    : '将按需下载全量或增量包。';
+                setMeta(`${sourceHint}${incr}下载前会测速并自动选择较快线路。已下载的模型、GPU/Demucs 支持库与 Advanced LLM 会保留。`);
             } else {
-                setMeta(`${sourceHint}可在本窗口下载并在重启后安装。`);
+                setMeta(`${sourceHint}请从发布页手动下载 zip 解压版（Setup/NSIS 已停更）。`);
             }
         } else {
             showEl('openReleasesBtn', true);

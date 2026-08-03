@@ -22,16 +22,15 @@ function focusAboutWindow() {
  * @param {import('electron').App} app
  * @param {{ parent?: import('electron').BrowserWindow|null }} [options]
  */
-function openAboutWindow(app, { parent } = {}) {
+function openAboutWindow(app, { parent: _parent } = {}) {
     const existing = focusAboutWindow();
     if (existing) return { ok: true };
 
-    const parentWin = parent && !parent.isDestroyed() ? parent : undefined;
     const win = new BrowserWindow({
         width: 420,
-        height: 400,
+        height: 460,
         minWidth: 360,
-        minHeight: 340,
+        minHeight: 380,
         resizable: true,
         maximizable: false,
         title: '关于 Transub',
@@ -39,7 +38,8 @@ function openAboutWindow(app, { parent } = {}) {
         autoHideMenuBar: true,
         backgroundColor: '#f9fafb',
         show: false,
-        parent: parentWin,
+        // Intentionally no `parent`: on Windows, closing an owned child often
+        // minimizes the owner, and the main window treats minimize as hide-to-tray.
         modal: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),

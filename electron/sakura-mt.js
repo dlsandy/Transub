@@ -46,6 +46,11 @@ function getSakuraInstallStatus(modelId) {
         installed,
         path: llmFs.getModelPath(entry),
         runtimeInstalled: !!runtime.installed,
+        runtimeOutdated: !!runtime.outdated,
+        runtimeMismatch: !!runtime.mismatch,
+        runtimeTag: runtime.tag || '',
+        runtimeInstalledTag: runtime.installedTag || '',
+        runtimeMessage: runtime.message || '',
         sizeHint: entry.sizeHint,
         note: entry.note,
     };

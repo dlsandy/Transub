@@ -1,6 +1,6 @@
 # Transub Windows build script
 param(
-    [ValidateSet('all', 'dir', 'zip', 'nsis')]
+    [ValidateSet('all', 'dir', 'zip')]
     [string]$Target = 'all',
     [switch]$SkipTests,
     [switch]$SkipIcons
@@ -171,6 +171,14 @@ Write-Step 'Ensure bundled engine models'
 $rc = Invoke-Npm @('run', 'ensure:bundled-models')
 if ($rc -ne 0) { exit $rc }
 
+Write-Step 'Ensure bundled small ASR/Hub wheels'
+$rc = Invoke-Npm @('run', 'ensure:bundled-wheels')
+if ($rc -ne 0) { exit $rc }
+
+Write-Step 'Ensure bundled language data pack (TDP)'
+$rc = Invoke-Npm @('run', 'ensure:bundled-tdp')
+if ($rc -ne 0) { exit $rc }
+
 Write-Step 'Verify packaging inputs'
 $rc = Invoke-Npm @('run', 'verify:packaging')
 if ($rc -ne 0) { exit $rc }
@@ -194,8 +202,8 @@ $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 switch ($Target) {
     'dir' { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'dir', $configArg, '--publish', 'never') }
     'zip' { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'zip', $configArg, '--publish', 'never') }
-    'nsis' { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'nsis', $configArg, '--publish', 'never') }
-    default { $rc = Invoke-Npx @('--yes', 'electron-builder', $configArg, '--publish', 'never') }
+    # default / all: zip + dir only (NSIS Setup discontinued)
+    default { $rc = Invoke-Npx @('--yes', 'electron-builder', '--win', 'zip', '--win', 'dir', $configArg, '--publish', 'never') }
 }
 if ($rc -ne 0) {
     Write-Host "electron-builder failed with exit code $rc" -ForegroundColor Red
@@ -214,25 +222,46 @@ if (Test-Path -LiteralPath $asarPath) {
 Write-Step 'Copy artifacts to dist'
 $copied = 0
 # package.json is UTF-8; default Get-Content uses the system code page and breaks ConvertFrom-Json on Chinese Windows
-$pkgVersion = (Get-Content (Join-Path $root 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+$pkgVersion = [string]((Get-Content (Join-Path $root 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version)
+$pkgVersion = $pkgVersion.Trim()
+if ($pkgVersion -notmatch '^\d+\.\d+\.\d+') {
+    Write-Host "Invalid package.json version: [$pkgVersion]" -ForegroundColor Red
+    exit 1
+}
+# ASCII-only first-install / auto-update full zip (keep build.ps1 free of non-ASCII literals).
 $wantedZip = "Transub-$pkgVersion-win.zip"
 
 function Unblock-Tree([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue |
-        Unblock-File -ErrorAction SilentlyContinue
+        ForEach-Object {
+            try { Unblock-File -LiteralPath $_.FullName -ErrorAction Stop } catch { }
+        }
 }
 
-Get-ChildItem $packDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap', '.zip' } |
+Get-ChildItem -LiteralPath $packDir -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in '.zip', '.yml' } |
     ForEach-Object {
-        $destName = $_.Name
-        if ($_.Extension -eq '.zip' -and $destName -ne $wantedZip) {
+        $srcPath = [string]$_.FullName
+        $destName = [string]$_.Name
+        # Normalize any Transub-*.zip from electron-builder to the canonical English name.
+        if ($_.Extension -eq '.zip' -and $destName -like 'Transub-*.zip' -and $destName -ne $wantedZip) {
             $destName = $wantedZip
         }
-        $dest = Join-Path $distDir $destName
-        Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
-        Unblock-File -LiteralPath $dest -ErrorAction SilentlyContinue
+        # Skip leftover NSIS / blockmap artifacts if present in staging
+        if ($destName -match 'Setup|\.blockmap$') { return }
+        if ($destName -match '[<>:"|?*]') {
+            Write-Host "  skip illegal artifact name: $destName" -ForegroundColor Yellow
+            return
+        }
+        $dest = [System.IO.Path]::Combine($distDir, $destName)
+        Copy-Item -LiteralPath $srcPath -Destination $dest -Force
+        try {
+            Unblock-File -LiteralPath $dest -ErrorAction Stop
+        } catch {
+            # Unblock-File can throw terminating "Illegal characters in path" on some ADS/zone edge cases;
+            # never fail the build for Mark-of-the-Web cleanup.
+        }
         Write-Host "  copied $destName" -ForegroundColor Green
         $copied++
     }
@@ -263,10 +292,43 @@ if ($copied -eq 0 -and $Target -ne 'dir') {
     exit 1
 }
 
+$manifestUnpacked = Join-Path $distDir 'win-unpacked'
+if (-not (Test-Path (Join-Path $manifestUnpacked 'Transub.exe'))) {
+    $manifestUnpacked = Join-Path $packDir 'win-unpacked'
+}
+if ($Target -ne 'dir' -and (Test-Path (Join-Path $manifestUnpacked 'Transub.exe'))) {
+    Write-Step 'Generate block update manifest + block zips'
+    $prevArg = ''
+    if ($env:PREV_UNPACKED -and (Test-Path (Join-Path $env:PREV_UNPACKED 'Transub.exe'))) {
+        $prevArg = " --prev-unpacked=`"$($env:PREV_UNPACKED)`""
+        Write-Host "  Using PREV_UNPACKED=$($env:PREV_UNPACKED)" -ForegroundColor DarkGray
+    } elseif ($env:PREV_MANIFEST -and (Test-Path $env:PREV_MANIFEST)) {
+        # Label only; block delta needs PREV_UNPACKED for file-level packing without publishing file lists.
+        $prevArg = " --prev-manifest=`"$($env:PREV_MANIFEST)`""
+        Write-Host "  PREV_MANIFEST set but delta requires PREV_UNPACKED — delta zip will be skipped" -ForegroundColor DarkYellow
+    } else {
+        Write-Host '  No PREV_UNPACKED — delta zip skipped (block zips + full zip only)' -ForegroundColor DarkYellow
+    }
+    cmd.exe /c "node tools/generate-update-manifest.js --unpacked=`"$manifestUnpacked`" --out=`"$distDir`"$prevArg"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    Write-Step 'Pack website update upload bundle'
+    cmd.exe /c "node tools/pack-website-update.js --dist=`"$distDir`" --out=`"$distDir\website-update`""
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 Write-Step 'Done'
 Get-ChildItem $distDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in '.exe', '.yml', '.zip' } |
+    Where-Object { $_.Extension -in '.yml', '.zip', '.json' -and $_.Name -match 'Transub|update-manifest|latest' } |
     ForEach-Object { Write-Host "  $($_.Name)" -ForegroundColor Green }
+
+$websiteBundle = Get-ChildItem (Join-Path $distDir 'website-update') -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '-update\.zip$|官网更新包\.zip$|website-update\.zip$' } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if ($websiteBundle) {
+    Write-Host "  website-update\$($websiteBundle.Name)  ← upload to official site" -ForegroundColor Cyan
+}
 
 $unpackedExe = Join-Path $distUnpacked 'Transub.exe'
 if (Test-Path $unpackedExe) {
@@ -278,6 +340,9 @@ if (Test-Path $unpackedExe) {
 Write-Host ''
 Write-Host "Output: $distDir"
 Write-Host "Staging: $packDir"
+if ($websiteBundle) {
+    Write-Host "Website update bundle: $($websiteBundle.FullName)" -ForegroundColor Cyan
+}
 Write-BuildLog "Done Output=$distDir Staging=$packDir"
 
 } catch {

@@ -35,7 +35,6 @@ function main() {
             'electron',
             'undici',
             'json5',
-            'electron-updater',
         ],
         logLevel: 'warning',
     });

@@ -51,6 +51,80 @@ function createEditorShortcut(appOutDir, productFilename, buildResourcesDir) {
     }
 }
 
+/** Slim-pack hygiene: drop edition wheel cache + pip rename leftovers + on-demand heavies. */
+function purgeSlimEngineBloat(appOutDir) {
+    const engineRoot = path.join(appOutDir, 'transub-engine');
+    if (!fs.existsSync(engineRoot)) return;
+
+    const wheelsEdition = path.join(engineRoot, 'wheels-edition');
+    if (fs.existsSync(wheelsEdition)) {
+        fs.rmSync(wheelsEdition, { recursive: true, force: true });
+        console.log('[after-pack] removed leaked wheels-edition/');
+    }
+
+    const sitePackages = path.join(engineRoot, 'runtime', 'Lib', 'site-packages');
+    if (!fs.existsSync(sitePackages)) return;
+
+    const onDemandDirs = [
+        'nvidia',
+        'torch', 'torch.libs', 'torchaudio', 'torchvision',
+        'onnxruntime', 'ctranslate2',
+        'whisper', 'demucs',
+        'av', 'av.libs',
+        'numba', 'llvmlite',
+        'scipy', 'scipy.libs',
+        'jieba',
+        'sklearn',
+        'sympy',
+        'modelscope',
+        'transformers',
+    ];
+    let removed = 0;
+    for (const name of onDemandDirs) {
+        const full = path.join(sitePackages, name);
+        if (!fs.existsSync(full)) continue;
+        fs.rmSync(full, { recursive: true, force: true });
+        removed += 1;
+    }
+    // pip leftover rename dirs (~umpy.libs, ~nnxruntime, …)
+    let leftovers = 0;
+    try {
+        for (const ent of fs.readdirSync(sitePackages, { withFileTypes: true })) {
+            if (!ent.isDirectory()) continue;
+            if (!ent.name.startsWith('~')) continue;
+            fs.rmSync(path.join(sitePackages, ent.name), { recursive: true, force: true });
+            leftovers += 1;
+        }
+    } catch (err) {
+        console.warn('[after-pack] pip leftover scan failed:', err.message || err);
+    }
+    // Orphan dist-info for purged packages
+    try {
+        for (const ent of fs.readdirSync(sitePackages, { withFileTypes: true })) {
+            if (!ent.isDirectory()) continue;
+            const n = ent.name.toLowerCase();
+            const drop = (
+                n.startsWith('torch-') || n.startsWith('torchaudio-') || n.startsWith('torchvision-')
+                || n.startsWith('onnxruntime-') || n.startsWith('ctranslate2-')
+                || n.startsWith('av-') || n.startsWith('numba-') || n.startsWith('llvmlite-')
+                || n.startsWith('scipy-') || n.startsWith('jieba-')
+                || n.startsWith('scikit_learn-') || n.startsWith('scikit-learn-')
+                || n.startsWith('sympy-') || n.startsWith('modelscope-')
+                || n.startsWith('transformers-') || n.startsWith('nvidia_')
+                || n.startsWith('openai_whisper-') || n.startsWith('demucs-')
+            ) && n.includes('.dist-info');
+            if (!drop) continue;
+            fs.rmSync(path.join(sitePackages, ent.name), { recursive: true, force: true });
+            leftovers += 1;
+        }
+    } catch {
+        /* ignore */
+    }
+    if (removed || leftovers) {
+        console.log(`[after-pack] purged on-demand site-packages: dirs=${removed}, extras=${leftovers}`);
+    }
+}
+
 /** @param {import('electron-builder').AfterPackContext} context */
 module.exports = async function afterPack(context) {
     if (process.platform !== 'win32') return;
@@ -62,6 +136,35 @@ module.exports = async function afterPack(context) {
     const iconPath = path.join(buildResourcesDir, 'app.ico');
 
     createEditorShortcut(appOutDir, productFilename, buildResourcesDir);
+    try {
+        purgeSlimEngineBloat(appOutDir);
+    } catch (err) {
+        console.warn('[after-pack] slim engine purge failed:', err.message || err);
+    }
+
+    try {
+        const editionPath = path.join(appOutDir, 'resources', 'transub-edition.json');
+        fs.mkdirSync(path.dirname(editionPath), { recursive: true });
+        const version = String(packager.appInfo.version || '').trim();
+        const {
+            standardZipName,
+        } = require('../electron/release-artifact-names');
+        fs.writeFileSync(
+            editionPath,
+            `${JSON.stringify({
+                edition: 'standard',
+                version,
+                role: 'first-install',
+                label: '标准版',
+                autoUpdateUses: version ? standardZipName(version) : 'Transub-*-win.zip',
+                note: 'Automatic updates always download the standard (slim) zip; local ASR/GPU libs are preserved.',
+            }, null, 2)}\n`,
+            'utf8',
+        );
+        console.log('[after-pack] wrote resources/transub-edition.json (标准版)');
+    } catch (err) {
+        console.warn('[after-pack] edition marker failed:', err.message || err);
+    }
 
     const args = [
         exePath,

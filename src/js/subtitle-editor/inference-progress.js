@@ -57,16 +57,20 @@
          *   pct?: number,
          *   indeterminate?: boolean,
          *   cancellable?: boolean,
+         *   holdBusy?: boolean, // false：只显示半透明遮罩，不占 reconstructBusy（供 QC 外壳）
          * }} [opts]
          */
         function showInferenceProgress(opts = {}) {
             const nodes = progressNodes();
             activeKind = String(opts.kind || 'inference');
+            const holdBusy = opts.holdBusy !== false;
             if (state) {
-                state.reconstructBusy = true;
+                if (holdBusy) state.reconstructBusy = true;
                 state.inferenceKind = activeKind;
             }
+            // QC 外壳也加 busy 类以禁用点击，但不锁 reconstructBusy
             document.body.classList.add('editor-inference-busy');
+            if (state) state._inferenceHoldBusy = holdBusy;
 
             if (!nodes.overlay) {
                 setStatus?.(opts.detail || opts.title || '推理进行中…', 'ok');
@@ -196,6 +200,7 @@
                 state.reconstructBusy = false;
                 state.inferenceKind = '';
                 state.translateEngine = '';
+                state._inferenceHoldBusy = false;
             }
             document.body.classList.remove('editor-inference-busy');
             const nodes = progressNodes();

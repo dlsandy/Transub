@@ -42,7 +42,8 @@ function anyOtherEditorOpen() {
 
 /**
  * After an editor closes: undo Windows spurious main hide-to-tray, and if the
- * main app window is already running (not editor-only), show/focus it.
+ * main app window is already running and still on-screen, focus it.
+ * Leave an intentional tray hide alone (do not force-show).
  */
 function restoreMainAfterEditorClosed() {
     try {
@@ -52,6 +53,13 @@ function restoreMainAfterEditorClosed() {
         if (anyOtherEditorOpen()) return;
         const main = linkedWindowManager?.getMainWindow?.();
         if (!main || main.isDestroyed()) return;
+        try {
+            // If restore-spurious already ran, main is visible again. If the user
+            // had main in the tray on purpose, it is still hidden — leave it.
+            if (!main.isVisible() || main.isMinimized()) return;
+        } catch (_) {
+            return;
+        }
         linkedWindowManager?.showMainWindow?.();
     } catch (_) { /* ignore */ }
 }

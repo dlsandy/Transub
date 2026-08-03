@@ -146,7 +146,19 @@ function attachUiZoom(win) {
     attached.set(win, state);
 
     const apply = () => applyUiZoomToWindow(win);
+    const nudgeRendererLayout = () => {
+        apply();
+        try {
+            const wc = win.webContents;
+            if (!wc || wc.isDestroyed()) return;
+            if (typeof wc.invalidate === 'function') wc.invalidate();
+            // Remeasure flex/% layouts after maximize/restore (log split, editor panes).
+            void wc.executeJavaScript('window.dispatchEvent(new Event("resize"));', true).catch(() => {});
+        } catch (_) { /* ignore */ }
+    };
     win.webContents.on('did-finish-load', apply);
+    win.on('maximize', nudgeRendererLayout);
+    win.on('unmaximize', nudgeRendererLayout);
     win.on('moved', () => {
         if (state.moveTimer) clearTimeout(state.moveTimer);
         state.moveTimer = setTimeout(apply, MOVE_DEBOUNCE_MS);

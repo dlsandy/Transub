@@ -239,6 +239,13 @@
     .file-sense-icon.is-suggest {
         @apply text-amber-700 bg-amber-50;
     }
+    .file-sense-icon.is-resense {
+        @apply text-sky-700 bg-sky-50;
+    }
+    .file-sense-icon.is-resense:disabled {
+        @apply text-gray-400 bg-gray-100;
+        opacity: 0.7;
+    }
     @keyframes file-sense-pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.45; }

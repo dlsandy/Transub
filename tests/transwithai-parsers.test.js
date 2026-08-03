@@ -65,6 +65,7 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchCpsSplit, true);
+    assert.strictEqual(defaults.postBatchQcFixMode, 'none');
     assert.strictEqual(defaults.sakuraNsfwPrompt, null);
     // Engine fields must be present so settings save/load does not drop them
     assert.strictEqual(defaults.engineBackend, 'transub');
@@ -110,9 +111,14 @@ function testNormalizeHallucinationOptions() {
     const off = normalizeTransWithAiRuntimeOptions({
         postBatchCompressRepetition: false,
         postBatchCpsSplit: false,
+        postBatchQcFixMode: 'smart',
     });
     assert.strictEqual(off.postBatchCompressRepetition, false);
     assert.strictEqual(off.postBatchCpsSplit, false);
+    assert.strictEqual(off.postBatchQcFixMode, 'smart');
+
+    const badFixMode = normalizeTransWithAiRuntimeOptions({ postBatchQcFixMode: 'nope' });
+    assert.strictEqual(badFixMode.postBatchQcFixMode, 'none');
 
     const cleared = normalizeTransWithAiRuntimeOptions({ hallucinationSilenceThreshold: '' });
     assert.strictEqual(cleared.hallucinationSilenceThreshold, null);

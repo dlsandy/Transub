@@ -278,25 +278,27 @@ function runEnginePython(engineRoot, code, timeoutMs = 12000) {
 async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     const needSv = prefersSensevoice(engineAsrModel);
     const modelInstalled = checkModelInstalled(engineRoot, 'sensevoice-small').installed;
-    // Import torch (and lightly touch funasr) — catches missing VC++ / Smart App Control.
+    // Import torch + FunASR stack deps — catches missing VC++ / Smart App Control / slim-pack gaps.
     const probe = await runEnginePython(
         engineRoot,
         [
             'import json,sys',
-            'out={"torch":"","funasr":"","error":""}',
+            'out={"torch":"","funasr":"","numba":"","scipy":"","librosa":"","missing":[],"error":""}',
             'try:',
             ' import torch',
             ' out["torch"]=str(getattr(torch,"__version__","") or "")',
             'except Exception as e:',
-            ' out["error"]=str(e)',
+            ' out["missing"].append("torch"); out["error"]=str(e)',
             ' print(json.dumps(out,ensure_ascii=False)); sys.exit(2)',
-            'try:',
-            ' import funasr',
-            ' out["funasr"]=str(getattr(funasr,"__version__","") or "ok")',
-            'except Exception as e:',
-            ' out["error"]=str(e)',
-            ' print(json.dumps(out,ensure_ascii=False)); sys.exit(3)',
+            'for mod,key in (("funasr","funasr"),("numba","numba"),("scipy","scipy"),("librosa","librosa")):',
+            ' try:',
+            '  m=__import__(mod)',
+            '  out[key]=str(getattr(m,"__version__","") or "ok")',
+            ' except Exception as e:',
+            '  out["missing"].append(key)',
+            '  if not out["error"]: out["error"]=str(e)',
             'print(json.dumps(out,ensure_ascii=False))',
+            'sys.exit(3 if out["missing"] else 0)',
         ].join('\n'),
         20000,
     );
@@ -306,9 +308,12 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     } catch {
         data = null;
     }
-    if (probe.ok && data?.torch) {
+    const missingList = Array.isArray(data?.missing) ? data.missing.map(String) : [];
+    if (probe.ok && data?.torch && missingList.length === 0) {
         const bits = [`torch ${data.torch}`];
         if (data.funasr) bits.push(`funasr ${data.funasr}`);
+        if (data.numba) bits.push(`numba ${data.numba}`);
+        if (data.scipy) bits.push(`scipy ${data.scipy}`);
         return {
             id: 'sensevoiceRuntime',
             label: 'SenseVoice 运行库',
@@ -319,21 +324,27 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     }
     const err = String(data?.error || probe.stderr || '').trim();
     const low = err.toLowerCase();
-    let missingPkg = '';
-    if (/no module named ['"]?funasr/i.test(err)) missingPkg = 'funasr';
-    else if (/no module named ['"]?torch/i.test(err)) missingPkg = 'torch';
+    let missingPkg = missingList[0] || '';
+    if (!missingPkg) {
+        if (/no module named ['"]?funasr/i.test(err)) missingPkg = 'funasr';
+        else if (/no module named ['"]?torch/i.test(err)) missingPkg = 'torch';
+        else if (/no module named ['"]?numba/i.test(err)) missingPkg = 'numba';
+        else if (/no module named ['"]?scipy/i.test(err)) missingPkg = 'scipy';
+        else if (/no module named ['"]?librosa/i.test(err)) missingPkg = 'librosa';
+    }
+    const missingLabel = missingList.length ? missingList.join(', ') : missingPkg;
 
     let detail;
     if (/winerror 4551|智能应用控制|应用程序控制策略|smart.?app/i.test(err)) {
         detail = 'Windows 智能应用控制/应用程序控制策略拦截了 torch DLL，请关闭该策略或将引擎目录加入排除项';
     } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err) || low.includes('torch_python')) {
         detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
-    } else if (modelInstalled && missingPkg) {
-        detail = `模型权重已安装，但缺少运行库 ${missingPkg}（与「已安装」不是同一项）。在「处理模型」对 SenseVoice Small 点重新下载可补齐`;
-    } else if (missingPkg) {
-        detail = `缺少运行库 ${missingPkg}；下载 SenseVoice 模型时会自动安装`;
+    } else if (modelInstalled && missingLabel) {
+        detail = `模型权重已安装，但缺少运行库 ${missingLabel}（与「已安装」不是同一项）。在「处理模型」对 SenseVoice Small 点重新下载可补齐`;
+    } else if (missingLabel) {
+        detail = `缺少运行库 ${missingLabel}；下载 SenseVoice 模型时会自动安装`;
     } else {
-        detail = err || '无法加载 torch / funasr（SenseVoice 推理需要，不是模型权重本身）';
+        detail = err || '无法加载 SenseVoice 运行库（torch / funasr / numba / scipy，不是模型权重本身）';
     }
 
     // Whisper 用户：SenseVoice 运行库缺失只是提示，不阻断「开始使用」。
@@ -628,7 +639,7 @@ async function checkGpu() {
     return { gpu: gpuItem, driver: driverItem, info };
 }
 
-function checkGpuRuntime(gpuInfo, engineRoot) {
+async function checkGpuRuntime(gpuInfo, engineRoot) {
     const nvidia = gpuInfo?.vendor === 'nvidia' && gpuInfo?.detected;
     if (!nvidia) {
         return {
@@ -641,12 +652,65 @@ function checkGpuRuntime(gpuInfo, engineRoot) {
     }
     const cublas = findCublasInEngine(engineRoot);
     if (cublas) {
+        // ASR/CT2 cuBLAS ≠ WhisperSeg onnxruntime-gpu; probe both when possible.
+        let probe = null;
+        try {
+            const res = await runEnginePython(
+                engineRoot,
+                [
+                    'import json',
+                    'from transub_engine.runtime_gpu import probe_gpu_runtime',
+                    'p = probe_gpu_runtime()',
+                    'print(json.dumps({',
+                    ' "status": p.get("status") or "",',
+                    ' "asrGpuReady": bool(p.get("asrGpuReady")),',
+                    ' "ortGpuCuda": bool(p.get("ortGpuCuda")),',
+                    ' "ortGpuRequirement": p.get("ortGpuRequirement") or "",',
+                    ' "hint": p.get("hint") or "",',
+                    '}, ensure_ascii=False))',
+                ].join('\n'),
+                20000,
+            );
+            if (res.ok) {
+                probe = JSON.parse(String(res.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
+            }
+        } catch {
+            probe = null;
+        }
+        if (probe && probe.asrGpuReady && !probe.ortGpuCuda && probe.ortGpuRequirement) {
+            return {
+                id: 'gpuRuntime',
+                label: 'GPU 运行时',
+                status: 'warn',
+                detail: probe.hint
+                    || 'ASR/CTranslate2 GPU 已就绪；WhisperSeg（onnxruntime-gpu）未就绪，灵敏检出将回退 CPU',
+                blocking: false,
+                asrGpuReady: true,
+                ortGpuCuda: false,
+            };
+        }
+        if (probe && probe.status === 'partial') {
+            return {
+                id: 'gpuRuntime',
+                label: 'GPU 运行时',
+                status: 'warn',
+                detail: probe.hint || 'GPU 组件部分就绪，请重启引擎或再次下载 GPU 支持',
+                blocking: false,
+                asrGpuReady: !!probe.asrGpuReady,
+                ortGpuCuda: !!probe.ortGpuCuda,
+            };
+        }
+        const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
         return {
             id: 'gpuRuntime',
             label: 'GPU 运行时',
             status: 'ok',
-            detail: '已找到 cublas64_12.dll（CUDA 12）',
+            detail: bothOk
+                ? (probe.hint || 'ASR/CTranslate2 + WhisperSeg ONNX GPU 已就绪')
+                : '已找到 cublas64_12.dll（CUDA 12）',
             blocking: false,
+            asrGpuReady: probe ? !!probe.asrGpuReady : true,
+            ortGpuCuda: probe ? !!probe.ortGpuCuda : undefined,
         };
     }
     const cudaMajor = Number(String(gpuInfo.cudaVersion || '').split('.')[0]);
@@ -693,6 +757,122 @@ function checkEngine(configuredRoot = '') {
 }
 
 /**
+ * llama-server 运行时：以二进制 --version 为准，落后于目录目标时提示可更新。
+ * 检测到 NVIDIA CUDA 12/13 时：未安装或后端不匹配 → warn，供向导一键修复安装匹配包。
+ */
+function checkLlamaServerRuntime() {
+    try {
+        let hints = {};
+        try {
+            hints = require('./advanced-runtime-prefer').getHints();
+        } catch (_) { /* ignore */ }
+        const llamaServer = require('./advanced-llama-server');
+        const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+        const st = llamaServer.getRuntimeStatus();
+        const catalogTag = String(st.tag || '').trim();
+        const installedTag = String(st.installedTag || '').trim();
+        const packageId = String(st.installedPackageId || '').trim();
+        const preferredId = String(st.preferredPackageId || st.package?.id || '').trim();
+        const recommendedId = hints.preferCuda
+            ? (catalog.getDefaultRuntimeId(process.platform, process.arch, hints) || preferredId)
+            : preferredId;
+        const recommendedPkg = recommendedId
+            ? catalog.getRuntimePackage(process.platform, process.arch, recommendedId, hints)
+            : null;
+        const cudaLabel = hints.cudaVersion
+            ? `CUDA ${hints.cudaVersion}`
+            : (recommendedPkg?.label || recommendedId || '');
+
+        if (!st.supported) {
+            return {
+                id: 'llamaServerRuntime',
+                label: 'llama-server 运行时',
+                status: 'ok',
+                detail: `当前平台不支持内置运行时（${process.platform}-${process.arch}）`,
+                blocking: false,
+            };
+        }
+
+        if (!st.installed) {
+            if (hints.preferCuda && recommendedId) {
+                return {
+                    id: 'llamaServerRuntime',
+                    label: 'llama-server 运行时',
+                    status: 'warn',
+                    detail: `未安装 · 已检测 ${cudaLabel || 'NVIDIA CUDA'}，建议安装 ${recommendedPkg?.label || recommendedId}（llama.cpp ${catalogTag || '—'}）`,
+                    blocking: false,
+                    catalogTag,
+                    preferredPackageId: recommendedId,
+                    recommendInstall: true,
+                    recommendRuntimeId: recommendedId,
+                };
+            }
+            return {
+                id: 'llamaServerRuntime',
+                label: 'llama-server 运行时',
+                status: 'ok',
+                detail: `未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp ${catalogTag || '—'}）`,
+                blocking: false,
+                catalogTag,
+            };
+        }
+
+        // Installed but preference (after hardware sync) wants a different CUDA package.
+        const backendMismatch = !!(
+            recommendedId
+            && packageId
+            && recommendedId !== packageId
+            && hints.preferCuda
+        );
+        if (st.mismatch || st.outdated || backendMismatch) {
+            let detail = '';
+            if (st.outdated) {
+                detail = `已安装 ${installedTag || '旧版'}，可更新至 ${catalogTag}${packageId ? ` · ${packageId}` : ''}`;
+            } else {
+                detail = `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}`;
+            }
+            if (st.mismatch || backendMismatch) {
+                const preferLabel = recommendedPkg?.label || st.package?.label || recommendedId || '偏好后端';
+                const installedLabel = st.meta?.label || packageId || '当前后端';
+                detail = `${detail} · 偏好「${preferLabel}」，当前为「${installedLabel}」，请重新安装运行时`;
+            }
+            return {
+                id: 'llamaServerRuntime',
+                label: 'llama-server 运行时',
+                status: 'warn',
+                detail,
+                blocking: false,
+                installedTag,
+                catalogTag,
+                outdated: !!st.outdated,
+                mismatch: !!(st.mismatch || backendMismatch),
+                preferredPackageId: recommendedId || preferredId,
+                recommendRuntimeId: recommendedId || preferredId,
+                recommendInstall: true,
+            };
+        }
+        return {
+            id: 'llamaServerRuntime',
+            label: 'llama-server 运行时',
+            status: 'ok',
+            detail: `${installedTag || catalogTag} 已就绪${packageId ? ` · ${packageId}` : ''}`,
+            blocking: false,
+            installedTag,
+            catalogTag,
+            preferredPackageId: preferredId,
+        };
+    } catch (err) {
+        return {
+            id: 'llamaServerRuntime',
+            label: 'llama-server 运行时',
+            status: 'warn',
+            detail: err?.message || '检测失败',
+            blocking: false,
+        };
+    }
+}
+
+/**
  * @param {{ ffmpegPath?: string, engineInstallPath?: string, engineAsrModel?: string }} [options]
  */
 async function runEnvCheck(options = {}) {
@@ -706,10 +886,20 @@ async function runEnvCheck(options = {}) {
     const engineRoot = engineItem.path || configuredRoot || getBundledEnginePath();
     const asrModel = String(options.engineAsrModel || '').trim();
     const { gpu, driver, info } = await checkGpu();
+    // Keep llama backend preference aligned with detected CUDA 12 / 13 before status check.
+    try {
+        const prefer = require('./advanced-runtime-prefer');
+        if (info) prefer.applyGpuInfo(info);
+        require('./advanced-llama-server').syncRuntimePreferenceToHardware({
+            force: !!options.syncLlamaBackend,
+            gpuInfo: info || undefined,
+        });
+    } catch (_) { /* ignore */ }
     items.push(gpu);
     items.push(driver);
-    items.push(checkGpuRuntime(info, engineRoot));
+    items.push(await checkGpuRuntime(info, engineRoot));
     items.push(engineItem);
+    items.push(checkLlamaServerRuntime());
 
     if (engineItem.status === 'ok') {
         items.push(checkAsrModel(engineRoot, asrModel));
@@ -788,6 +978,7 @@ function planEnvFixes(items, opts = {}) {
     const steps = [];
     let openVcRedist = false;
     let ensureGpu = false;
+    let ensureLlamaRuntime = false;
 
     const statusOf = (id) => String(byId[id]?.status || '');
     const detailOf = (id) => String(byId[id]?.detail || '');
@@ -820,7 +1011,7 @@ function planEnvFixes(items, opts = {}) {
         // Force so extras (torch/funasr) install even when weights already exist.
         modelIds.add('sensevoice-small');
         forceIds.add('sensevoice-small');
-        steps.push({ id: 'sensevoiceRuntime', label: '补齐 SenseVoice 运行库（torch / funasr）' });
+        steps.push({ id: 'sensevoiceRuntime', label: '补齐 SenseVoice 运行库（torch / funasr / numba / scipy）' });
     }
 
     if (statusOf('whisperRuntime') === 'fail' || statusOf('whisperRuntime') === 'warn') {
@@ -854,15 +1045,50 @@ function planEnvFixes(items, opts = {}) {
         }
     }
 
-    if (statusOf('gpuRuntime') === 'warn' && /cublas|GPU 支持|CUDA/i.test(detailOf('gpuRuntime'))) {
+    if (statusOf('gpuRuntime') === 'warn'
+        && /cublas|GPU 支持|CUDA|WhisperSeg|onnxruntime/i.test(detailOf('gpuRuntime'))) {
         ensureGpu = true;
-        steps.push({ id: 'gpuRuntime', label: '下载 GPU 支持（cuBLAS）' });
+        const ortOnly = /WhisperSeg|onnxruntime/i.test(detailOf('gpuRuntime'))
+            && !/cublas64_12|缺少 cublas/i.test(detailOf('gpuRuntime'));
+        steps.push({
+            id: 'gpuRuntime',
+            label: ortOnly
+                ? '下载 GPU 支持（WhisperSeg / onnxruntime-gpu）'
+                : '下载 GPU 支持（cuBLAS）',
+        });
+    }
+
+    const llamaItem = byId.llamaServerRuntime || {};
+    const recommendRuntimeId = String(
+        llamaItem.recommendRuntimeId || llamaItem.preferredPackageId || '',
+    ).trim();
+    if (statusOf('llamaServerRuntime') === 'warn'
+        && (llamaItem.outdated || llamaItem.mismatch || llamaItem.recommendInstall
+            || /可更新至|后端不一致|请重新安装|建议安装/i.test(detailOf('llamaServerRuntime')))) {
+        ensureLlamaRuntime = true;
+        let stepLabel = '更新 llama-server 运行时';
+        if (llamaItem.recommendInstall && !llamaItem.installedTag && !llamaItem.outdated) {
+            stepLabel = recommendRuntimeId
+                ? `安装 llama-server 运行时（${recommendRuntimeId}）`
+                : '安装 llama-server 运行时（匹配本机 CUDA）';
+        } else if (llamaItem.mismatch) {
+            stepLabel = recommendRuntimeId
+                ? `重新安装 llama-server 运行时（切换至 ${recommendRuntimeId}）`
+                : '重新安装 llama-server 运行时（后端不一致）';
+        } else if (llamaItem.outdated) {
+            stepLabel = `更新 llama-server 运行时至 ${llamaItem.catalogTag || '最新'}`;
+        }
+        steps.push({
+            id: 'llamaServerRuntime',
+            label: stepLabel,
+            runtimeId: recommendRuntimeId || undefined,
+        });
     }
 
     // installPath / ffmpeg / engine / gpu hardware: not auto-fixable here
     const models = [...modelIds];
     const force = forceIds.size > 0;
-    const fixable = openVcRedist || ensureGpu || models.length > 0;
+    const fixable = openVcRedist || ensureGpu || ensureLlamaRuntime || models.length > 0;
     const manualHints = list
         .filter((it) => {
             if (it.status !== 'fail' && it.status !== 'warn') return false;
@@ -878,6 +1104,8 @@ function planEnvFixes(items, opts = {}) {
         fixable,
         openVcRedist,
         ensureGpu,
+        ensureLlamaRuntime,
+        llamaRuntimeId: recommendRuntimeId || '',
         modelIds: models,
         force,
         forceIds: [...forceIds],
@@ -895,6 +1123,7 @@ module.exports = {
     checkAsrModel,
     checkVadModel,
     checkLidModel,
+    checkLlamaServerRuntime,
     checkModelInstalled,
     listInstalledAsrIds,
     prefersSensevoice,

@@ -103,14 +103,13 @@ function findFileRecursive(rootDir, fileName, maxDepth = 4) {
     return '';
 }
 
+/**
+ * 是否已有可用的 llama-server 可执行文件（不校验构建号；旧版仍算已安装）。
+ * 版本是否为目录目标请用 advanced-llama-server.getRuntimeStatus().outdated。
+ */
 function isRuntimeInstalled() {
     const exe = resolveServerExe();
-    if (!exe) return false;
-    const meta = readRuntimeMeta();
-    const pkg = catalog.getRuntimePackage();
-    if (meta?.tag && meta.tag !== catalog.LLAMA_CPP_TAG) return true; // 旧版也可先用
-    if (pkg && meta?.packageId && meta.packageId !== pkg.id) return true;
-    return true;
+    return !!exe && fs.existsSync(exe);
 }
 
 const GGUF_MAGIC = Buffer.from('GGUF');

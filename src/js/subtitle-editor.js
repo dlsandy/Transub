@@ -4588,15 +4588,58 @@ ${t.dualLineOrder||""}`;
         }
     }
 
+    function resolveEditorQcProfile() {
+        const api = T.TransubContentProfile;
+        if (!api?.classifyContentProfile) return "unknown";
+        try {
+            const path = t.videoPath || t.path || "";
+            return api.classifyContentProfile({
+                path,
+                fileName: G(path)
+            })?.profile || "unknown"
+        } catch {
+            return "unknown"
+        }
+    }
+
+    function applyQcProfileDefaultsToUi() {
+        const api = T.TransubContentProfile;
+        if (!api?.qcPresetForProfile) return "";
+        const profile = resolveEditorQcProfile();
+        const preset = api.qcPresetForProfile(profile);
+        // 仅套用免费规则默认；Pro 项保持不勾选，由用户显式开启
+        if (e.qcMaxCps) e.qcMaxCps.value = String(preset.maxCps ?? 18);
+        if (e.qcRemoveNoise) e.qcRemoveNoise.checked = !!preset.removeNoise;
+        if (e.qcRemoveDup) e.qcRemoveDup.checked = preset.removeDuplicates !== !1;
+        if (e.qcCompressRep) e.qcCompressRep.checked = preset.compressRepetition !== !1;
+        if (e.qcSmartFix && !e.qcSmartFix.disabled) e.qcSmartFix.checked = !1;
+        if (e.qcLlmSplit && !e.qcLlmSplit.disabled) e.qcLlmSplit.checked = !1;
+        if (e.qcRetranscribe && !e.qcRetranscribe.disabled) e.qcRetranscribe.checked = !1;
+        if (e.qcSemanticReview && !e.qcSemanticReview.disabled) e.qcSemanticReview.checked = !1;
+        return api.describeQcPresetHint?.(profile) || ""
+    }
+
     function pi() {
         const n = Ke();
+        const profile = resolveEditorQcProfile();
+        const preset = T.TransubContentProfile?.qcPresetForProfile?.(profile) || {};
         return {
             fixOverlap: !!e.qcFixOverlap?.checked,
             fixCpsBySplit: !!e.qcFixCpsSplit?.checked,
             fixCpsByExtend: !!e.qcFixCpsExtend?.checked,
             enforceMinDur: !!e.qcEnforceMin?.checked,
             enforceMaxDur: !!e.qcEnforceMax?.checked,
+            fixInvalid: !0,
             compressRepetition: !!e.qcCompressRep?.checked,
+            removeNoise: !!e.qcRemoveNoise?.checked,
+            removeDuplicates: !!e.qcRemoveDup?.checked,
+            smartFix: !!e.qcSmartFix?.checked,
+            llmSplit: !!e.qcLlmSplit?.checked,
+            retranscribeConnected: !!e.qcRetranscribe?.checked,
+            semanticReview: !!e.qcSemanticReview?.checked,
+            intensity: preset.intensity || "light",
+            maxSmartCues: Number(preset.maxSmartCues) || 40,
+            profile,
             maxCps: Number(e.qcMaxCps?.value) || 18,
             minSec: Number(e.qcMinSec?.value) || .5,
             maxSec: Number(e.qcMaxSec?.value) || 10,
@@ -4627,6 +4670,10 @@ ${t.dualLineOrder||""}`;
         type: "repetition",
         countKey: "repetition",
         label: "\u53E0\u8BCD"
+    }, {
+        type: "duplicate",
+        countKey: "duplicate",
+        label: "\u8FDE\u7EED\u91CD\u590D"
     }, {
         type: "fluency",
         countKey: "fluency",
@@ -4751,24 +4798,278 @@ ${t.dualLineOrder||""}`;
         if (e.qcFixFiltered && (e.qcFixFiltered.disabled = !o.ok, e.qcFixFiltered.title = o.ok ? `\u4EC5\u4FEE\u590D\u300C${o.label}\u300D\u76F8\u5173\u95EE\u9898` : o.reason || "\u8BF7\u5148\u7B5B\u9009\u53EF\u81EA\u52A8\u4FEE\u590D\u7684\u95EE\u9898\u7C7B\u578B"), t.qcTypeFilter) {
             if (!o.ok) e.qcPreview.textContent = o.reason, e.qcPreview.classList.add("err");
             else {
-                const c = oe.buildQcFixPlan(t.cues, o.opts);
+                const filteredScan = {
+                    issues: s,
+                    summary: i.summary
+                };
+                const c = oe.buildQcFixEstimate
+                    ? oe.buildQcFixEstimate(t.cues, {
+                        ...o.opts,
+                        beforeScan: filteredScan
+                    })
+                    : oe.buildQcFixPlan(t.cues, {
+                        ...o.opts,
+                        estimateOnly: !0
+                    });
                 e.qcPreview.textContent = `\u7B5B\u9009\u4FEE\u590D\uFF08${o.label}\uFF09\uFF1A${c.summary}`, e.qcPreview.classList.toggle("err", !c.ok)
             }
             return
         }
-        const l = oe.buildQcFixPlan(t.cues, n);
+        const l = oe.buildQcFixEstimate
+            ? oe.buildQcFixEstimate(t.cues, {
+                ...n,
+                beforeScan: i
+            })
+            : oe.buildQcFixPlan(t.cues, {
+                ...n,
+                estimateOnly: !0
+            });
         e.qcPreview.textContent = l.summary, e.qcPreview.classList.toggle("err", !l.ok)
     }
 
     function Fr() {
-        e.qcModal && (t.qcTypeFilter = null, x(), e.qcMaxCps && e.smartMaxCps && (e.qcMaxCps.value = e.smartMaxCps.value), Q(e.qcModal, e.qcConfirm), gt())
+        e.qcModal && (t.qcTypeFilter = null, x(), e.qcMaxCps && e.smartMaxCps && (e.qcMaxCps.value = e.smartMaxCps.value), void syncQcSmartFixGate().then(() => {
+            const hint = applyQcProfileDefaultsToUi();
+            hint && e.qcPreview && (e.qcPreview.textContent = hint, e.qcPreview.classList.remove("err"))
+        }), Q(e.qcModal, e.qcConfirm), gt())
     }
 
     function En() {
         K(e.qcModal)
     }
 
-    function Si({
+    let _qcGateCache = {
+        at: 0,
+        entitled: !1,
+        semanticEntitled: !1
+    };
+    const QC_GATE_TTL_MS = 3e4;
+
+    async function syncQcSmartFixGate() {
+        const wrap = e.qcSmartFixWrap;
+        const box = e.qcSmartFix;
+        const splitWrap = e.qcLlmSplitWrap;
+        const splitBox = e.qcLlmSplit;
+        const reWrap = e.qcRetranscribeWrap;
+        const reBox = e.qcRetranscribe;
+        const semWrap = e.qcSemanticWrap;
+        const semBox = e.qcSemanticReview;
+        let entitled = !1;
+        let semanticEntitled = !1;
+        const now = Date.now();
+        if (_qcGateCache.at && now - _qcGateCache.at < QC_GATE_TTL_MS) {
+            entitled = _qcGateCache.entitled;
+            semanticEntitled = _qcGateCache.semanticEntitled
+        } else {
+            try {
+                const requireFeat = p?.transubAdvancedRequireFeature;
+                if (requireFeat) {
+                    const [gate, fb, semGate] = await Promise.all([
+                        requireFeat({ featureId: "qcSmartFix" }),
+                        requireFeat({ featureId: "contextReconstruct" }),
+                        requireFeat({ featureId: "bilingualSemanticReview" })
+                    ]);
+                    entitled = !!(gate?.ok || fb?.ok);
+                    semanticEntitled = !!(semGate?.ok || entitled)
+                }
+            } catch {
+                entitled = !1;
+                semanticEntitled = !1
+            }
+            _qcGateCache = {
+                at: now,
+                entitled,
+                semanticEntitled
+            }
+        }
+        const hasVideo = !!t.videoPath && !!p?.transubTranscribeRange;
+        const hasDual = !!(t.pairCues?.length || t.pairPath);
+        if (wrap && box) {
+            wrap.classList.toggle("opacity-50", !entitled);
+            wrap.title = entitled ? "Pro：规则修复后对剩余通顺度/连续文本调用大模型润色" : "需解锁 Pro 后可用";
+            box.disabled = !entitled;
+            if (!entitled) box.checked = !1
+        }
+        if (splitWrap && splitBox) {
+            splitWrap.classList.toggle("opacity-50", !entitled);
+            splitWrap.title = entitled ? "Pro：对规则无法切开的长句/高读速用大模型断句" : "需解锁 Pro 后可用";
+            splitBox.disabled = !entitled;
+            if (!entitled) splitBox.checked = !1
+        }
+        if (reWrap && reBox) {
+            const reOk = entitled && hasVideo;
+            reWrap.classList.toggle("opacity-50", !reOk);
+            reWrap.title = !entitled
+                ? "需解锁 Pro 后可用"
+                : (hasVideo ? "Pro：对无法分割的连续高读速区间局部重转写" : "请先关联视频");
+            reBox.disabled = !reOk;
+            if (!reOk) reBox.checked = !1
+        }
+        if (semWrap && semBox) {
+            const semOk = semanticEntitled && hasDual && !!p?.transubAdvancedBilingualSemanticReview;
+            semWrap.classList.toggle("opacity-50", !semOk);
+            semWrap.title = !semanticEntitled
+                ? "需解锁 Pro 后可用"
+                : (hasDual ? "Pro：对问题条双语语义审阅并采纳建议译文" : "请先加载对照轨或原文缓存");
+            semBox.disabled = !semOk;
+            if (!semOk) semBox.checked = !1
+        }
+        return entitled
+    }
+
+    async function runQcLlmSplitPhase(qcOpts = {}) {
+        const smartApi = T.TransubSubtitleQcSmart;
+        if (!smartApi?.selectQcLlmSplitTargets || !p?.transubAdvancedQcLlmSplit) {
+            return {
+                ok: !1,
+                skipped: !0,
+                summary: "智能断句不可用"
+            }
+        }
+        // 断句挑选不需要通顺度
+        const scan = qcOpts._reuseScan || oe.scanCueIssues(t.cues, {
+            ...qcOpts,
+            checkFluency: !1
+        });
+        const targets = smartApi.selectQcLlmSplitTargets(scan.issues, {
+            maxTargets: 24
+        });
+        if (!targets.length) {
+            return {
+                ok: !0,
+                skipped: !0,
+                summary: smartApi.summarizeQcLlmSplitPlan(targets)
+            }
+        }
+        d(smartApi.summarizeQcLlmSplitPlan(targets), "info");
+        const prefs = typeof Ke == "function" ? Ke() : null;
+        const items = smartApi.buildQcLlmSplitPayload(t.cues, targets, {
+            smartMaxChars: Number(qcOpts.smartMaxChars) || Number(prefs?.smartMaxChars) || 20
+        });
+        try {
+            const res = await p.transubAdvancedQcLlmSplit({
+                cues: items
+            });
+            if (!res?.ok) {
+                return {
+                    ok: !1,
+                    summary: res?.error || "智能断句失败"
+                }
+            }
+            const applied = smartApi.applyQcLlmSplitResults(t.cues, res.splits || [], {
+                targetCps: yt(),
+                minSec: Number(qcOpts.minSec) || .5,
+                useCpsTime: !0
+            });
+            if (!applied.splitCount) {
+                return {
+                    ok: !0,
+                    skipped: !0,
+                    summary: "智能断句无可用切分"
+                }
+            }
+            $(), t.cues.splice(0, t.cues.length, ...applied.cues);
+            if (oe.applySmartAdjustToCues) {
+                oe.applySmartAdjustToCues(t.cues, {
+                    fixOverlap: !0,
+                    fixCps: !1,
+                    enforceMinDur: !1,
+                    enforceMaxDur: !1,
+                    gapMs: Number(qcOpts.gapMs) || 1
+                })
+            }
+            return {
+                ok: !0,
+                summary: `智能断句 ${applied.splitCount} 条(+${applied.added})`,
+                splitCount: applied.splitCount,
+                added: applied.added
+            }
+        } catch (err) {
+            return {
+                ok: !1,
+                summary: err?.message || "智能断句失败"
+            }
+        }
+    }
+
+    async function runQcRetranscribePhase(qcOpts = {}) {
+        const smartApi = T.TransubSubtitleQcSmart;
+        if (!smartApi?.selectQcRetranscribeTargets || !smartApi.buildQcRetranscribeRanges) {
+            return {
+                ok: !1,
+                skipped: !0,
+                summary: "重转写模块不可用"
+            }
+        }
+        if (!t.videoPath || !p?.transubTranscribeRange) {
+            return {
+                ok: !0,
+                skipped: !0,
+                summary: "未关联视频，跳过局部重转写"
+            }
+        }
+        const scan = qcOpts._reuseScan || oe.scanCueIssues(t.cues, {
+            ...qcOpts,
+            checkFluency: !1
+        });
+        const targets = smartApi.selectQcRetranscribeTargets(scan.issues);
+        const ranges = smartApi.buildQcRetranscribeRanges(t.cues, targets.map(n => n.index), {
+            maxRanges: 8,
+            maxDurationSec: 45,
+            mergeAdjacentGapMs: 800
+        });
+        if (!ranges.length) {
+            return {
+                ok: !0,
+                skipped: !0,
+                summary: smartApi.summarizeQcRetranscribePlan(ranges)
+            }
+        }
+        d(smartApi.summarizeQcRetranscribePlan(ranges), "info");
+        let okCount = 0,
+            failCount = 0,
+            replaced = 0;
+        for (let ri = 0; ri < ranges.length; ri += 1) {
+            const range = ranges[ri];
+            d(`局部重转写 ${ri+1}/${ranges.length}（${range.indexes.length} 条）…`, "info");
+            try {
+                const res = await ut({
+                    startMs: range.startMs,
+                    endMs: range.endMs,
+                    padMs: smartApi.DEFAULT_PAD_MS || 350,
+                    mode: "range",
+                    writeAs: "source",
+                    snapAfter: !0,
+                    detail: `QC 连续文本重转写 ${ri+1}/${ranges.length}`
+                });
+                if (res?.ok) {
+                    okCount += 1, replaced += Number(res.replacedCount) || 0
+                } else if (res?.cancelled) {
+                    return {
+                        ok: !1,
+                        cancelled: !0,
+                        summary: `局部重转写已取消（完成 ${okCount}/${ranges.length} 窗）`,
+                        okCount,
+                        failCount
+                    }
+                } else {
+                    failCount += 1, d(res?.error || "局部重转写失败", "err")
+                }
+            } catch (err) {
+                failCount += 1, d(err?.message || "局部重转写失败", "err")
+            }
+        }
+        return {
+            ok: failCount === 0,
+            summary: `局部重转写 ${okCount}/${ranges.length} 窗${replaced?` · 替换约 ${replaced} 条`:""}${failCount?` · 失败 ${failCount}`:""}`,
+            okCount,
+            failCount,
+            replaced,
+            rangeCount: ranges.length
+        }
+    }
+
+    async function Si({
         filtered: n = !1
     } = {}) {
         const r = vi({
@@ -4779,16 +5080,281 @@ ${t.dualLineOrder||""}`;
             return
         }
         const i = r.opts;
-        if (x(), !oe.buildQcFixPlan(t.cues, i).ok) {
-            gt();
+        const wantSmart = !!i.smartFix && !n;
+        const wantLlmSplit = !!i.llmSplit && !n;
+        const wantRetranscribe = !!i.retranscribeConnected && !n;
+        const wantSemantic = !!i.semanticReview && !n;
+        if (wantSmart || wantLlmSplit || wantRetranscribe || wantSemantic) {
+            const okPro = await syncQcSmartFixGate();
+            if (!okPro && (wantSmart || wantLlmSplit || wantRetranscribe)) {
+                d("智能处理需解锁 Pro，已改为仅规则修复", "warn");
+                i.smartFix = !1, i.llmSplit = !1, i.retranscribeConnected = !1
+            } else if (wantRetranscribe && (!t.videoPath || !p?.transubTranscribeRange)) {
+                d("未关联视频，跳过局部重转写", "warn");
+                i.retranscribeConnected = !1
+            }
+            if (wantSemantic && (!t.pairCues?.length && !t.pairPath || !p?.transubAdvancedBilingualSemanticReview)) {
+                d("无对照轨，跳过双语语义审阅", "warn");
+                i.semanticReview = !1
+            }
+            if (wantSemantic && e.qcSemanticReview?.disabled) i.semanticReview = !1
+        }
+        const hasRuleFix = !!(i.fixOverlap || i.fixCpsBySplit || i.fixCpsByExtend || i.enforceMinDur || i.enforceMaxDur || i.compressRepetition || i.fixInvalid || i.removeNoise || i.removeDuplicates);
+        const wantAnySmart = !!(wantSmart && i.smartFix) || !!(wantLlmSplit && i.llmSplit) || !!(wantRetranscribe && i.retranscribeConnected) || !!(wantSemantic && i.semanticReview);
+        // dry-run：不改写 cues，确认后再写回
+        let ruleApplied = null;
+        if (hasRuleFix) {
+            ruleApplied = oe.applyQcFixes(t.cues, i)
+        }
+        const hasRuleEffect = oe.hasQcFixEffect
+            ? oe.hasQcFixEffect(ruleApplied?.stats)
+            : !!(ruleApplied?.stats?.affected || ruleApplied?.stats?.splitCount || ruleApplied?.stats?.compressRepFixed || ruleApplied?.stats?.noiseRemoved);
+        if (!hasRuleEffect && !wantAnySmart) {
+            e.qcPreview && (e.qcPreview.textContent = ruleApplied?.summary || "无需修复", e.qcPreview.classList.add("err")), gt();
             return
         }
-        $();
-        const a = oe.applyQcFixes(t.cues, i);
-        t.cues.splice(0, t.cues.length, ...a.cues), P(!0), C(), t.selectedIndex >= 0 && R(), En();
-        const o = a.remaining?.total ? `\uFF0C\u4ECD\u6709 ${a.remaining.total} \u6761\u5F85\u5904\u7406` : "",
-            l = n && r.label ? `\uFF08${r.label}\uFF09` : "";
-        d(`\u8D28\u91CF\u4FEE\u590D\u5B8C\u6210${l}${o}`, "ok")
+        if (hasRuleEffect && oe.buildQcReviewRows) {
+            const review = oe.buildQcReviewRows(t.cues, ruleApplied.cues);
+            const rows = review?.rows || review || [];
+            const structural = !!(review?.structural);
+            const promptReview = St?.promptReconstructReview;
+            let accepted = null;
+            if (typeof promptReview == "function") {
+                accepted = await promptReview(rows, {
+                    title: "QC 修复对照",
+                    lead: structural
+                        ? "本次含分割或删除，条数将变化。确认后整体应用右侧修复结果；取消则不改写规则修复。"
+                        : "左边为修复前，右边为修复后。勾选要应用的条目后确认（可编辑右侧文本）；取消则不改写。",
+                    beforeLabel: "修复前",
+                    afterLabel: "修复后"
+                })
+            } else {
+                accepted = rows.filter(row => row.changed).map(row => ({
+                    index: row.index,
+                    text: row.after
+                }))
+            }
+            if (accepted === null) {
+                d("已取消规则修复", "warn");
+                ruleApplied = null;
+                if (!wantAnySmart) {
+                    gt();
+                    return
+                }
+            } else if (!accepted.length) {
+                d("未勾选任何规则修复", "warn");
+                ruleApplied = null;
+                if (!wantAnySmart) {
+                    gt();
+                    return
+                }
+            } else if (oe.applyQcAcceptedFixes) {
+                const merged = oe.applyQcAcceptedFixes(t.cues, ruleApplied.cues, accepted);
+                if (merged) ruleApplied = {
+                    ...ruleApplied,
+                    cues: merged
+                };
+                else ruleApplied = null
+            }
+        }
+        const showWait = !!wantAnySmart;
+        let progressUnsub = null;
+        // 半透明推理遮罩（holdBusy:false），勿用启动遮罩（不透明会整窗空白）
+        const qcWait = (detail) => {
+            const msg = detail || "正在执行质量修复…";
+            d(msg, "info");
+            if (!showWait || typeof Ui != "function") return;
+            const overlay = document.getElementById("editorReconstructProgress");
+            if (!overlay || overlay.classList.contains("hidden")) {
+                Ui({
+                    kind: "qc-smart",
+                    badge: "QC 处理",
+                    title: "QC 处理中，请稍候",
+                    detail: msg,
+                    hint: "可能调用大模型或局部重转写；界面仍可看见，请勿关闭窗口。",
+                    indeterminate: !0,
+                    pct: 5,
+                    holdBusy: !1
+                })
+            } else if (typeof Qi == "function") {
+                Qi({
+                    title: "QC 处理中，请稍候",
+                    message: msg,
+                    indeterminate: !0
+                })
+            }
+        };
+        if (showWait) {
+            qcWait("正在执行质量修复…");
+            progressUnsub = p.onAdvancedReconstructProgress?.(a => {
+                if (!a) return;
+                const mode = String(a.mode || "");
+                if (mode && mode !== "qc-smart" && mode !== "semantic-review" && mode !== "single" && mode !== "batch") return;
+                qcWait(a.message || a.detail || "QC 处理进行中…")
+            }) || null
+        } else {
+            d("正在规则修复，请稍候…", "info")
+        }
+        try {
+            x();
+            if (ruleApplied?.cues && (oe.hasQcFixEffect ? oe.hasQcFixEffect(ruleApplied.stats) : (ruleApplied.stats?.affected || ruleApplied.stats?.splitCount || ruleApplied.stats?.compressRepFixed || ruleApplied.stats?.noiseRemoved))) {
+                $();
+                t.cues.splice(0, t.cues.length, ...ruleApplied.cues), P(!0), C(), t.selectedIndex >= 0 && R();
+                const o = ruleApplied.remainingText
+                    ? `\uFF0C${ruleApplied.remainingText}`
+                    : (ruleApplied.remaining?.total ? `\uFF0C\u4ECD\u6709 ${ruleApplied.remaining.total} \u6761\u5F85\u5904\u7406` : "");
+                const l = n && r.label ? `\uFF08${r.label}\uFF09` : "";
+                d(`\u8D28\u91CF\u4FEE\u590D\u5B8C\u6210${l}${o}`, "ok")
+            }
+            En();
+            let reuseScan = ruleApplied?.scan || null;
+            if (i.llmSplit) {
+                qcWait("智能断句中，请稍候…");
+                const splitRes = await runQcLlmSplitPhase({
+                    ...i,
+                    _reuseScan: reuseScan
+                });
+                d(splitRes.summary || "智能断句结束", splitRes.ok ? "ok" : "err");
+                if (splitRes.splitCount) {
+                    P(!0), C(), t.selectedIndex >= 0 && R();
+                    reuseScan = null
+                }
+            }
+            if (i.retranscribeConnected) {
+                qcWait("局部重转写中，请稍候…");
+                const reRes = await runQcRetranscribePhase({
+                    ...i,
+                    _reuseScan: reuseScan
+                });
+                d(reRes.summary || "局部重转写结束", reRes.cancelled ? "warn" : reRes.ok ? "ok" : "err");
+                if (reRes.cancelled) return;
+                if (!reRes.skipped) reuseScan = null;
+                C(), t.selectedIndex >= 0 && R()
+            }
+            const smartApi = T.TransubSubtitleQcSmart;
+            let polishedIndexes = [];
+            if (i.smartFix && St?.runContextReconstructOnce && smartApi?.selectQcSmartTargets) {
+                const scan = reuseScan || oe.scanCueIssues(t.cues, i);
+                reuseScan = null;
+                const targets = smartApi.selectQcSmartTargets(scan.issues, {
+                    maxSmartCues: Number(i.maxSmartCues) || 40
+                });
+                if (!targets.length) {
+                    d("规则修复后无需智能润色", "info")
+                } else {
+                    const cueIndexes = targets.map(s => s.index);
+                    polishedIndexes = cueIndexes;
+                    qcWait(`智能润色 ${cueIndexes.length} 条，请稍候…`);
+                    d(`开始智能润色剩余 ${cueIndexes.length} 条…`, "info");
+                    const smartRes = await St.runContextReconstructOnce({
+                        cueIndexes,
+                        scope: "selected",
+                        mode: "basic",
+                        intensity: i.intensity || "light",
+                        windowCues: 16,
+                        preserveTiming: !0,
+                        skipReview: !1,
+                        userNote: smartApi.QC_SMART_NOTE || "",
+                        note: smartApi.QC_SMART_NOTE || ""
+                    });
+                    d(smartRes?.summary || "QC 智能润色结束", smartRes?.status === "failed" ? "err" : smartRes?.status === "cancelled" ? "warn" : "ok");
+                    if (smartRes?.status === "cancelled") return;
+                    // 润色结束会收起遮罩；若还有后续阶段则重新打开 QC 外壳
+                    if (i.semanticReview) qcWait("智能润色已完成…")
+                }
+            }
+            if (i.semanticReview) {
+                qcWait("双语语义审阅中，请稍候…");
+                const semRes = await runQcSemanticReviewPhase(i, {
+                    preferIndexes: polishedIndexes
+                });
+                d(semRes.summary || "语义审阅结束", semRes.ok ? (semRes.changed ? "ok" : "info") : "err");
+                if (semRes.changed) P(!0), C(), t.selectedIndex >= 0 && R()
+            }
+        } finally {
+            if (typeof progressUnsub == "function") try {
+                progressUnsub()
+            } catch {}
+            // 收起 QC 遮罩；若仍在润色 busy 则留给对应流程关闭
+            if (showWait && typeof Zi == "function" && !t.reconstructBusy) Zi();
+            // 兜底：绝不留下启动遮罩（不透明全白）
+            typeof Gr == "function" && Gr()
+        }
+    }
+
+    async function runQcSemanticReviewPhase(qcOpts = {}, extra = {}) {
+        const smartApi = T.TransubSubtitleQcSmart;
+        if (!smartApi?.buildQcSemanticPairs || !p?.transubAdvancedBilingualSemanticReview) {
+            return {
+                ok: !1,
+                summary: "语义审阅不可用"
+            }
+        }
+        const pairCues = t.pairCues?.length ? t.pairCues : await H?.loadKeptCues?.();
+        if (!pairCues?.length) {
+            return {
+                ok: !1,
+                summary: "需要对照轨或原文缓存"
+            }
+        }
+        const scan = oe.scanCueIssues(t.cues, qcOpts);
+        const indexes = smartApi.selectQcSemanticIndexes(scan.issues, {
+            maxPairs: 40,
+            preferIndexes: extra.preferIndexes || []
+        });
+        if (!indexes.length) {
+            return {
+                ok: !0,
+                skipped: !0,
+                changed: 0,
+                summary: "无需双语语义审阅"
+            }
+        }
+        const dualApi = O || T.TransubDualSubtitle;
+        const pairs = smartApi.buildQcSemanticPairs(t.cues, pairCues, indexes, dualApi);
+        if (!pairs.length) {
+            return {
+                ok: !0,
+                skipped: !0,
+                changed: 0,
+                summary: "无可审校的双语条目"
+            }
+        }
+        d(`开始语义审阅 ${pairs.length} 条…`, "info");
+        const review = await p.transubAdvancedBilingualSemanticReview({
+            pairs,
+            suggestFixes: !0,
+            note: smartApi.QC_SEMANTIC_NOTE || ""
+        });
+        if (!review?.ok) {
+            return {
+                ok: !1,
+                summary: review?.error || "语义审阅失败"
+            }
+        }
+        t.lastSemanticReview = review;
+        H?.refreshContextActionBar?.();
+        const issues = Array.isArray(review.issues) ? review.issues : [];
+        if (!issues.length) {
+            return {
+                ok: !0,
+                changed: 0,
+                summary: review.summary || "语义审阅：未发现问题"
+            }
+        }
+        const applied = smartApi.applyQcSemanticSuggestions(t.cues, issues);
+        if (applied.changed) {
+            $();
+            t.cues.splice(0, t.cues.length, ...applied.cues)
+        }
+        return {
+            ok: !0,
+            changed: applied.changed,
+            issueCount: issues.length,
+            summary: applied.changed
+                ? `语义采纳 ${applied.changed}/${issues.filter(s => s.suggestedTarget).length || applied.changed} 条`
+                : (review.summary || `语义审阅：${issues.length} 处（无建议译文）`)
+        }
     }
 
     function bi() {
@@ -4852,11 +5418,16 @@ ${t.dualLineOrder||""}`;
         let i = null;
         r === "selected" && (i = J(), !i.length && t.selectedIndex >= 0 && (i = [t.selectedIndex]));
         const s = e.chineseProtectGlossary?.checked !== !1 ? se.collectProtectTerms(xe()) : [];
+        const o = (document.querySelector('input[name="editorChineseLocale"]:checked')?.value
+            || e.chineseLocaleTwp?.value
+            || "twp").toLowerCase();
+        const a = ["twp", "tw", "hk", "t"].includes(o) ? o : "twp";
         return {
             direction: n,
             scope: r,
             indexes: i,
-            protectTerms: s
+            protectTerms: s,
+            locale: a
         }
     }
 
@@ -4866,6 +5437,7 @@ ${t.dualLineOrder||""}`;
             cues: t.cues.slice(),
             stats: {
                 direction: n.direction,
+                locale: n.locale,
                 cueTotal: t.cues.length,
                 cueTouched: 0,
                 charChanged: 0,
@@ -4874,6 +5446,7 @@ ${t.dualLineOrder||""}`;
             summary: "\u8BF7\u5148\u9009\u4E2D\u4E00\u6761\u6216\u591A\u6761\u5B57\u5E55"
         } : Gn.convertCues(t.cues, {
             direction: n.direction,
+            locale: n.locale,
             indexes: n.indexes,
             protectTerms: n.protectTerms
         })
@@ -6245,24 +6818,28 @@ ${t.dualLineOrder||""}`;
         }) || null;
         try {
             const a = await p.transubAdvancedBilingualSemanticReview({
-                pairs: i
+                pairs: i,
+                suggestFixes: !0
             });
             if (!a?.ok) {
                 d(a?.error || "\u8BED\u4E49\u5BA1\u9605\u5931\u8D25", "err");
                 return
             }
             const o = Array.isArray(a.issues) ? a.issues : [];
+            const suggestCount = o.filter(c => String(c.suggestedTarget || "").trim()).length;
             t.lastSemanticReview = a, H?.refreshContextActionBar?.();
             const l = o.slice(0, 20).map(c => {
                 const u = Number(c.index),
-                    m = Number.isInteger(u) ? `#${u+1}` : "";
-                return `<li><button type="button" class="ed-btn-block"${Number.isInteger(u)?` data-kept-action="goto-semantic" data-cue-idx="${u}"`:""}><strong>${b(c.type||"issue")}</strong> ${b(m)} \u2014 ${b(c.message||"")}</button></li>`
+                    m = Number.isInteger(u) ? `#${u+1}` : "",
+                    sug = String(c.suggestedTarget || "").trim();
+                return `<li><button type="button" class="ed-btn-block"${Number.isInteger(u)?` data-kept-action="goto-semantic" data-cue-idx="${u}"`:""}><strong>${b(c.type||"issue")}</strong> ${b(m)} \u2014 ${b(c.message||"")}${sug?`<br><span class="opacity-70">建议：${b(sug.slice(0,80))}</span>`:""}</button></li>`
             }).join("");
             e.genericModal && e.genericModalBody && (e.genericModalTitle && (e.genericModalTitle.textContent = a.summary || "\u8BED\u4E49\u5BA1\u9605"), e.genericModalBody.innerHTML = `
                     <ul class="text-sm space-y-1 mb-3 max-h-64 overflow-auto">${l||"<li>\u65E0\u95EE\u9898</li>"}</ul>
                     <div class="editor-modal-actions">
+                        ${suggestCount?'<button type="button" class="primary" data-kept-action="semantic-apply">\u4E00\u952E\u91C7\u7EB3\u5EFA\u8BAE</button>':""}
                         ${o.length?'<button type="button" data-kept-action="semantic-reconstruct">\u8BED\u5883\u91CD\u6784\u9009\u4E2D \u25C6</button>':""}
-                        <button type="button" class="primary" data-kept-action="close">\u5173\u95ED</button>
+                        <button type="button" data-kept-action="close">\u5173\u95ED</button>
                     </div>
                 `, t._genericModalHandler = (c, u) => {
                 if (c === "close") {
@@ -6275,6 +6852,19 @@ ${t.dualLineOrder||""}`;
                         scroll: !0,
                         seek: !0
                     }), K(e.genericModal));
+                    return
+                }
+                if (c === "semantic-apply") {
+                    const smartApi = T.TransubSubtitleQcSmart;
+                    if (smartApi?.applyQcSemanticSuggestions) {
+                        $();
+                        const applied = smartApi.applyQcSemanticSuggestions(t.cues, o);
+                        if (applied.changed) {
+                            t.cues.splice(0, t.cues.length, ...applied.cues), P(!0), C(), t.selectedIndex >= 0 && R();
+                            d(`已采纳 ${applied.changed} 条建议译文`, "ok")
+                        } else d("没有可采纳的建议译文", "info")
+                    }
+                    K(e.genericModal);
                     return
                 }
                 if (c === "semantic-reconstruct") {
@@ -7274,7 +7864,7 @@ ${t.dualLineOrder||""}`;
                 scroll: !0,
                 seek: !0
             })
-        }), [e.qcFixOverlap, e.qcFixCpsSplit, e.qcFixCpsExtend, e.qcEnforceMin, e.qcEnforceMax, e.qcCompressRep, e.qcMaxCps, e.qcMinSec, e.qcMaxSec, e.qcGapMs].forEach(s => {
+        }), [e.qcFixOverlap, e.qcFixCpsSplit, e.qcFixCpsExtend, e.qcEnforceMin, e.qcEnforceMax, e.qcCompressRep, e.qcRemoveNoise, e.qcRemoveDup, e.qcSmartFix, e.qcLlmSplit, e.qcRetranscribe, e.qcSemanticReview, e.qcMaxCps, e.qcMinSec, e.qcMaxSec, e.qcGapMs].forEach(s => {
             s?.addEventListener("input", gt), s?.addEventListener("change", gt)
         }), e.retranscribeDurConfirm?.addEventListener("click", () => {
             ao()
@@ -7839,6 +8429,16 @@ ${t.dualLineOrder||""}`;
             qcEnforceMin: document.getElementById("editorQcEnforceMin"),
             qcEnforceMax: document.getElementById("editorQcEnforceMax"),
             qcCompressRep: document.getElementById("editorQcCompressRep"),
+            qcRemoveNoise: document.getElementById("editorQcRemoveNoise"),
+            qcRemoveDup: document.getElementById("editorQcRemoveDup"),
+            qcSmartFix: document.getElementById("editorQcSmartFix"),
+            qcSmartFixWrap: document.getElementById("editorQcSmartFixWrap"),
+            qcLlmSplit: document.getElementById("editorQcLlmSplit"),
+            qcLlmSplitWrap: document.getElementById("editorQcLlmSplitWrap"),
+            qcRetranscribe: document.getElementById("editorQcRetranscribe"),
+            qcRetranscribeWrap: document.getElementById("editorQcRetranscribeWrap"),
+            qcSemanticReview: document.getElementById("editorQcSemanticReview"),
+            qcSemanticWrap: document.getElementById("editorQcSemanticWrap"),
             qcMaxCps: document.getElementById("editorQcMaxCps"),
             qcMinSec: document.getElementById("editorQcMinSec"),
             qcMaxSec: document.getElementById("editorQcMaxSec"),
@@ -7909,6 +8509,9 @@ ${t.dualLineOrder||""}`;
             chineseConvertCancel: document.getElementById("editorChineseConvertCancel"),
             chineseDirS2T: document.getElementById("editorChineseDirS2T"),
             chineseDirT2S: document.getElementById("editorChineseDirT2S"),
+            chineseLocaleTwp: document.getElementById("editorChineseLocaleTwp"),
+            chineseLocaleTw: document.getElementById("editorChineseLocaleTw"),
+            chineseLocaleHk: document.getElementById("editorChineseLocaleHk"),
             chineseScopeAll: document.getElementById("editorChineseScopeAll"),
             chineseScopeSelected: document.getElementById("editorChineseScopeSelected"),
             chineseProtectGlossary: document.getElementById("editorChineseProtectGlossary"),

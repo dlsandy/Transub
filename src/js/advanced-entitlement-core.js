@@ -21,6 +21,8 @@
     const FEATURE_BILINGUAL_SEMANTIC_REVIEW = 'bilingualSemanticReview';
     /** ASS export with speaker styles */
     const FEATURE_ASS_STYLE_EXPORT = 'assStyleExport';
+    /** QC 一键智能处理（规则修复后对剩余通顺度等做 LLM 润色） */
+    const FEATURE_QC_SMART_FIX = 'qcSmartFix';
     const FEATURE_ALL = '*';
 
     /** 同时绑定设备上限 */
@@ -453,6 +455,7 @@
         FEATURE_FILM_AUDIO_ENHANCE,
         FEATURE_BILINGUAL_SEMANTIC_REVIEW,
         FEATURE_ASS_STYLE_EXPORT,
+        FEATURE_QC_SMART_FIX,
         FEATURE_ALL,
         MAX_DEVICES,
         TRANSFER_COOLDOWN_MS,

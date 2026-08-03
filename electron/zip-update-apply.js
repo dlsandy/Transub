@@ -146,6 +146,7 @@ async function main() {
         installRoot: meta.installRoot,
         packageRoot: meta.packageRoot,
         preserveRelPaths: meta.preserveRelPaths,
+        allowPartial: Boolean(meta.allowPartial),
         onProgress: (info) => {
             setStatus({
                 phase: info.phase || 'copying',
@@ -156,6 +157,25 @@ async function main() {
         },
     });
     appendLog(logPath, `merge ok preserved=${(result.preserved || []).length}`);
+
+    if (meta.updateManifest && typeof meta.updateManifest === 'object') {
+        try {
+            const { writeBaseline } = require('./update-manifest-core');
+            const baselinePath = writeBaseline(meta.installRoot, meta.updateManifest);
+            appendLog(logPath, `baseline written ${baselinePath}`);
+        } catch (err) {
+            appendLog(logPath, `baseline write failed: ${err?.message || err}`);
+        }
+    } else if (meta.updateManifestPath && fs.existsSync(meta.updateManifestPath)) {
+        try {
+            const { writeBaseline, readJsonFile } = require('./update-manifest-core');
+            const manifest = readJsonFile(meta.updateManifestPath);
+            writeBaseline(meta.installRoot, manifest);
+            appendLog(logPath, 'baseline written from manifest path');
+        } catch (err) {
+            appendLog(logPath, `baseline write failed: ${err?.message || err}`);
+        }
+    }
 
     const exePath = meta.exePath || path.join(meta.installRoot, 'Transub.exe');
     if (!fs.existsSync(exePath)) {

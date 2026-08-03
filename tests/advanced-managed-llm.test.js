@@ -78,19 +78,26 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.strictEqual(pkg.archive, 'zip');
     });
 
-    it('allows selecting CUDA 12 runtime on win32-x64', () => {
+    it('allows selecting CUDA 12/13 runtime on win32-x64', () => {
         const choices = catalog.listRuntimePackages('win32', 'x64');
         assert.ok(choices.some((p) => p.id === 'win-vulkan-x64'));
         assert.ok(choices.some((p) => p.id === 'win-cuda12-x64'));
-        const cuda = catalog.getRuntimePackage('win32', 'x64', 'win-cuda12-x64');
-        assert.ok(cuda);
-        assert.strictEqual(cuda.backend, 'cuda');
-        assert.ok(cuda.url.includes('cuda-12.4'));
-        assert.ok(String(cuda.companionUrl || '').includes('cudart-llama-bin-win-cuda-12.4'));
+        assert.ok(choices.some((p) => p.id === 'win-cuda13-x64'));
+        const cuda12 = catalog.getRuntimePackage('win32', 'x64', 'win-cuda12-x64');
+        assert.ok(cuda12);
+        assert.strictEqual(cuda12.backend, 'cuda');
+        assert.ok(cuda12.url.includes('cuda-12.4'));
+        assert.ok(String(cuda12.companionUrl || '').includes('cudart-llama-bin-win-cuda-12.4'));
+        const cuda13 = catalog.getRuntimePackage('win32', 'x64', 'win-cuda13-x64');
+        assert.ok(cuda13);
+        assert.strictEqual(cuda13.backend, 'cuda');
+        assert.ok(cuda13.url.includes('cuda-13.3'));
+        assert.ok(String(cuda13.companionUrl || '').includes('cudart-llama-bin-win-cuda-13.3'));
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'win32', 'x64'), 'win-cuda12-x64');
+        assert.strictEqual(catalog.normalizeRuntimeId('win-cuda13-x64', 'win32', 'x64'), 'win-cuda13-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('', 'win32', 'x64'), 'win-vulkan-x64');
         assert.strictEqual(catalog.normalizeRuntimeId('nope', 'win32', 'x64'), 'win-vulkan-x64');
-        // NVIDIA 机器：空偏好默认 CUDA 12
+        // NVIDIA 机器：空偏好默认 CUDA 12；驱动 CUDA 13+ 时默认 CUDA 13
         assert.strictEqual(
             catalog.normalizeRuntimeId('', 'win32', 'x64', { preferCuda: true }),
             'win-cuda12-x64',
@@ -103,15 +110,33 @@ describe('advanced-managed-llm-catalog-core', () => {
             catalog.normalizeManagedLlm({}, { preferCuda: true }).runtimeId,
             'win-cuda12-x64',
         );
+        assert.strictEqual(
+            catalog.normalizeRuntimeId('', 'win32', 'x64', { preferCuda: true, cudaVersion: '13.3' }),
+            'win-cuda13-x64',
+        );
+        assert.strictEqual(
+            catalog.getDefaultRuntimeId('win32', 'x64', { preferCuda: true, cudaVersion: '12.8' }),
+            'win-cuda12-x64',
+        );
+        assert.strictEqual(
+            catalog.normalizeManagedLlm({}, { preferCuda: true, cudaVersion: '13.0' }).runtimeId,
+            'win-cuda13-x64',
+        );
         // 已显式选 Vulkan 时不因 preferCuda 覆盖
         assert.strictEqual(
-            catalog.normalizeManagedLlm({ runtimeId: 'win-vulkan-x64' }, { preferCuda: true }).runtimeId,
+            catalog.normalizeManagedLlm({ runtimeId: 'win-vulkan-x64' }, { preferCuda: true, cudaVersion: '13.3' }).runtimeId,
             'win-vulkan-x64',
         );
-        const cudaFirst = catalog.listRuntimePackages('win32', 'x64', { preferCuda: true });
-        assert.strictEqual(cudaFirst[0]?.id, 'win-cuda12-x64');
+        const cuda12First = catalog.listRuntimePackages('win32', 'x64', { preferCuda: true });
+        assert.strictEqual(cuda12First[0]?.id, 'win-cuda12-x64');
+        const cuda13First = catalog.listRuntimePackages('win32', 'x64', {
+            preferCuda: true,
+            cudaVersion: '13.3',
+        });
+        assert.strictEqual(cuda13First[0]?.id, 'win-cuda13-x64');
         // CUDA id is not valid on macOS — fall back to platform default
         assert.strictEqual(catalog.normalizeRuntimeId('win-cuda12-x64', 'darwin', 'arm64'), 'macos-arm64');
+        assert.strictEqual(catalog.normalizeRuntimeId('win-cuda13-x64', 'darwin', 'arm64'), 'macos-arm64');
     });
 
     it('normalizes managed llm and source', () => {

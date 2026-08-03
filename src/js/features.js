@@ -305,10 +305,43 @@
         });
     }
 
-    const PROJECT_HOME_URL = 'https://github.com/dlsandy/Transub';
+    const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
+    const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
+    const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
+    const AFDIAN_PURCHASE_URL = 'https://afdian.com/a/transub';
 
     function moreStatusEl() {
         return document.getElementById('moreStatus');
+    }
+
+    function setMoreAfdianVisible(visible) {
+        const btn = document.getElementById('openAfdianFromSettingsBtn');
+        if (!btn) return;
+        btn.hidden = !visible;
+        btn.classList.toggle('hidden', !visible);
+    }
+
+    async function syncMoreAfdianVisibility() {
+        try {
+            const res = await electron?.transubAdvancedGetStatus?.();
+            setMoreAfdianVisible(!(res?.ok && res.status?.entitled));
+        } catch (_) {
+            setMoreAfdianVisible(true);
+        }
+    }
+
+    async function openExternalLink(url, okMessage) {
+        const el = moreStatusEl();
+        try {
+            const res = await electron?.openExternal?.(url);
+            if (res?.ok === false) {
+                if (el) el.textContent = res?.error || '打开链接失败';
+                return;
+            }
+            if (el) el.textContent = okMessage || '已在浏览器中打开';
+        } catch (err) {
+            if (el) el.textContent = err?.message || '打开链接失败';
+        }
     }
 
     function formatDownloadBytes(bytes) {
@@ -396,9 +429,9 @@
             if (res.updateAvailable) {
                 if (res.canAutoInstall && electron?.transubDownloadAppUpdate) {
                     const yes = await appConfirmMsg(
-                        res.preservesEngineData || res.installKind === 'zip' || res.installKind === 'nsis'
-                            ? `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？\n（将保留已下载的模型、GPU/Demucs 支持库与 Advanced LLM）`
-                            : `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？`,
+                        res.preservesEngineData || res.installKind === 'zip'
+                            ? `发现新版本 v${res.latestVersion}。\n\n是否下载并在重启后安装？\n（优先增量更新；将保留已下载的模型、GPU/Demucs 支持库与 Advanced LLM）`
+                            : `发现新版本 v${res.latestVersion}。\n\nSetup/NSIS 已停更，是否打开发布页下载 zip 解压版？`,
                         { title: '发现更新', primaryLabel: '下载更新' },
                     );
                     if (yes) {
@@ -497,22 +530,22 @@
                 if (status) status.textContent = err?.message || '清理失败';
             }
         });
-        document.getElementById('openWebsiteBtn')?.addEventListener('click', async () => {
-            const el = moreStatusEl();
-            try {
-                const res = await electron?.openExternal?.(PROJECT_HOME_URL);
-                if (res?.ok === false) {
-                    if (el) el.textContent = res?.error || '打开官网失败';
-                    return;
-                }
-                if (el) el.textContent = '已在浏览器中打开项目主页';
-            } catch (err) {
-                if (el) el.textContent = err?.message || '打开官网失败';
-            }
+        document.getElementById('openWebsiteBtn')?.addEventListener('click', () => {
+            void openExternalLink(OFFICIAL_SITE_URL, '已在浏览器中打开官方网站');
+        });
+        document.getElementById('openGithubReleasesBtn')?.addEventListener('click', () => {
+            void openExternalLink(GITHUB_RELEASES_URL, '已在浏览器中打开 Github Releases');
+        });
+        document.getElementById('openCodebergReleasesBtn')?.addEventListener('click', () => {
+            void openExternalLink(CODEBERG_RELEASES_URL, '已在浏览器中打开 Codeberg Releases');
+        });
+        document.getElementById('openAfdianFromSettingsBtn')?.addEventListener('click', () => {
+            void openExternalLink(AFDIAN_PURCHASE_URL, '已在浏览器中打开赞助页面');
         });
         document.getElementById('openAboutFromSettingsBtn')?.addEventListener('click', () => {
             void electron?.transubOpenAboutWindow?.();
         });
+        void syncMoreAfdianVisibility();
         document.getElementById('resetSettingsBtn')?.addEventListener('click', async () => {
             const status = document.getElementById('resetSettingsStatus');
             if (!(await appConfirmMsg('确定将设置重置为默认值？当前表单会被覆盖（仍需点「保存设置」才会写入磁盘）。', { title: '重置设置', danger: true }))) return;

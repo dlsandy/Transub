@@ -12,6 +12,7 @@
         { id: 'gpuDriver', label: 'GPU 驱动版本' },
         { id: 'gpuRuntime', label: 'GPU 运行时' },
         { id: 'engine', label: 'Transub Engine' },
+        { id: 'llamaServerRuntime', label: 'llama-server 运行时' },
         { id: 'asrModel', label: 'ASR 模型' },
         { id: 'vadModel', label: 'VAD 模型（FSMN）' },
         { id: 'lidModel', label: '语种探测模型' },
@@ -143,15 +144,75 @@
     function computeFixVisibility(result) {
         const fixable = !!result?.fix?.fixable;
         const showFix = fixable || whisperRuntimeBad(result);
-        const showManual = listNeededManualKindsFromResult(result).length > 0
-            || (Array.isArray(result?.fix?.modelIds) && result.fix.modelIds.length > 0);
+        const kinds = listNeededManualKindsFromResult(result);
+        const showManual = kinds.some((k) => k !== 'llamaRuntime')
+            || (Array.isArray(result?.fix?.modelIds) && result.fix.modelIds.length > 0)
+            || (kinds.includes('llamaRuntime')
+                && !!electron?.transubAdvancedManagedLlmOpenManual);
         return { showFix, showManual, fixable };
+    }
+
+    async function offerManualLlamaRuntimeDownload(errorText = '') {
+        if (!electron?.transubAdvancedManagedLlmDownloadInfo
+            || !electron?.transubAdvancedManagedLlmOpenManual) {
+            return { ok: false, error: '当前环境不支持手动下载 llama-server' };
+        }
+        let infoRes;
+        try {
+            infoRes = await electron.transubAdvancedManagedLlmDownloadInfo({ kind: 'runtime' });
+        } catch (err) {
+            return { ok: false, error: err?.message || '无法获取运行时下载信息' };
+        }
+        if (!infoRes?.ok) {
+            return { ok: false, error: infoRes?.error || '无法获取运行时下载信息' };
+        }
+        const info = infoRes.info || {};
+        const detail = String(errorText || '').trim();
+        const sizeHint = info.sizeHint ? `\n体积约 ${info.sizeHint}。` : '';
+        const message = (
+            (detail ? `${detail}\n\n` : '')
+            + `将打开「${info.runtimeLabel || 'llama-server'}」下载链接。${sizeHint}\n`
+            + `目标版本：${info.runtimeTag || '—'}\n\n`
+            + '下载完成后请到设置 → 运行环境 →「选择 zip 安装」或「检测」。'
+        );
+        const proceed = global.TransubAppConfirm
+            ? await global.TransubAppConfirm({
+                title: '手动下载 llama-server',
+                message,
+                primaryLabel: '打开下载链接',
+                secondaryLabel: '取消',
+            })
+            : window.confirm(message);
+        if (!proceed) return { ok: false, cancelled: true };
+        try {
+            const openRes = await electron.transubAdvancedManagedLlmOpenManual({
+                kind: 'runtime',
+                runtimeId: info.runtimeId || undefined,
+                which: info.needsCompanion ? 'all-official' : 'official',
+            });
+            if (!openRes?.ok) {
+                return { ok: false, error: openRes?.error || '无法打开下载链接' };
+            }
+            return {
+                ok: true,
+                message: info.folder
+                    ? `已打开下载链接。解压或安装目标：${info.folder}`
+                    : '已打开下载链接',
+            };
+        } catch (err) {
+            return { ok: false, error: err?.message || '无法打开下载链接' };
+        }
     }
 
     async function performEnvCheck(payload = {}) {
         let result = null;
+        const request = {
+            ...(payload && typeof payload === 'object' ? payload : {}),
+            // System check + wizard: align llama-server backend to detected CUDA 12/13.
+            syncLlamaBackend: payload?.syncLlamaBackend !== false,
+        };
         try {
-            result = await electron?.transubEnvCheck?.(payload || {});
+            result = await electron?.transubEnvCheck?.(request);
         } catch (err) {
             result = {
                 ok: false,
@@ -252,7 +313,8 @@
         if (manualBtn) {
             const manualable = canOfferManualDownload();
             manualBtn.classList.toggle('hidden', !manualable);
-            manualBtn.disabled = busy || !manualable;
+            // 一键修复进行中仍可点「手动下载」（吞吐低/卡住时的逃生口）
+            manualBtn.disabled = !manualable || (busy && !state.fixing);
         }
     }
 
@@ -284,6 +346,9 @@
             || statusOf('whisperRuntime') === 'warn'
         ) {
             kinds.push('whisper');
+        }
+        if (plan.ensureLlamaRuntime || steps.some((s) => s?.id === 'llamaServerRuntime')) {
+            kinds.push('llamaRuntime');
         }
         return kinds;
     }
@@ -359,17 +424,18 @@
         }
         const plan = result?.fix || {};
         const kinds = listNeededManualKindsFromResult(result);
+        const whlKinds = kinds.filter((k) => k !== 'llamaRuntime');
 
-        if (kinds.length && global.TransubManualWhlInstall?.openModal) {
-            const labels = kinds.map((k) => {
+        if (whlKinds.length && global.TransubManualWhlInstall?.openModal) {
+            const labels = whlKinds.map((k) => {
                 if (k === 'sensevoice') return 'SenseVoice';
                 if (k === 'whisper') return 'Whisper';
                 return 'GPU';
             });
             setSubtitleFn(`正在打开手动下载（${labels.join(' + ')}）…`);
             const res = await global.TransubManualWhlInstall.openModal({
-                kind: kinds[0],
-                kinds,
+                kind: whlKinds[0],
+                kinds: whlKinds,
             });
             if (res?.ok) {
                 setSubtitleFn(res.message || '手动安装完成，正在重新检测…');
@@ -384,6 +450,16 @@
             return { ok: false, error: res?.error || 'manual_failed' };
         }
 
+        if (kinds.includes('llamaRuntime')) {
+            setSubtitleFn('正在打开 llama-server 手动下载…');
+            const opened = await offerManualLlamaRuntimeDownload();
+            setSubtitleFn(opened.ok
+                ? (opened.message || '已打开 llama-server 下载链接')
+                : (opened.cancelled ? '已取消手动下载。' : (opened.error || '打开失败')));
+            if (opened.ok) await recheck();
+            return opened;
+        }
+
         if (Array.isArray(plan.modelIds) && plan.modelIds.length) {
             const opened = await openModelMirrorLinks(plan.modelIds);
             setSubtitleFn(opened.ok ? opened.message : (opened.error || '打开模型镜像失败'));
@@ -394,7 +470,27 @@
         return { ok: false, error: 'nothing_to_manual' };
     }
 
+    /** Active auto-fix session; used so「手动下载」can abort download mid-fix. */
+    let activeFixSession = null;
+
+    function requestFixSwitchToManual() {
+        if (!activeFixSession?.requestSwitchToManual) return false;
+        activeFixSession.requestSwitchToManual();
+        return true;
+    }
+
+    function enableManualButton(manualBtn) {
+        const btn = manualBtn || $('envCheckManualBtn');
+        if (!btn) return;
+        if (!computeFixVisibility(
+            activeFixSession?.getResult?.() || state.result,
+        ).showManual) return;
+        btn.classList.remove('hidden');
+        btn.disabled = false;
+    }
+
     async function onManualDownload() {
+        if (state.fixing && requestFixSwitchToManual()) return;
         if (state.running || state.fixing) return;
         return runManualDownloadSession();
     }
@@ -410,6 +506,7 @@
         const setBusyFn = typeof ui.setBusy === 'function' ? ui.setBusy : setBusy;
         const setFixHintFn = typeof ui.setFixHintVisible === 'function' ? ui.setFixHintVisible : setFixHintVisible;
         const fixBtn = ui.fixBtn || $('envCheckFixBtn');
+        const manualBtn = ui.manualBtn || $('envCheckManualBtn');
         const recheck = typeof ui.recheck === 'function'
             ? ui.recheck
             : async (opts) => runCheck(opts);
@@ -432,6 +529,7 @@
             fixable: false,
             openVcRedist: false,
             ensureGpu: false,
+            ensureLlamaRuntime: false,
             force: false,
             modelIds: [],
             forceIds: [],
@@ -479,9 +577,21 @@
             : window.confirm(preview);
         if (!proceed) return { ok: false, cancelled: true };
 
+        let switchToManual = false;
+        const requestSwitchToManual = () => {
+            if (switchToManual) return;
+            switchToManual = true;
+            setSubtitleFn('正在取消自动下载，改为手动下载…');
+            enableManualButton(manualBtn);
+            try { void electron?.transubEngineCancelDownload?.(); } catch (_) { /* ignore */ }
+        };
+        activeFixSession = { requestSwitchToManual, getResult };
+
         markFixing(true);
         setBusyFn(true);
         setFixHintFn(true);
+        // 修复中保持「手动下载」可点（提示文案写「可随时点」）
+        enableManualButton(manualBtn);
         setSubtitleFn('正在开始修复…');
         await new Promise((r) => setTimeout(r, 120));
 
@@ -550,6 +660,7 @@
                     );
                     if (p?.suggestManual) {
                         setFixHintFn(true);
+                        enableManualButton(manualBtn);
                         if (ui.fixHintEl) {
                             ui.fixHintEl.textContent = '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装。';
                         } else {
@@ -562,7 +673,7 @@
                 });
             }
 
-            while (roundsDone < maxRounds && !manualCancelled) {
+            while (roundsDone < maxRounds && !manualCancelled && !switchToManual) {
                 if (!planHasAutoWork(plan)) break;
 
                 const issues = envIssueSignature(getResult());
@@ -589,6 +700,7 @@
                         errors.push(err?.message || '打开 VC++ 下载页失败');
                     }
                 }
+                if (switchToManual) break;
 
                 const modelIds = Array.isArray(plan.modelIds) ? plan.modelIds.filter(Boolean) : [];
                 if (modelIds.length) {
@@ -605,7 +717,13 @@
                             skipGpuPrestep: !hasNvidiaGpuInResult(getResult()),
                             ...downloadExtra,
                         });
+                        if (switchToManual) break;
                         if (!res?.ok) {
+                            if (res?.cancelled) {
+                                manualCancelled = true;
+                                errors.push(res?.error || '已取消下载');
+                                break;
+                            }
                             const errText = res?.error || res?.message || '模型/运行库下载失败';
                             const kinds = listNeededManualKindsFromResult(getResult())
                                 .filter((k) => k !== 'gpu' || hasNvidiaGpuInResult(getResult()));
@@ -618,6 +736,7 @@
                                         secondaryLabel: '取消',
                                     })
                                     : window.confirm('自动下载失败，是否改为手动下载？');
+                                if (switchToManual) break;
                                 if (useManual) {
                                     const manualRes = await global.TransubManualWhlInstall.openModal({
                                         kind: kinds[0],
@@ -646,7 +765,7 @@
                     }
                 }
 
-                if (!manualCancelled && plan.ensureGpu && hasNvidiaGpuInResult(getResult())) {
+                if (!manualCancelled && !switchToManual && plan.ensureGpu && hasNvidiaGpuInResult(getResult())) {
                     setProgress('正在安装 GPU 支持组件…', 0, {});
                     if (!electron?.transubEngineRunDownload) {
                         errors.push('当前环境不支持 GPU 组件下载');
@@ -657,7 +776,13 @@
                             engineAutoStart: true,
                             ...downloadExtra,
                         });
+                        if (switchToManual) break;
                         if (!res?.ok) {
+                            if (res?.cancelled) {
+                                manualCancelled = true;
+                                errors.push(res?.error || '已取消下载');
+                                break;
+                            }
                             const errText = res?.error || res?.message || 'GPU 支持安装失败';
                             const manualRes = await global.TransubManualWhlInstall?.offerAfterFailure?.({
                                 kind: 'gpu',
@@ -673,20 +798,106 @@
                     }
                 }
 
-                if (manualCancelled) break;
+                if (!manualCancelled && !switchToManual && plan.ensureLlamaRuntime) {
+                    const llamaStep = (plan.steps || []).find((s) => s?.id === 'llamaServerRuntime');
+                    const llamaRuntimeId = String(
+                        plan.llamaRuntimeId || llamaStep?.runtimeId || '',
+                    ).trim();
+                    setProgress(
+                        llamaRuntimeId
+                            ? `正在安装 llama-server 运行时（${llamaRuntimeId}）…`
+                            : '正在更新 llama-server 运行时…',
+                        0,
+                        {},
+                    );
+                    if (!electron?.transubAdvancedManagedLlmInstallRuntime) {
+                        errors.push('当前环境不支持 llama-server 运行时安装');
+                    } else {
+                        let unsubLlama = null;
+                        try {
+                            if (electron.onAdvancedManagedLlmProgress) {
+                                unsubLlama = electron.onAdvancedManagedLlmProgress((p) => {
+                                    setProgress(
+                                        p?.message || '更新 llama-server…',
+                                        Number.isFinite(Number(p?.pct ?? p?.percent))
+                                            ? Number(p.pct ?? p.percent)
+                                            : lastFixPct,
+                                        {
+                                            downloadedBytes: p?.downloadedBytes,
+                                            totalBytes: p?.totalBytes,
+                                            bytesPerSecond: p?.bytesPerSecond,
+                                        },
+                                    );
+                                });
+                            }
+                            // Prefer hardware-matched CUDA 12/13 package when known.
+                            const res = await electron.transubAdvancedManagedLlmInstallRuntime({
+                                force: true,
+                                runtimeId: llamaRuntimeId || undefined,
+                            });
+                            if (switchToManual) break;
+                            if (!res?.ok) {
+                                const errText = res?.error || res?.message || 'llama-server 运行时更新失败';
+                                const useManual = global.TransubAppConfirm
+                                    ? await global.TransubAppConfirm({
+                                        title: '运行时自动下载失败',
+                                        message: `${String(errText).slice(0, 500)}\n\n是否改为浏览器手动下载？`,
+                                        primaryLabel: '手动下载',
+                                        secondaryLabel: '跳过',
+                                    })
+                                    : window.confirm('运行时自动下载失败，是否改为手动下载？');
+                                if (switchToManual) break;
+                                if (useManual) {
+                                    const manualRes = await offerManualLlamaRuntimeDownload(errText);
+                                    if (manualRes?.cancelled) {
+                                        manualCancelled = true;
+                                        errors.push(errText);
+                                    } else if (!manualRes?.ok) {
+                                        errors.push(errText);
+                                    }
+                                } else {
+                                    errors.push(errText);
+                                }
+                            }
+                        } catch (err) {
+                            errors.push(err?.message || 'llama-server 运行时更新失败');
+                        } finally {
+                            try { unsubLlama?.(); } catch (_) { /* ignore */ }
+                        }
+                    }
+                }
+
+                if (manualCancelled || switchToManual) break;
 
                 setProgress('本轮修复完成，正在重新检测剩余项…', lastFixPct, lastFixMeta);
                 const next = await recheck({ duringFix: true });
                 if (next) setResult(next);
                 plan = cloneFixPlan(getResult()?.fix);
+                enableManualButton(manualBtn);
             }
         } catch (err) {
             errors.push(err?.message || String(err));
         } finally {
             if (elapsedTimer) clearInterval(elapsedTimer);
             try { unsub?.(); } catch (_) { /* ignore */ }
+            activeFixSession = null;
             markFixing(false);
             setFixHintFn(false);
+        }
+
+        if (switchToManual) {
+            setSubtitleFn('已改为手动下载…');
+            setBusyFn(false);
+            const manualUi = {
+                getResult,
+                setSubtitle: setSubtitleFn,
+                recheck: (opts) => recheck(opts),
+            };
+            const manualRes = await runManualDownloadSession(manualUi);
+            if (typeof ui.onDone === 'function') {
+                ui.onDone({ switchedToManual: true, manual: manualRes });
+            }
+            return { ok: !!manualRes?.ok, switchedToManual: true, manual: manualRes };
         }
 
         if (manualCancelled) {
@@ -736,7 +947,8 @@
         }
         if (manualBtn) {
             manualBtn.classList.toggle('hidden', !vis.showManual);
-            manualBtn.disabled = state.running || state.fixing || !vis.showManual;
+            // 检测中禁用；一键修复中（含修复内重检）仍可点「手动下载」
+            manualBtn.disabled = !vis.showManual || (state.running && !state.fixing);
         }
     }
 
@@ -749,7 +961,8 @@
         }
         if (manualBtn) {
             manualBtn.classList.toggle('hidden', !vis.showManual);
-            manualBtn.disabled = busy || !vis.showManual;
+            // busy 时仅在「非修复」场景禁用；一键修复中保持可点
+            manualBtn.disabled = !vis.showManual || (busy && !fixing);
         }
         return vis;
     }
@@ -775,7 +988,7 @@
         }
         renderItems(DEFAULT_ITEMS.map((it) => ({ ...it, status: 'checking' })));
 
-        const result = await performEnvCheck(opts.payload || { quick: true });
+        const result = await performEnvCheck(opts.payload || { quick: true, syncLlamaBackend: true });
         state.result = result;
         renderItems(result.items);
         if (!duringFix) {
@@ -807,6 +1020,7 @@
                 fixable: !!plan.fixable,
                 openVcRedist: !!plan.openVcRedist,
                 ensureGpu: !!plan.ensureGpu,
+                ensureLlamaRuntime: !!plan.ensureLlamaRuntime,
                 force: !!plan.force,
                 modelIds: Array.isArray(plan.modelIds) ? plan.modelIds.slice() : [],
                 forceIds: Array.isArray(plan.forceIds) ? plan.forceIds.slice() : [],
@@ -819,7 +1033,10 @@
     function planHasAutoWork(plan) {
         if (!plan) return false;
         const models = Array.isArray(plan.modelIds) ? plan.modelIds.filter(Boolean) : [];
-        return !!plan.openVcRedist || !!plan.ensureGpu || models.length > 0;
+        return !!plan.openVcRedist
+            || !!plan.ensureGpu
+            || !!plan.ensureLlamaRuntime
+            || models.length > 0;
     }
 
     function closeModal() {
@@ -930,6 +1147,7 @@
         applyFixButtons,
         runAutoFixSession,
         runManualDownloadSession,
+        requestFixSwitchToManual,
         listNeededManualKindsFromResult,
     };
 }(window));

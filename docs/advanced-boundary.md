@@ -2,38 +2,46 @@
 
 ## 开源边界（Core / MIT）
 
-- 媒体导入、**Transub Engine**（默认转录/免费译中）、可选 TransWithAI、字幕编辑、规则后处理、工作流引擎
+- 媒体导入、**Transub Engine**（默认转录/译中）、字幕编辑、规则后处理、工作流引擎
 - Pro **插件契约**：许可状态 IPC、BYOK 配置、模块加载路径、工作流步骤挂载点
 - 开源侧：`advanced-gates.js` / `advanced-bridge.js`（门控与 IPC）、`advanced-entitlement-core.js`、`advanced-license-crypto-core.js`、智能翻译 builtin 回退
 - **不含**语境重构 / 影片理解重构 / 双语语义审阅的算法与提示词实现（见闭源模块）
 - 引擎边界详见 [engine-boundary.md](./engine-boundary.md)
-- 与引擎/TWAI 任务共用主进程 **单任务锁**（见 `compute-task-lock.js`）：主窗口批处理与编辑器 LLM/重转写互斥；批次内嵌套翻译可重入
+- 与引擎任务共用主进程 **单任务锁**（见 `compute-task-lock.js`）：主窗口批处理与编辑器 LLM/重转写互斥；批次内嵌套翻译可重入
 
 ## 闭源模块
 
-| 项 | 约定 |
-|----|------|
-| 查找路径 | `{安装目录}/_advanced/index.js` 或 `{可写目录}/advanced-modules/index.js` |
-| 导出 | `{ name?, version?, features?, getInfo?, contextReconstruct(payload)?, filmContextReconstruct(payload)?, bilingualSemanticReview(payload)? }` |
-| 首发能力 | `contextReconstruct`、`filmContextReconstruct`、`smartTranslate`（智能翻译 Pro）、`filmAudioEnhance`（影视音频增强）、`bilingualSemanticReview` |
-| 构建 | `npm run build:advanced` → 生成压缩后的 `_advanced/index.js`（gitignore，勿提交） |
-| 发行 | `electron-builder` `extraFiles` 将 `_advanced` 放到 exe 旁；**asar 不含**算法源码 |
-| LLM | 用户 BYOK；密钥经 `safeStorage` 加密保存在 `transub-advanced.json` 的 `byokKeyBlob` |
+
+| 项    | 约定                                                                                                                                                                                                                                                                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 查找路径 | `{安装目录}/_advanced/index.js` 或 `{可写目录}/advanced-modules/index.js`                                                                                                                                                                                                                   |
+| 导出   | `{ name?, version?, features?, getInfo?, contextReconstruct(payload)?, filmContextReconstruct(payload)?, bilingualSemanticReview(payload)? }`                                                                                                                                      |
+| 首发能力 | `contextReconstruct`、`filmContextReconstruct`、`smartTranslate`（智能翻译 Pro）、`filmAudioEnhance`（影视音频增强）、`bilingualSemanticReview`（可返回 `suggestedTarget` 供一键采纳）、`qcSmartFix`（QC 智能修复：断句 / 局部重转写 / 润色 / 可选语义审阅；主窗口可传 `pairPath`/`pairCues`；按内容画像调 CPS/清杂音/重转写强度；兼容 `contextReconstruct`） |
+| 构建   | `npm run build:advanced` → 生成压缩后的 `_advanced/index.js`（gitignore，勿提交）                                                                                                                                                                                                              |
+| 发行   | `electron-builder` `extraFiles` 将 `_advanced` 放到 exe 旁；**asar 不含**算法源码                                                                                                                                                                                                             |
+| LLM  | 用户 BYOK；密钥经 `safeStorage` 加密保存在 `transub-advanced.json` 的 `byokKeyBlob`                                                                                                                                                                                                            |
+
 
 未安装闭源模块时：
 
 - **开发（未打包）**：回退仓库内置实现，便于调试
 - **正式包**：对应 Pro 能力直接报错（`advanced_module_missing`），不再内置明文算法
 
+
+
 ## 大版本内买断默认参数（已实现策略常量）
 
-| 项 | 值 |
-|----|----|
-| 设备 | 最多同时 **1** 台 |
-| 换机 | **每 30 天最多成功换机 1 次** |
-| 离线 | 激活后可用；**每 30 天需联网复核** |
-| LLM | 用户 BYOK 外接，或软件内选模型（下载 GGUF + 自带 llama-server） |
-| 版本 | **大版本内买断**：含本主版本（如 3.x）内 Pro 功能集；下一主版本（如 4.0）需另行购买（产品文案；代码以 feature 列表为准） |
+
+| 项   | 值                                                                         |
+| --- | ------------------------------------------------------------------------- |
+| 设备  | 最多同时 **1** 台                                                              |
+| 换机  | **每 30 天最多成功换机 1 次**                                                      |
+| 离线  | 激活后可用；**每 30 天需联网复核**                                                     |
+| LLM | 用户 BYOK 外接，或软件内选模型（下载 GGUF + 自带 llama-server）                             |
+| 版本  | **大版本内买断**：含本主版本（如 3.x）内 Pro 功能集；下一主版本（如 4.0）需另行购买（产品文案；代码以 feature 列表为准） |
+
+
+
 
 ## 许可密钥
 
@@ -55,28 +63,35 @@ node tools/sign-advanced-license.js --count=20 --prefix=pro2026 --out=keys.txt
 set TRANSUB_ADVANCED_DEV_UNLOCK=1
 ```
 
+
+
 ## 购买与发货（爱发电）
 
-| 项 | 说明 |
-|----|------|
-| 购买页 | [爱发电 · Transub](https://afdian.com/a/transub)（**大版本内买断**商品） |
-| 应用入口 | 设置 → **Pro** →「在爱发电购买 Pro」；关于窗口亦可打开 |
-| 推荐激活 | 付款后复制订单号 → 设置 → Pro → **领取并激活**（查单校验后签发并本机绑定） |
-| 备用激活 | 粘贴 `TSUB1.…` 密钥 → **激活**（兑换码池 / 人工发货仍可用） |
-| 覆盖范围 | 本主版本（如 3.x）内 Pro 功能；下一主版本需另行购买（以爱发电商品说明为准） |
-| 自动发货 | Cloudflare Worker：[`services/afdian-fulfillment/`](../services/afdian-fulfillment/)；Webhook + `/redeem`；KV 按订单幂等 |
-| 许可服务器复核 | `licenseServerUrl` 仍为预留；联网复核暂为本地验签刷新 |
 
-Worker 部署与 Secrets 见 [`services/afdian-fulfillment/README.md`](../services/afdian-fulfillment/README.md)。生产领取基址：`https://pay.kimtem.net`（Webhook：`/webhook/afdian`）。私钥仅放本机 / Worker Secret，勿提交仓库。
+| 项     | 说明                                                                                                               |
+| ----- | ---------------------------------------------------------------------------------------------------------------- |
+| 购买页   | [爱发电 · Transub](https://afdian.com/a/transub)（**大版本内买断**商品）                                                      |
+| 应用入口  | 设置 → **Pro** →「在爱发电购买 Pro」；关于窗口亦可打开                                                                              |
+| 推荐激活  | 付款后复制订单号 → 设置 → Pro → **领取并激活**（查单校验后签发并本机绑定）                                                                    |
+| 备用激活  | 粘贴 `TSUB1.…` 密钥 → **激活**（兑换码池 / 人工发货仍可用）                                                                         |
+| 覆盖范围  | 本主版本（如 3.x）内 Pro 功能；下一主版本需另行购买（以爱发电商品说明为准）                                                                       |
+| 自动发货  | Cloudflare Worker：`[services/afdian-fulfillment/](../services/afdian-fulfillment/)`；Webhook + `/redeem`；KV 按订单幂等 |
+| 设备硬限制 | Worker KV `lic:<licenseId>`：**同时 1 台**；换机冷却 30 天；激活/换机/复核/清除许可均联网同步；开发解锁跳过服务端                                    |
+| 许可复核  | 联网复核走 Worker `/license/revalidate`（校验本机仍在绑定列表）                                                                   |
+
+
+Worker 部署与 Secrets 见 `[services/afdian-fulfillment/README.md](../services/afdian-fulfillment/README.md)`。生产领取基址：`https://pay.kimtem.net`（Webhook：`/webhook/afdian`）。私钥仅放本机 / Worker Secret，勿提交仓库。
 
 ## 大模型双通道
 
 设置 → **高级** → **大模型**：
 
-| 来源 | 说明 |
-|------|------|
-| **外接模型（BYOK）** | 填写 Base URL / 模型 / API Key（云端或自建 OpenAI 兼容接口，含本机 Ollama） |
-| **软件内选模型** | 软件下载推荐 GGUF；**llama-server** 后端在设置 → **运行环境** 安装/切换（有 NVIDIA 且驱动 CUDA≥12 时默认 CUDA 12，否则 Vulkan）；模型目录与用途选用在设置 → Pro → 大模型；调用重构时自动启动本地 OpenAI 兼容服务 |
+
+| 来源             | 说明                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **外接模型（BYOK）** | 填写 Base URL / 模型 / API Key（云端或自建 OpenAI 兼容接口，含本机 Ollama）                                                                                         |
+| **软件内选模型**     | 软件下载推荐 GGUF；**llama-server** 后端在设置 → **运行环境** 安装/切换（有 NVIDIA 且驱动 CUDA≥12 时默认 CUDA 12，否则 Vulkan）；模型目录与用途选用在设置 → Pro → 大模型；调用重构时自动启动本地 OpenAI 兼容服务 |
+
 
 数据目录：`{可写根目录}/advanced-llm/`（`runtime/` + `models/`）。
 
@@ -112,13 +127,15 @@ Worker 部署与 Secrets 见 [`services/afdian-fulfillment/README.md`](../servic
 2. 引擎在 ASR 前运行 **Demucs 人声分离**，再按电影预设提高 VAD 阈值
 3. 引擎侧需安装 Demucs（设置 → 环境 → Transub Engine）
 
-| 能力 | 层级 |
-|------|------|
-| 默认 VAD + 专家阈值/时长 | 免费 |
-| 推理翻译（Sakura / 本地 GGUF） | 免费 |
-| 忠实语气 | 免费 |
-| 智能翻译 | **Pro**（影片简要 → 分块译 → 一致性） |
-| 影视音频增强（Pro） | Demucs + 电影级 VAD |
-| 语境 / 影片理解重构（Pro） | 需 `_advanced` + 许可 |
+
+| 能力                     | 层级                        |
+| ---------------------- | ------------------------- |
+| 默认 VAD + 专家阈值/时长       | 免费                        |
+| 推理翻译（Sakura / 本地 GGUF） | 免费                        |
+| 忠实语气                   | 免费                        |
+| 智能翻译                   | **Pro**（影片简要 → 分块译 → 一致性） |
+| 影视音频增强（Pro）            | Demucs + 电影级 VAD          |
+| 语境 / 影片理解重构（Pro）       | 需 `_advanced` + 许可        |
+
 
 许可说明见根目录 [LICENSE](../LICENSE)、[LICENSE-PRO](../LICENSE-PRO)、[NOTICE](../NOTICE)。发布前可跑 `npm run check:release`（**不要**在未剥离专有源码前 `git push`）。

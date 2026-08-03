@@ -22,7 +22,7 @@
     });
 
     const PROFILE_LABELS = Object.freeze({
-        av_soft: '日语 AV / 软声',
+        av_soft: '日语 / 软声',
         film: '影视 / 有配乐',
         talk: '对白 / 访谈',
         unknown: '未识别',
@@ -162,27 +162,59 @@
         'fc2', 'ppv', 'mngs', 'cjod', 'juq', 'fthtd',
     ]);
 
-    function loadOpaqueAvMakers() {
-        const merge = (list) => {
-            if (!Array.isArray(list)) return 0;
-            let n = 0;
-            for (const raw of list) {
-                const p = String(raw || '').trim().toLowerCase();
-                if (!/^[a-z][a-z0-9]{1,5}$/.test(p)) continue;
-                if (!KNOWN_AV_MAKERS.has(p)) {
-                    KNOWN_AV_MAKERS.add(p);
-                    n += 1;
-                }
-            }
-            return n;
-        };
+    const KNOWN_AV_MAKERS_FALLBACK = [...KNOWN_AV_MAKERS];
 
+    function mergeAvMakers(list) {
+        if (!Array.isArray(list)) return 0;
+        let n = 0;
+        for (const raw of list) {
+            const p = String(raw || '').trim().toLowerCase();
+            if (!/^[a-z][a-z0-9]{1,5}$/.test(p)) continue;
+            if (!KNOWN_AV_MAKERS.has(p)) {
+                KNOWN_AV_MAKERS.add(p);
+                n += 1;
+            }
+        }
+        return n;
+    }
+
+    function decodeAm1Buffer(buf) {
+        const zlib = require('zlib');
+        if (!Buffer.isBuffer(buf) || buf.length < 5) return null;
+        if (buf.subarray(0, 4).toString('utf8') !== 'AM01') return null;
+        const key = Buffer.from('TransubAvMakers01');
+        const xored = Buffer.alloc(buf.length - 4);
+        for (let i = 0; i < xored.length; i++) xored[i] = buf[i + 4] ^ key[i % key.length];
+        const payload = JSON.parse(zlib.inflateSync(xored).toString('utf8'));
+        return payload && Array.isArray(payload.makers) ? payload.makers : null;
+    }
+
+    function resetAvMakersToFallback() {
+        KNOWN_AV_MAKERS.clear();
+        for (const p of KNOWN_AV_MAKERS_FALLBACK) KNOWN_AV_MAKERS.add(p);
+    }
+
+    function reloadAvMakersFromAm1Buffer(buf) {
+        const makers = decodeAm1Buffer(buf);
+        if (!makers) return false;
+        resetAvMakersToFallback();
+        mergeAvMakers(makers);
+        return true;
+    }
+
+    function reloadAvMakersFromBundled() {
+        resetAvMakersToFallback();
+        loadOpaqueAvMakers();
+        return true;
+    }
+
+    function loadOpaqueAvMakers() {
         // Renderer: sync embed loader (see av-makers-embed.js)
         try {
             const g = typeof globalThis !== 'undefined' ? globalThis
                 : (typeof window !== 'undefined' ? window : null);
             if (g && typeof g.__TRANSUB_LOAD_AV_MAKERS__ === 'function') {
-                merge(g.__TRANSUB_LOAD_AV_MAKERS__());
+                mergeAvMakers(g.__TRANSUB_LOAD_AV_MAKERS__());
                 return;
             }
         } catch { /* ignore */ }
@@ -192,17 +224,10 @@
             if (typeof require === 'undefined' || typeof Buffer === 'undefined') return;
             const fs = require('fs');
             const path = require('path');
-            const zlib = require('zlib');
             const filePath = path.join(__dirname, 'av-makers.am1');
             if (!fs.existsSync(filePath)) return;
-            const buf = fs.readFileSync(filePath);
-            if (!Buffer.isBuffer(buf) || buf.length < 5) return;
-            if (buf.subarray(0, 4).toString('utf8') !== 'AM01') return;
-            const key = Buffer.from('TransubAvMakers01');
-            const xored = Buffer.alloc(buf.length - 4);
-            for (let i = 0; i < xored.length; i++) xored[i] = buf[i + 4] ^ key[i % key.length];
-            const payload = JSON.parse(zlib.inflateSync(xored).toString('utf8'));
-            merge(payload && payload.makers);
+            const makers = decodeAm1Buffer(fs.readFileSync(filePath));
+            mergeAvMakers(makers);
         } catch { /* ignore */ }
     }
 
@@ -1343,8 +1368,9 @@
                 }
                 out.engineAsrModel = asr;
             } else if (out.engineAsrModel && !installed.has(out.engineAsrModel)) {
-                notes.push(`ASR ${out.engineAsrModel} 未安装，已移除`);
-                delete out.engineAsrModel;
+                // Keep declaring the sense ASR so start can require install —
+                // never drop the override (form ASR would silently win).
+                notes.push(`ASR ${out.engineAsrModel} 未安装（待下载）`);
             }
         }
 
@@ -1423,7 +1449,9 @@
                         : `MT → ${prefer}（待下载）`);
                 }
             } else {
-                // Non-Japanese: never Sakura. Prefer general LLM; avoid forcing Opus.
+                // Non-Japanese: never Sakura. Prefer general LLM; declare pending rather than
+                // clearing so form Opus / defaults cannot silently replace the sense scheme.
+                const preferLlm = generalLlmWanted[0] || '';
                 if (mtIsSakura || !curMt || mtIsOpus) {
                     if (generalLlmHit) {
                         setMt(generalLlmHit, mtIsSakura
@@ -1431,17 +1459,23 @@
                             : (mtIsOpus
                                 ? `优先推理翻译 · MT ${curMt} → ${generalLlmHit}`
                                 : `优先推理翻译 · MT → ${generalLlmHit}`));
+                    } else if (preferLlm) {
+                        setMt(preferLlm, mtIsSakura
+                            ? `非日语 · 禁用 Sakura · 推理 → ${preferLlm}（待下载）`
+                            : (mtIsOpus
+                                ? `优先推理翻译 · MT ${curMt} → ${preferLlm}（待下载）`
+                                : `优先推理翻译 · MT → ${preferLlm}（待下载）`));
                     } else if (mtIsSakura) {
-                        // No LLM installed: drop Sakura; do not force Opus (form/engine may still choose).
                         clearMt(`非日语（${lang || '?'}）· 禁用 Sakura · 未强制机器翻译`);
-                    } else if (mtIsOpus) {
-                        // Sense should not lock Opus when inference is preferred and unavailable —
-                        // clear override so form translate-mode can win.
-                        clearMt(`感知不强制机器翻译 · 已移除 ${curMt}`);
                     }
-                    // else: empty MT — leave unset (inherit form)
-                } else if (curMt && installed.size && !installed.has(curMt) && generalLlmHit) {
-                    setMt(generalLlmHit, `MT ${curMt} 未安装 → 推理 ${generalLlmHit}`);
+                } else if (curMt && installed.size && !installed.has(curMt)) {
+                    if (generalLlmHit) {
+                        setMt(generalLlmHit, `MT ${curMt} 未安装 → 推理 ${generalLlmHit}`);
+                    } else if (preferLlm) {
+                        setMt(preferLlm, `MT ${curMt} 未安装 → 推理 ${preferLlm}（待下载）`);
+                    } else {
+                        notes.push(`MT ${curMt} 未安装（待下载）`);
+                    }
                 }
             }
             if (lang && lang !== 'ja' && Object.prototype.hasOwnProperty.call(out, 'sakuraNsfwPrompt')) {
@@ -1515,7 +1549,9 @@
             });
         }
 
-        if (translateLike) {
+        // Smart / Pro LLM translate does not consume engine MT (incl. Sakura).
+        const smartMt = ctx.smartTranslate === true || String(ctx.translateMode || '') === 'smart';
+        if (translateLike && !smartMt) {
             if (allowSakuraMt) {
                 push({
                     id: 'sakura-1.5b',
@@ -1693,7 +1729,7 @@
             ? '；已覆盖表单中的音频/VAD（可点文件名旁魔术棒切换）'
             : '';
         const softNote = !forceAdopt && classification.confidence < APPLY_CONFIDENCE
-            ? '；置信度偏低仍已默认采纳'
+            ? '；置信度偏低仍已强制采纳'
             : '';
 
         return {
@@ -1790,6 +1826,98 @@
     }
 
     /**
+     * QC 智能处理按素材类型的软默认（CPS / 清杂音 / 是否重转写 / LLM 强度等）。
+     * 用户显式勾选或传参时优先；仅填充 undefined/null。
+     */
+    const QC_PRESETS_BY_PROFILE = Object.freeze({
+        av_soft: Object.freeze({
+            maxCps: 20,
+            removeNoise: true,
+            removeDuplicates: true,
+            compressRepetition: true,
+            // Pro 子项默认关（编辑器不勾选）；主窗口点「智能修复」时再显式打开
+            llmSplit: false,
+            retranscribeConnected: false,
+            smartFix: false,
+            semanticReview: false,
+            intensity: 'light',
+            maxSmartCues: 40,
+            maxLlmSplitTargets: 24,
+        }),
+        film: Object.freeze({
+            maxCps: 18,
+            // 配乐/拟声易被当成碎片；影视优先靠 VAD，不默认猛清杂音
+            removeNoise: false,
+            removeDuplicates: true,
+            compressRepetition: true,
+            llmSplit: false,
+            retranscribeConnected: false,
+            smartFix: false,
+            semanticReview: false,
+            intensity: 'light',
+            maxSmartCues: 32,
+            maxLlmSplitTargets: 20,
+        }),
+        talk: Object.freeze({
+            maxCps: 16,
+            removeNoise: true,
+            removeDuplicates: true,
+            compressRepetition: true,
+            llmSplit: false,
+            retranscribeConnected: false,
+            smartFix: false,
+            semanticReview: false,
+            intensity: 'medium',
+            maxSmartCues: 48,
+            maxLlmSplitTargets: 28,
+        }),
+        unknown: Object.freeze({
+            maxCps: 18,
+            removeNoise: true,
+            removeDuplicates: true,
+            compressRepetition: true,
+            llmSplit: false,
+            retranscribeConnected: false,
+            smartFix: false,
+            semanticReview: false,
+            intensity: 'light',
+            maxSmartCues: 40,
+            maxLlmSplitTargets: 24,
+        }),
+    });
+
+    function qcPresetForProfile(profile) {
+        const id = Object.prototype.hasOwnProperty.call(QC_PRESETS_BY_PROFILE, profile)
+            ? profile
+            : PROFILES.unknown;
+        return { ...QC_PRESETS_BY_PROFILE[id] };
+    }
+
+    /**
+     * Soft-merge：仅当 opts 中键为 undefined/null 时用画像预设填充。
+     * @param {object} opts
+     * @param {string} [profile]
+     */
+    function mergeQcOptsWithProfile(opts = {}, profile) {
+        const preset = qcPresetForProfile(profile);
+        const out = { ...(opts && typeof opts === 'object' ? opts : {}) };
+        for (const [key, value] of Object.entries(preset)) {
+            if (out[key] === undefined || out[key] === null) out[key] = value;
+        }
+        return out;
+    }
+
+    function describeQcPresetHint(profile) {
+        const preset = qcPresetForProfile(profile);
+        const label = PROFILE_LABELS[profile] || PROFILE_LABELS.unknown;
+        const parts = [`素材 ${label}`, `CPS≤${preset.maxCps}`];
+        if (!preset.removeNoise) parts.push('轻清杂音');
+        if (!preset.retranscribeConnected) parts.push('跳过重转写');
+        if (preset.intensity && preset.intensity !== 'light') parts.push(`润色 ${preset.intensity}`);
+        return parts.join(' · ');
+    }
+
+    /**
      * Post-batch reconstruct suggestion (editor workflows). No auto-run.
      * @param {{ profile?: string, task?: string }} input
      * @returns {{ mode: 'film'|'basic'|'none', message: string }}
@@ -1832,6 +1960,26 @@
         talk: '访谈',
         unknown: '',
     });
+
+    /**
+     * Effective MT label for sense UI (magic wand tip / start logs).
+     * When form translate mode is smart, engine MT (e.g. Sakura) is not used.
+     * @param {object} overrides
+     * @param {{
+     *   task?: string,
+     *   translateMode?: string,
+     *   smartTranslate?: boolean,
+     * }} ctx
+     * @returns {string}
+     */
+    function describeSenseMtForUi(overrides = {}, ctx = {}) {
+        const task = String(ctx.task || '').trim();
+        if (task === 'transcribe') return '';
+        const mode = String(ctx.translateMode || '').trim();
+        const smart = ctx.smartTranslate === true || mode === 'smart';
+        if (smart) return '智能翻译';
+        return String(overrides?.engineMtModel || '').trim();
+    }
 
     /**
      * Effective audio / VAD method from options (after any soft-merge).
@@ -1883,7 +2031,7 @@
                 tone: 'off',
                 chipLabel: '感知 · 关',
                 detail: '智能感知已关闭 · 按表单参数生成',
-                title: '关闭后新文件不再感知；已有结果不参与生成',
+                title: '关闭后新文件不再感知，开始任务按表单参数；点魔术棒「不采纳」的项也按表单',
             };
         }
         if (sensingCount > 0) {
@@ -1891,7 +2039,7 @@
                 tone: 'apply',
                 chipLabel: `感知中 ${sensingCount}`,
                 detail: `正在分析素材类型与参数（${sensingCount}）`,
-                title: '智能感知进行中',
+                title: '智能感知进行中；完成前无法开始（避免误用表单参数）',
             };
         }
         if (adoptedCount > 0) {
@@ -1899,30 +2047,30 @@
                 tone: 'apply',
                 chipLabel: `已采纳 ${adoptedCount}`,
                 detail: '',
-                title: `已采纳 ${adoptedCount} 项：开始时按文件覆盖参数（见列表文件名旁图标）`,
+                title: `已采纳 ${adoptedCount} 项：开始时强制按感知方案覆盖参数（缺模型须先安装）`,
             };
         }
         if (doneCount > 0) {
             return {
                 tone: 'suggest',
                 chipLabel: `已感知 ${doneCount}`,
-                detail: '有感知结果但未采纳（可点文件名旁魔术棒采纳）',
-                title: '感知完成但未采纳',
+                detail: '有感知结果但未采纳（点魔术棒采纳，或不采纳后按表单）',
+                title: '感知完成但未采纳；开启感知时须采纳方案、不采纳或关闭感知后才能开始',
             };
         }
         if (itemCount > 0) {
             return {
                 tone: 'idle',
                 chipLabel: '感知 · 开',
-                detail: '拖入后自动分析并默认采纳',
-                title: '智能感知已开启；结果默认采纳，可点文件名旁魔术棒切换采纳',
+                detail: '拖入后自动分析并强制采纳',
+                title: '智能感知已开启；结果强制采纳，可点文件名旁魔术棒不采纳或关闭感知改用表单',
             };
         }
         return {
             tone: 'idle',
             chipLabel: '感知 · 开',
-            detail: '拖入视频后自动分析类型与参数（默认采纳）',
-            title: '智能感知已开启；结果默认采纳，可点文件名旁魔术棒切换采纳',
+            detail: '拖入视频后自动分析类型与参数（强制采纳）',
+            title: '智能感知已开启；结果强制采纳，可点文件名旁魔术棒不采纳或关闭感知改用表单',
         };
     }
 
@@ -1984,8 +2132,13 @@
         promoteClassificationFromEvidence,
         resolveSenseFromClassification,
         suggestPostReconstructMode,
+        QC_PRESETS_BY_PROFILE,
+        qcPresetForProfile,
+        mergeQcOptsWithProfile,
+        describeQcPresetHint,
         formatClassificationLog,
         describeAudioMethod,
+        describeSenseMtForUi,
         describeAutoSenseUi,
         describeContentProfileUi,
         profileBadge,
@@ -1993,5 +2146,7 @@
         extractAvCodesFromPath,
         isLikelyStandaloneAvCode,
         basenameOf,
+        reloadAvMakersFromAm1Buffer,
+        reloadAvMakersFromBundled,
     };
 }));

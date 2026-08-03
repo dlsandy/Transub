@@ -1,5 +1,5 @@
 /**
- * 下载离线 UI 资源（Font Awesome）
+ * 下载/同步离线 UI 资源（Font Awesome、opencc-js）
  * 运行: node tools/setup-vendor-assets.js
  */
 const fs = require('fs');
@@ -9,6 +9,22 @@ const http = require('http');
 
 const ROOT = path.join(__dirname, '..');
 const VENDOR = path.join(ROOT, 'src', 'vendor');
+
+function syncOpenccVendor() {
+    const srcJs = path.join(ROOT, 'node_modules', 'opencc-js', 'dist', 'umd', 'full.js');
+    const srcLic = path.join(ROOT, 'node_modules', 'opencc-js', 'LICENSE');
+    const destDir = path.join(VENDOR, 'opencc-js');
+    const destJs = path.join(destDir, 'full.js');
+    const destLic = path.join(destDir, 'LICENSE');
+    if (!fs.existsSync(srcJs)) {
+        console.warn('[setup-vendor-assets] 未找到 opencc-js，请先 npm install');
+        return;
+    }
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.copyFileSync(srcJs, destJs);
+    if (fs.existsSync(srcLic)) fs.copyFileSync(srcLic, destLic);
+    console.log(`sync vendor/opencc-js/full.js (${fs.statSync(destJs).size} bytes)`);
+}
 
 const ASSETS = [
     {
@@ -63,6 +79,7 @@ async function main() {
         console.log(`${data.length} bytes`);
     }
 
+    syncOpenccVendor();
     console.log('vendor assets ready');
 }
 

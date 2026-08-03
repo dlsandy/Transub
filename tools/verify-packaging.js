@@ -65,8 +65,9 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-text-presets-core.js',
     'js/subtitle-workflows-core.js',
     'js/subtitle-chinese-core.js',
-    'js/subtitle-chinese-dict.js',
+    'vendor/opencc-js/full.js',
     'js/subtitle-qc-core.js',
+    'js/subtitle-qc-smart-core.js',
     'js/subtitle-glossary-core.js',
     'js/subtitle-fluency-core.js',
     'js/mt-sanitize-core.js',
@@ -107,6 +108,8 @@ const ELECTRON_MUST_EXIST = [
     'electron/engine-mt-adapter.js',
     'electron/advanced-bridge.js',
     'electron/advanced-gates.js',
+    'electron/tdp-fs.js',
+    'electron/tdp-runtime.js',
     'electron/sakura-mt.js',
     'electron/sakura-translate.js',
     'electron/transwithai-bridge.js',
@@ -158,13 +161,10 @@ function packageFilesCover(relPosix) {
     if (normalized === 'package.json') {
         return files.includes('package.json');
     }
-    if (normalized.startsWith('src/js/')) {
+    if (normalized.startsWith('src/js/') || normalized.startsWith('src/vendor/')) {
         const base = path.posix.basename(normalized);
-        if (files.includes('src/js/*-core.js') && /-core\.js$/.test(base)) {
+        if (files.includes('src/js/*-core.js') && normalized.startsWith('src/js/') && /-core\.js$/.test(base)) {
             // still respect !src/js/... exclusions above
-            return true;
-        }
-        if (files.includes('src/js/subtitle-chinese-dict.js') && base === 'subtitle-chinese-dict.js') {
             return true;
         }
         if (files.includes('src/js/tone-adapt.tz1') && base === 'tone-adapt.tz1') {
@@ -240,7 +240,7 @@ function collectSrcJsRequiresFromElectron() {
     // Cores may also require sibling cores / dict
     const srcJs = path.join(root, 'src', 'js');
     for (const file of listJsFiles(srcJs)) {
-        if (!/[-]core\.js$/.test(file) && !file.endsWith('subtitle-chinese-dict.js')) continue;
+        if (!/[-]core\.js$/.test(file)) continue;
         const relCore = path.relative(root, file).split(path.sep).join('/');
         if (isProprietaryAsarPath(relCore)) continue;
         const text = fs.readFileSync(file, 'utf8');
@@ -380,6 +380,14 @@ function main() {
         }
     }
 
+    // Bundled TDP language pack (Pro hot-reload overlay; neutral filename)
+    const tdpBundledRel = 'shared/tdp/tdp-bundled.tpack';
+    if (!fs.existsSync(path.join(root, tdpBundledRel))) {
+        errors.push(`缺少语言优化包: ${tdpBundledRel}（用 tools/encode-tdp-pack.js 生成）`);
+    } else if (!packageFilesCover(tdpBundledRel)) {
+        errors.push(`package.json build.files 可能未打包: ${tdpBundledRel}`);
+    }
+
     // Opaque tone-adapt payload (read via fs from tone-adapt-lexicon-core, not require())
     const toneAdaptRel = 'src/js/tone-adapt.tz1';
     if (!fs.existsSync(path.join(root, toneAdaptRel))) {
@@ -494,12 +502,23 @@ function main() {
     } else {
         const filter = Array.isArray(engineExtra.filter) ? engineExtra.filter.map(String) : [];
         const requiredExcludes = [
+            '!wheels-edition/**',
             '!models/asr/**',
             '!models/mt/**',
             '!models/vad/**',
+            '!**/site-packages/~*/**',
             '!**/site-packages/nvidia/**',
             '!**/site-packages/torch/**',
             '!**/site-packages/ctranslate2/**',
+            '!**/site-packages/av/**',
+            '!**/site-packages/numba/**',
+            '!**/site-packages/llvmlite/**',
+            '!**/site-packages/scipy/**',
+            '!**/site-packages/jieba/**',
+            '!**/site-packages/sklearn/**',
+            '!**/site-packages/sympy/**',
+            '!**/site-packages/modelscope/**',
+            '!**/site-packages/transformers/**',
             '!**/*.pt',
             '!**/*.onnx',
             '!**/*.safetensors',
@@ -593,6 +612,34 @@ function main() {
     const engineFfmpeg = path.join(root, 'transub-engine', '_internal', 'bin', 'ffmpeg.exe');
     if (fs.existsSync(engineFfmpeg)) {
         warnings.push('transub-engine/_internal/bin 仍有 ffmpeg.exe（打包已过滤；建议删除以免与软件内置重复）');
+    }
+    // Bundled FFmpeg must be gyan essentials (not full_build) to keep release size down.
+    const bundledFfmpeg = path.join(root, '_internal', 'bin', 'ffmpeg.exe');
+    if (!fs.existsSync(bundledFfmpeg)) {
+        errors.push('缺少内置 FFmpeg: _internal/bin/ffmpeg.exe（先运行 npm run setup:ffmpeg）');
+    } else {
+        try {
+            const { execFileSync } = require('child_process');
+            const out = execFileSync(bundledFfmpeg, ['-hide_banner', '-version'], {
+                encoding: 'utf8',
+                windowsHide: true,
+                timeout: 15000,
+                maxBuffer: 256 * 1024,
+            });
+            const versionLine = String(out || '').split(/\r?\n/).find((line) => /ffmpeg version/i.test(line)) || '';
+            const lower = versionLine.toLowerCase();
+            if (lower.includes('full_build') || lower.includes('full-build')) {
+                errors.push(
+                    `内置 FFmpeg 为 full_build，发行须用 essentials：${versionLine.trim() || bundledFfmpeg}（运行 npm run setup:ffmpeg）`,
+                );
+            } else if (!lower.includes('essentials')) {
+                warnings.push(
+                    `内置 FFmpeg 版本未标明 essentials（请确认来自 gyan essentials）：${versionLine.trim() || bundledFfmpeg}`,
+                );
+            }
+        } catch (err) {
+            errors.push(`内置 FFmpeg 无法运行: ${err && err.message ? err.message : err}`);
+        }
     }
     // Dev tree: large Hub weights OK locally; packaging re-includes only whisper-tiny + fsmn-vad
     const shippedModels = [
@@ -731,6 +778,30 @@ function main() {
             );
             if (fs.existsSync(packedNvidia)) {
                 errors.push('发行包误含 transub-engine/runtime/.../nvidia（CUDA 应按需安装，勿打包）');
+            }
+            if (fs.existsSync(path.join(packedEngine, 'wheels-edition'))) {
+                errors.push('发行包误含 transub-engine/wheels-edition（版次 wheel 缓存不得打进 slim 包）');
+            }
+            const packedSite = path.join(packedEngine, 'runtime', 'Lib', 'site-packages');
+            const forbiddenPackedPkgs = [
+                'av', 'av.libs', 'numba', 'llvmlite', 'scipy', 'scipy.libs',
+                'jieba', 'sklearn', 'sympy', 'modelscope', 'transformers',
+                'torch', 'onnxruntime', 'ctranslate2',
+            ];
+            if (fs.existsSync(packedSite)) {
+                for (const pkg of forbiddenPackedPkgs) {
+                    if (fs.existsSync(path.join(packedSite, pkg))) {
+                        errors.push(`发行包误含按需依赖 site-packages/${pkg}（应排除或 after-pack 清理）`);
+                    }
+                }
+                try {
+                    const leftover = fs.readdirSync(packedSite).find((n) => String(n).startsWith('~'));
+                    if (leftover) {
+                        errors.push(`发行包含 pip 残留目录 site-packages/${leftover}（应 after-pack 清理）`);
+                    }
+                } catch {
+                    /* ignore */
+                }
             }
             const allowedWeightDirs = new Set([
                 path.join('models', 'asr', 'whisper-tiny'),

@@ -53,21 +53,32 @@
         return JSON.parse(inflated.toString('utf8'));
     }
 
-    function loadPayload() {
+    function loadPayloadFromPath(filePath) {
         try {
             if (typeof require === 'undefined' || typeof Buffer === 'undefined') return null;
             const fs = require('fs');
-            const path = require('path');
-            const filePath = path.join(__dirname, 'tone-adapt.tz1');
-            if (!fs.existsSync(filePath)) return null;
+            if (!filePath || !fs.existsSync(filePath)) return null;
             return decodeToneAdaptBuffer(fs.readFileSync(filePath));
         } catch (_) {
             return null;
         }
     }
 
+    function bundledTz1Path() {
+        try {
+            const path = require('path');
+            return path.join(__dirname, 'tone-adapt.tz1');
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function loadPayload() {
+        return loadPayloadFromPath(bundledTz1Path());
+    }
+
     function applyPayload(payload) {
-        if (!payload || typeof payload !== 'object') return;
+        if (!payload || typeof payload !== 'object') return false;
         const entries = Array.isArray(payload.entries) ? payload.entries : [];
         NSFW_LEXICON_ENTRIES = Object.freeze(entries.map((e) => ({
             ja: Array.isArray(e?.ja) ? e.ja.map((x) => String(x)) : [],
@@ -84,6 +95,16 @@
                 ? p.smartFaithful.map((x) => String(x))
                 : [],
         };
+        return true;
+    }
+
+    function reloadFromTz1Buffer(buf) {
+        const payload = decodeToneAdaptBuffer(buf);
+        return applyPayload(payload);
+    }
+
+    function reloadFromBundled() {
+        return applyPayload(loadPayload());
     }
 
     applyPayload(loadPayload());
@@ -264,7 +285,7 @@
     }
 
     return {
-        NSFW_LEXICON_ENTRIES,
+        get NSFW_LEXICON_ENTRIES() { return NSFW_LEXICON_ENTRIES; },
         normalizeJaKey,
         pickTermsForText,
         mergeNsfwGlossaryTerms,
@@ -272,5 +293,9 @@
         formatPromptExamples,
         getSakuraNsfwSystemPrompt,
         getSmartFaithfulPromptLines,
+        reloadFromTz1Buffer,
+        reloadFromBundled,
+        decodeToneAdaptBuffer,
+        applyPayload,
     };
 }));

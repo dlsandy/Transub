@@ -9,8 +9,12 @@
     <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="vendor/app.css">
     <style>
+        /* Prefer % over 100vh: Electron/Windows maximize often leaves vh stuck at the pre-max size. */
+        html, body { height: 100%; width: 100%; }
         .subtitle-task-table { table-layout: fixed; width: 100%; }
         .subtitle-task-table .col-file { width: 28%; min-width: 8rem; }
+        .subtitle-task-table .col-duration { width: 4rem; }
+        .subtitle-task-table .col-elapsed { width: 4rem; }
         .subtitle-task-table .col-progress { width: 7rem; }
         .subtitle-task-table .col-status {
             width: 18rem;
@@ -29,9 +33,44 @@
             max-width: 100%;
         }
         .subtitle-task-table .col-qc {
-            width: 2.25rem;
-            min-width: 2.25rem;
-            max-width: 2.25rem;
+            width: 3.25rem;
+            min-width: 3.25rem;
+            max-width: 3.5rem;
+        }
+        .subtitle-task-table .qc-cell {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.15rem;
+            line-height: 1;
+        }
+        .subtitle-task-table .qc-fixed-tag {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9999px;
+            padding: 0.05rem 0.3rem;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+        .subtitle-task-table .qc-fixed-tag.is-fix {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .subtitle-task-table .qc-fixed-tag.is-smart {
+            background: #ede9fe;
+            color: #5b21b6;
+        }
+        html.main-theme-dark .subtitle-task-table .qc-fixed-tag.is-fix {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fcd34d;
+        }
+        html.main-theme-dark .subtitle-task-table .qc-fixed-tag.is-smart {
+            background: rgba(139, 92, 246, 0.25);
+            color: #c4b5fd;
         }
         .subtitle-task-table .col-actions {
             width: 7.75rem;
@@ -109,6 +148,10 @@
         .subtitle-task-table .file-cell-main > .file-sense-icon,
         .subtitle-task-table .file-cell-main > .file-sense-status {
             margin-left: 0;
+        }
+        .subtitle-task-table .file-cell-main > .file-sense-icon + .file-sense-icon,
+        .subtitle-task-table .file-cell-main > .file-sense-status + .file-sense-icon {
+            margin-left: 0.125rem;
         }
         .toolbar-editor-icon {
             width: 1rem;
@@ -704,8 +747,22 @@
         #setupWizardModal .wizard-step { display: none; }
         #setupWizardModal .wizard-step.active { display: block; }
         #setupWizardModal > div {
+            position: relative;
             width: min(100%, 44rem);
             max-height: min(92vh, 48rem);
+        }
+        #setupWizardDetectWait {
+            position: absolute;
+            inset: 0;
+            z-index: 30;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(249, 250, 251, 0.88);
+            backdrop-filter: blur(2px);
+        }
+        #setupWizardDetectWait:not(.hidden) {
+            display: flex;
         }
         #setupWizardModal .wizard-choice {
             display: flex; align-items: flex-start; gap: 0.6rem;
@@ -1296,7 +1353,8 @@
             z-index: 5100 !important;
         }
         /* Self-contained boot spinner — visible before Font Awesome / app.css finish */
-        #loadingOverlay .boot-spinner {
+        #loadingOverlay .boot-spinner,
+        #setupWizardDetectWait .boot-spinner {
             width: 2rem;
             height: 2rem;
             margin: 0 auto 0.75rem;
@@ -1310,7 +1368,7 @@
         }
     </style>
 </head>
-<body class="bg-gray-50 h-screen overflow-hidden text-gray-800 flex flex-col">
+<body class="bg-gray-50 h-full overflow-hidden text-gray-800 flex flex-col">
     <div id="loadingOverlay" class="fixed inset-0 z-[110] flex items-center justify-center bg-gray-50/85 backdrop-blur-[2px]">
         <div class="bg-white rounded-xl shadow-lg border border-gray-200 px-8 py-6 text-center max-w-sm mx-4">
             <div class="boot-spinner" aria-hidden="true"></div>
@@ -1376,6 +1434,7 @@
             <span id="qcBannerText">有条目存在 QC 问题</span>
             <div class="flex items-center gap-2 shrink-0">
                 <button type="button" id="qcBannerFixBtn" class="qc-banner-fix-btn px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">一键修复QC</button>
+                <button type="button" id="qcBannerSmartFixBtn" class="qc-banner-fix-btn px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" title="Pro：规则修复后对剩余通顺度等做大模型润色">智能修复 (Pro)</button>
                 <button type="button" id="qcBannerViewBtn" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs hover:bg-amber-50 shrink-0">查看第一条</button>
                 <button type="button" id="qcBannerDismissBtn" class="toolbar-icon-btn !w-7 !h-7 shrink-0" title="关闭" aria-label="关闭"><i class="fa fa-times text-xs"></i></button>
             </div>
@@ -1498,7 +1557,9 @@
                         <span class="param-chip-label">目标</span>
                         <select id="quickTargetLangSelect" class="param-chip-select" aria-label="目标语言">
                             <option value="simplified">简体中文</option>
-                            <option value="traditional">繁体中文</option>
+                            <option value="traditional">繁体（台湾）</option>
+                            <option value="traditional-tw">繁体（台湾字形）</option>
+                            <option value="traditional-hk">繁体（香港）</option>
                         </select>
                     </label>
                     <div class="relative shrink-0" id="translateModeMenuWrap">
@@ -1527,15 +1588,37 @@
                         <span id="quickFormatLabel" class="param-chip-value">srt</span>
                     </button>
                     <span class="content-profile-chip tone-idle" id="autoSenseChip">
-                        <button type="button" id="autoSenseToggle" class="content-profile-chip-toggle" aria-pressed="true" title="智能感知：拖入后分析每项素材并匹配参数（默认采纳）" aria-label="智能感知">
+                        <button type="button" id="autoSenseToggle" class="content-profile-chip-toggle" aria-pressed="true" title="智能感知：拖入后分析每项素材并匹配参数（强制采纳；可点魔术棒不采纳或关闭感知改用表单）" aria-label="智能感知">
                             <span class="param-chip-label">智能感知</span>
                             <span id="autoSenseToggleLabel" class="param-chip-value">开</span>
                         </button>
                         <span class="settings-tip tip-up tip-end">
                             <button type="button" class="settings-tip-btn" title="" aria-label="智能感知说明">?</button>
-                            <span class="settings-tip-bubble" role="tooltip">智能感知：拖入后分析每项素材并匹配参数（默认采纳）。未识别时会自动加强深入感知。推荐新手开启，可自动匹配语种与模型，少动手调参。</span>
+                            <span class="settings-tip-bubble" role="tooltip">智能感知：拖入后分析每项素材并匹配参数，开启时强制按感知方案运行（缺模型须先安装，不会悄悄改用表单低配）。不采纳可点文件名旁魔术棒；或关闭智能感知后按表单参数。未识别时会自动加强深入感知。</span>
                         </span>
                     </span>
+                    <div class="relative shrink-0" id="postBatchQcFixMenuWrap">
+                        <button type="button" id="postBatchQcFixBtn" class="param-chip param-chip-btn" title="任务完成后自动修复 QC（点击选择）" aria-haspopup="menu" aria-expanded="false" aria-label="完成后修复QC">
+                            <span class="param-chip-label">QC修复</span>
+                            <span id="postBatchQcFixLabel" class="param-chip-value">关</span>
+                            <i class="fa fa-caret-down text-[9px] text-gray-400 ml-0.5" aria-hidden="true"></i>
+                        </button>
+                        <div id="postBatchQcFixMenu" class="post-task-menu post-task-menu--left hidden w-48" role="menu" aria-label="任务完成后修复QC">
+                            <p class="post-task-menu-hint">全部字幕成功后</p>
+                            <button type="button" class="post-task-menu-item active" data-qc-fix-mode="none" role="menuitem">
+                                <i class="fa fa-check post-task-check" aria-hidden="true"></i>
+                                <span>关闭</span>
+                            </button>
+                            <button type="button" class="post-task-menu-item" data-qc-fix-mode="fix" role="menuitem">
+                                <i class="fa fa-check post-task-check" aria-hidden="true"></i>
+                                <span>一键QC修复</span>
+                            </button>
+                            <button type="button" class="post-task-menu-item" data-qc-fix-mode="smart" role="menuitem">
+                                <i class="fa fa-check post-task-check" aria-hidden="true"></i>
+                                <span>◆ 智能QC修复 Pro</span>
+                            </button>
+                        </div>
+                    </div>
                     <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
                 </div>
                 <div id="readinessStrip" class="readiness-strip hidden" aria-live="polite">
@@ -1575,7 +1658,8 @@
                         <tr>
                             <th class="px-2 py-2 w-8"><input type="checkbox" id="selectAllCheck" title="全选 (Ctrl+A)"></th>
                             <th class="px-2 py-2 text-left col-file">文件</th>
-                            <th class="px-2 py-2 text-right w-16 col-duration">片长</th>
+                            <th class="px-2 py-2 text-right col-duration" title="媒体时长">片长</th>
+                            <th class="px-2 py-2 text-right col-elapsed" title="任务所耗时">耗时</th>
                             <th class="px-2 py-2 text-left col-progress" style="width:7rem">进度</th>
                             <th class="px-2 py-2 text-left col-status">状态</th>
                             <th class="px-1 py-2 text-center col-qc" title="质量检查">QC</th>
@@ -1814,7 +1898,7 @@
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 自动感知记忆
-                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主界面「智能感知」开启后，点击文件名旁魔术棒可切换采纳/不采纳；偏好会按目录与厂牌番号记住，下次同目录/同厂牌自动抬升或避免自动采纳。清空后不影响当前列表里已有的感知结果。</span></span>
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主界面「智能感知」开启后强制按感知方案运行；点击文件名旁魔术棒可切换采纳/不采纳。不采纳偏好会按目录与厂牌番号记住，下次同目录/同厂牌不自动采纳。清空后不影响当前列表里已有的感知结果。</span></span>
                             </legend>
                             <p id="senseMemoryStatus" class="text-xs text-gray-500 leading-relaxed">记忆条目：—</p>
                             <div class="flex flex-wrap items-center gap-2 mt-2">
@@ -1827,7 +1911,7 @@
                         <fieldset class="settings-section settings-section-env">
                             <legend class="settings-section-title">当前选用模型</legend>
                             <p class="text-xs text-gray-500 leading-relaxed">仅列出本机已下载的模型；未下载的请到「处理模型」页下载。</p>
-                            <p class="text-xs text-amber-800/90 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed">列表中已采纳「智能感知」的条目，会优先使用感知匹配的语种与模型；下方全局选用对其不生效。未采纳或关闭智能感知时，仍按此处设置。</p>
+                            <p class="text-xs text-amber-800/90 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed">智能感知开启且已采纳时，强制使用感知匹配的语种与模型（缺项须先安装）；下方全局选用对其不生效。仅在点魔术棒「不采纳」或关闭智能感知后，才按此处设置。</p>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <label class="block text-sm">
                                     <span class="settings-label text-gray-700 font-medium">ASR 语音识别模型<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">把片源人声转成文字。下拉仅显示已下载项，可按片源语言与硬件选择。</span></span></span>
@@ -1871,33 +1955,31 @@
                                     <input type="text" id="engineUrlInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="http://127.0.0.1:8765" maxlength="4096">
                                 </label>
                                 <div class="flex flex-wrap items-center gap-2">
-                                    <button type="button" id="engineTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">① 检测引擎</button>
-                                    <button type="button" id="engineRecommendBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white">推荐档位</button>
+                                    <button type="button" id="engineTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">检测引擎</button>
                                     <label class="inline-flex items-center gap-1.5 text-sm text-gray-600">
                                         <input type="checkbox" id="engineAutoStartCheck" class="rounded" checked>
                                         自动启动引擎
                                     </label>
-                                </div>
-                                <div class="flex flex-wrap items-center gap-2">
                                     <button type="button" id="engineEnsureGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm text-sky-700 hover:bg-sky-50">下载 GPU 支持</button>
                                     <button type="button" id="engineManualGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm text-gray-700 hover:bg-gray-50" title="网络不佳时，浏览器下载 .whl 后本地安装">手动安装 GPU</button>
                                     <button type="button" id="engineOpenLogBtn" class="px-3 py-1.5 text-xs text-emerald-700 hover:underline">打开引擎日志</button>
                                 </div>
-                                <p id="engineGpuStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                                <p id="engineGpuStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
                                 <p id="engineStatus" class="text-xs text-gray-500 min-h-[1.25rem]"></p>
                             </div>
                         </fieldset>
                         <fieldset class="settings-section settings-section-env">
                             <legend class="settings-section-title">llama-server 运行时</legend>
-                            <p class="text-xs text-gray-500 leading-relaxed">供推理翻译（Sakura 等）与软件内大模型使用。模型选用仍在「Pro → 大模型」。检测到 NVIDIA（驱动 CUDA 12+）时默认安装 CUDA 12，否则默认 Vulkan。</p>
+                            <p class="text-xs text-gray-500 leading-relaxed">供推理翻译、智能翻译与软件内大模型使用。</p>
                             <p id="advancedManagedRuntimeStatus" class="text-xs text-gray-600 leading-relaxed mt-2">检测本地运行时…</p>
                             <label id="advancedManagedRuntimeBackendWrap" class="block text-sm mt-2 hidden">
                                 <span class="settings-label font-medium text-gray-700">
                                     llama-server 后端
-                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有 NVIDIA 且驱动支持 CUDA 12+ 时默认 CUDA 12（通常更快，约 630MB 含运行库）；否则默认 Vulkan（兼容面广、体积小）。切换时会弹窗确认并自动安装；失败可用「手动下载运行时」。</span></span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有 NVIDIA 时按驱动 CUDA 主版本默认：13+ → CUDA 13，12+ → CUDA 12（通常更快，含运行库约数百 MB）；否则默认 Vulkan（兼容面广、体积小）。切换时会弹窗确认并自动安装；失败可用「手动下载运行时」。</span></span>
                                 </span>
                                 <select id="advancedManagedRuntimeBackendSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
-                                    <option value="win-cuda12-x64">CUDA 12（NVIDIA）</option>
+                                    <option value="win-cuda13-x64">CUDA 13（NVIDIA显卡驱动580或更高版本）</option>
+                                    <option value="win-cuda12-x64">CUDA 12（NVIDIA显卡驱动580以下版本）</option>
                                     <option value="win-vulkan-x64">Vulkan（兼容多数 GPU）</option>
                                 </select>
                                 <span class="block text-xs text-gray-500 mt-1">切换时会确认；确认后自动安装。自动下载失败时可改用「手动下载」。已就绪则跳过下载。</span>
@@ -1909,13 +1991,13 @@
                                 <button type="button" id="advancedManagedPerfTestBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="启动本地服务并测生成速度（tok/s）">性能测试</button>
                                 <button type="button" id="advancedManagedStopServerBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">停止本地服务</button>
                             </div>
+                            <p id="advancedLlamaServerActionStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
                             <div id="advancedLlamaServerProgressWrap" class="hidden mt-2 space-y-1">
                                 <div class="h-2 rounded-full bg-violet-100 overflow-hidden">
                                     <div id="advancedLlamaServerProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
                                 </div>
-                                <p id="advancedLlamaServerProgressText" class="text-xs text-gray-500"></p>
+                                <p id="advancedLlamaServerProgressText" class="text-xs text-violet-700"></p>
                             </div>
-                            <p id="advancedLlamaServerActionStatus" class="text-xs text-gray-500 min-h-[1.25rem] mt-2"></p>
                         </fieldset>
                     </div>
 
@@ -2026,7 +2108,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 VAD 降噪 QC CPS 拆句 杂音 叠词 素材 集束 智能感知 深度感知">
+                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 VAD 降噪 QC CPS 拆句 杂音 叠词 素材 集束 智能感知 深度感知 修复QC 一键修复 智能修复">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 智能感知
@@ -2090,6 +2172,17 @@
                                     完成后 QC 检测
                                     <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。扫描新字幕的重叠、读速、时长与通顺度等问题，并在任务列表标出数量。</span></span>
                                 </span>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    完成后自动修复 QC
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">与主界面工具栏「修复QC」一致。检测出问题后自动写回：一键修复走规则（时间轴/读速/叠词等）；智能修复为 Pro，规则后再断句/重转写/大模型润色。默认关闭。</span></span>
+                                </span>
+                                <select id="postBatchQcFixModeSelect" class="w-full max-w-[16rem] border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="完成后自动修复 QC">
+                                    <option value="none">关闭</option>
+                                    <option value="fix">一键修复 QC</option>
+                                    <option value="smart">智能修复 QC (Pro)</option>
+                                </select>
                             </label>
                             <label class="settings-row text-sm">
                                 <input type="checkbox" id="postBatchCpsSplitCheck" class="rounded" checked>
@@ -2157,11 +2250,13 @@
                             <label class="block text-sm" id="chineseSubtitleVariantWrap">
                                 <span class="settings-label text-gray-700 font-medium">
                                     中文字幕类型
-                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在「翻译」「双语」任务中生效。</span></span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在「翻译」「双语」任务中生效。任务完成后的最后一步才做简繁转换（在清噪/叠词/CPS/QC 之后）。繁体默认台湾用词（如软件→軟體）；也可选仅字形或香港。</span></span>
                                 </span>
                                 <select id="chineseSubtitleVariantSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                     <option value="simplified">简体中文（默认）</option>
-                                    <option value="traditional">繁体中文</option>
+                                    <option value="traditional">繁体中文（台湾，含常用词）</option>
+                                    <option value="traditional-tw">繁体中文（台湾字形）</option>
+                                    <option value="traditional-hk">繁体中文（香港）</option>
                                 </select>
                             </label>
                             <label class="settings-row text-sm" id="glossaryMtWrap">
@@ -2496,6 +2591,24 @@
                             <p id="advancedModuleStatus" class="text-xs text-gray-600 leading-relaxed">检测中…</p>
                             <button type="button" id="advancedReloadModuleBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">重新检测模块</button>
                         </fieldset>
+                        <fieldset class="settings-section" data-settings-search="语言优化包 领域数据 TDP 更新">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>语言优化包</legend>
+                            <p class="text-xs text-gray-600 leading-relaxed mb-2">独立于软件发版的领域识别与用语修正数据。开通 Pro 后可热加载使用；更新包可从官方站点获取。</p>
+                            <p id="tdpStatusLine" class="text-sm text-gray-700 min-h-[1.25rem]">检测中…</p>
+                            <p id="tdpMetaLine" class="text-xs text-gray-500 leading-relaxed mb-2"></p>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" id="tdpCheckBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">检查更新</button>
+                                <button type="button" id="tdpUpdateBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">立即更新</button>
+                                <button type="button" id="tdpCancelBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60 hidden">取消</button>
+                            </div>
+                            <div id="tdpProgressWrap" class="hidden mt-2">
+                                <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                    <div id="tdpProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
+                                </div>
+                                <p id="tdpProgressText" class="text-xs text-gray-500 mt-1"></p>
+                            </div>
+                            <p id="tdpActionStatus" class="text-xs text-gray-500 min-h-[1rem] mt-1"></p>
+                        </fieldset>
                     </div>
 
                     <div class="params-tab-panel" data-tab-panel="pro-llm" data-settings-search="Pro 大模型 BYOK 外接 API 软件内 模型 llama GGUF Ollama 智能翻译模型 LLM推理模型">
@@ -2685,8 +2798,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="more" data-settings-search="更多 导出 导入 日志 更新 自动更新 检查更新 关于 重置">
-                        
+                    <div class="params-tab-panel" data-tab-panel="more" data-settings-search="更多 导出 导入 日志 更新 自动更新 检查更新 关于 官网 网站 Github Codeberg 赞助 重置">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 配置备份
@@ -2711,7 +2823,7 @@
                             <label class="block text-sm mt-2">
                                 <span class="settings-label text-gray-700 font-medium">
                                     自动检查更新
-                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率在后台检查 GitHub / Codeberg 发布页。下载更新前会测速并自动选择较快线路。发现新版本时会提示是否升级；不会自动下载安装。改后点「保存设置」生效。</span></span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率在后台检查 GitHub / Codeberg 发布页。下载更新前会测速 GitHub / Codeberg / 官网并自动选择较快线路。发现新版本时会提示是否升级；不会自动下载安装。改后点「保存设置」生效。</span></span>
                                 </span>
                                 <select id="autoUpdateCheckIntervalSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm max-w-xs">
                                     <option value="off">不检查</option>
@@ -2722,16 +2834,6 @@
                             </label>
                             <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
                         </fieldset>
-                        <fieldset class="settings-section">
-                            <legend class="settings-section-title">工具与关于</legend>
-                            <div class="grid grid-cols-1 gap-2">
-                                
-                                <button type="button" id="openWebsiteBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
-                                    <i class="fa fa-github w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>访问官网（GitHub）
-                                </button>
-                            </div>
-                        </fieldset>
-                    
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">日志</legend>
                             <label class="block text-sm">
@@ -2745,10 +2847,24 @@
                             </label>
                         </fieldset>
                         <fieldset class="settings-section">
-                            <legend class="settings-section-title">关于</legend>
-                            <button type="button" id="openAboutFromSettingsBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 w-full">
-                                <i class="fa fa-info-circle w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开关于窗口
-                            </button>
+                            <legend class="settings-section-title">关于与链接</legend>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button type="button" id="openWebsiteBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 sm:col-span-2">
+                                    <i class="fa fa-globe w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>官方网站
+                                </button>
+                                <button type="button" id="openGithubReleasesBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-github w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>Github
+                                </button>
+                                <button type="button" id="openCodebergReleasesBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-code-fork w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>Codeberg
+                                </button>
+                                <button type="button" id="openAboutFromSettingsBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 sm:col-span-2">
+                                    <i class="fa fa-info-circle w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开关于窗口
+                                </button>
+                                <button type="button" id="openAfdianFromSettingsBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 sm:col-span-2">
+                                    <i class="fa fa-heart w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>赞助解锁Pro
+                                </button>
+                            </div>
                         </fieldset>
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">危险操作</legend>
@@ -3087,6 +3203,13 @@
                 <div class="flex items-center gap-2">
                     <button type="button" id="setupWizardBackBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white">上一步</button>
                     <button type="button" id="setupWizardNextBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">下一步</button>
+                </div>
+            </div>
+            <div id="setupWizardDetectWait" class="hidden" role="status" aria-live="polite" aria-busy="true">
+                <div class="bg-white rounded-xl shadow-lg border border-gray-200 px-8 py-6 text-center max-w-sm mx-4">
+                    <div class="boot-spinner" aria-hidden="true"></div>
+                    <p id="setupWizardDetectWaitMessage" class="text-sm font-medium text-gray-700">正在检查本机依赖…</p>
+                    <p class="text-xs text-gray-400 mt-2">请稍候</p>
                 </div>
             </div>
         </div>
