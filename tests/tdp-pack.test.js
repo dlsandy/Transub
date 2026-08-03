@@ -52,6 +52,27 @@ describe('tdp-pack-core', () => {
         assert.ok(tdpPack.compareVersions('1.0.0', '1.0.3') < 0);
         assert.strictEqual(tdpPack.compareVersions('1.0.3', '1.0.3'), 0);
     });
+
+    it('bundled tpack D01 includes shared + adult ASR pairs', () => {
+        const bundled = path.join(__dirname, '..', 'shared', 'tdp', 'tdp-bundled.tpack');
+        assert.ok(fs.existsSync(bundled), 'run npm run ensure:bundled-tdp');
+        const parsed = tdpPack.parsePack(fs.readFileSync(bundled));
+        const pairs = tdpPack.decodeD01Payload(tdpPack.getSection(parsed, 'D01'));
+        const opaque = require('../src/js/mt-opaque-strings');
+        const adult = opaque.getAsrAdultDomainPairs();
+        const ssot = JSON.parse(fs.readFileSync(
+            path.join(__dirname, '..', 'shared', 'ja-asr-domain-fixes.json'),
+            'utf8',
+        ));
+        assert.ok(pairs.length >= ssot.length + Math.min(1, adult.length));
+        const fromSet = new Set(pairs.map((p) => p.from));
+        for (const p of adult.slice(0, 5)) {
+            assert.ok(fromSet.has(p.from), `missing adult ASR in D01: ${p.from}`);
+        }
+        for (const p of ssot.slice(0, 5)) {
+            assert.ok(fromSet.has(p.from), `missing shared ASR in D01: ${p.from}`);
+        }
+    });
 });
 
 describe('tdp-crypto-core', () => {

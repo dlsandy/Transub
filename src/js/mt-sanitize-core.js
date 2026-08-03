@@ -1717,8 +1717,13 @@
             return /[?？]/.test(s) ? '舒服吗？' : '好舒服';
         }
         if (/(?:イッちゃう|いっちゃう|イク[っっ]|イキそう|イッちゃ)/.test(s) && textLen(s) <= 20) {
-            return '要去了';
+            return /[?？]/.test(s) ? '要去了吗？' : '要去了';
         }
+        if (/^(?:イク|いく)[？?]$/.test(bare)) return '要去了吗？';
+        if (/^やめて[。．.!！]*$|^やめろ[。．.!！]*$/.test(bare) && textLen(s) <= 6) return '不要';
+        if (/中に出して/.test(s) && textLen(s) <= 12) return '射在里面';
+        if (/^(?:挿れて|入れて)$/.test(bare) && textLen(s) <= 6) return '进来';
+        if (/もっと深く/.test(s) && textLen(s) <= 10) return '再深一点';
         if (/ちゅ[ーう]|チュー|ちゅうして/.test(s) && textLen(s) <= 16) {
             return /もして/.test(s) ? '也亲亲我' : '亲一下';
         }

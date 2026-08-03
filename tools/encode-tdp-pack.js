@@ -75,7 +75,28 @@ function main() {
         console.error('domain JSON 必须是数组');
         process.exit(1);
     }
-    const d01 = tdpPack.encodeD01Payload(domainPairs);
+    // Merge adult opaque ASR pairs into D01 so TDP hot-updates carry training ASR.
+    let adultPairs = [];
+    try {
+        const opaque = require('../src/js/mt-opaque-strings');
+        adultPairs = typeof opaque.getAsrAdultDomainPairs === 'function'
+            ? opaque.getAsrAdultDomainPairs()
+            : [];
+    } catch (err) {
+        console.warn('adult opaque ASR 未合并:', err.message || err);
+    }
+    const seenFrom = new Set();
+    const mergedPairs = [];
+    for (const p of [...domainPairs, ...adultPairs]) {
+        const from = String(p?.from || '');
+        const to = String(p?.to || '');
+        if (!from || !to || seenFrom.has(from)) continue;
+        seenFrom.add(from);
+        mergedPairs.push({ from, to });
+    }
+    mergedPairs.sort((a, b) => Array.from(b.from).length - Array.from(a.from).length
+        || String(a.from).localeCompare(String(b.from), 'ja'));
+    const d01 = tdpPack.encodeD01Payload(mergedPairs);
 
     const packBuf = tdpPack.buildPack({
         schemaVersion: 1,
@@ -136,6 +157,7 @@ function main() {
     console.log('pack →', packPath);
     console.log('bundled →', bundledPath);
     console.log('cdn staging →', path.join(packsDir, packName));
+    console.log('D01 pairs', mergedPairs.length, `(shared ${domainPairs.length} + adult ${adultPairs.length})`);
     console.log('sha256', sha256);
     console.log('size', packBuf.length);
 

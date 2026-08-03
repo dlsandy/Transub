@@ -906,6 +906,75 @@ describe('mt-sanitize-core', () => {
         assert.strictEqual(ugok.text, FIX.ugokanaiBlankOkZh);
     });
 
+    it('expands adult domain: orgasm/erect/oral/squirt/blanks', () => {
+        const zec = sanitize.correctZhDomainMistranslations(FIX.zecchouBadZh, FIX.zecchouJa);
+        assert.ok(zec.changed);
+        assert.strictEqual(zec.text, FIX.zecchouOkZh);
+
+        const erect = sanitize.correctZhDomainMistranslations(FIX.erectLineBadZh, FIX.erectLineJa);
+        assert.ok(erect.changed);
+        assert.strictEqual(erect.text, FIX.erectLineOkZh);
+
+        const nakaOnly = sanitize.correctZhDomainMistranslations(FIX.nakaOnlyBadZh, FIX.nakaOnlyJa);
+        assert.ok(nakaOnly.changed);
+        assert.strictEqual(nakaOnly.text, FIX.nakaOnlyOkZh);
+
+        const nakaIn = sanitize.correctZhDomainMistranslations(FIX.nakaInBadZh, FIX.nakaInJa);
+        assert.ok(nakaIn.changed);
+        assert.strictEqual(nakaIn.text, FIX.nakaInOkZh);
+
+        const fella = sanitize.correctZhDomainMistranslations(FIX.fellaLineBadZh, FIX.fellaLineJa);
+        assert.ok(fella.changed);
+        assert.strictEqual(fella.text, FIX.fellaLineOkZh);
+
+        const kunni = sanitize.correctZhDomainMistranslations(FIX.kunniLineBadZh, FIX.kunniLineJa);
+        assert.ok(kunni.changed);
+        assert.strictEqual(kunni.text, FIX.kunniLineOkZh);
+
+        const tekoki = sanitize.correctZhDomainMistranslations(FIX.tekokiLineBadZh, FIX.tekokiLineJa);
+        assert.ok(tekoki.changed);
+        assert.strictEqual(tekoki.text, FIX.tekokiLineOkZh);
+
+        const shio = sanitize.correctZhDomainMistranslations(FIX.shioLineBadZh, FIX.shioLineJa);
+        assert.ok(shio.changed);
+        assert.strictEqual(shio.text, FIX.shioLineOkZh);
+
+        const gok = sanitize.correctZhDomainMistranslations(FIX.gokkunLineBadZh, FIX.gokkunLineJa);
+        assert.ok(gok.changed);
+        assert.strictEqual(gok.text, FIX.gokkunLineOkZh);
+
+        const mango = sanitize.correctZhDomainMistranslations(FIX.mangoLineBadZh, FIX.mangoLineJa);
+        assert.ok(mango.changed);
+        assert.strictEqual(mango.text, FIX.mangoLineOkZh);
+
+        const samen = sanitize.correctZhDomainMistranslations(FIX.samenLineBadZh, FIX.samenLineJa);
+        assert.ok(samen.changed);
+        assert.strictEqual(samen.text, FIX.samenLineOkZh);
+
+        const asrFella = sanitize.correctJaAsrDomainMishears(FIX.fellaAsrJa);
+        assert.ok(asrFella.changed);
+        assert.strictEqual(asrFella.text, FIX.fellaAsrFixed);
+
+        const asrTekoki = sanitize.correctJaAsrDomainMishears(FIX.tekokiAsrJa);
+        assert.ok(asrTekoki.changed);
+        assert.strictEqual(asrTekoki.text, FIX.tekokiAsrFixed);
+
+        for (const [ja, ok] of [
+            [FIX.yameteBlankJa, FIX.yameteBlankOkZh],
+            [FIX.nakaInJa, FIX.nakaInOkZh],
+            [FIX.ireteBlankJa, FIX.ireteBlankOkZh],
+            [FIX.fukakuBlankJa, FIX.fukakuBlankOkZh],
+            [FIX.ikuQBlankJa, FIX.ikuQBlankOkZh],
+        ]) {
+            const blank = sanitize.sanitizeMtCueText('…', ja, { contentProfile: 'av_soft' });
+            assert.ok(
+                blank.flags.includes('blank_adult_recover') || blank.flags.includes('truncated_reactive'),
+                ja,
+            );
+            assert.strictEqual(blank.text, ok);
+        }
+    });
+
     it('fixes ZH domain mistranslations conditioned on JA source', () => {
         const oil = sanitize.correctZhDomainMistranslations(
             '这是防晒油吗？',
