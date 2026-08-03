@@ -15,7 +15,7 @@
     const crypto = require('crypto');
 
     /** Built-in verify key (SPKI DER, base64). Private key: .tdp-private.b64 / TRANSUB_TDP_PRIVATE_KEY_PKCS8_B64 */
-    const DEFAULT_PUBLIC_KEY_SPKI_B64 = 'MCowBQYDK2VwAyEAAedDSzilB4Va6vCJqd6gA2yNtbOEqQWrszW5whkCQ1w=';
+    const DEFAULT_PUBLIC_KEY_SPKI_B64 = 'MCowBQYDK2VwAyEAxfnmf81yGxWXiOGXWmsqOit8Tx1qFnItpY/db6ZRnq0=';
 
     const MESSAGE_PREFIX = 'TDP1|';
 
