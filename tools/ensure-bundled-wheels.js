@@ -90,6 +90,21 @@ function runPython(args, opts = {}) {
     });
 }
 
+/** Dist name as on PyPI / importlib.metadata (e.g. faster-whisper). */
+function distNameOf(pkg) {
+    return String(pkg.spec || pkg.id || '').split(/[=<>!~]/)[0].trim();
+}
+
+function distInstalled(distName) {
+    const name = String(distName || '').trim();
+    if (!name || !fs.existsSync(pythonExe)) return false;
+    const res = runPython(
+        ['-c', `from importlib.metadata import version; print(version(${JSON.stringify(name)}))`],
+        { timeout: 30000 },
+    );
+    return res.status === 0;
+}
+
 function importOk(importName) {
     if (!importName || !fs.existsSync(pythonExe)) return false;
     const res = runPython(
@@ -97,6 +112,25 @@ function importOk(importName) {
         { timeout: 45000 },
     );
     return res.status === 0;
+}
+
+/**
+ * Required packages must be installed. Full import is best-effort: faster_whisper
+ * pulls ctranslate2→torch; a broken/SAC-blocked local torch must not fail slim packaging.
+ */
+function requiredPackageReady(pkg) {
+    const dist = distNameOf(pkg);
+    if (!distInstalled(dist)) {
+        return { ok: false, detail: `not installed: ${dist}` };
+    }
+    if (!pkg.importName) return { ok: true, detail: 'installed' };
+    if (importOk(pkg.importName)) return { ok: true, detail: 'importable' };
+    // Package files present; native import failed (torch/SAC/DLL) — warn, allow packaging.
+    return {
+        ok: true,
+        soft: true,
+        detail: `installed but import ${pkg.importName} failed (often SAC-blocked torch / missing CT2); slim pack still OK`,
+    };
 }
 
 function downloadPackage(spec) {
@@ -165,9 +199,10 @@ function check() {
     for (const pkg of PACKAGES) {
         const whl = findWheelForPackage(pkg.id);
         if (!whl) missing.push(`${pkg.id} (wheel)`);
-        else if (pkg.required && pkg.importName && !importOk(pkg.importName)) {
-            // funasr may fail without torch — only hard-fail required imports
-            missing.push(`${pkg.id} (not importable: ${pkg.importName})`);
+        else if (pkg.required) {
+            const ready = requiredPackageReady(pkg);
+            if (!ready.ok) missing.push(`${pkg.id} (${ready.detail})`);
+            else if (ready.soft) console.warn(`[ensure-bundled-wheels] ${pkg.id}: ${ready.detail}`);
         }
     }
     if (missing.length) {
@@ -203,10 +238,14 @@ function main() {
     installAllFromWheels();
     writeManifest();
 
-    for (const pkg of PACKAGES.filter((p) => p.required && p.importName)) {
-        if (!importOk(pkg.importName)) {
-            console.error(`[ensure-bundled-wheels] cannot import required ${pkg.importName}`);
+    for (const pkg of PACKAGES.filter((p) => p.required)) {
+        const ready = requiredPackageReady(pkg);
+        if (!ready.ok) {
+            console.error(`[ensure-bundled-wheels] ${ready.detail}`);
             process.exit(1);
+        }
+        if (ready.soft) {
+            console.warn(`[ensure-bundled-wheels] ${pkg.id}: ${ready.detail}`);
         }
     }
     // Soft-check funasr (needs torch for full import)

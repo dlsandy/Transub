@@ -1,12 +1,10 @@
 /**
- * Afdian fulfillment client: redeem Pro license by out_trade_no.
+ * Afdian fulfillment + hard device-limit client.
  */
 const DEFAULT_AFDIAN_FULFILL_URL = 'https://pay.kimtem.net';
-/** Tried in order when primary fails with a network error */
 const FALLBACK_AFDIAN_FULFILL_URLS = [
     'https://transub-afdian.transubafdian.workers.dev',
 ];
-/** Optional shared secret; must match Worker REDEEM_SHARED_SECRET when set */
 const DEFAULT_REDEEM_SECRET = '';
 
 function fulfillBaseUrl() {
@@ -49,26 +47,26 @@ function resolveFetchImpl(custom) {
     return typeof fetch === 'function' ? fetch : null;
 }
 
-function formatNetworkError(err) {
-    if (!err) return '领取请求失败';
-    if (err.name === 'AbortError') return '领取超时，请稍后重试';
+function formatNetworkError(err, actionLabel = '领取') {
+    if (!err) return `${actionLabel}请求失败`;
+    if (err.name === 'AbortError') return `${actionLabel}超时，请稍后重试`;
     const cause = err.cause || {};
     const code = String(cause.code || err.code || '').toUpperCase();
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
-        return '无法解析领取服务器域名，请检查网络或 DNS（可尝试 1.1.1.1）';
+        return '无法解析许可服务器域名，请检查网络或 DNS（可尝试 1.1.1.1）';
     }
     if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'UND_ERR_HEADERS_TIMEOUT') {
-        return '连接领取服务器超时，请稍后重试或检查代理';
+        return '连接许可服务器超时，请稍后重试或检查代理';
     }
     if (code === 'ECONNREFUSED' || code === 'ECONNRESET') {
-        return '领取服务器连接被重置，请检查代理或防火墙';
+        return '许可服务器连接被重置，请检查代理或防火墙';
     }
     if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
-        return '领取服务器证书校验失败';
+        return '许可服务器证书校验失败';
     }
-    const detail = String(cause.message || err.message || '').trim() || '领取请求失败';
+    const detail = String(cause.message || err.message || '').trim() || `${actionLabel}请求失败`;
     if (detail === 'fetch failed' || detail === 'Failed to fetch') {
-        return '无法连接领取服务器。请浏览器打开 https://pay.kimtem.net/health 自检；若失败请检查网络/代理，或稍后重试';
+        return '无法连接许可服务器。请浏览器打开 https://pay.kimtem.net/health 自检；若失败请检查网络/代理';
     }
     return detail;
 }
@@ -85,46 +83,45 @@ function isRetryableNetworkError(err) {
     return detail === 'fetch failed' || detail === 'Failed to fetch' || /network/i.test(detail);
 }
 
-/**
- * @param {string} outTradeNo
- * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, bases?: string[] }} [opts]
- * @returns {Promise<{ ok: true, licenseKey: string, licenseId?: string, outTradeNo?: string, cached?: boolean }
- *   | { ok: false, error: string, code?: string }>}
- */
-async function redeemLicenseByOrder(outTradeNo, opts = {}) {
-    const no = String(outTradeNo || '').trim();
-    if (!no) return { ok: false, error: '请填写爱发电订单号', code: 'bad_request' };
+function buildHeaders() {
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    const secret = redeemSecret();
+    if (secret) headers['X-Transub-Redeem-Secret'] = secret;
+    return headers;
+}
 
+/**
+ * POST JSON to fulfill service with primary + fallback hosts.
+ */
+async function postFulfill(pathName, body, opts = {}) {
+    const label = opts.actionLabel || '请求';
     const bases = Array.isArray(opts.bases) && opts.bases.length
         ? opts.bases.map((b) => String(b || '').trim().replace(/\/+$/, '')).filter(Boolean)
         : fulfillUrlCandidates();
     if (!bases.length) {
         return {
             ok: false,
-            error: '未配置领取服务地址（TRANSUB_AFDIAN_FULFILL_URL）',
+            error: '未配置许可服务地址（TRANSUB_AFDIAN_FULFILL_URL）',
             code: 'misconfigured',
         };
     }
 
     const fetchImpl = resolveFetchImpl(opts.fetchImpl);
     if (!fetchImpl) {
-        return { ok: false, error: '当前环境不支持联网领取', code: 'misconfigured' };
+        return { ok: false, error: '当前环境不支持联网许可', code: 'misconfigured' };
     }
 
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    const secret = redeemSecret();
-    if (secret) headers['X-Transub-Redeem-Secret'] = secret;
-
     const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 20000);
+    const headers = buildHeaders();
     let lastNetworkError = null;
 
     for (let i = 0; i < bases.length; i += 1) {
         const base = bases[i];
         let url;
         try {
-            url = new URL('/redeem', `${base}/`);
+            url = new URL(pathName, `${base}/`);
         } catch (_) {
-            lastNetworkError = new Error('领取服务地址无效');
+            lastNetworkError = new Error('许可服务地址无效');
             continue;
         }
 
@@ -135,7 +132,7 @@ async function redeemLicenseByOrder(outTradeNo, opts = {}) {
             res = await fetchImpl(url.toString(), {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ outTradeNo: no }),
+                body: JSON.stringify(body || {}),
                 signal: ac?.signal,
             });
         } catch (err) {
@@ -143,7 +140,7 @@ async function redeemLicenseByOrder(outTradeNo, opts = {}) {
             if (isRetryableNetworkError(err) && i < bases.length - 1) continue;
             return {
                 ok: false,
-                error: formatNetworkError(err),
+                error: formatNetworkError(err, label),
                 code: err?.name === 'AbortError' ? 'timeout' : 'network',
             };
         } finally {
@@ -154,32 +151,82 @@ async function redeemLicenseByOrder(outTradeNo, opts = {}) {
         try {
             json = await res.json();
         } catch (_) {
-            return { ok: false, error: `领取服务响应无效 (HTTP ${res.status})`, code: 'bad_response' };
+            return { ok: false, error: `许可服务响应无效 (HTTP ${res.status})`, code: 'bad_response' };
         }
 
-        if (!json?.ok || !String(json.licenseKey || '').trim()) {
+        if (!json?.ok) {
             return {
                 ok: false,
-                error: json?.error || `领取失败 (HTTP ${res.status})`,
-                code: json?.code || 'redeem_failed',
+                error: json?.error || `${label}失败 (HTTP ${res.status})`,
+                code: json?.code || 'request_failed',
+                hint: json?.hint,
+                retryAt: json?.retryAt,
+                retryInMs: json?.retryInMs,
+                devices: json?.devices,
+                lastTransferAt: json?.lastTransferAt,
+                maxDevices: json?.maxDevices,
+                status: res.status,
             };
         }
 
-        return {
-            ok: true,
-            licenseKey: String(json.licenseKey).trim(),
-            licenseId: json.licenseId ? String(json.licenseId) : undefined,
-            outTradeNo: json.outTradeNo ? String(json.outTradeNo) : no,
-            cached: !!json.cached,
-            fulfillBase: base,
-        };
+        return { ...json, ok: true, fulfillBase: base };
     }
 
     return {
         ok: false,
-        error: formatNetworkError(lastNetworkError),
+        error: formatNetworkError(lastNetworkError, label),
         code: 'network',
     };
+}
+
+async function redeemLicenseByOrder(outTradeNo, opts = {}) {
+    const no = String(outTradeNo || '').trim();
+    if (!no) return { ok: false, error: '请填写爱发电订单号', code: 'bad_request' };
+    return postFulfill('/redeem', { outTradeNo: no }, { ...opts, actionLabel: '领取' });
+}
+
+async function bindLicenseDevice({ licenseKey, deviceId, label = '' }, opts = {}) {
+    const key = String(licenseKey || '').trim();
+    const id = String(deviceId || '').trim();
+    if (!key) return { ok: false, error: '缺少许可密钥', code: 'bad_request' };
+    if (!id) return { ok: false, error: '缺少设备标识', code: 'bad_request' };
+    return postFulfill('/license/bind', { licenseKey: key, deviceId: id, label }, {
+        ...opts,
+        actionLabel: '激活绑定',
+    });
+}
+
+async function transferLicenseDevice({ licenseKey, deviceId, label = '' }, opts = {}) {
+    const key = String(licenseKey || '').trim();
+    const id = String(deviceId || '').trim();
+    if (!key) return { ok: false, error: '缺少许可密钥', code: 'bad_request' };
+    if (!id) return { ok: false, error: '缺少设备标识', code: 'bad_request' };
+    return postFulfill('/license/transfer', { licenseKey: key, deviceId: id, label }, {
+        ...opts,
+        actionLabel: '换机',
+    });
+}
+
+async function revalidateLicenseDevice({ licenseKey, deviceId }, opts = {}) {
+    const key = String(licenseKey || '').trim();
+    const id = String(deviceId || '').trim();
+    if (!key) return { ok: false, error: '缺少许可密钥', code: 'bad_request' };
+    if (!id) return { ok: false, error: '缺少设备标识', code: 'bad_request' };
+    return postFulfill('/license/revalidate', { licenseKey: key, deviceId: id }, {
+        ...opts,
+        actionLabel: '复核',
+    });
+}
+
+async function unbindLicenseDevice({ licenseKey, deviceId }, opts = {}) {
+    const key = String(licenseKey || '').trim();
+    const id = String(deviceId || '').trim();
+    if (!key || !id) return { ok: true, skipped: true };
+    return postFulfill('/license/unbind', { licenseKey: key, deviceId: id }, {
+        ...opts,
+        actionLabel: '解绑',
+        timeoutMs: opts.timeoutMs || 10000,
+    });
 }
 
 module.exports = {
@@ -189,5 +236,10 @@ module.exports = {
     fulfillUrlCandidates,
     redeemSecret,
     formatNetworkError,
+    postFulfill,
     redeemLicenseByOrder,
+    bindLicenseDevice,
+    transferLicenseDevice,
+    revalidateLicenseDevice,
+    unbindLicenseDevice,
 };

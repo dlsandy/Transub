@@ -27,6 +27,20 @@ const PRESERVE_SITE_PACKAGE_RE = [
     /^numpy([_.-]|$)/i,
     /^av$/i,
     /^av-/i,
+    /^av\.libs$/i,
+    /^numba([_.-]|$)/i,
+    /^llvmlite([_.-]|$)/i,
+    /^scipy([_.-]|$)/i,
+    /^scipy\.libs$/i,
+    /^jieba([_.-]|$)/i,
+    /^librosa([_.-]|$)/i,
+    /^soundfile([_.-]|$)/i,
+    /^sklearn([_.-]|$)/i,
+    /^scikit_learn([_.-]|$)/i,
+    /^scikit-learn([_.-]|$)/i,
+    /^sympy([_.-]|$)/i,
+    /^modelscope([_.-]|$)/i,
+    /^transformers([_.-]|$)/i,
     /^tokenizers([_.-]|$)/i,
     /^onnx([_.-]|$)/i,
     /^sentencepiece([_.-]|$)/i,
@@ -49,6 +63,7 @@ const PRESERVE_TOP_LEVEL_DIRS = [
     'backup',
     'subtitles',
     'temp',
+    'tdp',
     'transwithai-config',
 ];
 
@@ -286,12 +301,14 @@ function copyTreeOverwrite(srcDir, destDir, opts = {}) {
  *   installRoot: string,
  *   packageRoot: string,
  *   preserveRelPaths?: string[],
+ *   allowPartial?: boolean,
  *   onProgress?: (info: { phase: string, message: string, percent: number }) => void,
  * }} opts
  */
 function applyZipUpdateMerge(opts = {}) {
     const installRoot = path.resolve(String(opts.installRoot || ''));
     const packageRoot = path.resolve(String(opts.packageRoot || ''));
+    const allowPartial = Boolean(opts.allowPartial);
     const report = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const emit = (phase, message, percent) => {
         if (!report) return;
@@ -304,7 +321,7 @@ function applyZipUpdateMerge(opts = {}) {
     if (!packageRoot || !fs.existsSync(packageRoot)) {
         throw new Error('更新包目录无效');
     }
-    if (!fs.existsSync(path.join(packageRoot, 'Transub.exe'))) {
+    if (!allowPartial && !fs.existsSync(path.join(packageRoot, 'Transub.exe'))) {
         throw new Error('更新包缺少 Transub.exe');
     }
 

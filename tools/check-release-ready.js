@@ -64,8 +64,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.0.2') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.0.2 for this cut)`);
+if (pkg.version === '3.0.3') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.0.3 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');
@@ -104,6 +104,28 @@ const extra = pkg.build?.extraFiles || [];
 const shipsAdvanced = extra.some((e) => e && (e.from === '_advanced' || e.to === '_advanced'));
 if (shipsAdvanced) ok('extraFiles ships _advanced');
 else fail('extraFiles missing _advanced');
+
+console.log('\nLanguage data pack (TDP)');
+const tdpBundled = 'shared/tdp/tdp-bundled.tpack';
+if (exists(tdpBundled)) {
+    const n = fs.statSync(path.join(root, tdpBundled)).size;
+    if (n > 100) ok(`${tdpBundled} present (${n} bytes)`);
+    else fail(`${tdpBundled} too small — run npm run ensure:bundled-tdp`);
+} else {
+    fail(`${tdpBundled} missing — run npm run ensure:bundled-tdp`);
+}
+const filesList = pkg.build?.files || [];
+if (filesList.includes(tdpBundled) || filesList.some((f) => String(f).includes('tdp-bundled'))) {
+    ok('build.files includes tdp-bundled.tpack');
+} else {
+    fail('package.json build.files missing shared/tdp/tdp-bundled.tpack');
+}
+const shipsTdp = extra.some((e) => e && (
+    e.from === tdpBundled || e.to === tdpBundled
+    || String(e.from || '').includes('tdp-bundled')
+));
+if (shipsTdp) ok('extraFiles ships tdp-bundled.tpack (next to exe)');
+else fail('extraFiles missing shared/tdp/tdp-bundled.tpack');
 
 console.log('\nPackaged unlock hardening');
 const gates = fs.readFileSync(path.join(root, 'electron/advanced-gates.js'), 'utf8');

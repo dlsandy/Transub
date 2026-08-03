@@ -59,5 +59,38 @@ describe('advanced-llm-download mirrors', () => {
             downloadSourceLabel('https://github.com/dlsandy/Transub/releases/download/v1/a.zip'),
             'GitHub',
         );
+        assert.strictEqual(
+            downloadSourceLabel('https://www.transub.cc/updates/3.0.3/Transub-3.0.3-win.zip'),
+            '官网',
+        );
+    });
+});
+
+describe('advanced-llm-download extract helpers', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const {
+        extractArchiveAsync,
+        rimrafSafeAsync,
+    } = require('../electron/advanced-llm-download');
+
+    it('extractArchiveAsync unpacks a tiny zip without blocking API shape', async () => {
+        if (process.platform !== 'win32') return;
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-extract-'));
+        const srcDir = path.join(root, 'src');
+        const zipPath = path.join(root, 't.zip');
+        const destDir = path.join(root, 'out');
+        fs.mkdirSync(srcDir, { recursive: true });
+        fs.writeFileSync(path.join(srcDir, 'hello.txt'), 'ok');
+        const { execFileSync } = require('child_process');
+        execFileSync('powershell.exe', [
+            '-NoProfile', '-Command',
+            `Compress-Archive -LiteralPath ${JSON.stringify(path.join(srcDir, 'hello.txt'))} -DestinationPath ${JSON.stringify(zipPath)} -Force`,
+        ], { windowsHide: true, stdio: 'pipe' });
+        await extractArchiveAsync(zipPath, destDir, 'zip');
+        const found = fs.readdirSync(destDir);
+        assert.ok(found.includes('hello.txt') || found.length > 0);
+        await rimrafSafeAsync(root);
     });
 });

@@ -127,10 +127,17 @@ function scanSubtitleQc(filePath, options = {}) {
     const shortParts = [];
     if (summary?.overlap) shortParts.push(`重叠 ${summary.overlap}`);
     if (summary?.highCps) shortParts.push(`CPS ${summary.highCps}`);
+    if (summary?.splittable) shortParts.push(`可分割 ${summary.splittable}`);
+    if (summary?.connected) shortParts.push(`连续文本 ${summary.connected}`);
+    if (summary?.repetition) shortParts.push(`叠词 ${summary.repetition}`);
     if (summary?.short) shortParts.push(`过短 ${summary.short}`);
     if (summary?.long) shortParts.push(`过长 ${summary.long}`);
+    if (summary?.duplicate) shortParts.push(`连续重复 ${summary.duplicate}`);
     if (summary?.fluency) shortParts.push(`通顺度 ${summary.fluency}`);
     if (summary?.invalid) shortParts.push(`无效 ${summary.invalid}`);
+    if (summary?.autoFixable && summary?.advisory) {
+        shortParts.push(`可修 ${summary.autoFixable}`);
+    }
     return {
         ok: true,
         path: doc.path,
@@ -168,9 +175,14 @@ function applySubtitlePostprocess(filePath, options = {}) {
     const doSpacePunct = options.spaceAfterChinesePunctuation === true;
     const doCpsSplit = options.cpsSplit === true;
     const doNoise = options.removeNoise === true || options.removeHallucinations === true;
+    const doRemoveDuplicates = options.removeDuplicates === true;
     const doCompressRep = options.compressRepetition === true;
     const chineseVariant = String(options.chineseSubtitleVariant || '').trim();
-    const doChinese = chineseVariant === 'simplified' || chineseVariant === 'traditional';
+    const doChinese = chineseVariant === 'simplified'
+        || chineseVariant === 'traditional'
+        || chineseVariant === 'traditional-tw'
+        || chineseVariant === 'traditional-hk'
+        || chineseVariant === 'traditional-twp';
 
     if (doSpacePunct) {
         let chinese;
@@ -200,11 +212,13 @@ function applySubtitlePostprocess(filePath, options = {}) {
             fixCpsByExtend: options.fixCpsByExtend === true,
             enforceMinDur: options.enforceMinDur === true,
             enforceMaxDur: options.enforceMaxDur !== false,
+            fixInvalid: options.fixInvalid !== false,
             maxCps: Number(options.maxCps) || 18,
             maxSec: Number(options.maxSec) || 10,
             smartMaxChars: Number(options.smartMaxChars) || 20,
             smartLineChars: Number(options.smartLineChars) || 18,
             targetCps: Number(options.targetCps) || 3,
+            gapMs: Number(options.gapMs) >= 0 ? Number(options.gapMs) : 1,
         });
         cues = fix.cues;
         result.cpsSplit = {
@@ -212,10 +226,12 @@ function applySubtitlePostprocess(filePath, options = {}) {
             beforeCount: fix.beforeCount,
             afterCount: fix.afterCount,
             stats: fix.stats,
+            remaining: fix.remaining,
+            remainingText: fix.remainingText,
         };
     }
 
-    if (doNoise) {
+    if (doNoise || doRemoveDuplicates) {
         let fluency;
         try {
             fluency = require('../src/js/subtitle-fluency-core');
@@ -223,7 +239,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
             return { ok: false, error: err.message || '无法加载通顺度模块' };
         }
         // Stitch JA mid-phrase ASR splits before deleting leftover fragments.
-        if (options.stitchJaFragments !== false && typeof fluency.stitchJaFragmentCues === 'function') {
+        if (doNoise && options.stitchJaFragments !== false && typeof fluency.stitchJaFragmentCues === 'function') {
             const stitched = fluency.stitchJaFragmentCues(cues, {
                 maxGapMs: options.jaStitchMaxGapMs,
                 maxMergedDurMs: options.jaStitchMaxMergedDurMs,
@@ -237,12 +253,12 @@ function applySubtitlePostprocess(filePath, options = {}) {
             }
         }
         const noise = fluency.removeNoiseFromCues(cues, {
-            removeEmpty: options.removeEmpty !== false,
-            removeFragments: options.removeFragments !== false,
-            removeSoundEffects: options.removeSoundEffects !== false,
-            removeSymbolOnly: options.removeSymbolOnly !== false,
-            removeDuplicates: options.removeDuplicates === true,
-            removeHallucinations: options.removeHallucinations !== false,
+            removeEmpty: doNoise && options.removeEmpty !== false,
+            removeFragments: doNoise && options.removeFragments !== false,
+            removeSoundEffects: doNoise && options.removeSoundEffects !== false,
+            removeSymbolOnly: doNoise && options.removeSymbolOnly !== false,
+            removeDuplicates: doRemoveDuplicates,
+            removeHallucinations: doNoise && options.removeHallucinations !== false,
             blankInsteadOfRemove: options.blankInsteadOfRemove === true,
             blankPlaceholder: options.blankPlaceholder,
         });
@@ -252,7 +268,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
             stats: noise.stats,
         };
         // Mens-esthe / soft-AV ASR mishears on source tracks (免税→メンエス …)
-        if (options.jaAsrDomainFix !== false) {
+        if (doNoise && options.jaAsrDomainFix !== false) {
             try {
                 const mtSanitize = require('../src/js/mt-sanitize-core');
                 if (typeof mtSanitize.correctJaAsrDomainMishearsInCues === 'function') {
@@ -308,9 +324,15 @@ function applySubtitlePostprocess(filePath, options = {}) {
                 /* glossary optional */
             }
         }
-        const direction = chineseVariant === 'traditional' ? 's2t' : 't2s';
+        const convertOpts = typeof chinese.variantToConvertOptions === 'function'
+            ? chinese.variantToConvertOptions(chineseVariant)
+            : {
+                direction: chineseVariant === 'simplified' ? 't2s' : 's2t',
+                locale: 'twp',
+            };
         const converted = chinese.convertCues(cues, {
-            direction,
+            direction: convertOpts.direction,
+            locale: convertOpts.locale,
             protectTerms: protectTerms || [],
         });
         cues = converted.cues;
@@ -887,6 +909,8 @@ function setupExtensionsBridge(api, deps) {
                 ffmpegPath,
                 engineInstallPath,
                 engineAsrModel,
+                // Wizard passes syncLlamaBackend:true to force CUDA 12/13 preference.
+                syncLlamaBackend: !!payload.syncLlamaBackend,
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err), items: [] };

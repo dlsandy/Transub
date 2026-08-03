@@ -54,20 +54,29 @@ Same body; returns a single JSON result (used by Transub desktop client).
 
 ### `GET /runtime/gpu`
 
-Probe NVIDIA GPU + CUDA 12 runtime readiness for Whisper / CTranslate2.
+Probe NVIDIA GPU runtime readiness for **two stacks**: ASR/CTranslate2 (`cublas` /
+`ctranslate2Cuda`) and WhisperSeg ONNX (`ortGpuCuda` / `onnxruntime-gpu`).
+`status=ready` only when both applicable stacks are OK; CT2-ready but ORT-missing is
+`partial` (hint names WhisperSeg explicitly).
 
 ```json
 {
   "ok": true,
-  "status": "need_install",
+  "status": "partial",
   "hasCuda": true,
   "gpuName": "NVIDIA GeForce RTX 3080",
   "driverCudaVersion": "13.2",
-  "cublas12": false,
-  "ctranslate2Cuda": false,
+  "cublas12": true,
+  "ctranslate2Cuda": true,
+  "asrGpuReady": true,
   "target": "cuda12",
+  "ortGpuTarget": "cuda13",
+  "ortGpuRequirement": "onnxruntime-gpu>=1.27",
+  "ortGpuVersion": "",
+  "ortGpuCuda": false,
+  "whispersegGpuReady": false,
   "packages": ["nvidia-cublas-cu12", "nvidia-cuda-runtime-cu12", "nvidia-cudnn-cu12"],
-  "hint": "…"
+  "hint": "ASR/CTranslate2 GPU 已就绪；WhisperSeg（onnxruntime-gpu）未就绪…"
 }
 ```
 

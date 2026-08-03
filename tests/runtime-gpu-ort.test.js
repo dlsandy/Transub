@@ -127,6 +127,8 @@ print(json.dumps({
     "hasOrtTarget": "ortGpuTarget" in p,
     "hasOrtReq": "ortGpuRequirement" in p,
     "hasCublas13": "cublas13" in p,
+    "hasAsrReady": "asrGpuReady" in p,
+    "hasWhispersegReady": "whispersegGpuReady" in p,
 }))
 `);
         const payload = JSON.parse(out);
@@ -134,5 +136,153 @@ print(json.dumps({
         assert.strictEqual(payload.hasOrtTarget, true);
         assert.strictEqual(payload.hasOrtReq, true);
         assert.strictEqual(payload.hasCublas13, true);
+        assert.strictEqual(payload.hasAsrReady, true);
+        assert.strictEqual(payload.hasWhispersegReady, true);
+    });
+
+    it('status hint separates ASR/CT2 readiness from WhisperSeg ORT', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from transub_engine.runtime_gpu import _status_hint
+
+ready_both = _status_hint(
+    "ready", "RTX", "13.3",
+    ct2_ok=True, ort_ok=True, ort_needed=True,
+    ort_req="onnxruntime-gpu>=1.27",
+)
+partial_ort = _status_hint(
+    "partial", "RTX", "13.3",
+    ct2_ok=True, ort_ok=False, ort_needed=True,
+    ort_req="onnxruntime-gpu>=1.27",
+)
+partial_ct2 = _status_hint(
+    "partial", "RTX", "13.3",
+    ct2_ok=False, ort_ok=True, ort_needed=True,
+    ort_req="onnxruntime-gpu>=1.27",
+)
+ready_asr_only = _status_hint(
+    "ready", "RTX", "12.6",
+    ct2_ok=True, ort_ok=False, ort_needed=False,
+)
+print(json.dumps({
+    "ready_both": ready_both,
+    "partial_ort": partial_ort,
+    "partial_ct2": partial_ct2,
+    "ready_asr_only": ready_asr_only,
+}, ensure_ascii=False))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(/ASR\/CTranslate2 \+ WhisperSeg ONNX/.test(payload.ready_both));
+        assert.ok(/ASR\/CTranslate2 GPU/.test(payload.partial_ort));
+        assert.ok(/WhisperSeg/.test(payload.partial_ort));
+        assert.ok(/onnxruntime-gpu>=1\.27/.test(payload.partial_ort));
+        // Must not claim blanket "GPU runtime ready" when ORT is missing.
+        assert.ok(!/^GPU /.test(payload.partial_ort));
+        assert.ok(/CTranslate2/.test(payload.partial_ct2));
+        assert.ok(/WhisperSeg ONNX GPU/.test(payload.partial_ct2));
+        assert.ok(/ASR\/CTranslate2/.test(payload.ready_asr_only));
+        assert.ok(!/WhisperSeg ONNX/.test(payload.ready_asr_only));
+    });
+
+    it('probe marks partial when CT2 ready but onnxruntime-gpu missing', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_gpu as rg
+
+device = {
+    "hasCuda": True,
+    "gpuName": "NVIDIA GeForce RTX 3080",
+    "vramMb": 10240,
+    "ramMb": 32768,
+}
+with patch.object(rg, "detect_device", return_value=device), \\
+     patch.object(rg, "_parse_driver_cuda_version", return_value="13.3"), \\
+     patch.object(rg, "find_cublas64_12", return_value=r"C:\\\\cublas64_12.dll"), \\
+     patch.object(rg, "find_cublas64_13", return_value=""), \\
+     patch.object(rg, "ctranslate2_cuda_usable", return_value=True), \\
+     patch.object(rg, "_ort_gpu_requirement_satisfied", return_value=False), \\
+     patch.object(rg, "_ort_gpu_version_installed", return_value=""):
+    p = rg.probe_gpu_runtime()
+print(json.dumps({
+    "status": p.get("status"),
+    "asrGpuReady": p.get("asrGpuReady"),
+    "ortGpuCuda": p.get("ortGpuCuda"),
+    "hint": p.get("hint") or "",
+}, ensure_ascii=False))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.status, 'partial');
+        assert.strictEqual(payload.asrGpuReady, true);
+        assert.strictEqual(payload.ortGpuCuda, false);
+        assert.ok(/WhisperSeg/.test(payload.hint));
+        assert.ok(!/^GPU 运行库已就绪/.test(payload.hint));
+    });
+
+    it('accepts CUDA 12 ORT as ready on CUDA 13 drivers with cu12 libs', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from packaging.version import Version
+from transub_engine import runtime_gpu as rg
+
+device = {
+    "hasCuda": True,
+    "gpuName": "NVIDIA GeForce RTX 3080",
+    "vramMb": 10240,
+    "ramMb": 32768,
+}
+
+def sat(req):
+    from packaging.requirements import Requirement
+    from importlib.metadata import PackageNotFoundError
+    try:
+        r = Requirement(str(req or ""))
+    except Exception:
+        return False
+    if r.name != "onnxruntime-gpu":
+        return False
+    installed = Version("1.21.1")
+    return (not r.specifier) or (installed in r.specifier)
+
+with patch.object(rg, "detect_device", return_value=device), \\
+     patch.object(rg, "_parse_driver_cuda_version", return_value="13.3"), \\
+     patch.object(rg, "find_cublas64_12", return_value=r"C:\\\\cublas64_12.dll"), \\
+     patch.object(rg, "find_cublas64_13", return_value=""), \\
+     patch.object(rg, "ctranslate2_cuda_usable", return_value=True), \\
+     patch.object(rg, "_ort_gpu_requirement_satisfied", side_effect=sat), \\
+     patch.object(rg, "_ort_gpu_version_installed", return_value="1.21.1"):
+    ready = rg.resolve_ort_gpu_readiness("13.3", has_cublas12=True, has_cublas13=False)
+    p = rg.probe_gpu_runtime()
+print(json.dumps({
+    "ready": ready,
+    "status": p.get("status"),
+    "ortGpuCuda": p.get("ortGpuCuda"),
+    "ortGpuTarget": p.get("ortGpuTarget"),
+    "ortGpuDesiredTarget": p.get("ortGpuDesiredTarget"),
+    "missing": p.get("missingPackages") or [],
+    "hint": p.get("hint") or "",
+}, ensure_ascii=False))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ready.ok, true);
+        assert.strictEqual(payload.ready.target, 'cuda12');
+        assert.strictEqual(payload.ready.desiredTarget, 'cuda13');
+        assert.strictEqual(payload.status, 'ready');
+        assert.strictEqual(payload.ortGpuCuda, true);
+        assert.strictEqual(payload.ortGpuTarget, 'cuda12');
+        assert.strictEqual(payload.ortGpuDesiredTarget, 'cuda13');
+        assert.deepStrictEqual(payload.missing, []);
+        assert.ok(/ASR\/CTranslate2 \+ WhisperSeg ONNX/.test(payload.hint));
+        assert.ok(!/未就绪/.test(payload.hint));
     });
 });

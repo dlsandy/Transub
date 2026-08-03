@@ -182,11 +182,10 @@ print(json.dumps(probe_asr_whisper()))
         assert.ok(Array.isArray(probe.packages));
     });
 
-    it('skips vad-whisperseg pip when requirements already satisfied', function () {
+    it('skips vad-whisperseg pip when requirements already satisfied', { timeout: 60000 }, function () {
         if (process.platform !== 'win32') {
             this.skip();
         }
-        this.timeout(60000);
         const out = runExtras(`
 import json
 from transub_engine.runtime_extras import (
@@ -210,14 +209,14 @@ print(json.dumps({
 `);
         const payload = JSON.parse(out);
         assert.strictEqual(payload.probeOk, true);
+        if (payload.allSatisfied) {
+            assert.deepStrictEqual(payload.unsatisfied, []);
+        }
         // Import-based readiness: if the stack imports, ensure must skip pip.
+        // Metadata-satisfied alone can still fail import (e.g. SAC-blocked DLLs).
         if (payload.probeReady) {
             assert.strictEqual(payload.ensureOk, true);
             assert.strictEqual(payload.ensureSkipped, true);
-        }
-        if (payload.allSatisfied) {
-            assert.strictEqual(payload.probeReady, true);
-            assert.deepStrictEqual(payload.unsatisfied, []);
         }
     });
 

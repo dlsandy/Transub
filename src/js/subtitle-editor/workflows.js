@@ -95,18 +95,37 @@
             return !!(wf && !wf.builtin);
         }
 
-        async function applyTraditionalIfNeeded(updates) {
-            const list = Array.isArray(updates) ? updates : [];
-            if (!list.length || !chineseCore?.convertText) return list;
+        /**
+         * 简繁转换只应在整条工作流结束后执行一次（避免中途译/改写后再被后续步骤按简体规则处理）。
+         * 翻译/重构步骤保持简体；设置了繁体时，在全部步骤完成后统一转繁。
+         */
+        async function applyTraditionalAtWorkflowEndIfNeeded() {
+            if (!chineseCore?.convertCues || !state.cues?.length) return { changed: false };
             try {
                 const optsRes = await electron?.transWithAiGetOptions?.({});
-                if (optsRes?.options?.chineseSubtitleVariant !== 'traditional') return list;
-                for (const u of list) {
-                    const converted = chineseCore.convertText(String(u.text ?? ''), 's2t');
-                    if (converted?.text != null) u.text = converted.text;
-                }
-            } catch (_) { /* ignore */ }
-            return list;
+                const variant = optsRes?.options?.chineseSubtitleVariant;
+                const trad = typeof chineseCore.isTraditionalVariant === 'function'
+                    ? chineseCore.isTraditionalVariant(variant)
+                    : variant === 'traditional'
+                        || variant === 'traditional-tw'
+                        || variant === 'traditional-hk';
+                if (!trad) return { changed: false };
+                const convertOpts = typeof chineseCore.variantToConvertOptions === 'function'
+                    ? chineseCore.variantToConvertOptions(variant)
+                    : { direction: 's2t', locale: 'twp' };
+                const result = chineseCore.convertCues(state.cues, {
+                    direction: convertOpts.direction,
+                    locale: convertOpts.locale,
+                });
+                if (!result.stats?.cueTouched) return { changed: false, summary: result.summary };
+                state.cues.splice(0, state.cues.length, ...result.cues);
+                setDirty(true);
+                renderCueList();
+                if (state.selectedIndex >= 0) renderDetailPane();
+                return { changed: true, summary: result.summary };
+            } catch (_) {
+                return { changed: false };
+            }
         }
 
         async function loadWorkflows() {
@@ -936,7 +955,6 @@
                         summary: res.message || '未返回改写结果',
                     };
                 }
-                await applyTraditionalIfNeeded(updates);
 
                 let failedIndexes = collectFailedIndexes(res);
                 let rows = buildRowsFromUpdates(updates, failedIndexes);
@@ -985,7 +1003,6 @@
                                     return null;
                                 }
                                 const retryUpdates = Array.isArray(retryRes.cues) ? retryRes.cues : [];
-                                await applyTraditionalIfNeeded(retryUpdates);
                                 const retryFailed = collectFailedIndexes(retryRes);
                                 failedIndexes = retryFailed;
                                 res = retryRes;
@@ -1658,7 +1675,6 @@
                 if (!updates.length) {
                     return { status: 'skipped', summary: res.summary || '未返回翻译结果' };
                 }
-                await applyTraditionalIfNeeded(updates);
 
                 const rows = buildRowsFromUpdates(updates);
                 if (!rows.length) {
@@ -1889,7 +1905,10 @@
                         fixCpsByExtend: true,
                         enforceMinDur: true,
                         enforceMaxDur: true,
-                        compressRepetition: false,
+                        fixInvalid: true,
+                        compressRepetition: true,
+                        removeNoise: true,
+                        removeDuplicates: true,
                         maxCps: 18,
                         minSec: 0.5,
                         maxSec: 10,
@@ -1901,16 +1920,268 @@
                         ...(step.params || {}),
                     };
                     syncDetailToCue();
-                    const plan = qcCore.buildQcFixPlan(state.cues, opts);
-                    if (!plan.ok) return { status: 'skipped', summary: plan.summary || '无需修复' };
-                    recordUndoBeforeChange();
                     const result = qcCore.applyQcFixes(state.cues, opts);
+                    const ok = !!(result.stats?.affected || result.stats?.splitCount
+                        || result.stats?.compressRepFixed || result.stats?.noiseRemoved);
+                    if (!ok) return { status: 'skipped', summary: result.summary || '无需修复' };
+                    recordUndoBeforeChange();
                     state.cues.splice(0, state.cues.length, ...result.cues);
                     setDirty(true);
                     renderCueList();
                     if (state.selectedIndex >= 0) renderDetailPane();
                     refreshQcBadge();
-                    return { status: 'done', summary: plan.summary, changed: true };
+                    return { status: 'done', summary: result.summary, changed: true };
+                },
+                'qc.smartFix': async (_c, step) => {
+                    if (!state.cues.length) return { status: 'skipped', summary: '无字幕' };
+                    const gate = await electron?.transubAdvancedRequireFeature?.({ featureId: 'qcSmartFix' });
+                    const gateFb = gate?.ok
+                        ? gate
+                        : await electron?.transubAdvancedRequireFeature?.({ featureId: 'contextReconstruct' });
+                    if (!gateFb?.ok) {
+                        return { status: 'failed', summary: gateFb?.error || gate?.error || '需解锁 Pro' };
+                    }
+                    const prefs = loadSplitPrefs();
+                    const profileApi = global.TransubContentProfile;
+                    const profile = profileApi?.classifyContentProfile?.({
+                        path: state.videoPath || state.path || '',
+                        fileName: String(state.videoPath || state.path || '').split(/[/\\]/).pop() || '',
+                    })?.profile || 'unknown';
+                    const profilePreset = profileApi?.qcPresetForProfile?.(profile) || {};
+                    const opts = {
+                        fixOverlap: true,
+                        fixCpsBySplit: true,
+                        fixCpsByExtend: true,
+                        enforceMinDur: true,
+                        enforceMaxDur: true,
+                        fixInvalid: true,
+                        compressRepetition: true,
+                        removeNoise: true,
+                        removeDuplicates: true,
+                        maxCps: 18,
+                        minSec: 0.5,
+                        maxSec: 10,
+                        gapMs: 1,
+                        maxSmartCues: 40,
+                        intensity: 'light',
+                        llmSplit: false,
+                        retranscribeConnected: false,
+                        semanticReview: false,
+                        ...profilePreset,
+                        smartMaxChars: prefs.smartMaxChars,
+                        smartLineChars: prefs.smartLineChars,
+                        targetCps: getTargetCps(),
+                        useCpsTime: prefs.useCps !== false,
+                        profile,
+                        ...(step.params || {}),
+                    };
+                    syncDetailToCue();
+                    // 勿占用 reconstructBusy；阶段提示用状态栏，润色时由 runContextReconstructOnce 自带遮罩
+                    const qcWaitStatus = (msg) => {
+                        setStatus(msg || 'QC 处理中，请稍候…', '');
+                    };
+                    qcWaitStatus('QC 处理中，请稍候…');
+                    const unsubWfQc = electron?.onAdvancedReconstructProgress?.((info) => {
+                        if (!info) return;
+                        const mode = String(info.mode || '');
+                        if (mode && mode !== 'qc-smart' && mode !== 'semantic-review' && mode !== 'single') return;
+                        qcWaitStatus(info.message || info.detail || 'QC 处理进行中，请稍候…');
+                    }) || null;
+                    try {
+                    const ruleResult = qcCore.applyQcFixes(state.cues, opts);
+                    const ruleOk = !!(ruleResult.stats?.affected || ruleResult.stats?.splitCount
+                        || ruleResult.stats?.compressRepFixed || ruleResult.stats?.noiseRemoved);
+                    if (ruleOk) {
+                        recordUndoBeforeChange();
+                        state.cues.splice(0, state.cues.length, ...ruleResult.cues);
+                        setDirty(true);
+                        renderCueList();
+                        if (state.selectedIndex >= 0) renderDetailPane();
+                    }
+                    const smartApi = global.TransubSubtitleQcSmart;
+                    const parts = [];
+                    if (ruleOk) parts.push(ruleResult.summary);
+                    let changed = !!ruleOk;
+                    let reuseScan = ruleResult.scan || null;
+
+                    const doLlmSplit = opts.llmSplit === true || step.params?.llmSplit === true;
+                    if (doLlmSplit && smartApi?.selectQcLlmSplitTargets && electron?.transubAdvancedQcLlmSplit) {
+                        qcWaitStatus('智能断句中，请稍候…');
+                        const splitScan = reuseScan || qcCore.scanCueIssues(state.cues, {
+                            ...opts,
+                            checkFluency: false,
+                        });
+                        const splitTargets = smartApi.selectQcLlmSplitTargets(splitScan.issues, {
+                            maxTargets: Number(step.params?.maxLlmSplitTargets) || 24,
+                        });
+                        if (splitTargets.length) {
+                            if (!changed) recordUndoBeforeChange();
+                            const items = smartApi.buildQcLlmSplitPayload(state.cues, splitTargets, {
+                                smartMaxChars: Number(opts.smartMaxChars) || 20,
+                            });
+                            const splitRes = await electron.transubAdvancedQcLlmSplit({ cues: items });
+                            if (splitRes?.ok && Array.isArray(splitRes.splits)) {
+                                const applied = smartApi.applyQcLlmSplitResults(state.cues, splitRes.splits, {
+                                    targetCps: getTargetCps(),
+                                    minSec: Number(opts.minSec) || 0.5,
+                                    useCpsTime: opts.useCpsTime !== false,
+                                });
+                                if (applied.splitCount) {
+                                    state.cues.splice(0, state.cues.length, ...applied.cues);
+                                    maybeFixOverlapAfterSplit?.();
+                                    setDirty(true);
+                                    changed = true;
+                                    reuseScan = null;
+                                    parts.push(`智能断句 ${applied.splitCount} 条(+${applied.added})`);
+                                    renderCueList();
+                                    if (state.selectedIndex >= 0) renderDetailPane();
+                                }
+                            } else if (splitRes && !splitRes.ok) {
+                                parts.push(splitRes.error || '智能断句失败');
+                            }
+                        }
+                    }
+
+                    const doRetranscribe = opts.retranscribeConnected === true
+                        || step.params?.retranscribeConnected === true;
+                    if (doRetranscribe && state.videoPath && typeof runRetranscribeRange === 'function' && smartApi?.buildQcRetranscribeRanges) {
+                        qcWaitStatus('局部重转写中，请稍候…');
+                        const reScan = reuseScan || qcCore.scanCueIssues(state.cues, {
+                            ...opts,
+                            checkFluency: false,
+                        });
+                        const reTargets = smartApi.selectQcRetranscribeTargets(reScan.issues);
+                        const ranges = smartApi.buildQcRetranscribeRanges(
+                            state.cues,
+                            reTargets.map((t) => t.index),
+                            {
+                                maxRanges: Number(step.params?.maxRetranscribeRanges) || 8,
+                                maxDurationSec: Number(step.params?.maxRetranscribeSec) || 45,
+                            },
+                        );
+                        if (ranges.length) {
+                            if (!changed) recordUndoBeforeChange();
+                            let okCount = 0;
+                            for (let ri = 0; ri < ranges.length; ri += 1) {
+                                const range = ranges[ri];
+                                const res = await runRetranscribeRange({
+                                    startMs: range.startMs,
+                                    endMs: range.endMs,
+                                    padMs: Number(step.params?.padMs) || smartApi.DEFAULT_PAD_MS || 350,
+                                    mode: 'range',
+                                    writeAs: 'source',
+                                    snapAfter: step.params?.snapAfter !== false,
+                                    detail: `QC 连续文本重转写 ${ri + 1}/${ranges.length}`,
+                                });
+                                if (res?.ok) {
+                                    okCount += 1;
+                                    changed = true;
+                                } else if (res?.cancelled) {
+                                    refreshQcBadge();
+                                    parts.push(`局部重转写已取消（${okCount}/${ranges.length}）`);
+                                    return { status: 'cancelled', summary: parts.join('；'), changed };
+                                }
+                            }
+                            parts.push(`局部重转写 ${okCount}/${ranges.length} 窗`);
+                            if (okCount > 0) reuseScan = null;
+                            renderCueList();
+                            if (state.selectedIndex >= 0) renderDetailPane();
+                        }
+                    }
+
+                    if (!smartApi?.selectQcSmartTargets) {
+                        refreshQcBadge();
+                        return {
+                            status: changed ? 'done' : 'skipped',
+                            summary: parts.join('；') || '智能模块不可用',
+                            changed,
+                        };
+                    }
+                    const scan = reuseScan || qcCore.scanCueIssues(state.cues, opts);
+                    reuseScan = null;
+                    const targets = smartApi.selectQcSmartTargets(scan.issues, {
+                        maxSmartCues: Number(opts.maxSmartCues) || Number(step.params?.maxSmartCues) || 40,
+                    });
+                    let polishedIndexes = [];
+                    let smartStatus = changed ? 'done' : 'skipped';
+                    if (!targets.length) {
+                        parts.push('无需智能润色');
+                    } else {
+                        polishedIndexes = targets.map((row) => row.index);
+                        const smartRes = await runContextReconstructOnce({
+                            cueIndexes: polishedIndexes,
+                            scope: 'selected',
+                            mode: 'basic',
+                            intensity: opts.intensity || step.params?.intensity || 'light',
+                            windowCues: Number(step.params?.windowCues) || 16,
+                            preserveTiming: true,
+                            skipReview: step.params?.skipReview === true,
+                            userNote: smartApi.QC_SMART_NOTE || '',
+                            note: smartApi.QC_SMART_NOTE || '',
+                        });
+                        parts.push(smartRes?.summary || '智能润色结束');
+                        changed = !!(changed || smartRes?.status === 'done');
+                        smartStatus = smartRes?.status || 'done';
+                    }
+
+                    const doSemantic = opts.semanticReview === true || step.params?.semanticReview === true;
+                    if (doSemantic && smartApi.buildQcSemanticPairs && electron?.transubAdvancedBilingualSemanticReview) {
+                        qcWaitStatus('双语语义审阅中，请稍候…');
+                        const pairCues = Array.isArray(state.pairCues) && state.pairCues.length
+                            ? state.pairCues
+                            : null;
+                        if (pairCues?.length) {
+                            const semScan = qcCore.scanCueIssues(state.cues, opts);
+                            const semIndexes = smartApi.selectQcSemanticIndexes(semScan.issues, {
+                                maxPairs: 40,
+                                preferIndexes: polishedIndexes,
+                            });
+                            const dualApi = global.TransubDualSubtitle;
+                            const pairs = smartApi.buildQcSemanticPairs(state.cues, pairCues, semIndexes, dualApi);
+                            if (pairs.length) {
+                                const review = await electron.transubAdvancedBilingualSemanticReview({
+                                    pairs,
+                                    suggestFixes: true,
+                                    note: smartApi.QC_SEMANTIC_NOTE || '',
+                                });
+                                if (review?.ok) {
+                                    state.lastSemanticReview = review;
+                                    const issues = Array.isArray(review.issues) ? review.issues : [];
+                                    if (opts.autoApplySemantic !== false && issues.some((it) => it.suggestedTarget)) {
+                                        if (!changed) recordUndoBeforeChange();
+                                        const applied = smartApi.applyQcSemanticSuggestions(state.cues, issues);
+                                        if (applied.changed) {
+                                            state.cues.splice(0, state.cues.length, ...applied.cues);
+                                            setDirty(true);
+                                            changed = true;
+                                            parts.push(`语义采纳 ${applied.changed} 条`);
+                                            renderCueList();
+                                            if (state.selectedIndex >= 0) renderDetailPane();
+                                        } else if (issues.length) {
+                                            parts.push(review.summary || `语义审阅 ${issues.length} 处`);
+                                        }
+                                    } else if (issues.length) {
+                                        parts.push(review.summary || `语义审阅 ${issues.length} 处`);
+                                    }
+                                    if (smartStatus === 'skipped' && (changed || issues.length)) smartStatus = 'done';
+                                } else if (review && !review.ok) {
+                                    parts.push(review.error || '语义审阅失败');
+                                }
+                            }
+                        }
+                    }
+
+                    refreshQcBadge();
+                    return {
+                        status: smartStatus,
+                        summary: parts.join('；') || '无需智能处理',
+                        changed,
+                    };
+                    } finally {
+                        if (typeof unsubWfQc === 'function') {
+                            try { unsubWfQc(); } catch (_) { /* ignore */ }
+                        }
+                    }
                 },
                 'timing.shift': async (_c, step) => {
                     if (!state.cues.length) return { status: 'skipped', summary: '无字幕' };
@@ -2074,17 +2345,27 @@
                 'text.chineseConvert': async (_c, step) => {
                     if (!state.cues.length) return { status: 'skipped', summary: '无字幕' };
                     const direction = step.params?.direction === 's2t' ? 's2t' : 't2s';
+                    const locale = ['twp', 'tw', 'hk', 't'].includes(step.params?.locale)
+                        ? step.params.locale
+                        : 'twp';
                     const scope = step.params?.scope || 'all';
                     let indexes = null;
                     if (scope === 'selected') {
                         indexes = getSelectedCueIndexes();
                         if (!indexes.length) return { status: 'skipped', summary: '未选中条目' };
                     }
+                    let protectTerms = [];
+                    if (step.params?.protectTerms !== false && glossaryCore?.collectProtectTerms) {
+                        try {
+                            protectTerms = glossaryCore.collectProtectTerms(getEffectiveGlossary()) || [];
+                        } catch { /* optional */ }
+                    }
                     syncDetailToCue();
                     const result = chineseCore.convertCues(state.cues, {
                         direction,
+                        locale,
                         indexes,
-                        protectTerms: step.params?.protectTerms !== false,
+                        protectTerms,
                     });
                     if (!result.stats?.cueTouched) return { status: 'skipped', summary: '无变化' };
                     recordUndoBeforeChange();
@@ -2695,6 +2976,15 @@
 
                 const msg = workflowsCore.summarizeRun(run);
                 const ok = !!(run?.ok);
+                let finalMsg = msg;
+                // 全部步骤成功后，再统一做繁体转换（最终步骤）
+                if (ok && !run?.summary?.cancelled && !run?.summary?.aborted) {
+                    const zh = await applyTraditionalAtWorkflowEndIfNeeded();
+                    if (zh?.changed && zh.summary) {
+                        finalMsg = `${msg}；${zh.summary}`;
+                        setStatus(`${wf.name}：${finalMsg}`, 'ok');
+                    }
+                }
                 const statusType = run?.summary?.failed || run?.summary?.cancelled || run?.summary?.aborted
                     ? (run.summary.failed ? 'err' : 'warn')
                     : 'ok';
@@ -2708,20 +2998,20 @@
 
                 showSilenceSplitProgress({
                     title: doneTitle,
-                    detail: msg,
+                    detail: finalMsg,
                     current: enabledCount,
                     total: Math.max(enabledCount, 1),
                     indeterminate: false,
                     hint: ok ? '全部步骤已处理完毕' : '部分步骤未完成，可在工作流面板查看摘要',
-                    statusMessage: `${wf.name}：${msg}`,
+                    statusMessage: `${wf.name}：${finalMsg}`,
                 });
                 setSilenceSplitBusy(false);
                 if (els.silenceProgressCancel) {
                     els.silenceProgressCancel.textContent = '关闭';
                     els.silenceProgressCancel.disabled = false;
                 }
-                setWorkflowStatus(msg);
-                setStatus(`${wf.name}：${msg}`, statusType);
+                setWorkflowStatus(finalMsg);
+                setStatus(`${wf.name}：${finalMsg}`, statusType);
                 if (typeof flushSilenceProgressPaint === 'function') {
                     await flushSilenceProgressPaint();
                 }
@@ -2907,6 +3197,7 @@
             cancelWorkflowRun,
             runContextReconstructOnce,
             runTextTranslateOnce,
+            promptReconstructReview,
         };
     }
 

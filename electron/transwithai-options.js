@@ -146,6 +146,7 @@ function mergeTransWithAiOptions(input = {}) {
         autoSense: true,
         autoDeepSense: false,
         postBatchQc: true,
+        postBatchQcFixMode: 'none',
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,

@@ -140,5 +140,6 @@ npm start
 
 - Core：[MIT](LICENSE) · Pro 模块：[LICENSE-PRO](LICENSE-PRO) / [NOTICE](NOTICE)
 - **Transub Engine** — 默认本地 ASR / 免费译中 · [边界说明](docs/engine-boundary.md)
+- **TransWithAI** — 可选旧后端
 - UI 图标：[Font Awesome 4.7](https://fontawesome.com/)（SIL OFL 1.1）
 

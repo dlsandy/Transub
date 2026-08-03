@@ -76,4 +76,32 @@ describe('advanced-afdian client', () => {
         err.cause = { message: 'fetch failed' };
         assert.match(afdian.formatNetworkError(err), /pay\.kimtem\.net\/health/);
     });
+
+    it('posts license bind', async () => {
+        const res = await afdian.bindLicenseDevice({
+            licenseKey: 'TSUB1.a.b',
+            deviceId: 'dev1',
+            label: 'PC',
+        }, {
+            bases: ['https://bind.test'],
+            fetchImpl: async (url, init) => {
+                assert.ok(String(url).endsWith('/license/bind'));
+                const body = JSON.parse(init.body);
+                assert.strictEqual(body.deviceId, 'dev1');
+                return {
+                    status: 200,
+                    async json() {
+                        return {
+                            ok: true,
+                            licenseId: 'lic1',
+                            devices: [{ deviceId: 'dev1', boundAt: '2026-08-01T00:00:00.000Z', label: 'PC' }],
+                            maxDevices: 1,
+                        };
+                    },
+                };
+            },
+        });
+        assert.strictEqual(res.ok, true);
+        assert.strictEqual(res.devices[0].deviceId, 'dev1');
+    });
 });

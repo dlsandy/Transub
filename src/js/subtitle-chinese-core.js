@@ -1,59 +1,46 @@
 /**
  * 字幕简繁体转换（浏览器与 Node 测试共用）
- * 基于 OpenCC 字符表 + 短语表；不改时间轴。
+ * 基于 opencc-js（OpenCC mmseg + 地区词典）；不改时间轴。
+ *
+ * 简→繁默认 cn→twp（台湾字形 + 常用词，如 软件→軟體）；
+ * 繁→简默认 twp→cn。可通过 options.locale 指定 tw / twp / hk / t。
  */
 (function (global, factory) {
-    const dict = (typeof module !== 'undefined' && module.exports)
-        ? require('./subtitle-chinese-dict')
-        : (global && global.TransubSubtitleChineseDict);
-    const api = factory(dict);
+    function resolveOpenCC() {
+        if (typeof module !== 'undefined' && module.exports) {
+            try {
+                return require('opencc-js');
+            } catch (_) { /* fall through to global */ }
+        }
+        const g = typeof globalThis !== 'undefined' ? globalThis : global;
+        return (g && g.OpenCC) || null;
+    }
+
+    const api = factory(resolveOpenCC);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSubtitleChinese = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleChineseCoreFactory(dict) {
-    if (!dict?.S2T_FROM || !dict?.S2T_TO || !dict?.T2S_FROM || !dict?.T2S_TO) {
-        throw new Error('subtitle-chinese-dict.js must load before subtitle-chinese-core.js');
-    }
-
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleChineseCoreFactory(resolveOpenCC) {
     const DIRECTIONS = new Set(['s2t', 't2s']);
+    const LOCALES = new Set(['twp', 'tw', 'hk', 't']);
+    const DEFAULT_LOCALE = 'twp';
     const MASK_PREFIX = '\uE000p';
     const MASK_SUFFIX = '\uE001';
 
-    let s2tMap = null;
-    let t2sMap = null;
-    let s2tPhrases = null;
-    let t2sPhrases = null;
+    /** @type {Map<string, function(string): string>} */
+    const converterCache = new Map();
+    let openCCLib = null;
 
-    function buildMap(fromStr, toStr) {
-        const from = [...fromStr];
-        const to = [...toStr];
-        const map = new Map();
-        const n = Math.min(from.length, to.length);
-        for (let i = 0; i < n; i += 1) {
-            if (from[i] !== to[i]) map.set(from[i], to[i]);
+    function getOpenCC() {
+        if (openCCLib) return openCCLib;
+        openCCLib = typeof resolveOpenCC === 'function' ? resolveOpenCC() : resolveOpenCC;
+        if (!openCCLib || typeof openCCLib.Converter !== 'function') {
+            throw new Error('opencc-js 未加载：请确保已安装依赖，或在页面中引入 vendor/opencc-js/full.js');
         }
-        return map;
-    }
-
-    function getPhrases(direction) {
-        if (direction === 's2t') {
-            if (!s2tPhrases) s2tPhrases = Array.isArray(dict.S2T_PHRASES) ? dict.S2T_PHRASES : [];
-            return s2tPhrases;
-        }
-        if (!t2sPhrases) t2sPhrases = Array.isArray(dict.T2S_PHRASES) ? dict.T2S_PHRASES : [];
-        return t2sPhrases;
-    }
-
-    function getMap(direction) {
-        if (direction === 's2t') {
-            if (!s2tMap) s2tMap = buildMap(dict.S2T_FROM, dict.S2T_TO);
-            return s2tMap;
-        }
-        if (!t2sMap) t2sMap = buildMap(dict.T2S_FROM, dict.T2S_TO);
-        return t2sMap;
+        return openCCLib;
     }
 
     function normalizeDirection(direction) {
@@ -61,8 +48,72 @@
         return DIRECTIONS.has(d) ? d : 's2t';
     }
 
-    function directionLabel(direction) {
-        return normalizeDirection(direction) === 't2s' ? '繁体 → 简体' : '简体 → 繁体';
+    function normalizeLocale(locale) {
+        const loc = String(locale || DEFAULT_LOCALE).toLowerCase();
+        return LOCALES.has(loc) ? loc : DEFAULT_LOCALE;
+    }
+
+    /**
+     * 设置项 chineseSubtitleVariant → 规范值
+     * simplified | traditional(=twp) | traditional-tw | traditional-hk
+     */
+    function normalizeVariant(variant) {
+        const v = String(variant || '').trim().toLowerCase();
+        if (v === 'traditional' || v === 'traditional-twp' || v === 'twp') return 'traditional';
+        if (v === 'traditional-tw' || v === 'tw') return 'traditional-tw';
+        if (v === 'traditional-hk' || v === 'hk') return 'traditional-hk';
+        return 'simplified';
+    }
+
+    function isTraditionalVariant(variant) {
+        return normalizeVariant(variant) !== 'simplified';
+    }
+
+    /** @returns {{ direction: 's2t'|'t2s', locale: 'twp'|'tw'|'hk'|'t' }} */
+    function variantToConvertOptions(variant) {
+        const v = normalizeVariant(variant);
+        if (v === 'traditional-tw') return { direction: 's2t', locale: 'tw' };
+        if (v === 'traditional-hk') return { direction: 's2t', locale: 'hk' };
+        if (v === 'traditional') return { direction: 's2t', locale: 'twp' };
+        return { direction: 't2s', locale: 'twp' };
+    }
+
+    function variantLabel(variant) {
+        const v = normalizeVariant(variant);
+        if (v === 'traditional') return '繁体（台湾）';
+        if (v === 'traditional-tw') return '繁体（台湾字形）';
+        if (v === 'traditional-hk') return '繁体（香港）';
+        return '简体';
+    }
+
+    function directionLabel(direction, locale) {
+        const dir = normalizeDirection(direction);
+        const loc = normalizeLocale(locale);
+        if (dir === 't2s') {
+            return loc === 'hk' ? '繁体（香港）→ 简体' : '繁体 → 简体';
+        }
+        if (loc === 'hk') return '简体 → 繁体（香港）';
+        if (loc === 'tw') return '简体 → 繁体（台湾字形）';
+        if (loc === 't') return '简体 → 繁体（OpenCC 标准）';
+        return '简体 → 繁体（台湾）';
+    }
+
+    function getConverter(direction, locale) {
+        const dir = normalizeDirection(direction);
+        const loc = normalizeLocale(locale);
+        const key = `${dir}:${loc}`;
+        let conv = converterCache.get(key);
+        if (conv) return conv;
+        const OpenCC = getOpenCC();
+        if (dir === 's2t') {
+            conv = OpenCC.Converter({ from: 'cn', to: loc });
+        } else {
+            // 繁→简：与输出地区对齐，便于还原台湾/香港用词
+            const from = loc === 't' ? 't' : loc;
+            conv = OpenCC.Converter({ from, to: 'cn' });
+        }
+        converterCache.set(key, conv);
+        return conv;
     }
 
     /** 移除旧版 initial_prompt 简繁提示被 Whisper 复述进字幕的片段 */
@@ -158,75 +209,52 @@
         return out;
     }
 
-    function applyPhrases(text, phrases) {
-        const raw = String(text ?? '');
-        if (!raw || !phrases?.length) return { text: raw, changed: 0 };
-        let changed = 0;
-        let out = '';
-        let i = 0;
-        while (i < raw.length) {
-            let matched = false;
-            for (const pair of phrases) {
-                const from = pair?.[0];
-                const to = pair?.[1];
-                if (!from || to == null) continue;
-                if (!raw.startsWith(from, i)) continue;
-                out += to;
-                if (from !== to) changed += [...from].length;
-                i += from.length;
-                matched = true;
-                break;
-            }
-            if (!matched) {
-                out += raw[i];
-                i += 1;
-            }
+    function countChangedChars(before, after) {
+        const a = [...String(before ?? '')];
+        const b = [...String(after ?? '')];
+        const n = Math.min(a.length, b.length);
+        let changed = Math.abs(a.length - b.length);
+        for (let i = 0; i < n; i += 1) {
+            if (a[i] !== b[i]) changed += 1;
         }
-        return { text: out, changed };
-    }
-
-    function applyCharMap(text, map) {
-        const raw = String(text ?? '');
-        if (!raw) return { text: raw, changed: 0 };
-        let changed = 0;
-        let out = '';
-        for (const ch of raw) {
-            const next = map.get(ch);
-            if (next != null) {
-                out += next;
-                changed += 1;
-            } else {
-                out += ch;
-            }
-        }
-        return { text: out, changed };
+        return changed;
     }
 
     /**
+     * @param {string} text
+     * @param {'s2t'|'t2s'} [direction]
+     * @param {{ protectTerms?: string[], locale?: 'twp'|'tw'|'hk'|'t' }} [options]
      * @returns {{ text: string, changed: number }}
      */
     function convertText(text, direction = 's2t', options = {}) {
         const raw = String(text ?? '');
         if (!raw) return { text: raw, changed: 0 };
         const dir = normalizeDirection(direction);
+        const locale = normalizeLocale(options.locale);
         const masked = maskProtectedTerms(raw, options.protectTerms);
-        const phraseResult = applyPhrases(masked.text, getPhrases(dir));
-        const charResult = applyCharMap(phraseResult.text, getMap(dir));
-        const textOut = unmaskProtectedTerms(charResult.text, masked.slots);
+        const convert = getConverter(dir, locale);
+        const converted = convert(masked.text);
+        const textOut = unmaskProtectedTerms(converted, masked.slots);
         return {
             text: textOut,
-            changed: phraseResult.changed + charResult.changed,
+            changed: countChangedChars(raw, textOut),
         };
     }
 
     /**
      * @param {Array<{startMs?:number,endMs?:number,text?:string}>} cues
-     * @param {{ direction?: 's2t'|'t2s', indexes?: number[]|null, protectTerms?: string[] }} [options]
-     *   indexes: 仅转换这些下标；缺省/空则转换全部
+     * @param {{
+     *   direction?: 's2t'|'t2s',
+     *   locale?: 'twp'|'tw'|'hk'|'t',
+     *   indexes?: number[]|null,
+     *   protectTerms?: string[],
+     *   stripPromptLeakage?: boolean,
+     * }} [options]
      */
     function convertCues(cues, options = {}) {
         const list = Array.isArray(cues) ? cues : [];
         const direction = normalizeDirection(options.direction);
+        const locale = normalizeLocale(options.locale);
         const protectTerms = options.protectTerms;
         const indexSet = Array.isArray(options.indexes) && options.indexes.length
             ? new Set(options.indexes.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0))
@@ -235,6 +263,7 @@
         const nextCues = [];
         const stats = {
             direction,
+            locale,
             cueTotal: list.length,
             cueTouched: 0,
             charChanged: 0,
@@ -256,7 +285,7 @@
             const strippedText = options.stripPromptLeakage === false
                 ? base.text
                 : stripTranslatePromptLeakage(base.text);
-            const converted = convertText(strippedText, direction, { protectTerms });
+            const converted = convertText(strippedText, direction, { protectTerms, locale });
             const textOut = converted.text;
             const leakageStripped = strippedText !== base.text;
             if (leakageStripped || converted.changed > 0) {
@@ -279,15 +308,23 @@
 
     function summarizeConversion(stats) {
         if (!stats) return '—';
+        const label = directionLabel(stats.direction, stats.locale);
         if (!stats.cueTouched) {
-            return `无需转换（${directionLabel(stats.direction)}）`;
+            return `无需转换（${label}）`;
         }
-        return `${directionLabel(stats.direction)}：将更新 ${stats.cueTouched} 条，替换 ${stats.charChanged} 个字符`;
+        return `${label}：将更新 ${stats.cueTouched} 条，约 ${stats.charChanged} 处变化`;
     }
 
     return {
         DIRECTIONS: ['s2t', 't2s'],
+        LOCALES: ['twp', 'tw', 'hk', 't'],
+        DEFAULT_LOCALE,
         normalizeDirection,
+        normalizeLocale,
+        normalizeVariant,
+        isTraditionalVariant,
+        variantToConvertOptions,
+        variantLabel,
         directionLabel,
         stripTranslatePromptLeakage,
         ensureSpaceAfterChinesePunctuation,

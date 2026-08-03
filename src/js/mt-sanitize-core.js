@@ -227,15 +227,25 @@
         { from: '基礎してください', to: 'キスしてください' },
     ]);
 
-    function loadJaAsrDomainFixPairs() {
-        let base = JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
+    function loadBundledJaAsrDomainBasePairs() {
         if (typeof module !== 'undefined' && module.exports) {
             try {
+                const fs = require('fs');
                 const path = require('path');
-                const pairs = require(path.join(__dirname, '..', '..', 'shared', 'ja-asr-domain-fixes.json'));
-                if (Array.isArray(pairs) && pairs.length) base = pairs;
+                const filePath = path.join(__dirname, '..', '..', 'shared', 'ja-asr-domain-fixes.json');
+                if (fs.existsSync(filePath)) {
+                    const pairs = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                    if (Array.isArray(pairs) && pairs.length) return pairs;
+                }
             } catch (_) { /* fall through */ }
         }
+        return JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
+    }
+
+    function mergeJaAsrDomainFixPairs(basePairs) {
+        const base = Array.isArray(basePairs) && basePairs.length
+            ? basePairs
+            : JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
         const adult = (typeof mtOpaque?.getAsrAdultDomainPairs === 'function')
             ? mtOpaque.getAsrAdultDomainPairs()
             : [];
@@ -254,22 +264,39 @@
         return merged;
     }
 
-    const JA_ASR_DOMAIN_FIX_PAIRS = Object.freeze(loadJaAsrDomainFixPairs().map((p) => ({
-        from: String(p.from),
-        to: String(p.to),
-    })));
-
     function escapeAsrFixLiteral(text) {
         return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
+    /** @type {{ from: string, to: string }[]} */
+    let JA_ASR_DOMAIN_FIX_PAIRS = Object.freeze([]);
     /** @type {{ from: RegExp, to: string }[]} */
-    const JA_ASR_DOMAIN_FIXES = Object.freeze(
-        JA_ASR_DOMAIN_FIX_PAIRS.map((p) => ({
-            from: new RegExp(escapeAsrFixLiteral(p.from), 'g'),
-            to: p.to,
-        })),
-    );
+    let JA_ASR_DOMAIN_FIXES = Object.freeze([]);
+
+    function rebuildJaAsrDomainFixes(basePairs) {
+        const merged = mergeJaAsrDomainFixPairs(basePairs).map((p) => ({
+            from: String(p.from),
+            to: String(p.to),
+        }));
+        JA_ASR_DOMAIN_FIX_PAIRS = Object.freeze(merged);
+        JA_ASR_DOMAIN_FIXES = Object.freeze(
+            merged.map((p) => ({
+                from: new RegExp(escapeAsrFixLiteral(p.from), 'g'),
+                to: p.to,
+            })),
+        );
+        return true;
+    }
+
+    function reloadJaAsrDomainBasePairs(basePairs) {
+        return rebuildJaAsrDomainFixes(basePairs);
+    }
+
+    function reloadJaAsrDomainFromBundled() {
+        return rebuildJaAsrDomainFixes(loadBundledJaAsrDomainBasePairs());
+    }
+
+    rebuildJaAsrDomainFixes(loadBundledJaAsrDomainBasePairs());
 
     /** Standalone mid-scene greetings Whisper often invents in soft AV. */
     const JA_FAKE_GREETING_RE = /^(?:おはようございます|おはようございま[すっ]|おはよう)[。．!！?？\s]*$/;
@@ -656,10 +683,14 @@
         }
 
         // Model invents censorship meta for 「…」/ adult lines
-        if (/省略或遮挡的内容|表示省略或遮挡/.test(cur) || /省略了/.test(cur)) {
+        if (
+            /省略或遮挡的内容|表示省略或遮挡|字幕中的模糊或被遮挡/.test(cur)
+            || /省略了/.test(cur)
+        ) {
             const next = cur
                 .replace(/表示省略或遮挡的内容/g, '')
                 .replace(/省略或遮挡的内容/g, '')
+                .replace(/字幕中的模糊或被遮挡的文字/g, '')
                 .replace(/省略了/g, '')
                 .replace(/\s{2,}/g, ' ')
                 .replace(/([，,、]){2,}/g, '$1')
@@ -1706,13 +1737,25 @@
         if (/ありがとう/.test(s) && /チャッピ|ちゃっぴ|チャピ/.test(s) && textLen(s) <= 20) {
             return '谢谢，恰皮';
         }
+        if (/^はい[、,，]?\s*ありがとう/.test(s) && textLen(s) <= 18) {
+            return '好的，谢谢';
+        }
+        if (/もうダメ|もうだめ/.test(s) && textLen(s) <= 10) {
+            return /あ/.test(s) ? '啊，已经不行了' : '已经不行了';
+        }
+        if (/気持ち悪すぎる/.test(s) && textLen(s) <= 24) {
+            return /かも|かもしれ/.test(s) ? '可能恶心过头了' : '恶心过头了';
+        }
         if (/^ねえ[、,，]?\s*(?:ちゃっぴー|チャッピー|チャッピ)/.test(s) && textLen(s) <= 16) {
             return '喂，恰皮';
         }
         if (/ちょっと/.test(s) && /おちんちん|おはちんちん/.test(s) && textLen(s) <= 16) {
             return '等等，鸡巴';
         }
-        if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡]+$/.test(s)) {
+        if (/^動かない[。．.!！]*$/u.test(bare) && textLen(s) <= 8) {
+            return '不动';
+        }
+        if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.、，,\s♡]+$/.test(s)) {
             if (/[はハ]/.test(s) && !/[あァぁあんン]/.test(s.replace(/[はハ]/g, ''))) {
                 return /[!！]/.test(s) ? '哈——！' : '哈啊';
             }
@@ -1781,7 +1824,7 @@
         const remapped = remapZhFromJaSimple(src);
         if (remapped == null) return { text: cur, changed: false };
         if (
-            /^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡]+$/.test(src)
+            /^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.、，,\s♡]+$/.test(src)
             || /^あはは|^ははは/.test(src)
         ) {
             return { text: remapped, changed: remapped !== cur };
@@ -2333,7 +2376,9 @@
         isAvSoftContext,
         shouldBlankFakeGreeting,
         textLen,
-        JA_ASR_DOMAIN_FIXES,
-        JA_ASR_DOMAIN_FIX_PAIRS,
+        get JA_ASR_DOMAIN_FIXES() { return JA_ASR_DOMAIN_FIXES; },
+        get JA_ASR_DOMAIN_FIX_PAIRS() { return JA_ASR_DOMAIN_FIX_PAIRS; },
+        reloadJaAsrDomainBasePairs,
+        reloadJaAsrDomainFromBundled,
     };
 }));

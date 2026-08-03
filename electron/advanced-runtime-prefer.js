@@ -1,5 +1,6 @@
 /**
- * llama-server 默认后端偏好：有可用 NVIDIA（驱动 CUDA ≥12）时优先 CUDA 12。
+ * llama-server 默认后端偏好：有可用 NVIDIA（驱动 CUDA ≥12）时优先 CUDA；
+ * 具体 12 / 13 由目录按 hints.cudaVersion 选择。
  */
 const { detectGpuEnvironment } = require('./gpu-detect');
 
@@ -77,6 +78,7 @@ async function ensurePreferCudaReady() {
 module.exports = {
     shouldPreferCuda12,
     getHints,
+    applyGpuInfo,
     refreshPreferCuda,
     ensurePreferCudaReady,
     /** @internal tests */

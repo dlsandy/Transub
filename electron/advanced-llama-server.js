@@ -3,7 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const catalog = require('../src/js/advanced-managed-llm-catalog-core');
 const llmFs = require('./advanced-llm-fs');
 const downloader = require('./advanced-llm-download');
@@ -17,6 +17,91 @@ let installAbort = null;
 const IDLE_STOP_MS = 5 * 60 * 1000;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let idleStopTimer = null;
+/** @type {{ exePath: string, mtimeMs: number, size: number, tag: string } | null} */
+let probedTagCache = null;
+
+/**
+ * 从 llama-server --version 输出解析构建号（如 b10077）。
+ * @param {string} text
+ * @returns {string}
+ */
+function parseLlamaCppTag(text) {
+    const s = String(text || '');
+    const numbered = s.match(/\bversion:\s*(\d+)\b/i);
+    if (numbered) return `b${numbered[1]}`;
+    const tagged = s.match(/\b(b\d{4,})\b/i);
+    return tagged ? `b${tagged[1].slice(1)}` : '';
+}
+
+/**
+ * 探测本机 llama-server 可执行文件真实构建号。
+ * @param {string} exePath
+ * @returns {string}
+ */
+function probeLlamaServerTag(exePath) {
+    const exe = String(exePath || '').trim();
+    if (!exe || !fs.existsSync(exe)) return '';
+    try {
+        const st = fs.statSync(exe);
+        if (
+            probedTagCache
+            && probedTagCache.exePath === exe
+            && probedTagCache.mtimeMs === st.mtimeMs
+            && probedTagCache.size === st.size
+            && probedTagCache.tag
+        ) {
+            return probedTagCache.tag;
+        }
+        const r = spawnSync(exe, ['--version'], {
+            encoding: 'utf8',
+            // Keep short: CUDA builds may load drivers; long hangs freeze the whole app.
+            timeout: 2500,
+            windowsHide: true,
+        });
+        const tag = parseLlamaCppTag(`${r.stdout || ''}\n${r.stderr || ''}`);
+        if (tag) {
+            probedTagCache = {
+                exePath: exe,
+                mtimeMs: st.mtimeMs,
+                size: st.size,
+                tag,
+            };
+        }
+        return tag;
+    } catch (_) {
+        return '';
+    }
+}
+
+/**
+ * 已安装构建号：优先缓存 / runtime.json，避免每次 spawnSync llama-server --version
+ *（CUDA 构建冷启动可卡主进程数秒，表现为整应用假死）。
+ * @param {string} [exePath]
+ * @param {object|null} [meta]
+ * @param {{ forceProbe?: boolean }} [opts]
+ */
+function resolveInstalledRuntimeTag(exePath = '', meta = null, opts = {}) {
+    const forceProbe = !!opts.forceProbe;
+    const exe = String(exePath || '').trim();
+    if (!forceProbe && exe && fs.existsSync(exe) && probedTagCache) {
+        try {
+            const st = fs.statSync(exe);
+            if (
+                probedTagCache.exePath === exe
+                && probedTagCache.mtimeMs === st.mtimeMs
+                && probedTagCache.size === st.size
+                && probedTagCache.tag
+            ) {
+                return probedTagCache.tag;
+            }
+        } catch (_) { /* ignore */ }
+    }
+    if (!forceProbe) {
+        const metaTag = String(meta?.probedTag || meta?.tag || '').trim();
+        if (metaTag) return metaTag;
+    }
+    return probeLlamaServerTag(exe);
+}
 
 function clearIdleStopTimer() {
     if (idleStopTimer) {
@@ -73,7 +158,7 @@ function runtimePreferHints() {
 }
 
 /**
- * 解析偏好运行时包 id：显式参数 → 高级设置 → 硬件默认（NVIDIA→CUDA 12，否则 Vulkan）。
+ * 解析偏好运行时包 id：显式参数 → 高级设置 → 硬件默认（NVIDIA→CUDA 13/12，否则 Vulkan）。
  * @param {string} [explicit]
  */
 function resolvePreferredRuntimeId(explicit = '') {
@@ -101,6 +186,59 @@ function resolvePreferredRuntimeId(explicit = '') {
         || '';
 }
 
+/**
+ * 按硬件 CUDA 主版本把 managedLlm.runtimeId 默认设为匹配后端（CUDA 13 / 12）。
+ * 有 NVIDIA + CUDA≥12 时写入；无独显不改动。
+ * @param {{ force?: boolean, gpuInfo?: object|null }} [opts]
+ * @returns {{ ok: boolean, skipped?: boolean, already?: boolean, runtimeId?: string, previousId?: string, reason?: string }}
+ */
+function syncRuntimePreferenceToHardware(opts = {}) {
+    const options = asPlainObject(opts);
+    try {
+        const prefer = require('./advanced-runtime-prefer');
+        if (options.gpuInfo) {
+            prefer.applyGpuInfo(options.gpuInfo);
+        } else if (!prefer.getHints().ready) {
+            // Sync callers (env-check) usually pass gpuInfo; otherwise use cached hints.
+        }
+        const hints = prefer.getHints();
+        if (!hints.preferCuda) {
+            return { ok: true, skipped: true, reason: 'no_cuda' };
+        }
+        const recommended = catalog.getDefaultRuntimeId(process.platform, process.arch, hints);
+        if (!recommended || !/^win-cuda\d+-x64$/i.test(recommended)) {
+            return { ok: true, skipped: true, reason: 'no_recommended' };
+        }
+
+        const { readAdvancedDoc, writeAdvancedDoc } = require('./advanced-license-data');
+        const read = readAdvancedDoc();
+        const doc = read.doc;
+        const managed = catalog.normalizeManagedLlm(doc?.managedLlm, hints);
+        const previousId = String(managed.runtimeId || '').trim();
+        if (previousId === recommended) {
+            return { ok: true, already: true, runtimeId: recommended, previousId };
+        }
+
+        const isCudaPkg = /^win-cuda\d+-x64$/i.test(previousId);
+        // Soft sync: fill empty preference or correct CUDA 12↔13 mismatch.
+        // force: also replace Vulkan / other backends (wizard / one-click install).
+        if (!options.force && previousId && !isCudaPkg) {
+            return { ok: true, skipped: true, reason: 'user_backend', previousId, runtimeId: previousId };
+        }
+
+        const saved = writeAdvancedDoc({
+            ...doc,
+            managedLlm: { ...managed, runtimeId: recommended },
+        });
+        if (!saved.ok) {
+            return { ok: false, error: saved.error || 'write_failed', runtimeId: recommended, previousId };
+        }
+        return { ok: true, runtimeId: recommended, previousId };
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+}
+
 function getRuntimeStatus(options = {}) {
     const opts = asPlainObject(options);
     const hints = runtimePreferHints();
@@ -110,13 +248,19 @@ function getRuntimeStatus(options = {}) {
     const exe = llmFs.resolveServerExe(meta);
     const installed = !!exe && fs.existsSync(exe);
     const installedId = String(meta?.packageId || '').trim();
+    const catalogTag = catalog.LLAMA_CPP_TAG;
+    const installedTag = installed ? resolveInstalledRuntimeTag(exe, meta) : '';
+    const outdated = !!(installed && installedTag && installedTag !== catalogTag);
     const mismatch = !!(installed && preferredId && installedId && installedId !== preferredId);
     const choices = catalog.listRuntimePackages(process.platform, process.arch, hints);
     let message = !pkg
         ? `当前平台暂不支持内置运行时（${process.platform}-${process.arch}）`
         : (installed
-            ? `llama-server 已就绪（${meta?.tag || catalog.LLAMA_CPP_TAG}${installedId ? ` · ${installedId}` : ''}）`
-            : `尚未安装运行时（llama.cpp ${catalog.LLAMA_CPP_TAG} · ${pkg.label}）`);
+            ? `llama-server 已就绪（${installedTag || catalogTag}${installedId ? ` · ${installedId}` : ''}）`
+            : `尚未安装运行时（llama.cpp ${catalogTag} · ${pkg.label}）`);
+    if (outdated) {
+        message = `${message} · 可更新至 ${catalogTag}`;
+    }
     if (mismatch) {
         const preferLabel = pkg?.label || preferredId;
         const installedLabel = meta?.label || installedId;
@@ -129,11 +273,13 @@ function getRuntimeStatus(options = {}) {
         preferredPackageId: preferredId || pkg?.id || '',
         installedPackageId: installedId,
         mismatch,
+        outdated,
         choices,
         installed,
         exePath: installed ? exe : '',
         meta,
-        tag: catalog.LLAMA_CPP_TAG,
+        tag: catalogTag,
+        installedTag: installedTag || '',
         message,
     };
 }
@@ -157,13 +303,132 @@ function flattenStagingRoot(staging) {
     return sourceRoot;
 }
 
-function replaceRuntimeDir(runtimeDir, stamp) {
-    const cleared = downloader.rimrafSafe(runtimeDir);
+/**
+ * Stable cudart package id (independent of llama.cpp tag).
+ * e.g. cudart-llama-bin-win-cuda-13.3-x64
+ * @param {object|string|null|undefined} pkgOrUrl
+ * @returns {string}
+ */
+function resolveCompanionId(pkgOrUrl) {
+    const url = typeof pkgOrUrl === 'string'
+        ? pkgOrUrl
+        : String(pkgOrUrl?.companionUrl || pkgOrUrl?.companionId || '');
+    const m = String(url).match(/(cudart[^/\\]*?win-cuda-[\d.]+-x64)/i);
+    return m ? m[1].toLowerCase() : '';
+}
+
+/**
+ * @param {string} companionId
+ * @param {string} [packageId]
+ * @returns {number}
+ */
+function resolveCompanionCudaMajor(companionId = '', packageId = '') {
+    const fromCompanion = /cuda-(\d+)/i.exec(String(companionId || ''));
+    if (fromCompanion) return Number(fromCompanion[1]) || 0;
+    const fromPkg = /win-cuda(\d+)/i.exec(String(packageId || ''));
+    return fromPkg ? (Number(fromPkg[1]) || 0) : 0;
+}
+
+/** CUDA companion zip artifacts only (not ggml-cuda.dll from the main package). */
+function isCompanionArtifactName(name) {
+    return /^(cudart|cublasLt|cublas)/i.test(String(name || ''));
+}
+
+/**
+ * @param {string} runtimeDir
+ * @returns {string[]} absolute paths
+ */
+function listCompanionArtifacts(runtimeDir) {
+    const root = String(runtimeDir || '').trim();
+    if (!root || !fs.existsSync(root)) return [];
+    /** @type {string[]} */
+    const out = [];
+    const walk = (dir, depth) => {
+        if (depth > 3) return;
+        let names = [];
+        try { names = fs.readdirSync(dir); } catch (_) { return; }
+        for (const name of names) {
+            const abs = path.join(dir, name);
+            let st;
+            try { st = fs.statSync(abs); } catch (_) { continue; }
+            if (st.isDirectory()) {
+                walk(abs, depth + 1);
+                continue;
+            }
+            if (st.isFile() && isCompanionArtifactName(name)) out.push(abs);
+        }
+    };
+    walk(root, 0);
+    return out;
+}
+
+/**
+ * @param {string} runtimeDir
+ * @param {string} companionId
+ * @param {string} [packageId]
+ * @returns {boolean}
+ */
+function hasReusableCompanion(runtimeDir, companionId = '', packageId = '') {
+    const major = resolveCompanionCudaMajor(companionId, packageId);
+    if (!major) return false;
+    const marker = `cudart64_${major}.dll`;
+    if (llmFs.findFileRecursive(runtimeDir, marker, 4)) return true;
+    try {
+        return fs.existsSync(path.join(runtimeDir, marker));
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Whether an existing CUDA runtime library can be kept when updating llama.cpp.
+ * Same CUDA flavor (12.4 / 13.3) + marker DLLs present → skip cudart re-download.
+ * @param {object|null|undefined} pkg
+ * @param {object|null|undefined} meta
+ * @param {string} runtimeDir
+ * @param {{ reinstall?: boolean, forceCompanion?: boolean }} [opts]
+ */
+function canReuseInstalledCompanion(pkg, meta = null, runtimeDir = '', opts = {}) {
+    if (!pkg?.companionUrl) return false;
+    if (opts.reinstall || opts.forceCompanion) return false;
+    const wantId = resolveCompanionId(pkg);
+    if (!wantId) return false;
+    const installedCompanion = String(meta?.companionId || '').trim().toLowerCase();
+    const installedPkg = String(meta?.packageId || '').trim();
+    const sameCompanion = !!(installedCompanion && installedCompanion === wantId);
+    const samePackage = !!(installedPkg && installedPkg === pkg.id);
+    // Backward compatible: older runtime.json has no companionId; same packageId is enough.
+    if (!sameCompanion && !samePackage) return false;
+    return hasReusableCompanion(runtimeDir, wantId, pkg.id);
+}
+
+/**
+ * Copy cudart/cublas DLLs aside before wiping runtime/.
+ * @param {string} runtimeDir
+ * @param {string} destDir
+ * @returns {{ ok: boolean, files: string[] }}
+ */
+function preserveCompanionArtifacts(runtimeDir, destDir) {
+    const files = listCompanionArtifacts(runtimeDir);
+    if (!files.length) return { ok: false, files: [] };
+    fs.mkdirSync(destDir, { recursive: true });
+    for (const abs of files) {
+        const rel = path.relative(runtimeDir, abs);
+        const to = path.join(destDir, rel);
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.copyFileSync(abs, to);
+    }
+    return { ok: true, files };
+}
+
+async function replaceRuntimeDir(runtimeDir, stamp) {
+    const cleared = await downloader.rimrafSafeAsync(runtimeDir);
     if (!cleared.ok && fs.existsSync(runtimeDir)) {
         const bypass = `${runtimeDir}.old-${stamp}`;
         try {
             fs.renameSync(runtimeDir, bypass);
-            downloader.rimrafSafe(bypass);
+            // Best-effort cleanup of bypass; do not block install on slow deletes.
+            void downloader.rimrafSafeAsync(bypass);
         } catch (err) {
             return {
                 ok: false,
@@ -177,8 +442,16 @@ function replaceRuntimeDir(runtimeDir, stamp) {
 }
 
 function writeInstalledRuntimeMeta(pkg, exePath, extra = {}) {
+    probedTagCache = null;
+    // Prefer catalog tag for freshly installed package. Live --version can stall
+    // the main process while CUDA DLLs load; meta is enough for outdated checks.
+    let probed = '';
+    try {
+        probed = probeLlamaServerTag(exePath);
+    } catch (_) { /* ignore */ }
+    const companionId = resolveCompanionId(pkg);
     const meta = {
-        tag: catalog.LLAMA_CPP_TAG,
+        tag: probed || catalog.LLAMA_CPP_TAG,
         packageId: pkg.id,
         label: pkg.label,
         backend: pkg.backend || '',
@@ -187,6 +460,8 @@ function writeInstalledRuntimeMeta(pkg, exePath, extra = {}) {
         installedAt: new Date().toISOString(),
         ...extra,
     };
+    if (companionId && meta.companionId == null) meta.companionId = companionId;
+    if (probed) meta.probedTag = probed;
     llmFs.writeRuntimeMeta(meta);
     return meta;
 }
@@ -244,12 +519,12 @@ async function installRuntimeFromLocalArchives(options = {}) {
             pct: 10,
         });
         fs.mkdirSync(staging, { recursive: true });
-        downloader.extractArchive(archivePath, staging, pkg.archive);
+        await downloader.extractArchiveAsync(archivePath, staging, pkg.archive);
 
-        const replaced = replaceRuntimeDir(runtimeDir, stamp);
+        const replaced = await replaceRuntimeDir(runtimeDir, stamp);
         if (!replaced.ok) return replaced;
 
-        copyDirRecursive(flattenStagingRoot(staging), runtimeDir);
+        await copyDirRecursiveAsync(flattenStagingRoot(staging), runtimeDir);
 
         if (companionPath) {
             sendProgress(opts.onProgress, {
@@ -259,8 +534,8 @@ async function installRuntimeFromLocalArchives(options = {}) {
                 pct: 70,
             });
             fs.mkdirSync(companionStaging, { recursive: true });
-            downloader.extractArchive(companionPath, companionStaging, pkg.archive);
-            copyDirRecursive(flattenStagingRoot(companionStaging), runtimeDir);
+            await downloader.extractArchiveAsync(companionPath, companionStaging, pkg.archive);
+            await copyDirRecursiveAsync(flattenStagingRoot(companionStaging), runtimeDir);
         }
 
         const exe = llmFs.findFileRecursive(runtimeDir, pkg.exeName, 5);
@@ -273,6 +548,7 @@ async function installRuntimeFromLocalArchives(options = {}) {
 
         if (pkg.backend === 'cuda') {
             const cudaDll = llmFs.findFileRecursive(runtimeDir, 'ggml-cuda.dll', 4)
+                || llmFs.findFileRecursive(runtimeDir, 'cudart64_13.dll', 4)
                 || llmFs.findFileRecursive(runtimeDir, 'cudart64_12.dll', 4);
             if (!cudaDll) {
                 return {
@@ -298,14 +574,15 @@ async function installRuntimeFromLocalArchives(options = {}) {
             code: 'runtime_import_failed',
         };
     } finally {
-        downloader.rimrafSafe(staging);
-        downloader.rimrafSafe(companionStaging);
+        await downloader.rimrafSafeAsync(staging);
+        await downloader.rimrafSafeAsync(companionStaging);
     }
 }
 
 /**
  * 下载并解压 llama-server 运行时。
- * @param {{ force?: boolean, runtimeId?: string, packageId?: string, signal?: AbortSignal, onProgress?: Function }} [options]
+ * 更新 llama.cpp 时：若本机已有同 CUDA 版本的 cudart 且文件齐全，则跳过 CUDA 运行库下载。
+ * @param {{ force?: boolean, reinstall?: boolean, forceCompanion?: boolean, runtimeId?: string, packageId?: string, signal?: AbortSignal, onProgress?: Function }} [options]
  */
 async function ensureRuntimeInstalled(options = {}) {
     const opts = asPlainObject(options);
@@ -325,11 +602,13 @@ async function ensureRuntimeInstalled(options = {}) {
 
     const existing = getRuntimeStatus({ runtimeId: pkg.id });
     const meta = llmFs.readRuntimeMeta();
+    const installedTag = String(existing.installedTag || resolveInstalledRuntimeTag(existing.exePath, meta) || '').trim();
     const samePackage = !!(
         existing.installed
         && existing.exePath
         && meta?.packageId === pkg.id
-        && meta?.tag === catalog.LLAMA_CPP_TAG
+        && installedTag
+        && installedTag === catalog.LLAMA_CPP_TAG
     );
     // 已是目标后端且版本匹配：即使 force 也不重复下载（除非显式 reinstall）
     if (samePackage && !opts.reinstall) {
@@ -342,7 +621,7 @@ async function ensureRuntimeInstalled(options = {}) {
             already: true,
             exePath: existing.exePath,
             meta,
-            outdated: meta?.tag !== catalog.LLAMA_CPP_TAG,
+            outdated: !!(installedTag && installedTag !== catalog.LLAMA_CPP_TAG),
             mismatch: meta?.packageId !== pkg.id,
         };
     }
@@ -364,13 +643,24 @@ async function ensureRuntimeInstalled(options = {}) {
     const stamp = `${Date.now()}-${process.pid}`;
     const staging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-staging-${stamp}`);
     const companionStaging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-${stamp}`);
+    const companionKeep = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-keep-${stamp}`);
     const archiveExt = pkg.archive === 'zip' ? 'zip' : 'tar.gz';
     const archivePath = path.join(
         llmFs.getAdvancedLlmRoot(),
         `_runtime-${pkg.id}-${stamp}.${archiveExt}`,
     );
     const companionUrl = String(pkg.companionUrl || '').trim();
-    const companionPath = companionUrl
+    const companionId = resolveCompanionId(pkg);
+    let reuseCompanion = canReuseInstalledCompanion(pkg, meta, runtimeDir, opts);
+    if (reuseCompanion) {
+        const kept = preserveCompanionArtifacts(runtimeDir, companionKeep);
+        reuseCompanion = !!(kept.ok && kept.files.length);
+        if (!reuseCompanion) {
+            try { await downloader.rimrafSafeAsync(companionKeep); } catch (_) { /* ignore */ }
+        }
+    }
+    const needCompanionDownload = !!(companionUrl && !reuseCompanion);
+    const companionPath = needCompanionDownload
         ? path.join(llmFs.getAdvancedLlmRoot(), `_runtime-${pkg.id}-cudart-${stamp}.${archiveExt}`)
         : '';
 
@@ -384,7 +674,7 @@ async function ensureRuntimeInstalled(options = {}) {
 
         fs.mkdirSync(staging, { recursive: true });
 
-        const mainWeight = companionUrl ? 55 : 100;
+        const mainWeight = needCompanionDownload ? 55 : 100;
         await downloader.downloadFile(pkg.url, archivePath, {
             signal: controller.signal,
             onProgress: (p) => {
@@ -401,7 +691,7 @@ async function ensureRuntimeInstalled(options = {}) {
             },
         });
 
-        if (companionUrl && companionPath) {
+        if (needCompanionDownload && companionPath) {
             sendProgress(opts.onProgress, {
                 phase: 'start',
                 kind: 'runtime',
@@ -423,6 +713,13 @@ async function ensureRuntimeInstalled(options = {}) {
                     });
                 },
             });
+        } else if (reuseCompanion) {
+            sendProgress(opts.onProgress, {
+                phase: 'start',
+                kind: 'runtime',
+                message: '复用已有 CUDA 运行库，跳过 cudart 下载',
+                pct: Math.min(98, mainWeight),
+            });
         }
 
         sendProgress(opts.onProgress, {
@@ -431,14 +728,29 @@ async function ensureRuntimeInstalled(options = {}) {
             message: '正在解压运行时…',
             pct: 99,
         });
-        downloader.extractArchive(archivePath, staging, pkg.archive);
+        await downloader.extractArchiveAsync(archivePath, staging, pkg.archive);
 
-        const replaced = replaceRuntimeDir(runtimeDir, stamp);
+        const replaced = await replaceRuntimeDir(runtimeDir, stamp);
         if (!replaced.ok) return replaced;
 
-        copyDirRecursive(flattenStagingRoot(staging), runtimeDir);
+        await copyDirRecursiveAsync(flattenStagingRoot(staging), runtimeDir);
 
-        if (companionUrl && companionPath) {
+        if (reuseCompanion) {
+            sendProgress(opts.onProgress, {
+                phase: 'extracting',
+                kind: 'runtime',
+                message: '正在还原 CUDA 运行库…',
+                pct: 99,
+            });
+            await copyDirRecursiveAsync(companionKeep, runtimeDir);
+            if (!hasReusableCompanion(runtimeDir, companionId, pkg.id)) {
+                return {
+                    ok: false,
+                    error: '复用 CUDA 运行库失败（文件缺失）。请重试并勾选完整重装，或手动安装 cudart。',
+                    code: 'companion_reuse_failed',
+                };
+            }
+        } else if (needCompanionDownload && companionPath) {
             sendProgress(opts.onProgress, {
                 phase: 'extracting',
                 kind: 'runtime',
@@ -446,8 +758,8 @@ async function ensureRuntimeInstalled(options = {}) {
                 pct: 99,
             });
             fs.mkdirSync(companionStaging, { recursive: true });
-            downloader.extractArchive(companionPath, companionStaging, pkg.archive);
-            copyDirRecursive(flattenStagingRoot(companionStaging), runtimeDir);
+            await downloader.extractArchiveAsync(companionPath, companionStaging, pkg.archive);
+            await copyDirRecursiveAsync(flattenStagingRoot(companionStaging), runtimeDir);
         }
 
         const exe = llmFs.findFileRecursive(runtimeDir, pkg.exeName, 5);
@@ -458,15 +770,21 @@ async function ensureRuntimeInstalled(options = {}) {
             try { fs.chmodSync(exe, 0o755); } catch (_) { /* ignore */ }
         }
 
-        const meta = writeInstalledRuntimeMeta(pkg, exe, { source: 'download' });
+        const written = writeInstalledRuntimeMeta(pkg, exe, {
+            source: 'download',
+            companionId: companionId || undefined,
+            companionReused: reuseCompanion || undefined,
+        });
 
         sendProgress(opts.onProgress, {
             phase: 'done',
             kind: 'runtime',
-            message: `运行时安装完成（${pkg.label}）`,
+            message: reuseCompanion
+                ? `运行时安装完成（${pkg.label}，已复用 CUDA 运行库）`
+                : `运行时安装完成（${pkg.label}）`,
             pct: 100,
         });
-        return { ok: true, exePath: exe, meta };
+        return { ok: true, exePath: exe, meta: written, companionReused: !!reuseCompanion };
     } catch (err) {
         if (err?.name === 'AbortError' || err?.code === 'cancelled') {
             return { ok: false, error: '已取消', code: 'cancelled' };
@@ -482,8 +800,9 @@ async function ensureRuntimeInstalled(options = {}) {
         if (companionPath) {
             try { fs.unlinkSync(companionPath); } catch (_) { /* ignore */ }
         }
-        downloader.rimrafSafe(staging);
-        downloader.rimrafSafe(companionStaging);
+        await downloader.rimrafSafeAsync(staging);
+        await downloader.rimrafSafeAsync(companionStaging);
+        await downloader.rimrafSafeAsync(companionKeep);
         // 顺带清理历史残留 staging / 旁路目录（失败不影响安装结果）
         try {
             const root = llmFs.getAdvancedLlmRoot();
@@ -495,7 +814,7 @@ async function ensureRuntimeInstalled(options = {}) {
                     || /\.trash-\d+/.test(name)
                     || (name.startsWith('_runtime-') && (name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.partial')));
                 if (shouldClean) {
-                    downloader.rimrafSafe(path.join(root, name));
+                    await downloader.rimrafSafeAsync(path.join(root, name));
                 }
             }
         } catch (_) { /* ignore */ }
@@ -510,6 +829,26 @@ function copyDirRecursive(src, dest) {
         const st = fs.statSync(from);
         if (st.isDirectory()) copyDirRecursive(from, to);
         else fs.copyFileSync(from, to);
+    }
+}
+
+/** Yield occasionally so Electron main can paint / handle IPC during large CUDA copies. */
+async function copyDirRecursiveAsync(src, dest) {
+    fs.mkdirSync(dest, { recursive: true });
+    const names = fs.readdirSync(src);
+    for (let i = 0; i < names.length; i += 1) {
+        const name = names[i];
+        const from = path.join(src, name);
+        const to = path.join(dest, name);
+        const st = fs.statSync(from);
+        if (st.isDirectory()) {
+            await copyDirRecursiveAsync(from, to);
+        } else {
+            fs.copyFileSync(from, to);
+        }
+        if (i % 16 === 0) {
+            await downloader.sleep(0);
+        }
     }
 }
 
@@ -797,6 +1136,16 @@ async function ensureLlamaServer(options = {}) {
 
 module.exports = {
     resolvePreferredRuntimeId,
+    syncRuntimePreferenceToHardware,
+    parseLlamaCppTag,
+    probeLlamaServerTag,
+    resolveInstalledRuntimeTag,
+    resolveCompanionId,
+    resolveCompanionCudaMajor,
+    canReuseInstalledCompanion,
+    hasReusableCompanion,
+    listCompanionArtifacts,
+    preserveCompanionArtifacts,
     getRuntimeStatus,
     ensureRuntimeInstalled,
     installRuntimeFromLocalArchives,

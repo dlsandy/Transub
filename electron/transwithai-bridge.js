@@ -30,6 +30,7 @@ const {
 } = require('./subtitle-task-ui');
 const {
     createPostSubtitleTaskRunner,
+    createDeferredBatchFinalize,
     notifyBatchComplete,
 } = require('./subtitle-batch-lifecycle');
 const { applyPostBatchPipeline } = require('./post-batch-pipeline');
@@ -413,9 +414,19 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         })(),
         glossaryPromptEnabled: false,
         glossaryMtEnabled: merged.glossaryMtEnabled !== false,
-        chineseSubtitleVariant: String(merged.chineseSubtitleVariant || '').trim() === 'traditional'
-            ? 'traditional'
-            : 'simplified',
+        chineseSubtitleVariant: (() => {
+            try {
+                const chinese = require('../src/js/subtitle-chinese-core');
+                if (typeof chinese.normalizeVariant === 'function') {
+                    return chinese.normalizeVariant(merged.chineseSubtitleVariant);
+                }
+            } catch { /* optional */ }
+            const v = String(merged.chineseSubtitleVariant || '').trim().toLowerCase();
+            if (v === 'traditional' || v === 'traditional-twp' || v === 'twp') return 'traditional';
+            if (v === 'traditional-tw' || v === 'tw') return 'traditional-tw';
+            if (v === 'traditional-hk' || v === 'hk') return 'traditional-hk';
+            return 'simplified';
+        })(),
         dualTargetSuffix: dualCore.normalizeDualTargetSuffix(merged.dualTargetSuffix),
         dualPrimaryTrack: dualCore.normalizeDualPrimaryTrack(merged.dualPrimaryTrack),
         dualDisplayMode: dualCore.normalizeDualDisplayMode(merged.dualDisplayMode),
@@ -505,6 +516,10 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         })(),
         lastAutoUpdateCheckAt: String(merged.lastAutoUpdateCheckAt || '').trim(),
         postBatchQc: merged.postBatchQc !== false,
+        postBatchQcFixMode: (() => {
+            const raw = String(merged.postBatchQcFixMode || '').trim().toLowerCase();
+            return (raw === 'fix' || raw === 'smart') ? raw : 'none';
+        })(),
         autoSense: (() => {
             if (Object.prototype.hasOwnProperty.call(merged, 'autoSense')) {
                 return merged.autoSense !== false;
@@ -738,6 +753,15 @@ const runPostSubtitleTaskActions = createPostSubtitleTaskRunner({
     getSessionPostTaskOptions,
     normalizePostTaskOptions,
     isJobCancelled: () => jobCancelled,
+});
+
+const {
+    deferBatchFinalize,
+    flushDeferredBatchFinalize,
+    clearDeferredBatchFinalize,
+} = createDeferredBatchFinalize({
+    notifyBatchComplete,
+    runPostSubtitleTaskActions,
 });
 
 function resolveInferOutputDir(resolvedVideo, options = {}) {
@@ -2052,8 +2076,10 @@ async function runSubtitleBatchBody({
 
         notifySubtitleTask(windowManager, 'subtitle-task-job-finished', result);
         if (!result.cancelled && manageJobState) {
-            notifyBatchComplete(runtimeOptions, result);
-            runPostSubtitleTaskActions(runtimeOptions, result, windowManager);
+            // Tray notify / sound / shutdown wait until UI finishes post-batch (incl. QC fix).
+            deferBatchFinalize(runtimeOptions, result, windowManager);
+        } else if (result.cancelled) {
+            clearDeferredBatchFinalize();
         }
         return result;
     } catch (err) {
@@ -2470,6 +2496,13 @@ function setupTransWithAiBridge(api, deps) {
 
     // transwithai-get-options is registered in main.js (lightweight cold-start path)
 
+    register('transub-batch-finalize', async (_event, payload = {}) => {
+        try {
+            return flushDeferredBatchFinalize(payload || {});
+        } catch (err) {
+            return { ok: false, error: err?.message || String(err) };
+        }
+    });
     register('transwithai-set-post-task', async (_event, payload = {}) => {
         try {
             const options = setSessionPostTaskOptions(payload);
@@ -2527,6 +2560,7 @@ function setupTransWithAiBridge(api, deps) {
                 'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow',
                 'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
                 'postBatchQc',
+                'postBatchQcFixMode',
                 'autoSense', 'autoDeepSense',
                 'outputDir', 'outputMode', 'audioSuffixes', 'ffmpegPath', 'settingsUiMode',
             ]
@@ -2648,5 +2682,8 @@ module.exports = {
     setSessionPostTaskOptions,
     getSessionPostTaskOptions,
     runPostSubtitleTaskActions,
+    deferBatchFinalize,
+    flushDeferredBatchFinalize,
+    clearDeferredBatchFinalize,
     writeMergedBilingualSubtitleFiles,
 };

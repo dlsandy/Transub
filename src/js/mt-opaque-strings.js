@@ -100,6 +100,7 @@
         aboutToCumZh: d('6KaB5Y675LqG'),
         ochinchinJa: d('44GK44Gh44KT44Gh44KT'),
         ochinpoJa: d('44GK44Gh44KT44G9'),
+        chinChinHiraJa: d('44Gh44KT44Gh44KT'),
         chikubiJa: d('44OB44Kv44OT'),
         nippleJa: d('5Lmz6aaW'),
         earZh: d('6ICz5py1'),
@@ -110,6 +111,8 @@
         chinpoJa: d('44OB44Oz44Od'),
         erectVerbZh: d('56Gs6LW35p2l'),
         toroToroJa: d('44OI44Ot44OI44Ot'),
+        torottoroJa: d('44Go44KN44Gj44Go44KN'),
+        dorodoroJa: d('44OJ44Ot44OD44OJ44Ot'),
         faceCumJa: d('44GK6aGU44Gr5Ye644GX44GmfOmhlOOBq+WHuuOBl+OBpg=='),
         faceRevealZh: d('6IS45LiK6Zyy5Ye6'),
         faceCumZh: d('5bCE5Zyo6IS45LiK'),
@@ -142,6 +145,7 @@
         untilMorningJa: d('5pyd44G+44Gn'),
         untilMorningSexZh: d('5YGa5Yiw5pep5LiK'),
         littleChickZh: d('5bCP6bih6bih'),
+        tinyChickZh: d('5bCP5bCP6bih6bih'),
         shootCumZh: d('6KaB5bCE5LqG'),
         shootCumShortZh: d('6KaB5bCE'),
         goCumShortZh: d('6KaB5Y67'),
@@ -154,6 +158,29 @@
         aboutToSoonZh: d('6ams5LiK6KaB5LqG'),
         aboutToSoonOkZh: d('6ams5LiK6KaB5Y675LqG'),
         noLickNippleOkZh: d('5aWz5Lq65LiN5biu6IiU5Lmz5aS05ZCX77yf'),
+        chinpoMilkJa: d('44GK44Gh44KT44G944Of44Or44Kv'),
+        milkWaterZh: d('5aW25rC0'),
+        semenZh: d('57K+5ray'),
+        alreadyShotZh: d('5bey57uP5bCE5LqG'),
+        alreadyCameZh: d('5bey57uP5Y675LqG'),
+        wantShootZh: d('5oOz5bCE'),
+        wantGoZh: d('5oOz5Y67'),
+        giveMeZh: d('5rGC5L2g57uZ5oiR'),
+        cowMilkZh: d('54mb5aW2'),
+        hardThingZh: d('56Gs5Lic6KW/'),
+        skinHardZh: d('55qu6IKk5LiK55qE56Gs5Lic6KW/'),
+        rekindleZh: d('6YeN5rip5pen5oOF'),
+        breedingSexZh: d('57mB5q6W5oCn6KGM5Li6'),
+        nakadashiSexZh: d('5Lit5Ye65YGa54ix'),
+        seedSexZh: d('5pKt56eN5YGa54ix'),
+        cameHereZh: d('5p2l5LqG'),
+        testicleZh: d('552+5Li4'),
+        sexFriendZh: d('54Ku5Y+L'),
+        sefriJa: d('44K744OV44Os'),
+        nakadashiJa: d('5Lit5Ye644GX'),
+        tanetsukeJa: d('56iu5LuY44GR'),
+        ugokanaiZh: d('5LiN5Yqo'),
+        lickCumOkZh: d('5YaN6KKr6L+Z5qC36IiU5bCx6KaB5bCE5LqG'),
     });
 
     const RE = Object.freeze({
@@ -176,8 +203,8 @@
         appleFruit: /林檎|りんご/,
         appleZhG: new RegExp(T.appleZh, 'g'),
         wontPassThrough: /不会放过/,
-        dekachinSrc: new RegExp(`${T.dekachinJa}|${T.chinchinJa}|${T.ochinchinJa}|${T.ochinpoJa}|${T.chinpoJa}`),
-        climaxIkuSrc: re('6KGM44GN44Gd44GGfOOBglvjgJzvvZ7jg7xdKuihjOOBj3znlJ/ooYzjgY9855Sf6KGM44Gj44Gh44KD44GGfOS/uuihjOOBj3zjgqTjgY9844Kk44Gj44Gh44KD44GGfOOCpOODg+OBoeOCg+OBhnzjgqTjgq3jgZ3jgYZ844Kk44GN44Gd44GGfOOBhOOBo+OBoeOCg+OBhOOBneOBhnzjgqTjgq/jgqTjgq9844Kk44Kv44GjfOOBhOOBo+OBoeOCg+OBhnzooYzjgaPjgaHjgoPjgYZ8KD86XnxbXmEtekEtWl0p44Kk44KvKD86W15hLXpBLVpdfCQp'),
+        dekachinSrc: new RegExp(`${T.dekachinJa}|${T.chinchinJa}|${T.ochinchinJa}|${T.ochinpoJa}|${T.chinpoJa}|${T.chinChinHiraJa}`),
+        climaxIkuSrc: re('6KGM44GN44Gd44GGfOOBglvjgJzvvZ7jg7xdKuihjOOBj3znlJ/ooYzjgY9855Sf6KGM44Gj44Gh44KD44GGfOS/uuihjOOBj3zjgqTjgY9844Kk44Gj44Gh44KD44GGfOOCpOODg+OBoeOCg+OBhnzjgqTjg4PjgaHjgoPjgaPjgZ9844GE44Gj44Gh44KD44Gj44GffOOCpOOBo+OBoeOCg+OBo+OBn3zjgqTjg4PjgaHjgoPjgYTjgZ3jgYZ844Kk44Kt44Gd44GGfOOCpOOBjeOBneOBhnzjgYTjgaPjgaHjgoPjgYTjgZ3jgYZ844Kk44GL44GV44KMfOOCpOOCr+OCpOOCr3zjgqTjgq/jgaN844GE44Gj44Gh44KD44GGfOihjOOBo+OBoeOCg+OBhnwoPzpefFteYS16QS1aXSnjgqTjgq8oPzpbXmEtekEtWl18JCk='),
         chinkoBigSrc: new RegExp(`(?:${T.chinkuMo}|${T.chinkoMo}).{0,8}でかい`),
         breastZh: /胸部/,
         aboutToStartG: new RegExp(T.aboutToStartZh, 'g'),
@@ -194,14 +221,25 @@
         haveRelationG: new RegExp(T.haveRelationZh, 'g'),
         oneNightG: new RegExp(T.oneNightZh, 'g'),
         littleChickG: new RegExp(T.littleChickZh, 'g'),
+        tinyChickG: new RegExp(T.tinyChickZh, 'g'),
         thatThingG: new RegExp(T.thatThingZh, 'g'),
         spitSomethingG: new RegExp(T.spitSomethingZh, 'g'),
         rodDupG: new RegExp(T.rodDupZh, 'g'),
         aboutToSoonG: new RegExp(T.aboutToSoonZh, 'g'),
+        milkWaterG: new RegExp(T.milkWaterZh, 'g'),
+        cowMilkG: new RegExp(T.cowMilkZh, 'g'),
+        alreadyShotG: new RegExp(T.alreadyShotZh, 'g'),
+        wantShootG: new RegExp(T.wantShootZh, 'g'),
+        testicleG: new RegExp(T.testicleZh, 'g'),
+        rekindleG: new RegExp(T.rekindleZh, 'g'),
+        breedingSexG: new RegExp(T.breedingSexZh, 'g'),
+        hardThingG: new RegExp(T.hardThingZh, 'g'),
+        skinHardG: new RegExp(T.skinHardZh, 'g'),
+        cameHereG: new RegExp(T.cameHereZh, 'g'),
     });
 
     /** Sensitive JA ASR pairs omitted from shared/ja-asr-domain-fixes.json plaintext. */
-    const ASR_ADULT_PAIRS_B64 = 'W3siZnJvbSI6IuODleOCp+ODqeODs+ODh+ODouODs+OCueODiOODrOODvOOCt+ODp+ODsyIsInRvIjoi44OV44Kn44Op44Gu44OH44Oi44Oz44K544OI44Os44O844K344On44OzIn0seyJmcm9tIjoi44Kq44O844Kv5YWl44KM44KL44KI44Kq44O844OpIiwidG8iOiLlpaXlhaXjgozjgovjgojjgbvjgokifSx7ImZyb20iOiLlpKflpb3jgY3jgarjgqLjg4Pjg5fjgafmjJ8iLCJ0byI6IuWkp+WlveOBjeOBquOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiOOBs+OCk+OBs+OCkyIsInRvIjoi44GK44Gh44KT44Gh44KT44OT44Oz44OT44OzIn0seyJmcm9tIjoi6LO85YWl44GX44Gm44Gm44GP44Gg44GV44GEIiwidG8iOiLoiIjlpa7jgZfjgabjgabjgY/jgaDjgZXjgYQifSx7ImZyb20iOiLjgaHjgpPjgaHjgoPjgpPjgafotbfjgY3jgaYiLCJ0byI6IuODgeODs+ODgeODs+OBp+i1t+OBjeOBpiJ9LHsiZnJvbSI6IuWkp+WlveOBjeOBquOCouODg+ODl+ODqyIsInRvIjoi5aSn5aW944GN44Gq44GK44Gj44Gx44GEIn0seyJmcm9tIjoi5oKU44GE44Gr44GV44KM44Gh44KD44GGIiwidG8iOiLlpaXjgavjgZXjgozjgaHjgoPjgYYifSx7ImZyb20iOiLkuIDml6Xjga7lvaLjgoTlpKfjgY3jgZUiLCJ0byI6IuOCpOODgeODouODhOOBruW9ouOChOWkp+OBjeOBlSJ9LHsiZnJvbSI6IuellueItuOBqOOBr+mBleOBhOOBvuOBmSIsInRvIjoi6aKo5L+X44Go44Gv6YGV44GE44G+44GZIn0seyJmcm9tIjoi44GC44Gj44CB44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgaPjgIHmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYTjgaPjgaHjgoPjgYTjgaPjgaHjgoMiLCJ0byI6IuOCpOODg+OBoeOCg+OCpOODg+OBoeOCgyJ9LHsiZnJvbSI6IuOBiuOBoeOCk+OBmOOCheOBhuOBleOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44Kz44O844OB44Oz5pWj44KM44Gf44KJIiwidG8iOiLnsr7mtrLmlaPjgozjgZ/jgokifSx7ImZyb20iOiLjgrnjgr/jgqTjg4jjgZfjgb7jgZnjga0iLCJ0byI6IuWHuuOBn+OBhOOBp+OBmeOBrSJ9LHsiZnJvbSI6IuOCu+ODleODrOOCquOCu+ODg+OCr+OCuSIsInRvIjoi44K744OV44Os44Gu44K744OD44Kv44K5In0seyJmcm9tIjoi44OB44Oz44OB44Oz5Y+W44KK5a+d44GmIiwidG8iOiLjg4Hjg7Pjg4Hjg7Plj5bjgorlhaXjgozjgaYifSx7ImZyb20iOiLjg57jgqTjgq/jg63jg5Pjg4Pjgq3jg7MiLCJ0byI6IuODnuOCpOOCr+ODreODk+OCreODiyJ9LHsiZnJvbSI6IuWIneatr+OCkuS7iuiIkOOCgeOBpiIsInRvIjoi5YWI44Gj44G944KS5LuK6IiQ44KB44GmIn0seyJmcm9tIjoi44GC44GC44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgYLmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYLjgaPjgY3jgoLjgaHjgYTjgYQiLCJ0byI6IuOBguOBo+awl+aMgeOBoeOBhOOBhCJ9LHsiZnJvbSI6IuOCuOODo+ODkeODi+ODvOOCuuS8miIsInRvIjoi44K444Oj44OR44OL44O844K644Ks44KkIn0seyJmcm9tIjoi5YWl44KK44Gb44GE44Gn44GZIiwidG8iOiLlhaXjgorjgZ3jgYbjgafjgZkifSx7ImZyb20iOiLnlJ/ooYzjgaPjgaHjgoPjgYYiLCJ0byI6IuOCpOOBo+OBoeOCg+OBhiJ9LHsiZnJvbSI6IuOCouOCt+OCq+aPj+OBhOOBpiIsInRvIjoi6Laz6ZaL44GE44GmIn0seyJmcm9tIjoi44GC44Gj44Gx44GE44Gn5oyfIiwidG8iOiLjgYrjgaPjgbHjgYTjgafmjJ8ifSx7ImZyb20iOiLjgqLjg4Pjg5fjg6vjgafmjJ8iLCJ0byI6IuOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuOCpOOCseODoeODs+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44GK44Gh44KT44Gh44KD44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgYrjga/jgaHjgpPjgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuODgeODpeODs+ODgeODpeODsyIsInRvIjoi44OB44Oz44OB44OzIn0seyJmcm9tIjoi44OH44Kr44OB44ON44K/44OzIiwidG8iOiLjg4fjgqvjg4Hjg7Pjga8ifSx7ImZyb20iOiLogLPjga7jg5Djg4Pjg4giLCJ0byI6IuOBiuOBoeOCk+OBoeOCk+OBjCJ9LHsiZnJvbSI6IuadpeOCiOOCquODvOODqSIsInRvIjoi5p2l44Gm44G744KJIn0seyJmcm9tIjoi5LiA5pel44Gu5YWI44GvIiwidG8iOiLjgqTjg4Hjg6Ljg4Tjga7lhYjjga8ifSx7ImZyb20iOiLjgqLjg4Pjg5fjgafmjJ8iLCJ0byI6IuOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuOCtOODqeihjOOBj+OCiCIsInRvIjoi44G744KJ6KGM44GP44KIIn0seyJmcm9tIjoi44OI44Oq44GM5L2O44GEIiwidG8iOiLjg4jjg6rjgqzjg7zjgYzkvY7jgYQifSx7ImZyb20iOiLlpaXjgafmv4DlirEiLCJ0byI6IuWlpeOBp+WIuua/gCJ9LHsiZnJvbSI6IuaAkuiBtOOBl+OBpiIsInRvIjoi5YuD6LW344GX44GmIn0seyJmcm9tIjoi5pel5pys56ul5a2QIiwidG8iOiLml6XmnKzjga7nq6Xosp4ifSx7ImZyb20iOiLjg4Hjg7Pjgq/jgoIiLCJ0byI6IuOBoeOCk+OBk+OCgiJ9LHsiZnJvbSI6IuODmeOCv+ODgeODsyIsInRvIjoi44OH44Kr44OB44OzIn0seyJmcm9tIjoi44G744Gj44Gx44GEIiwidG8iOiLjgYrjgaPjgbHjgYQifSx7ImZyb20iOiLjgbvjgb7jgpPjgZMiLCJ0byI6IuOBiuOBvuOCk+OBkyJ9LHsiZnJvbSI6IumHkeacquadpSIsInRvIjoi6YeR546J5pyq5p2lIn0seyJmcm9tIjoi6YeR44OR44OzIiwidG8iOiLjg4Hjg7Pjg50ifSx7ImZyb20iOiLnlJ/ooYzjgY8iLCJ0byI6IuOCpOOBjyJ9LHsiZnJvbSI6IuOBiuato+awlyIsInRvIjoi44GK5LuV572u44GNIn0seyJmcm9tIjoi44K344OV44OsIiwidG8iOiLjgrvjg5Xjg6wifSx7ImZyb20iOiLkubPovrIiLCJ0byI6IuS5s+aIvyJ9LHsiZnJvbSI6IumKgOmKgCIsInRvIjoi44OT44Oz44OT44OzIn1d';
+    const ASR_ADULT_PAIRS_B64 = 'W3siZnJvbSI6IuODleOCp+ODqeODs+ODh+ODouODs+OCueODiOODrOODvOOCt+ODp+ODsyIsInRvIjoi44OV44Kn44Op44Gu44OH44Oi44Oz44K544OI44Os44O844K344On44OzIn0seyJmcm9tIjoi44Kq44O844Kv5YWl44KM44KL44KI44Kq44O844OpIiwidG8iOiLlpaXlhaXjgozjgovjgojjgbvjgokifSx7ImZyb20iOiLlpKflpb3jgY3jgarjgqLjg4Pjg5fjgafmjJ8iLCJ0byI6IuWkp+WlveOBjeOBquOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiOOBs+OCk+OBs+OCkyIsInRvIjoi44GK44Gh44KT44Gh44KT44OT44Oz44OT44OzIn0seyJmcm9tIjoi6LO85YWl44GX44Gm44Gm44GP44Gg44GV44GEIiwidG8iOiLoiIjlpa7jgZfjgabjgabjgY/jgaDjgZXjgYQifSx7ImZyb20iOiLjgaHjgpPjgaHjgoPjgpPjgafotbfjgY3jgaYiLCJ0byI6IuODgeODs+ODgeODs+OBp+i1t+OBjeOBpiJ9LHsiZnJvbSI6IuWkp+WlveOBjeOBquOCouODg+ODl+ODqyIsInRvIjoi5aSn5aW944GN44Gq44GK44Gj44Gx44GEIn0seyJmcm9tIjoi5oKU44GE44Gr44GV44KM44Gh44KD44GGIiwidG8iOiLlpaXjgavjgZXjgozjgaHjgoPjgYYifSx7ImZyb20iOiLkuIDml6Xjga7lvaLjgoTlpKfjgY3jgZUiLCJ0byI6IuOCpOODgeODouODhOOBruW9ouOChOWkp+OBjeOBlSJ9LHsiZnJvbSI6IuellueItuOBqOOBr+mBleOBhOOBvuOBmSIsInRvIjoi6aKo5L+X44Go44Gv6YGV44GE44G+44GZIn0seyJmcm9tIjoi44GC44Gj44CB44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgaPjgIHmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYTjgaPjgaHjgoPjgYTjgaPjgaHjgoMiLCJ0byI6IuOCpOODg+OBoeOCg+OCpOODg+OBoeOCgyJ9LHsiZnJvbSI6IuOBiuOBoeOCk+OBmOOCheOBhuOBleOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44Kz44O844OB44Oz5pWj44KM44Gf44KJIiwidG8iOiLnsr7mtrLmlaPjgozjgZ/jgokifSx7ImZyb20iOiLjgrnjgr/jgqTjg4jjgZfjgb7jgZnjga0iLCJ0byI6IuWHuuOBn+OBhOOBp+OBmeOBrSJ9LHsiZnJvbSI6IuOCu+ODleODrOOCquOCu+ODg+OCr+OCuSIsInRvIjoi44K744OV44Os44Gu44K744OD44Kv44K5In0seyJmcm9tIjoi44OB44Oz44OB44Oz5Y+W44KK5a+d44GmIiwidG8iOiLjg4Hjg7Pjg4Hjg7Plj5bjgorlhaXjgozjgaYifSx7ImZyb20iOiLjg57jgqTjgq/jg63jg5Pjg4Pjgq3jg7MiLCJ0byI6IuODnuOCpOOCr+ODreODk+OCreODiyJ9LHsiZnJvbSI6IuWIneatr+OCkuS7iuiIkOOCgeOBpiIsInRvIjoi5YWI44Gj44G944KS5LuK6IiQ44KB44GmIn0seyJmcm9tIjoi44GC44GC44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgYLmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYLjgaPjgY3jgoLjgaHjgYTjgYQiLCJ0byI6IuOBguOBo+awl+aMgeOBoeOBhOOBhCJ9LHsiZnJvbSI6IuOCuOODo+ODkeODi+ODvOOCuuS8miIsInRvIjoi44K444Oj44OR44OL44O844K644Ks44KkIn0seyJmcm9tIjoi5YWl44KK44Gb44GE44Gn44GZIiwidG8iOiLlhaXjgorjgZ3jgYbjgafjgZkifSx7ImZyb20iOiLnlJ/ooYzjgaPjgaHjgoPjgYYiLCJ0byI6IuOCpOOBo+OBoeOCg+OBhiJ9LHsiZnJvbSI6IuOCouOCt+OCq+aPj+OBhOOBpiIsInRvIjoi6Laz6ZaL44GE44GmIn0seyJmcm9tIjoi44GC44Gj44Gx44GE44Gn5oyfIiwidG8iOiLjgYrjgaPjgbHjgYTjgafmjJ8ifSx7ImZyb20iOiLjgqLjg4Pjg5fjg6vjgafmjJ8iLCJ0byI6IuOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuOCpOOCseODoeODs+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44GK44GG44Gh44KT44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgYrjgaHjgpPjgaHjgoPjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOBiuOBr+OBoeOCk+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44OB44Ol44Oz44OB44Ol44OzIiwidG8iOiLjg4Hjg7Pjg4Hjg7MifSx7ImZyb20iOiLjg4fjgqvjg4Hjg43jgr/jg7MiLCJ0byI6IuODh+OCq+ODgeODs+OBryJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiCIsInRvIjoi44GK44Gh44KT44Gh44KT44GMIn0seyJmcm9tIjoi5p2l44KI44Kq44O844OpIiwidG8iOiLmnaXjgabjgbvjgokifSx7ImZyb20iOiLkuIDml6Xjga7lhYjjga8iLCJ0byI6IuOCpOODgeODouODhOOBruWFiOOBryJ9LHsiZnJvbSI6IuOCouODg+ODl+OBp+aMnyIsInRvIjoi44GK44Gj44Gx44GE44Gn5oyfIn0seyJmcm9tIjoi44K044Op6KGM44GP44KIIiwidG8iOiLjgbvjgonooYzjgY/jgogifSx7ImZyb20iOiLjg4jjg6rjgYzkvY7jgYQiLCJ0byI6IuODiOODquOCrOODvOOBjOS9juOBhCJ9LHsiZnJvbSI6IuWlpeOBp+a/gOWKsSIsInRvIjoi5aWl44Gn5Yi65r+AIn0seyJmcm9tIjoi5oCS6IG044GX44GmIiwidG8iOiLli4PotbfjgZfjgaYifSx7ImZyb20iOiLml6XmnKznq6XlrZAiLCJ0byI6IuaXpeacrOOBruerpeiyniJ9LHsiZnJvbSI6IuODgeODs+OCr+OCgiIsInRvIjoi44Gh44KT44GT44KCIn0seyJmcm9tIjoi44OZ44K/44OB44OzIiwidG8iOiLjg4fjgqvjg4Hjg7MifSx7ImZyb20iOiLjgbvjgaPjgbHjgYQiLCJ0byI6IuOBiuOBo+OBseOBhCJ9LHsiZnJvbSI6IuOBu+OBvuOCk+OBkyIsInRvIjoi44GK44G+44KT44GTIn0seyJmcm9tIjoi6YeR5pyq5p2lIiwidG8iOiLph5HnjonmnKrmnaUifSx7ImZyb20iOiLph5Hjg5Hjg7MiLCJ0byI6IuODgeODs+ODnSJ9LHsiZnJvbSI6IueUn+ihjOOBjyIsInRvIjoi44Kk44GPIn0seyJmcm9tIjoi44GK5q2j5rCXIiwidG8iOiLjgYrku5Xnva7jgY0ifSx7ImZyb20iOiLjgrfjg5Xjg6wiLCJ0byI6IuOCu+ODleODrCJ9LHsiZnJvbSI6IuS5s+i+siIsInRvIjoi5Lmz5oi/In0seyJmcm9tIjoi6YqA6YqAIiwidG8iOiLjg5Pjg7Pjg5Pjg7MifSx7ImZyb20iOiLjg4Hjg7Pjg5Hjg5/jg6vjgq8iLCJ0byI6IuOBiuOBoeOCk+OBveODn+ODq+OCryJ9LHsiZnJvbSI6IuOCs+ODvOODiOOCguOBhuaIkeaFoiIsInRvIjoi44Gh44KH44Gj44Go44KC44GG5oiR5oWiIn0seyJmcm9tIjoi5Luy5Ye644GXIiwidG8iOiLkuK3lh7rjgZcifV0=';
 
     function getAsrAdultDomainPairs() {
         try {
@@ -383,7 +421,12 @@
             note('domain_term');
         }
         if (
-            (src.includes(T.toroToroJa) || /とろとろ/.test(src))
+            (
+                src.includes(T.toroToroJa)
+                || src.includes(T.torottoroJa)
+                || src.includes(T.dorodoroJa)
+                || /とろとろ|とろっとろ|ドロッ|どろっ|ピチョ|びちゃ|びちょ/.test(src)
+            )
             && cur.includes(T.softCottonZh)
         ) {
             cur = cur.split(T.softCottonZh).join(T.wetMessyZh);
@@ -461,6 +504,10 @@
         }
         // おちんちん → childish / vague euphemisms
         if (RE.dekachinSrc.test(src)) {
+            if (cur.includes(T.tinyChickZh)) {
+                cur = cur.replace(RE.tinyChickG, T.rodZh);
+                note('domain_term');
+            }
             if (cur.includes(T.littleChickZh)) {
                 cur = cur.replace(RE.littleChickG, T.rodZh);
                 note('domain_term');
@@ -511,6 +558,156 @@
         // 「马上要了」missing 去 for climax
         if (RE.climaxIkuSrc.test(src) && cur.includes(T.aboutToSoonZh)) {
             cur = cur.replace(RE.aboutToSoonG, T.aboutToSoonOkZh);
+            note('domain_term');
+        }
+        // おちんぽミルク / sexual ミルク →「奶水」「牛奶」
+        if (
+            (
+                src.includes(T.chinpoMilkJa)
+                || /チンパミルク|チンポミルク/.test(src)
+                || (/ミルク/.test(src) && /出す|出して/.test(src))
+            )
+            && (cur.includes(T.milkWaterZh) || cur.includes(T.cowMilkZh) || /挤出奶|挤些.*奶|挤.*奶来/.test(cur))
+        ) {
+            cur = cur
+                .replace(RE.milkWaterG, T.semenZh)
+                .replace(RE.cowMilkG, T.semenZh)
+                .replace(/挤出奶/g, `射出${T.semenZh}`)
+                .replace(/挤些/g, '挤些');
+            note('domain_term');
+        }
+        // コート/ちょっと + milk line with leftover「外套」
+        if (
+            /ミルク/.test(src)
+            && /出す|出して/.test(src)
+            && /我慢できない|がまんできない/.test(src)
+            && (/外套/.test(cur) || /コート/.test(src))
+        ) {
+            cur = FIX.coatMilkOkZh;
+            note('domain_term');
+        }
+        // 我慢できない + milk inverted as「再忍耐」
+        if (
+            src.includes(T.chinpoMilkJa)
+            && /我慢できない|がまんできない/.test(src)
+            && /忍耐/.test(cur)
+        ) {
+            cur = FIX.cantHoldMilkOkZh;
+            note('domain_term');
+        }
+        // おちんぽビュー出す misread as「给你看」
+        if (
+            /おちんぽビュー|おちんぽびゅー|おちんぽビュッ/.test(src)
+            && /看几次|给你看/.test(cur)
+        ) {
+            cur = FIX.viewSpurtOkZh;
+            note('domain_term');
+        }
+        // ちょうだい hallucinated as chick/erect with no chin in JA
+        if (
+            /ちょうだい/.test(src)
+            && !RE.dekachinSrc.test(src)
+            && (
+                cur.includes(T.littleChickZh)
+                || cur.includes(T.tinyChickZh)
+                || /弄硬/.test(cur)
+            )
+        ) {
+            const n = (src.match(/ちょうだい/g) || []).length;
+            cur = n >= 2 ? `${T.giveMeZh}，${T.giveMeZh}` : T.giveMeZh;
+            note('domain_term');
+        }
+        // イッちゃった →「已经射了」→「已经去了」
+        if (
+            /イッちゃっ|いっちゃっ|イっちゃっ/.test(src)
+            && cur.includes(T.alreadyShotZh)
+        ) {
+            cur = cur.replace(RE.alreadyShotG, T.alreadyCameZh);
+            note('domain_term');
+        }
+        // 行きたい →「想射」→「想去」
+        if (/行きたい/.test(src) && cur.includes(T.wantShootZh)) {
+            cur = cur.replace(RE.wantShootG, T.wantGoZh);
+            note('domain_term');
+        }
+        // Bare climax 行く →「要射」/「要开始了」→「要去」(not travel / not ejaculation verbs)
+        if (
+            /行く/.test(src)
+            && !/どこ行|行けたら|行けば|行ける|行って|行っちゃった|出て行|行けた|行こう/.test(src)
+            && !/出ちゃう|出るよ|出るもん|射精|ザーメン|精液|出して/.test(src)
+            && (
+                cur.includes(T.shootCumShortZh)
+                || cur.includes(T.shootCumZh)
+                || cur.includes(T.aboutToStartZh)
+            )
+        ) {
+            cur = cur
+                .replace(RE.aboutToStartG, T.aboutToCumZh)
+                .replace(RE.shootCumG, T.aboutToCumZh)
+                .replace(RE.shootCumShortG, T.goCumShortZh);
+            note('domain_term');
+        }
+        // 中出しセックス →「重温旧情」
+        if (
+            (src.includes(T.nakadashiJa) || /仲出し/.test(src))
+            && (src.includes(T.sexJa) || src.includes(T.sexHiraJa))
+            && cur.includes(T.rekindleZh)
+        ) {
+            cur = cur.replace(RE.rekindleG, T.nakadashiSexZh);
+            note('domain_term');
+        }
+        // 種付けセックス →「繁殖性行为」
+        if (
+            src.includes(T.tanetsukeJa)
+            && (src.includes(T.sexJa) || src.includes(T.sexHiraJa))
+            && cur.includes(T.breedingSexZh)
+        ) {
+            cur = cur
+                .split(`进行${T.breedingSexZh}`).join(T.seedSexZh)
+                .replace(RE.breedingSexG, T.seedSexZh);
+            note('domain_term');
+        }
+        // おちんぽ →「硬东西」/「皮肤上的硬东西」
+        if (RE.dekachinSrc.test(src)) {
+            if (cur.includes(T.skinHardZh)) {
+                cur = cur.replace(RE.skinHardG, T.rodZh);
+                note('domain_term');
+            } else if (cur.includes(T.hardThingZh)) {
+                cur = cur.replace(RE.hardThingG, T.rodZh);
+                note('domain_term');
+            }
+        }
+        // セフレ truncated after boyfriend negation
+        if (
+            src.includes(T.sefriJa)
+            && /男朋友|男友/.test(cur)
+            && !cur.includes(T.sexFriendZh)
+        ) {
+            const bare = cur.replace(/[，,。．.\s]+$/u, '');
+            cur = `${bare}，是${T.sexFriendZh}`;
+            note('domain_term');
+        }
+        // short 出ちゃう →「来了」
+        if (
+            /出ちゃう/.test(src)
+            && !/どこ|店|エラー|外に出す|残り出して/.test(src)
+            && (cur === T.cameHereZh || cur === `${T.cameHereZh}。` || /^[啊阿]?来了[。．.]?$/.test(cur))
+        ) {
+            cur = T.shootCumZh;
+            note('domain_term');
+        }
+        // 金玉 →「睾丸」→「蛋蛋」
+        if (src.includes(T.kintamaJa) && cur.includes(T.testicleZh)) {
+            cur = cur.replace(RE.testicleG, T.ballsZh);
+            note('domain_term');
+        }
+        // 舐められ…出ちゃう hallucinated as drinking milk
+        if (
+            /舐められ/.test(src)
+            && /出ちゃう/.test(src)
+            && /奶|小姐/.test(cur)
+        ) {
+            cur = T.lickCumOkZh;
             note('domain_term');
         }
 
@@ -723,6 +920,93 @@
         ikuNippleOkZh: d('5LiA56Kw5Yiw5Lmz5aS05bCx6ams5LiK6KaB5Y675LqG55qE'),
         shifureJa: d('44K344OV44Os'),
         sefriJa: d('44K744OV44Os'),
+        hiraChinJa: d('5YGl44Gh44KD44KT44Gu44Gh44KT44Gh44KT44GL44CC'),
+        hiraChinBadZh: d('5YGl55qE5bCP6bih6bih'),
+        hiraChinOkZh: d('5YGl55qE6bih5be0'),
+        ikuSouJa: d('44Kk44OD44Gh44KD44GE44Gd44GG'),
+        ikuSouBadZh: d('6KaB5bCE5LqG'),
+        ikuSouOkZh: d('6KaB5Y675LqG'),
+        ikaSareJa: d('44GZ44GQ44Kk44GL44GV44KM44Gh44KD44GE44Gd44GG44CC'),
+        ikaSareBadZh: d('6ams5LiK5bCx6KaB5bCE5LqG'),
+        ikaSareOkZh: d('6ams5LiK5bCx6KaB5Y675LqG'),
+        ballsChinJa: d('44Gh44KT44Gh44KT44KB44Gh44KD44GP44Gh44KD54ax44GP44Gq44Gj44Gm44GN44Gm44KL44KI44CC'),
+        ballsChinBadZh: d('6JuL6JuL54Ot5b6X5LiN5b6X5LqG'),
+        ballsChinOkZh: d('6bih5be054Ot5b6X5LiN5b6X5LqG'),
+        torottoroJaFix: d('44Go44KN44Gj44Go44KN44Gr44Gq44Gj44Gm44KL44Gq44CC'),
+        torottoroBadZh: d('6L2v57u157u15Zyw5a2X5bmV5Lit55qE5qih57OK5oiW6KKr6YGu5oyh55qE5paH5a2X'),
+        torottoroOkZh: d('5rm/5ryJ5ryJ5Zyw'),
+        ouchinJa: d('44Gt44GI44GK44GG44Gh44KT44Gh44KT5YWl44KM44Gf44KJ44Gp44GG44Gq44Gj44Gh44KD44GG44GT44KM'),
+        ouchinFixed: d('44Gt44GI44GK44Gh44KT44Gh44KT5YWl44KM44Gf44KJ44Gp44GG44Gq44Gj44Gh44KD44GG44GT44KM'),
+        ouchinBadZh: d('5ZaC77yM5L2g6L+Z5bCP6bih6bih5o+S6L+b5Y675Lya5oCO5LmI5qC3'),
+        ouchinOkZh: d('5ZaC77yM5L2g6L+Z6bih5be05o+S6L+b5Y675Lya5oCO5LmI5qC3'),
+        blankIkuJa: d('44GC44GC44KE44Gw44GE44KE44Gw44GE44GC44GC44KC44GG44G+44Gf44Kk44OD44Gh44KD44GG44KI44GT44KT44Gq44Gv'),
+        blankIkuOkZh: d('6KaB5Y675LqG'),
+        // CAWD-999 / ADN-801 fixtures
+        chinpoMilkJa: d('44Gv44GC44GK44Gh44KT44G944Of44Or44Kv44Gf44GP44GV44KT5Ye644GX44Gm44GC44GS44KL44GL44KJ44Gt'),
+        chinpoMilkBadZh: d('5ZOI77yM57uZ5L2g5aSa5Ye654K55aW25rC077yM5aW95ZCX77yf'),
+        chinpoMilkOkZh: d('5ZOI77yM57uZ5L2g5aSa5Ye654K557K+5ray77yM5aW95ZCX77yf'),
+        cantHoldMilkJa: d('44Gh44KH44Gj44Go44KC44GG5oiR5oWi44Gn44GN44Gq44GE44Gn44GK44Gh44KT44G944Of44Or44Kv5Ye644GZ44GL44KJ44Gt44CC'),
+        cantHoldMilkBadZh: d('56iN5b6u5YaN5b+N6ICQ5LiA5LiL77yM5oiR6ams5LiK5bCx6KaB5bCE57K+5LqG5ZOm'),
+        cantHoldMilkOkZh: d('5b+N5LiN5L2P5LqG77yM6bih5be057K+5ray6KaB5bCE5Ye65p2l5LqG5ZOm'),
+        viewSpurtJa: d('44GE44Gj44Gx44GE44GK44Gh44KT44G944OT44Ol44O85Ye644GZ44GL44KJ44Gt44CC'),
+        viewSpurtBadZh: d('5oiR5Lya5aSa57uZ5L2g55yL5Yeg5qyh'),
+        viewSpurtOkZh: d('5Lya5aSn6YeP5bCE5Ye65p2l55qE5ZOm44CC'),
+        choudaiHallJa: d('44Gq44GK44GP44KT44G+44Gn44Gh44KH44GG44Gg44GE44Gq44GK44GP44KT44G+44Gn44Gh44KH44GG44Gg44GE'),
+        choudaiHallBadZh: d('5oqK5L2g55qE5bCP6bih6bih5Lmf5byE56Gs54K577yM5oqK5L2g55qE5bCP6bih6bih5Lmf5byE56Gs54K5'),
+        choudaiHallOkZh: d('5rGC5L2g57uZ5oiR77yM5rGC5L2g57uZ5oiR'),
+        ittaJa: d('44GC44KT44Gf44Kk44OD44Gh44KD44Gj44Gf44KT44Gn44GZ44GL44GtPw=='),
+        ittaBadZh: d('5L2g5piv5LiN5piv5bey57uP5bCE5LqG77yf'),
+        ittaOkZh: d('5L2g5piv5LiN5piv5bey57uP5Y675LqG77yf'),
+        ikitaiJa: d('44Gm44Gj44Gh44KD44KT5Ye644Gh44KD44GGPyDjgYbjgpPooYzjgY3jgZ/jgYQ/'),
+        ikitaiBadZh: d('6KaB5bCE5LqG5ZCX77yfIOWXr++8jOaDs+WwhO+8nw=='),
+        ikitaiOkZh: d('6KaB5bCE5LqG5ZCX77yfIOWXr++8jOaDs+WOu++8nw=='),
+        ikuBareJa: d('6KGM44GP4oCm44GC44Gh44KH44Gj44G+44Gg'),
+        ikuBareBadZh: d('6KaB5bCE5LqG4oCm5ZWK77yM'),
+        ikuBareOkZh: d('6KaB5Y675LqG4oCm5ZWK77yM'),
+        arigatouHaiJa: d('44Gv44GE44CB44GC44KK44GM44Go44GG44Gv44O844GE'),
+        arigatouHaiOkZh: d('5aW955qE77yM6LCi6LCi'),
+        mouDameJa: d('44GC44GC44KC44GG44OA44Oh'),
+        mouDameOkZh: d('5ZWK77yM5bey57uP5LiN6KGM5LqG'),
+        kimochiWaruiJa: d('44GC44CB44GC44Gu44CB5rCX5oyB44Gh5oKq44GZ44GO44KL44GL44KC44GX44KM44G+44Gb44KT44CC'),
+        kimochiWaruiOkZh: d('5Y+v6IO95oG25b+D6L+H5aS05LqG'),
+        moanBlankJa: d('44GC44Gj44CB44GC44Gj44CB44GC44GjIQ=='),
+        moanBlankOkZh: d('5ZWK4oCU4oCU77yB'),
+        // ADN-798 / ADN-791 / residual CAWD-999 / ADN-801
+        chinpaMilkJa: d('44OB44Oz44OR44Of44Or44Kv44Gf44GP44GV44KT5Ye644GX44Gm44GC44GS44KL44GL44KJ44Gt'),
+        chinpaMilkBadZh: d('5oiR5Lya5aSa57uZ5L2g5oyk5Lqb54mb5aW255qE'),
+        chinpaMilkOkZh: d('5oiR5Lya5aSa57uZ5L2g5oyk5Lqb57K+5ray55qE'),
+        chinpaMilkFixedJa: d('44GK44Gh44KT44G944Of44Or44Kv44Gf44GP44GV44KT5Ye644GX44Gm44GC44GS44KL44GL44KJ44Gt'),
+        coatMilkJa: d('44Kz44O844OI44KC44GG5oiR5oWi44Gn44GN44Gq44GE44GT44Gj44Gh44Gr44KC44Of44Or44Kv5Ye644GZ44GL44KJ44Gt'),
+        coatMilkBadZh: d('5aSW5aWX5oiR5b+N5LiN5L2P5LqG6L+Z6L655Lmf6KaB5oyk5Ye65aW25p2l'),
+        coatMilkOkZh: d('5oiR5b+N5LiN5L2P5LqG6L+Z6L655Lmf6KaB5bCE5Ye657K+5ray5p2l'),
+        coatMilkFixedJa: d('44Gh44KH44Gj44Go44KC44GG5oiR5oWi44Gn44GN44Gq44GE44GT44Gj44Gh44Gr44KC44Of44Or44Kv5Ye644GZ44GL44KJ44Gt'),
+        hardOchinJa: d('44K544Kr44Kk44Oz44OB44Gu44GK44Gh44KT44G9'),
+        hardOchinBadZh: d('55qu6IKk5LiK55qE56Gs5Lic6KW/'),
+        hardOchinOkZh: d('6bih5be0'),
+        nakadashiSexJa: d('6YOo6ZW344CB56eB44Go5LmF44GX44G244KK44Gr5Luy5Ye644GX44K744OD44Kv44K544GX44Gf44GE44Gn44GZ44GLPw=='),
+        nakadashiSexBadZh: d('6YOo6ZW/77yM5L2g5piv5LiN5piv5oOz5ZKM5oiR6YeN5rip5pen5oOF77yf'),
+        nakadashiSexOkZh: d('6YOo6ZW/77yM5L2g5piv5LiN5piv5oOz5ZKM5oiR5Lit5Ye65YGa54ix77yf'),
+        nakadashiSexFixedJa: d('6YOo6ZW344CB56eB44Go5LmF44GX44G244KK44Gr5Lit5Ye644GX44K744OD44Kv44K544GX44Gf44GE44Gn44GZ44GLPw=='),
+        seedSexJa: d('56eB44Gf44Gh44Gv56iu5LuY44GR44K744OD44Kv44K544GX44Gm44G+44GZ'),
+        seedSexBadZh: d('5oiR5Lus5Zyo6L+b6KGM57mB5q6W5oCn6KGM5Li6'),
+        seedSexOkZh: d('5oiR5Lus5Zyo5pKt56eN5YGa54ix'),
+        ikuStartJa: d('6KGM44GP'),
+        ikuStartBadZh: d('6KaB5byA5aeL5LqG4oCm5ZWK5ZWK'),
+        ikuStartOkZh: d('6KaB5Y675LqG4oCm5ZWK5ZWK'),
+        dashichauComeJa: d('5Ye644Gh44KD44GG44KI'),
+        dashichauComeBadZh: d('5p2l5LqG'),
+        dashichauComeOkZh: d('6KaB5bCE5LqG'),
+        sefriLineJa: d('5b285rCP44GY44KD44Gq44GE44Gn44GZ5b285rCP44Gq44GE44Gn44GZ44K744OV44Os44Gn44GZ'),
+        sefriLineBadZh: d('5oiR5LiN5piv55S35pyL5Y+L77yM5rKh5pyJ55S35pyL5Y+L77yM'),
+        sefriLineOkZh: d('5oiR5LiN5piv55S35pyL5Y+L77yM5rKh5pyJ55S35pyL5Y+L77yM5piv54Ku5Y+L'),
+        kintamaTestJa: d('6YeR546J44Gr5rqc44G+44Gj44Gm44KL'),
+        kintamaTestBadZh: d('6YO95Zyo552+5Li46YeM56ev552A'),
+        kintamaTestOkZh: d('6YO95Zyo6JuL6JuL6YeM56ev552A'),
+        ugokanaiBlankJa: d('5YuV44GL44Gq44GE'),
+        ugokanaiBlankOkZh: d('5LiN5Yqo'),
+        lickDadJa: d('44KC44GG44GT44KM5Lul5LiK6IiQ44KB44KJ44KM44Gf54i244GV44KT5Ye644Gh44KD44GG44KI'),
+        lickDadBadZh: d('576O5oG15L2g5Lmf6KaB6K6p5oiR5Zad5bCP5aeQ55qE5aW2'),
+        lickDadOkZh: d('5YaN6KKr6L+Z5qC36IiU5bCx6KaB5bCE5LqG'),
     });
 
     function glossAdultPartnerZh(raw) {
@@ -801,6 +1085,37 @@
             && /触られ/.test(src)
         ) {
             return FIX.nippleChinkoOkZh || '被我摸就会硬吧，乳头被摸鸡巴也会硬';
+        }
+
+        // Climax / erect scraps blanked by refusal
+        if (RE.climaxIkuSrc.test(src) || /イッちゃいそう|イかされ/.test(src)) {
+            return T.aboutToCumZh;
+        }
+        if (/勃起してる/.test(src) && [...src.replace(/\s/g, '')].length <= 20) {
+            return '硬得好厉害';
+        }
+        if (/^動かない[。．.!！]*$/u.test(src)) {
+            return T.ugokanaiZh;
+        }
+        if (/気持ちよすぎる/.test(src)) {
+            return '好舒服过头了';
+        }
+        if (compact === String(FIX.arigatouHaiJa || '').replace(/\s+/g, '')) {
+            return FIX.arigatouHaiOkZh;
+        }
+        if (/ありがとうはーい|ありがとう\s*はーい/.test(src) && [...src.replace(/\s/g, '')].length <= 18) {
+            return FIX.arigatouHaiOkZh || '好的，谢谢';
+        }
+        if (compact === String(FIX.mouDameJa || '').replace(/\s+/g, '') || /^あ+もうダメ[。．.!！]*$/u.test(src)) {
+            return FIX.mouDameOkZh;
+        }
+        if (/もうダメ|もうだめ/.test(src) && [...src.replace(/\s/g, '')].length <= 10) {
+            return FIX.mouDameOkZh || '啊，已经不行了';
+        }
+        if (/気持ち悪すぎる/.test(src)) {
+            return /かも|かもしれ/.test(src)
+                ? (FIX.kimochiWaruiOkZh || '可能恶心过头了')
+                : '恶心过头了';
         }
 
         if (src.includes(T.sexJa) || src.includes(T.sexHiraJa)) {

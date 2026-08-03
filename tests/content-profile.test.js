@@ -5,10 +5,14 @@ const {
     resolveItemSense,
     resolveContentProfileForJob,
     suggestPostReconstructMode,
+    qcPresetForProfile,
+    mergeQcOptsWithProfile,
+    describeQcPresetHint,
     hasManualAudioProfile,
     mergeContentProfileOptions,
     mergeSenseOverrides,
     describeAudioMethod,
+    describeSenseMtForUi,
     describeAutoSenseUi,
     guessLanguageFromName,
     shouldSniffSpokenLanguage,
@@ -218,10 +222,44 @@ describe('content-profile-core', () => {
         assert.strictEqual(suggestPostReconstructMode({ profile: 'unknown', task: 'translate' }).mode, 'none');
     });
 
+    it('provides QC presets by content profile', () => {
+        const film = qcPresetForProfile('film');
+        assert.strictEqual(film.retranscribeConnected, false);
+        assert.strictEqual(film.removeNoise, false);
+        assert.strictEqual(film.maxCps, 18);
+        const talk = qcPresetForProfile('talk');
+        assert.strictEqual(talk.intensity, 'medium');
+        assert.ok(talk.maxCps <= 16);
+        const merged = mergeQcOptsWithProfile({ maxCps: 22 }, 'film');
+        assert.strictEqual(merged.maxCps, 22);
+        assert.strictEqual(merged.retranscribeConnected, false);
+        assert.ok(describeQcPresetHint('film').includes('影视') || describeQcPresetHint('film').includes('CPS'));
+    });
+
     it('describes audio method from options', () => {
         assert.strictEqual(describeAudioMethod({ filmAudioEnhance: true }).id, 'film_enhance');
         assert.strictEqual(describeAudioMethod({ vadSensitive: true }).id, 'sensitive');
         assert.strictEqual(describeAudioMethod({}).short, '默认');
+    });
+
+    it('describeSenseMtForUi hides Sakura when smart translate is on', () => {
+        const overrides = { engineMtModel: 'sakura-1.5b' };
+        assert.strictEqual(
+            describeSenseMtForUi(overrides, { task: 'translate', translateMode: 'smart' }),
+            '智能翻译',
+        );
+        assert.strictEqual(
+            describeSenseMtForUi(overrides, { task: 'dual', smartTranslate: true }),
+            '智能翻译',
+        );
+        assert.strictEqual(
+            describeSenseMtForUi(overrides, { task: 'translate', translateMode: 'llm' }),
+            'sakura-1.5b',
+        );
+        assert.strictEqual(
+            describeSenseMtForUi(overrides, { task: 'transcribe', translateMode: 'smart' }),
+            '',
+        );
     });
 
     it('builds auto-sense UI summary', () => {
@@ -802,6 +840,44 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.vadSensitive, false);
     });
 
+    it('refineSenseModels keeps missing ASR as pending instead of clearing', () => {
+        const { overrides, notes } = refineSenseModels(
+            { engineAsrModel: 'whisper-large-v3-turbo', language: 'ja' },
+            {
+                profile: 'film',
+                language: 'ja',
+                task: 'translate',
+                installedModels: [{ id: 'fsmn-vad', installed: true }],
+            },
+        );
+        assert.strictEqual(overrides.engineAsrModel, 'whisper-large-v3-turbo');
+        assert.ok(notes.some((n) => /待下载|未安装/.test(n)));
+    });
+
+    it('refineSenseModels declares LLM pending for non-JA when none installed', () => {
+        const { overrides, notes } = refineSenseModels(
+            {
+                language: 'en',
+                engineMtModel: 'sakura-1.5b',
+                sakuraNsfwPrompt: true,
+            },
+            {
+                profile: 'film',
+                language: 'en',
+                task: 'translate',
+                installedModels: [
+                    { id: 'sakura-1.5b', installed: true },
+                    { id: 'opus-mt-en-zh', installed: true },
+                ],
+            },
+        );
+        assert.ok(!/^sakura-/i.test(String(overrides.engineMtModel || '')));
+        assert.ok(!/^opus-mt-/i.test(String(overrides.engineMtModel || '')));
+        assert.ok(overrides.engineMtModel, 'must declare a sense MT target');
+        assert.ok(notes.some((n) => /待下载|推理/.test(n)));
+        assert.strictEqual(overrides.sakuraNsfwPrompt, false);
+    });
+
     it('collectSenseSupportGaps lists preferred AV models when missing', () => {
         const { missing } = collectSenseSupportGaps(
             {
@@ -843,6 +919,30 @@ describe('content-profile-core', () => {
             },
         );
         assert.strictEqual(missing.length, 0);
+    });
+
+    it('collectSenseSupportGaps skips MT when smart translate is on', () => {
+        const { preferred, missing } = collectSenseSupportGaps(
+            {
+                language: 'ja',
+                engineAsrModel: 'whisper-large-v3-turbo',
+                engineVadModel: 'fsmn-vad',
+                vadSensitive: false,
+                engineMtModel: 'sakura-1.5b',
+            },
+            {
+                profile: 'av_soft',
+                language: 'ja',
+                task: 'translate',
+                translateMode: 'smart',
+                installedModels: [
+                    { id: 'whisper-ja-1.5b', installed: true },
+                    { id: 'whisperseg-asmr', installed: true },
+                ],
+            },
+        );
+        assert.ok(!preferred.some((m) => m.role === 'mt'));
+        assert.ok(!missing.some((m) => m.id === 'sakura-1.5b'));
     });
 
     it('collectSenseSupportGaps flags Demucs for film enhance', () => {

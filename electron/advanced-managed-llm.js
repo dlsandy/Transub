@@ -118,6 +118,7 @@ function buildManagedStatus(doc, options = {}) {
             preferredPackageId: runtime.preferredPackageId || managed.runtimeId || '',
             installedPackageId: runtime.installedPackageId || '',
             mismatch: !!runtime.mismatch,
+            outdated: !!runtime.outdated,
             choices: Array.isArray(runtime.choices) ? runtime.choices : [],
             preferCuda: (() => {
                 try {
@@ -127,6 +128,7 @@ function buildManagedStatus(doc, options = {}) {
                 }
             })(),
             tag: runtime.tag,
+            installedTag: runtime.installedTag || '',
             exePath: runtime.exePath || '',
             baseUrl: llamaServer.getServerBaseUrl(managed.serverPort),
             serverRunning: !!server,
@@ -171,16 +173,26 @@ async function pullManagedModel(options = {}) {
     };
 
     try {
-        // 先确保运行时（体积小，失败不阻塞仅提示）
-        if (!llmFs.isRuntimeInstalled()) {
+        // 先确保运行时：缺失 / 构建号落后 / 后端不一致时安装或强制更新
+        const runtimeStatus = llamaServer.getRuntimeStatus({ runtimeId: opts.runtimeId });
+        const needRuntime = !runtimeStatus.installed
+            || !!runtimeStatus.outdated
+            || !!runtimeStatus.mismatch;
+        if (needRuntime) {
+            const reason = !runtimeStatus.installed
+                ? '首次使用：先安装 llama-server 运行时…'
+                : (runtimeStatus.mismatch
+                    ? '运行时后端与偏好不一致，正在重新安装…'
+                    : `运行时版本较旧（${runtimeStatus.installedTag || '旧版'}），正在更新至 ${runtimeStatus.tag}…`);
             send({
                 phase: 'start',
                 kind: 'runtime',
                 modelId: entry.id,
-                message: '首次使用：先安装 llama-server 运行时…',
+                message: reason,
                 pct: 0,
             });
             const rt = await llamaServer.ensureRuntimeInstalled({
+                force: !!runtimeStatus.installed,
                 runtimeId: opts.runtimeId,
                 signal: controller.signal,
                 onProgress: (p) => send({ ...p, modelId: entry.id }),
@@ -473,5 +485,7 @@ module.exports = {
     installRuntimeFromLocalArchives: (...args) => llamaServer.installRuntimeFromLocalArchives(...args),
     stopLlamaServer: (...args) => llamaServer.stopLlamaServer(...args),
     getRuntimeStatus: (...args) => llamaServer.getRuntimeStatus(...args),
+    syncRuntimePreferenceToHardware: (...args) => llamaServer.syncRuntimePreferenceToHardware(...args),
+    probeLlamaServerTag: (...args) => llamaServer.probeLlamaServerTag(...args),
     isModelInstalled: (...args) => llmFs.isModelInstalled(...args),
 };

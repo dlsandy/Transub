@@ -219,6 +219,13 @@
         smart: '智能',
     };
 
+    const POST_BATCH_QC_FIX_MODES = new Set(['none', 'fix', 'smart']);
+    const POST_BATCH_QC_FIX_CHIP_LABELS = {
+        none: '关',
+        fix: '一键',
+        smart: 'Pro',
+    };
+
     const ux = () => global.TransubMainUiUx;
 
         function showToast(message, tone = 'info', options = {}) {
@@ -257,6 +264,7 @@
     let activeParamsTab = 'runtime';
     let settingsFormDirty = false;
     let translateModeMenuOpen = false;
+    let postBatchQcFixMenuOpen = false;
     /** Cached path of vendored `transub-engine/` (empty until probed). */
     let cachedBundledEnginePath = '';
     /** @type {Set<number>} */
@@ -445,7 +453,9 @@
         syncAdvancedFeaturesGate();
         syncProGatedNav();
         syncTranslateModeChipUi();
+        syncPostBatchQcFixChipUi();
         updateReadinessStrip();
+        updateQcBanner();
         // Pro unlock changes which LLM models appear in「模型 → LLM推理翻译」.
         if (cachedEnginePickCatalog.length) {
             void refreshEngineModels({ silent: true });
@@ -595,6 +605,12 @@
         syncAdvancedFeaturesGate();
         syncTranslateModeChipUi();
         updateReadinessStrip();
+        // Magic wand tips show effective MT (Sakura vs 智能翻译); refresh when mode changes.
+        if (fromUser && !isStandaloneSettings && state.items.some((i) => (
+            i?.sense?.status === 'done' || i?.sense?.status === 'error'
+        ))) {
+            renderList();
+        }
     }
 
     function readOpusMtModelFromForm() {
@@ -753,6 +769,7 @@
         moreMenuOpen: false,
         qcBannerDismissed: false,
         qcFixing: false,
+        qcSmartFixing: false,
         postBatchBusy: false,
         /** Cross-window engine / LLM single-slot busy (main process lock). */
         computeBusy: false,
@@ -1028,12 +1045,13 @@
             'translateModeMenuWrap', 'translateModeMenu',
             'readinessStrip', 'readinessStripText', 'readinessStripAction',
             'autoSenseToggle', 'autoSenseToggleLabel',
+            'postBatchQcFixBtn', 'postBatchQcFixLabel', 'postBatchQcFixMenuWrap', 'postBatchQcFixMenu',
             'senseMemoryStatus', 'clearSenseMemoryBtn',
             'transWithAiStatus', 'openParamsBtn',
             'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
             'openAboutBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
-            'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
+            'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerSmartFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
             'emptyStateEnvHint', 'emptyStateWizardBtn', 'emptyStateEnvBtn',
             'toggleMainThemeBtn', 'toggleMainThemeLabel', 'openShortcutsMenuBtn',
             'paramsModal', 'closeParamsBtn', 'cancelParamsBtn', 'saveAndCloseParamsBtn', 'settingsDirtyBadge',
@@ -1050,7 +1068,7 @@
             'engineMtModelSelect', 'engineMtModelWrap', 'engineMtModelHint',
             'engineLlmMtModelSelect', 'engineLlmMtModelWrap', 'engineLlmMtModelHint',
             'engineVadModelSelect',
-            'engineAutoStartCheck', 'engineTestBtn', 'engineRecommendBtn',
+            'engineAutoStartCheck', 'engineTestBtn',
             'engineCancelDownloadBtn',
             'engineEnsureGpuBtn', 'engineManualGpuBtn', 'engineGpuStatus',
             'engineRefreshModelsBtn', 'engineDownloadProgress', 'engineDownloadProgressBar',
@@ -1085,7 +1103,7 @@
             'transcriptKeepDaysInput', 'clearTranscriptCacheBtn', 'historySettingsStatus',
             'trayProgressCheck', 'showTaskResourceUsageCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
             'startupWindowSelect', 'autoUpdateCheckIntervalSelect',
-            'postBatchQcCheck', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
+            'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
@@ -1167,7 +1185,11 @@
         if (els.postTaskMenuBtn) {
             els.postTaskMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
-        if (open) setAddMenuOpen(false);
+        if (open) {
+            setAddMenuOpen(false);
+            setTranslateModeMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
+        }
     }
 
     function setAddMenuOpen(open) {
@@ -1178,6 +1200,8 @@
         }
         if (open) {
             setPostTaskMenuOpen(false);
+            setTranslateModeMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
         }
     }
 
@@ -1228,6 +1252,8 @@
             if (state.postTaskMenuOpen) setPostTaskMenuOpen(false);
             if (state.addMenuOpen) setAddMenuOpen(false);
             if (state.moreMenuOpen) setMoreMenuOpen(false);
+            if (translateModeMenuOpen) setTranslateModeMenuOpen(false);
+            if (postBatchQcFixMenuOpen) setPostBatchQcFixMenuOpen(false);
         });
     }
 
@@ -1240,6 +1266,8 @@
         if (open) {
             setPostTaskMenuOpen(false);
             setAddMenuOpen(false);
+            setTranslateModeMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
         }
     }
 
@@ -1467,6 +1495,9 @@
         els.qcBannerFixBtn?.addEventListener('click', () => {
             void runPostBatchQcFix();
         });
+        els.qcBannerSmartFixBtn?.addEventListener('click', () => {
+            void runPostBatchQcSmartFix();
+        });
         els.qcBannerViewBtn?.addEventListener('click', () => {
             openFirstQcIssueItem();
         });
@@ -1518,6 +1549,26 @@
             });
         });
         els.translateModeMenu?.addEventListener('click', (event) => event.stopPropagation());
+        els.postBatchQcFixBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setPostBatchQcFixMenuOpen(!postBatchQcFixMenuOpen);
+        });
+        els.postBatchQcFixMenu?.querySelectorAll('[data-qc-fix-mode]').forEach((item) => {
+            item.addEventListener('click', (event) => {
+                event.stopPropagation();
+                setPostBatchQcFixMenuOpen(false);
+                void setPostBatchQcFixMode(item.dataset.qcFixMode || 'none', { fromUser: true });
+            });
+        });
+        els.postBatchQcFixMenu?.addEventListener('click', (event) => event.stopPropagation());
+        els.postBatchQcFixModeSelect?.addEventListener('change', () => {
+            void setPostBatchQcFixMode(els.postBatchQcFixModeSelect.value || 'none', {
+                fromUser: true,
+                persist: false,
+            });
+            markSettingsDirty(true);
+            setSaveParamsStatus('有未保存更改', 'warn');
+        });
         ['translateModeEngine', 'translateModeSakura', 'translateModeSmart'].forEach((id) => {
             els[id]?.addEventListener('change', () => {
                 if (!els[id]?.checked) return;
@@ -2321,6 +2372,82 @@
         if (open) {
             setPostTaskMenuOpen(false);
             setAddMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
+        }
+    }
+
+    function normalizePostBatchQcFixMode(value) {
+        const mode = String(value || '').trim().toLowerCase();
+        return POST_BATCH_QC_FIX_MODES.has(mode) ? mode : 'none';
+    }
+
+    function getPostBatchQcFixMode() {
+        if (els.postBatchQcFixModeSelect) {
+            return normalizePostBatchQcFixMode(els.postBatchQcFixModeSelect.value);
+        }
+        return normalizePostBatchQcFixMode(savedOptionsSnapshot?.postBatchQcFixMode);
+    }
+
+    function postBatchQcFixModeLabel(mode) {
+        return POST_BATCH_QC_FIX_CHIP_LABELS[mode] || POST_BATCH_QC_FIX_CHIP_LABELS.none;
+    }
+
+    function setPostBatchQcFixMenuOpen(open) {
+        postBatchQcFixMenuOpen = !!open;
+        els.postBatchQcFixMenu?.classList.toggle('hidden', !open);
+        els.postBatchQcFixBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+            setTranslateModeMenuOpen(false);
+        }
+    }
+
+    function syncPostBatchQcFixChipUi() {
+        const mode = getPostBatchQcFixMode();
+        if (els.postBatchQcFixLabel) {
+            els.postBatchQcFixLabel.textContent = postBatchQcFixModeLabel(mode);
+        }
+        if (els.postBatchQcFixBtn) {
+            const titles = {
+                none: '任务完成后不自动修复 QC',
+                fix: '任务完成后自动一键修复 QC',
+                smart: '任务完成后自动智能修复 QC (Pro)',
+            };
+            els.postBatchQcFixBtn.title = titles[mode] || titles.none;
+            els.postBatchQcFixBtn.classList.toggle('ring-1', mode !== 'none');
+            els.postBatchQcFixBtn.classList.toggle('ring-violet-200', mode === 'fix');
+            els.postBatchQcFixBtn.classList.toggle('border-violet-300', mode === 'fix');
+            els.postBatchQcFixBtn.classList.toggle('bg-violet-50/60', mode === 'fix');
+            els.postBatchQcFixBtn.classList.toggle('ring-amber-200', mode === 'smart');
+            els.postBatchQcFixBtn.classList.toggle('border-amber-300', mode === 'smart');
+            els.postBatchQcFixBtn.classList.toggle('bg-amber-50/60', mode === 'smart');
+        }
+        els.postBatchQcFixMenu?.querySelectorAll('[data-qc-fix-mode]').forEach((item) => {
+            const active = item.dataset.qcFixMode === mode;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+        if (els.postBatchQcFixModeSelect && els.postBatchQcFixModeSelect.value !== mode) {
+            els.postBatchQcFixModeSelect.value = mode;
+        }
+    }
+
+    async function setPostBatchQcFixMode(nextMode, { fromUser = false, persist = true } = {}) {
+        let mode = normalizePostBatchQcFixMode(nextMode);
+        if (mode === 'smart' && fromUser && !advancedEntitled) {
+            appendLog('智能修复 QC 为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
+            openAppSettings('pro');
+            syncPostBatchQcFixChipUi();
+            return;
+        }
+        if (els.postBatchQcFixModeSelect) {
+            els.postBatchQcFixModeSelect.value = mode;
+        }
+        syncPostBatchQcFixChipUi();
+        if (persist && fromUser) {
+            await persistFormOptionsQuiet();
+            updateParamsSummary();
         }
     }
 
@@ -2487,6 +2614,7 @@
         updateEnvBanner();
         updateAutoSenseUi();
         syncTranslateModeChipUi();
+        syncPostBatchQcFixChipUi();
         updateReadinessStrip();
     }
 
@@ -3284,11 +3412,20 @@
         }
     }
 
+    function isExplicitSenseReject(item) {
+        const s = item?.sense;
+        if (!s) return false;
+        if (s.userRejected) return true;
+        // Memory avoid: visible suggest, not auto-adopted — treat as sticky 不采纳.
+        return s.action === 'suggest' && !s.adopted;
+    }
+
     function rejectItemSense(item) {
         if (!item?.sense) return;
         item.sense = {
             ...item.sense,
             adopted: false,
+            userRejected: true,
             status: item.sense.status === 'sensing' ? 'done' : item.sense.status,
             message: item.sense.message
                 ? `${String(item.sense.message).replace(/（已不采纳）$/, '')}（已不采纳）`
@@ -3300,24 +3437,52 @@
         appendLog(`不采纳感知：${basename(item.path)}`, 'info');
     }
 
-    function adoptItemSense(item) {
-        if (!item?.sense || item.sense.status !== 'done') return;
+    function adoptItemSense(item, { quiet = false } = {}) {
+        if (!item?.sense || item.sense.status !== 'done') return false;
         const overrides = item.sense.overrides || {};
         if (!Object.keys(overrides).length) {
-            appendLog(`无法采纳：${basename(item.path)} · 无可用感知参数`, 'warn');
-            return;
+            if (!quiet) appendLog(`无法采纳：${basename(item.path)} · 无可用感知参数`, 'warn');
+            return false;
         }
         item.sense = {
             ...item.sense,
             adopted: true,
+            userRejected: false,
+            action: item.sense.action === 'suggest' ? 'apply' : (item.sense.action || 'apply'),
             message: item.sense.message
-                ? String(item.sense.message).replace(/（已不采纳）/g, '')
+                ? String(item.sense.message).replace(/（已不采纳）/g, '').replace(/；未自动采纳$/, '')
                 : '已采纳感知方案',
         };
         recordSenseMemoryForItem(item, true);
         refreshListRow(item);
         updateAutoSenseUi();
-        appendLog(`采纳感知：${basename(item.path)}`, 'info');
+        if (!quiet) appendLog(`采纳感知：${basename(item.path)}`, 'info');
+        return true;
+    }
+
+    /**
+     * While 智能感知 is on: force-adopt any finished sense scheme unless the user
+     * explicitly rejected it (wand / sticky memory avoid). Returns items still
+     * uncovered (no adopted overrides and not explicitly rejected).
+     */
+    function enforceSenseAdoptForStart(selectedItems = []) {
+        const list = Array.isArray(selectedItems) ? selectedItems : [];
+        const uncovered = [];
+        for (const item of list) {
+            const s = item?.sense;
+            if (s?.status === 'sensing') {
+                uncovered.push(item);
+                continue;
+            }
+            if (isExplicitSenseReject(item)) continue;
+            if (s?.adopted && s.overrides && Object.keys(s.overrides).length) continue;
+            if (s?.status === 'done' && s.overrides && Object.keys(s.overrides).length) {
+                adoptItemSense(item, { quiet: true });
+                if (item.sense?.adopted) continue;
+            }
+            uncovered.push(item);
+        }
+        return uncovered;
     }
 
     function toggleItemSenseAdopt(item) {
@@ -3450,9 +3615,9 @@
             els.releaseGpuAfterCheck.checked = options.releaseGpuAfter === true;
         }
         if (els.chineseSubtitleVariantSelect) {
-            els.chineseSubtitleVariantSelect.value = options.chineseSubtitleVariant === 'traditional'
-                ? 'traditional'
-                : 'simplified';
+            const cv = String(options.chineseSubtitleVariant || 'simplified');
+            const allowed = new Set(['simplified', 'traditional', 'traditional-tw', 'traditional-hk']);
+            els.chineseSubtitleVariantSelect.value = allowed.has(cv) ? cv : 'simplified';
         }
         if (els.glossaryMtCheck) {
             els.glossaryMtCheck.checked = options.glossaryMtEnabled !== false;
@@ -3572,6 +3737,7 @@
         if (els.postBatchQcCheck) {
             els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
+        void setPostBatchQcFixMode(options.postBatchQcFixMode || 'none', { persist: false });
         if (els.autoDeepSenseCheck) {
             els.autoDeepSenseCheck.checked = !!options.autoDeepSense;
         }
@@ -3648,9 +3814,11 @@
             modelPath: readModelPathFromForm('translate') || readModelPathFromForm('transcribe') || '',
             transcribeModelPath: readModelPathFromForm('transcribe'),
             translateModelPath: readModelPathFromForm('translate'),
-            chineseSubtitleVariant: els.chineseSubtitleVariantSelect?.value === 'traditional'
-                ? 'traditional'
-                : 'simplified',
+            chineseSubtitleVariant: (() => {
+                const cv = String(els.chineseSubtitleVariantSelect?.value || 'simplified');
+                const allowed = new Set(['simplified', 'traditional', 'traditional-tw', 'traditional-hk']);
+                return allowed.has(cv) ? cv : 'simplified';
+            })(),
             glossaryPromptEnabled: false,
             glossaryMtEnabled: els.glossaryMtCheck ? !!els.glossaryMtCheck.checked : true,
             logLevel: els.logLevelSelect?.value || 'DEBUG',
@@ -3708,6 +3876,7 @@
             autoSense: isAutoSenseEnabled(),
             autoDeepSense: !!els.autoDeepSenseCheck?.checked,
             postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
+            postBatchQcFixMode: getPostBatchQcFixMode(),
             postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
             postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
             postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
@@ -4245,6 +4414,18 @@
         return paths;
     }
 
+    /** 译文轨 QC 智能修复时的对照原文路径（与 subtitle-qc-smart-core.resolveQcSemanticPairPath 一致）。 */
+    function resolveQcSemanticPairPathForItem(item, fixingPath) {
+        const fixing = String(fixingPath || '').trim();
+        const src = String(item?.sourceSubtitlePath || '').trim();
+        if (!fixing || !src) return '';
+        const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+        if (norm(fixing) === norm(src)) return '';
+        const tgt = String(item?.targetSubtitlePath || getSubtitlePathForItem(item) || '').trim();
+        if (tgt && norm(fixing) !== norm(tgt)) return '';
+        return src;
+    }
+
     function showPathForItem(item) {
         return getSubtitlePathForItem(item) || item.path || '';
     }
@@ -4268,6 +4449,39 @@
         return state.items.filter((i) => Number(i.qcIssueCount) > 0).length;
     }
 
+    function markItemQcFixed(item, mode, { written = false, summary = '' } = {}) {
+        if (!item) return;
+        item.qcFixedMode = mode === 'smart' ? 'smart' : 'fix';
+        item.qcFixedWritten = !!written;
+        item.qcFixedSummary = String(summary || '').trim().slice(0, 200);
+        item.qcFixedAt = Date.now();
+    }
+
+    function clearItemQcFixed(item, { clearScan = false } = {}) {
+        if (!item) return;
+        item.qcFixedMode = '';
+        item.qcFixedWritten = false;
+        item.qcFixedSummary = '';
+        item.qcFixedAt = 0;
+        if (clearScan) {
+            item.qcIssueCount = undefined;
+            item.qcSummary = '';
+            item.qcError = '';
+        }
+    }
+
+    function qcFixedTagHtml(item) {
+        const mode = String(item?.qcFixedMode || '');
+        if (mode !== 'fix' && mode !== 'smart') return '';
+        const label = mode === 'smart' ? 'Pro修' : '已修';
+        const tip = esc(
+            item.qcFixedSummary
+            || (mode === 'smart' ? '已智能修复 QC' : '已一键修复 QC')
+            || '',
+        );
+        return `<span class="qc-fixed-tag is-${mode}" title="${tip}">${label}</span>`;
+    }
+
     function updateQcBanner() {
         if (!els.qcBanner) return;
         const n = countQcIssues();
@@ -4277,12 +4491,18 @@
         }
         if (els.qcBannerText) {
             els.qcBannerText.textContent = state.qcFixing
-                ? `正在一键修复 QC（${n} 条有问题）…`
-                : `${n} 条字幕有 QC 问题，可一键修复或在编辑器中查看`;
+                ? `正在${state.qcSmartFixing ? '智能' : '一键'}修复 QC（${n} 条有问题）…`
+                : `${n} 条字幕有 QC 问题，可一键修复${advancedEntitled ? ' / 智能修复' : ''}或在编辑器中查看`;
         }
         if (els.qcBannerFixBtn) {
             els.qcBannerFixBtn.disabled = !!state.running || !!state.qcFixing;
-            els.qcBannerFixBtn.textContent = state.qcFixing ? '修复中…' : '一键修复QC';
+            els.qcBannerFixBtn.textContent = state.qcFixing && !state.qcSmartFixing ? '修复中…' : '一键修复QC';
+        }
+        if (els.qcBannerSmartFixBtn) {
+            const smartOk = !!advancedEntitled && !!electron?.transubAdvancedQcSmartFix;
+            els.qcBannerSmartFixBtn.classList.toggle('hidden', !smartOk);
+            els.qcBannerSmartFixBtn.disabled = !smartOk || !!state.running || !!state.qcFixing;
+            els.qcBannerSmartFixBtn.textContent = state.qcSmartFixing ? '智能修复中…' : '智能修复 (Pro)';
         }
         els.qcBanner.classList.remove('hidden');
     }
@@ -5097,6 +5317,7 @@
         }
 
         const base = getSenseBaseOptions();
+        const translateMode = readTranslateModeFromForm();
         const gapLists = adopted.map((item) => {
             const overrides = item.sense?.overrides || {};
             return profileApi.collectSenseSupportGaps(overrides, {
@@ -5106,6 +5327,8 @@
                 installedModels: cachedEngineModels,
                 demucsReady,
                 advancedEntitled,
+                translateMode,
+                smartTranslate: translateMode === 'smart' || !!base.smartTranslate,
             });
         });
         return profileApi.mergeSenseSupportGaps
@@ -5122,17 +5345,17 @@
             message: (
                 '已采纳的智能感知方案需要以下尚未安装的支持项或模型：\n\n'
                 + `${lines}\n\n`
+                + '须安装后才能按感知方案开始（避免误用表单低配模型）。'
+                + '也可关闭智能感知或不采纳该项后再开始。\n\n'
                 + '是否现在安装？安装完成后请再次点击「开始生成」。'
             ),
             primaryLabel: '去安装',
             secondaryLabel: '取消',
-            tertiaryLabel: '仍用现有继续',
         });
         if (choice === 'primary') {
             await installSenseSupportGaps(list);
             return 'install';
         }
-        if (choice === 'tertiary') return 'continue';
         return 'cancel';
     }
 
@@ -5546,6 +5769,61 @@
         } finally {
             setEngineDownloadBusy(false);
         }
+    }
+
+    function formatEngineTestResultMessage(res) {
+        if (!res?.ok) {
+            const lines = [
+                '检测未通过。',
+                '',
+                String(res?.error || '引擎未就绪').trim(),
+            ];
+            if (res?.baseUrl) lines.push(`地址：${res.baseUrl}`);
+            const path = String(els.engineInstallPathInput?.value || '').trim();
+            if (path) lines.push(`目录：${path}`);
+            return lines.filter(Boolean).join('\n');
+        }
+        const ver = String(res.version || res.health?.engineVersion || '').trim();
+        const stub = res.health?.stub ? '（stub）' : '';
+        const lines = [
+            '引擎已就绪。',
+            '',
+            ver ? `版本：${ver}${stub}` : null,
+            res.baseUrl ? `地址：${res.baseUrl}` : null,
+            res.spawned ? '服务：本次已自动启动' : '服务：已在运行',
+        ];
+        const gpu = String(els.engineGpuStatus?.textContent || '').trim();
+        if (gpu) lines.push(`GPU：${gpu}`);
+        const models = Array.isArray(cachedEngineModels) ? cachedEngineModels : [];
+        if (models.length) {
+            const installed = models.filter((m) => m?.installed).length;
+            lines.push(`模型目录：共 ${models.length} 个` + (installed ? `，已安装 ${installed} 个` : ''));
+        }
+        const demucs = cachedDemucsProbe;
+        if (demucs && (demucs.status || demucs.hint || demucs.ok != null)) {
+            const status = String(demucs.status || '').trim();
+            const demucsHint = String(demucs.hint || demucs.message || '').trim();
+            const ready = status === 'ready';
+            lines.push(
+                demucsHint
+                    ? `人声分离：${demucsHint}`
+                    : (ready ? '人声分离：Demucs 可用' : '人声分离：Demucs 未安装'),
+            );
+        }
+        const path = String(els.engineInstallPathInput?.value || '').trim();
+        if (path) lines.push(`目录：${path}`);
+        return lines.filter((line) => line != null).join('\n');
+    }
+
+    async function showEngineTestResultDialog(res) {
+        const ok = !!res?.ok;
+        const message = formatEngineTestResultMessage(res);
+        await appConfirm({
+            title: ok ? '引擎检测结果' : '引擎检测未通过',
+            message,
+            primaryLabel: '确定',
+            hideSecondary: true,
+        });
     }
 
     async function refreshEngineStatus() {
@@ -6234,6 +6512,16 @@
             const canToggleAdopt = sense.status === 'done'
                 && !state.running
                 && (sense.adopted || hasSenseOverrides);
+            const translateMode = readTranslateModeFromForm();
+            const senseMtLabel = profileApi?.describeSenseMtForUi?.(sense.overrides || {}, {
+                task: readTaskFromForm(),
+                translateMode,
+                smartTranslate: translateMode === 'smart',
+            }) || (
+                translateMode === 'smart' && readTaskFromForm() !== 'transcribe'
+                    ? '智能翻译'
+                    : (sense.overrides?.engineMtModel || '')
+            );
             const tipParts = [
                 sense.adopted ? '将使用感知参数' : (autoOn ? '感知未采纳' : '感知已关'),
                 hit?.label || badge || '未识别',
@@ -6241,7 +6529,7 @@
                 lang && lang !== 'auto' ? `语种 ${lang}` : '',
                 method?.short && sense.adopted ? method.short : '',
                 sense.overrides?.engineAsrModel || '',
-                sense.overrides?.engineMtModel || '',
+                senseMtLabel,
                 acousticLabel ? `声学·${acousticLabel}` : '',
                 ...(hit?.reasons || []).slice(0, 2),
                 canToggleAdopt
@@ -6268,22 +6556,27 @@
             profileBadgeHtml = '';
         }
 
-        let senseBtns = '';
+        let resenseIconHtml = '';
         if (!state.running && sense && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')) {
-            senseBtns = `<span class="row-sense-actions">
-                    <button type="button" data-sense-resense="${idx}" class="row-sense-pill row-sense-pill-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="深度感知" ${sense.status === 'sensing' ? 'disabled' : ''}>深度感知</button>
-                </span>`;
+            resenseIconHtml = `<button type="button" data-sense-resense="${idx}" class="file-sense-icon is-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="深度感知"${sense.status === 'sensing' ? ' disabled' : ''}><i class="fa fa-search-plus" aria-hidden="true"></i></button>`;
         }
-        let qcCell = '<span class="text-gray-300">—</span>';
+        let qcStatusHtml = '<span class="text-gray-300">—</span>';
         if (item.qcError) {
-            qcCell = `<span class="text-amber-600 text-xs" title="${esc(item.qcError)}">?</span>`;
+            qcStatusHtml = `<span class="text-amber-600 text-xs" title="${esc(item.qcError)}">?</span>`;
         } else if (Number.isFinite(Number(item.qcIssueCount))) {
             const n = Number(item.qcIssueCount);
-            const tip = esc(item.qcSummary || (n ? `${n} 项问题` : '通过'));
-            qcCell = n > 0
+            const fixedHint = item.qcFixedMode
+                ? (item.qcFixedMode === 'smart' ? ' · 已智能修复' : ' · 已一键修复')
+                : '';
+            const tip = esc((item.qcSummary || (n ? `${n} 项问题` : '通过')) + fixedHint);
+            qcStatusHtml = n > 0
                 ? `<button type="button" data-qc-open="${idx}" class="inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 hover:bg-amber-200" title="${tip}（点击编辑）">${n}</button>`
                 : `<span class="text-emerald-600 text-xs" title="${tip}">✓</span>`;
         }
+        const qcFixedHtml = qcFixedTagHtml(item);
+        const qcCell = qcFixedHtml
+            ? `<span class="qc-cell">${qcStatusHtml}${qcFixedHtml}</span>`
+            : qcStatusHtml;
         const editBtn = subPath
             ? `<button type="button" data-edit-sub="${esc(subPath)}" data-edit-video="${esc(item.path)}" class="row-action-btn text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="编辑字幕"><i class="fa fa-pencil text-xs"></i></button>` : '';
         const canQcFix = !state.running && !state.qcFixing
@@ -6291,6 +6584,9 @@
             && getPostBatchPathsForItem(item).length > 0;
         const qcFixBtn = canQcFix
             ? `<button type="button" data-qc-fix="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="一键修复QC" aria-label="一键修复QC"><i class="fa fa-wrench text-xs"></i></button>`
+            : '';
+        const qcSmartFixBtn = canQcFix && advancedEntitled && electron?.transubAdvancedQcSmartFix
+            ? `<button type="button" data-qc-smart-fix="${idx}" class="row-action-btn text-violet-600 hover:text-violet-800 hover:bg-violet-50" title="智能修复QC (Pro)" aria-label="智能修复QC"><i class="fa fa-magic text-xs"></i></button>`
             : '';
         const retryBtn = (item.status === 'failed' || item.status === 'error') && !state.running
             ? `<button type="button" data-retry-idx="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="重试本条" aria-label="重试本条"><i class="fa fa-repeat text-xs"></i></button>`
@@ -6334,8 +6630,9 @@
         return `
             <tr class="task-row hover:bg-gray-50/80" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
                 <td class="px-2 py-1.5"><input type="checkbox" data-row-check ${item.selected ? 'checked' : ''} ${state.running ? 'disabled' : ''}></td>
-                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${profileBadgeHtml}</div></td>
+                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${profileBadgeHtml}${resenseIconHtml}</div></td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
+                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-elapsed"${elapsed !== '—' ? ` title="已用 ${esc(elapsed)}"` : ''}>${esc(elapsed)}</td>
                 <td class="px-2 py-1.5 col-progress">${progressCell}</td>
                 <td class="px-2 py-1.5 text-xs col-status">
                     <span class="row-status-badge ${meta.cls}">${esc(meta.label)}</span>
@@ -6344,9 +6641,9 @@
                 <td class="px-1 py-1.5 text-center text-xs col-qc">${qcCell}</td>
                 <td class="px-1 py-1.5 text-center col-actions">
                     <div class="row-actions">
-                    ${senseBtns}
                     ${retryBtn}
                     ${qcFixBtn}
+                    ${qcSmartFixBtn}
                     ${editBtn}
                     <button type="button" data-show-folder="${esc(revealPath)}" data-idx="${idx}"
                         class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100 disabled:opacity-30"
@@ -6719,6 +7016,8 @@
                         : 0)
                     : bumpProgress(existing?.progress, state.videoProgress);
                 state.videoProgress = progress;
+                // New run replaces subtitle — clear previous QC scan / fix markers
+                clearItemQcFixed(existing, { clearScan: true });
                 const itemPatch = {
                     status: 'running',
                     progress,
@@ -6900,19 +7199,22 @@
         return { withIssues, scanned: list.length };
     }
 
-    async function runPostBatchQcScan() {
-        if (!els.postBatchQcCheck?.checked) return;
-        if (!electron?.transubScanSubtitleQc) return;
+    async function runPostBatchQcScan({ force = false } = {}) {
+        if (!force && !els.postBatchQcCheck?.checked) return { withIssues: 0, scanned: 0 };
+        if (!electron?.transubScanSubtitleQc) return { withIssues: 0, scanned: 0 };
         const targets = state.items.filter((item) => {
             if (item.status !== 'done' && item.status !== 'skipped') return false;
             return !!getSubtitlePathForItem(item);
         });
-        if (!targets.length) return;
+        if (!targets.length) return { withIssues: 0, scanned: 0 };
 
         const { withIssues, scanned } = await scanQcForItems(targets);
+        const willAutoFix = getPostBatchQcFixMode() !== 'none' && withIssues > 0;
         appendLog(
             withIssues > 0
-                ? `QC 完成：${withIssues}/${scanned} 个字幕存在问题（仅标记，未自动修复）`
+                ? (willAutoFix
+                    ? `QC 完成：${withIssues}/${scanned} 个字幕存在问题，即将自动修复…`
+                    : `QC 完成：${withIssues}/${scanned} 个字幕存在问题（仅标记，未自动修复）`)
                 : `QC 完成：${scanned} 个字幕均未发现问题`,
             withIssues > 0 ? 'warn' : 'ok',
         );
@@ -6920,9 +7222,155 @@
         if (withIssues > 0) state.qcBannerDismissed = false;
         renderList();
         updateQcBanner();
+        return { withIssues, scanned };
     }
 
-    async function runPostBatchQcFix(onlyItem = null) {
+    async function runPostBatchQcSmartFix(onlyItem = null, { confirm = true } = {}) {
+        if (state.running || state.qcFixing) return;
+        if (!advancedEntitled) {
+            appendLog('QC 智能修复为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
+            openAppSettings('pro');
+            return;
+        }
+        if (!electron?.transubAdvancedQcSmartFix) {
+            appendLog('当前环境不支持 QC 智能修复', 'err');
+            return;
+        }
+        const targets = state.items.filter((item) => {
+            if (onlyItem && item !== onlyItem) return false;
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            if (!(Number(item.qcIssueCount) > 0)) return false;
+            return getPostBatchPathsForItem(item).length > 0;
+        });
+        if (!targets.length) {
+            if (confirm) appendLog('没有可智能修复的 QC 条目（需为 .srt/.vtt/.lrc）', 'info');
+            return;
+        }
+
+        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
+        if (confirm) {
+            const confirmMsg = onlyItem
+                ? `确定对「${basename(onlyItem.path)}」做 QC 智能修复吗？\n将按素材类型调整强度，并依次：规则修复 → 智能断句 → 局部重转写（需视频；有必要时执行）→ 大模型润色；有原文对照时再做语义审阅采纳。`
+                : `确定 QC 智能修复吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕（内容画像 + 规则/断句/必要时局部重转写/润色；双语任务含语义审阅）。`;
+            const yes = await appConfirm({
+                title: 'QC 智能修复 (Pro)',
+                message: confirmMsg,
+                primaryLabel: '开始智能修复',
+                secondaryLabel: '取消',
+            });
+            if (!yes) return;
+        }
+
+        state.qcFixing = true;
+        state.qcSmartFixing = true;
+        updateQcBanner();
+        els.progressLabel.textContent = 'QC 智能修复中，请稍候…';
+        appendLog(
+            confirm
+                ? `开始 QC 智能修复（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`
+                : `任务完成后自动智能修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`,
+            'info',
+        );
+        let written = 0;
+        let fileTotal = 0;
+        let phaseHint = '准备中';
+        const unsubQcProgress = electron.onAdvancedReconstructProgress?.((info) => {
+            if (!info) return;
+            const mode = String(info.mode || '');
+            if (mode && mode !== 'qc-smart' && mode !== 'semantic-review' && mode !== 'single') return;
+            phaseHint = String(info.message || info.detail || phaseHint).trim() || phaseHint;
+            els.progressLabel.textContent = pathCount > 0
+                ? `QC 智能修复中，请稍候… ${fileTotal}/${pathCount} · ${phaseHint}`
+                : `QC 智能修复中，请稍候… · ${phaseHint}`;
+        }) || null;
+        try {
+            for (let i = 0; i < targets.length; i += 1) {
+                const item = targets[i];
+                const paths = getPostBatchPathsForItem(item);
+                const profile = item.sense?.classification?.profile
+                    || (typeof TransubContentProfile !== 'undefined'
+                        && TransubContentProfile.classifyContentProfile?.({ path: item.path })?.profile)
+                    || 'unknown';
+                const preset = (typeof TransubContentProfile !== 'undefined'
+                    && TransubContentProfile.qcPresetForProfile?.(profile))
+                    || {};
+                let itemOk = false;
+                let itemWritten = 0;
+                let lastSummary = '';
+                for (const subPath of paths) {
+                    fileTotal += 1;
+                    phaseHint = basename(subPath);
+                    els.progressLabel.textContent = `QC 智能修复中，请稍候… ${fileTotal}/${pathCount} · ${phaseHint}`;
+                    try {
+                        const pairPath = resolveQcSemanticPairPathForItem(item, subPath);
+                        const res = await electron.transubAdvancedQcSmartFix({
+                            path: subPath,
+                            mediaPath: item.path,
+                            profile,
+                            ...preset,
+                            // 用户已点「智能修复」：显式开启 Pro 链路（画像仅调 CPS/强度等）
+                            // 局部重转写：有 connected/高 CPS 等目标时才跑；SenseVoice 空则引擎侧可回退 Whisper
+                            llmSplit: true,
+                            retranscribeConnected: true,
+                            smartFix: true,
+                            pairPath: pairPath || undefined,
+                            semanticReview: !!pairPath,
+                            maxRetranscribeRanges: 8,
+                            backupMode: 'off',
+                        });
+                        if (res?.ok && res.written) {
+                            written += 1;
+                            itemWritten += 1;
+                            itemOk = true;
+                            lastSummary = res.summary || '已智能修复 QC';
+                            appendLog(`${basename(subPath)}：${lastSummary}`, 'ok');
+                        } else if (res?.ok) {
+                            itemOk = true;
+                            lastSummary = res.summary || '无需写回';
+                            appendLog(`${basename(subPath)}：${lastSummary}`, 'info');
+                        } else {
+                            appendLog(`${basename(subPath)}：${res?.error || 'QC 智能修复失败'}`, 'err');
+                        }
+                    } catch (err) {
+                        appendLog(`${basename(subPath)}：${err?.message || 'QC 智能修复失败'}`, 'err');
+                    }
+                }
+                if (itemOk) {
+                    markItemQcFixed(item, 'smart', {
+                        written: itemWritten > 0,
+                        summary: lastSummary || '已智能修复 QC',
+                    });
+                }
+            }
+            appendLog(
+                written > 0
+                    ? `QC 智能修复写回完成：${written}/${fileTotal} 个字幕；正在复查…`
+                    : `QC 智能修复完成：${fileTotal} 个字幕均无需写回；正在复查…`,
+                written > 0 ? 'ok' : 'info',
+            );
+            const { withIssues, scanned } = await scanQcForItems(targets, { quiet: true });
+            appendLog(
+                withIssues > 0
+                    ? `QC 复查：仍有 ${withIssues}/${scanned} 个字幕存在问题`
+                    : `QC 复查：${scanned} 个字幕已通过`,
+                withIssues > 0 ? 'warn' : 'ok',
+            );
+            els.progressLabel.textContent = withIssues > 0 ? 'QC 智能修复完成（仍有问题）' : 'QC 智能修复完成';
+            // 按全表剩余问题数决定横幅，避免单条修复把其它项的 QC 提示一并关掉
+            state.qcBannerDismissed = countQcIssues() <= 0;
+        } finally {
+            if (typeof unsubQcProgress === 'function') {
+                try { unsubQcProgress(); } catch (_) { /* ignore */ }
+            }
+            state.qcFixing = false;
+            state.qcSmartFixing = false;
+            // 必须在清掉 qcFixing 后再渲染，否则 canQcFix 会把所有行的 QC 操作图标去掉
+            renderList();
+            updateQcBanner();
+        }
+    }
+
+    async function runPostBatchQcFix(onlyItem = null, { confirm = true } = {}) {
         if (state.running || state.qcFixing) return;
         if (!electron?.transubApplySubtitlePostprocess) {
             appendLog('当前环境不支持字幕后处理，无法一键修复 QC', 'err');
@@ -6935,35 +7383,45 @@
             return getPostBatchPathsForItem(item).length > 0;
         });
         if (!targets.length) {
-            appendLog('没有可写回修复的 QC 条目（需为 .srt/.vtt/.lrc）', 'info');
+            if (confirm) appendLog('没有可写回修复的 QC 条目（需为 .srt/.vtt/.lrc）', 'info');
             return;
         }
 
         const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
-        const confirmMsg = onlyItem
-            ? `确定对「${basename(onlyItem.path)}」一键修复 QC 问题吗？\n将写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`
-            : `确定一键修复 QC 问题吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`;
-        const yes = await appConfirm({
-            title: '一键修复 QC',
-            message: confirmMsg,
-            primaryLabel: '一键修复',
-            secondaryLabel: '取消',
-        });
-        if (!yes) return;
+        if (confirm) {
+            const confirmMsg = onlyItem
+                ? `确定对「${basename(onlyItem.path)}」一键修复 QC 问题吗？\n将写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`
+                : `确定一键修复 QC 问题吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕文件（时间轴 / 读速 / 叠词等）。`;
+            const yes = await appConfirm({
+                title: '一键修复 QC',
+                message: confirmMsg,
+                primaryLabel: '一键修复',
+                secondaryLabel: '取消',
+            });
+            if (!yes) return;
+        }
 
         state.qcFixing = true;
         updateQcBanner();
-        els.progressLabel.textContent = '一键修复 QC…';
-        appendLog(`开始一键修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`, 'info');
+        els.progressLabel.textContent = '一键修复 QC 中，请稍候…';
+        appendLog(
+            confirm
+                ? `开始一键修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`
+                : `任务完成后自动一键修复 QC（${pathCount} 个字幕文件 / ${targets.length} 条任务）…`,
+            'info',
+        );
         let written = 0;
         let fileTotal = 0;
         try {
             for (let i = 0; i < targets.length; i += 1) {
                 const item = targets[i];
                 const paths = getPostBatchPathsForItem(item);
+                let itemOk = false;
+                let itemWritten = 0;
+                let lastSummary = '';
                 for (const subPath of paths) {
                     fileTotal += 1;
-                    els.progressLabel.textContent = `一键修复 QC… ${fileTotal}/${pathCount}`;
+                    els.progressLabel.textContent = `一键修复 QC 中，请稍候… ${fileTotal}/${pathCount} · ${basename(subPath)}`;
                     try {
                         const res = await electron.transubApplySubtitlePostprocess({
                             path: subPath,
@@ -6973,22 +7431,42 @@
                                 fixCpsByExtend: true,
                                 enforceMinDur: true,
                                 enforceMaxDur: true,
+                                fixInvalid: true,
+                                compressRepetition: true,
+                                removeNoise: true,
+                                removeHallucinations: true,
+                                removeDuplicates: true,
                                 maxCps: 18,
                                 maxSec: 10,
+                                gapMs: 1,
                                 backupMode: 'off',
                             },
                         });
                         if (res?.ok && res.written) {
                             written += 1;
-                            appendLog(`${basename(subPath)}：${res.summary || '已修复 QC'}`, 'ok');
+                            itemWritten += 1;
+                            itemOk = true;
+                            const remainHint = res.cpsSplit?.remainingText
+                                ? `；${res.cpsSplit.remainingText}`
+                                : '';
+                            lastSummary = `${res.summary || '已修复 QC'}${remainHint}`;
+                            appendLog(`${basename(subPath)}：${lastSummary}`, 'ok');
                         } else if (res?.ok) {
-                            appendLog(`${basename(subPath)}：${res.summary || '无需写回'}`, 'info');
+                            itemOk = true;
+                            lastSummary = res.summary || '无需写回';
+                            appendLog(`${basename(subPath)}：${lastSummary}`, 'info');
                         } else {
                             appendLog(`${basename(subPath)}：${res?.error || 'QC 修复失败'}`, 'err');
                         }
                     } catch (err) {
                         appendLog(`${basename(subPath)}：${err?.message || 'QC 修复失败'}`, 'err');
                     }
+                }
+                if (itemOk) {
+                    markItemQcFixed(item, 'fix', {
+                        written: itemWritten > 0,
+                        summary: lastSummary || '已一键修复 QC',
+                    });
                 }
             }
             appendLog(
@@ -7005,17 +7483,73 @@
                 withIssues > 0 ? 'warn' : 'ok',
             );
             els.progressLabel.textContent = withIssues > 0 ? 'QC 修复完成（仍有问题）' : 'QC 修复完成';
-            if (withIssues > 0) state.qcBannerDismissed = false;
-            else state.qcBannerDismissed = true;
-            renderList();
+            // 按全表剩余问题数决定横幅，避免单条修复把其它项的 QC 提示一并关掉
+            state.qcBannerDismissed = countQcIssues() <= 0;
         } finally {
             state.qcFixing = false;
+            // 必须在清掉 qcFixing 后再渲染，否则 canQcFix 会把所有行的 QC 操作图标去掉
+            renderList();
             updateQcBanner();
         }
     }
 
+    async function runPostBatchQcAutoFixIfEnabled() {
+        // Prefer saved options so a standalone settings window stays in sync.
+        let savedMode = null;
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            if (optsRes?.options) {
+                savedMode = normalizePostBatchQcFixMode(optsRes.options.postBatchQcFixMode);
+            }
+        } catch { /* ignore */ }
+        const mode = savedMode || getPostBatchQcFixMode();
+        if (mode === 'none') return;
+        if (countQcIssues() <= 0) return;
+        if (mode === 'smart') {
+            if (!advancedEntitled) {
+                appendLog('已设置完成后 Pro 修复 QC，但未解锁 Pro，改为规则一键修复', 'warn');
+                await runPostBatchQcFix(null, { confirm: false });
+                return;
+            }
+            await runPostBatchQcSmartFix(null, { confirm: false });
+            return;
+        }
+        await runPostBatchQcFix(null, { confirm: false });
+    }
+
+    function normalizeChineseSubtitleVariant(raw) {
+        const allowed = new Set(['simplified', 'traditional', 'traditional-tw', 'traditional-hk']);
+        const cv = String(raw || 'simplified');
+        return allowed.has(cv) ? cv : 'simplified';
+    }
+
+    function chineseSubtitleVariantLabel(variant) {
+        if (variant === 'simplified') return '转简体';
+        if (variant === 'traditional-hk') return '转繁体（香港）';
+        if (variant === 'traditional-tw') return '转繁体（台湾字形）';
+        return '转繁体（台湾）';
+    }
+
+    /** 解析翻译任务最终应写回的中文变体；非翻译任务返回 null */
+    async function resolvePostBatchChineseVariant() {
+        let savedOpts = null;
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            if (optsRes?.options) savedOpts = optsRes.options;
+        } catch { /* ignore */ }
+        const taskFromSaved = savedOpts?.task === 'transcribe' || savedOpts?.task === 'dual'
+            ? savedOpts.task
+            : (savedOpts?.task ? 'translate' : null);
+        const taskNow = taskFromSaved || readTaskFromForm();
+        if (!isTranslateLikeTask(taskNow)) return null;
+        const variantFromSaved = normalizeChineseSubtitleVariant(savedOpts?.chineseSubtitleVariant);
+        const variantFromForm = normalizeChineseSubtitleVariant(els.chineseSubtitleVariantSelect?.value);
+        return savedOpts ? variantFromSaved : variantFromForm;
+    }
+
     async function runPostBatchAutoFix() {
         // 以磁盘配置为准（独立设置窗口保存后，主窗口表单可能尚未同步）
+        // 注意：简繁转换刻意不在此执行，留到 QC 之后的最后一步
         let savedOpts = null;
         try {
             const optsRes = await electron?.transWithAiGetOptions?.();
@@ -7035,19 +7569,9 @@
             : (savedOpts?.task ? 'translate' : null);
         const taskNow = taskFromSaved || readTaskFromForm();
         const isTranslate = isTranslateLikeTask(taskNow);
-        const variantFromSaved = savedOpts?.chineseSubtitleVariant === 'traditional'
-            ? 'traditional'
-            : 'simplified';
-        const variantFromForm = els.chineseSubtitleVariantSelect?.value === 'traditional'
-            ? 'traditional'
-            : 'simplified';
-        const chineseSubtitleVariant = isTranslate
-            ? (savedOpts ? variantFromSaved : variantFromForm)
-            : null;
-        const doChinese = !!chineseSubtitleVariant;
         // 翻译/双语任务默认：。？！后补空格（在 CPS 拆句之前）；双语后处理只作用于译文轨
         const doSpacePunct = isTranslate;
-        if (!doCps && !doNoise && !doCompressRep && !doChinese && !doSpacePunct) return;
+        if (!doCps && !doNoise && !doCompressRep && !doSpacePunct) return;
         if (!electron?.transubApplySubtitlePostprocess) return;
 
         const targets = state.items.filter((item) => {
@@ -7062,9 +7586,6 @@
         if (doCps) parts.push('CPS 拆句');
         if (doNoise) parts.push('清理杂音');
         if (doCompressRep) parts.push('压缩叠词');
-        if (doChinese) {
-            parts.push(chineseSubtitleVariant === 'traditional' ? '转繁体' : '转简体');
-        }
         const dualHint = taskNow === 'dual' ? '（译文轨 + 合并双语）' : '';
         const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
         appendLog(`开始批量后处理（${pathCount} 个字幕文件 / ${targets.length} 条任务${dualHint} · ${parts.join(' · ')}）…`, 'info');
@@ -7089,7 +7610,6 @@
                             enforceMaxDur: true,
                             maxCps: 18,
                             backupMode: 'off',
-                            chineseSubtitleVariant: chineseSubtitleVariant || undefined,
                         },
                     });
                     if (res?.ok && res.written) {
@@ -7112,6 +7632,60 @@
             written > 0 ? 'ok' : 'info',
         );
         els.progressLabel.textContent = '后处理完成';
+    }
+
+    /** 整条完成后处理的最后一步：简繁转换（须在 CPS/清噪/叠词/QC 之后） */
+    async function runPostBatchChineseConvert() {
+        if (!electron?.transubApplySubtitlePostprocess) return;
+        const chineseSubtitleVariant = await resolvePostBatchChineseVariant();
+        if (!chineseSubtitleVariant) return;
+
+        const targets = state.items.filter((item) => {
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            return getPostBatchPathsForItem(item).length > 0;
+        });
+        if (!targets.length) return;
+
+        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
+        const zhLabel = chineseSubtitleVariantLabel(chineseSubtitleVariant);
+        els.progressLabel.textContent = `${zhLabel}…`;
+        appendLog(`开始${zhLabel}（最终步骤 · ${pathCount} 个字幕文件）…`, 'info');
+        let written = 0;
+        let fileTotal = 0;
+        for (let i = 0; i < targets.length; i += 1) {
+            const item = targets[i];
+            const paths = getPostBatchPathsForItem(item);
+            for (const subPath of paths) {
+                fileTotal += 1;
+                els.progressLabel.textContent = `${zhLabel}… ${fileTotal}/${pathCount}`;
+                try {
+                    const res = await electron.transubApplySubtitlePostprocess({
+                        path: subPath,
+                        options: {
+                            chineseSubtitleVariant,
+                            backupMode: 'off',
+                        },
+                    });
+                    if (res?.ok && res.written) {
+                        written += 1;
+                        appendLog(`${basename(subPath)}：${res.chinese?.summary || res.summary || zhLabel}`, 'ok');
+                    } else if (res?.ok) {
+                        appendLog(`${basename(subPath)}：${res.summary || '无需转换'}`, 'info');
+                    } else {
+                        appendLog(`${basename(subPath)}：${res?.error || `${zhLabel}失败`}`, 'err');
+                    }
+                } catch (err) {
+                    appendLog(`${basename(subPath)}：${err?.message || `${zhLabel}失败`}`, 'err');
+                }
+            }
+        }
+        appendLog(
+            written > 0
+                ? `${zhLabel}完成：已写回 ${written}/${fileTotal} 个字幕`
+                : `${zhLabel}完成：${fileTotal} 个字幕均无需写回`,
+            written > 0 ? 'ok' : 'info',
+        );
+        els.progressLabel.textContent = `${zhLabel}完成`;
     }
 
     async function onJobFinished(payload) {
@@ -7172,60 +7746,88 @@
             setBadge(failed > 0 ? '已完成（有失败）' : '已完成', failed > 0 ? 'error' : 'done');
             els.progressLabel.textContent = failed > 0
                 ? (finishError || '任务结束，部分失败')
-                : '全部处理完成';
+                : '后处理中…';
             appendLog(
                 `任务结束：成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
                 failed > 0 ? 'warn' : 'ok',
             );
-            const qcIssues = countQcIssues();
-            const summaryLines = [
-                `成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
-            ];
-            if (qcIssues > 0) summaryLines.push(`${qcIssues} 条字幕存在 QC 问题`);
-            if (finishError) summaryLines.push(finishError);
-            const summaryText = summaryLines.join('\n');
-            showToast(summaryText.split('\n')[0], failed > 0 ? 'warn' : 'ok');
-            if (ux()?.showBatchSummary) {
-                void ux().showBatchSummary({
-                    title: failed > 0 ? '任务完成（有失败）' : '任务完成',
-                    summaryText,
-                    primaryLabel: failed > 0 ? '重试失败项' : '',
-                    secondaryLabel: '关闭',
-                    onPrimary: failed > 0,
-                }).then((action) => {
-                    if (action === 'primary' && failed > 0) {
-                        retryAllFailedItems();
-                    }
-                });
-            }
             // Hold start/queue until post-batch finishes so a new job cannot race writes.
+            // Completion toast / tray notify / sound wait until after QC auto-fix.
             try {
-                await runPostBatchAutoFix();
-            } catch (err) {
-                appendLog(err?.message || '后处理失败', 'err');
-            }
-            try {
-                await runPostBatchQcScan();
-            } catch (err) {
-                appendLog(err?.message || 'QC 检测失败', 'err');
-            }
-            try {
-                // Only suggest reconstruct when the batch fully succeeded.
-                if (failed === 0) {
-                    const profileApi = global.TransubContentProfile;
-                    const profile = state.lastContentProfile?.profile;
-                    if (profileApi?.suggestPostReconstructMode && profile) {
-                        const tip = profileApi.suggestPostReconstructMode({
-                            profile,
-                            task: savedOptionsSnapshot?.task || buildRuntimeOptions().task,
-                        });
-                        if (tip?.message) appendLog(tip.message, 'info');
-                    }
+                try {
+                    await runPostBatchAutoFix();
+                } catch (err) {
+                    appendLog(err?.message || '后处理失败', 'err');
                 }
-            } catch { /* ignore */ }
-            state.postBatchBusy = false;
-            updateStartButton();
-            updateProgressUi();
+                try {
+                    const fixMode = getPostBatchQcFixMode();
+                    await runPostBatchQcScan({ force: fixMode !== 'none' });
+                } catch (err) {
+                    appendLog(err?.message || 'QC 检测失败', 'err');
+                }
+                try {
+                    await runPostBatchQcAutoFixIfEnabled();
+                } catch (err) {
+                    appendLog(err?.message || 'QC 自动修复失败', 'err');
+                }
+                try {
+                    // 简繁必须在 CPS/清噪/叠词/QC 全部完成之后再做
+                    await runPostBatchChineseConvert();
+                } catch (err) {
+                    appendLog(err?.message || '简繁转换失败', 'err');
+                }
+                try {
+                    // Only suggest reconstruct when the batch fully succeeded.
+                    if (failed === 0) {
+                        const profileApi = global.TransubContentProfile;
+                        const profile = state.lastContentProfile?.profile;
+                        if (profileApi?.suggestPostReconstructMode && profile) {
+                            const tip = profileApi.suggestPostReconstructMode({
+                                profile,
+                                task: savedOptionsSnapshot?.task || buildRuntimeOptions().task,
+                            });
+                            if (tip?.message) appendLog(tip.message, 'info');
+                        }
+                    }
+                } catch { /* ignore */ }
+
+                const qcIssues = countQcIssues();
+                const summaryLines = [
+                    `成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
+                ];
+                if (qcIssues > 0) summaryLines.push(`${qcIssues} 条字幕存在 QC 问题`);
+                if (finishError) summaryLines.push(finishError);
+                const summaryText = summaryLines.join('\n');
+                els.progressLabel.textContent = failed > 0
+                    ? (finishError || '任务结束，部分失败')
+                    : (qcIssues > 0 ? '全部处理完成（仍有 QC 问题）' : '全部处理完成');
+                showToast(summaryText.split('\n')[0], failed > 0 || qcIssues > 0 ? 'warn' : 'ok');
+                if (ux()?.showBatchSummary) {
+                    void ux().showBatchSummary({
+                        title: failed > 0 ? '任务完成（有失败）' : '任务完成',
+                        summaryText,
+                        primaryLabel: failed > 0 ? '重试失败项' : '',
+                        secondaryLabel: '关闭',
+                        onPrimary: failed > 0,
+                    }).then((action) => {
+                        if (action === 'primary' && failed > 0) {
+                            retryAllFailedItems();
+                        }
+                    });
+                }
+            } finally {
+                try {
+                    const qcIssues = countQcIssues();
+                    await electron?.transubBatchFinalize?.({
+                        summaryExtra: qcIssues > 0 ? `仍有 ${qcIssues} 条 QC 问题` : '',
+                    });
+                } catch (err) {
+                    appendLog(err?.message || '完成通知失败', 'warn');
+                }
+                state.postBatchBusy = false;
+                updateStartButton();
+                updateProgressUi();
+            }
         }
 
         setTimeout(() => {
@@ -7316,17 +7918,47 @@
         state.lastContentProfile = null;
         const autoSenseOn = isAutoSenseEnabled();
         if (autoSenseOn) {
+            const uncovered = enforceSenseAdoptForStart(selected);
+            if (uncovered.length) {
+                const names = uncovered.slice(0, 4).map((i) => basename(i.path)).join('、');
+                const more = uncovered.length > 4 ? ` 等 ${uncovered.length} 项` : '';
+                appendLog(
+                    '智能感知已开启：须等待感知完成并采纳方案，或点魔术棒「不采纳」，'
+                    + `或关闭智能感知后再按表单参数生成（未覆盖：${names}${more}）`,
+                    'warn',
+                );
+                setBadge('待感知', 'warn');
+                updateAutoSenseUi();
+                return;
+            }
             const adopted = selected.filter((i) => i.sense?.adopted && i.sense?.classification?.profile);
+            const rejected = selected.filter((i) => isExplicitSenseReject(i));
             if (adopted.length) {
                 state.lastContentProfile = adopted[0].sense.classification;
-                appendLog(`感知方案：已采纳 ${adopted.length}/${selected.length} 项（按文件覆盖参数）`, 'info');
+                appendLog(
+                    `感知方案：强制采纳 ${adopted.length}/${selected.length} 项`
+                    + (rejected.length ? `（${rejected.length} 项已不采纳·走表单）` : '')
+                    + '（按文件覆盖参数）',
+                    'info',
+                );
+                const startTranslateMode = readTranslateModeFromForm();
+                const profileApi = global.TransubContentProfile;
                 adopted.slice(0, 12).forEach((i) => {
                     const o = i.sense.overrides || {};
+                    const mtLabel = profileApi?.describeSenseMtForUi?.(o, {
+                        task: opts.task || readTaskFromForm(),
+                        translateMode: startTranslateMode,
+                        smartTranslate: startTranslateMode === 'smart' || !!opts.smartTranslate,
+                    }) || (
+                        (startTranslateMode === 'smart' || opts.smartTranslate)
+                            ? '智能翻译'
+                            : o.engineMtModel
+                    );
                     const bits = [
                         i.sense.classification?.label || i.sense.classification?.profile,
                         o.language,
                         o.engineAsrModel,
-                        o.engineMtModel,
+                        mtLabel,
                         o.engineVadModel || (o.vadSensitive ? '灵敏' : ''),
                     ].filter(Boolean);
                     appendLog(`· ${basename(i.path)} → ${bits.join(' · ')}`, 'info');
@@ -7334,8 +7966,8 @@
                 if (adopted.length > 12) {
                     appendLog(`· …其余 ${adopted.length - 12} 项已省略`, 'info');
                 }
-            } else {
-                appendLog('感知开启但本批无已采纳项，将按表单参数生成', 'warn');
+            } else if (rejected.length === selected.length) {
+                appendLog('本批均已不采纳感知，将按表单参数生成', 'info');
             }
         }
         updateAutoSenseUi();
@@ -7349,14 +7981,8 @@
                     appendLog('已打开安装流程；完成后请再次开始生成', 'info');
                     return;
                 }
-                if (decision === 'cancel') {
-                    appendLog('已取消开始生成（感知方案缺少支持项）', 'warn');
-                    return;
-                }
-                appendLog(
-                    `感知缺项：仍用现有继续（${senseGaps.map((g) => g.id).join('、')}）`,
-                    'warn',
-                );
+                appendLog('已取消开始生成（感知方案缺少支持项，须安装后才能按感知方案运行）', 'warn');
+                return;
             }
         }
 
@@ -7376,7 +8002,11 @@
             }
         }
 
-        if (useEngine) {
+        // When every selected item uses a sense scheme, form model picks are irrelevant.
+        const allSenseCovered = autoSenseOn && selected.every((i) => (
+            i.sense?.adopted && i.sense.overrides && Object.keys(i.sense.overrides).length
+        ));
+        if (useEngine && !allSenseCovered) {
             if (!cachedEngineModels.length) {
                 await refreshEngineModels({ silent: true });
             }
@@ -7419,6 +8049,8 @@
                 setBadge('模型未安装', 'error');
                 return;
             }
+        } else if (useEngine && allSenseCovered && !cachedEngineModels.length) {
+            await refreshEngineModels({ silent: true });
         }
 
         appendLog(`开始生成字幕 ${selected.length} 个文件…`, 'info');
@@ -7449,7 +8081,7 @@
                 items: selected.map((i) => ({
                     fullPath: i.path,
                     durationSec: i.duration || 0,
-                    optionOverrides: (i.sense?.adopted && i.sense.overrides)
+                    optionOverrides: (autoSenseOn && i.sense?.adopted && i.sense.overrides)
                         ? i.sense.overrides
                         : undefined,
                 })),
@@ -7674,6 +8306,13 @@
                 e.preventDefault();
                 e.stopPropagation();
                 void runPostBatchQcFix(state.items[Number(qcFixRowBtn.dataset.qcFix)]);
+                return;
+            }
+            const qcSmartFixRowBtn = e.target.closest('[data-qc-smart-fix]');
+            if (qcSmartFixRowBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                void runPostBatchQcSmartFix(state.items[Number(qcSmartFixRowBtn.dataset.qcSmartFix)]);
                 return;
             }
             const openEditorBtn = e.target.closest('[data-open-editor]');
@@ -7971,52 +8610,25 @@
             }
         });
         els.engineTestBtn?.addEventListener('click', async () => {
-            const res = await refreshEngineStatus();
-            if (res?.ok) {
-                appendLog(els.engineStatus?.textContent || '引擎就绪', 'ok');
-            } else {
-                appendLog(res?.error || '引擎未就绪', 'err');
+            const btn = els.engineTestBtn;
+            const prevLabel = btn?.textContent || '检测引擎';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '检测中…';
             }
-        });
-        els.engineRecommendBtn?.addEventListener('click', async () => {
-            const res = await electron?.transubEngineRecommend?.({
-                ...engineFormPayload(),
-            });
-            if (!res?.ok) {
-                appendLog(res?.error || '推荐失败', 'err');
-                setEngineStatusText(res?.error || '推荐失败', 'err');
-                return;
-            }
-            if (els.engineProfileSelect && res.profile) els.engineProfileSelect.value = res.profile;
-            const asrId = res.models?.asrModel || res.models?.asr_model;
-            if (els.engineAsrModelSelect && asrId) {
-                if (![...els.engineAsrModelSelect.options].some((o) => o.value === asrId)) {
-                    const opt = document.createElement('option');
-                    opt.value = asrId;
-                    opt.textContent = asrId;
-                    els.engineAsrModelSelect.appendChild(opt);
+            try {
+                const res = await refreshEngineStatus();
+                if (res?.ok) {
+                    appendLog(els.engineStatus?.textContent || '引擎就绪', 'ok');
+                } else {
+                    appendLog(res?.error || '引擎未就绪', 'err');
                 }
-                els.engineAsrModelSelect.value = asrId;
-            }
-            appendLog(`已推荐档位：${res.profile}`, 'ok');
-            setEngineStatusText(`已推荐档位：${res.profile}`, 'ok');
-            await refreshEngineModels({ silent: true });
-            const gpuProbe = res.device || null;
-            if (gpuProbe) {
-                applyGpuRuntimeProbe({
-                    status: gpuProbe.cublas12 ? 'ready' : (gpuProbe.hasCuda ? 'need_install' : 'no_gpu'),
-                    hint: gpuProbe.hasCuda
-                        ? (gpuProbe.cublas12
-                            ? `已检测 ${gpuProbe.gpuName || 'NVIDIA GPU'}，CUDA 运行库可用`
-                            : `已检测 ${gpuProbe.gpuName || 'NVIDIA GPU'}，建议下载 GPU 支持以启用 Whisper 加速`)
-                        : '未检测到 NVIDIA GPU',
-                    gpuName: gpuProbe.gpuName,
-                    driverCudaVersion: '',
-                    ...gpuProbe,
-                });
-            } else {
-                await refreshEngineGpuStatus({ silent: true });
-                await refreshEngineDemucsStatus({ silent: true });
+                await showEngineTestResultDialog(res);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = prevLabel;
+                }
             }
         });
         els.engineCancelDownloadBtn?.addEventListener('click', () => {
@@ -8119,15 +8731,42 @@
             });
         }
         els.engineRefreshModelsBtn?.addEventListener('click', async () => {
-            const res = await refreshEngineModels({ silent: false });
-            if (res?.ok || cachedEngineModels.length) {
-                const list = res.models || cachedEngineModels;
-                const installed = list.filter((m) => m.installed).length;
-                const total = list.length;
-                appendLog(`模型状态已刷新：已安装 ${installed} / ${total}`, 'ok');
-                setEngineStatusText(`模型状态已刷新：已安装 ${installed} / ${total}`, 'ok');
-            } else {
-                appendLog(res?.error || '刷新模型状态失败', 'err');
+            const btn = els.engineRefreshModelsBtn;
+            const prevLabel = btn?.textContent || '刷新状态';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '刷新中…';
+            }
+            try {
+                const res = await refreshEngineModels({ silent: false });
+                if (res?.ok || cachedEngineModels.length) {
+                    const list = res.models || cachedEngineModels;
+                    const installed = list.filter((m) => m.installed).length;
+                    const total = list.length;
+                    const msg = `模型状态已刷新：已安装 ${installed} / ${total}`;
+                    appendLog(msg, 'ok');
+                    setEngineStatusText(msg, 'ok');
+                    await appConfirm({
+                        title: '模型状态',
+                        message: msg,
+                        primaryLabel: '确定',
+                        hideSecondary: true,
+                    });
+                } else {
+                    const err = res?.error || '刷新模型状态失败';
+                    appendLog(err, 'err');
+                    await appConfirm({
+                        title: '刷新失败',
+                        message: err,
+                        primaryLabel: '确定',
+                        hideSecondary: true,
+                    });
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = prevLabel;
+                }
             }
         });
         els.ffmpegBrowseBtn?.addEventListener('click', browseFfmpegPath);

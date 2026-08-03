@@ -216,6 +216,7 @@ function migrateLegacyUserDataFiles(fileNames = [
     copyDirIfMissing(path.join(legacyRoot, 'transwithai-config'), path.join(writable, 'transwithai-config'));
     copyDirIfMissing(path.join(legacyRoot, 'advanced-modules'), path.join(writable, 'advanced-modules'));
     copyDirIfMissing(path.join(legacyRoot, 'backup'), path.join(writable, 'backup'));
+    copyDirIfMissing(path.join(legacyRoot, 'tdp'), path.join(writable, 'tdp'));
 }
 
 module.exports = {

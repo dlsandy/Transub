@@ -24,17 +24,17 @@
         .about-main {
             flex: 1;
             min-height: 0;
-            padding: 1.5rem 1.5rem 1rem;
+            padding: 1.35rem 1.5rem 1.15rem;
             display: flex;
             flex-direction: column;
             align-items: center;
             text-align: center;
-            gap: 0.75rem;
+            gap: 0.55rem;
             overflow-y: auto;
         }
         .about-main img {
-            width: 4rem;
-            height: 4rem;
+            width: 3.75rem;
+            height: 3.75rem;
             border-radius: 0.75rem;
         }
         .about-main h1 {
@@ -51,7 +51,7 @@
             font-variant-numeric: tabular-nums;
         }
         .about-desc {
-            margin: 0.25rem 0 0;
+            margin: 0.15rem 0 0;
             font-size: 0.8125rem;
             line-height: 1.55;
             color: #4b5563;
@@ -64,23 +64,26 @@
             line-height: 1.5;
         }
         .about-actions {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 0.5rem;
-            justify-content: center;
-            margin-top: 0.5rem;
+            width: 100%;
+            max-width: 17.5rem;
+            margin-top: 0.65rem;
         }
         .about-btn {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 0.4rem;
-            padding: 0.45rem 0.85rem;
+            padding: 0.5rem 0.75rem;
             border: 1px solid #e5e7eb;
             border-radius: 0.5rem;
             background: #fff;
             color: #374151;
             font-size: 0.8125rem;
             cursor: pointer;
+            min-height: 2.25rem;
         }
         .about-btn:hover {
             background: #f3f4f6;
@@ -89,22 +92,48 @@
         .about-btn i {
             color: #9ca3af;
         }
+        .about-btn-span {
+            grid-column: 1 / -1;
+        }
+        .about-btn-primary {
+            background: #111827;
+            border-color: #111827;
+            color: #fff;
+        }
+        .about-btn-primary:hover {
+            background: #1f2937;
+            border-color: #1f2937;
+        }
+        .about-btn-primary i {
+            color: #d1d5db;
+        }
+        .about-btn[hidden] {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
     <main class="about-main">
-        <img src="icon-64.png" alt="" width="64" height="64" decoding="async">
+        <img src="icon-64.png" alt="" width="60" height="60" decoding="async">
         <h1>Transub</h1>
         <p id="aboutVersion" class="about-version">…</p>
-        <p id="aboutAdvancedStatus" class="about-meta" style="margin-top:0.25rem">Pro：检测中…</p>
-        <p class="about-desc">字幕批量转写 / 翻译，结构化字幕编辑与视频同步预览。</p>
-        <p class="about-meta">核心开源 · MIT License<br>Pro 为可选专有组件（大版本内买断 + BYOK）<br>引擎：Transub Engine</p>
+        <p id="aboutAdvancedStatus" class="about-meta" style="margin-top:0.1rem">Pro：检测中…</p>
+        <p class="about-desc">音视频字幕批量转写/翻译，结构化字幕编辑器。</p>
+        <p class="about-meta">Pro为可选专有组件<br>引擎：Transub Engine</p>
         <div class="about-actions">
+            <button type="button" id="aboutWebsiteBtn" class="about-btn about-btn-span about-btn-primary">
+                <i class="fa fa-globe" aria-hidden="true"></i>
+                <span>官方网站 www.Transub.cc</span>
+            </button>
             <button type="button" id="aboutGithubBtn" class="about-btn">
                 <i class="fa fa-github" aria-hidden="true"></i>
-                <span>Transub</span>
+                <span>Github</span>
             </button>
-            <button type="button" id="aboutAfdianBtn" class="about-btn">
+            <button type="button" id="aboutCodebergBtn" class="about-btn">
+                <i class="fa fa-code-fork" aria-hidden="true"></i>
+                <span>Codeberg</span>
+            </button>
+            <button type="button" id="aboutAfdianBtn" class="about-btn about-btn-span">
                 <i class="fa fa-heart" aria-hidden="true"></i>
                 <span>赞助解锁Pro</span>
             </button>

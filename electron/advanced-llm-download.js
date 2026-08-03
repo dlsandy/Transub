@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const { asString } = require('./ipc-validate');
 const { getDownloadAgents, hostMatchesBypass } = require('./proxy-settings');
 
@@ -82,7 +82,7 @@ function expandDownloadUrls(url) {
 
 function isMirrorCandidateUrl(url, originalUrl = '') {
     const u = String(url || '');
-    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org/i.test(u)) return true;
+    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org|transub\.cc/i.test(u)) return true;
     const orig = String(originalUrl || '').trim();
     return Boolean(orig) && u !== orig && u.includes(orig);
 }
@@ -92,6 +92,7 @@ function downloadSourceLabel(url, originalUrl = '') {
     if (/hf-mirror\.com/i.test(u)) return 'HF 镜像';
     if (/ghfast\.top/i.test(u)) return 'ghfast';
     if (/ghproxy\.com/i.test(u)) return 'ghproxy';
+    if (/transub\.cc/i.test(u)) return '官网';
     if (/codeberg\.org/i.test(u)) return 'Codeberg';
     if (/github\.com|githubusercontent\.com/i.test(u)) return 'GitHub';
     if (originalUrl && u === String(originalUrl).trim()) return '官方源';
@@ -665,32 +666,68 @@ function formatBytes(n) {
     return `${(v / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function extractArchive(archivePath, destDir, archiveKind = 'zip') {
-    fs.mkdirSync(destDir, { recursive: true });
+function extractArchiveArgs(archivePath, destDir, archiveKind = 'zip') {
     const kind = String(archiveKind || 'zip').toLowerCase();
     if (kind === 'zip') {
         if (process.platform === 'win32') {
-            execFileSync('powershell.exe', [
-                '-NoProfile', '-Command',
-                `Expand-Archive -LiteralPath ${JSON.stringify(archivePath)} -DestinationPath ${JSON.stringify(destDir)} -Force`,
-            ], { stdio: 'pipe', windowsHide: true });
-            return;
+            return {
+                command: 'powershell.exe',
+                args: [
+                    '-NoProfile', '-Command',
+                    `Expand-Archive -LiteralPath ${JSON.stringify(archivePath)} -DestinationPath ${JSON.stringify(destDir)} -Force`,
+                ],
+            };
         }
-        execFileSync('unzip', ['-o', archivePath, '-d', destDir], { stdio: 'pipe' });
-        return;
+        return { command: 'unzip', args: ['-o', archivePath, '-d', destDir] };
     }
     if (kind === 'tar.gz' || kind === 'tgz') {
-        execFileSync('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'pipe' });
-        return;
+        return { command: 'tar', args: ['-xzf', archivePath, '-C', destDir] };
     }
     throw new Error(`不支持的压缩格式：${archiveKind}`);
 }
 
-function sleepSync(ms) {
-    const end = Date.now() + Math.max(0, ms);
-    while (Date.now() < end) {
-        /* busy wait briefly for sync retry backoff */
-    }
+/**
+ * Sync extract — prefer extractArchiveAsync on Electron main to avoid UI freeze.
+ */
+function extractArchive(archivePath, destDir, archiveKind = 'zip') {
+    fs.mkdirSync(destDir, { recursive: true });
+    const { command, args } = extractArchiveArgs(archivePath, destDir, archiveKind);
+    execFileSync(command, args, { stdio: 'pipe', windowsHide: true });
+}
+
+/**
+ * Async extract via spawn so the Electron main process can keep pumping IPC/UI.
+ * CUDA llama-server zips are large; Expand-Archive can take minutes.
+ */
+function extractArchiveAsync(archivePath, destDir, archiveKind = 'zip') {
+    fs.mkdirSync(destDir, { recursive: true });
+    const { command, args } = extractArchiveArgs(archivePath, destDir, archiveKind);
+    return new Promise((resolve, reject) => {
+        let child;
+        try {
+            child = spawn(command, args, {
+                windowsHide: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+        } catch (err) {
+            reject(err);
+            return;
+        }
+        let stderr = '';
+        child.stderr?.on('data', (chunk) => {
+            stderr += String(chunk || '');
+            if (stderr.length > 8000) stderr = stderr.slice(-4000);
+        });
+        child.on('error', reject);
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            const detail = stderr.trim() || `解压失败 (exit ${code})`;
+            reject(new Error(detail));
+        });
+    });
 }
 
 /**
@@ -733,6 +770,7 @@ function rimrafSafe(target, { retries = 6 } = {}) {
                 execFileSync('cmd.exe', ['/c', 'rd', '/s', '/q', abs], {
                     stdio: 'ignore',
                     windowsHide: true,
+                    timeout: 20000,
                 });
                 if (!fs.existsSync(abs)) return { ok: true, via: 'rd' };
             } catch (err) {
@@ -740,7 +778,79 @@ function rimrafSafe(target, { retries = 6 } = {}) {
             }
         }
 
-        sleepSync(50 * (i + 1));
+        // Brief sync backoff only — callers that need long waits should use rimrafSafeAsync.
+        const waitMs = 50 * (i + 1);
+        const end = Date.now() + waitMs;
+        while (Date.now() < end) {
+            /* short retry backoff */
+        }
+    }
+
+    return {
+        ok: !fs.existsSync(abs),
+        error: lastErr ? formatError(lastErr) : 'ENOTEMPTY',
+    };
+}
+
+/**
+ * Async rimraf with non-blocking backoff (preferred on Electron main).
+ */
+async function rimrafSafeAsync(target, { retries = 6 } = {}) {
+    if (!target) return { ok: true, skipped: true };
+    const abs = path.resolve(String(target));
+    if (!fs.existsSync(abs)) return { ok: true, skipped: true };
+
+    let lastErr = null;
+    for (let i = 0; i < retries; i += 1) {
+        try {
+            fs.rmSync(abs, { recursive: true, force: true, maxRetries: 3, retryDelay: 80 });
+            if (!fs.existsSync(abs)) return { ok: true };
+        } catch (err) {
+            lastErr = err;
+        }
+
+        try {
+            if (fs.existsSync(abs)) {
+                const renamed = `${abs}.trash-${Date.now()}-${i}`;
+                fs.renameSync(abs, renamed);
+                try {
+                    fs.rmSync(renamed, { recursive: true, force: true, maxRetries: 3, retryDelay: 80 });
+                } catch (_) { /* leave for later cleanup */ }
+                if (!fs.existsSync(abs)) return { ok: true, renamed: true };
+            } else {
+                return { ok: true };
+            }
+        } catch (err) {
+            lastErr = err;
+        }
+
+        if (process.platform === 'win32') {
+            try {
+                await new Promise((resolve, reject) => {
+                    const child = spawn('cmd.exe', ['/c', 'rd', '/s', '/q', abs], {
+                        windowsHide: true,
+                        stdio: 'ignore',
+                    });
+                    const timer = setTimeout(() => {
+                        try { child.kill(); } catch (_) { /* ignore */ }
+                        reject(new Error('rd timeout'));
+                    }, 20000);
+                    child.on('error', (err) => {
+                        clearTimeout(timer);
+                        reject(err);
+                    });
+                    child.on('close', () => {
+                        clearTimeout(timer);
+                        resolve();
+                    });
+                });
+                if (!fs.existsSync(abs)) return { ok: true, via: 'rd' };
+            } catch (err) {
+                lastErr = err;
+            }
+        }
+
+        await sleep(50 * (i + 1));
     }
 
     return {
@@ -752,6 +862,7 @@ function rimrafSafe(target, { retries = 6 } = {}) {
 module.exports = {
     downloadFile,
     extractArchive,
+    extractArchiveAsync,
     formatBytes,
     formatError,
     expandDownloadUrls,
@@ -760,5 +871,6 @@ module.exports = {
     orderDownloadUrlsByProbe,
     downloadSourceLabel,
     rimrafSafe,
+    rimrafSafeAsync,
     sleep,
 };

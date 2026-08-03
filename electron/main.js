@@ -290,6 +290,7 @@ deferredBridges.installLazyRoutes({
     'transub-test-proxy': 'transwithai',
     'transub-test-hf-endpoint': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
+    'transub-batch-finalize': 'transwithai',
     'transwithai-get-pending-files': 'transwithai',
     'transwithai-select-videos': 'transwithai',
     'transwithai-show-in-folder': 'transwithai',
@@ -388,6 +389,8 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-managed-llm-perf-test': 'advanced',
     'transub-advanced-open-ollama-download': 'advanced',
     'transub-advanced-require-feature': 'advanced',
+    'transub-advanced-qc-smart-fix': 'advanced',
+    'transub-advanced-qc-llm-split': 'advanced',
     'transub-advanced-context-reconstruct': 'advanced',
     'transub-advanced-film-context-reconstruct': 'advanced',
     'transub-advanced-smart-translate': 'advanced',
@@ -397,6 +400,11 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-cancel-context-reconstruct': 'advanced',
     'transub-advanced-test-byok': 'advanced',
     'transub-advanced-reload-module': 'advanced',
+    'transub-tdp-get-status': 'advanced',
+    'transub-tdp-check': 'advanced',
+    'transub-tdp-pull': 'advanced',
+    'transub-tdp-cancel-pull': 'advanced',
+    'transub-tdp-sync': 'advanced',
     'transub-sakura-status': 'engine',
     'transub-sakura-translate': 'engine',
     'transub-sakura-cancel-translate': 'engine',
@@ -474,7 +482,7 @@ app.on('second-instance', (_event, commandLine) => {
 
 app.whenReady().then(() => {
     registerMediaProtocolHandler();
-    // 尽早探测 NVIDIA，供 llama-server 默认选 CUDA 12（无独显则仍为 Vulkan）
+    // 尽早探测 NVIDIA，供 llama-server 默认选 CUDA 13/12（无独显则仍为 Vulkan）
     try {
         require('./advanced-runtime-prefer').refreshPreferCuda().catch(() => {});
     } catch (_) { /* ignore */ }

@@ -43,9 +43,10 @@
             count: empty,
         });
 
+        const qcSummary = input.qcResult?.summary || input.qcResult?.stats || null;
         let overlaps = 0;
-        if (input.qcResult?.stats?.overlap != null) {
-            overlaps = Number(input.qcResult.stats.overlap) || 0;
+        if (qcSummary?.overlap != null) {
+            overlaps = Number(qcSummary.overlap) || 0;
         } else {
             for (let i = 1; i < cues.length; i += 1) {
                 const prevEnd = cueEndMs(cues[i - 1]);
@@ -62,10 +63,14 @@
         });
 
         let highCps = 0;
-        if (input.qcResult?.stats?.highCps != null) {
-            highCps = Number(input.qcResult.stats.highCps) || 0;
+        if (qcSummary?.highCps != null) {
+            highCps = Number(qcSummary.highCps) || 0;
         } else if (Array.isArray(input.qcResult?.issues)) {
-            highCps = input.qcResult.issues.filter((x) => x?.type === 'cps' || x?.flag === 'high_cps').length;
+            highCps = input.qcResult.issues.filter((x) => (
+                x?.type === 'cps'
+                || x?.flag === 'high_cps'
+                || (Array.isArray(x?.types) && x.types.includes('high_cps'))
+            )).length;
         }
         items.push({
             id: 'cps',

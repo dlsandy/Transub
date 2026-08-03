@@ -108,17 +108,81 @@ function createPostSubtitleTaskRunner({
     };
 }
 
-function notifyBatchComplete(options, result) {
+function notifyBatchComplete(options, result, extraBody = '') {
     try {
         const { notifySubtitleComplete, setTrayNotifyEnabled } = require('./notifications');
         setTrayNotifyEnabled(!!options?.trayNotifyEnabled);
-        notifySubtitleComplete(
-            `成功 ${result?.generated || 0}，跳过 ${result?.skipped || 0}，失败 ${result?.failed || 0}`,
-        );
+        const base = `成功 ${result?.generated || 0}，跳过 ${result?.skipped || 0}，失败 ${result?.failed || 0}`;
+        const extra = String(extraBody || '').trim();
+        notifySubtitleComplete(extra ? `${base} · ${extra}` : base);
     } catch { /* ignore */ }
+}
+
+/**
+ * Hold tray notify / completion sound / shutdown etc. until UI finishes post-batch
+ * (CPS 拆句、QC 扫描、自动修复 QC). Renderer calls flush via IPC.
+ */
+function createDeferredBatchFinalize({
+    notifyBatchComplete: notifyFn,
+    runPostSubtitleTaskActions: runPostFn,
+}) {
+    let pending = null;
+    let fallbackTimer = null;
+
+    function clearFallback() {
+        if (fallbackTimer) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+        }
+    }
+
+    function deferBatchFinalize(options, result, windowManager) {
+        clearFallback();
+        pending = {
+            options: options || {},
+            result: result || {},
+            windowManager: windowManager || null,
+        };
+        // Safety net if renderer never acknowledges (crashed / closed).
+        fallbackTimer = setTimeout(() => {
+            flushDeferredBatchFinalize({ reason: 'fallback' });
+        }, 30 * 60 * 1000);
+        if (typeof fallbackTimer.unref === 'function') fallbackTimer.unref();
+    }
+
+    function flushDeferredBatchFinalize(payload = {}) {
+        clearFallback();
+        const held = pending;
+        pending = null;
+        if (!held || held.result?.cancelled) {
+            return { ok: true, skipped: true };
+        }
+        const extra = String(payload.summaryExtra || '').trim();
+        try {
+            notifyFn(held.options, held.result, extra);
+        } catch { /* ignore */ }
+        try {
+            runPostFn(held.options, held.result, held.windowManager);
+        } catch (err) {
+            console.warn('[batch-lifecycle] post-task failed:', err?.message || err);
+        }
+        return { ok: true, skipped: false, reason: payload.reason || 'renderer' };
+    }
+
+    function clearDeferredBatchFinalize() {
+        clearFallback();
+        pending = null;
+    }
+
+    return {
+        deferBatchFinalize,
+        flushDeferredBatchFinalize,
+        clearDeferredBatchFinalize,
+    };
 }
 
 module.exports = {
     createPostSubtitleTaskRunner,
+    createDeferredBatchFinalize,
     notifyBatchComplete,
 };

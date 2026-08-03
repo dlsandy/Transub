@@ -126,8 +126,7 @@ const content = `
                                     </div>
                                 </label>
                                 <div class="flex flex-wrap items-center gap-2">
-                                    <button type="button" id="engineTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">① 检测引擎</button>
-                                    <button type="button" id="engineRecommendBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white">推荐档位</button>
+                                    <button type="button" id="engineTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">检测引擎</button>
                                     <label class="inline-flex items-center gap-1.5 text-sm text-gray-600 ml-1">
                                         <input type="checkbox" id="engineAutoStartCheck" class="rounded" checked>
                                         自动启动引擎

@@ -658,110 +658,132 @@
         }
     }
 
-    async function runDetect() {
-        if (state.fixing) return state.detect.envResult;
+    function setDetectWaitVisible(visible, message) {
+        const el = $('setupWizardDetectWait');
+        if (!el) return;
+        el.classList.toggle('hidden', !visible);
+        el.setAttribute('aria-busy', visible ? 'true' : 'false');
+        const msg = $('setupWizardDetectWaitMessage');
+        if (message && msg) msg.textContent = message;
+        const closeBtn = $('setupWizardCloseBtn');
+        if (closeBtn) closeBtn.disabled = !!visible;
+        const skipBtn = $('setupWizardSkipBtn');
+        if (skipBtn) skipBtn.disabled = !!visible;
+    }
+
+    async function runDetect(opts = {}) {
+        const duringFix = !!opts.duringFix;
+        // Mid-fix recheck must run; only block unrelated detects while fixing.
+        if (state.fixing && !duringFix) return state.detect.envResult;
         const api = envApi();
         const status = $('setupWizardDetectStatus');
         const list = $('setupWizardDetectList');
         state.detecting = true;
         setDetectBusy(true);
+        setDetectWaitVisible(true, duringFix ? '正在重新检测，请稍候…' : '正在检查本机依赖…');
         if (status) status.textContent = '正在检查依赖项…';
         api?.renderItemsInto?.(
             list,
             (api.DEFAULT_ITEMS || []).map((it) => ({ ...it, status: 'checking' })),
         );
 
-        const goals = readGoals();
-
-        // Prefer vendored engine when the settings field is still empty.
-        try {
-            const pathInput = $('engineInstallPathInput');
-            if (pathInput && !pathInput.value.trim()) {
-                const bundled = await electron?.transubEngineBundledPath?.();
-                if (bundled?.ok && bundled.present && bundled.path) {
-                    pathInput.value = bundled.path;
-                    state.detect.enginePath = bundled.path;
-                }
-            }
-        } catch { /* ignore */ }
-
-        const payload = enginePayloadFromForm();
-        state.detect.enginePath = payload.engineInstallPath;
-        state.detect.engineUrl = payload.engineUrl;
-
-        const asrHint = goals.asrModel
-            || defaultAsrFor(goals.language, goals.profile, state.detect.recommend)
-            || 'sensevoice-small';
         let result = null;
-        if (api?.performEnvCheck) {
-            result = await api.performEnvCheck({
-                engineInstallPath: payload.engineInstallPath,
-                engineAsrModel: asrHint,
-            });
-        } else {
+        try {
+            const goals = readGoals();
+
+            // Prefer vendored engine when the settings field is still empty.
             try {
-                result = await electron?.transubEnvCheck?.({
+                const pathInput = $('engineInstallPathInput');
+                if (pathInput && !pathInput.value.trim()) {
+                    const bundled = await electron?.transubEngineBundledPath?.();
+                    if (bundled?.ok && bundled.present && bundled.path) {
+                        pathInput.value = bundled.path;
+                        state.detect.enginePath = bundled.path;
+                    }
+                }
+            } catch { /* ignore */ }
+
+            const payload = enginePayloadFromForm();
+            state.detect.enginePath = payload.engineInstallPath;
+            state.detect.engineUrl = payload.engineUrl;
+
+            const asrHint = goals.asrModel
+                || defaultAsrFor(goals.language, goals.profile, state.detect.recommend)
+                || 'sensevoice-small';
+            if (api?.performEnvCheck) {
+                result = await api.performEnvCheck({
                     engineInstallPath: payload.engineInstallPath,
                     engineAsrModel: asrHint,
+                    syncLlamaBackend: true,
                 });
-            } catch (err) {
-                result = { ok: false, error: err?.message || String(err), items: [], fix: { fixable: false } };
+            } else {
+                try {
+                    result = await electron?.transubEnvCheck?.({
+                        engineInstallPath: payload.engineInstallPath,
+                        engineAsrModel: asrHint,
+                        syncLlamaBackend: true,
+                    });
+                } catch (err) {
+                    result = { ok: false, error: err?.message || String(err), items: [], fix: { fixable: false } };
+                }
             }
+
+            state.detect.envResult = result;
+            api?.renderItemsInto?.(list, result?.items || []);
+            if (status) {
+                status.textContent = api?.summarizeCheckResult?.(result)
+                    || (result?.ok ? '检测完成。' : '检测未通过，请先修复后再继续。');
+            }
+
+            const items = result?.items || [];
+            const gpuItem = items.find((it) => it.id === 'gpu');
+            const gpuRuntime = items.find((it) => it.id === 'gpuRuntime');
+            const engineItem = items.find((it) => it.id === 'engine');
+            const whisperItem = items.find((it) => it.id === 'whisperRuntime');
+
+            state.detect.gpuOk = gpuItem?.status === 'ok';
+            state.detect.gpuName = String(gpuItem?.detail || '').split('·')[0].trim();
+            const cudaReady = state.detect.gpuOk && gpuRuntime?.status === 'ok';
+            state.detect.suggestedDevice = cudaReady ? 'cuda' : (state.detect.gpuOk ? 'cuda' : 'cpu');
+            if (state.detect.gpuOk && gpuRuntime?.status === 'warn') {
+                // NVIDIA present but cuBLAS missing — still allow choosing GPU.
+                state.detect.suggestedDevice = 'cuda';
+            }
+            state.detect.engineOk = engineItem?.status === 'ok';
+            state.detect.engineError = state.detect.engineOk ? '' : (engineItem?.detail || result?.error || '引擎未就绪');
+            state.detect.asrWhisperOk = whisperItem?.status === 'ok';
+            state.detect.numpyVersion = '';
+            state.detect.fasterWhisperVersion = '';
+            if (whisperItem?.detail) {
+                const np = String(whisperItem.detail).match(/numpy\s+([\d.]+)/i);
+                const fw = String(whisperItem.detail).match(/faster-whisper\s+([\d.]+|ok)/i);
+                if (np) state.detect.numpyVersion = np[1];
+                if (fw) state.detect.fasterWhisperVersion = fw[1];
+            }
+
+            state.detect.recommend = null;
+            if (state.detect.engineOk) {
+                try {
+                    const rec = await electron?.transubEngineRecommend?.({
+                        ...payload,
+                        engineProfile: goals.profile,
+                        engineHfEndpoint: hfEndpointFromGoals(goals),
+                    });
+                    if (rec?.ok) state.detect.recommend = rec;
+                } catch { /* ignore */ }
+            }
+
+            const deviceSel = $('wizardDeviceSelect');
+            if (deviceSel) deviceSel.value = state.detect.suggestedDevice;
+            const profileSel = $('wizardProfileSelect');
+            if (profileSel) profileSel.value = goals.profile;
+        } finally {
+            state.detecting = false;
+            // Keep detect buttons busy while one-click fix is still running.
+            setDetectBusy(!!state.fixing);
+            setDetectWaitVisible(false);
+            syncModelSelects({ preserve: false });
         }
-
-        state.detect.envResult = result;
-        api?.renderItemsInto?.(list, result?.items || []);
-        if (status) {
-            status.textContent = api?.summarizeCheckResult?.(result)
-                || (result?.ok ? '检测完成。' : '检测未通过，请先修复后再继续。');
-        }
-
-        const items = result?.items || [];
-        const gpuItem = items.find((it) => it.id === 'gpu');
-        const gpuRuntime = items.find((it) => it.id === 'gpuRuntime');
-        const engineItem = items.find((it) => it.id === 'engine');
-        const whisperItem = items.find((it) => it.id === 'whisperRuntime');
-
-        state.detect.gpuOk = gpuItem?.status === 'ok';
-        state.detect.gpuName = String(gpuItem?.detail || '').split('·')[0].trim();
-        const cudaReady = state.detect.gpuOk && gpuRuntime?.status === 'ok';
-        state.detect.suggestedDevice = cudaReady ? 'cuda' : (state.detect.gpuOk ? 'cuda' : 'cpu');
-        if (state.detect.gpuOk && gpuRuntime?.status === 'warn') {
-            // NVIDIA present but cuBLAS missing — still allow choosing GPU.
-            state.detect.suggestedDevice = 'cuda';
-        }
-        state.detect.engineOk = engineItem?.status === 'ok';
-        state.detect.engineError = state.detect.engineOk ? '' : (engineItem?.detail || result?.error || '引擎未就绪');
-        state.detect.asrWhisperOk = whisperItem?.status === 'ok';
-        state.detect.numpyVersion = '';
-        state.detect.fasterWhisperVersion = '';
-        if (whisperItem?.detail) {
-            const np = String(whisperItem.detail).match(/numpy\s+([\d.]+)/i);
-            const fw = String(whisperItem.detail).match(/faster-whisper\s+([\d.]+|ok)/i);
-            if (np) state.detect.numpyVersion = np[1];
-            if (fw) state.detect.fasterWhisperVersion = fw[1];
-        }
-
-        state.detect.recommend = null;
-        if (state.detect.engineOk) {
-            try {
-                const rec = await electron?.transubEngineRecommend?.({
-                    ...payload,
-                    engineProfile: goals.profile,
-                    engineHfEndpoint: hfEndpointFromGoals(goals),
-                });
-                if (rec?.ok) state.detect.recommend = rec;
-            } catch { /* ignore */ }
-        }
-
-        const deviceSel = $('wizardDeviceSelect');
-        if (deviceSel) deviceSel.value = state.detect.suggestedDevice;
-        const profileSel = $('wizardProfileSelect');
-        if (profileSel) profileSel.value = goals.profile;
-
-        state.detecting = false;
-        setDetectBusy(false);
-        syncModelSelects({ preserve: false });
         return result;
     }
 
@@ -781,6 +803,7 @@
                 if (el) el.classList.toggle('hidden', !v);
             },
             fixBtn: $('setupWizardFixBtn'),
+            manualBtn: $('setupWizardManualBtn'),
             fixHintEl: $('setupWizardFixHint'),
             downloadPayload: {
                 engineInstallPath: enginePayloadFromForm().engineInstallPath,
@@ -794,7 +817,7 @@
                     const status = $('setupWizardDetectStatus');
                     if (status) status.textContent = '本轮修复完成，正在重新检测…';
                 }
-                return runDetect();
+                return runDetect({ duringFix: !!opts?.duringFix });
             },
             onDone: () => {
                 state.fixing = false;
@@ -805,7 +828,9 @@
 
     async function runWizardManual() {
         const api = envApi();
-        if (!api?.runManualDownloadSession || state.detecting || state.fixing) return;
+        if (!api?.runManualDownloadSession) return;
+        if (state.fixing && api.requestFixSwitchToManual?.()) return;
+        if (state.detecting || state.fixing) return;
         await api.runManualDownloadSession({
             getResult: () => state.detect.envResult,
             setSubtitle: (t) => {
@@ -1703,6 +1728,49 @@
                     });
                 });
             }
+            // 先按本机 CUDA 对齐并检查/更新 llama-server（缺失、过旧、后端不一致）
+            try {
+                const st = await electron.transubAdvancedManagedLlmStatus?.();
+                const runtime = st?.managed?.runtime || st?.runtime || {};
+                const preferredId = String(
+                    runtime.preferredPackageId || runtime.package?.id || '',
+                ).trim();
+                const needRuntime = !runtime.available
+                    || !!runtime.outdated
+                    || !!runtime.mismatch;
+                if (needRuntime && electron.transubAdvancedManagedLlmInstallRuntime) {
+                    const tip = !runtime.available
+                        ? (preferredId
+                            ? `安装 llama-server 运行时（${preferredId}）…`
+                            : '安装 llama-server 运行时…')
+                        : (runtime.mismatch
+                            ? (preferredId
+                                ? `重新安装 llama-server（切换至 ${preferredId}）…`
+                                : '重新安装 llama-server（后端不一致）…')
+                            : `更新 llama-server（${runtime.installedTag || '旧版'} → ${runtime.tag || '最新'}）…`);
+                    appendApplyLine(tip, null);
+                    setApplyProgress(true, tip, 0, { itemTotal: modelIds.length });
+                    const rt = await electron.transubAdvancedManagedLlmInstallRuntime({
+                        force: true,
+                        runtimeId: preferredId || undefined,
+                    });
+                    if (rt?.ok) {
+                        appendApplyLine(rt.message || 'llama-server 运行时已就绪', true);
+                    } else {
+                        appendApplyLine(
+                            `运行时安装失败：${rt?.error || '未知错误'}（仍继续下载模型）`,
+                            false,
+                        );
+                    }
+                } else if (runtime.available && runtime.installedTag) {
+                    appendApplyLine(
+                        `llama-server 已就绪（${runtime.installedTag}${runtime.installedPackageId ? ` · ${runtime.installedPackageId}` : ''}）`,
+                        true,
+                    );
+                }
+            } catch (err) {
+                appendApplyLine(`运行时检查失败：${err?.message || err}（仍继续下载模型）`, false);
+            }
             for (let i = 0; i < modelIds.length; i += 1) {
                 const id = modelIds[i];
                 state.applyItemDone = i;
@@ -2019,7 +2087,7 @@
     }
 
     function closeWizard({ dismiss = false } = {}) {
-        if (state.applying || state.fixing || state.sensing) return;
+        if (state.applying || state.detecting || state.fixing || state.sensing) return;
         if (dismiss) markDismissed();
         $('setupWizardModal')?.classList.add('hidden');
         if (isStandaloneWizard) {
@@ -2092,6 +2160,7 @@
             state.detect.envResult = null;
             state.samples = [];
             state.sense = null;
+            setDetectWaitVisible(false);
             modal.classList.remove('hidden');
             showStep(0);
             return { ok: true };

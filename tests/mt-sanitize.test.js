@@ -760,6 +760,152 @@ describe('mt-sanitize-core', () => {
         assert.strictEqual(iku.text, FIX.ikuNippleOkZh);
     });
 
+    it('batch residuals: hira-chin / ikusou / torottoro / ouchin ASR / blank iku', () => {
+        const chin = sanitize.correctZhDomainMistranslations(FIX.hiraChinBadZh, FIX.hiraChinJa);
+        assert.ok(chin.changed);
+        assert.strictEqual(chin.text, FIX.hiraChinOkZh);
+
+        const ikuSou = sanitize.correctZhDomainMistranslations(FIX.ikuSouBadZh, FIX.ikuSouJa);
+        assert.ok(ikuSou.changed);
+        assert.strictEqual(ikuSou.text, FIX.ikuSouOkZh);
+
+        const ika = sanitize.correctZhDomainMistranslations(FIX.ikaSareBadZh, FIX.ikaSareJa);
+        assert.ok(ika.changed);
+        assert.strictEqual(ika.text, FIX.ikaSareOkZh);
+
+        const balls = sanitize.correctZhDomainMistranslations(FIX.ballsChinBadZh, FIX.ballsChinJa);
+        assert.ok(balls.changed);
+        assert.strictEqual(balls.text, FIX.ballsChinOkZh);
+
+        const toro = sanitize.correctZhDomainMistranslations(FIX.torottoroBadZh, FIX.torottoroJaFix);
+        assert.ok(toro.changed);
+        assert.strictEqual(toro.text, FIX.torottoroOkZh);
+
+        const asr = sanitize.correctJaAsrDomainMishears(FIX.ouchinJa);
+        assert.ok(asr.changed);
+        assert.strictEqual(asr.text, FIX.ouchinFixed);
+        const ouchin = sanitize.correctZhDomainMistranslations(FIX.ouchinBadZh, asr.text);
+        assert.ok(ouchin.changed);
+        assert.strictEqual(ouchin.text, FIX.ouchinOkZh);
+
+        const blank = sanitize.sanitizeMtCueText('…', FIX.blankIkuJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(blank.flags.includes('blank_adult_recover') || blank.flags.includes('truncated_reactive'));
+        assert.strictEqual(blank.text, FIX.blankIkuOkZh);
+    });
+
+    it('CAWD-999 / ADN-801: milk / view-spurt / choudai / iku-go / blanks', () => {
+        const milk = sanitize.correctZhDomainMistranslations(FIX.chinpoMilkBadZh, FIX.chinpoMilkJa);
+        assert.ok(milk.changed);
+        assert.strictEqual(milk.text, FIX.chinpoMilkOkZh);
+
+        const hold = sanitize.correctZhDomainMistranslations(FIX.cantHoldMilkBadZh, FIX.cantHoldMilkJa);
+        assert.ok(hold.changed);
+        assert.strictEqual(hold.text, FIX.cantHoldMilkOkZh);
+
+        const view = sanitize.correctZhDomainMistranslations(FIX.viewSpurtBadZh, FIX.viewSpurtJa);
+        assert.ok(view.changed);
+        assert.strictEqual(view.text, FIX.viewSpurtOkZh);
+
+        const choudai = sanitize.correctZhDomainMistranslations(FIX.choudaiHallBadZh, FIX.choudaiHallJa);
+        assert.ok(choudai.changed);
+        assert.strictEqual(choudai.text, FIX.choudaiHallOkZh);
+
+        const itta = sanitize.correctZhDomainMistranslations(FIX.ittaBadZh, FIX.ittaJa);
+        assert.ok(itta.changed);
+        assert.strictEqual(itta.text, FIX.ittaOkZh);
+
+        const ikitai = sanitize.correctZhDomainMistranslations(FIX.ikitaiBadZh, FIX.ikitaiJa);
+        assert.ok(ikitai.changed);
+        assert.strictEqual(ikitai.text, FIX.ikitaiOkZh);
+
+        const ikuBare = sanitize.correctZhDomainMistranslations(FIX.ikuBareBadZh, FIX.ikuBareJa);
+        assert.ok(ikuBare.changed);
+        assert.strictEqual(ikuBare.text, FIX.ikuBareOkZh);
+
+        const thanks = sanitize.sanitizeMtCueText('…', FIX.arigatouHaiJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(thanks.flags.includes('blank_adult_recover') || thanks.flags.includes('truncated_reactive'));
+        assert.strictEqual(thanks.text, FIX.arigatouHaiOkZh);
+
+        const dame = sanitize.sanitizeMtCueText('…', FIX.mouDameJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(dame.flags.includes('blank_adult_recover') || dame.flags.includes('truncated_reactive'));
+        assert.strictEqual(dame.text, FIX.mouDameOkZh);
+
+        const warui = sanitize.sanitizeMtCueText('…', FIX.kimochiWaruiJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(warui.flags.includes('blank_adult_recover') || warui.flags.includes('truncated_reactive'));
+        assert.strictEqual(warui.text, FIX.kimochiWaruiOkZh);
+
+        const moan = sanitize.sanitizeMtCueText('…', FIX.moanBlankJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(moan.flags.includes('blank_adult_recover') || moan.flags.includes('truncated_reactive'));
+        assert.strictEqual(moan.text, FIX.moanBlankOkZh);
+    });
+
+    it('ADN-798/791 + residuals: milk ASR / nakadashi / sefri / iku-start / blanks', () => {
+        const chinpaAsr = sanitize.correctJaAsrDomainMishears(FIX.chinpaMilkJa);
+        assert.ok(chinpaAsr.changed);
+        assert.strictEqual(chinpaAsr.text, FIX.chinpaMilkFixedJa);
+        const chinpa = sanitize.correctZhDomainMistranslations(FIX.chinpaMilkBadZh, chinpaAsr.text);
+        assert.ok(chinpa.changed);
+        assert.strictEqual(chinpa.text, FIX.chinpaMilkOkZh);
+
+        const coatAsr = sanitize.correctJaAsrDomainMishears(FIX.coatMilkJa);
+        assert.ok(coatAsr.changed);
+        assert.strictEqual(coatAsr.text, FIX.coatMilkFixedJa);
+        const coat = sanitize.correctZhDomainMistranslations(FIX.coatMilkBadZh, coatAsr.text);
+        assert.ok(coat.changed);
+        assert.strictEqual(coat.text, FIX.coatMilkOkZh);
+
+        const hard = sanitize.correctZhDomainMistranslations(FIX.hardOchinBadZh, FIX.hardOchinJa);
+        assert.ok(hard.changed);
+        assert.strictEqual(hard.text, FIX.hardOchinOkZh);
+
+        const nakaAsr = sanitize.correctJaAsrDomainMishears(FIX.nakadashiSexJa);
+        assert.ok(nakaAsr.changed);
+        assert.ok(nakaAsr.text.includes(opaque.T.nakadashiJa));
+        const naka = sanitize.correctZhDomainMistranslations(FIX.nakadashiSexBadZh, nakaAsr.text);
+        assert.ok(naka.changed);
+        assert.strictEqual(naka.text, FIX.nakadashiSexOkZh);
+
+        const seed = sanitize.correctZhDomainMistranslations(FIX.seedSexBadZh, FIX.seedSexJa);
+        assert.ok(seed.changed);
+        assert.strictEqual(seed.text, FIX.seedSexOkZh);
+
+        const ikuStart = sanitize.correctZhDomainMistranslations(FIX.ikuStartBadZh, FIX.ikuStartJa);
+        assert.ok(ikuStart.changed);
+        assert.strictEqual(ikuStart.text, FIX.ikuStartOkZh);
+
+        const dash = sanitize.correctZhDomainMistranslations(FIX.dashichauComeBadZh, FIX.dashichauComeJa);
+        assert.ok(dash.changed);
+        assert.strictEqual(dash.text, FIX.dashichauComeOkZh);
+
+        const sefri = sanitize.correctZhDomainMistranslations(FIX.sefriLineBadZh, FIX.sefriLineJa);
+        assert.ok(sefri.changed);
+        assert.strictEqual(sefri.text, FIX.sefriLineOkZh);
+
+        const kin = sanitize.correctZhDomainMistranslations(FIX.kintamaTestBadZh, FIX.kintamaTestJa);
+        assert.ok(kin.changed);
+        assert.strictEqual(kin.text, FIX.kintamaTestOkZh);
+
+        const lick = sanitize.correctZhDomainMistranslations(FIX.lickDadBadZh, FIX.lickDadJa);
+        assert.ok(lick.changed);
+        assert.strictEqual(lick.text, FIX.lickDadOkZh);
+
+        const ugok = sanitize.sanitizeMtCueText('…', FIX.ugokanaiBlankJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(ugok.flags.includes('blank_adult_recover') || ugok.flags.includes('truncated_reactive'));
+        assert.strictEqual(ugok.text, FIX.ugokanaiBlankOkZh);
+    });
+
     it('fixes ZH domain mistranslations conditioned on JA source', () => {
         const oil = sanitize.correctZhDomainMistranslations(
             '这是防晒油吗？',

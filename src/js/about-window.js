@@ -3,7 +3,9 @@
  */
 (function () {
     const electron = window.__ELECTRON__;
-    const PROJECT_HOME_URL = 'https://github.com/dlsandy/Transub';
+    const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
+    const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
+    const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
     const AFDIAN_PURCHASE_URL = 'https://afdian.com/a/transub';
 
     async function fillVersion() {
@@ -17,6 +19,12 @@
         el.textContent = ver ? `版本 ${ver}` : '版本 —';
     }
 
+    function setAfdianVisible(visible) {
+        const btn = document.getElementById('aboutAfdianBtn');
+        if (!btn) return;
+        btn.hidden = !visible;
+    }
+
     async function fillAdvancedStatus() {
         const el = document.getElementById('aboutAdvancedStatus');
         if (!el) return;
@@ -24,6 +32,7 @@
             const res = await electron?.transubAdvancedGetStatus?.();
             if (!res?.ok) {
                 el.textContent = 'Pro：未检测';
+                setAfdianVisible(true);
                 return;
             }
             const s = res.status || {};
@@ -31,11 +40,14 @@
                 el.textContent = s.devUnlock
                     ? 'Pro：已解锁（开发）'
                     : 'Pro：已解锁';
+                setAfdianVisible(false);
             } else {
                 el.textContent = 'Pro：未解锁（设置 → Pro 购买/激活）';
+                setAfdianVisible(true);
             }
         } catch (_) {
             el.textContent = 'Pro：—';
+            setAfdianVisible(true);
         }
     }
 
@@ -46,8 +58,14 @@
     }
 
     function bind() {
+        document.getElementById('aboutWebsiteBtn')?.addEventListener('click', () => {
+            void openUrl(OFFICIAL_SITE_URL);
+        });
         document.getElementById('aboutGithubBtn')?.addEventListener('click', () => {
-            void openUrl(PROJECT_HOME_URL);
+            void openUrl(GITHUB_RELEASES_URL);
+        });
+        document.getElementById('aboutCodebergBtn')?.addEventListener('click', () => {
+            void openUrl(CODEBERG_RELEASES_URL);
         });
         document.getElementById('aboutAfdianBtn')?.addEventListener('click', () => {
             void openUrl(AFDIAN_PURCHASE_URL);

@@ -1,0 +1,697 @@
+/**
+ * QC 智能处理（Pro）：挑选规则修不掉的条目，供智能断句 / 局部重转写 / 语境重构润色。
+ * 纯逻辑，无网络；浏览器与 Node 测试共用。
+ */
+(function (global, factory) {
+    const splitCore = (typeof module !== 'undefined' && module.exports)
+        ? require('./subtitle-split-core')
+        : (global && global.TransubSubtitleSplit);
+    const api = factory(splitCore || {});
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = api;
+    }
+    if (global) {
+        global.TransubSubtitleQcSmart = api;
+    }
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleQcSmartCoreFactory(splitCore) {
+    const DEFAULT_MAX_SMART_CUES = 40;
+    const DEFAULT_NEIGHBOR_RADIUS = 1;
+    const DEFAULT_SMART_TYPES = Object.freeze(['fluency', 'connected']);
+    const DEFAULT_RETRANSCRIBE_TYPES = Object.freeze(['connected']);
+    const DEFAULT_LLM_SPLIT_TYPES = Object.freeze(['connected', 'high_cps', 'long', 'splittable']);
+    const DEFAULT_MAX_LLM_SPLIT = 24;
+    const DEFAULT_MAX_RETRANSCRIBE_RANGES = 8;
+    const DEFAULT_MAX_RANGE_SEC = 45;
+    const DEFAULT_MERGE_GAP_MS = 800;
+    const DEFAULT_PAD_MS = 350;
+
+    const QC_SMART_NOTE = [
+        '本批为 QC 智能修复：只修正不通顺、句末残缺、口吃残留、明显误译或难读长句。',
+        '保持每条 index 不变，不要合并或拆分，不要改时间轴，不要编造剧情。',
+        '改动宜小；若原文语义已清楚且通顺，可原样返回。',
+    ].join('');
+
+    function clampInt(value, min, max, fallback) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, Math.round(n)));
+    }
+
+    function cueEndMs(cue) {
+        if (!cue) return 0;
+        if (cue.endMs != null && Number.isFinite(Number(cue.endMs))) return Number(cue.endMs);
+        return (Number(cue.startMs) || 0) + 2000;
+    }
+
+    /**
+     * 从 QC issues 中挑选适合 LLM 润色的条目（按优先级截断）。
+     * @returns {{ index: number, types: string[], score: number, messages: string[] }[]}
+     */
+    function selectQcSmartTargets(issues, options = {}) {
+        const max = clampInt(options.maxSmartCues, 1, 200, DEFAULT_MAX_SMART_CUES);
+        const typeSet = new Set(
+            Array.isArray(options.types) && options.types.length
+                ? options.types.map((t) => String(t || '').trim()).filter(Boolean)
+                : DEFAULT_SMART_TYPES,
+        );
+        const scored = [];
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0) continue;
+            const types = Array.isArray(issue.types) ? issue.types : [];
+            const hit = types.filter((t) => typeSet.has(t));
+            if (!hit.length) continue;
+            let score = 0;
+            if (types.includes('fluency')) score += 3;
+            if (types.includes('connected')) score += 2;
+            if (types.includes('high_cps')) score += 1;
+            if (types.includes('duplicate')) score += 1;
+            scored.push({
+                index: idx,
+                types: hit,
+                score,
+                messages: Array.isArray(issue.messages) ? issue.messages.slice() : [],
+            });
+        }
+        scored.sort((a, b) => b.score - a.score || a.index - b.index);
+        return scored.slice(0, max);
+    }
+
+    /**
+     * 挑选适合局部重转写的条目：默认 connected（高 CPS 且无法智能分割）。
+     * @returns {{ index: number, types: string[], score: number, messages: string[] }[]}
+     */
+    function selectQcRetranscribeTargets(issues, options = {}) {
+        const max = clampInt(options.maxTargets, 1, 200, 24);
+        const typeSet = new Set(
+            Array.isArray(options.types) && options.types.length
+                ? options.types.map((t) => String(t || '').trim()).filter(Boolean)
+                : DEFAULT_RETRANSCRIBE_TYPES,
+        );
+        const scored = [];
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0) continue;
+            const types = Array.isArray(issue.types) ? issue.types : [];
+            const hit = types.filter((t) => typeSet.has(t));
+            if (!hit.length) continue;
+            let score = 0;
+            if (types.includes('connected')) score += 4;
+            if (types.includes('high_cps')) score += 2;
+            if (types.includes('overlap')) score += 1;
+            if (types.includes('fluency')) score += 1;
+            scored.push({
+                index: idx,
+                types: hit,
+                score,
+                messages: Array.isArray(issue.messages) ? issue.messages.slice() : [],
+            });
+        }
+        scored.sort((a, b) => a.index - b.index || b.score - a.score);
+        return scored.slice(0, max);
+    }
+
+    /**
+     * 将目标 index 合并为可重转写的时间窗（邻接/近邻合并，过长则切开）。
+     * @returns {{ startMs: number, endMs: number, indexes: number[], durationMs: number }[]}
+     */
+    function buildQcRetranscribeRanges(cues, indexes, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const idxList = [...new Set((Array.isArray(indexes) ? indexes : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n >= 0 && n < list.length))]
+            .sort((a, b) => a - b);
+        if (!idxList.length) return [];
+
+        const mergeGapMs = clampInt(options.mergeAdjacentGapMs, 0, 5000, DEFAULT_MERGE_GAP_MS);
+        const maxDurMs = Math.max(1000, Math.round((Number(options.maxDurationSec) || DEFAULT_MAX_RANGE_SEC) * 1000));
+        const maxRanges = clampInt(options.maxRanges, 1, 40, DEFAULT_MAX_RETRANSCRIBE_RANGES);
+
+        // 先按 index 邻接聚类，再按时间间隙合并
+        const clusters = [];
+        let cur = { indexes: [idxList[0]] };
+        for (let i = 1; i < idxList.length; i += 1) {
+            const prev = idxList[i - 1];
+            const next = idxList[i];
+            const prevEnd = cueEndMs(list[prev]);
+            const nextStart = Number(list[next]?.startMs) || 0;
+            const adjacent = next === prev + 1 || (nextStart - prevEnd) <= mergeGapMs;
+            if (adjacent) cur.indexes.push(next);
+            else {
+                clusters.push(cur);
+                cur = { indexes: [next] };
+            }
+        }
+        clusters.push(cur);
+
+        const ranges = [];
+        for (const cluster of clusters) {
+            let startMs = Number(list[cluster.indexes[0]]?.startMs) || 0;
+            let endMs = cueEndMs(list[cluster.indexes[0]]);
+            const bucket = [cluster.indexes[0]];
+            for (let k = 1; k < cluster.indexes.length; k += 1) {
+                const idx = cluster.indexes[k];
+                const cStart = Number(list[idx]?.startMs) || 0;
+                const cEnd = cueEndMs(list[idx]);
+                const nextEnd = Math.max(endMs, cEnd);
+                if (nextEnd - startMs > maxDurMs && bucket.length) {
+                    ranges.push({
+                        startMs,
+                        endMs: Math.max(startMs + 200, endMs),
+                        indexes: bucket.slice(),
+                        durationMs: Math.max(200, endMs - startMs),
+                    });
+                    startMs = cStart;
+                    endMs = cEnd;
+                    bucket.length = 0;
+                    bucket.push(idx);
+                } else {
+                    endMs = nextEnd;
+                    bucket.push(idx);
+                }
+            }
+            if (bucket.length) {
+                ranges.push({
+                    startMs,
+                    endMs: Math.max(startMs + 200, endMs),
+                    indexes: bucket.slice(),
+                    durationMs: Math.max(200, endMs - startMs),
+                });
+            }
+        }
+
+        // 按时长优先（更难读的长窗优先），再截断
+        ranges.sort((a, b) => b.durationMs - a.durationMs || a.startMs - b.startMs);
+        const limited = ranges.slice(0, maxRanges);
+        limited.sort((a, b) => a.startMs - b.startMs);
+        return limited;
+    }
+
+    function summarizeQcRetranscribePlan(ranges, options = {}) {
+        const n = Array.isArray(ranges) ? ranges.length : 0;
+        if (!n) return '无需局部重转写';
+        const cueCount = ranges.reduce((sum, r) => sum + (r.indexes?.length || 0), 0);
+        const max = clampInt(options.maxRanges, 1, 40, DEFAULT_MAX_RETRANSCRIBE_RANGES);
+        const parts = [`将对 ${n} 个时间窗重转写（覆盖约 ${cueCount} 条）`];
+        if (ranges.length >= max) parts.push(`已截断至 ${max} 窗`);
+        return parts.join(' · ');
+    }
+
+    /**
+     * 为目标 index 扩邻域，给 LLM 一点上下文；写回时仍可只应用 targetIndexes。
+     */
+    function expandIndexesWithNeighbors(indexes, cueCount, radius = DEFAULT_NEIGHBOR_RADIUS) {
+        const r = clampInt(radius, 0, 3, DEFAULT_NEIGHBOR_RADIUS);
+        const total = Math.max(0, Number(cueCount) || 0);
+        const set = new Set();
+        for (const raw of Array.isArray(indexes) ? indexes : []) {
+            const i = Number(raw);
+            if (!Number.isInteger(i) || i < 0 || i >= total) continue;
+            for (let d = -r; d <= r; d += 1) {
+                const j = i + d;
+                if (j >= 0 && j < total) set.add(j);
+            }
+        }
+        return [...set].sort((a, b) => a - b);
+    }
+
+    function buildQcSmartCuePayload(cues, indexes, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const pairCues = Array.isArray(options.pairCues) ? options.pairCues : null;
+        const findOverlap = typeof options.findBestOverlapCue === 'function'
+            ? options.findBestOverlapCue
+            : null;
+        return (Array.isArray(indexes) ? indexes : []).map((idx) => {
+            const cue = list[idx];
+            let sourceText = '';
+            if (pairCues && findOverlap && cue) {
+                try {
+                    const hit = findOverlap(pairCues, cue.startMs, cue.endMs);
+                    sourceText = String(hit?.cue?.text || hit?.text || '');
+                } catch {
+                    sourceText = '';
+                }
+            }
+            return {
+                index: idx,
+                startMs: cue?.startMs,
+                endMs: cue?.endMs,
+                text: String(cue?.text ?? ''),
+                sourceText,
+            };
+        }).filter((c) => Number.isInteger(c.index));
+    }
+
+    /**
+     * 将 LLM 返回的 cues/updates 写回；仅改 text，且默认只改 allowIndexes。
+     */
+    function applyQcSmartUpdates(cues, updates, options = {}) {
+        const next = (Array.isArray(cues) ? cues : []).map((c) => ({
+            startMs: c?.startMs,
+            endMs: c?.endMs,
+            text: c?.text ?? '',
+        }));
+        const allow = options.allowIndexes == null
+            ? null
+            : new Set((Array.isArray(options.allowIndexes) ? options.allowIndexes : [])
+                .map((n) => Number(n))
+                .filter((n) => Number.isInteger(n)));
+        let changed = 0;
+        const changedIndexes = [];
+        for (const u of Array.isArray(updates) ? updates : []) {
+            const idx = Number(u?.index);
+            if (!Number.isInteger(idx) || !next[idx]) continue;
+            if (allow && !allow.has(idx)) continue;
+            const after = String(u?.text ?? '');
+            const before = String(next[idx].text ?? '');
+            if (after === before) continue;
+            next[idx] = { ...next[idx], text: after };
+            changed += 1;
+            changedIndexes.push(idx);
+        }
+        return { cues: next, changed, changedIndexes };
+    }
+
+    function buildQcSmartReconstructOptions(options = {}) {
+        return {
+            preserveTiming: options.preserveTiming !== false,
+            intensity: options.intensity || 'light',
+            windowCues: clampInt(options.windowCues, 5, 40, 16),
+            note: String(options.note || QC_SMART_NOTE).trim(),
+            userNote: String(options.userNote || options.note || QC_SMART_NOTE).trim(),
+        };
+    }
+
+    function summarizeQcSmartPlan(targets, options = {}) {
+        const n = Array.isArray(targets) ? targets.length : 0;
+        if (!n) return '规则修复后无需智能润色';
+        const max = clampInt(options.maxSmartCues, 1, 200, DEFAULT_MAX_SMART_CUES);
+        const fluency = targets.filter((t) => t.types?.includes('fluency')).length;
+        const connected = targets.filter((t) => t.types?.includes('connected')).length;
+        const parts = [`将对 ${n} 条做智能润色`];
+        if (fluency) parts.push(`通顺度 ${fluency}`);
+        if (connected) parts.push(`连续文本 ${connected}`);
+        if (n >= max) parts.push(`已截断至 ${max} 条`);
+        return parts.join(' · ');
+    }
+
+    /**
+     * 挑选适合 LLM 智能断句的条目（规则分割失败或仍过长/过快）。
+     */
+    function selectQcLlmSplitTargets(issues, options = {}) {
+        const max = clampInt(options.maxTargets, 1, 200, DEFAULT_MAX_LLM_SPLIT);
+        const minChars = clampInt(options.minChars, 4, 200, 18);
+        const typeSet = new Set(
+            Array.isArray(options.types) && options.types.length
+                ? options.types.map((t) => String(t || '').trim()).filter(Boolean)
+                : DEFAULT_LLM_SPLIT_TYPES,
+        );
+        const scored = [];
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0) continue;
+            const types = Array.isArray(issue.types) ? issue.types : [];
+            const hit = types.filter((t) => typeSet.has(t));
+            if (!hit.length) continue;
+            const preview = String(issue.textPreview || '');
+            if (preview && preview.replace(/\s/g, '').length < minChars
+                && !types.includes('connected') && !types.includes('high_cps')) {
+                continue;
+            }
+            let score = 0;
+            if (types.includes('connected')) score += 4;
+            if (types.includes('high_cps')) score += 3;
+            if (types.includes('splittable')) score += 2;
+            if (types.includes('long')) score += 1;
+            scored.push({
+                index: idx,
+                types: hit,
+                score,
+                messages: Array.isArray(issue.messages) ? issue.messages.slice() : [],
+                cps: issue.cps,
+            });
+        }
+        scored.sort((a, b) => b.score - a.score || a.index - b.index);
+        return scored.slice(0, max);
+    }
+
+    function buildQcLlmSplitPayload(cues, targets, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const maxChars = clampInt(options.smartMaxChars, 4, 80, 20);
+        return (Array.isArray(targets) ? targets : []).map((t) => {
+            const idx = Number(t?.index);
+            const cue = list[idx];
+            const text = String(cue?.text ?? '');
+            const chars = text.replace(/\s/g, '').length;
+            const targetParts = Math.max(2, Math.min(6, Math.ceil(chars / maxChars) || 2));
+            return {
+                index: idx,
+                startMs: cue?.startMs,
+                endMs: cue?.endMs,
+                text,
+                cps: t?.cps != null ? t.cps : null,
+                types: Array.isArray(t?.types) ? t.types : [],
+                maxChars,
+                targetParts,
+            };
+        }).filter((row) => Number.isInteger(row.index) && row.text);
+    }
+
+    function buildLlmSplitChatMessages(items) {
+        const system = [
+            '你是字幕断句助手。根据语义把过长/过快的字幕切成多条短字幕。',
+            '不要改写措辞，不要增删字词，只决定切分位置。',
+            'breakIndices 为 JavaScript 字符串下标（String.slice），严格递增，且落在 (0, text.length) 内。',
+            '每段至少 2 个字符；优先在标点、语气停顿、连词后切开。',
+            '只输出 JSON：{"splits":[{"index":0,"breakIndices":[12,28]}]}',
+            '不必覆盖全部输入；无法安全切分的条目可省略。',
+        ].join('\n');
+        const payload = (Array.isArray(items) ? items : []).map((it) => ({
+            index: it.index,
+            text: it.text,
+            maxChars: it.maxChars,
+            targetParts: it.targetParts,
+            types: it.types,
+        }));
+        return [
+            { role: 'system', content: system },
+            { role: 'user', content: `待断句字幕：\n${JSON.stringify(payload, null, 2)}` },
+        ];
+    }
+
+    function textsFromBreakIndices(text, breakIndices) {
+        const raw = String(text ?? '');
+        if (!raw) return null;
+        const breaks = [...new Set((Array.isArray(breakIndices) ? breakIndices : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n > 0 && n < raw.length))]
+            .sort((a, b) => a - b);
+        if (!breaks.length) return null;
+        const parts = [];
+        let prev = 0;
+        for (const at of breaks) {
+            const chunk = raw.slice(prev, at).trim();
+            if (chunk.length < 2) return null;
+            parts.push(chunk);
+            prev = at;
+        }
+        const last = raw.slice(prev).trim();
+        if (last.length < 2) return null;
+        parts.push(last);
+        return parts.length >= 2 ? parts : null;
+    }
+
+    function parseLlmSplitResponse(content, expectedIndexes) {
+        const expect = new Set((Array.isArray(expectedIndexes) ? expectedIndexes : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n)));
+        let raw = String(content || '').trim();
+        raw = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+        const start = raw.search(/\{/);
+        if (start >= 0) raw = raw.slice(start);
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            const m = raw.match(/\{[\s\S]*"splits"\s*:\s*\[[\s\S]*\][\s\S]*\}/);
+            if (!m) return { ok: false, error: '无法解析断句 JSON', snippet: raw.slice(0, 180) };
+            try {
+                parsed = JSON.parse(m[0]);
+            } catch {
+                return { ok: false, error: '无法解析断句 JSON', snippet: raw.slice(0, 180) };
+            }
+        }
+        const list = Array.isArray(parsed?.splits) ? parsed.splits : [];
+        const splits = [];
+        for (const row of list) {
+            const index = Number(row?.index);
+            if (!Number.isInteger(index)) continue;
+            if (expect.size && !expect.has(index)) continue;
+            const breakIndices = Array.isArray(row?.breakIndices)
+                ? row.breakIndices
+                : (Array.isArray(row?.breaks) ? row.breaks : []);
+            if (!breakIndices.length && Array.isArray(row?.texts) && row.texts.length >= 2) {
+                // 允许模型直接返回 texts：回推 breakIndices（尽力）
+                splits.push({ index, texts: row.texts.map((t) => String(t || '').trim()).filter(Boolean) });
+                continue;
+            }
+            splits.push({ index, breakIndices });
+        }
+        if (!splits.length) return { ok: false, error: '模型未返回有效断句' };
+        return { ok: true, splits };
+    }
+
+    /**
+     * 无 LLM 的本地模拟：按 maxChars 在中段附近切开（便于 mock / 测试）。
+     */
+    function mockLlmSplitCues(items) {
+        const splits = [];
+        for (const it of Array.isArray(items) ? items : []) {
+            const text = String(it?.text || '');
+            const maxChars = clampInt(it?.maxChars, 4, 80, 20);
+            if (text.replace(/\s/g, '').length <= maxChars) continue;
+            const targetParts = clampInt(it?.targetParts, 2, 6, 2);
+            const breakIndices = [];
+            for (let p = 1; p < targetParts; p += 1) {
+                const ideal = Math.round((text.length * p) / targetParts);
+                let at = Math.max(2, Math.min(text.length - 2, ideal));
+                // 向左右找标点/空白
+                let best = at;
+                for (let d = 0; d < 8; d += 1) {
+                    for (const pos of [at + d, at - d]) {
+                        if (pos <= 1 || pos >= text.length - 1) continue;
+                        const ch = text[pos - 1];
+                        if (/[。！？!?…，、；;:\s]/.test(ch)) {
+                            best = pos;
+                            d = 99;
+                            break;
+                        }
+                    }
+                }
+                if (!breakIndices.includes(best)) breakIndices.push(best);
+            }
+            breakIndices.sort((a, b) => a - b);
+            if (breakIndices.length) splits.push({ index: it.index, breakIndices });
+        }
+        return { ok: true, splits, mock: true };
+    }
+
+    function applyQcLlmSplitResults(cues, splits, options = {}) {
+        const list = (Array.isArray(cues) ? cues : []).map((c) => ({
+            startMs: c?.startMs,
+            endMs: c?.endMs,
+            text: c?.text ?? '',
+        }));
+        const byIndex = new Map();
+        for (const s of Array.isArray(splits) ? splits : []) {
+            const idx = Number(s?.index);
+            if (!Number.isInteger(idx) || !list[idx]) continue;
+            byIndex.set(idx, s);
+        }
+        if (!byIndex.size) {
+            return { cues: list, splitCount: 0, added: 0, changedIndexes: [] };
+        }
+
+        const targetCps = Math.max(0.1, Number(options.targetCps) || 3);
+        const minDurMs = Math.max(100, Math.round((Number(options.minSec) || 0.5) * 1000));
+        const useCps = options.useCpsTime !== false;
+        const indexes = [...byIndex.keys()].sort((a, b) => b - a);
+        let splitCount = 0;
+        let added = 0;
+        const changedIndexes = [];
+
+        for (const idx of indexes) {
+            const spec = byIndex.get(idx);
+            const cue = list[idx];
+            const text = String(cue?.text ?? '');
+            let texts = Array.isArray(spec?.texts) && spec.texts.length >= 2
+                ? spec.texts.map((t) => String(t || '').trim()).filter(Boolean)
+                : textsFromBreakIndices(text, spec?.breakIndices);
+            if (!texts || texts.length < 2) continue;
+            if (!splitCore?.buildCuesFromTexts) continue;
+            const built = splitCore.buildCuesFromTexts(
+                Number(cue.startMs) || 0,
+                cue.endMs != null ? Number(cue.endMs) : (Number(cue.startMs) || 0) + 2000,
+                texts,
+                useCps ? 'cps' : 'proportional',
+                { targetCps, minDurMs },
+            );
+            if (!built || built.length < 2) continue;
+            list.splice(idx, 1, ...built.map((c) => ({
+                startMs: c.startMs,
+                endMs: c.endMs,
+                text: c.text ?? '',
+            })));
+            splitCount += 1;
+            added += built.length - 1;
+            changedIndexes.push(idx);
+        }
+
+        return { cues: list, splitCount, added, changedIndexes };
+    }
+
+    function summarizeQcLlmSplitPlan(targets, options = {}) {
+        const n = Array.isArray(targets) ? targets.length : 0;
+        if (!n) return '无需智能断句';
+        const max = clampInt(options.maxTargets, 1, 200, DEFAULT_MAX_LLM_SPLIT);
+        const parts = [`将对 ${n} 条做智能断句`];
+        if (n >= max) parts.push(`已截断至 ${max} 条`);
+        return parts.join(' · ');
+    }
+
+    const QC_SEMANTIC_NOTE = [
+        '本批为 QC 联动语义审阅：优先检查问题字幕的漏译、错译与专名。',
+        '若给出 suggestedTarget，请可直接替换该条译文，勿改时间轴。',
+    ].join('');
+
+    /**
+     * 从 QC issues 中取待语义审阅的 index（preferIndexes 优先，去重截断）。
+     * @returns {number[]}
+     */
+    function selectQcSemanticIndexes(issues, options = {}) {
+        const max = clampInt(options.maxPairs, 1, 80, 40);
+        const prefer = Array.isArray(options.preferIndexes)
+            ? options.preferIndexes.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0)
+            : [];
+        const fromIssues = [];
+        const seen = new Set();
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0 || seen.has(idx)) continue;
+            seen.add(idx);
+            fromIssues.push(idx);
+        }
+        const out = [];
+        const used = new Set();
+        for (const idx of prefer) {
+            if (used.has(idx)) continue;
+            used.add(idx);
+            out.push(idx);
+            if (out.length >= max) return out;
+        }
+        for (const idx of fromIssues) {
+            if (used.has(idx)) continue;
+            used.add(idx);
+            out.push(idx);
+            if (out.length >= max) break;
+        }
+        return out;
+    }
+
+    /**
+     * 按 index 构建双语审阅 pairs。
+     * @param {object[]} targetCues
+     * @param {object[]} pairCues
+     * @param {number[]} indexes
+     * @param {{ findBestOverlapCue?: Function }} [dualApi]
+     */
+    function buildQcSemanticPairs(targetCues, pairCues, indexes, dualApi = null) {
+        const targets = Array.isArray(targetCues) ? targetCues : [];
+        const pairsSrc = Array.isArray(pairCues) ? pairCues : [];
+        const out = [];
+        for (const raw of Array.isArray(indexes) ? indexes : []) {
+            const index = Number(raw);
+            if (!Number.isInteger(index) || !targets[index]) continue;
+            const cue = targets[index];
+            const startMs = Number(cue?.startMs) || 0;
+            const endMs = cueEndMs(cue);
+            const target = String(cue?.text || '').trim();
+            let source = '';
+            if (dualApi?.findBestOverlapCue) {
+                const hit = dualApi.findBestOverlapCue(pairsSrc, startMs, endMs);
+                source = String(hit?.cue?.text || '').trim();
+            } else {
+                source = String(pairsSrc[index]?.text || '').trim();
+            }
+            if (!source && !target) continue;
+            out.push({ index, source, target });
+        }
+        return out;
+    }
+
+    /**
+     * 采纳语义审阅建议译文（suggestedTarget）。
+     */
+    function applyQcSemanticSuggestions(cues, issues, options = {}) {
+        const updates = [];
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            const text = String(issue?.suggestedTarget || '').trim();
+            if (!Number.isInteger(idx) || !text) continue;
+            updates.push({ index: idx, text });
+        }
+        return applyQcSmartUpdates(cues, updates, options);
+    }
+
+    function summarizeQcSemanticPlan(pairCount, options = {}) {
+        const n = Number(pairCount) || 0;
+        if (!n) return '无需双语语义审阅';
+        const max = clampInt(options.maxPairs, 1, 80, 40);
+        const parts = [`将对 ${n} 条做语义审阅`];
+        if (options.autoApply !== false) parts.push('可自动采纳建议');
+        if (n >= max) parts.push(`已截断至 ${max} 条`);
+        return parts.join(' · ');
+    }
+
+    function normPathKey(p) {
+        return String(p || '').trim().replace(/\\/g, '/').toLowerCase();
+    }
+
+    /**
+     * 主窗口批处理：为正在修复的译文轨解析对照原文路径。
+     * 正在修原文轨时返回空（语义审阅的 target 应为译文）。
+     * @param {{ sourceSubtitlePath?: string, targetSubtitlePath?: string, subtitlePath?: string }} item
+     * @param {string} fixingPath
+     * @returns {string}
+     */
+    function resolveQcSemanticPairPath(item = {}, fixingPath = '') {
+        const fixing = String(fixingPath || '').trim();
+        const src = String(item?.sourceSubtitlePath || '').trim();
+        if (!fixing || !src) return '';
+        // 正在修原文轨时不做「译文语义审阅」
+        if (normPathKey(fixing) === normPathKey(src)) return '';
+        const tgt = String(item?.targetSubtitlePath || item?.subtitlePath || '').trim();
+        // 有明确译文轨时，仅对译文轨附带对照
+        if (tgt && normPathKey(fixing) !== normPathKey(tgt)) return '';
+        return src;
+    }
+
+    return {
+        DEFAULT_MAX_SMART_CUES,
+        DEFAULT_NEIGHBOR_RADIUS,
+        DEFAULT_SMART_TYPES,
+        DEFAULT_RETRANSCRIBE_TYPES,
+        DEFAULT_LLM_SPLIT_TYPES,
+        DEFAULT_MAX_LLM_SPLIT,
+        DEFAULT_MAX_RETRANSCRIBE_RANGES,
+        DEFAULT_MAX_RANGE_SEC,
+        DEFAULT_MERGE_GAP_MS,
+        DEFAULT_PAD_MS,
+        QC_SMART_NOTE,
+        QC_SEMANTIC_NOTE,
+        selectQcSmartTargets,
+        selectQcRetranscribeTargets,
+        selectQcLlmSplitTargets,
+        selectQcSemanticIndexes,
+        buildQcSemanticPairs,
+        applyQcSemanticSuggestions,
+        summarizeQcSemanticPlan,
+        resolveQcSemanticPairPath,
+        buildQcRetranscribeRanges,
+        summarizeQcRetranscribePlan,
+        expandIndexesWithNeighbors,
+        buildQcSmartCuePayload,
+        buildQcLlmSplitPayload,
+        buildLlmSplitChatMessages,
+        textsFromBreakIndices,
+        parseLlmSplitResponse,
+        mockLlmSplitCues,
+        applyQcLlmSplitResults,
+        summarizeQcLlmSplitPlan,
+        applyQcSmartUpdates,
+        buildQcSmartReconstructOptions,
+        summarizeQcSmartPlan,
+        cueEndMs,
+    };
+}));
+

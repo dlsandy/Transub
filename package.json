@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -28,16 +28,22 @@
     "verify:packaging": "node tools/verify-packaging.js",
     "ensure:bundled-models": "node tools/ensure-bundled-models.js",
     "ensure:bundled-wheels": "node tools/ensure-bundled-wheels.js",
-    "pack": "npm run build:renderer && npm run build:advanced && npm run ensure:bundled-models && npm run ensure:bundled-wheels && npm run verify:packaging && electron-builder --dir",
-    "dist": "npm run build:renderer && npm run build:advanced && npm run ensure:bundled-models && npm run ensure:bundled-wheels && npm run verify:packaging && electron-builder",
-    "build": "powershell -ExecutionPolicy Bypass -File tools/build.ps1",
+    "ensure:bundled-tdp": "node tools/encode-tdp-pack.js",
+    "ensure:packaging": "npm run ensure:bundled-wheels && npm run ensure:bundled-models && npm run ensure:bundled-tdp",
+    "generate:update-manifest": "node tools/generate-update-manifest.js",
+    "pack:website-update": "node tools/pack-website-update.js",
+    "pack": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target dir -SkipTests",
+    "dist": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip -SkipTests",
+    "build": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip",
     "build:dir": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target dir",
-    "build:zip": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip",
-    "build:setup": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target nsis",
+    "build:zip": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip -SkipTests",
+    "build:release": "powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Target zip",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "fetch:av-makers": "node tools/fetch-av-makers.js",
+    "encode:tdp": "node tools/encode-tdp-pack.js",
+    "encode:tdp:sign": "node tools/encode-tdp-pack.js --sign",
     "lint": "eslint electron src/js tests tools --max-warnings 200",
     "lint:fix": "eslint electron src/js tests tools --fix",
     "format": "prettier --write \"electron/**/*.js\" \"src/js/**/*.js\" \"tests/**/*.js\" \"tools/**/*.js\"",
@@ -45,8 +51,8 @@
     "icons": "node tools/generate-icons.js"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9",
     "json5": "^2.2.3",
+    "opencc-js": "^1.4.1",
     "undici": "^8.9.0"
   },
   "devDependencies": {
@@ -73,6 +79,11 @@
       "buildResources": "electron"
     },
     "icon": "app.ico",
+    "electronLanguages": [
+      "zh-CN",
+      "zh-TW",
+      "en-US"
+    ],
     "electronDownload": {
       "mirror": "https://npmmirror.com/mirrors/electron/"
     },
@@ -91,11 +102,12 @@
       "!src/js/advanced-film-reconstruct-core.js",
       "!src/js/advanced-smart-translate-core.js",
       "src/js/mt-opaque-strings.js",
-      "src/js/subtitle-chinese-dict.js",
+      "src/vendor/opencc-js/**/*",
       "src/js/tone-adapt.tz1",
       "src/js/av-makers.am1",
       "src/js/av-makers-embed.js",
-      "shared/ja-asr-domain-fixes.json"
+      "shared/ja-asr-domain-fixes.json",
+      "shared/tdp/tdp-bundled.tpack"
     ],
     "asarUnpack": [
       "electron/app.ico",
@@ -128,6 +140,10 @@
         "to": "shared/ja-asr-domain-fixes.json"
       },
       {
+        "from": "shared/tdp/tdp-bundled.tpack",
+        "to": "shared/tdp/tdp-bundled.tpack"
+      },
+      {
         "from": "_internal",
         "to": "_internal",
         "filter": [
@@ -139,6 +155,7 @@
         "to": "transub-engine",
         "filter": [
           "**/*",
+          "!wheels-edition/**",
           "!**/__pycache__/**",
           "!**/*.pyc",
           "!**/.venv/**",
@@ -149,6 +166,7 @@
           "!models/asr/**",
           "!models/mt/**",
           "!models/vad/**",
+          "!**/site-packages/~*/**",
           "!**/site-packages/nvidia/**",
           "!**/site-packages/nvidia_*.dist-info/**",
           "!**/site-packages/torch/**",
@@ -166,6 +184,27 @@
           "!**/site-packages/openai_whisper-*.dist-info/**",
           "!**/site-packages/demucs/**",
           "!**/site-packages/demucs-*.dist-info/**",
+          "!**/site-packages/av/**",
+          "!**/site-packages/av-*.dist-info/**",
+          "!**/site-packages/av.libs/**",
+          "!**/site-packages/numba/**",
+          "!**/site-packages/numba-*.dist-info/**",
+          "!**/site-packages/llvmlite/**",
+          "!**/site-packages/llvmlite-*.dist-info/**",
+          "!**/site-packages/scipy/**",
+          "!**/site-packages/scipy-*.dist-info/**",
+          "!**/site-packages/scipy.libs/**",
+          "!**/site-packages/jieba/**",
+          "!**/site-packages/jieba-*.dist-info/**",
+          "!**/site-packages/sklearn/**",
+          "!**/site-packages/scikit_learn-*.dist-info/**",
+          "!**/site-packages/scikit-learn-*.dist-info/**",
+          "!**/site-packages/sympy/**",
+          "!**/site-packages/sympy-*.dist-info/**",
+          "!**/site-packages/modelscope/**",
+          "!**/site-packages/modelscope-*.dist-info/**",
+          "!**/site-packages/transformers/**",
+          "!**/site-packages/transformers-*.dist-info/**",
           "!**/*.onnx",
           "!**/*.pt",
           "!**/*.pth",
@@ -207,32 +246,12 @@
           ]
         },
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
           "target": "dir",
           "arch": [
             "x64"
           ]
         }
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "packElevateHelper": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Transub",
-      "include": "installer.nsh",
-      "installerIcon": "app.ico",
-      "uninstallerIcon": "app.ico",
-      "installerHeaderIcon": "app.ico",
-      "artifactName": "Transub-Setup-${version}.${ext}"
     }
   }
 }

@@ -12,7 +12,7 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function advancedManagedLlmCatalogFactory() {
     const DEFAULT_SERVER_PORT = 39281;
-    const LLAMA_CPP_TAG = 'b10077';
+    const LLAMA_CPP_TAG = 'b10236';
     const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
     const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
     /** 免费管线翻译：软件内白名单模型参数量上限（十亿） */
@@ -92,7 +92,8 @@
 
     /**
      * 固定版本的 llama.cpp 预编译包。
-     * Windows x64：静态回退为 Vulkan；有 NVIDIA（驱动 CUDA≥12）时由 preferCuda 将默认切到 CUDA 12。
+     * Windows x64：静态回退为 Vulkan；有 NVIDIA 时由 preferCuda + 驱动 CUDA 主版本选默认：
+     * CUDA ≥13 → CUDA 13；CUDA ≥12 → CUDA 12。
      */
     const WIN_VULKAN_X64 = Object.freeze({
         id: 'win-vulkan-x64',
@@ -114,7 +115,18 @@
         archive: 'zip',
         exeName: 'llama-server.exe',
         sizeHint: '约 630 MB（含 CUDA 运行库）',
-        note: '需 NVIDIA 驱动；通常比 Vulkan 更快',
+        note: '需 NVIDIA 驱动（CUDA 12+）；通常比 Vulkan 更快',
+    });
+    const WIN_CUDA13_X64 = Object.freeze({
+        id: 'win-cuda13-x64',
+        label: 'Windows x64 · CUDA 13（NVIDIA）',
+        backend: 'cuda',
+        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/llama-${LLAMA_CPP_TAG}-bin-win-cuda-13.3-x64.zip`,
+        companionUrl: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/cudart-llama-bin-win-cuda-13.3-x64.zip`,
+        archive: 'zip',
+        exeName: 'llama-server.exe',
+        sizeHint: '约 540 MB（含 CUDA 运行库）',
+        note: '需较新 NVIDIA 驱动（CUDA 13+）；通常比 CUDA 12 / Vulkan 更快',
     });
 
     /** 平台默认包（向后兼容 RUNTIME_PACKAGES[platformKey]） */
@@ -160,7 +172,7 @@
 
     /** 同平台可选变体（仅列出可切换的；缺省回退 RUNTIME_PACKAGES） */
     const RUNTIME_PACKAGE_VARIANTS = Object.freeze({
-        'win32-x64': Object.freeze([WIN_VULKAN_X64, WIN_CUDA12_X64]),
+        'win32-x64': Object.freeze([WIN_VULKAN_X64, WIN_CUDA12_X64, WIN_CUDA13_X64]),
     });
 
     /** id → 包（含变体） */
@@ -659,15 +671,26 @@
         return `${platform}-${arch}`;
     }
 
+    function parseCudaMajor(hints = {}) {
+        const major = Number(String(hints?.cudaVersion || '').split('.')[0]);
+        return Number.isFinite(major) ? major : 0;
+    }
+
     /**
      * @param {string} [platform]
      * @param {string} [arch]
-     * @param {{ preferCuda?: boolean }} [hints]
+     * @param {{ preferCuda?: boolean, cudaVersion?: string }} [hints]
      */
     function getDefaultRuntimeId(platform = detectPlatform(), arch = detectArch(), hints = {}) {
         const key = platformKey(platform, arch);
-        if (key === 'win32-x64' && hints && hints.preferCuda && RUNTIME_PACKAGE_BY_ID['win-cuda12-x64']) {
-            return 'win-cuda12-x64';
+        if (key === 'win32-x64' && hints && hints.preferCuda) {
+            const major = parseCudaMajor(hints);
+            if (major >= 13 && RUNTIME_PACKAGE_BY_ID['win-cuda13-x64']) {
+                return 'win-cuda13-x64';
+            }
+            if (RUNTIME_PACKAGE_BY_ID['win-cuda12-x64']) {
+                return 'win-cuda12-x64';
+            }
         }
         return RUNTIME_PACKAGES[key]?.id || '';
     }
@@ -683,10 +706,16 @@
             list = def ? [{ ...def }] : [];
         }
         if (hints && hints.preferCuda && key === 'win32-x64' && list.length > 1) {
+            const preferredId = getDefaultRuntimeId(platform, arch, hints);
             list.sort((a, b) => {
+                if (a.id === preferredId) return -1;
+                if (b.id === preferredId) return 1;
                 const ac = a.backend === 'cuda' ? 0 : 1;
                 const bc = b.backend === 'cuda' ? 0 : 1;
-                return ac - bc;
+                if (ac !== bc) return ac - bc;
+                const am = Number((/cuda(\d+)/i.exec(String(a.id || '')) || [])[1] || 0);
+                const bm = Number((/cuda(\d+)/i.exec(String(b.id || '')) || [])[1] || 0);
+                return bm - am;
             });
         }
         return list;
@@ -695,8 +724,8 @@
     /**
      * @param {string} [platform]
      * @param {string} [arch]
-     * @param {string} [runtimeId] 偏好包 id（如 win-cuda12-x64）；无效则回退平台默认
-     * @param {{ preferCuda?: boolean }} [hints]
+     * @param {string} [runtimeId] 偏好包 id（如 win-cuda12-x64 / win-cuda13-x64）；无效则回退平台默认
+     * @param {{ preferCuda?: boolean, cudaVersion?: string }} [hints]
      */
     function getRuntimePackage(platform = detectPlatform(), arch = detectArch(), runtimeId = '', hints = {}) {
         const key = platformKey(platform, arch);
@@ -719,7 +748,7 @@
         return RUNTIME_PACKAGES[key] || null;
     }
 
-    /** 规范化运行时偏好；空/非法 → 平台默认 id（hints.preferCuda 时 Windows 默认 CUDA 12） */
+    /** 规范化运行时偏好；空/非法 → 平台默认 id（preferCuda 时按驱动 CUDA 主版本选 13/12） */
     function normalizeRuntimeId(runtimeId, platform = detectPlatform(), arch = detectArch(), hints = {}) {
         const pkg = getRuntimePackage(platform, arch, runtimeId, hints);
         return pkg?.id || '';
@@ -850,7 +879,7 @@
 
     /**
      * @param {object} [raw]
-     * @param {{ preferCuda?: boolean }} [hints]
+     * @param {{ preferCuda?: boolean, cudaVersion?: string }} [hints]
      */
     function normalizeManagedLlm(raw, hints = {}) {
         const base = emptyManagedLlm();

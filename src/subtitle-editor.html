@@ -100,8 +100,9 @@ html {
 body.editor-body {
     background: var(--ed-bg);
     color: var(--ed-text);
-    height: 100vh;
-    max-height: 100vh;
+    /* Use % (from html,body height:100%) — 100vh stays stuck after maximize on Windows/Electron. */
+    height: 100%;
+    max-height: 100%;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -137,6 +138,9 @@ body.editor-body button {
     min-width: 0;
     flex-direction: row;
     overflow: hidden;
+    /* Isolate panel z-indexes so list/情境条 cannot cover mode-tools dropdowns */
+    position: relative;
+    z-index: 1;
 }
 
 .editor-layout-split {
@@ -251,6 +255,9 @@ body.editor-dock-dragging {
     background: var(--ed-surface-2);
     flex-shrink: 0;
     flex-wrap: wrap;
+    position: relative;
+    z-index: 40;
+    overflow: visible;
 }
 
 .editor-filter-btn {
@@ -277,6 +284,9 @@ body.editor-dock-dragging {
     overflow-anchor: none;
     user-select: none;
     -webkit-user-select: none;
+    /* Keep list (sticky thead / content-visibility layers) below toolbars & 情境条 menus */
+    position: relative;
+    z-index: 0;
 }
 .editor-list-wrap:focus { outline: none; }
 .editor-list-wrap:focus-visible { box-shadow: inset 0 0 0 2px var(--ed-accent); }
@@ -1291,7 +1301,7 @@ textarea.recon-review-after {
 .editor-header {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem;
     padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--ed-border);
-    background: var(--ed-surface); flex-shrink: 0; position: relative; z-index: 50;
+    background: var(--ed-surface); flex-shrink: 0; position: relative; z-index: 60;
     overflow: visible;
 }
 .editor-header-actions {
@@ -1390,6 +1400,9 @@ textarea.recon-review-after {
     z-index: 35;
     box-shadow: inset 2px 0 0 var(--ed-accent);
 }
+.editor-context-action-bar:has(.editor-dropdown:not(.hidden)) {
+    z-index: 45;
+}
 .editor-context-action-bar.hidden { display: none; }
 .editor-context-action-primary {
     display: flex; flex-wrap: nowrap; align-items: center; gap: 0.25rem;
@@ -1416,6 +1429,7 @@ textarea.recon-review-after {
 }
 .editor-context-action-bar .editor-menu-wrap {
     display: inline-flex; flex: 0 0 auto; position: relative; z-index: 1;
+    overflow: visible;
 }
 .editor-context-action-bar .editor-menu-wrap.hidden { display: none !important; }
 .editor-context-action-bar .editor-menu-wrap:has(.editor-dropdown:not(.hidden)) { z-index: 5; }
@@ -1500,7 +1514,10 @@ textarea.recon-review-after {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
     padding: 0.28rem 0.55rem; border-bottom: 1px solid var(--ed-border);
     background: var(--ed-surface); flex-shrink: 0; overflow: visible;
-    min-height: 2.1rem; position: relative; z-index: 30;
+    min-height: 2.1rem; position: relative; z-index: 50;
+}
+.editor-mode-tools:has(.editor-dropdown:not(.hidden)) {
+    z-index: 55;
 }
 .editor-mode-tools::-webkit-scrollbar { height: 4px; }
 .editor-mode-tools::-webkit-scrollbar-thumb { background: var(--ed-border); border-radius: 2px; }
@@ -3048,7 +3065,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-chinese-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorChineseConvertTitle">简繁转换</h3>
-                <p>按 OpenCC 字符/短语表批量转换字幕文本（不改时间轴）。专名、两岸用语差异请再人工校对。</p>
+                <p>基于 OpenCC（opencc-js，含分词与地区词典），不改时间轴。专名请用术语表保护。</p>
                 <div class="split-mode-list">
                     <label class="split-mode-item">
                         <input type="radio" name="editorChineseDirection" id="editorChineseDirS2T" value="s2t" checked>
@@ -3057,6 +3074,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <label class="split-mode-item">
                         <input type="radio" name="editorChineseDirection" id="editorChineseDirT2S" value="t2s">
                         <span>繁体 → 简体</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleTwp" value="twp" checked>
+                        <span>台湾（字形 + 常用词，如 软件→軟體）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleTw" value="tw">
+                        <span>台湾（仅字形）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleHk" value="hk">
+                        <span>香港</span>
                     </label>
                     <label class="split-mode-item">
                         <input type="radio" name="editorChineseScope" id="editorChineseScopeAll" value="all" checked>
@@ -3114,7 +3143,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-qc-dismiss></div>
             <div class="editor-modal-panel qc-panel">
                 <h3 id="editorQcTitle">质量检查</h3>
-                <p>扫描重叠、读速、时长、叠词与通顺度嫌疑；点击上方标签可按问题类型筛选。一键修复可调时间轴/分割/压缩叠词；其它通顺度问题请重转写或手工改。</p>
+                <p>扫描重叠、读速、时长、叠词与通顺度嫌疑；点击上方标签可按问题类型筛选。一键修复可调时间轴/分割/压缩叠词/清杂音；句末残缺等请重转写或手工改。</p>
                 <div id="editorQcSummaryBar" class="qc-summary-bar" aria-live="polite"></div>
                 <div id="editorQcIssueList" class="qc-issue-list" role="list"></div>
                 <div class="split-mode-list">
@@ -3148,8 +3177,32 @@ button.needs-video.is-no-video { opacity: 0.45; }
                         最长 <input type="number" id="editorQcMaxSec" min="0.5" max="600" step="0.01" value="10.00" class="tabular-nums"> 秒
                     </div>
                     <label class="split-mode-item">
-                        <input type="checkbox" id="editorQcCompressRep">
+                        <input type="checkbox" id="editorQcCompressRep" checked>
                         <span>压缩叠词（词…词！）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcRemoveNoise" checked>
+                        <span>清理杂音 / 碎片句</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorQcRemoveDup" checked>
+                        <span>删除连续重复条</span>
+                    </label>
+                    <label class="split-mode-item" id="editorQcSmartFixWrap" title="Pro：规则修复后对剩余通顺度/连续文本调用大模型润色">
+                        <input type="checkbox" id="editorQcSmartFix">
+                        <span>智能处理剩余问题 (Pro)</span>
+                    </label>
+                    <label class="split-mode-item" id="editorQcLlmSplitWrap" title="Pro：对规则无法切开的长句/高读速用大模型断句">
+                        <input type="checkbox" id="editorQcLlmSplit">
+                        <span>智能断句 (Pro)</span>
+                    </label>
+                    <label class="split-mode-item" id="editorQcRetranscribeWrap" title="Pro：对无法分割的连续高读速区间局部重转写（需关联视频）">
+                        <input type="checkbox" id="editorQcRetranscribe">
+                        <span>连续文本局部重转写 (需视频)</span>
+                    </label>
+                    <label class="split-mode-item" id="editorQcSemanticWrap" title="Pro：对剩余问题条做双语语义审阅并采纳建议译文（需对照轨）">
+                        <input type="checkbox" id="editorQcSemanticReview">
+                        <span>双语语义审阅并采纳 (需对照)</span>
                     </label>
                 </div>
                 <div class="batch-dur-target">
@@ -3471,11 +3524,13 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-fluency-core.js"></script>
     <script src="js/mt-sanitize-core.js"></script>
     <script src="js/subtitle-qc-core.js"></script>
+    <script src="js/subtitle-qc-smart-core.js"></script>
+    <script src="js/content-profile-core.js"></script>
     <script src="js/subtitle-meta-core.js"></script>
     <script src="js/subtitle-glossary-core.js"></script>
     <script src="js/subtitle-text-presets-core.js"></script>
     <script src="js/subtitle-workflows-core.js"></script>
-    <script src="js/subtitle-chinese-dict.js"></script>
+    <script src="vendor/opencc-js/full.js"></script>
     <script src="js/subtitle-chinese-core.js"></script>
     <script src="js/dual-subtitle-core.js"></script>
     <script src="js/transcript-compare-core.js"></script>

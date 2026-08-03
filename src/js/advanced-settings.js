@@ -44,6 +44,15 @@
         progressWrap: () => document.getElementById('advancedManagedProgressWrap'),
         progressBar: () => document.getElementById('advancedManagedProgressBar'),
         progressText: () => document.getElementById('advancedManagedProgressText'),
+        tdpStatus: () => document.getElementById('tdpStatusLine'),
+        tdpMeta: () => document.getElementById('tdpMetaLine'),
+        tdpAction: () => document.getElementById('tdpActionStatus'),
+        tdpProgressWrap: () => document.getElementById('tdpProgressWrap'),
+        tdpProgressBar: () => document.getElementById('tdpProgressBar'),
+        tdpProgressText: () => document.getElementById('tdpProgressText'),
+        tdpCancelBtn: () => document.getElementById('tdpCancelBtn'),
+        tdpCheckBtn: () => document.getElementById('tdpCheckBtn'),
+        tdpUpdateBtn: () => document.getElementById('tdpUpdateBtn'),
     };
 
     const SCALE_CHIPS = [
@@ -55,6 +64,7 @@
 
     let unsubManagedProgress = null;
     let unsubModelChanged = null;
+    let unsubTdpProgress = null;
     let syncingModelSelects = false;
     /** @type {object|null} */
     let managedSnapshot = null;
@@ -378,20 +388,19 @@
         wrap.classList.toggle('hidden', !show);
         if (!show) return;
 
-        const preferCuda = !!runtime.preferCuda;
         const preferred = String(
             managed?.managedLlm?.runtimeId
             || runtime.preferredPackageId
             || choices[0]?.id
             || '',
         ).trim();
+        // choices 已按硬件偏好排序：首项即推荐默认（NVIDIA→CUDA 13/12，否则 Vulkan）
+        const hardwareDefaultId = String(choices[0]?.id || '').trim();
         const html = choices.map((c) => {
             const id = String(c.id || '').trim();
             if (!id) return '';
             const label = String(c.label || id).trim();
-            const isDefault = preferCuda
-                ? c.backend === 'cuda'
-                : c.backend === 'vulkan' || (!c.backend && id.includes('vulkan'));
+            const isDefault = !!hardwareDefaultId && id === hardwareDefaultId;
             const bits = [];
             if (isDefault) bits.push('默认');
             if (c.sizeHint) bits.push(String(c.sizeHint));
@@ -904,6 +913,11 @@
             purchaseBlock.classList.toggle('hidden', entitled);
             purchaseBlock.setAttribute('aria-hidden', entitled ? 'true' : 'false');
         }
+        const moreAfdianBtn = document.getElementById('openAfdianFromSettingsBtn');
+        if (moreAfdianBtn) {
+            moreAfdianBtn.hidden = entitled;
+            moreAfdianBtn.classList.toggle('hidden', entitled);
+        }
 
         const byok = status.byok || {};
         if (els.provider() && byok.provider) els.provider().value = byok.provider;
@@ -929,6 +943,54 @@
                 ? `已加载闭源模块：${mod.name || 'Pro Module'}${mod.version ? ` v${mod.version}` : ''}`
                 : '使用内置语境重构。安装 `_advanced/index.js` 后可覆盖为闭源实现。',
         );
+
+        void refreshTdp();
+    }
+
+    function applyTdpStatus(tdp) {
+        if (!tdp) return;
+        const ver = tdp.installedVersion || (tdp.bundledAvailable ? '内置' : '无');
+        const useLine = tdp.entitled
+            ? (tdp.applied ? '已热加载使用中' : '已开通 Pro，可更新并应用')
+            : '开通 Pro 后可使用语言优化包';
+        setText(els.tdpStatus(), `当前版本：${ver} · ${useLine}`);
+        const meta = [];
+        if (tdp.source) meta.push(`来源：${tdp.source === 'cdn' ? '官方更新' : tdp.source === 'bundled' ? '安装包内置' : tdp.source}`);
+        if (tdp.installedAt) meta.push(`安装于 ${String(tdp.installedAt).slice(0, 10)}`);
+        setText(els.tdpMeta(), meta.join(' · '));
+        // Download is open; apply/hot-reload is Pro-gated in the main process.
+        if (els.tdpUpdateBtn()) els.tdpUpdateBtn().disabled = false;
+        if (els.tdpCheckBtn()) els.tdpCheckBtn().disabled = false;
+    }
+
+    async function refreshTdp() {
+        if (!electron.transubTdpGetStatus) return;
+        try {
+            const res = await electron.transubTdpGetStatus();
+            if (res?.ok) applyTdpStatus(res.tdp);
+            else setText(els.tdpStatus(), res?.error || '无法读取优化包状态');
+        } catch (err) {
+            setText(els.tdpStatus(), err.message || '读取失败');
+        }
+    }
+
+    function setTdpProgress(p) {
+        const wrap = els.tdpProgressWrap();
+        const bar = els.tdpProgressBar();
+        const text = els.tdpProgressText();
+        const cancel = els.tdpCancelBtn();
+        if (!p || p.phase === 'done' || p.phase === 'error') {
+            wrap?.classList.add('hidden');
+            cancel?.classList.add('hidden');
+            if (bar) bar.style.width = '0%';
+            return;
+        }
+        wrap?.classList.remove('hidden');
+        cancel?.classList.remove('hidden');
+        const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
+        if (bar) bar.style.width = `${pct}%`;
+        const phase = p.phase === 'download' ? '下载中' : p.phase === 'apply' ? '应用中' : '准备中';
+        setText(text, `${phase}${p.version ? ` ${p.version}` : ''} ${pct ? `${Math.round(pct)}%` : ''}`.trim());
     }
 
     async function refreshManaged() {
@@ -1042,18 +1104,37 @@
         });
         document.getElementById('advancedActivateBtn')?.addEventListener('click', () => {
             const key = String(els.keyInput()?.value || '').trim();
-            void withAction(els.actionStatus(), () => electron.transubAdvancedActivate({ licenseKey: key }));
+            void withAction(els.actionStatus(), async () => {
+                const res = await electron.transubAdvancedActivate({ licenseKey: key });
+                await electron.transubTdpSync?.();
+                await refreshTdp();
+                return res;
+            });
         });
         document.getElementById('advancedTransferBtn')?.addEventListener('click', () => {
             const key = String(els.keyInput()?.value || '').trim();
-            void withAction(els.actionStatus(), () => electron.transubAdvancedTransfer({ licenseKey: key }));
+            void withAction(els.actionStatus(), async () => {
+                const res = await electron.transubAdvancedTransfer({ licenseKey: key });
+                await electron.transubTdpSync?.();
+                await refreshTdp();
+                return res;
+            });
         });
         document.getElementById('advancedRevalidateBtn')?.addEventListener('click', () => {
-            void withAction(els.actionStatus(), () => electron.transubAdvancedRevalidate());
+            void withAction(els.actionStatus(), async () => {
+                const res = await electron.transubAdvancedRevalidate();
+                await electron.transubTdpSync?.();
+                await refreshTdp();
+                return res;
+            });
         });
         document.getElementById('advancedDeactivateBtn')?.addEventListener('click', async () => {
             if (!(await askConfirm({ title: '清除许可', message: '确定清除本机 Pro 许可？', danger: true }))) return;
-            void withAction(els.actionStatus(), () => electron.transubAdvancedDeactivate());
+            void withAction(els.actionStatus(), async () => {
+                const res = await electron.transubAdvancedDeactivate();
+                await refreshTdp();
+                return res;
+            });
         });
 
         const onSourceChange = () => {
@@ -1175,12 +1256,27 @@
                 return { ok: true, message: '已刷新' };
             });
         });
-        const runtimeStatusEl = () => els.llamaServerActionStatus() || els.byokStatus();
+        const runtimeStatusEl = () => (
+            els.llamaServerActionStatus()
+            || els.managedRuntime()
+            || els.byokStatus()
+        );
 
         document.getElementById('advancedManagedRuntimeRefreshBtn')?.addEventListener('click', () => {
             void withAction(runtimeStatusEl(), async () => {
                 await refreshManaged();
-                return { ok: true, message: '已刷新运行时状态' };
+                const runtime = managedSnapshot?.runtime || {};
+                const detail = String(runtime.message || '').trim()
+                    || (runtime.available ? 'llama-server 可用' : '尚未安装运行时');
+                // 把最新状态写回主状态行；动作反馈留在 action 行
+                setText(els.managedRuntime(), detail);
+                return {
+                    ok: true,
+                    message: runtime.outdated
+                        ? `已刷新 · ${detail}`
+                        : `已刷新运行时状态 · ${detail}`,
+                    managed: managedSnapshot || undefined,
+                };
             });
         });
         document.getElementById('advancedManagedInstallRuntimeBtn')?.addEventListener('click', () => {
@@ -1189,7 +1285,7 @@
                 const choice = (managedSnapshot?.runtime?.choices || [])
                     .find((c) => c.id === runtimeId);
                 const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
-                if (runtimeId === 'win-cuda12-x64' || choice?.backend === 'cuda') {
+                if (choice?.backend === 'cuda' || /^win-cuda\d+-x64$/i.test(runtimeId)) {
                     const ok = await askConfirm({
                         title: '安装 CUDA 运行时',
                         message: `将下载 NVIDIA CUDA 版 llama-server（含运行库）。${sizeHint}\n\n需要较新的 NVIDIA 驱动；若安装失败可改回 Vulkan 或改用「手动下载运行时」。\n若该后端已安装且版本匹配，将跳过下载。`,
@@ -1222,17 +1318,44 @@
                 const select = els.managedRuntimeBackendSelect();
                 const runtimeId = String(select?.value || '').trim();
                 if (!runtimeId) return { ok: false, error: '请选择运行时后端' };
+                const runtime = managedSnapshot?.runtime || {};
                 const prevId = String(
                     managedSnapshot?.managedLlm?.runtimeId
-                    || managedSnapshot?.runtime?.preferredPackageId
+                    || runtime.preferredPackageId
                     || '',
                 ).trim();
-                const choice = (managedSnapshot?.runtime?.choices || [])
+                const choice = (runtime.choices || [])
                     .find((c) => c.id === runtimeId);
-                const prevChoice = (managedSnapshot?.runtime?.choices || [])
+                const prevChoice = (runtime.choices || [])
                     .find((c) => c.id === prevId);
+                const installedId = String(runtime.installedPackageId || '').trim();
+                const targetAlreadyInstalled = !!(
+                    installedId
+                    && installedId === runtimeId
+                    && runtime.available
+                );
+
+                // 目标后端已在本机安装：只改偏好，无需确认、无需再下
+                if (targetAlreadyInstalled) {
+                    if (runtimeId === prevId) {
+                        return { ok: true, message: `已是「${choice?.label || runtimeId}」` };
+                    }
+                    const setRes = await electron.transubAdvancedManagedLlmSetRuntime?.({ runtimeId });
+                    if (!setRes?.ok) {
+                        if (prevId && select) select.value = prevId;
+                        return setRes || { ok: false, error: '切换失败' };
+                    }
+                    if (setRes.managed) applyManagedStatus(setRes.managed);
+                    else await refreshManaged();
+                    return {
+                        ok: true,
+                        message: `已切换为「${choice?.label || runtimeId}」`,
+                        managed: setRes.managed || managedSnapshot || undefined,
+                    };
+                }
+
                 const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
-                const cudaNote = (runtimeId === 'win-cuda12-x64' || choice?.backend === 'cuda')
+                const cudaNote = (choice?.backend === 'cuda' || /^win-cuda\d+-x64$/i.test(runtimeId))
                     ? '\n需较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用手动下载。'
                     : '';
                 const confirmed = await askConfirm({
@@ -1299,13 +1422,29 @@
                 const res = await electron.transubAdvancedManagedLlmPerfTest?.({});
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
-                    const detail = [
-                        res.message,
+                    const lines = [
+                        String(res.message || '性能测试完成').trim(),
+                        res.tokensPerSec != null ? `吞吐：${res.tokensPerSec} tok/s` : '',
+                        res.loadMs != null ? `启动：${Math.round(Number(res.loadMs) || 0)} ms` : '',
                         res.sample ? `样例：${res.sample}` : '',
-                    ].filter(Boolean).join(' · ');
-                    return { ok: true, message: detail };
+                    ].filter(Boolean);
+                    const detail = lines.join('\n');
+                    await askConfirm({
+                        title: '性能测试结果',
+                        message: detail,
+                        primaryLabel: '确定',
+                        hideSecondary: true,
+                    });
+                    return { ok: true, message: lines[0] || '性能测试完成', managed: res.managed };
                 }
-                return { ok: false, error: res?.error || '性能测试失败' };
+                const err = res?.error || '性能测试失败';
+                await askConfirm({
+                    title: '性能测试失败',
+                    message: String(err),
+                    primaryLabel: '确定',
+                    hideSecondary: true,
+                });
+                return { ok: false, error: err };
             });
         });
         document.getElementById('advancedManagedCancelPullBtn')?.addEventListener('click', () => {
@@ -1330,8 +1469,42 @@
             });
         });
 
+        document.getElementById('tdpCheckBtn')?.addEventListener('click', () => {
+            void withAction(els.tdpAction(), async () => {
+                const res = await electron.transubTdpCheck?.();
+                if (!res?.ok) return res || { ok: false, error: '检查失败' };
+                if (res.upToDate) return { ok: true, message: '已是最新' };
+                if (res.updateAvailable) {
+                    return {
+                        ok: true,
+                        message: `发现新版本 ${res.remote?.version || ''}${res.remote?.notes ? `：${res.remote.notes}` : ''}`.trim(),
+                    };
+                }
+                return { ok: true, message: res.message || '检查完成' };
+            });
+        });
+
+        document.getElementById('tdpUpdateBtn')?.addEventListener('click', () => {
+            void withAction(els.tdpAction(), async () => {
+                setTdpProgress({ phase: 'start', percent: 0 });
+                const res = await electron.transubTdpPull?.();
+                setTdpProgress(res?.ok ? { phase: 'done' } : { phase: 'error' });
+                await refreshTdp();
+                return res?.ok
+                    ? { ok: true, message: res.message || '更新完成' }
+                    : res || { ok: false, error: '更新失败' };
+            });
+        });
+
+        document.getElementById('tdpCancelBtn')?.addEventListener('click', () => {
+            void electron.transubTdpCancelPull?.();
+        });
+
         if (!unsubManagedProgress && electron.onAdvancedManagedLlmProgress) {
             unsubManagedProgress = electron.onAdvancedManagedLlmProgress((p) => setPullProgress(p));
+        }
+        if (!unsubTdpProgress && electron.onTdpProgress) {
+            unsubTdpProgress = electron.onTdpProgress((p) => setTdpProgress(p));
         }
         if (!unsubModelChanged && electron.onAdvancedLlmModelChanged) {
             unsubModelChanged = electron.onAdvancedLlmModelChanged(() => {
