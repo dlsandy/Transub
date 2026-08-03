@@ -112,9 +112,11 @@ shared/tdp/manifest.json
 # Local subtitle work samples (not part of the product tree)
 subtitles/
 
-# Afdian fulfillment Worker local deps / wrangler state
-services/afdian-fulfillment/node_modules/
-services/afdian-fulfillment/.wrangler/
+# Private Afdian fulfillment Worker + local ops / Worker-only tests (do not publish)
+services/
+tools/sync-license-kv.js
+tests/afdian-license-device.test.js
+tests/afdian-license-sign.test.js
 
 # AV makers fetch temp / plaintext source (opaque .am1 is committed)
 tools/_tmp_av_fetch/
