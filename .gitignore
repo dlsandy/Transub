@@ -18,7 +18,7 @@ transub-engine/.venv/
 transub-engine/venv/
 transub-engine/**/__pycache__/
 transub-engine/**/*.pyc
-# Hub weights under models/{asr,mt,vad} â€” fetch shipped essentials via:
+# Hub weights under models/{asr,mt,vad} â€?fetch shipped essentials via:
 #   npm run ensure:bundled-models
 transub-engine/models/asr/
 transub-engine/models/mt/
@@ -79,7 +79,7 @@ tools/tone-adapt.src.json
 # Generated closed Pro module (minify of proprietary algorithms; rebuild with npm run build:advanced)
 _advanced/
 
-# Pro proprietary algorithm sources (never push; pack via npm run build:advanced â†’ _advanced)
+# Pro proprietary algorithm sources (never push; pack via npm run build:advanced â†?_advanced)
 electron/advanced-context-reconstruct.js
 electron/advanced-film-reconstruct.js
 electron/advanced-bilingual-semantic.js
@@ -99,9 +99,11 @@ keys.txt
 # Local subtitle work samples (not part of the product tree)
 subtitles/
 
-# Afdian fulfillment Worker local deps / wrangler state
-services/afdian-fulfillment/node_modules/
-services/afdian-fulfillment/.wrangler/
+# Private Afdian fulfillment Worker (do not publish)
+services/
+tools/sync-license-kv.js
+tests/afdian-license-device.test.js
+tests/afdian-license-sign.test.js
 
 # AV makers fetch temp / plaintext source (opaque .am1 is committed)
 tools/_tmp_av_fetch/
