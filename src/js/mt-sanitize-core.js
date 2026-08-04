@@ -56,12 +56,16 @@
     const JA_PERSON_RE = /([一-龯ぁ-んァ-ンー]{1,6}?)(さん|くん|ちゃん|君|様|氏)/g;
     const ZH_PERSON_RE = /([\u4e00-\u9fff]{1,4})(同学|小姐|先生|桑|君|酱|酱酱|大人|老师)/g;
 
+    const OT = mtOpaque?.T || {};
+    const OFIX = mtOpaque?.FIX || {};
     const COMMON_KEEP_TOKENS = new Set([
         '好的', '是的', '不是', '没有', '可以', '不行', '没事', '对不起', '抱歉',
         '谢谢', '再见', '加油', '真的', '当然', '怎么', '什么', '哪里', '为什么',
         '好吧', '好啦', '嗯嗯', '啊啊', '哈哈', '呵呵', '唉呀', '哎呀',
         '要去了', '好舒服', '舒服吗', '好开心', '也亲亲我', '亲一下',
-        '别哭', '超棒', '好纠结', '振作起来', '别捣乱', '恰皮', '鸡巴',
+        '别哭', '超棒', '好纠结', '振作起来', '别捣乱', '恰皮',
+        ...(OT.rodZh ? [OT.rodZh] : []),
+        ...(OT.meatRodZh ? [OT.meatRodZh] : []),
         '用那种心情', '再慢一点等我', '又消失了呢',
     ]);
 
@@ -84,7 +88,7 @@
     /** Legitimate 1-char trailing interjections (do not strip). */
     const KEEP_SINGLE_TRAILING = new Set([
         '嗯', '啊', '哦', '噢', '哈', '唔', '呃', '哼', '呀', '哟', '吧', '呢',
-        '吗', '嘛', '啦', '哇', '唉', '诶', '欸', '啾', '咿', '呜', '呼', '呵',
+        '吗', '嘛', '啦', '哇', '唉', '诶', '欸', '咿', '呜', '呼', '呵',
         '嗨', '喂', '哎', '好', '哔',
     ]);
 
@@ -225,6 +229,9 @@
         { from: 'サイジ', to: 'サイズ' },
         { from: '張りつ舞って', to: '張りつめて' },
         { from: '基礎してください', to: 'キスしてください' },
+        { from: 'いあちゅい', to: 'イッちゃう' },
+        { from: 'キれいだよ', to: '綺麗だよ' },
+        { from: 'すごきれい', to: 'すごく綺麗' },
     ]);
 
     function loadBundledJaAsrDomainBasePairs() {
@@ -381,6 +388,101 @@
     }
 
     /**
+     * Wet / suck / lick oral SFX in ZH (咕咚/啾/滋溜…) — not moans (哈/啊/嗯).
+     * Used for av_soft cue cleanup.
+     */
+    const WET_ORAL_SFX_ZH_ATOM = '(?:咕咚|咕啾|扑哧|滋溜|叽噜|咕噜+|咕{2,}|啾+|滋{1,}|噜+|噗|啪)';
+    const WET_ORAL_SFX_JA_ATOM = '(?:ん?ちゅっ|ん?ちゅぱっ?|ん?ちゅぽっ?|ん?ちゅぅ+|ん?ちゅる+[っッ]*'
+        + '|ん?(?:ぢゅ|ヂュ)ぅ+'
+        + '|ちゅうう+|ん?チュッ|ん?チュパッ?|ん?チュゥ+'
+        + '|ちゅ(?=[…·.…!！?？、,\\s]|$)'
+        + '|ん?(?:ぢゅ|じゅ|ジュ)(?:っ|ぼっ?|ぽっ?|ぷっ?|る+[っッ]*|ぅ+)+'
+        + '|ず(?:ぢゅ|じゅ)(?:ぼ|ぢゅぼ|じゅぼ)*[っッ]?'
+        + '|くちゅ[うっんン]+|ぐちゅ[うっんン]+|ごく[んっンッ]+|ゴク[リッんン]+|ごっくん|ゴックン'
+        + '|コクン|こくん|ぺろっ?|れろっ?|んぐっ?|ぷっ|あむっ|んむっ|んむぎゅ'
+        + '|んにゅごっきゅ|ぶっつぅ+|ぬぷっ?)';
+    const AV_MISC_SFX_JA_ONLY = /^(?:[グぐ][ルる]+[っッ]*|ブフッ?|ロー+|トゥゥ*|チラッ|ぱっ)[。．.!！?？…\s]*$/u;
+
+    function isWetOralSfxOnlyZh(text = '') {
+        const stripped = stripWetOralSfxFromZh(text).text;
+        if (String(text || '').trim() && !String(stripped || '').trim()) return true;
+        const t = String(stripped || text || '').trim();
+        if (!t) return Boolean(String(text || '').trim());
+        if (/^(?:[啧吸舔、,，.。…\s—\-]|吸吸*)+$/u.test(t) && /[啧吸舔]/.test(t)) return true;
+        if (/^(?:舔了舔|舔一下)[。．.!！?？…\s]*$/u.test(t)) return true;
+        if (/^(?:Nyu|Kyu|nyu|kyu)(?:[\s、,]+(?:Nyu|Kyu|nyu|kyu))*[!！?？…\s]*$/i.test(t)) return true;
+        if (/^(?:咕噜+|噜…?噜*)[!！?？…\s]*$/u.test(String(text || '').trim())) return true;
+        return false;
+    }
+
+    function isWetOralSfxOnlyJa(text = '') {
+        const t = String(text || '').trim();
+        if (!t) return false;
+        if (AV_MISC_SFX_JA_ONLY.test(t)) return true;
+        const re = new RegExp(
+            '^[\\s…·.•\\-—_~～。．.!！?？、,，\\[\\]()（）【】「」『』]*'
+            + `(?:${WET_ORAL_SFX_JA_ATOM}[\\s、,．.…!！?？ー〜～・･]*)+$`,
+            'u',
+        );
+        return re.test(t);
+    }
+
+    function stripWetOralSfxFromZh(text = '') {
+        let s = String(text ?? '');
+        if (!s) return { text: '', changed: false };
+        const before = s;
+        if (/^(?:咕噜+|噜…?噜*|偷瞄)[!！?？…\s]*$/u.test(s.trim())) {
+            return { text: '', changed: true };
+        }
+        // Moan+wet compounds: keep the moan (嗯啾/嗯咕/嗯—噗 → 嗯)
+        s = s.replace(/([哈啊嗯唔呼])(?:啾|咕|—?噗)/gu, '$1');
+        s = s.replace(new RegExp(`(?:${WET_ORAL_SFX_ZH_ATOM})(?:[\\s、,，.。…!！?？—\\-]*)`, 'gu'), '');
+        s = s.replace(/(?:啧[、,，\s]*)?(?:吸[、,，.。…\s—\-]*){2,}/gu, '');
+        s = s.replace(/^(?:舔了舔|舔一下|偷瞄)[。．.!！?？…\s]*$/gu, '');
+        s = s.replace(/(?:舔了舔|舔一下)(?=[、,，.。…!！?？\s]*$)/gu, '');
+        s = s.replace(/\b(?:Nyu|Kyu|nyu|kyu)(?:\s+(?:Nyu|Kyu|nyu|kyu))*\b/gi, '');
+        s = s.replace(/[、,，]{2,}/g, '、');
+        s = s.replace(/[.…]{2,}/g, '…');
+        s = s.replace(/^[、,，.。…!！?？\s—\-]+/, '');
+        s = s.replace(/[、,，.。\s—\-]+$/, '');
+        s = s.replace(/\s{2,}/g, ' ').trim();
+        if (!s) {
+            const raw = String(before || '').trim();
+            if (/^(?:[啧吸舔、,，.。…\s—\-]|吸吸*)+$/u.test(raw) && /[啧吸舔]/.test(raw)) {
+                return { text: '', changed: true };
+            }
+            if (/^(?:舔了舔|舔一下|偷瞄)[。．.!！?？…\s]*$/u.test(raw)) {
+                return { text: '', changed: true };
+            }
+            if (/^(?:Nyu|Kyu|nyu|kyu)(?:[\s、,]+(?:Nyu|Kyu|nyu|kyu))*[!！?？…\s]*$/i.test(raw)) {
+                return { text: '', changed: true };
+            }
+        }
+        return { text: s, changed: s !== before };
+    }
+
+    function stripWetOralSfxFromJa(text = '') {
+        let s = String(text ?? '').trim();
+        if (!s) return { text: '', changed: false };
+        const before = s;
+        if (isWetOralSfxOnlyJa(s)) return { text: '', changed: true };
+        // Protect lexical kiss requests (ちゅーもして / チューして…)
+        const guards = [];
+        s = s.replace(/(?:ちゅ[ーう]+|チュー+)も?して[よね]?っ?|キスして[よね]?っ?/g, (m) => {
+            const key = `\uE000${guards.length}\uE001`;
+            guards.push(m);
+            return key;
+        });
+        s = s.replace(new RegExp(`(?:${WET_ORAL_SFX_JA_ATOM})[\\s、,．.…!！?？ー〜～・･]*`, 'gu'), '');
+        for (let i = 0; i < guards.length; i += 1) {
+            s = s.replace(`\uE000${i}\uE001`, guards[i]);
+        }
+        s = s.replace(/[、,]{2,}/g, '、').replace(/[.…]{2,}/g, '…');
+        s = s.replace(/^[、,．.…!！?？\s]+/, '').replace(/[、,．.\s]+$/, '').trim();
+        return { text: s, changed: s !== before };
+    }
+
+    /**
      * Mid-scene Whisper おはよう hallucinations → blank ZH 早上好.
      * Require explicit AV profile / NSFW prompt — faithfulTone alone must NOT
      * wipe real greetings (and undoes short-JA fallback fills).
@@ -412,6 +514,7 @@
     function correctZhDomainMistranslations(text, sourceText = '', options = {}) {
         let cur = String(text ?? '');
         const src = String(sourceText || '');
+        const rawZh = cur;
         const flags = [];
         if (!src) return { text: cur, changed: false, flags };
         // Allow empty / ellipsis ZH through — recovery rules (おかえり, synopsis wipe) need it.
@@ -424,6 +527,94 @@
         if (mtOpaque?.applyAdultSemanticFixes) {
             const adult = mtOpaque.applyAdultSemanticFixes(cur, src, mark);
             if (adult.changed) cur = adult.text;
+        }
+
+        // OpenCC / font slip: 幺 → 么 in interrogatives
+        if (/[怎什那为]幺/.test(cur)) {
+            const next = cur.replace(/怎幺/g, '怎么').replace(/什幺/g, '什么')
+                .replace(/那幺/g, '那么').replace(/为幺/g, '为么');
+            if (next !== cur) {
+                cur = next;
+                mark('domain_term');
+            }
+        }
+
+        // Sakura invents anatomy not present in JA (ADN-798).
+        // Keep remaps from clinical ZH (男性生殖器/阴茎/大尺寸) even when JA ASR lost ちん.
+        const jaHasRod = /(?:ちん|チン|肉棒|おちん|イチモツ|竿|カチン|出かち)/.test(src);
+        const zhHadClinicalRod = /男性生殖器|生殖器|阴茎|大尺寸/.test(rawZh);
+        if (/肉棒/.test(cur) && !jaHasRod && !zhHadClinicalRod) {
+            const next = cur
+                .replace(/是爸爸的肉棒，所以/g, '是爸爸的，所以')
+                .replace(/爸爸的肉棒/g, '爸爸的')
+                .replace(/的肉棒/g, '的')
+                .replace(/肉棒/g, '');
+            if (next !== cur) {
+                cur = next.replace(/\s{2,}/g, ' ').trim();
+                mark('domain_hallucination');
+            }
+        }
+        if (/屁股/.test(cur) && !/(?:尻|お尻|ケツ|臀部)/.test(src)) {
+            const next = cur
+                .replace(/我的屁股吗/g, '我的吗')
+                .replace(/的屁股/g, '的')
+                .replace(/屁股/g, '');
+            if (next !== cur) {
+                cur = next.replace(/\s{2,}/g, ' ').replace(/吗？\s*怎/g, '吗？怎').trim();
+                mark('domain_hallucination');
+            }
+        }
+
+        // 綺麗 truncated / mis-glossed as 来吧 / 不过 / 好厉害
+        if (/綺麗|きれい|キれい/.test(src)) {
+            if (/^(?:来吧|好厉害|厉害)[。．.!！?？\s]*$/u.test(cur.trim())) {
+                cur = /ミカ|美[亜亞香]/.test(src) ? '好漂亮啊' : '好漂亮';
+                mark('domain_term');
+            } else if (/^不过[。．.!！?？\s]*$/u.test(cur.trim()) && /でも/.test(src)) {
+                cur = '不过，好漂亮';
+                mark('domain_term');
+            }
+        }
+
+        // いあちゅい / イッちゃう stubbed as 好厉害
+        if (
+            /(?:いあちゅい|イッちゃう|いっちゃう)/.test(src)
+            && /^(?:好厉害|厉害)[。．.!！?？\s]*$/u.test(cur.trim())
+            && textLen(src) <= 12
+        ) {
+            cur = '要去了';
+            mark('domain_term');
+        }
+
+        // Under-translated warm tongue / multi kinship
+        if (
+            /あったかい/.test(src)
+            && /(?:べろ|舌)/.test(src)
+            && textLen(cur) <= 4
+        ) {
+            cur = '好温暖的舌头';
+            mark('domain_term');
+        }
+        if (
+            /お父さん/.test(src)
+            && /兄さん/.test(src)
+            && /あったかい/.test(src)
+            && textLen(cur) <= 3
+        ) {
+            cur = /(?:べろ|舌)/.test(src)
+                ? '爸爸…哥哥…好温暖的舌头'
+                : '爸爸…哥哥…好温暖';
+            mark('domain_term');
+        }
+
+        // Moan ZH collapsed to「啊」while JA is multi-はあ — remap
+        if (
+            /^(?:啊|啊…|啊……)[!！?？\s]*$/u.test(cur.trim())
+            && /(?:はぁ|はあ|ハァ|はあっ)/.test(src)
+            && (src.match(/(?:はぁ|はあ|ハァ|はあっ)/g) || []).length >= 2
+        ) {
+            cur = /[!！]/.test(src) ? '哈啊——！' : '哈啊、哈啊';
+            mark('domain_term');
         }
 
         // Intro / disclaimer hallucinated into moans or inverted refusals
@@ -1381,9 +1572,12 @@
         cur = cur
             .replace(/[^\S\n]{2,}/g, ' ')
             .replace(/^[^\S\n]+|[^\S\n]+$/g, '')
-            .replace(/\s+([。．.！？!?…，,；;：:])/g, '$1')
-            .replace(/^[…⋅・.。～〜\s-]+|[…⋅・.。～〜\s-]+$/g, '')
-            .trim();
+            .replace(/\s+([。．.！？!?…，,；;：:])/g, '$1');
+        // Keep ellipsis on short moan residues (啊…… / 哈啊…); only trim name-strip debris.
+        if (!/^(?:哈啊?|啊+|嗯+|唔+|呼+|呜+|哦+|噢+)[…·.。]*$/u.test(cur.trim())) {
+            cur = cur.replace(/^[…⋅・.。～〜\s-]+|[…⋅・.。～〜\s-]+$/g, '');
+        }
+        cur = cur.trim();
         if (/^[…⋅・.\s。！？!?～〜\-'"，,]*$/.test(cur)) cur = '';
 
         return {
@@ -1724,7 +1918,11 @@
         if (/中に出して/.test(s) && textLen(s) <= 12) return '射在里面';
         if (/^(?:挿れて|入れて)$/.test(bare) && textLen(s) <= 6) return '进来';
         if (/もっと深く/.test(s) && textLen(s) <= 10) return '再深一点';
-        if (/ちゅ[ーう]|チュー|ちゅうして/.test(s) && textLen(s) <= 16) {
+        // Kiss requests (ちゅーもして / チューして); bare ちゅっ wet SFX is stripped elsewhere.
+        if (
+            (/(?:ちゅ[ーう]+|チュー+)も?して/.test(s) || /キスして/.test(s))
+            && textLen(s) <= 16
+        ) {
             return /もして/.test(s) ? '也亲亲我' : '亲一下';
         }
         if (/泣かないで/.test(s) && textLen(s) <= 12) return '别哭';
@@ -1755,12 +1953,16 @@
             return '喂，恰皮';
         }
         if (/ちょっと/.test(s) && /おちんちん|おはちんちん/.test(s) && textLen(s) <= 16) {
-            return '等等，鸡巴';
+            return OFIX.ochinchinWaitOkZh || '';
         }
         if (/^動かない[。．.!！]*$/u.test(bare) && textLen(s) <= 8) {
             return '不动';
         }
         if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.、，,\s♡]+$/.test(s)) {
+            const haaRuns = (s.match(/[はハはぁアァ][ぁァ]?[っッ]?/g) || []).length;
+            if (haaRuns >= 2 || /(?:はぁ|はあ|ハァ|はあっ)[、,\s…]*((?:はぁ|はあ|ハァ|はあっ)[、,\s…]*)+/.test(s)) {
+                return /[!！]/.test(s) ? '哈啊——！' : '哈啊、哈啊';
+            }
             if (/[はハ]/.test(s) && !/[あァぁあんン]/.test(s.replace(/[はハ]/g, ''))) {
                 return /[!！]/.test(s) ? '哈——！' : '哈啊';
             }
@@ -1770,6 +1972,19 @@
             if (/[うぅウゥ]/.test(s) && !/[あァぁ]/.test(s)) return '呜……';
             return /[!！]/.test(s) ? '啊——！' : '啊……';
         }
+        if (/(?:いあちゅい|イッちゃう|いっちゃう)/.test(s) && textLen(s) <= 12) {
+            return /[?？]/.test(s) ? '要去了吗？' : '要去了';
+        }
+        if (/綺麗|きれい|キれい/.test(s) && textLen(s) <= 14) {
+            if (/ミカ|美[亜亞香]/.test(s)) return '好漂亮啊';
+            return '好漂亮';
+        }
+        if (/あったかい/.test(s) && /べろ|舌/.test(s) && textLen(s) <= 24) {
+            return '好温暖的舌头';
+        }
+        if (/すごいよ/.test(s) && textLen(s) <= 20) {
+            return '好厉害';
+        }
         return null;
     }
 
@@ -1778,7 +1993,7 @@
         const cur = String(text || '').trim();
         const src = String(sourceText || '');
         if (!cur || !src) return { text: cur, changed: false };
-        if (!/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|好|好的|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
+        if (!/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|好|好的|好厉害|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|来吧[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
             // Trailing climax stub:「…啊，」after anatomy when JA has イッちゃう
             if (
                 /(?:啊[，,]|啊)$/.test(cur)
@@ -1914,14 +2129,36 @@
         const justifyOpts = { loopStrippedSource };
         const cueOpts = { ...options, justifyOpts };
 
-        const orphanStuck = polishOrphanStuckZh(cur, loopStrippedSource || sourceText);
+        // av_soft: drop wet/suck oral SFX (咕咚/啾…); keep moans (哈/啊/嗯)
+        let senseSource = String(loopStrippedSource || sourceText || '');
+        if (isAvSoftContext(options) && options.stripWetOralSfx !== false) {
+            const wetJa = stripWetOralSfxFromJa(senseSource);
+            if (wetJa.changed) {
+                senseSource = wetJa.text;
+                flags.push('wet_sfx_ja');
+            }
+            const wetZh = stripWetOralSfxFromZh(cur);
+            if (wetZh.changed) {
+                cur = wetZh.text;
+                changed = true;
+                flags.push('wet_sfx');
+            }
+            // Pure wet-SFX source → blank ZH (do not recover as 咕啾)
+            if (!String(senseSource || '').trim() && String(sourceText || '').trim()) {
+                cur = '';
+                changed = true;
+                if (!flags.includes('wet_sfx')) flags.push('wet_sfx');
+            }
+        }
+
+        const orphanStuck = polishOrphanStuckZh(cur, senseSource);
         if (orphanStuck.changed) {
             cur = orphanStuck.text;
             changed = true;
             flags.push('orphan_stuck_zh');
         }
 
-        const truncReact = polishTruncatedReactiveZh(cur, loopStrippedSource || sourceText);
+        const truncReact = polishTruncatedReactiveZh(cur, senseSource);
         if (truncReact.changed) {
             cur = truncReact.text;
             changed = true;
@@ -2088,15 +2325,35 @@
         }
 
         // Model refused / echoed JA / wrote «…» for clear adult dialogue → recover
-        const blankAdult = recoverBlankedAdultZh(cur, loopStrippedSource || sourceText, options);
+        // Skip when sense source was pure wet SFX (stripped to empty).
+        const blankAdult = String(senseSource || '').trim()
+            ? recoverBlankedAdultZh(cur, senseSource, options)
+            : { text: cur, changed: false };
         if (blankAdult.changed) {
             cur = blankAdult.text;
             changed = true;
             flags.push('blank_adult_recover');
         }
 
-        // Never leave a dialogue source with a totally empty ZH (engine/post may drop the cue)
-        if (!String(cur).trim() && String(sourceText || '').trim()) {
+        // After name/pollution passes: restore lexical residue kept in JA after wet-SFX strip
+        if (
+            isAvSoftContext(options)
+            && /すごいよ/.test(senseSource)
+            && /哈啊/.test(cur)
+            && !/厉害|好厉/.test(cur)
+        ) {
+            cur = `${String(cur).trim()}，好厉害`;
+            changed = true;
+            flags.push('wet_sfx_recover');
+        }
+
+        // Never leave a dialogue source with a totally empty ZH (engine/post may drop the cue).
+        // Wet-SFX-only sources stay as «…» timing placeholders.
+        if (!String(cur).trim() && String(senseSource || sourceText || '').trim()) {
+            cur = '…';
+            changed = true;
+            flags.push('empty_placeholder');
+        } else if (!String(cur).trim() && flags.includes('wet_sfx')) {
             cur = '…';
             changed = true;
             flags.push('empty_placeholder');
@@ -2380,6 +2637,10 @@
         isMoanOrSfxHeavyJa,
         isAvSoftContext,
         shouldBlankFakeGreeting,
+        isWetOralSfxOnlyZh,
+        isWetOralSfxOnlyJa,
+        stripWetOralSfxFromZh,
+        stripWetOralSfxFromJa,
         textLen,
         get JA_ASR_DOMAIN_FIXES() { return JA_ASR_DOMAIN_FIXES; },
         get JA_ASR_DOMAIN_FIX_PAIRS() { return JA_ASR_DOMAIN_FIX_PAIRS; },

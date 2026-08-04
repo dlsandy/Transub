@@ -247,14 +247,28 @@ function copyCudaLibsFromLocalRuntime(destUnpacked) {
 }
 
 function createEditionZip(outZip, unpackedDir) {
+    const { walkFiles, normalizeRelPath } = require('../electron/update-manifest-core');
+    const rels = walkFiles(unpackedDir, {
+        ignoreRel: (rel) => {
+            const p = normalizeRelPath(rel).toLowerCase();
+            return p.endsWith('.__ts_preserve__') || p.includes('.__ts_preserve__/');
+        },
+    });
+    if (!rels.length) throw new Error(`no files under ${unpackedDir}`);
     if (fs.existsSync(outZip)) fs.unlinkSync(outZip);
-    const r = spawnSync(
-        'tar',
-        ['-a', '-c', '-f', outZip, '-C', unpackedDir, '.'],
-        { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
-    );
-    if (r.status !== 0) {
-        throw new Error(`edition zip failed: ${r.stderr || r.stdout || r.status}`);
+    const listFile = `${outZip}.filelist.txt`;
+    fs.writeFileSync(listFile, `${rels.join('\n')}\n`, 'utf8');
+    try {
+        const r = spawnSync(
+            'tar',
+            ['-a', '-c', '-f', outZip, '-C', unpackedDir, '-T', listFile],
+            { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+        );
+        if (r.status !== 0) {
+            throw new Error(`edition zip failed: ${r.stderr || r.stdout || r.status}`);
+        }
+    } finally {
+        try { fs.unlinkSync(listFile); } catch { /* ignore */ }
     }
 }
 

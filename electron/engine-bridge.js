@@ -100,7 +100,7 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         hubId: 'deepdml/faster-whisper-large-v3-turbo-ct2',
         kind: 'asr',
         name: 'Whisper large-v3-turbo',
-        note: '质量与速度较均衡；推荐高质量档与多语种识别',
+        note: '可选 · 质量与速度较均衡；多语种高精度识别（非默认安装）',
     },
     'whisper-large-v3': {
         hubId: 'Systran/faster-whisper-large-v3',
@@ -113,6 +113,36 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         kind: 'asr',
         name: 'Whisper JA 1.5B（日语微调）',
         note: '日语微调 ASR；适合日语影视、轻声与口语内容',
+    },
+    'anime-whisper': {
+        hubId: 'quantumcookie/anime-whisper-ct2-fp16',
+        kind: 'asr',
+        name: 'Anime Whisper（动画/Galgame）',
+        note: 'kotoba-v2.0 动画演技微调；软声/NSFW 更稳；引擎自动禁 prompt 并分窗转写（避免全片崩溃）',
+    },
+    'kotoba-whisper-v2.0-faster': {
+        hubId: 'kotoba-tech/kotoba-whisper-v2.0-faster',
+        kind: 'asr',
+        name: 'Kotoba Whisper v2.0（日语）',
+        note: 'kotoba 日语蒸馏 Whisper；通用日语、段级时间戳可用；偏广播域，非软 AV 特化',
+    },
+    'reazonspeech-k2': {
+        hubId: 'reazon-research/reazonspeech-k2-v2',
+        kind: 'asr',
+        name: 'ReazonSpeech K2（日语）',
+        note: 'Zipformer/sherpa-onnx；自带 subword 时间戳；≤25s 分窗；偏广播域',
+    },
+    'qwen3-asr-0.6b': {
+        hubId: 'Qwen/Qwen3-ASR-0.6B',
+        kind: 'asr',
+        name: 'Qwen3-ASR 0.6B',
+        note: 'Qwen3 专用 ASR；下载时附带 ForcedAligner 做时间戳；依赖较重、长片较慢',
+    },
+    'qwen3-forced-aligner-0.6b': {
+        hubId: 'Qwen/Qwen3-ForcedAligner-0.6B',
+        kind: 'asr',
+        name: 'Qwen3 ForcedAligner 0.6B',
+        note: '为 Qwen3-ASR 提供词/字级时间戳（随 qwen3-asr-0.6b 自动下载）',
     },
     'opus-mt-en-zh': {
         hubId: 'Helsinki-NLP/opus-mt-en-zh',
@@ -193,7 +223,8 @@ const ENGINE_MODEL_HUB_FALLBACK = {
 const ENGINE_PROFILE_MODELS = {
     speed: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
     balanced: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
-    quality: ['whisper-large-v3-turbo', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'silero-vad', 'whisperseg-asmr'],
+    // quality no longer auto-installs whisper-large-v3-turbo (optional download).
+    quality: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
 };
 
 /**
@@ -237,6 +268,87 @@ const GPU_MANUAL_PACKAGES = [
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b9/75/70c05b2f3ed5be3bb30b7102b6eb78e100da4bbf6944fd6725c012831cab/nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl',
     },
 ];
+
+/**
+ * WhisperSeg onnxruntime-gpu — mutually exclusive with CPU ``onnxruntime``.
+ * CUDA 12 drivers → 1.21.x (<1.27); CUDA 13 drivers → >=1.27.
+ */
+const ORT_GPU_MANUAL_PACKAGES = {
+    cuda12: {
+        id: 'onnxruntime-gpu',
+        name: 'onnxruntime-gpu（WhisperSeg · CUDA 12）',
+        target: 'cuda12',
+        requirement: 'onnxruntime-gpu>=1.21,<1.27',
+        fileName: 'onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/dc/ad/a9199df9350b5fee6b7377d3af03ed45a2ef162feb10679b0bc10f270515/onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/dc/ad/a9199df9350b5fee6b7377d3af03ed45a2ef162feb10679b0bc10f270515/onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
+        group: 'WhisperSeg / onnxruntime-gpu',
+        note: '灵敏检出 GPU；与 CPU 版 onnxruntime 互斥，装前请先卸载后者',
+    },
+    cuda13: {
+        id: 'onnxruntime-gpu',
+        name: 'onnxruntime-gpu（WhisperSeg · CUDA 13）',
+        target: 'cuda13',
+        requirement: 'onnxruntime-gpu>=1.27',
+        fileName: 'onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/e5/9e/92554acd080db68f549fd0e653fcf51a9dea7cb31e70c497714a9f2310fc/onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e5/9e/92554acd080db68f549fd0e653fcf51a9dea7cb31e70c497714a9f2310fc/onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
+        group: 'WhisperSeg / onnxruntime-gpu',
+        note: '灵敏检出 GPU（驱动 CUDA 13+）；与 CPU 版 onnxruntime 互斥',
+    },
+};
+
+/** Best-effort: nvidia-smi CUDA major for picking the ORT GPU wheel. */
+function detectDriverCudaMajorQuick() {
+    try {
+        const { execFileSync } = require('child_process');
+        const out = execFileSync('nvidia-smi', [], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 4000,
+        });
+        const m = String(out || '').match(/CUDA\s+(?:UMD\s+)?Version:\s*(\d+)\.(\d+)/i);
+        if (m) return Number(m[1]) || 0;
+    } catch (_) { /* ignore */ }
+    return 0;
+}
+
+function resolveOrtGpuManualPackage(payload = {}) {
+    const desired = String(
+        payload.ortGpuDesiredTarget
+        || payload.ortGpuTarget
+        || '',
+    ).trim().toLowerCase();
+    if (desired === 'cuda13' || desired === 'cuda12') {
+        return ORT_GPU_MANUAL_PACKAGES[desired];
+    }
+    const req = String(payload.ortGpuRequirement || '').trim();
+    // Prefer explicit upper bound (CUDA 12 pin) over ">=1.27" substring matches.
+    if (/<\s*1\.27/.test(req)) {
+        return ORT_GPU_MANUAL_PACKAGES.cuda12;
+    }
+    if (/>=\s*1\.27/.test(req)) {
+        return ORT_GPU_MANUAL_PACKAGES.cuda13;
+    }
+    const major = detectDriverCudaMajorQuick();
+    if (major >= 13) return ORT_GPU_MANUAL_PACKAGES.cuda13;
+    return ORT_GPU_MANUAL_PACKAGES.cuda12;
+}
+
+function mapGpuManualItem(pkg, { group = 'GPU 组件', primary = false } = {}) {
+    return {
+        id: pkg.id,
+        name: pkg.name,
+        kind: 'gpu',
+        group: pkg.group || group,
+        fileName: pkg.fileName,
+        officialUrl: pkg.officialUrl,
+        mirrorUrl: pkg.mirrorUrl,
+        defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
+        note: pkg.note || pkg.fileName || 'pip 包（whl）· 直链下载',
+        primary: !!primary,
+    };
+}
 
 /** SenseVoice extras (torch / torchaudio / funasr / numpy) — direct .whl links.
  * numpy must be <2.5 (numba/librosa requirement); 2.5+ forces numba source builds.
@@ -411,26 +523,46 @@ async function buildEngineDownloadInfo(payload = {}) {
         const pipPrefix = runtimePy
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
+        const ortPkg = resolveOrtGpuManualPackage(payload || {});
+        const ortOnly = payload?.ortOnly === true
+            || (payload?.asrGpuReady === true && payload?.ortGpuCuda === false);
+        // Prefer the driver-matched ORT wheel first — ASR/CT2 cuBLAS is often
+        // already ready while WhisperSeg still needs onnxruntime-gpu.
+        const ortItem = mapGpuManualItem(ortPkg, {
+            group: 'WhisperSeg / onnxruntime-gpu',
+            primary: true,
+        });
+        // Also offer the alternate pin so CUDA 13 drivers can fall back to
+        // CUDA 12 ORT when cu13 extras are unavailable.
+        const altTarget = ortPkg.target === 'cuda13' ? 'cuda12' : 'cuda13';
+        const altPkg = ORT_GPU_MANUAL_PACKAGES[altTarget];
+        const altItem = mapGpuManualItem({
+            ...altPkg,
+            name: `${altPkg.name}（备选）`,
+        }, { group: 'WhisperSeg / onnxruntime-gpu（备选）' });
+        const cudaItems = GPU_MANUAL_PACKAGES.map((pkg) => mapGpuManualItem(pkg));
+        const items = ortOnly
+            ? [ortItem, altItem]
+            : [ortItem, altItem, ...cudaItems];
+        const ortPip = ortPkg.requirement || 'onnxruntime-gpu>=1.27';
+        const cudaPip = 'nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12';
+        const pipPkgs = ortOnly ? `"${ortPip}"` : `${cudaPip} "${ortPip}"`;
         return {
             ok: true,
             info: {
                 kind: 'gpu',
-                title: '下载 GPU 支持',
+                title: ortOnly ? '下载 WhisperSeg GPU（onnxruntime-gpu）' : '下载 GPU 支持',
                 folder,
-                pipCommand: `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12`,
-                hint: '优先阿里云 PyPI（失败自动回退华为云 / 清华）。也可点下方「下载文件」直接获取 win_amd64 .whl，再选本地文件安装。',
-                wheelHint: '每个组件已给出唯一 .whl 直链（win_amd64）。请全部下载后多选安装。',
-                items: GPU_MANUAL_PACKAGES.map((pkg) => ({
-                    id: pkg.id,
-                    name: pkg.name,
-                    kind: 'gpu',
-                    group: 'GPU 组件',
-                    fileName: pkg.fileName,
-                    officialUrl: pkg.officialUrl,
-                    mirrorUrl: pkg.mirrorUrl,
-                    defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
-                    note: pkg.fileName || 'pip 包（whl）· 直链下载',
-                })),
+                pipCommand: `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com ${pipPkgs}`,
+                hint: ortOnly
+                    ? `ASR/CTranslate2 已就绪；请安装 ${ortPip}（与 CPU 版 onnxruntime 互斥）。优先点下方「下载文件」，或复制 pip 命令。`
+                    : '优先阿里云 PyPI（失败自动回退华为云 / 清华）。WhisperSeg 灵敏检出还需 onnxruntime-gpu（见清单首项）。也可点下方「下载文件」获取 win_amd64 .whl。',
+                wheelHint: ortOnly
+                    ? `请下载 ${ortPkg.fileName} 后本地安装。若已装 CPU 版 onnxruntime，请先卸载再装 GPU 版。`
+                    : '请先装 WhisperSeg / onnxruntime-gpu，再按需补齐下方 NVIDIA CUDA 12 组件。',
+                items,
+                ortGpuRequirement: ortPkg.requirement,
+                ortGpuTarget: ortPkg.target,
             },
         };
     }
@@ -2271,6 +2403,13 @@ async function runEngineBatchLocked({
                 glossary: glossaryPairs,
                 contentProfile: fileMerged.contentProfile || fileMerged.senseProfile || undefined,
                 senseProfile: fileMerged.senseProfile || fileMerged.contentProfile || undefined,
+                ...(fileMerged.timingAlign != null
+                    ? { timingAlign: fileMerged.timingAlign }
+                    : {}),
+                ...(fileMerged.timingAlignModel != null
+                    && String(fileMerged.timingAlignModel).trim() !== ''
+                    ? { timingAlignModel: String(fileMerged.timingAlignModel).trim() }
+                    : {}),
                 // LLM MT: skip built-in JA name lexicon protect (__GLOSS*__),
                 // which harms Sakura/smart quality vs the subtitle editor path.
                 ...(useExternalMt ? { builtinNames: false } : {}),
@@ -3696,6 +3835,37 @@ function setupEngineBridge(api, {
                 await sleep(600);
             }
 
+            // onnxruntime (CPU) and onnxruntime-gpu are mutually exclusive.
+            const hasOrtGpuWhl = checked.paths.some((p) => /onnxruntime[_-]gpu/i.test(path.basename(p)));
+            if (hasOrtGpuWhl) {
+                emit({
+                    phase: 'progress',
+                    message: '正在卸载 CPU 版 onnxruntime（与 GPU 版互斥）…',
+                    pct: 5,
+                });
+                try {
+                    await new Promise((resolve) => {
+                        const child = spawn(
+                            pythonPath,
+                            ['-m', 'pip', 'uninstall', '-y', 'onnxruntime'],
+                            { windowsHide: true, stdio: 'ignore' },
+                        );
+                        const t = setTimeout(() => {
+                            try { child.kill(); } catch (_) { /* ignore */ }
+                            resolve();
+                        }, 60_000);
+                        child.on('close', () => {
+                            clearTimeout(t);
+                            resolve();
+                        });
+                        child.on('error', () => {
+                            clearTimeout(t);
+                            resolve();
+                        });
+                    });
+                } catch (_) { /* ignore */ }
+            }
+
             emit({
                 phase: 'progress',
                 message: `正在本地安装 ${checked.paths.length} 个 wheel…`,
@@ -4148,7 +4318,7 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             const isSenseVoice = /sensevoice/i.test(primaryAsr);
             // SenseVoice 对短窗/AV 常空：有必要时再换 Whisper 试一次（未安装则原样失败）
             const asrCandidates = isSenseVoice
-                ? [primaryAsr, 'whisper-large-v3-turbo', 'whisper-tiny']
+                ? [primaryAsr, 'whisper-tiny', 'whisper-large-v3-turbo']
                 : [primaryAsr];
 
             const isEmptyAsrFail = (res) => {
@@ -4190,6 +4360,13 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                     }, { entitled: false }),
                     contentProfile: options.contentProfile || options.senseProfile || undefined,
                     senseProfile: options.senseProfile || options.contentProfile || undefined,
+                    ...(options.timingAlign != null
+                        ? { timingAlign: options.timingAlign }
+                        : {}),
+                    ...(options.timingAlignModel != null
+                        && String(options.timingAlignModel).trim() !== ''
+                        ? { timingAlignModel: String(options.timingAlignModel).trim() }
+                        : {}),
                     castNames: options.castNames || options.cast_names || undefined,
                     releaseGpuAfter: true,
                     sync: false,

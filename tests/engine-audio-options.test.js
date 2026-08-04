@@ -193,6 +193,18 @@ describe('engine-audio-options', () => {
         assert.strictEqual(vad.model, 'silero-vad');
     });
 
+    it('legacy silero alias normalizes to silero-vad for Whisper', () => {
+        const vad = buildVadJobOptions({
+            language: 'ja',
+            engineAsrModel: 'anime-whisper',
+            task: 'translate',
+            engineVadModel: 'silero',
+            vadSensitive: false,
+        });
+        assert.strictEqual(vad.sensitive, false);
+        assert.strictEqual(vad.model, 'silero-vad');
+    });
+
     it('SenseVoice never sends whisperseg even when sensitive is checked', () => {
         const vad = buildVadJobOptions({
             engineAsrModel: 'sensevoice-small',

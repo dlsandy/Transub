@@ -975,6 +975,256 @@ describe('mt-sanitize-core', () => {
         }
     });
 
+    it('FNS/HODV residuals: grandpa halluc / private-part / heixiu / sefri false-pos', () => {
+        const grandpa = sanitize.correctZhDomainMistranslations(FIX.ikuGrandpaBadZh, FIX.ikuGrandpaJa);
+        assert.ok(grandpa.changed);
+        assert.strictEqual(grandpa.text, FIX.ikuGrandpaOkZh);
+
+        const priv = sanitize.correctZhDomainMistranslations(FIX.omankoPrivateBadZh, FIX.omankoPrivateJa);
+        assert.ok(priv.changed);
+        assert.strictEqual(priv.text, FIX.omankoPrivateOkZh);
+
+        const heixiu = sanitize.correctZhDomainMistranslations(FIX.heixiuLineBadZh, FIX.heixiuLineJa);
+        assert.ok(heixiu.changed);
+        assert.strictEqual(heixiu.text, FIX.heixiuLineOkZh);
+
+        const below = sanitize.correctZhDomainMistranslations(FIX.belowThingBadZh, 'おちんぽ舐めて');
+        assert.ok(below.changed);
+        assert.strictEqual(below.text, FIX.belowThingOkZh);
+
+        const sefriFalse = sanitize.correctZhDomainMistranslations(FIX.sefriFalseZh, FIX.sefriFalseJa);
+        assert.ok(!sefriFalse.changed || !String(sefriFalse.text).includes('炮友'));
+        assert.strictEqual(sefriFalse.text, FIX.sefriFalseZh);
+
+        const erect = sanitize.correctZhDomainMistranslations(FIX.erectShootBadZh, FIX.erectShootJa);
+        assert.ok(erect.changed);
+        assert.strictEqual(erect.text, FIX.erectShootOkZh);
+
+        const milk = sanitize.correctZhDomainMistranslations(FIX.milkOnlyBadZh, FIX.milkOnlyJa);
+        assert.ok(milk.changed);
+        assert.strictEqual(milk.text, FIX.milkOnlyOkZh);
+
+        const oji = sanitize.correctJaAsrDomainMishears(FIX.ojiChinAsrJa);
+        assert.ok(oji.changed);
+        assert.strictEqual(oji.text, FIX.ojiChinAsrFixed);
+
+        // existing sefri truncation still works
+        const sefri = sanitize.correctZhDomainMistranslations(FIX.sefriLineBadZh, FIX.sefriLineJa);
+        assert.ok(sefri.changed);
+        assert.strictEqual(sefri.text, FIX.sefriLineOkZh);
+    });
+
+    it('ADN-791: itchau-start / iku-done / penis / irete / jugyou ASR / dechai', () => {
+        const itchau = sanitize.correctZhDomainMistranslations(FIX.itchaunStartBadZh, FIX.itchaunStartJa);
+        assert.ok(itchau.changed);
+        assert.strictEqual(itchau.text, FIX.itchaunStartOkZh);
+
+        const done = sanitize.correctZhDomainMistranslations(FIX.ikuDoneBadZh, FIX.ikuDoneJa);
+        assert.ok(done.changed);
+        assert.strictEqual(done.text, FIX.ikuDoneOkZh);
+
+        const penis = sanitize.correctZhDomainMistranslations(FIX.chinPenisBadZh, FIX.chinPenisJa);
+        assert.ok(penis.changed);
+        assert.strictEqual(penis.text, FIX.chinPenisOkZh);
+
+        const irete = sanitize.correctZhDomainMistranslations(FIX.iretePleaseBadZh, FIX.iretePleaseJa);
+        assert.ok(irete.changed);
+        assert.strictEqual(irete.text, FIX.iretePleaseOkZh);
+
+        const jugyouAsr = sanitize.correctJaAsrDomainMishears(FIX.jugyouAsrJa);
+        assert.ok(jugyouAsr.changed);
+        assert.strictEqual(jugyouAsr.text, FIX.jugyouAsrFixed);
+        const jugyou = sanitize.correctZhDomainMistranslations(FIX.jugyouBadZh, jugyouAsr.text);
+        assert.ok(jugyou.changed);
+        assert.strictEqual(jugyou.text, FIX.jugyouOkZh);
+
+        const dechaiAsr = sanitize.correctJaAsrDomainMishears(FIX.dechaiJa);
+        assert.ok(dechaiAsr.changed);
+        assert.strictEqual(dechaiAsr.text, FIX.dechaiFixed);
+        const dechai = sanitize.correctZhDomainMistranslations(FIX.dechaiBadZh, dechaiAsr.text);
+        assert.ok(dechai.changed);
+        assert.strictEqual(dechai.text, FIX.dechaiOkZh);
+
+        const kuchun = sanitize.sanitizeMtCueText('…', FIX.kuchunBlankJa, { contentProfile: 'av_soft' });
+        assert.ok(kuchun.flags.includes('wet_sfx') || kuchun.flags.includes('wet_sfx_ja'));
+        assert.ok(kuchun.text === '…' || kuchun.text === '');
+    });
+
+    it('ADN-798: Sakura trunc / anatomy halluc / wet SFX / moan remap', () => {
+        const kirei = sanitize.sanitizeMtCueText('来吧', 'キれいだよ、ミカ…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/漂亮/.test(kirei.text));
+
+        const demo = sanitize.sanitizeMtCueText('不过', 'でも、綺麗だよ。', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/漂亮/.test(demo.text));
+
+        const sugokirei = sanitize.sanitizeMtCueText('好厉害', 'すごきれいだ。', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/漂亮/.test(sugokirei.text));
+
+        const meat = sanitize.sanitizeMtCueText(
+            '是爸爸的肉棒，所以没关系的',
+            'お父さんのだからいいんですよ…そんな…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(!/肉棒/.test(meat.text));
+        assert.ok(/爸爸/.test(meat.text));
+
+        const hip = sanitize.sanitizeMtCueText(
+            '这次是…我的屁股吗？ 怎幺了？',
+            '今度は私の…気持ちいいですか?何を…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(!/屁股/.test(hip.text));
+        assert.ok(/什么|怎么/.test(hip.text));
+
+        const iachu = sanitize.sanitizeMtCueText('好厉害', 'いっ、いあちゅい', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/要去了/.test(iachu.text));
+
+        const moan = sanitize.sanitizeMtCueText('啊', 'はぁ、はぁ、はぁ…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/哈啊/.test(moan.text));
+
+        const wetMix = sanitize.sanitizeMtCueText(
+            '哈啊，哈啊',
+            'はあっ、はあっ…すごいよ、ちゅるるっ',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(/好厉害/.test(wetMix.text));
+        assert.ok(!/啾|噜/.test(wetMix.text));
+
+        const growl = sanitize.sanitizeMtCueText('咕噜噜噜', 'グルルル…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(growl.text === '…' || growl.text === '');
+    });
+
+    it('av_soft strips wet oral SFX but keeps moans', () => {
+        const drop = sanitize.sanitizeMtCueText('咕咚、咕咚…咕咚', '…ごくっ、ごくっ…ごくっ', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(drop.flags.includes('wet_sfx') || drop.flags.includes('wet_sfx_ja'));
+        assert.ok(drop.text === '…' || drop.text === '');
+
+        const chuu = sanitize.sanitizeMtCueText('啾、啾、啾吧、啾', '…ちゅっ、ちゅっ、ちゅぱっ、ちゅっ', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(chuu.flags.includes('wet_sfx'));
+        assert.ok(chuu.text === '…' || chuu.text === '');
+
+        const mixed = sanitize.sanitizeMtCueText('呼…啾…哈', 'ふぅ…ちゅっ…はぁ…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(mixed.flags.includes('wet_sfx'));
+        assert.ok(!/啾/.test(mixed.text));
+        assert.ok(/呼/.test(mixed.text) && /哈/.test(mixed.text));
+
+        const moan = sanitize.sanitizeMtCueText('哈…哈…那…啊…哈', 'はぁ…はぁ…た…ぁ…はぁ…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(!moan.flags.includes('wet_sfx'));
+        assert.ok(/哈/.test(moan.text));
+
+        const kissVerb = sanitize.stripWetOralSfxFromJa('ちゅうして');
+        assert.strictEqual(kissVerb.changed, false);
+        assert.strictEqual(kissVerb.text, 'ちゅうして');
+    });
+
+    it('MIDA-762: male-genital / dekachin-size / kintama-epididymis / porchio', () => {
+        const genital = sanitize.correctZhDomainMistranslations(FIX.maleGenitalBadZh, FIX.maleGenitalJa);
+        assert.ok(genital.changed);
+        assert.strictEqual(genital.text, FIX.maleGenitalOkZh);
+
+        const deka = sanitize.correctZhDomainMistranslations(FIX.dekaSizeBadZh, FIX.dekaSizeJa);
+        assert.ok(deka.changed);
+        assert.strictEqual(deka.text, FIX.dekaSizeOkZh);
+
+        const kin = sanitize.correctZhDomainMistranslations(FIX.kintamaEpiBadZh, FIX.kintamaEpiJa);
+        assert.ok(kin.changed);
+        assert.strictEqual(kin.text, FIX.kintamaEpiOkZh);
+
+        const porchio = sanitize.correctZhDomainMistranslations(FIX.porchioBadZh, FIX.porchioLineJa);
+        assert.ok(porchio.changed);
+        assert.strictEqual(porchio.text, FIX.porchioOkZh);
+
+        const cue = sanitize.sanitizeMtCueText(
+            '摩擦男性生殖器感觉舒服吗？',
+            'おちんぽをこする気持ちいいんですか?',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(cue.changed);
+        assert.ok(cue.text.includes('肉棒'));
+        assert.ok(!cue.text.includes('生殖器'));
+
+        // Compound clinical MT without ochin JA (ASR garbage cue)
+        const compound = sanitize.correctZhDomainMistranslations(
+            FIX.compoundGenitalBadZh,
+            'っぱいさこつりつけていいこれ',
+        );
+        assert.ok(compound.changed);
+        assert.strictEqual(compound.text, FIX.compoundGenitalOkZh);
+
+        // Truncated カチン ASR tail
+        const kachin = sanitize.correctZhDomainMistranslations(
+            FIX.kachinGenitalBadZh,
+            FIX.kachinGenitalJa,
+        );
+        assert.ok(kachin.changed);
+        assert.strictEqual(kachin.text, FIX.kachinGenitalOkZh);
+
+        // おまんこ →「阴茎」gender-flip
+        const omanko = sanitize.correctZhDomainMistranslations(
+            FIX.omankoPenisBadZh,
+            FIX.omankoPenisJa,
+        );
+        assert.ok(omanko.changed);
+        assert.strictEqual(omanko.text, FIX.omankoPenisOkZh);
+
+        // Dual-phrase collapse: 大尺寸的男性生殖器 → 大肉棒 (not 大肉棒的肉棒)
+        const dual = sanitize.sanitizeMtCueText(
+            '这大尺寸的男性生殖器进去会怎么样？',
+            'この大きいおちんちんが入ったらどうなっちゃう?',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(dual.changed);
+        assert.strictEqual(dual.text, '这大肉棒进去会怎么样？');
+    });
+
+    it('keeps clinical 肉棒 remaps without reopening ADN-798 hallucination strip', () => {
+        // ADN-798: Sakura invents 肉棒 with no JA rod cue → strip
+        const halluc = sanitize.sanitizeMtCueText(
+            '是爸爸的肉棒，所以没关系的',
+            'お父さんのだからいいんですよ…そんな…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(!/肉棒/.test(halluc.text));
+        assert.ok(/爸爸/.test(halluc.text));
+
+        // MIDA-762: clinical ZH → 肉棒 must survive even when JA ASR lost ちん
+        const clinical = sanitize.correctZhDomainMistranslations(
+            FIX.compoundGenitalBadZh,
+            'っぱいさこつりつけていいこれ',
+        );
+        assert.ok(clinical.changed);
+        assert.strictEqual(clinical.text, FIX.compoundGenitalOkZh);
+        assert.ok(!clinical.flags.includes('domain_hallucination'));
+
+        const truncated = sanitize.sanitizeMtCueText(
+            FIX.kachinGenitalBadZh,
+            FIX.kachinGenitalJa,
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(truncated.changed);
+        assert.strictEqual(truncated.text, FIX.kachinGenitalOkZh);
+    });
+
     it('fixes ZH domain mistranslations conditioned on JA source', () => {
         const oil = sanitize.correctZhDomainMistranslations(
             '这是防晒油吗？',

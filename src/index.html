@@ -1385,6 +1385,9 @@
         <div class="flex items-center gap-2 shrink-0 ml-auto">
             <span id="headerSettingsDirtyBadge" class="hidden text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium" title="设置有未保存修改">设置未保存</span>
             <span id="jobStatusBadge" class="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">空闲</span>
+            <button type="button" id="openFeedbackBtn" class="px-3 py-1.5 border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-lg text-sm shrink-0" title="使用反馈">
+                <i class="fa fa-comment-o mr-1 text-gray-400"></i>使用反馈
+            </button>
             <button type="button" id="openParamsBtn" class="px-3 py-1.5 border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-lg text-sm shrink-0">
                 <i class="fa fa-cog mr-1 text-gray-400"></i>设置
             </button>
@@ -3236,7 +3239,10 @@
             <div class="px-4 py-3 border-b border-gray-100">
                 <h2 id="batchSummaryTitle" class="text-base font-semibold text-gray-900">任务完成</h2>
             </div>
-            <p id="batchSummaryBody" class="px-4 py-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed"></p>
+            <div class="px-4 py-4 space-y-3">
+                <p id="batchSummaryBody" class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed"></p>
+                <p id="batchSummaryElapsed" class="hidden text-sm text-gray-500 tabular-nums"></p>
+            </div>
             <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80">
                 <button type="button" id="batchSummarySecondaryBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">关闭</button>
                 <button type="button" id="batchSummaryPrimaryBtn" class="hidden px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">确定</button>

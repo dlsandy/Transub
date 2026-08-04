@@ -173,9 +173,30 @@ async function runSakuraTranslate(payload = {}) {
     }, payload, () => runSakuraTranslateBody(payload));
 }
 
+/**
+ * Share Pro TDP D01 (+ ASR name-loop strip) with Sakura before inference.
+ * Engine external-MT already preprocesses; standalone/editor Sakura needs this too.
+ */
+function preprocessCuesForSakura(cues) {
+    let list = Array.isArray(cues) ? cues : [];
+    try {
+        const jaNames = require('../src/js/ja-person-names-core');
+        if (typeof jaNames.stripAsrHallucinationLoopsInCues === 'function') {
+            list = jaNames.stripAsrHallucinationLoopsInCues(list).cues;
+        }
+    } catch { /* optional */ }
+    try {
+        const mtSanitize = require('../src/js/mt-sanitize-core');
+        if (typeof mtSanitize.correctJaAsrDomainMishearsInCues === 'function') {
+            list = mtSanitize.correctJaAsrDomainMishearsInCues(list).cues;
+        }
+    } catch { /* optional */ }
+    return list;
+}
+
 async function runSakuraTranslateBody(payload = {}) {
     const p = enrichSakuraNsfwOptions(asPlainObject(payload));
-    const cues = core.normalizeCueList(p.cues);
+    const cues = preprocessCuesForSakura(core.normalizeCueList(p.cues));
     if (!cues.length) {
         return { ok: true, cues: [], skipped: true, summary: '无字幕条目' };
     }
@@ -678,4 +699,5 @@ module.exports = {
     sakuraTranslateSubtitleFile,
     cancelSakuraTranslate,
     setupSakuraTranslateBridge,
+    preprocessCuesForSakura,
 };

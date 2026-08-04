@@ -33,6 +33,18 @@ function normalizeEngineBackend(value) {
     return 'transub';
 }
 
+/**
+ * Canonical VAD catalog id. Legacy preset/API alias `silero` → `silero-vad`
+ * (faster-whisper built-in; always "installed", never a separate Hub download).
+ */
+function normalizeVadModelId(value, fallback = 'fsmn-vad') {
+    const raw = String(value || '').trim();
+    if (!raw) return fallback;
+    const lower = raw.toLowerCase();
+    if (lower === 'silero' || lower === 'silero_vad') return 'silero-vad';
+    return raw;
+}
+
 function mergeEngineOptions(input = {}) {
     const merged = {
         engineBackend: DEFAULT_ENGINE_BACKEND,
@@ -76,7 +88,7 @@ function mergeEngineOptions(input = {}) {
             merged.engineOpusMtModel = id;
         }
     }
-    merged.engineVadModel = String(merged.engineVadModel || 'fsmn-vad').trim();
+    merged.engineVadModel = normalizeVadModelId(merged.engineVadModel, 'fsmn-vad');
     merged.engineAutoStart = merged.engineAutoStart !== false;
     return merged;
 }
@@ -114,6 +126,7 @@ module.exports = {
     DEFAULT_ENGINE_HF_ENDPOINT,
     EXPECTED_API_MAJOR,
     normalizeEngineBackend,
+    normalizeVadModelId,
     mergeEngineOptions,
     resolveEngineInstallPath,
     usesExternalMt,

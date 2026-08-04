@@ -4,6 +4,7 @@
             title: 'Transub 字幕生成',
             params: '当前设置',
             paramsSettings: '设置',
+            feedback: '使用反馈',
             addVideos: '添加媒体',
             addFolder: '添加文件夹',
             start: '开始执行',
@@ -15,6 +16,7 @@
             title: 'Transub Subtitles',
             params: 'Subtitle params',
             paramsSettings: 'Settings',
+            feedback: 'Feedback',
             addVideos: 'Add media',
             addFolder: 'Add folder',
             start: 'Start',
@@ -33,6 +35,7 @@
         document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
         const map = [
             ['h1', null, 'title'],
+            ['#openFeedbackBtn', null, 'feedback'],
             ['#openParamsBtn', null, 'paramsSettings'],
             ['#addVideosBtn', 'firstChild', 'addVideos'],
             ['#addFolderBtn', 'lastChild', 'addFolder'],
@@ -45,6 +48,8 @@
             const text = t(key);
             if (sel === 'h1') {
                 el.innerHTML = `<i class="fa fa-closed-captioning text-violet-600 mr-2"></i>${text}`;
+            } else if (sel === '#openFeedbackBtn') {
+                el.innerHTML = `<i class="fa fa-comment-o mr-1 text-gray-400"></i>${text}`;
             } else if (sel === '#openParamsBtn') {
                 el.innerHTML = `<i class="fa fa-cog mr-1"></i>${text}`;
             } else {

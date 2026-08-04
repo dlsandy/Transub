@@ -446,7 +446,8 @@ async function runManagedPerfBenchmark(doc, options = {}) {
         ? completionTokens
         : estimateCompletionTokens(gen.content);
     const tokensPerSec = genMs > 0 ? (tokens / (genMs / 1000)) : 0;
-    const sample = String(gen.content || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    // Keep the full bench sample (already capped by max_tokens); do not mid-cut mid-sentence for the dialog.
+    const sample = String(gen.content || '').replace(/\s+/g, ' ').trim();
 
     const message = [
         `${llm.modelName || llm.modelId}`,

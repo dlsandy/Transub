@@ -66,10 +66,17 @@ function ensureTar() {
 }
 
 function createZipFromFileList(outZip, baseDir, relFiles) {
-    if (!relFiles.length) return false;
+    const cleaned = [...new Set(
+        (Array.isArray(relFiles) ? relFiles : [])
+            .map((r) => normalizeRelPath(r))
+            .filter(Boolean),
+    )];
+    if (!cleaned.length) return false;
     if (fs.existsSync(outZip)) fs.unlinkSync(outZip);
     const listFile = `${outZip}.filelist.txt`;
-    fs.writeFileSync(listFile, `${relFiles.join('\n')}\n`, 'utf8');
+    // Use forward-slash relative paths only — never archive as "." or the zip will
+    // embed "./..." entries that break Windows Explorer extraction.
+    fs.writeFileSync(listFile, `${cleaned.join('\n')}\n`, 'utf8');
     try {
         const r = spawnSync(
             'tar',
@@ -82,19 +89,44 @@ function createZipFromFileList(outZip, baseDir, relFiles) {
     } finally {
         try { fs.unlinkSync(listFile); } catch { /* ignore */ }
     }
+    assertZipHasNoDotSlashPrefix(outZip);
     return true;
 }
 
-function recreateFullZip(outZip, unpackedDir) {
-    if (fs.existsSync(outZip)) fs.unlinkSync(outZip);
-    const r = spawnSync(
-        'tar',
-        ['-a', '-c', '-f', outZip, '-C', unpackedDir, '.'],
-        { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
-    );
+/** Windows Explorer fails to extract zips whose entries start with "./". */
+function assertZipHasNoDotSlashPrefix(zipPath) {
+    const r = spawnSync('tar', ['-tf', zipPath], {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+    });
     if (r.status !== 0) {
-        throw new Error(`full zip failed: ${r.stderr || r.stdout || r.status}`);
+        throw new Error(`tar -tf failed for ${zipPath}: ${r.stderr || r.stdout || r.status}`);
     }
+    const sample = String(r.stdout || '')
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 40);
+    const bad = sample.find((line) => line === '.' || line === './' || line.startsWith('./'));
+    if (bad) {
+        throw new Error(
+            `Zip embeds "./" entry paths (breaks Explorer extract): ${path.basename(zipPath)} → ${bad}`,
+        );
+    }
+}
+
+function recreateFullZip(outZip, unpackedDir) {
+    // Include update-manifest.json; only skip internal preserve markers.
+    const rels = walkFiles(unpackedDir, {
+        ignoreRel: (rel) => {
+            const p = normalizeRelPath(rel).toLowerCase();
+            return p.endsWith('.__ts_preserve__') || p.includes('.__ts_preserve__/');
+        },
+    });
+    if (!rels.length) {
+        throw new Error(`no files under ${unpackedDir}`);
+    }
+    createZipFromFileList(outZip, unpackedDir, rels);
 }
 
 function fileDigestMap(unpackedDir) {

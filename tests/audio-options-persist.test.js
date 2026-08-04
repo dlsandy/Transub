@@ -125,6 +125,13 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(normalized.engineHfEndpoint, '');
     });
 
+    it('migrates legacy silero VAD alias to silero-vad on save', () => {
+        const normalized = buildTransWithAiOptionsFromPayload({
+            engineVadModel: 'silero',
+        }, {});
+        assert.strictEqual(normalized.engineVadModel, 'silero-vad');
+    });
+
     it('migrates autoContentProfile to autoSense', () => {
         const { mergeTransWithAiOptions } = require('../electron/transwithai-options');
         const migrated = mergeTransWithAiOptions({ autoContentProfile: false });
