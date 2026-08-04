@@ -160,13 +160,24 @@ function main() {
     const bundleZipName = websiteUpdateZipName(VERSION);
     const bundleZip = path.join(args.outDir, bundleZipName);
     if (fs.existsSync(bundleZip)) fs.unlinkSync(bundleZip);
-    const r = spawnSync(
-        'tar',
-        ['-a', '-c', '-f', bundleZip, '-C', stageDir, '.'],
-        { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
-    );
-    if (r.status !== 0) {
-        throw new Error(`website-update zip failed: ${r.stderr || r.stdout || r.status}`);
+    // Explicit file list — avoid `tar -C dir .` which embeds "./" and breaks Explorer extract.
+    const bundleEntries = fs.readdirSync(stageDir).filter((name) => {
+        const abs = path.join(stageDir, name);
+        return fs.statSync(abs).isFile();
+    });
+    const listFile = `${bundleZip}.filelist.txt`;
+    fs.writeFileSync(listFile, `${bundleEntries.join('\n')}\n`, 'utf8');
+    try {
+        const r = spawnSync(
+            'tar',
+            ['-a', '-c', '-f', bundleZip, '-C', stageDir, '-T', listFile],
+            { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+        );
+        if (r.status !== 0) {
+            throw new Error(`website-update zip failed: ${r.stderr || r.stdout || r.status}`);
+        }
+    } finally {
+        try { fs.unlinkSync(listFile); } catch { /* ignore */ }
     }
 
     const zipMb = (fs.statSync(bundleZip).size / (1024 * 1024)).toFixed(1);

@@ -4,6 +4,7 @@ const {
     mapTaskToEngineTask,
     isApiCompatible,
     normalizeEngineBackend,
+    normalizeVadModelId,
 } = require('../electron/engine-options');
 const { joinUrl } = require('../electron/engine-client');
 
@@ -64,6 +65,16 @@ describe('engine-options', () => {
         assert.strictEqual(normalizeEngineBackend('transwithai'), 'twai');
         assert.strictEqual(normalizeEngineBackend('TWAI'), 'twai');
         assert.strictEqual(normalizeEngineBackend(''), 'transub');
+    });
+
+    it('normalizes legacy silero VAD alias to silero-vad', () => {
+        assert.strictEqual(normalizeVadModelId('silero'), 'silero-vad');
+        assert.strictEqual(normalizeVadModelId('Silero'), 'silero-vad');
+        assert.strictEqual(normalizeVadModelId('silero_vad'), 'silero-vad');
+        assert.strictEqual(normalizeVadModelId('silero-vad'), 'silero-vad');
+        assert.strictEqual(normalizeVadModelId('fsmn-vad'), 'fsmn-vad');
+        const opts = mergeEngineOptions({ engineVadModel: 'silero' });
+        assert.strictEqual(opts.engineVadModel, 'silero-vad');
     });
 
     it('maps tasks for free MT and external LLM (smart / Sakura)', () => {

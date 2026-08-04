@@ -687,6 +687,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 blocking: false,
                 asrGpuReady: true,
                 ortGpuCuda: false,
+                ortGpuRequirement: probe.ortGpuRequirement || '',
             };
         }
         if (probe && probe.status === 'partial') {
@@ -698,6 +699,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 blocking: false,
                 asrGpuReady: !!probe.asrGpuReady,
                 ortGpuCuda: !!probe.ortGpuCuda,
+                ortGpuRequirement: probe.ortGpuRequirement || '',
             };
         }
         const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
@@ -711,6 +713,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             blocking: false,
             asrGpuReady: probe ? !!probe.asrGpuReady : true,
             ortGpuCuda: probe ? !!probe.ortGpuCuda : undefined,
+            ortGpuRequirement: probe ? (probe.ortGpuRequirement || '') : '',
         };
     }
     const cudaMajor = Number(String(gpuInfo.cudaVersion || '').split('.')[0]);

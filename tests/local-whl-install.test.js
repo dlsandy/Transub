@@ -86,6 +86,30 @@ describe('local-whl-install', () => {
         );
     });
 
+    it('GPU manual catalog includes onnxruntime-gpu for WhisperSeg', () => {
+        const src = fs.readFileSync(
+            path.join(__dirname, '..', 'electron', 'engine-bridge.js'),
+            'utf8',
+        );
+        assert.ok(src.includes('ORT_GPU_MANUAL_PACKAGES'), 'missing ORT_GPU_MANUAL_PACKAGES');
+        assert.ok(
+            /onnxruntime_gpu-1\.21\.1-cp312-cp312-win_amd64\.whl/.test(src),
+            'missing CUDA 12 onnxruntime-gpu wheel',
+        );
+        assert.ok(
+            /onnxruntime_gpu-1\.28\.0-cp312-cp312-win_amd64\.whl/.test(src),
+            'missing CUDA 13 onnxruntime-gpu wheel',
+        );
+        assert.ok(
+            src.includes("requirement: 'onnxruntime-gpu>=1.27'"),
+            'missing CUDA 13 ORT requirement pin',
+        );
+        assert.ok(
+            src.includes('resolveOrtGpuManualPackage'),
+            'missing ORT package resolver',
+        );
+    });
+
     it('SenseVoice and Whisper manual packages use direct .whl URLs', () => {
         const src = fs.readFileSync(
             path.join(__dirname, '..', 'electron', 'engine-bridge.js'),

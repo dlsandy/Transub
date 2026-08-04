@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, dialog, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, screen, powerMonitor } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { resolveHtmlPath, getWritableRoot } = require('./app-paths');
@@ -13,10 +13,13 @@ const WINDOW_STATE_FILE = 'window-state.json';
 const DEFAULT_WINDOW = Object.freeze({
     width: 1680,
     height: 1200,
-    minWidth: 760,
-    minHeight: 520,
+    // Keep header / 添加·开始 / 常用设置 chips on one row (avoid flex-wrap).
+    minWidth: 1100,
+    minHeight: 640,
 });
 const SAVE_STATE_DEBOUNCE_MS = 400;
+/** Treat resume / unlock within this window as a GPU-surface stale event. */
+const POWER_RESUME_STALE_MS = 120_000;
 
 function getWindowStatePath() {
     return path.join(getWritableRoot(), WINDOW_STATE_FILE);
@@ -118,7 +121,54 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
      * uses a stronger wake instead of leaving chrome + backgroundColor only.
      */
     let mainNeedsRepaintOnShow = false;
+    /**
+     * Display sleep / OS resume / lock-screen while the main HWND is hidden often
+     * drops the Chromium/DWM backing store. Next show needs the longest wake
+     * schedule — not only after LONG_TRAY_HIDE_MS.
+     */
+    let mainNeedsExtendedRepaintOnShow = false;
+    /** Timestamp of last powerMonitor resume / unlock-screen (0 = never). */
+    let lastPowerResumeAt = 0;
+    let powerResumeRepaintGuardAttached = false;
+    /** Timestamp when main was last intentionally hidden to tray (0 = not hidden). */
+    let mainHiddenToTrayAt = 0;
     let mainRepaintTimer = null;
+    /** Long tray hide / GPU-busy sessions need more delayed compositor kicks. */
+    const LONG_TRAY_HIDE_MS = 30_000;
+
+    function markMainCompositorStale({ extended = true, wakeIfVisible = false } = {}) {
+        mainNeedsRepaintOnShow = true;
+        if (extended) mainNeedsExtendedRepaintOnShow = true;
+        // Only wake immediately when asked (power resume / unlock). display-metrics
+        // fires often (taskbar, DPI) and must not flicker a visible window.
+        if (wakeIfVisible && isMainVisiblyOpen()) {
+            scheduleMainWindowRepaint({ strong: true, extended: true });
+        }
+    }
+
+    function attachPowerResumeRepaintGuard() {
+        if (powerResumeRepaintGuardAttached) return;
+        powerResumeRepaintGuardAttached = true;
+        const onPowerResume = () => {
+            lastPowerResumeAt = Date.now();
+            markMainCompositorStale({ extended: true, wakeIfVisible: true });
+        };
+        try {
+            // System sleep / hibernate wake.
+            powerMonitor.on('resume', onPowerResume);
+            // Lock screen often accompanies 息屏; unlock alone can leave a blank surface.
+            powerMonitor.on('unlock-screen', onPowerResume);
+        } catch (_) { /* ignore */ }
+        try {
+            // Monitor off/on or DPI change may not fire powerMonitor resume.
+            // Only flag next tray restore — do not paint-kick a visible window here.
+            screen.on('display-metrics-changed', () => {
+                if (mainHiddenToTray) {
+                    markMainCompositorStale({ extended: true, wakeIfVisible: false });
+                }
+            });
+        } catch (_) { /* ignore */ }
+    }
 
     function hideToTray() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -150,6 +200,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         try { mainWindow.setSkipTaskbar(true); } catch (_) { /* ignore */ }
         try { mainWindow.hide(); } catch (_) { /* ignore */ }
         mainHiddenToTray = true;
+        mainHiddenToTrayAt = Date.now();
         try {
             if (typeof mainWindow.setOpacity === 'function') mainWindow.setOpacity(1);
         } catch (_) { /* ignore */ }
@@ -172,10 +223,17 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
      * setSize ±1px) often fails to round-trip frame/DPI, so closing settings
      * grew the main window by a pixel each time.
      */
-    function forceMainWindowRepaint({ strong = false } = {}) {
+    function forceMainWindowRepaint({ strong = false, _retry = 0 } = {}) {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         try {
-            if (mainWindow.isMinimized() || !mainWindow.isVisible()) return;
+            // Windows can report not-visible/minimized for a tick after show();
+            // reschedule instead of silently skipping the compositor wake.
+            if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
+                if (_retry < 8) {
+                    setTimeout(() => forceMainWindowRepaint({ strong, _retry: _retry + 1 }), 40);
+                }
+                return;
+            }
             if (typeof mainWindow.setOpacity === 'function') {
                 if (strong && process.platform === 'win32') {
                     // Brief opacity flicker wakes DWM without changing outer size.
@@ -183,30 +241,57 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
                 }
                 mainWindow.setOpacity(1);
             }
+            // After 息屏, toggling the DWM shadow forces a surface recreate without
+            // the setSize ±1 growth bug on mixed-DPI setups.
+            if (strong && process.platform === 'win32' && typeof mainWindow.setHasShadow === 'function') {
+                try {
+                    const shadowed = typeof mainWindow.hasShadow === 'function'
+                        ? !!mainWindow.hasShadow()
+                        : true;
+                    mainWindow.setHasShadow(false);
+                    mainWindow.setHasShadow(shadowed);
+                } catch (_) { /* ignore */ }
+            }
             const wc = mainWindow.webContents;
             if (wc && !wc.isDestroyed()) {
                 if (typeof wc.invalidate === 'function') wc.invalidate();
                 try { wc.focus(); } catch (_) { /* ignore */ }
                 // Remeasure layouts / kick compositor without changing outer size.
+                // translateZ(0) forces a layer rebuild after GPU context loss on wake.
                 void wc.executeJavaScript(
-                    'window.dispatchEvent(new Event("resize"));',
+                    `(() => {
+                        try {
+                            const root = document.documentElement;
+                            if (root) {
+                                const prev = root.style.transform;
+                                root.style.transform = 'translateZ(0)';
+                                void root.offsetHeight;
+                                root.style.transform = prev;
+                            }
+                        } catch (_) { /* ignore */ }
+                        window.dispatchEvent(new Event('resize'));
+                    })();`,
                     true,
                 ).catch(() => {});
             }
         } catch (_) { /* ignore */ }
     }
 
-    function scheduleMainWindowRepaint({ strong = false } = {}) {
+    function scheduleMainWindowRepaint({ strong = false, extended = false } = {}) {
         forceMainWindowRepaint({ strong });
         if (mainRepaintTimer) clearTimeout(mainRepaintTimer);
         // Delayed passes: restore/show and GPU wake can finish a tick later on Windows,
         // especially while an ASR/MT/download task is holding the GPU.
-        // Stronger schedule after secondary-window churn while tray-hidden.
-        const passes = strong ? [40, 120, 280, 520] : [50, 200];
+        // Stronger schedule after tray restore / secondary-window churn.
+        // Extended: long tray hide / display sleep often drops the Chromium backing store.
+        // Extra-late passes: monitor power-on can lag behind the tray click by seconds.
+        const passes = extended
+            ? [40, 120, 280, 520, 900, 1600, 2800, 4500]
+            : (strong ? [40, 120, 280, 520] : [50, 200]);
         let i = 0;
         const runNext = () => {
             mainRepaintTimer = null;
-            forceMainWindowRepaint({ strong });
+            forceMainWindowRepaint({ strong: strong || extended });
             i += 1;
             if (i < passes.length) {
                 mainRepaintTimer = setTimeout(runNext, passes[i] - (passes[i - 1] || 0));
@@ -246,15 +331,36 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     function revealMainWindowChrome() {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         try {
-            const strongRepaint = mainNeedsRepaintOnShow;
+            const fromTray = mainHiddenToTray;
+            const hiddenForMs = fromTray && mainHiddenToTrayAt
+                ? (Date.now() - mainHiddenToTrayAt)
+                : 0;
+            const recentPowerResume = lastPowerResumeAt > 0
+                && (Date.now() - lastPowerResumeAt) < POWER_RESUME_STALE_MS;
+            // Plain tray restore must use the strong wake too — after a long hide
+            // (or GPU-bound ASR/MT) the weak [50,200] schedule often leaves a
+            // blank #f9fafb client area with native chrome only.
+            // 息屏 while hidden often invalidates the GPU surface without a long
+            // wall-clock hide; always use the extended schedule when restoring
+            // from tray, or when power/display events marked the compositor stale.
+            const strongRepaint = mainNeedsRepaintOnShow || fromTray || recentPowerResume;
+            const extendedRepaint = mainNeedsExtendedRepaintOnShow
+                || fromTray
+                || recentPowerResume
+                || (hiddenForMs >= LONG_TRAY_HIDE_MS);
             mainNeedsRepaintOnShow = false;
+            mainNeedsExtendedRepaintOnShow = false;
             if (typeof mainWindow.setOpacity === 'function') mainWindow.setOpacity(1);
             mainWindow.setSkipTaskbar(false);
             mainHiddenToTray = false;
+            mainHiddenToTrayAt = 0;
             if (mainWindow.isMinimized()) mainWindow.restore();
             mainWindow.show();
             if (typeof mainWindow.setOpacity === 'function') mainWindow.setOpacity(1);
-            scheduleMainWindowRepaint({ strong: strongRepaint });
+            scheduleMainWindowRepaint({
+                strong: strongRepaint || extendedRepaint,
+                extended: extendedRepaint,
+            });
         } catch (_) { /* ignore */ }
     }
 
@@ -362,8 +468,12 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
         setTimeout(focusMain, 40);
         setTimeout(() => {
             focusMain();
-            forceMainWindowRepaint();
+            forceMainWindowRepaint({ strong: true });
         }, 160);
+        setTimeout(() => {
+            focusMain();
+            forceMainWindowRepaint({ strong: true });
+        }, 600);
         applyWindowIcon(mainWindow);
         return mainWindow;
     }
@@ -605,6 +715,7 @@ function createWindowManager({ getAppRoot, getUserDataPath }) {
     }
 
     function createMainWindow(options = {}) {
+        attachPowerResumeRepaintGuard();
         if (mainWindow && !mainWindow.isDestroyed()) {
             if (options.startMinimizedToTray) hideToTray();
             else showMainWindow();

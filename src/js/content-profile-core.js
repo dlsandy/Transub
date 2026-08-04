@@ -62,7 +62,7 @@
 
     const AV_SOFT_PATCH = Object.freeze({
         language: 'ja',
-        engineAsrModel: 'whisper-large-v3-turbo',
+        engineAsrModel: 'whisper-ja-1.5b',
         // Prefer Sakura for JA AV tone; refineSenseModels may fall back to Opus if Sakura missing but Opus installed.
         engineMtModel: 'sakura-1.5b',
         filmAudioEnhance: false,
@@ -89,7 +89,8 @@
     // Sense never auto-enables Demucs (hard to install → poor UX); users can still
     // turn on「影视音频增强」manually in the form.
     const FILM_PATCH = Object.freeze({
-        engineAsrModel: 'whisper-large-v3-turbo',
+        // Prefer SenseVoice by default; turbo remains optional if already installed.
+        engineAsrModel: 'sensevoice-small',
         filmAudioEnhance: false,
         filmVadPreset: false,
         engineVadModel: 'silero-vad',
@@ -107,7 +108,7 @@
 
     /** Free fallback when film enhance is locked (no Advanced). */
     const FILM_FREE_PATCH = Object.freeze({
-        engineAsrModel: 'whisper-large-v3-turbo',
+        engineAsrModel: 'sensevoice-small',
         filmAudioEnhance: false,
         filmVadPreset: false,
         engineVadModel: 'silero-vad',
@@ -1339,18 +1340,38 @@
 
         // ASR preference by profile / language
         const asrWanted = [];
-        if (profile === PROFILES.av_soft || (lang === 'ja' && profile !== PROFILES.film)) {
-            asrWanted.push('whisper-ja-1.5b', 'whisper-large-v3-turbo', 'whisper-large-v3', 'sensevoice-small');
+        if (profile === PROFILES.av_soft) {
+            asrWanted.push(
+                'whisper-ja-1.5b',
+                'kotoba-whisper-v2.0-faster',
+                'anime-whisper',
+                'reazonspeech-k2',
+                'qwen3-asr-0.6b',
+                'whisper-large-v3-turbo',
+                'whisper-large-v3',
+                'sensevoice-small',
+            );
+        } else if (lang === 'ja' && profile !== PROFILES.film) {
+            asrWanted.push(
+                'whisper-ja-1.5b',
+                'kotoba-whisper-v2.0-faster',
+                'anime-whisper',
+                'qwen3-asr-0.6b',
+                'whisper-large-v3-turbo',
+                'whisper-large-v3',
+                'sensevoice-small',
+            );
         } else if (profile === PROFILES.film) {
-            asrWanted.push('whisper-large-v3-turbo', 'whisper-large-v3', 'sensevoice-small');
+            // Prefer installed turbo when present; otherwise stick to default SenseVoice.
+            asrWanted.push('sensevoice-small', 'whisper-large-v3-turbo', 'whisper-large-v3', 'whisper-tiny');
         } else if (lang === 'zh' || lang === 'en' || lang === 'ko') {
-            asrWanted.push('sensevoice-small', 'whisper-large-v3-turbo', 'whisper-tiny');
+            asrWanted.push('sensevoice-small', 'whisper-tiny', 'whisper-large-v3-turbo');
         } else {
             asrWanted.push(
                 out.engineAsrModel || '',
                 'sensevoice-small',
-                'whisper-large-v3-turbo',
                 'whisper-tiny',
+                'whisper-large-v3-turbo',
             );
         }
         if (out.engineAsrModel && !asrWanted.includes(out.engineAsrModel)) {
@@ -1374,7 +1395,14 @@
             }
         }
 
-        // VAD: keep profile choice if installed, else fall back
+        // VAD: keep profile choice if installed, else fall back.
+        // Alias `silero` → catalog `silero-vad` so we never treat the built-in as missing.
+        if (out.engineVadModel) {
+            const vadLower = String(out.engineVadModel).trim().toLowerCase();
+            if (vadLower === 'silero' || vadLower === 'silero_vad') {
+                out.engineVadModel = 'silero-vad';
+            }
+        }
         if (out.engineVadModel && installed.size && !installed.has(out.engineVadModel)) {
             const vadAlt = out.engineVadModel.includes('whisperseg')
                 ? firstInstalled(['silero-vad', 'fsmn-vad'], installed)
@@ -1395,7 +1423,6 @@
             if (
                 vadFinal.includes('whisperseg')
                 || vadFinal === 'silero-vad'
-                || vadFinal === 'silero'
             ) {
                 notes.push(`VAD ${out.engineVadModel} 与 SenseVoice 不兼容 → fsmn-vad`);
                 out.engineVadModel = 'fsmn-vad';
@@ -1510,21 +1537,34 @@
         const allowSakuraMt = lang === 'ja'
             || (profile === PROFILES.av_soft && !lang);
 
-        if (jaAv) {
+        if (profile === PROFILES.av_soft) {
             push({
                 id: 'whisper-ja-1.5b',
                 kind: 'model',
                 role: 'asr',
                 label: '日语识别 whisper-ja-1.5b',
-                altIds: [],
+                altIds: [
+                    'kotoba-whisper-v2.0-faster',
+                    'anime-whisper',
+                    'reazonspeech-k2',
+                    'qwen3-asr-0.6b',
+                ],
+            });
+        } else if (jaAv) {
+            push({
+                id: 'whisper-ja-1.5b',
+                kind: 'model',
+                role: 'asr',
+                label: '日语识别 whisper-ja-1.5b',
+                altIds: ['kotoba-whisper-v2.0-faster', 'anime-whisper', 'reazonspeech-k2', 'qwen3-asr-0.6b'],
             });
         } else if (profile === PROFILES.film) {
             push({
-                id: 'whisper-large-v3-turbo',
+                id: 'sensevoice-small',
                 kind: 'model',
                 role: 'asr',
-                label: '识别 whisper-large-v3-turbo',
-                altIds: ['whisper-large-v3'],
+                label: '识别 sensevoice-small',
+                altIds: ['whisper-tiny', 'whisper-large-v3-turbo', 'whisper-large-v3'],
             });
         } else if (overrides.engineAsrModel) {
             push({

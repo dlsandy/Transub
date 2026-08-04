@@ -158,6 +158,7 @@ const content = `
                                         <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
                                         <option value="whisper-large-v3">whisper-large-v3</option>
                                         <option value="whisper-ja-1.5b">whisper-ja-1.5b · 日语微调（可选）</option>
+                                        <option value="anime-whisper">anime-whisper · 动画/Galgame（可选）</option>
                                     </select>
                                 </label>
                                 <label class="block text-sm" id="engineMtModelWrap">

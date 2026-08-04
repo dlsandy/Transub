@@ -16,7 +16,7 @@
     const DEFAULT_AUDIO_SUFFIXES = mediaExt.DEFAULT_AUDIO_SUFFIXES
         || [...MEDIA_EXTENSIONS].join(',');
 
-    const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
+    const GITHUB_ISSUES_URL = 'https://github.com/dlsandy/Transub/issues/new';
 
     const DEVICE_LABELS = {
         cuda: 'GPU',
@@ -1047,7 +1047,7 @@
             'autoSenseToggle', 'autoSenseToggleLabel',
             'postBatchQcFixBtn', 'postBatchQcFixLabel', 'postBatchQcFixMenuWrap', 'postBatchQcFixMenu',
             'senseMemoryStatus', 'clearSenseMemoryBtn',
-            'transWithAiStatus', 'openParamsBtn',
+            'transWithAiStatus', 'openFeedbackBtn', 'openParamsBtn',
             'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
             'openAboutBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
@@ -1076,7 +1076,7 @@
             'engineModelsPanel', 'engineModelsSummary', 'engineModelsSelectedHint', 'engineModelsList',
             'engineModelsSearch', 'engineModelsFilters',
             'engineStatus',
-            'installPathInput', 'installBrowseBtn', 'installTestBtn', 'installCheckUpdateBtn', 'installDownloadBtn',
+            'installPathInput', 'installBrowseBtn', 'installTestBtn', 'installCheckUpdateBtn',
             'transcribeModelSelect', 'translateModelSelect', 'modelSelectHint',
             'transcribeModelPathInput', 'translateModelPathInput',
             'transcribeModelBrowseBtn', 'translateModelBrowseBtn',
@@ -3902,11 +3902,6 @@
         };
     }
 
-    async function openTransWithAiReleases() {
-        const res = await electron?.openExternal?.(TRANWITHAI_RELEASES_URL);
-        if (res?.ok === false) appendLog(res?.error || '无法打开下载页面', 'err');
-    }
-
     function formatTransWithAiStatusText(version) {
         const ver = String(version || '').trim();
         return ver ? `已识别到 TransWithAI (${ver})` : '已识别到 TransWithAI';
@@ -4067,9 +4062,13 @@
                     secondaryLabel: '关闭',
                 });
                 if (open) {
-                    const url = res.releaseUrl || res.releasesUrl || TRANWITHAI_RELEASES_URL;
-                    const openRes = await electron?.openExternal?.(url);
-                    if (openRes?.ok === false) appendLog(openRes?.error || '无法打开下载页面', 'err');
+                    const url = res.releaseUrl || res.releasesUrl;
+                    if (!url) {
+                        appendLog('未返回下载地址', 'err');
+                    } else {
+                        const openRes = await electron?.openExternal?.(url);
+                        if (openRes?.ok === false) appendLog(openRes?.error || '无法打开下载页面', 'err');
+                    }
                 }
             } else if (!res.currentVersion && res.latestVersion) {
                 const open = await appConfirm({
@@ -4079,8 +4078,9 @@
                     secondaryLabel: '关闭',
                 });
                 if (open) {
-                    const url = res.releaseUrl || res.releasesUrl || TRANWITHAI_RELEASES_URL;
-                    await electron?.openExternal?.(url);
+                    const url = res.releaseUrl || res.releasesUrl;
+                    if (!url) appendLog('未返回下载地址', 'err');
+                    else await electron?.openExternal?.(url);
                 }
             }
         } catch (err) {
@@ -7792,6 +7792,12 @@
                 } catch { /* ignore */ }
 
                 const qcIssues = countQcIssues();
+                const totalElapsedSec = state.jobStartedAt
+                    ? elapsedSecSince(state.jobStartedAt)
+                    : 0;
+                const totalElapsedText = totalElapsedSec > 0
+                    ? formatDuration(totalElapsedSec)
+                    : '';
                 const summaryLines = [
                     `成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
                 ];
@@ -7806,6 +7812,7 @@
                     void ux().showBatchSummary({
                         title: failed > 0 ? '任务完成（有失败）' : '任务完成',
                         summaryText,
+                        elapsedText: totalElapsedText,
                         primaryLabel: failed > 0 ? '重试失败项' : '',
                         secondaryLabel: '关闭',
                         onPrimary: failed > 0,
@@ -8405,6 +8412,20 @@
             void saveParamsSettings({ closeAfter: true });
         });
         bindResourceUsageSetting();
+        els.openFeedbackBtn?.addEventListener('click', () => {
+            void (async () => {
+                try {
+                    const res = await electron?.openExternal?.(GITHUB_ISSUES_URL);
+                    if (res?.ok === false) {
+                        showToast(res?.error || '无法打开反馈页面', 'err');
+                        return;
+                    }
+                    showToast('已在浏览器中打开 GitHub Issues', 'ok');
+                } catch (err) {
+                    showToast(err?.message || '无法打开反馈页面', 'err');
+                }
+            })();
+        });
         els.openParamsBtn?.addEventListener('click', () => {
             openAppSettings('runtime');
         });
@@ -8772,7 +8793,6 @@
         els.ffmpegBrowseBtn?.addEventListener('click', browseFfmpegPath);
         els.ffmpegFolderBtn?.addEventListener('click', browseFfmpegFolder);
         els.ffmpegTestBtn?.addEventListener('click', () => refreshFfmpegStatus({ quick: false }));
-        els.installDownloadBtn?.addEventListener('click', openTransWithAiReleases);
         els.deviceSelect?.addEventListener('change', () => {
             syncBatchSizeUi();
             syncDeviceOptionsForMode();

@@ -13,6 +13,18 @@ function isFreeDefault(value, freeDefault) {
     return value == null || value === '' || Number(value) === freeDefault;
 }
 
+function normalizeVadModelId(value, fallback = 'fsmn-vad') {
+    try {
+        return require('./engine-options').normalizeVadModelId(value, fallback);
+    } catch {
+        const raw = String(value || '').trim();
+        if (!raw) return fallback;
+        const lower = raw.toLowerCase();
+        if (lower === 'silero' || lower === 'silero_vad') return 'silero-vad';
+        return raw;
+    }
+}
+
 /**
  * Resolve max single segment ms for the Engine vad payload.
  * Prefer explicit vadMaxSingleSegmentMs; fall back to legacy targetChunkDurationS * 1000.
@@ -46,11 +58,10 @@ function buildVadJobOptions(merged = {}) {
     const task = String(merged.task || '').trim().toLowerCase();
     const isJa = lang.startsWith('ja') || lang === 'japanese' || lang === 'jp';
     const isWhisper = asr.includes('whisper');
-    const vadModelRaw = String(merged.engineVadModel || '').trim().toLowerCase();
+    const vadModelRaw = normalizeVadModelId(merged.engineVadModel, '').toLowerCase();
     // Only Silero is a deliberate Whisper opt-out. fsmn-vad is the SenseVoice default
     // and should not block JA Whisper translate from using WhisperSeg.
-    const explicitNonSeg = ['silero-vad', 'silero'].includes(vadModelRaw)
-        && !merged.vadSensitive;
+    const explicitNonSeg = vadModelRaw === 'silero-vad' && !merged.vadSensitive;
 
     // JA Whisper translate/dual: default WhisperSeg (sensitive) unless user picked Silero/FSMN.
     let sensitive = !!merged.vadSensitive;
@@ -97,7 +108,7 @@ function buildVadJobOptions(merged = {}) {
         if (isFreeDefault(merged.vadSpeechPadMs, 200)) speechPadMs = 180;
     }
 
-    let vadModel = String(merged.engineVadModel || 'fsmn-vad').trim() || 'fsmn-vad';
+    let vadModel = normalizeVadModelId(merged.engineVadModel, 'fsmn-vad');
     // Sensitive Whisper path → WhisperSeg ASMR (WhisperJAV-style).
     if (sensitive) {
         vadModel = 'whisperseg-asmr';
@@ -108,7 +119,6 @@ function buildVadJobOptions(merged = {}) {
             vadL === 'whisperseg-asmr'
             || vadL.includes('whisperseg')
             || vadL === 'silero-vad'
-            || vadL === 'silero'
         ) {
             vadModel = 'fsmn-vad';
         }

@@ -1,18 +1,24 @@
 /**
  * TDP runtime: check CDN manifest, download, verify Ed25519, apply / hot-reload.
  * Download is open; applying sections requires Pro entitlement.
+ *
+ * Applied sections are shared with Sakura translation (same process modules):
+ *   L01 → tone-adapt lexicon + Sakura NSFW system prompt / glossary merge
+ *   P01 → av_soft profiling → enables Sakura NSFW / sanitize paths
+ *   D01 → mt-sanitize JA ASR domain fixes (Sakura preprocesses sources before infer)
+ *
+ * CDN HTTPS uses Chromium net.fetch (not Node https): Electron/BoringSSL resets
+ * against www.transub.cc (openresty), while Chromium's stack succeeds.
  */
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 const tdpFs = require('./tdp-fs');
 const tdpPack = require('../src/js/tdp-pack-core');
 const tdpCrypto = require('../src/js/tdp-crypto-core');
 const { downloadFile } = require('./advanced-llm-download');
-const { getDownloadAgents } = require('./proxy-settings');
 
 const DEFAULT_MANIFEST_URL = 'https://www.transub.cc/tdp/manifest.json';
+const TDP_UA = 'Transub-TDP';
 
 /** @type {AbortController|null} */
 let pullAbort = null;
@@ -40,51 +46,143 @@ function getAppVersion() {
     }
 }
 
-function httpGetJson(url, { timeoutMs = 20000 } = {}) {
-    return new Promise((resolve, reject) => {
-        let parsed;
-        try {
-            parsed = new URL(url);
-        } catch (err) {
-            reject(err);
-            return;
+/** Prefer Electron Chromium fetch; fall back to global fetch (tests / Node). */
+function resolveTdpFetch() {
+    try {
+        const { net } = require('electron');
+        if (typeof net?.fetch === 'function') return net.fetch.bind(net);
+    } catch { /* not in Electron */ }
+    return typeof fetch === 'function' ? fetch.bind(globalThis) : null;
+}
+
+function formatTdpNetworkError(err, actionLabel = '请求') {
+    if (!err) return `${actionLabel}失败`;
+    if (err.name === 'AbortError') return `${actionLabel}超时`;
+    const cause = err.cause || {};
+    const code = String(cause.code || err.code || '').toUpperCase();
+    const detail = String(cause.message || err.message || '').trim();
+    if (code === 'ECONNRESET' || /ECONNRESET/i.test(detail)) {
+        return `${actionLabel}连接被重置，请检查网络/代理后重试`;
+    }
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+        return `无法解析更新服务器域名，请检查网络或 DNS`;
+    }
+    if (code === 'ETIMEDOUT' || /timeout/i.test(detail)) {
+        return `${actionLabel}超时，请稍后重试`;
+    }
+    return detail || `${actionLabel}失败`;
+}
+
+async function httpGetJson(url, { timeoutMs = 20000, signal } = {}) {
+    const fetchImpl = resolveTdpFetch();
+    if (!fetchImpl) {
+        throw new Error('当前环境无法发起 HTTPS 请求');
+    }
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const onOuterAbort = () => ac.abort();
+    if (signal) {
+        if (signal.aborted) ac.abort();
+        else signal.addEventListener('abort', onOuterAbort, { once: true });
+    }
+    try {
+        const res = await fetchImpl(url, {
+            method: 'GET',
+            headers: { Accept: 'application/json', 'User-Agent': TDP_UA },
+            signal: ac.signal,
+            redirect: 'follow',
+        });
+        if (!res.ok) {
+            throw new Error(`清单 HTTP ${res.status}`);
         }
-        const lib = parsed.protocol === 'https:' ? https : http;
-        const { httpAgent, httpsAgent } = getDownloadAgents();
-        const agent = parsed.protocol === 'https:' ? httpsAgent : httpAgent;
-        const req = lib.get(url, {
-            agent,
-            timeout: timeoutMs,
-            headers: { Accept: 'application/json', 'User-Agent': 'Transub-TDP' },
-        }, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                res.resume();
-                httpGetJson(new URL(res.headers.location, url).toString(), { timeoutMs })
-                    .then(resolve, reject);
-                return;
-            }
-            if (res.statusCode !== 200) {
-                res.resume();
-                reject(new Error(`清单 HTTP ${res.statusCode}`));
-                return;
-            }
-            const chunks = [];
-            res.on('data', (c) => chunks.push(c));
-            res.on('end', () => {
-                try {
-                    const text = Buffer.concat(chunks).toString('utf8');
-                    resolve(JSON.parse(text));
-                } catch (err) {
-                    reject(new Error(`清单解析失败：${err.message || err}`));
-                }
-            });
+        const text = await res.text();
+        try {
+            return JSON.parse(text);
+        } catch (err) {
+            throw new Error(`清单解析失败：${err.message || err}`);
+        }
+    } catch (err) {
+        if (err && err.message && String(err.message).startsWith('清单')) throw err;
+        throw new Error(formatTdpNetworkError(err, '清单请求'));
+    } finally {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onOuterAbort);
+    }
+}
+
+/**
+ * Download pack via Chromium net (small tpack). Falls back to Node downloadFile
+ * only when Electron net.fetch is unavailable.
+ */
+async function downloadTdpPack(url, destPath, { signal, expectedBytes, onProgress } = {}) {
+    const fetchImpl = resolveTdpFetch();
+    const canUseChromium = !!(fetchImpl && (() => {
+        try {
+            require('electron');
+            return true;
+        } catch {
+            return false;
+        }
+    })());
+
+    if (!canUseChromium) {
+        await downloadFile(url, destPath, {
+            signal,
+            expectedBytes,
+            skipProbe: true,
+            onProgress,
         });
-        req.on('error', reject);
-        req.on('timeout', () => {
-            req.destroy();
-            reject(new Error('清单请求超时'));
-        });
+        return;
+    }
+
+    const res = await fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: '*/*', 'User-Agent': TDP_UA },
+        signal,
+        redirect: 'follow',
     });
+    if (!res.ok) {
+        throw new Error(`下载 HTTP ${res.status}`);
+    }
+
+    const totalHeader = Number(res.headers.get('content-length') || 0);
+    const total = expectedBytes || totalHeader || 0;
+
+    // Prefer streaming when body is a web ReadableStream.
+    if (res.body && typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = Buffer.from(value);
+            chunks.push(chunk);
+            received += chunk.length;
+            if (typeof onProgress === 'function') {
+                try {
+                    onProgress({
+                        received,
+                        total: total || undefined,
+                        percent: total > 0 ? Math.min(99, Math.round((received / total) * 100)) : undefined,
+                    });
+                } catch { /* ignore */ }
+            }
+        }
+        const buf = Buffer.concat(chunks);
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.writeFileSync(destPath, buf);
+        return;
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (typeof onProgress === 'function') {
+        try {
+            onProgress({ received: buf.length, total: total || buf.length, percent: 100 });
+        } catch { /* ignore */ }
+    }
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, buf);
 }
 
 function localStatus() {
@@ -326,10 +424,9 @@ async function pullUpdate({ onProgress } = {}) {
 
     emit({ phase: 'start', version: latest.version, percent: 0 });
     try {
-        await downloadFile(latest.url, stagingPack, {
+        await downloadTdpPack(latest.url, stagingPack, {
             signal,
             expectedBytes: latest.size || undefined,
-            skipProbe: true,
             onProgress: (p) => {
                 emit({
                     phase: 'download',
@@ -344,7 +441,7 @@ async function pullUpdate({ onProgress } = {}) {
         if (err?.name === 'AbortError' || err?.code === 'cancelled') {
             return { ok: false, error: '已取消', code: 'cancelled' };
         }
-        return { ok: false, error: err.message || '下载失败' };
+        return { ok: false, error: formatTdpNetworkError(err, '下载') };
     }
 
     let buf;

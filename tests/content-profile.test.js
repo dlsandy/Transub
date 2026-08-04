@@ -109,7 +109,7 @@ describe('content-profile-core', () => {
         assert.strictEqual(resolved.overrides.vadSensitive, true);
         assert.strictEqual(resolved.overrides.engineVadModel, 'whisperseg-asmr');
         assert.strictEqual(resolved.overrides.language, 'ja');
-        assert.strictEqual(resolved.overrides.engineAsrModel, 'whisper-large-v3-turbo');
+        assert.strictEqual(resolved.overrides.engineAsrModel, 'whisper-ja-1.5b');
         assert.strictEqual(resolved.overrides.engineMtModel, 'sakura-1.5b');
         assert.strictEqual(resolved.overrides.filmAudioEnhance, false);
         assert.strictEqual(base.vadSensitive, false, 'must not mutate base');
@@ -629,6 +629,32 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.engineMtModel, 'sakura-1.5b');
     });
 
+    it('refineSenseModels prefers whisper-ja-1.5b over kotoba/reazon for AV soft', () => {
+        const { overrides } = refineSenseModels(
+            {
+                language: 'ja',
+                engineAsrModel: 'whisper-large-v3-turbo',
+                engineMtModel: 'opus-mt-ja-zh',
+            },
+            {
+                profile: 'av_soft',
+                language: 'ja',
+                task: 'translate',
+                installedModels: [
+                    { id: 'reazonspeech-k2', installed: true },
+                    { id: 'qwen3-asr-0.6b', installed: true },
+                    { id: 'kotoba-whisper-v2.0-faster', installed: true },
+                    { id: 'anime-whisper', installed: true },
+                    { id: 'whisper-ja-1.5b', installed: true },
+                    { id: 'sakura-1.5b', installed: true },
+                    { id: 'opus-mt-ja-zh', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(overrides.engineAsrModel, 'whisper-ja-1.5b');
+        assert.strictEqual(overrides.engineMtModel, 'sakura-1.5b');
+    });
+
     it('refineSenseModels keeps Sakura as declared target when neither Sakura nor Opus installed', () => {
         const { overrides, notes } = refineSenseModels(
             {
@@ -902,6 +928,23 @@ describe('content-profile-core', () => {
         assert.ok(ids.includes('whisper-ja-1.5b'));
         assert.ok(ids.includes('whisperseg-asmr'));
         assert.ok(ids.includes('sakura-1.5b'));
+    });
+
+    it('collectSenseSupportGaps treats JA 1.5B as satisfying av_soft preference', () => {
+        const { missing } = collectSenseSupportGaps(
+            { language: 'ja', filmAudioEnhance: false },
+            {
+                profile: 'av_soft',
+                language: 'ja',
+                task: 'translate',
+                installedModels: [
+                    { id: 'whisper-ja-1.5b', installed: true },
+                    { id: 'whisperseg-asmr', installed: true },
+                    { id: 'sakura-1.5b', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(missing.length, 0);
     });
 
     it('collectSenseSupportGaps treats Sakura 7B as satisfying Sakura preference', () => {

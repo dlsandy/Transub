@@ -14,6 +14,7 @@
     let batchSummaryEl = null;
     let batchSummaryTitle = null;
     let batchSummaryBody = null;
+    let batchSummaryElapsed = null;
     let batchSummaryPrimary = null;
     let batchSummarySecondary = null;
     let batchSummaryResolve = null;
@@ -32,6 +33,7 @@
         batchSummaryEl = document.getElementById('batchSummaryModal');
         batchSummaryTitle = document.getElementById('batchSummaryTitle');
         batchSummaryBody = document.getElementById('batchSummaryBody');
+        batchSummaryElapsed = document.getElementById('batchSummaryElapsed');
         batchSummaryPrimary = document.getElementById('batchSummaryPrimaryBtn');
         batchSummarySecondary = document.getElementById('batchSummarySecondaryBtn');
         shortcutsEl = document.getElementById('shortcutsModal');
@@ -216,6 +218,11 @@
         }
         batchSummaryTitle.textContent = options.title || '任务完成';
         batchSummaryBody.textContent = options.summaryText || '';
+        const elapsedText = String(options.elapsedText || '').trim();
+        if (batchSummaryElapsed) {
+            batchSummaryElapsed.textContent = elapsedText ? `总用时 ${elapsedText}` : '';
+            batchSummaryElapsed.classList.toggle('hidden', !elapsedText);
+        }
         batchSummaryPrimary.textContent = options.primaryLabel || '确定';
         batchSummarySecondary.textContent = options.secondaryLabel || '关闭';
         batchSummaryPrimary.classList.toggle('hidden', !options.onPrimary);

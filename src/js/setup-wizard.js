@@ -42,11 +42,31 @@
     const ASR_OPTIONS = [
         { id: 'sensevoice-small', label: 'SenseVoice Small（多语种·推荐）', langs: ['auto', 'ja', 'zh', 'en', 'ko', 'yue'] },
         { id: 'whisper-tiny', label: 'Whisper tiny（最快）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
-        { id: 'whisper-large-v3-turbo', label: 'Whisper large-v3-turbo（质量）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
+        { id: 'whisper-large-v3-turbo', label: 'Whisper large-v3-turbo（可选·高质量）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
         { id: 'whisper-large-v3', label: 'Whisper large-v3（最高质量）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
+        { id: 'anime-whisper', label: 'Anime Whisper（动画/Galgame）', langs: ['ja', 'auto'] },
         { id: 'whisper-ja-1.5b', label: 'Whisper JA 1.5B（日语微调）', langs: ['ja', 'auto'] },
+        { id: 'kotoba-whisper-v2.0-faster', label: 'Kotoba Whisper v2.0（日语）', langs: ['ja', 'auto'] },
+        { id: 'reazonspeech-k2', label: 'ReazonSpeech K2（日语·带时间戳）', langs: ['ja', 'auto'] },
+        { id: 'qwen3-asr-0.6b', label: 'Qwen3-ASR 0.6B（多语·带对齐）', langs: ['auto', 'ja', 'zh', 'en'] },
     ];
-    const WHISPER_JA_ID = 'whisper-ja-1.5b';
+    /** Preferred JA specialized ASR when Sakura / soft-AV needs a Whisper JA model. */
+    const WHISPER_JA_PRIMARY = 'whisper-ja-1.5b';
+    const WHISPER_JA_IDS = [
+        'whisper-ja-1.5b',
+        'kotoba-whisper-v2.0-faster',
+        'anime-whisper',
+    ];
+    /** @deprecated use WHISPER_JA_PRIMARY / isWhisperJaId */
+    const WHISPER_JA_ID = WHISPER_JA_PRIMARY;
+
+    function isWhisperJaId(id) {
+        return WHISPER_JA_IDS.includes(String(id || '').trim());
+    }
+
+    function asrListHasWhisperJa(ids = []) {
+        return (ids || []).some((id) => isWhisperJaId(id));
+    }
     const SAMPLE_MAX = 5;
     const OPUS_MT_OPTIONS = [
         { id: 'opus-mt-ja-zh', label: 'Opus-MT 日→中（机器翻译）', langs: ['ja', 'auto'], kind: 'engine' },
@@ -223,9 +243,8 @@
     function defaultAsrFor(language, profile, recommend) {
         const rec = recommend?.models?.asrModel || recommend?.models?.asr_model || '';
         if (rec) return rec;
-        if (language === 'ja' && profile === 'quality') return 'whisper-ja-1.5b';
-        if (profile === 'quality') return 'whisper-large-v3-turbo';
-        if (profile === 'speed') return 'sensevoice-small';
+        if (language === 'ja' && profile === 'quality') return WHISPER_JA_PRIMARY;
+        // All profiles default to SenseVoice; whisper-large-v3-turbo is optional.
         return 'sensevoice-small';
     }
 
@@ -294,35 +313,50 @@
         return ids.some((id) => isSakuraModelId(id));
     }
 
-    /** When any Sakura MT is selected, Whisper JA must stay checked. */
+    /** When any Sakura MT is selected, a Whisper JA specialized ASR must stay checked. */
     function enforceWhisperJaForSakura() {
         if (!mtListHasSakura()) return false;
         const host = $('wizardAsrList');
         if (!host) return false;
-        let input = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_ID}"]`);
+        if (asrListHasWhisperJa(readCheckedIds('wizardAsrList'))) {
+            // Lock whichever JA specialist is already selected.
+            for (const jaId of WHISPER_JA_IDS) {
+                const input = host.querySelector(`input[type="checkbox"][data-model-id="${jaId}"]`);
+                if (input?.checked) {
+                    input.disabled = true;
+                    input.title = '勾选 Sakura 推理翻译时必须使用日语专用 Whisper';
+                }
+            }
+            refreshPrimaryHints(host);
+            return false;
+        }
+        let input = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_PRIMARY}"]`);
         if (!input) {
             // Ensure JA option exists even if language filter hid it.
             const asrOpts = asrOptionsFor('ja');
             const prev = readCheckedIds('wizardAsrList');
-            if (!prev.includes(WHISPER_JA_ID)) prev.push(WHISPER_JA_ID);
+            if (!asrListHasWhisperJa(prev)) prev.push(WHISPER_JA_PRIMARY);
             renderModelCheckList('wizardAsrList', asrOpts, prev);
-            input = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_ID}"]`);
+            input = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_PRIMARY}"]`);
         }
         if (!input) return false;
         const changed = !input.checked;
         input.checked = true;
         input.disabled = true;
-        input.title = '勾选 Sakura 推理翻译时必须使用 Whisper JA';
+        input.title = '勾选 Sakura 推理翻译时必须使用日语专用 Whisper';
         refreshPrimaryHints(host);
         return changed;
     }
 
     function clearWhisperJaLock() {
         const host = $('wizardAsrList');
-        const input = host?.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_ID}"]`);
-        if (input) {
-            input.disabled = false;
-            input.title = '';
+        if (!host) return;
+        for (const jaId of WHISPER_JA_IDS) {
+            const input = host.querySelector(`input[type="checkbox"][data-model-id="${jaId}"]`);
+            if (input) {
+                input.disabled = false;
+                input.title = '';
+            }
         }
     }
 
@@ -419,8 +453,8 @@
             : ((goals.mtModels && goals.mtModels.length)
                 ? goals.mtModels
                 : defaultMtSelection(goals.language, goals.task, state.detect.recommend, goals.translatePref));
-        if (mtList.some((id) => isSakuraModelId(id)) && !asrList.includes(WHISPER_JA_ID)) {
-            asrList.unshift(WHISPER_JA_ID);
+        if (mtList.some((id) => isSakuraModelId(id)) && !asrListHasWhisperJa(asrList)) {
+            asrList.unshift(WHISPER_JA_PRIMARY);
         }
         const vadList = defaultVadFor(asrList);
         const ids = [];
@@ -446,22 +480,22 @@
         const prevAsr = preserve ? readCheckedIds('wizardAsrList') : [];
         // Sense recommendations win over leftover checkboxes from earlier steps.
         let preferAsr = (sense?.asrModels?.length)
-            ? sense.asrModels.filter((id) => asrOpts.some((o) => o.id === id) || id === WHISPER_JA_ID)
+            ? sense.asrModels.filter((id) => asrOpts.some((o) => o.id === id) || isWhisperJaId(id))
             : (prevAsr.length
-                ? prevAsr.filter((id) => asrOpts.some((o) => o.id === id) || id === WHISPER_JA_ID)
+                ? prevAsr.filter((id) => asrOpts.some((o) => o.id === id) || isWhisperJaId(id))
                 : [defaultAsrFor(lang, profile, state.detect.recommend)]);
         if ((translatePref === 'sakura' || sense?.mtModels?.some((id) => isSakuraModelId(id)))
-            && !preferAsr.includes(WHISPER_JA_ID)) {
-            preferAsr = [WHISPER_JA_ID, ...preferAsr];
+            && !asrListHasWhisperJa(preferAsr)) {
+            preferAsr = [WHISPER_JA_PRIMARY, ...preferAsr];
         }
         const asrOptsFinal = (() => {
             const needJa = translatePref === 'sakura'
                 || sense?.mtModels?.some((id) => isSakuraModelId(id))
-                || preferAsr.includes(WHISPER_JA_ID)
+                || asrListHasWhisperJa(preferAsr)
                 || mtListHasSakura(preserve ? readCheckedIds('wizardMtList') : (sense?.mtModels || []));
             if (!needJa) return asrOpts;
-            if (asrOpts.some((o) => o.id === WHISPER_JA_ID)) return asrOpts;
-            const ja = ASR_OPTIONS.find((o) => o.id === WHISPER_JA_ID);
+            if (asrOpts.some((o) => isWhisperJaId(o.id))) return asrOpts;
+            const ja = ASR_OPTIONS.find((o) => o.id === WHISPER_JA_PRIMARY);
             return ja ? [...asrOpts, ja] : asrOpts;
         })();
         renderModelCheckList(
@@ -605,7 +639,7 @@
                 const asrIds = readCheckedIds('wizardAsrList');
                 const mtIds = readCheckedIds('wizardMtList');
                 const asrOk = asrIds.length > 0;
-                const sakuraOk = !mtIds.some((mid) => isSakuraModelId(mid)) || asrIds.includes(WHISPER_JA_ID);
+                const sakuraOk = !mtIds.some((mid) => isSakuraModelId(mid)) || asrListHasWhisperJa(asrIds);
                 nextBtn.disabled = !asrOk || !sakuraOk;
             } else if (id === 'apply') {
                 nextBtn.textContent = '请稍候…';
@@ -1229,12 +1263,12 @@
         }
         const hint = $('setupWizardPlanHint');
         const needsJa = mtList.some((id) => isSakuraModelId(id));
-        const hasJa = asrList.includes(WHISPER_JA_ID);
+        const hasJa = asrListHasWhisperJa(asrList);
         if (hint) {
             if (!asrList.length) {
                 hint.textContent = '请至少选择一个听写模型（可在上方「调整模型」中勾选）。';
             } else if (needsJa && !hasJa) {
-                hint.textContent = '已选更准翻译：需同时勾选 Whisper JA。';
+                hint.textContent = '已选更准翻译：需同时勾选 Anime Whisper 或 Whisper JA。';
             } else if (!state.detect.engineOk) {
                 hint.textContent = '转写引擎尚未就绪：仍会保存偏好；可稍后在环境页补齐。';
             } else {
@@ -1827,8 +1861,8 @@
             : (goals.mtModels?.length
                 ? goals.mtModels
                 : defaultMtSelection(goals.language, goals.task, state.detect.recommend, goals.translatePref));
-        if (mtList.some((id) => isSakuraModelId(id)) && !asrList.includes(WHISPER_JA_ID)) {
-            asrList.unshift(WHISPER_JA_ID);
+        if (mtList.some((id) => isSakuraModelId(id)) && !asrListHasWhisperJa(asrList)) {
+            asrList.unshift(WHISPER_JA_PRIMARY);
         }
         const asr = asrList[0] || '';
         const mt = mtList[0] || '';
@@ -1851,7 +1885,7 @@
             if (hint) hint.textContent = '请至少勾选一个语音识别（ASR）模型。';
             return;
         }
-        if (mtList.some((id) => isSakuraModelId(id)) && !asrList.includes(WHISPER_JA_ID)) {
+        if (mtList.some((id) => isSakuraModelId(id)) && !asrListHasWhisperJa(asrList)) {
             enforceWhisperJaForSakura();
             const hint = $('setupWizardPlanHint');
             if (hint) hint.textContent = '已勾选 Sakura：必须同时勾选 Whisper JA 1.5B。';
@@ -2335,10 +2369,12 @@
                 else clearWhisperJaLock();
             }
             if (host?.id === 'wizardAsrList' && mtListHasSakura()) {
-                const ja = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_ID}"]`);
-                if (ja && !ja.checked) {
-                    ja.checked = true;
-                    ja.disabled = true;
+                if (!asrListHasWhisperJa(readCheckedIds('wizardAsrList'))) {
+                    const ja = host.querySelector(`input[type="checkbox"][data-model-id="${WHISPER_JA_PRIMARY}"]`);
+                    if (ja) {
+                        ja.checked = true;
+                        ja.disabled = true;
+                    }
                 }
             }
             refreshPrimaryHints(host);

@@ -33,7 +33,7 @@ Lists supported tasks (`transcribe`, `translate_mt`, `dual`), ASR/MT/VAD backend
 
 Installed + catalog models (`asr` / `mt` / `vad`).
 
-ASR ids include `sensevoice-small`, `whisper-tiny`, `whisper-large-v3-turbo`, `whisper-large-v3`, and optional Japanese-specialized `whisper-ja-1.5b` (`TransWithAI/whisper-ja-1.5B-ct2`; not part of default profiles — pass `asrModel` / download by id).
+ASR ids include `sensevoice-small`, `whisper-tiny`, `whisper-large-v3-turbo`, `whisper-large-v3`, optional Japanese-specialized `whisper-ja-1.5b` (`TransWithAI/whisper-ja-1.5B-ct2`), and optional anime/galgame `anime-whisper` (`quantumcookie/anime-whisper-ct2-fp16`). For `anime-whisper`, the engine clears `initialPrompt`/`hotwords` (prompting causes hallucinations), skips WhisperSeg clip gating, and by default runs **TEN VAD short frames** (0.5s silence / ≤5s groups) → per-frame ASR so the VAD frame owns the timeline (ChronosJAV / WhisperJAV Branch B). Fallback when TEN is unavailable: ≤180s ffmpeg windows + CPS collapsed-timestamp repair (single-pass CT2 can native-crash on Windows). Job fields: `timingAlign` (`false`/`off` disables), `timingAlignModel` (`ten`|`auto`|omit = TEN frames; `rate` = windows+CPS only; `whisper-ja-1.5b`|`wav2vec2`|… = post-hoc align). Neither JA specialist is part of default profiles — pass `asrModel` / download by id.
 
 ### `POST /models/recommend`
 
@@ -200,6 +200,8 @@ Optional job flags:
 | `perfProfile` | `"quality"` (default) or `"speed"` — speed: Silero VAD for JA Whisper, skip clip retranscribe, `beamSize=1` if unset, disable Whisper DTW word timestamps unless `includeWords`/`karaokeVtt` |
 | `wordTimestamps` | Force Whisper DTW word alignment on/off (overrides `perfProfile` auto); always on when `includeWords`/`karaokeVtt` |
 | `retranscribe` | Enable/disable Whisper clip retranscribe (default: on for quality, off for speed) |
+| `timingAlign` | `false` / `"off"` disables anime timing align (rate-repair windows only) |
+| `timingAlignModel` | Anime-whisper timeline: `ten` / `auto` / omit → TEN VAD short frames (≤5s); `rate` → windows+CPS only; `whisper-ja-1.5b` / `wav2vec2` / … → post-hoc dual align |
 | `sensevoiceInprocess` | Run SenseVoice in-process (model cache; cancel cannot kill mid-generate). Same as env `TRANSUB_SENSEVOICE_INPROCESS=1` |
 
 Process env (engine host):

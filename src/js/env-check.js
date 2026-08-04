@@ -433,9 +433,19 @@
                 return 'GPU';
             });
             setSubtitleFn(`正在打开手动下载（${labels.join(' + ')}）…`);
+            const gpuItem = (result?.items || []).find((it) => it.id === 'gpuRuntime') || {};
+            const gpuExtras = whlKinds.includes('gpu')
+                ? {
+                    asrGpuReady: gpuItem.asrGpuReady === true,
+                    ortGpuCuda: gpuItem.ortGpuCuda === true,
+                    ortGpuRequirement: gpuItem.ortGpuRequirement || '',
+                    ortOnly: gpuItem.asrGpuReady === true && gpuItem.ortGpuCuda === false,
+                }
+                : {};
             const res = await global.TransubManualWhlInstall.openModal({
                 kind: whlKinds[0],
                 kinds: whlKinds,
+                formPayload: gpuExtras,
             });
             if (res?.ok) {
                 setSubtitleFn(res.message || '手动安装完成，正在重新检测…');
