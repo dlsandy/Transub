@@ -44,10 +44,27 @@
         }
     }
 
+    function getThemeSelect() {
+        return document.getElementById('appThemeSelect')
+            || document.getElementById('editorThemeSelect');
+    }
+
     function loadIntoForm() {
-        const theme = lsGet(KEYS.theme, 'light');
-        const themeSel = document.getElementById('editorThemeSelect');
-        if (themeSel) themeSel.value = theme === 'dark' ? 'dark' : 'light';
+        const themeSel = getThemeSelect();
+        if (themeSel) {
+            let theme = lsGet('transub.mainTheme', '') || lsGet(KEYS.theme, 'light');
+            themeSel.value = theme === 'dark' ? 'dark' : 'light';
+            void (async () => {
+                try {
+                    const res = await global.__ELECTRON__?.transubGetAppTheme?.();
+                    if (res?.theme === 'dark' || res?.theme === 'light') {
+                        themeSel.value = res.theme;
+                        lsSet(KEYS.theme, res.theme);
+                        lsSet('transub.mainTheme', res.theme);
+                    }
+                } catch (_) { /* ignore */ }
+            })();
+        }
 
         const autoFocus = document.getElementById('editorAutoFocusCheck');
         if (autoFocus) autoFocus.checked = lsGet(KEYS.autoFocus, '0') === '1';
@@ -143,8 +160,15 @@
     }
 
     function saveFromForm() {
-        const themeSel = document.getElementById('editorThemeSelect');
-        if (themeSel) lsSet(KEYS.theme, themeSel.value === 'dark' ? 'dark' : 'light');
+        const themeSel = getThemeSelect();
+        if (themeSel) {
+            const theme = themeSel.value === 'dark' ? 'dark' : 'light';
+            lsSet(KEYS.theme, theme);
+            lsSet('transub.mainTheme', theme);
+            try {
+                void global.__ELECTRON__?.transubSetAppTheme?.({ theme });
+            } catch (_) { /* ignore */ }
+        }
 
         const autoFocus = document.getElementById('editorAutoFocusCheck');
         if (autoFocus) lsSet(KEYS.autoFocus, autoFocus.checked ? '1' : '0');
@@ -222,6 +246,18 @@
         if (clearBtn && clearBtn.dataset.bound !== '1') {
             clearBtn.dataset.bound = '1';
             clearBtn.addEventListener('click', clearFilmHints);
+        }
+        const themeSel = getThemeSelect();
+        if (themeSel && themeSel.dataset.themeBound !== '1') {
+            themeSel.dataset.themeBound = '1';
+            themeSel.addEventListener('change', () => {
+                const theme = themeSel.value === 'dark' ? 'dark' : 'light';
+                lsSet(KEYS.theme, theme);
+                lsSet('transub.mainTheme', theme);
+                try {
+                    void global.__ELECTRON__?.transubSetAppTheme?.({ theme });
+                } catch (_) { /* ignore */ }
+            });
         }
     }
 

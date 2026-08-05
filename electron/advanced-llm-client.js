@@ -25,6 +25,68 @@ function resolveModelsUrl(baseUrl) {
 }
 
 /**
+ * Turn opaque undici "fetch failed" into an actionable Chinese message.
+ * @param {unknown} err
+ * @param {{ baseUrl?: string }} [ctx]
+ * @returns {string}
+ */
+function formatLlmNetworkError(err, ctx = {}) {
+    const e = err && typeof err === 'object' ? err : {};
+    const cause = e.cause && typeof e.cause === 'object' ? e.cause : {};
+    const nested = cause.cause && typeof cause.cause === 'object' ? cause.cause : {};
+    const code = String(nested.code || cause.code || e.code || '').toUpperCase();
+    const causeMsg = String(
+        nested.message || cause.message || e.message || err || '',
+    ).trim();
+    const base = normalizeBaseUrl(ctx.baseUrl || '');
+    let host = base;
+    try {
+        host = new URL(base).host || base;
+    } catch (_) { /* keep base */ }
+    const local = /127\.0\.0\.1|localhost/i.test(`${host} ${base} ${ctx.baseUrl || ''}`);
+    const resetLike = code === 'ECONNRESET'
+        || code === 'UND_ERR_SOCKET'
+        || /ECONNRESET|UND_ERR_SOCKET|连接被重置/i.test(`${causeMsg} ${code}`);
+
+    if (e.name === 'AbortError' || code === 'ABORT_ERR') {
+        return '请求超时';
+    }
+    if (code === 'ECONNREFUSED') {
+        return local
+            ? `无法连接本地模型 ${host}（连接被拒绝）。请确认软件内模型 / llama-server 已启动。`
+            : `无法连接 ${host}（连接被拒绝）。请确认本地模型 / API 服务已启动，或检查 Base URL。`;
+    }
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+        return `无法解析 ${host} 的域名，请检查 Base URL 或 DNS。`;
+    }
+    if (code === 'ETIMEDOUT' || code === 'ESOCKETTIMEDOUT'
+        || code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'UND_ERR_HEADERS_TIMEOUT') {
+        return `连接 ${host} 超时。请检查网络、代理，或稍后重试。`;
+    }
+    if (resetLike) {
+        if (local) {
+            return [
+                `本地模型服务（${host}）连接被重置，通常是 llama-server 中途退出。`,
+                '常见原因：显存不足、上下文过长、或 GPU 驱动异常。',
+                '可尝试：设置中减小 GPU 层数 / 上下文，换更小模型，或先「测试连接」后再跑理解重构。',
+            ].join('');
+        }
+        return `与 ${host} 的连接被重置。请检查代理 / 防火墙，或确认服务未中途退出。`;
+    }
+    if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+        || code === 'ERR_TLS_CERT_ALTNAME_INVALID') {
+        return `连接 ${host} 时证书校验失败。`;
+    }
+    if (causeMsg === 'fetch failed' || causeMsg === 'Failed to fetch' || !causeMsg) {
+        const hint = local
+            ? '请确认本地大模型（llama-server / Ollama）已启动，并在设置中测试连接。'
+            : '请检查 Base URL、API Key、网络与代理设置，并在设置中测试连接。';
+        return `无法连接大模型接口 ${host}。${hint}`;
+    }
+    return `无法连接 ${host}（${causeMsg}${code ? ` / ${code}` : ''}）`;
+}
+
+/**
  * 测试 BYOK / Ollama 连通性：优先 GET /models，再可选探测指定 model。
  */
 async function testConnection(options = {}) {
@@ -54,7 +116,7 @@ async function testConnection(options = {}) {
             }
             return {
                 ok: false,
-                error: `无法连接 ${baseUrl}（${err.message || err}）`,
+                error: formatLlmNetworkError(err, { baseUrl }),
                 code: 'network',
             };
         }
@@ -381,7 +443,11 @@ async function chatCompletions(options = {}) {
             }
             return { ok: false, error: '请求超时', code: 'timeout' };
         }
-        return { ok: false, error: err.message || String(err), code: 'llm_network' };
+        return {
+            ok: false,
+            error: formatLlmNetworkError(err, { baseUrl: opts.baseUrl }),
+            code: 'llm_network',
+        };
     } finally {
         clearTimeout(timer);
         if (opts.signal) {
@@ -397,6 +463,7 @@ module.exports = {
     normalizeBaseUrl,
     resolveChatCompletionsUrl,
     resolveModelsUrl,
+    formatLlmNetworkError,
     isMockMode,
     supportsThinkingControls,
     extractChatMessageContent,

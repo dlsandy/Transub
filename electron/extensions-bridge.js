@@ -150,8 +150,18 @@ function scanSubtitleQc(filePath, options = {}) {
 }
 
 /**
+ * True for JA/source archive tracks (noise may be deleted).
+ * Translation tracks should blank noise so cue count stays aligned.
+ */
+function isSourceSubtitleTrack(filePath) {
+    const base = path.basename(String(filePath || ''));
+    return /\.src\.|_src\.|\.source\./i.test(base)
+        || /[.\\_-]ja(?:\.|$)/i.test(base);
+}
+
+/**
  * 批量后处理：可选句读后空格、CPS 智能拆分、清理杂音/幻觉短句、压缩叠词、翻译任务简繁体，写回字幕文件。
- * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 压缩叠词 → 简繁转换。
+ * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 压缩叠词 → 简繁转换（仅繁体变体；简体目标跳过 OpenCC）。
  */
 function applySubtitlePostprocess(filePath, options = {}) {
     const doc = readSubtitleDocument(filePath);
@@ -177,9 +187,17 @@ function applySubtitlePostprocess(filePath, options = {}) {
     const doNoise = options.removeNoise === true || options.removeHallucinations === true;
     const doRemoveDuplicates = options.removeDuplicates === true;
     const doCompressRep = options.compressRepetition === true;
+    const sourceTrack = isSourceSubtitleTrack(doc.path);
+    // Default: delete noise (not blank to 「…」). For JA↔ZH alignment use
+    // removeNoiseFromSubtitlePair / removeAlignedNoiseFromCuePairs instead.
+    const blankInsteadOfRemove = options.blankInsteadOfRemove === true;
+    // JA mid-phrase stitch only helps source tracks; skip on ZH.
+    const stitchJaFragments = options.stitchJaFragments != null
+        ? options.stitchJaFragments !== false
+        : sourceTrack;
     const chineseVariant = String(options.chineseSubtitleVariant || '').trim();
-    const doChinese = chineseVariant === 'simplified'
-        || chineseVariant === 'traditional'
+    // MT already emits simplified; OpenCC twp→cn is unnecessary and can corrupt 么→幺.
+    const doChinese = chineseVariant === 'traditional'
         || chineseVariant === 'traditional-tw'
         || chineseVariant === 'traditional-hk'
         || chineseVariant === 'traditional-twp';
@@ -239,7 +257,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
             return { ok: false, error: err.message || '无法加载通顺度模块' };
         }
         // Stitch JA mid-phrase ASR splits before deleting leftover fragments.
-        if (doNoise && options.stitchJaFragments !== false && typeof fluency.stitchJaFragmentCues === 'function') {
+        if (doNoise && stitchJaFragments && typeof fluency.stitchJaFragmentCues === 'function') {
             const stitched = fluency.stitchJaFragmentCues(cues, {
                 maxGapMs: options.jaStitchMaxGapMs,
                 maxMergedDurMs: options.jaStitchMaxMergedDurMs,
@@ -259,7 +277,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
             removeSymbolOnly: doNoise && options.removeSymbolOnly !== false,
             removeDuplicates: doRemoveDuplicates,
             removeHallucinations: doNoise && options.removeHallucinations !== false,
-            blankInsteadOfRemove: options.blankInsteadOfRemove === true,
+            blankInsteadOfRemove,
             blankPlaceholder: options.blankPlaceholder,
         });
         cues = noise.cues;
@@ -326,10 +344,7 @@ function applySubtitlePostprocess(filePath, options = {}) {
         }
         const convertOpts = typeof chinese.variantToConvertOptions === 'function'
             ? chinese.variantToConvertOptions(chineseVariant)
-            : {
-                direction: chineseVariant === 'simplified' ? 't2s' : 's2t',
-                locale: 'twp',
-            };
+            : { direction: 's2t', locale: 'twp' };
         const converted = chinese.convertCues(cues, {
             direction: convertOpts.direction,
             locale: convertOpts.locale,
@@ -343,10 +358,18 @@ function applySubtitlePostprocess(filePath, options = {}) {
     }
 
     result.afterCount = cues.length;
+    const noiseTouched = result.noise && (
+        Number(result.noise.stats?.removed) > 0
+        || Number(result.noise.stats?.blanked) > 0
+        || Number(result.noise.stats?.asrNameLoops) > 0
+        || Number(result.noise.stats?.asrNormalize) > 0
+    );
     const changed = result.afterCount !== result.beforeCount
         || (result.spacePunct && Number(result.spacePunct.stats?.cueTouched) > 0)
         || (result.cpsSplit && Number(result.cpsSplit.stats?.affected) > 0)
-        || (result.noise && Number(result.noise.stats?.removed) > 0)
+        || noiseTouched
+        || (result.jaStitch && Number(result.jaStitch.stats?.mergedPairs) > 0)
+        || (result.jaAsrDomain && Number(result.jaAsrDomain.changed) > 0)
         || (result.compressRep && Number(result.compressRep.stats?.cueTouched) > 0)
         || (result.chinese && Number(result.chinese.stats?.cueTouched) > 0);
 
@@ -370,7 +393,9 @@ function applySubtitlePostprocess(filePath, options = {}) {
         parts.push(result.spacePunct.summary);
     }
     if (result.cpsSplit?.summary) parts.push(result.cpsSplit.summary);
-    if (result.noise?.summary && result.noise.stats?.removed) parts.push(result.noise.summary);
+    if (result.noise?.summary && (result.noise.stats?.removed || result.noise.stats?.blanked)) {
+        parts.push(result.noise.summary);
+    }
     if (result.compressRep?.summary && result.compressRep.stats?.cueTouched) {
         parts.push(result.compressRep.summary.replace(/^将/, '已'));
     }
@@ -379,6 +404,233 @@ function applySubtitlePostprocess(filePath, options = {}) {
         ...result,
         written: true,
         summary: parts.join('；') || `已更新（${result.beforeCount} → ${result.afterCount} 条）`,
+    };
+}
+
+/**
+ * Delete noise from ZH+JA subtitle files together (union of noisy indexes) and renumber.
+ * Keeps JA↔ZH cue counts aligned without blanking ZH to 「…」.
+ * @param {string} targetPath
+ * @param {string} sourcePath
+ * @param {object} [options]
+ */
+function removeNoiseFromSubtitlePair(targetPath, sourcePath = '', options = {}) {
+    const target = readSubtitleDocument(targetPath);
+    if (!target.ok) return target;
+
+    let sourceCues = Array.isArray(options.sourceCues) ? options.sourceCues : [];
+    const srcPath = String(sourcePath || options.sourcePath || '').trim();
+    let sourceDoc = null;
+    if (srcPath) {
+        try {
+            if (fs.existsSync(path.resolve(srcPath))) {
+                sourceDoc = readSubtitleDocument(srcPath);
+                if (sourceDoc.ok && Array.isArray(sourceDoc.cues) && sourceDoc.cues.length) {
+                    sourceCues = sourceDoc.cues;
+                }
+            }
+        } catch { /* keep sourceCues fallback */ }
+    }
+    if (!sourceCues.length) {
+        return {
+            ok: true,
+            removed: 0,
+            skipped: true,
+            reason: 'no_source',
+            path: target.path,
+        };
+    }
+
+    let fluency;
+    try {
+        fluency = require('../src/js/subtitle-fluency-core');
+    } catch (err) {
+        return { ok: false, error: err.message || '无法加载通顺度模块' };
+    }
+    if (typeof fluency.removeAlignedNoiseFromCuePairs !== 'function') {
+        return { ok: false, error: '通顺度模块缺少成对清噪接口' };
+    }
+
+    const before = target.cues.length;
+    const cleaned = fluency.removeAlignedNoiseFromCuePairs(target.cues, sourceCues, {
+        removeEmpty: options.removeEmpty !== false,
+        removeFragments: options.removeFragments !== false,
+        removeSoundEffects: options.removeSoundEffects !== false,
+        removeSymbolOnly: options.removeSymbolOnly !== false,
+        removeDuplicates: options.removeDuplicates !== false,
+        removeHallucinations: options.removeHallucinations !== false,
+        hallucinationMaxChars: options.hallucinationMaxChars,
+        hallucinationMaxDurMs: options.hallucinationMaxDurMs,
+    });
+    if (cleaned.skipped) {
+        return {
+            ok: true,
+            removed: 0,
+            skipped: true,
+            reason: cleaned.reason || 'skipped',
+            path: target.path,
+            sourcePath: srcPath || undefined,
+        };
+    }
+    if (!cleaned.stats?.removed) {
+        return {
+            ok: true,
+            removed: 0,
+            path: target.path,
+            sourcePath: srcPath || undefined,
+            summary: fluency.summarizeNoiseRemoval(cleaned.stats),
+        };
+    }
+    if (!cleaned.zhCues.length) {
+        return {
+            ok: false,
+            error: '清噪后无剩余字幕，已取消写入',
+            removed: cleaned.stats?.removed || 0,
+            path: target.path,
+        };
+    }
+
+    const writtenZh = writeSubtitleDocument(target.path, {
+        cues: cleaned.zhCues,
+        format: target.format,
+        header: target.header,
+        backupMode: options.backupMode || 'off',
+    });
+    if (!writtenZh.ok) return writtenZh;
+
+    let sourceWritten = false;
+    if (
+        options.writeSource !== false
+        && sourceDoc?.ok
+        && srcPath
+        && fs.existsSync(path.resolve(srcPath))
+    ) {
+        const srcWrite = writeSubtitleDocument(sourceDoc.path, {
+            cues: cleaned.jaCues,
+            format: sourceDoc.format,
+            header: sourceDoc.header,
+            backupMode: options.backupMode || 'off',
+        });
+        sourceWritten = !!srcWrite.ok;
+    }
+
+    return {
+        ok: true,
+        removed: cleaned.stats?.removed || 0,
+        beforeCount: before,
+        afterCount: cleaned.zhCues.length,
+        path: target.path,
+        sourcePath: srcPath || undefined,
+        sourceWritten,
+        stats: cleaned.stats,
+        summary: fluency.summarizeNoiseRemoval(cleaned.stats),
+        written: true,
+    };
+}
+
+/**
+ * Optional compact delivery: drop pure interjection / moan cues from both ZH and JA
+ * when both sides are filler-only, then renumber on write.
+ * @param {string} targetPath - Chinese / translation subtitle
+ * @param {string} [sourcePath] - Japanese / ASR source subtitle
+ * @param {object} [options]
+ * @returns {{ ok: boolean, dropped?: number, skipped?: boolean, reason?: string, path?: string, sourcePath?: string, summary?: string, error?: string }}
+ */
+function compactPureInterjectionSubtitlePair(targetPath, sourcePath = '', options = {}) {
+    const target = readSubtitleDocument(targetPath);
+    if (!target.ok) return target;
+
+    let sourceCues = Array.isArray(options.sourceCues) ? options.sourceCues : [];
+    const srcPath = String(sourcePath || options.sourcePath || '').trim();
+    let sourceDoc = null;
+    if (srcPath) {
+        try {
+            if (fs.existsSync(path.resolve(srcPath))) {
+                sourceDoc = readSubtitleDocument(srcPath);
+                if (sourceDoc.ok && Array.isArray(sourceDoc.cues) && sourceDoc.cues.length) {
+                    sourceCues = sourceDoc.cues;
+                }
+            }
+        } catch { /* keep sourceCues fallback */ }
+    }
+    if (!sourceCues.length) {
+        return {
+            ok: true,
+            dropped: 0,
+            skipped: true,
+            reason: 'no_source',
+            path: target.path,
+        };
+    }
+
+    let fluency;
+    try {
+        fluency = require('../src/js/subtitle-fluency-core');
+    } catch (err) {
+        return { ok: false, error: err.message || '无法加载通顺度模块' };
+    }
+    if (typeof fluency.dropPureInterjectionPairs !== 'function') {
+        return { ok: false, error: '通顺度模块缺少成对精简接口' };
+    }
+
+    const before = target.cues.length;
+    const droppedRes = fluency.dropPureInterjectionPairs(target.cues, sourceCues);
+    if (droppedRes.skipped) {
+        return {
+            ok: true,
+            dropped: 0,
+            skipped: true,
+            reason: droppedRes.reason || 'skipped',
+            path: target.path,
+            sourcePath: srcPath || undefined,
+        };
+    }
+    if (!droppedRes.dropped) {
+        return {
+            ok: true,
+            dropped: 0,
+            path: target.path,
+            sourcePath: srcPath || undefined,
+            summary: fluency.summarizePureInterjectionDrop?.(0)
+                || '未发现可精简的纯语气词条目',
+        };
+    }
+
+    const writtenZh = writeSubtitleDocument(target.path, {
+        cues: droppedRes.zhCues,
+        format: target.format,
+        header: target.header,
+        backupMode: options.backupMode || 'off',
+    });
+    if (!writtenZh.ok) return writtenZh;
+
+    let writtenSrc = false;
+    if (
+        options.writeSource !== false
+        && sourceDoc?.ok
+        && srcPath
+        && fs.existsSync(path.resolve(srcPath))
+    ) {
+        const srcWrite = writeSubtitleDocument(sourceDoc.path, {
+            cues: droppedRes.jaCues,
+            format: sourceDoc.format,
+            header: sourceDoc.header,
+            backupMode: options.backupMode || 'off',
+        });
+        writtenSrc = !!srcWrite.ok;
+    }
+
+    const summary = fluency.summarizePureInterjectionDrop?.(droppedRes.dropped)
+        || `精简纯语气词 ${droppedRes.dropped} 条`;
+    return {
+        ok: true,
+        dropped: droppedRes.dropped,
+        beforeCount: before,
+        afterCount: droppedRes.zhCues.length,
+        path: target.path,
+        sourcePath: srcPath || undefined,
+        sourceWritten: writtenSrc,
+        summary,
     };
 }
 
@@ -1266,6 +1518,38 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-compact-pure-interjections', async (_event, payload = {}) => {
+        try {
+            const targetPath = assertEditableSubtitlePath(payload.path || payload.targetPath);
+            const sourcePath = payload.sourcePath
+                ? assertEditableSubtitlePath(payload.sourcePath)
+                : '';
+            return compactPureInterjectionSubtitlePair(
+                targetPath,
+                sourcePath,
+                payload.options || payload || {},
+            );
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-remove-noise-pair', async (_event, payload = {}) => {
+        try {
+            const targetPath = assertEditableSubtitlePath(payload.path || payload.targetPath);
+            const sourcePath = payload.sourcePath
+                ? assertEditableSubtitlePath(payload.sourcePath)
+                : '';
+            return removeNoiseFromSubtitlePair(
+                targetPath,
+                sourcePath,
+                payload.options || payload || {},
+            );
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transwithai-list-models', async (_event, payload = {}) => {
         try {
             const installPath = asString(payload.installPath || loadSettings(getAppRoot).options?.installPath || '', 4096);
@@ -1937,4 +2221,7 @@ module.exports = {
     resolveModelDir,
     applySubtitlePostprocess,
     sanitizeMtSubtitlePair,
+    removeNoiseFromSubtitlePair,
+    compactPureInterjectionSubtitlePair,
+    isSourceSubtitleTrack,
 };

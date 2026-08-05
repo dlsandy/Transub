@@ -45,6 +45,9 @@ function enrichSakuraNsfwOptions(p = {}) {
             if (opts.smartTranslateFaithfulTone && out.smartTranslateFaithfulTone == null) {
                 out.smartTranslateFaithfulTone = true;
             }
+            if (opts.smartTranslateFaithfulTone && out.faithfulTone == null) {
+                out.faithfulTone = true;
+            }
             const preset = String(opts.activePresetId || opts.presetId || '').trim();
             if (preset && !out.presetId && !out.activePresetId) {
                 out.presetId = preset;
@@ -60,6 +63,17 @@ function enrichSakuraNsfwOptions(p = {}) {
                 if (hit?.profile) out.contentProfile = hit.profile;
             } catch (_) { /* ignore */ }
         }
+    }
+    // Align with smart-translate: NSFW / faithful / av_soft ⇒ apply lexicon on sanitize.
+    if (out.applyNsfwLexicon == null) {
+        const nsfw = core.shouldUseNsfwPrompt(out);
+        out.applyNsfwLexicon = !!(
+            nsfw
+            || out.faithfulTone
+            || out.smartTranslateFaithfulTone
+            || out.sakuraNsfwPrompt
+            || out.nsfwPrompt
+        );
     }
     return out;
 }
@@ -251,6 +265,7 @@ async function runSakuraTranslateBody(payload = {}) {
             senseProfile: p.senseProfile || p.contentProfile,
             faithfulTone: p.faithfulTone || p.smartTranslateFaithfulTone,
             smartTranslateFaithfulTone: p.smartTranslateFaithfulTone || p.faithfulTone,
+            applyNsfwLexicon: p.applyNsfwLexicon,
             presetId: p.presetId || p.activePresetId,
             timeoutMs: chunkTimeoutMs,
             signal: p.signal,

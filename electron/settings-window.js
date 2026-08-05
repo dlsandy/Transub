@@ -84,6 +84,11 @@ function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, fo
 
     // Intentionally no `parent`: on Windows, closing an owned child often minimizes
     // the owner, and the main window treats minimize as hide-to-tray.
+    let backgroundColor = '#f9fafb';
+    try {
+        const { getAppTheme, MAIN_BG } = require('./app-theme');
+        backgroundColor = MAIN_BG[getAppTheme()] || backgroundColor;
+    } catch (_) { /* ignore */ }
     const win = new BrowserWindow({
         width: 1120,
         height: 820,
@@ -92,7 +97,7 @@ function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, fo
         title: wizard ? 'Transub 设置向导' : 'Transub 设置',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
-        backgroundColor: '#f9fafb',
+        backgroundColor,
         show: false,
         modal: false,
         webPreferences: {

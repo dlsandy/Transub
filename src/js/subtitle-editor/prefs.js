@@ -277,7 +277,7 @@
             }
         }
 
-        function applyTheme(theme) {
+        function applyTheme(theme, { persistShared = false } = {}) {
             const { els } = ctx;
             const dark = theme === 'dark';
             const root = document.documentElement;
@@ -286,24 +286,60 @@
             document.body.classList.toggle('editor-theme-dark', dark);
             document.body.classList.toggle('editor-theme-light', !dark);
             try { root.style.colorScheme = dark ? 'dark' : 'light'; } catch (_) { /* ignore */ }
-            try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch (_) { /* ignore */ }
+            try {
+                localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
+                localStorage.setItem('transub.mainTheme', dark ? 'dark' : 'light');
+            } catch (_) { /* ignore */ }
             if (els.themeToggle) {
                 const label = dark ? '切换到浅色主题' : '切换到深色主题';
                 els.themeToggle.textContent = dark ? '浅色主题' : '深色主题';
                 els.themeToggle.title = label;
                 els.themeToggle.setAttribute('aria-label', label);
             }
+            if (persistShared) {
+                try {
+                    void global.__ELECTRON__?.transubSetAppTheme?.({
+                        theme: dark ? 'dark' : 'light',
+                    });
+                } catch (_) { /* ignore */ }
+            }
         }
 
         function loadTheme() {
             let theme = 'light';
-            try { theme = localStorage.getItem(THEME_KEY) || 'light'; } catch (_) { /* ignore */ }
+            try {
+                theme = localStorage.getItem(THEME_KEY)
+                    || localStorage.getItem('transub.mainTheme')
+                    || 'light';
+            } catch (_) { /* ignore */ }
             applyTheme(theme === 'dark' ? 'dark' : 'light');
+            void (async () => {
+                try {
+                    const res = await global.__ELECTRON__?.transubGetAppTheme?.();
+                    if (res?.theme === 'dark' || res?.theme === 'light') {
+                        applyTheme(res.theme);
+                        return;
+                    }
+                    if (!res?.persisted && theme === 'dark') {
+                        await global.__ELECTRON__?.transubSetAppTheme?.({ theme: 'dark' });
+                    }
+                } catch (_) { /* ignore */ }
+            })();
+            try {
+                if (!ctx._appThemeListenerBound) {
+                    ctx._appThemeListenerBound = true;
+                    global.__ELECTRON__?.onAppThemeChanged?.((payload) => {
+                        const next = payload?.theme === 'dark' ? 'dark' : 'light';
+                        applyTheme(next);
+                        try { ctx.syncMenuState?.(); } catch (_) { /* ignore */ }
+                    });
+                }
+            } catch (_) { /* ignore */ }
         }
 
         function toggleTheme() {
             const dark = document.body.classList.contains('editor-theme-dark');
-            applyTheme(dark ? 'light' : 'dark');
+            applyTheme(dark ? 'light' : 'dark', { persistShared: true });
         }
 
         function applyPanelWidth(pct) {

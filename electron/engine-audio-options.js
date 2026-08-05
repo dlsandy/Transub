@@ -109,7 +109,7 @@ function buildVadJobOptions(merged = {}) {
     }
 
     let vadModel = normalizeVadModelId(merged.engineVadModel, 'fsmn-vad');
-    // Sensitive Whisper path → WhisperSeg ASMR (WhisperJAV-style).
+    // Sensitive Whisper path → WhisperSeg ASMR.
     if (sensitive) {
         vadModel = 'whisperseg-asmr';
     } else if (!isWhisper) {

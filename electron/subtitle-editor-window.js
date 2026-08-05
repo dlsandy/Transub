@@ -1,6 +1,5 @@
-const { BrowserWindow, dialog, nativeTheme, app: electronApp } = require('electron');
+const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
-const fs = require('fs');
 const { resolveHtmlPath } = require('./app-paths');
 const { getEditorWindowIconOption, applyEditorWindowIcon } = require('./icons');
 const { guessVideoPathForSubtitle } = require('./subtitle-utils');
@@ -8,6 +7,7 @@ const { asString } = require('./ipc-validate');
 const { refocusWindow } = require('./window-focus');
 const { applySubtitleEditorMenu } = require('./subtitle-editor-menu');
 const { attachUiZoom } = require('./ui-zoom');
+const { getAppTheme, setAppTheme, EDITOR_BG } = require('./app-theme');
 
 /** @type {Map<string, import('electron').BrowserWindow>} */
 const editorWindows = new Map();
@@ -18,6 +18,7 @@ const EMPTY_EDITOR_KEY = '__welcome__';
  *   restoreMainAfterSecondaryWindowClosed?: () => void,
  *   getMainWindow?: () => import('electron').BrowserWindow | null,
  *   showMainWindow?: () => import('electron').BrowserWindow | null | undefined,
+ *   isMainHiddenToTray?: () => boolean,
  *   isQuitting?: () => boolean,
  * } | null} */
 let linkedWindowManager = null;
@@ -27,9 +28,9 @@ function linkWindowManager(windowManager) {
 }
 
 /** Prevent Windows spurious main-window minimize→tray when this editor closes. */
-function armMainMinimizeSuppress() {
+function armMainMinimizeSuppress(ms) {
     try {
-        linkedWindowManager?.beginSuppressMinimizeToTray?.();
+        linkedWindowManager?.beginSuppressMinimizeToTray?.(ms);
     } catch (_) { /* ignore */ }
 }
 
@@ -51,6 +52,8 @@ function restoreMainAfterEditorClosed() {
         if (linkedWindowManager?.isQuitting?.()) return;
         // Keep focus on remaining editors; only hand off when none left.
         if (anyOtherEditorOpen()) return;
+        // Soft-park keeps isVisible() true — tray flag is authoritative.
+        if (linkedWindowManager?.isMainHiddenToTray?.()) return;
         const main = linkedWindowManager?.getMainWindow?.();
         if (!main || main.isDestroyed()) return;
         try {
@@ -61,37 +64,6 @@ function restoreMainAfterEditorClosed() {
             return;
         }
         linkedWindowManager?.showMainWindow?.();
-    } catch (_) { /* ignore */ }
-}
-
-const EDITOR_CHROME = {
-    light: { background: '#f3f4f6' },
-    dark: { background: '#0f1419' },
-};
-
-function getEditorChromePrefPath() {
-    try {
-        return path.join(electronApp.getPath('userData'), 'transub-editor-chrome-theme');
-    } catch (_) {
-        return '';
-    }
-}
-
-function readSavedEditorChromeDark() {
-    const file = getEditorChromePrefPath();
-    if (!file) return false;
-    try {
-        return String(fs.readFileSync(file, 'utf8') || '').trim() === 'dark';
-    } catch (_) {
-        return false;
-    }
-}
-
-function writeSavedEditorChromeDark(dark) {
-    const file = getEditorChromePrefPath();
-    if (!file) return;
-    try {
-        fs.writeFileSync(file, dark ? 'dark' : 'light', 'utf8');
     } catch (_) { /* ignore */ }
 }
 
@@ -114,38 +86,28 @@ function unbindEditorWindow(win) {
     }
 }
 
-function anyEditorWantsDarkChrome() {
-    for (const win of editorWindows.values()) {
-        if (!win || win.isDestroyed()) continue;
-        if (win.__transubDarkTheme === true) return true;
-    }
-    return false;
-}
-
-function refreshNativeThemeFromEditors() {
-    try {
-        const next = anyEditorWantsDarkChrome() ? 'dark' : 'system';
-        if (nativeTheme.themeSource !== next) {
-            nativeTheme.themeSource = next;
-        }
-    } catch (_) { /* ignore */ }
-}
-
 /**
- * Sync window chrome (title bar / menu / background) with editor dark theme.
- * nativeTheme drives OS title bar + menu colors on Windows/macOS/Linux.
+ * Sync this editor window's chrome with the shared app theme.
+ * Process-wide nativeTheme is owned by app-theme.js (never reset on close).
  * @param {import('electron').BrowserWindow | null | undefined} win
  * @param {boolean} dark
  */
 function applyEditorWindowChrome(win, dark) {
     if (!win || win.isDestroyed()) return;
-    const tone = dark ? EDITOR_CHROME.dark : EDITOR_CHROME.light;
+    win.__transubIsEditorWindow = true;
     win.__transubDarkTheme = !!dark;
-    writeSavedEditorChromeDark(dark);
+    const next = dark ? 'dark' : 'light';
     try {
-        win.setBackgroundColor(tone.background);
-    } catch (_) { /* ignore */ }
-    refreshNativeThemeFromEditors();
+        if (getAppTheme() !== next) {
+            setAppTheme(next);
+            return;
+        }
+        win.setBackgroundColor(EDITOR_BG[next]);
+    } catch (_) {
+        try {
+            win.setBackgroundColor(EDITOR_BG[next]);
+        } catch (__) { /* ignore */ }
+    }
 }
 
 function bindEditorWindow(win, subPath) {
@@ -174,10 +136,11 @@ function maximizeEditorWindow(win) {
     if (!win.isMaximized()) win.maximize();
 }
 
-function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
+function createSubtitleEditorWindow(app, { subPath, videoPath, action } = {}) {
     const rawSub = String(subPath || '').trim();
     const resolvedSub = rawSub ? path.resolve(rawSub) : '';
     const key = editorWindowKey(resolvedSub);
+    const openAction = asString(action, 64).trim();
     const existing = editorWindows.get(key);
     if (existing && !existing.isDestroyed()) {
         existing.focus();
@@ -186,6 +149,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             sendEditorInit(existing, {
                 subPath: resolvedSub,
                 videoPath: videoPath || guessVideoPathForSubtitle(resolvedSub) || '',
+                ...(openAction ? { action: openAction } : {}),
             });
         }
         return existing;
@@ -206,11 +170,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
         ? (String(videoPath || '').trim() || guessVideoPathForSubtitle(resolvedSub) || '')
         : '';
     const size = resolvedSub ? EDITOR_WINDOW : WELCOME_WINDOW;
-    // Windows title bar respects nativeTheme best when set before BrowserWindow creation
-    const preferDark = readSavedEditorChromeDark();
-    if (preferDark) {
-        try { nativeTheme.themeSource = 'dark'; } catch (_) { /* ignore */ }
-    }
+    const preferDark = getAppTheme() === 'dark';
     const win = new BrowserWindow({
         width: size.width,
         height: size.height,
@@ -222,7 +182,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
             : 'Transub Editor',
         icon: getEditorWindowIconOption(),
         autoHideMenuBar: false,
-        backgroundColor: preferDark ? EDITOR_CHROME.dark.background : EDITOR_CHROME.light.background,
+        backgroundColor: EDITOR_BG[preferDark ? 'dark' : 'light'],
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -235,6 +195,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     });
 
     attachUiZoom(win);
+    win.__transubIsEditorWindow = true;
     // 仅显示自定义归类菜单；不使用 Electron 原生 File/Edit/View 等菜单
     // 初始勾选与编辑器默认偏好对齐，随后由渲染进程同步真实状态
     applySubtitleEditorMenu(win, {
@@ -247,7 +208,11 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
     applyEditorWindowChrome(win, preferDark);
 
     const initPayload = resolvedSub
-        ? { subPath: resolvedSub, videoPath: linkedVideo }
+        ? {
+            subPath: resolvedSub,
+            videoPath: linkedVideo,
+            ...(openAction ? { action: openAction } : {}),
+        }
         : { welcome: true };
     let shown = false;
     const reveal = () => {
@@ -340,7 +305,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath } = {}) {
 
     win.on('closed', () => {
         unbindEditorWindow(win);
-        refreshNativeThemeFromEditors();
+        armMainMinimizeSuppress(1600);
         restoreMainAfterEditorClosed();
     });
 
@@ -405,7 +370,12 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 return { ok: false, error: '缺少字幕路径' };
             }
             const videoPath = asString(payload.videoPath, 4096).trim();
-            createSubtitleEditorWindow(app, { subPath, videoPath });
+            const action = asString(payload.action, 64).trim();
+            createSubtitleEditorWindow(app, {
+                subPath,
+                videoPath,
+                ...(action ? { action } : {}),
+            });
             return { ok: true, path: path.resolve(subPath) };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };

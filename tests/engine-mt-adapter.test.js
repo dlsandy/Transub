@@ -82,8 +82,9 @@ describe('engine-mt-adapter', () => {
             [{ index: 1, text: '你好' }],
         );
         assert.strictEqual(res.cues[0].text, '你好');
-        assert.strictEqual(res.cues[1].text, '');
-        assert.ok(!res.cues[1].text.includes('ありがとう'));
+        // Missing cue may be recovered via short-JA fallback lexicon, but never echoes source JA.
+        assert.ok(!String(res.cues[1].text || '').includes('ありがとう'));
+        assert.ok(!/[\u3040-\u30ff]/.test(String(res.cues[1].text || '')));
     });
 
     it('sanitizes pathological / Gloss-polluted MT responses', () => {

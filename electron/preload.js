@@ -10,6 +10,14 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     isDesktop: true,
     platform: process.platform,
     getAppVersion: () => ipcRenderer.invoke('transub-get-app-version'),
+    transubGetAppTheme: () => ipcRenderer.invoke('transub-get-app-theme'),
+    transubSetAppTheme: (payload) => ipcRenderer.invoke('transub-set-app-theme', payload || {}),
+    onAppThemeChanged: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-app-theme-changed', handler);
+        return () => ipcRenderer.removeListener('transub-app-theme-changed', handler);
+    },
     getPathForFile: (file) => {
         try {
             if (!file) return '';
@@ -142,6 +150,8 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubDeleteSubtitleFiles: (payload) => ipcRenderer.invoke('transub-delete-subtitle-files', payload || {}),
     transubScanSubtitleQc: (payload) => ipcRenderer.invoke('transub-scan-subtitle-qc', payload || {}),
     transubApplySubtitlePostprocess: (payload) => ipcRenderer.invoke('transub-apply-subtitle-postprocess', payload || {}),
+    transubCompactPureInterjections: (payload) => ipcRenderer.invoke('transub-compact-pure-interjections', payload || {}),
+    transubRemoveNoisePair: (payload) => ipcRenderer.invoke('transub-remove-noise-pair', payload || {}),
     transWithAiListModels: (payload) => ipcRenderer.invoke('transwithai-list-models', payload || {}),
     transWithAiValidateModel: (payload) => ipcRenderer.invoke('transwithai-validate-model', payload || {}),
     transubCopySubtitleAs: (payload) => ipcRenderer.invoke('transub-copy-subtitle-as', payload || {}),

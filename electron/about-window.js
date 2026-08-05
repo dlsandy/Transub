@@ -26,6 +26,11 @@ function openAboutWindow(app, { parent: _parent } = {}) {
     const existing = focusAboutWindow();
     if (existing) return { ok: true };
 
+    let backgroundColor = '#f9fafb';
+    try {
+        const { getAppTheme, MAIN_BG } = require('./app-theme');
+        backgroundColor = MAIN_BG[getAppTheme()] || backgroundColor;
+    } catch (_) { /* ignore */ }
     const win = new BrowserWindow({
         width: 420,
         height: 460,
@@ -36,7 +41,7 @@ function openAboutWindow(app, { parent: _parent } = {}) {
         title: '关于 Transub',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
-        backgroundColor: '#f9fafb',
+        backgroundColor,
         show: false,
         // Intentionally no `parent`: on Windows, closing an owned child often
         // minimizes the owner, and the main window treats minimize as hide-to-tray.

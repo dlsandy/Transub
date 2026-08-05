@@ -263,7 +263,7 @@
         const tpl = PROMPTS.sakuraNsfw;
         if (!tpl) {
             return fillExamples(
-                '你是日译中字幕翻译。忠实传达语气。喘息与拟声译成自然中文。例：{{EXAMPLES}}。每行只译对应一行。',
+                '你是日译中字幕翻译。忠实传达语气，自然口语。喘息与拟声译成自然中文；纯拟声可短译，有完整语义须译全句。例：{{EXAMPLES}}。每行只译对应一行。',
                 examples,
             );
         }
@@ -278,7 +278,7 @@
         const lines = Array.isArray(PROMPTS.smartFaithful) ? PROMPTS.smartFaithful : [];
         if (!lines.length) {
             return [
-                fillExamples('日语拟声与成人用语译成自然中文。例：{{EXAMPLES}}。', examples),
+                fillExamples('日语拟声与成人用语译成自然中文。纯拟声可短译；有完整语义须译全句，勿压成单字语气词。例：{{EXAMPLES}}。', examples),
             ];
         }
         return lines.map((line) => fillExamples(line, examples));

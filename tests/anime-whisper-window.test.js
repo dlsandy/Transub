@@ -322,8 +322,12 @@ from transub_engine.ffmpeg_util import resolve_ffmpeg
 from transub_engine.vad.ten_vad_seg import (
     _load_int16_mono_16k,
     collect_ten_vad_intervals,
+    collect_ten_vad_intervals_with_audio,
+    slice_pcm_f32,
     ten_vad_available,
+    SAMPLE_RATE,
 )
+import numpy as np
 
 ffmpeg = resolve_ffmpeg()
 if not ffmpeg or not Path(ffmpeg).is_file():
@@ -343,6 +347,12 @@ else:
     ], check=True, capture_output=True)
     pcm = _load_int16_mono_16k(str(mp4))
     intervals = collect_ten_vad_intervals(str(mp4), min_speech_s=0.05, merge_gap_s=0.2)
+    iv2, audio_f32 = collect_ten_vad_intervals_with_audio(
+        str(mp4), min_speech_s=0.05, merge_gap_s=0.2,
+    )
+    # Synthetic PCM clock check: slice [0.25, 0.75] on 1s buffer
+    fake = np.linspace(-0.5, 0.5, SAMPLE_RATE, dtype=np.float32)
+    clip = slice_pcm_f32(fake, 0.25, 0.75)
     print(json.dumps({
         'skip': False,
         'ffmpeg': bool(ffmpeg),
@@ -351,6 +361,11 @@ else:
         'dtype': str(pcm.dtype),
         'near_1s': 14000 <= len(pcm) <= 18000,
         'intervals_n': len(intervals),
+        'with_audio_n': len(iv2),
+        'f32_dtype': str(audio_f32.dtype),
+        'f32_near_1s': 14000 <= len(audio_f32) <= 18000,
+        'slice_n': int(len(clip)),
+        'slice_ok': abs(len(clip) - int(0.5 * SAMPLE_RATE)) <= 2,
     }))
 `);
         const j = JSON.parse(out);
@@ -359,6 +374,58 @@ else:
         assert.strictEqual(j.avail, true);
         assert.strictEqual(j.dtype, 'int16');
         assert.strictEqual(j.near_1s, true, `expected ~16k samples, got ${j.n_samples}`);
+        assert.strictEqual(j.f32_dtype, 'float32');
+        assert.strictEqual(j.f32_near_1s, true);
+        assert.strictEqual(j.slice_ok, true, `slice len=${j.slice_n}`);
+        assert.strictEqual(j.with_audio_n, j.intervals_n);
+    });
+
+    it('PCM slice indices match VAD frame bounds', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+import numpy as np
+from transub_engine.vad.ten_vad_seg import SAMPLE_RATE, slice_pcm_f32
+
+# 10s of PCM; frames at 1.0-3.5 and 7.0-9.0
+audio = np.arange(SAMPLE_RATE * 10, dtype=np.float32)
+frames = [(1.0, 3.5), (7.0, 9.0)]
+ok = True
+lens = []
+starts = []
+for s, e in frames:
+    clip = slice_pcm_f32(audio, s, e)
+    i0 = int(s * SAMPLE_RATE)
+    expected = int(e * SAMPLE_RATE) - i0
+    lens.append(int(len(clip)))
+    starts.append(float(clip[0]) if len(clip) else None)
+    if abs(len(clip) - expected) > 1:
+        ok = False
+    if len(clip) and abs(float(clip[0]) - float(i0)) > 0.5:
+        ok = False
+print(json.dumps({'ok': ok, 'lens': lens, 'starts': starts, 'sr': SAMPLE_RATE}))
+`);
+        const j = JSON.parse(out);
+        assert.strictEqual(j.ok, true, JSON.stringify(j));
+        assert.ok(j.lens[0] >= 39000 && j.lens[0] <= 41000);
+        assert.ok(j.lens[1] >= 31000 && j.lens[1] <= 33000);
+    });
+
+    it('anime TEN island ASR forces greedy beam_size=1', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from transub_engine.asr.whisper_fw import _anime_ten_beam_size
+print(json.dumps({
+    'none': _anime_ten_beam_size(None),
+    'one': _anime_ten_beam_size(1),
+    'five': _anime_ten_beam_size(5),
+}))
+`);
+        const j = JSON.parse(out);
+        assert.strictEqual(j.none, 1);
+        assert.strictEqual(j.one, 1);
+        assert.strictEqual(j.five, 1);
     });
 
     it('anime default timing uses TEN island ASR helper', function () {

@@ -16,7 +16,7 @@
             || window.alert(message);
     }
 
-    function appendInferLog(line) {
+    function appendInferLog(line, tone) {
         const host = document.getElementById('inferLogHost');
         if (!host) return;
         const placeholder = host.textContent || '';
@@ -24,16 +24,35 @@
             placeholder.includes('引擎日志将显示在此处')
             || placeholder.includes('TransWithAI日志将显示在此处')
             || placeholder.includes('infer 日志将显示在此处')
+            || placeholder.includes('Transub Engine 日志将显示在此处')
         ) {
             host.textContent = '';
         }
         const row = document.createElement('div');
-        row.className = 'infer-log-line text-gray-600';
+        const colors = {
+            ok: 'text-emerald-700',
+            warn: 'text-amber-700',
+            err: 'text-red-700',
+            info: 'text-gray-600',
+        };
+        row.className = `infer-log-line ${colors[tone] || colors.info}`;
         row.textContent = line;
         host.appendChild(row);
         while (host.childElementCount > 400) host.firstChild?.remove();
         const panel = host.closest('.log-panel') || host;
         panel.scrollTop = panel.scrollHeight;
+    }
+
+    function activateLogTab(tab) {
+        const want = tab === 'infer' ? 'infer' : 'app';
+        document.querySelectorAll('.log-tab-btn').forEach((b) => {
+            b.classList.toggle('active', b.dataset.logTab === want);
+        });
+        document.querySelectorAll('.log-panel').forEach((p) => {
+            const active = p.id === (want === 'infer' ? 'logPanelInfer' : 'logPanelApp');
+            p.classList.toggle('active', active);
+            if (active) p.scrollTop = p.scrollHeight;
+        });
     }
 
     async function openEngineRawLog() {
@@ -48,13 +67,7 @@
     function bindLogTabs() {
         document.querySelectorAll('.log-tab-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
-                const tab = btn.dataset.logTab;
-                document.querySelectorAll('.log-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.logTab === tab));
-                document.querySelectorAll('.log-panel').forEach((p) => {
-                    const active = p.id === (tab === 'infer' ? 'logPanelInfer' : 'logPanelApp');
-                    p.classList.toggle('active', active);
-                    if (active) p.scrollTop = p.scrollHeight;
-                });
+                activateLogTab(btn.dataset.logTab);
             });
         });
     }
@@ -797,5 +810,11 @@
         setTimeout(init, 0);
     }
 
-    global.TransubFeatures = { loadPresets, showInstallWizard, showSubtitlePreview, appendInferLog };
+    global.TransubFeatures = {
+        loadPresets,
+        showInstallWizard,
+        showSubtitlePreview,
+        appendInferLog,
+        activateLogTab,
+    };
 }(window));

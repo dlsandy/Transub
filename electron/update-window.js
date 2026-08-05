@@ -31,6 +31,11 @@ function openUpdateWindow(app, { parent: _parent, autoCheck = true } = {}) {
         return { ok: true };
     }
 
+    let backgroundColor = '#f9fafb';
+    try {
+        const { getAppTheme, MAIN_BG } = require('./app-theme');
+        backgroundColor = MAIN_BG[getAppTheme()] || backgroundColor;
+    } catch (_) { /* ignore */ }
     const win = new BrowserWindow({
         width: 500,
         height: 560,
@@ -41,7 +46,7 @@ function openUpdateWindow(app, { parent: _parent, autoCheck = true } = {}) {
         title: '检查更新',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
-        backgroundColor: '#f9fafb',
+        backgroundColor,
         show: false,
         // Intentionally no `parent`: on Windows, closing an owned child often
         // minimizes the owner, and the main window treats minimize as hide-to-tray.

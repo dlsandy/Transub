@@ -1972,7 +1972,7 @@
         if (profile === PROFILES.film) {
             return {
                 mode: 'film',
-                message: '建议：在字幕编辑器中使用「影片理解重构」，按场景统一人物与专名',
+                message: '建议：使用任务列表「理解重构」或字幕编辑器「影片理解重构」，按场景统一人物与专名',
             };
         }
         if (profile === PROFILES.av_soft || profile === PROFILES.talk) {

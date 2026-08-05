@@ -597,6 +597,25 @@
     html.main-theme-dark .post-task-power-btn {
         @apply border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-gray-100;
     }
+    html.main-theme-dark .post-task-power-btn.active {
+        @apply border-violet-500 bg-violet-950/60 text-violet-300;
+    }
+    html.main-theme-dark .post-task-menu {
+        @apply border-gray-600 bg-gray-800 shadow-xl;
+    }
+    html.main-theme-dark .post-task-menu-hint {
+        color: #9ca3af;
+        @apply border-gray-700;
+    }
+    html.main-theme-dark .post-task-menu-item {
+        @apply text-gray-200 hover:bg-violet-950/50;
+    }
+    html.main-theme-dark .post-task-menu-item.active {
+        @apply text-violet-300 bg-violet-950/40;
+    }
+    html.main-theme-dark .post-task-menu-shutdown {
+        @apply border-gray-700;
+    }
     html.main-theme-dark .param-chip {
         @apply border-gray-600 bg-gray-700/50 text-gray-100 hover:border-violet-500;
     }
@@ -620,13 +639,74 @@
         @apply text-red-300;
     }
     html.main-theme-dark .file-sense-label { @apply text-violet-300; }
-    html.main-theme-dark .param-chip-label { @apply text-gray-400; }
+    html.main-theme-dark .param-chip-label { color: #9ca3af; }
     html.main-theme-dark .param-chip-value,
     html.main-theme-dark .param-chip-select { @apply text-gray-100; }
     html.main-theme-dark #dropZone { @apply border-gray-600 bg-gray-900/40; }
-    html.main-theme-dark .subtitle-task-table thead { @apply bg-gray-800/95 text-gray-400; }
+    html.main-theme-dark .subtitle-task-table thead {
+        background-color: rgb(31 41 55 / 0.95);
+        color: #9ca3af;
+    }
     html.main-theme-dark .subtitle-task-table tbody { @apply bg-gray-800; }
+    html.main-theme-dark .subtitle-task-table td,
+    html.main-theme-dark .subtitle-task-table th {
+        @apply text-gray-200 border-gray-700;
+    }
     html.main-theme-dark .task-row:hover { @apply bg-gray-700/40; }
+    html.main-theme-dark .task-row[data-status="running"] { @apply bg-violet-950/30; }
+    html.main-theme-dark .task-row[data-status="failed"],
+    html.main-theme-dark .task-row[data-status="error"] { @apply bg-red-950/25; }
+    html.main-theme-dark .row-status-pending,
+    html.main-theme-dark .row-status-ready { @apply bg-gray-700 text-gray-200; }
+    html.main-theme-dark .row-status-probing,
+    html.main-theme-dark .row-status-running { @apply bg-violet-950 text-violet-200; }
+    html.main-theme-dark .row-status-done { @apply bg-emerald-950 text-emerald-200; }
+    html.main-theme-dark .row-status-skipped { @apply bg-sky-950 text-sky-200; }
+    html.main-theme-dark .row-status-failed,
+    html.main-theme-dark .row-status-error { @apply bg-red-950 text-red-200; }
+    html.main-theme-dark .row-mini-progress { @apply bg-gray-700; }
+    html.main-theme-dark .file-sense-icon {
+        @apply text-gray-300 bg-gray-700;
+    }
+    html.main-theme-dark .file-sense-icon.is-sensing { @apply text-violet-300 bg-violet-950; }
+    html.main-theme-dark .file-sense-icon.is-adopted { @apply text-violet-200 bg-violet-900; }
+    html.main-theme-dark .file-sense-icon.is-rejected { @apply text-gray-400 bg-gray-700; }
+    html.main-theme-dark .file-sense-icon.is-suggest { @apply text-amber-200 bg-amber-950; }
+    html.main-theme-dark .file-sense-icon.is-resense { @apply text-sky-200 bg-sky-950; }
+    html.main-theme-dark .file-profile-badge.profile-av_soft { @apply bg-rose-950 text-rose-200; }
+    html.main-theme-dark .file-profile-badge.profile-film { @apply bg-indigo-950 text-indigo-200; }
+    html.main-theme-dark .file-profile-badge.profile-talk { @apply bg-sky-950 text-sky-200; }
+    html.main-theme-dark .file-profile-badge.is-sensing { @apply bg-violet-950 text-violet-300; }
+    html.main-theme-dark .file-profile-badge.is-suggest { @apply bg-amber-950 text-amber-200; }
     html.main-theme-dark .readiness-strip { @apply bg-gray-800 border-gray-600 text-gray-300; }
-    html.main-theme-dark #emptyState .text-gray-800 { @apply text-gray-100; }
+    html.main-theme-dark .readiness-strip.is-warn { @apply border-amber-700 bg-amber-950/50 text-amber-100; }
+    html.main-theme-dark .readiness-strip.is-ok { @apply border-emerald-700 bg-emerald-950/45 text-emerald-100; }
+    html.main-theme-dark .readiness-strip-action { @apply text-violet-300 hover:text-violet-200; }
+    html.main-theme-dark .row-sense-pill-reject {
+        @apply border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700;
+    }
+    html.main-theme-dark .toast-item { @apply bg-gray-800 shadow-xl; }
+    html.main-theme-dark .toast-info { @apply border-gray-600 bg-gray-800 text-gray-100; }
+    html.main-theme-dark .toast-ok { @apply border-emerald-700 bg-emerald-950 text-emerald-100; }
+    html.main-theme-dark .toast-warn { @apply border-amber-700 bg-amber-950 text-amber-100; }
+    html.main-theme-dark .toast-err { @apply border-red-700 bg-red-950 text-red-100; }
+    html.main-theme-dark .toast-action { @apply text-violet-300 hover:text-violet-200; }
+    html.main-theme-dark #emptyState p { color: #f3f4f6; }
+    html.main-theme-dark #loadingOverlay .rounded-xl {
+        @apply bg-gray-800 border-gray-600;
+    }
+    html.main-theme-dark #paramsModal .rounded-xl {
+        @apply bg-gray-800 border-gray-600 text-gray-100;
+    }
+    html.main-theme-dark #paramsModal input:not([type="checkbox"]):not([type="radio"]),
+    html.main-theme-dark #paramsModal select,
+    html.main-theme-dark #paramsModal textarea {
+        @apply bg-gray-900 border-gray-600 text-gray-100;
+    }
+    html.main-theme-dark #paramsModal input:not([type="checkbox"]):not([type="radio"])::placeholder,
+    html.main-theme-dark #paramsModal textarea::placeholder {
+        color: #6b7280;
+    }
+    html.main-theme-dark .log-tab-btn { color: #9ca3af; }
+    html.main-theme-dark .log-tab-btn.active { @apply text-violet-300; }
 }

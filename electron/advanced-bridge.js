@@ -195,6 +195,7 @@ async function activateWithKey(licenseKey, { transfer = false } = {}) {
         licenseId: verified.payload.licenseId,
         features: verified.payload.features,
         product: verified.payload.product,
+        expiresAt: verified.payload.expiresAt || null,
     });
 
     if (doc.license?.licenseId && doc.license.licenseId !== verified.payload.licenseId) {
@@ -299,6 +300,11 @@ async function revalidateLicense() {
 
     const verified = licenseCrypto.verifyLicenseKey(lic.key);
     if (!verified.ok) {
+        // Persist expiresAt from a previously timed key so UI can show「体验已到期」even if crypto rejects.
+        if (String(verified.error || '').includes('过期') && lic.expiresAt) {
+            const status = publicStatus(doc, deviceId);
+            return { ok: false, error: verified.error || '许可已过期', code: 'expired', status };
+        }
         return { ok: false, error: verified.error || '许可无效' };
     }
 
@@ -312,6 +318,8 @@ async function revalidateLicense() {
             if (remote.code === 'device_unbound') {
                 const unbound = entitlement.normalizeLicenseState({
                     ...lic,
+                    features: verified.payload.features,
+                    expiresAt: verified.payload.expiresAt || null,
                     devices: Array.isArray(remote.devices) ? remote.devices : [],
                     lastTransferAt: remote.lastTransferAt || lic.lastTransferAt,
                 });
@@ -334,6 +342,8 @@ async function revalidateLicense() {
         }
         const merged = entitlement.normalizeLicenseState({
             ...lic,
+            features: verified.payload.features,
+            expiresAt: verified.payload.expiresAt || null,
             devices: Array.isArray(remote.devices) ? remote.devices : lic.devices,
             lastTransferAt: remote.lastTransferAt || lic.lastTransferAt,
         });
@@ -362,7 +372,14 @@ async function revalidateLicense() {
         return { ok: false, error: '本机未绑定，请先激活或换机', code: 'device_unbound' };
     }
 
-    const license = entitlement.markValidated(lic, Date.now());
+    const license = entitlement.markValidated(
+        entitlement.normalizeLicenseState({
+            ...lic,
+            features: verified.payload.features,
+            expiresAt: verified.payload.expiresAt || null,
+        }),
+        Date.now(),
+    );
     const saved = persistLicense(doc, license);
     if (!saved.ok) return { ok: false, error: saved.error };
     syncMainWindowTitle();
@@ -1784,6 +1801,9 @@ async function prepareQcSmartFixState(input, event) {
         removeNoise: input.removeNoise !== false,
         removeDuplicates: input.removeDuplicates !== false,
         removeHallucinations: input.removeHallucinations !== false,
+        // Default: delete noise. Opt-in blank mode only when explicitly requested;
+        // batch postprocess pairs JA↔ZH deletions to keep cue counts aligned.
+        blankInsteadOfRemove: input.blankInsteadOfRemove === true,
         maxCps: Number(input.maxCps) || 18,
         maxSec: Number(input.maxSec) || 10,
         gapMs: Number(input.gapMs) >= 0 ? Number(input.gapMs) : 1,
@@ -2256,9 +2276,12 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
 
     try {
         if (!dryRun) {
+            clearManagedIdleStopTimer();
             llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
             if (!llm.ok) return llm;
             logAdvancedLlmToEngine(llm, { feature: '影片理解' });
+            // Keep llama-server alive for the whole multi-step film job.
+            clearManagedIdleStopTimer();
         }
         const sendProgress = (info) => {
             const payloadOut = {
@@ -2283,7 +2306,12 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
         };
 
         const modLoad = loadAdvancedModule();
-        if (modLoad.loaded && typeof modLoad.module.filmContextReconstruct === 'function') {
+        // Unpackaged (npm start): always use live electron/ sources so Brief/local-LLM
+        // fixes apply without rebuilding `_advanced`. Packaged installs keep the closed blob.
+        const useClosedFilm = isAppPackaged()
+            && modLoad.loaded
+            && typeof modLoad.module.filmContextReconstruct === 'function';
+        if (useClosedFilm) {
             try {
                 sendProgress({ phase: 'start', message: '正在调用 Pro 影片理解模块…', pct: 0 });
                 const result = await modLoad.module.filmContextReconstruct({
@@ -2373,7 +2401,21 @@ async function runSmartTranslateBody(payload = {}, event = null) {
 
     try {
         if (!dryRun) {
-            smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
+            const overrideId = String(
+                input.modelId || input.smartTranslateModelId || '',
+            ).trim();
+            if (overrideId) {
+                const block = managedCatalog.getSmartTranslateModelBlock?.(overrideId)
+                    || null;
+                if (block?.ok === false) return block;
+                smartChoice = {
+                    modelId: overrideId,
+                    requestedId: overrideId,
+                    fallbackFrom: '',
+                };
+            } else {
+                smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
+            }
             const smartModelId = smartChoice.modelId;
             llm = await resolveAdvancedLlmConfig(doc, {
                 activeModelId: smartModelId || undefined,
@@ -2657,7 +2699,14 @@ async function runBatchContextReconstructJobLocked(event, payload = {}) {
                 backupMode: input.backupMode || 'off',
                 sceneGapMs: input.sceneGapMs,
                 sceneMaxCues: input.sceneMaxCues,
+                sceneMaxMs: input.sceneMaxMs,
                 userNote: input.userNote,
+                filmTitle: input.filmTitle || input.title,
+                filmSynopsis: input.filmSynopsis || input.synopsis,
+                filmTerms: input.filmTerms || input.terms,
+                intensity: input.intensity,
+                filmBrief: input.filmBrief || null,
+                skipConsistency: input.skipConsistency === true,
             },
             signal,
             reconstructCues: (cuePayload) => runOne({

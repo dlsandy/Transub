@@ -137,16 +137,30 @@ function resolveLookupStem({ videoPath = '', subPath = '', stem = '' } = {}) {
     return name;
 }
 
+/**
+ * Score a keep-dir candidate against a video basename stem.
+ * Same-name only: `{stem}.srt` or `{stem}.{src|source|ja|…}.srt`.
+ * Rejects translation / bilingual tracks and fuzzy substring hits.
+ */
 function scoreKeptCandidate(filePath, stem) {
-    const base = path.basename(filePath).toLowerCase();
+    const base = path.basename(String(filePath || ''));
+    const ext = path.extname(base);
+    const name = (ext ? base.slice(0, -ext.length) : base).toLowerCase();
     const stemLower = String(stem || '').toLowerCase();
-    if (!stemLower) return 0;
-    let score = 0;
-    if (base.startsWith(`${stemLower}.`) || base.startsWith(`${stemLower}_`)) score += 40;
-    if (base.includes(stemLower)) score += 10;
-    if (/\.(src|source|ja|en)(\.|$)/i.test(base)) score += 20;
-    if (/\.(zh|bilingual|bi)(\.|$)/i.test(base)) score -= 15;
-    return score;
+    if (!stemLower || !name) return 0;
+
+    // Exact same stem as the video (e.g. SQTE-704.srt)
+    if (name === stemLower) return 100;
+
+    // Same-name with role / language suffix (e.g. SQTE-704.src.srt)
+    if (name.startsWith(`${stemLower}.`)) {
+        const rest = name.slice(stemLower.length + 1);
+        if (/^(zh|cht|chs|cn|bilingual|bi|target|dual)(\.|$)/i.test(rest)) return 0;
+        if (/^(src|source|ja|jp|en|ko|orig|asr)(\.|$)/i.test(rest)) return 80;
+        // Other same-prefix suffixes still count as same-name, but prefer source roles above
+        return 50;
+    }
+    return 0;
 }
 
 /**
@@ -175,7 +189,8 @@ function findKeptTranscript({
     let bestScore = -Infinity;
     for (const f of files) {
         const score = scoreKeptCandidate(f.path, lookupStem);
-        if (score < 20) continue;
+        // Same-name threshold: exact stem or `{stem}.{role}` (see scoreKeptCandidate)
+        if (score < 50) continue;
         const ranked = score + Math.min(10, f.mtimeMs / 1e13);
         if (ranked > bestScore) {
             bestScore = ranked;

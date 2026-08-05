@@ -278,8 +278,47 @@ function testFixInvalidAndDuplicates() {
         maxSec: 60,
     });
     assert.ok(fixed.stats.invalidFixed >= 1 || fixed.cues[0].endMs > fixed.cues[0].startMs);
-    assert.ok(fixed.stats.duplicatesRemoved >= 1 || fixed.stats.noiseRemoved >= 1);
+    assert.ok(fixed.stats.duplicatesRemoved >= 1 || fixed.stats.noiseRemoved >= 1 || fixed.stats.noiseBlanked >= 1);
     assert.ok(fixed.cues.every((c) => c.endMs > c.startMs));
+
+    // Opt-in blank mode still keeps cue count when explicitly requested.
+    const zhCues = [
+        { startMs: 0, endMs: 400, text: '嗯' },
+        { startMs: 500, endMs: 1200, text: '这是一句正常对白内容。' },
+        { startMs: 1300, endMs: 1700, text: '…' },
+    ];
+    const blanked = applyQcFixes(zhCues, {
+        removeNoise: true,
+        removeDuplicates: false,
+        blankInsteadOfRemove: true,
+        fixOverlap: false,
+        fixCpsBySplit: false,
+        fixCpsByExtend: false,
+        enforceMinDur: false,
+        enforceMaxDur: false,
+        fixInvalid: false,
+        compressRepetition: false,
+    });
+    assert.strictEqual(blanked.cues.length, zhCues.length, 'QC blank mode keeps cue count');
+    assert.ok((blanked.stats.noiseBlanked || 0) >= 1);
+
+    // Default QC noise cleanup deletes (no blank to …).
+    const deleted = applyQcFixes(zhCues, {
+        removeNoise: true,
+        removeDuplicates: false,
+        blankInsteadOfRemove: false,
+        fixOverlap: false,
+        fixCpsBySplit: false,
+        fixCpsByExtend: false,
+        enforceMinDur: false,
+        enforceMaxDur: false,
+        fixInvalid: false,
+        compressRepetition: false,
+    });
+    assert.ok(deleted.cues.length < zhCues.length);
+    assert.ok(!deleted.cues.some((c) => String(c.text || '').trim() === '嗯'));
+    assert.ok(!deleted.cues.some((c) => String(c.text || '').trim() === '…'));
+    assert.ok(deleted.cues.some((c) => String(c.text).includes('正常对白')));
 }
 
 function testBuildOptionsForIssueType() {

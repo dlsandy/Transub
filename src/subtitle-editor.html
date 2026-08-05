@@ -957,6 +957,89 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
 .editor-modal-panel.batch-dur-panel { width: min(24rem, 94vw); }
 .editor-modal-panel.qc-panel { width: min(28rem, 94vw); }
 .editor-modal-panel.film-hint-panel { width: min(28rem, 96vw); }
+.editor-modal-panel.film-brief-panel {
+    width: min(52rem, 96vw);
+    max-height: min(90vh, 46rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0;
+}
+.film-brief-header {
+    flex-shrink: 0;
+    padding: 1rem 1.15rem 0.7rem;
+    border-bottom: 1px solid var(--ed-border);
+}
+.film-brief-header h3 { margin-bottom: 0.25rem; }
+.film-brief-header p { margin-bottom: 0; line-height: 1.45; }
+.film-brief-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.85rem 1.15rem 1rem;
+    overscroll-behavior: contain;
+}
+.film-brief-section {
+    margin-bottom: 1rem;
+}
+.film-brief-section:last-child { margin-bottom: 0.15rem; }
+.film-brief-section > h4 {
+    margin: 0 0 0.55rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px dashed var(--ed-border);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--ed-muted);
+}
+.film-brief-grid {
+    display: grid;
+    gap: 0.65rem 0.85rem;
+}
+.film-brief-grid--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.film-brief-panel .film-hint-field { margin-bottom: 0.65rem; }
+.film-brief-panel .film-brief-grid .film-hint-field { margin-bottom: 0; }
+.film-brief-panel .film-hint-field > span {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.4rem;
+}
+.film-brief-panel .film-hint-field .hint-sub {
+    display: inline;
+    margin-top: 0;
+}
+.film-brief-panel .film-hint-field input,
+.film-brief-panel .film-hint-field.is-compact textarea {
+    min-height: 0;
+    resize: none;
+}
+.film-brief-panel .film-hint-field.is-compact textarea {
+    min-height: 2.4rem;
+    field-sizing: content;
+}
+.film-brief-panel .film-hint-field.is-mid textarea {
+    min-height: 5rem;
+}
+.film-brief-panel .film-hint-field.is-tall textarea {
+    min-height: 8rem;
+}
+.film-brief-actions {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0.75rem 1.15rem;
+    border-top: 1px solid var(--ed-border);
+    background: var(--ed-surface);
+}
+@media (max-width: 720px) {
+    .film-brief-grid--2 { grid-template-columns: 1fr; }
+    .editor-modal-panel.film-brief-panel {
+        width: min(96vw, 52rem);
+        max-height: min(92vh, 46rem);
+    }
+}
 .editor-modal-panel.reconstruct-review-panel {
     width: min(56rem, 96vw);
     max-height: min(88vh, 52rem);
@@ -1046,6 +1129,29 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
     vertical-align: middle;
 }
 .recon-review-row.is-fallback .recon-review-cell.is-before { opacity: 0.85; }
+.recon-review-row.is-fallback .recon-review-cell.is-after {
+    background: rgba(245, 158, 11, 0.08);
+    opacity: 0.9;
+}
+.film-hint-source-hint {
+    margin: 0.35rem 0 0.65rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--ed-muted);
+    padding: 0.45rem 0.6rem;
+    border-radius: 0.4rem;
+    background: var(--ed-surface-2, rgba(127,127,127,0.08));
+    border: 1px solid var(--ed-border);
+}
+.film-hint-source-hint.is-warn {
+    color: #92400e;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+}
+.film-hint-source-hint.is-ok {
+    color: var(--ed-muted);
+}
+.film-hint-source-hint.hidden { display: none; }
 .recon-review-cell {
     font-size: 0.75rem;
     line-height: 1.45;
@@ -1072,22 +1178,33 @@ textarea.recon-review-after {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem 1rem;
-    margin: 0.35rem 0 0.65rem;
+    margin: 0.35rem 0 0.25rem;
     font-size: 0.75rem;
+    border: none;
+    padding: 0;
+    min-inline-size: 0;
 }
 .film-hint-intensity label {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    cursor: help;
+    cursor: pointer;
     color: var(--ed-text);
+}
+.film-hint-intensity-help {
+    margin: 0 0 0.65rem;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--ed-muted);
+    background: color-mix(in srgb, var(--ed-border) 35%, transparent);
+    border-radius: 0.35rem;
 }
 .film-hint-glossary-hint {
     font-size: 0.72rem;
     color: var(--ed-muted);
     margin: -0.35rem 0 0.55rem;
 }
-.film-brief-panel textarea { min-height: 3.5rem; }
 .recon-review-empty {
     text-align: center;
     padding: 2rem 1rem;
@@ -2075,7 +2192,8 @@ button.needs-video.is-no-video { opacity: 0.45; }
 <script>
 (function () {
     try {
-        var dark = localStorage.getItem('transub-editor-theme') === 'dark';
+        var dark = localStorage.getItem('transub-editor-theme') === 'dark'
+            || localStorage.getItem('transub.mainTheme') === 'dark';
         var root = document.documentElement;
         root.classList.toggle('editor-theme-dark', dark);
         root.classList.toggle('editor-theme-light', !dark);
@@ -3293,13 +3411,14 @@ button.needs-video.is-no-video { opacity: 0.45; }
         <div class="editor-modal-backdrop" data-film-hint-dismiss></div>
         <div class="editor-modal-panel film-hint-panel">
             <h3 id="editorFilmHintTitle">影片理解重构</h3>
-            <p id="editorFilmHintLead">可选填写片名与简介，便于生成更贴合剧情的 Brief。全部留空也可直接开始。</p>
+            <p id="editorFilmHintLead">先生成全片 Brief（人物/专名/语气），确认后再按场景改写。可选填写片名与简介；留空也可直接开始。</p>
+            <p id="editorFilmHintSourceHint" class="film-hint-source-hint hidden" aria-live="polite"></p>
             <label class="film-hint-field">
                 <span>片名</span>
                 <input type="text" id="editorFilmHintTitleInput" maxlength="120" placeholder="例如：星际穿越" autocomplete="off">
             </label>
             <label class="film-hint-field">
-                <span>简介 <span class="hint-sub">类型 + 核心冲突，3～5 句即可</span></span>
+                <span>简介 <span class="hint-sub">类型 + 核心突破，3～5 句即可（或也可留空）</span></span>
                 <textarea id="editorFilmHintSynopsisInput" maxlength="800" placeholder="科幻；宇航员穿越虫洞寻找人类新家园…"></textarea>
             </label>
             <label class="film-hint-field">
@@ -3309,20 +3428,27 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <p id="editorFilmHintGlossaryHint" class="film-hint-glossary-hint hidden"></p>
             <fieldset class="film-hint-intensity">
                 <legend style="font-size:0.72rem;font-weight:600;margin-bottom:0.25rem">改写强度</legend>
-                <label title="轻度：尽量少改，优先保留原译用词与句式，只修明显不通顺处。适合已较通顺、只需微调的字幕。">
-                    <input type="radio" name="editorFilmHintIntensity" value="light"> 轻度
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="light"
+                        data-help="尽量少改，优先保留原译用词与句式，只修明显不通顺处。适合已较通顺、只需微调的字幕。">
+                    轻度
                 </label>
-                <label title="均衡：在贴合剧情与专名的前提下适度润色，兼顾通顺与忠实。推荐大多数影片使用。">
-                    <input type="radio" name="editorFilmHintIntensity" value="balanced" checked> 均衡
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="balanced" checked
+                        data-help="在贴合剧情与专名的前提下适度润色，兼顾通顺与忠实。推荐大多数影片使用。">
+                    均衡
                 </label>
-                <label title="加强：更大胆统一专名、语气与跨场景风格，改动可能更多。适合译名混乱、语气不一致的片子。">
-                    <input type="radio" name="editorFilmHintIntensity" value="strong"> 加强
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="strong"
+                        data-help="更大胆统一专名、语气与跨场景风格，改动可能更多；会自动缩小场景块以降低并条错位风险。适合译名混乱、语气不一致的片子。">
+                    加强
                 </label>
             </fieldset>
+            <p id="editorFilmHintIntensityHelp" class="film-hint-intensity-help" aria-live="polite">在贴合剧情与专名的前提下适度润色，兼顾通顺与忠实。推荐大多数影片使用。</p>
             <p id="editorFilmHintScope" class="batch-dur-preview">—</p>
             <div class="editor-modal-actions">
                 <button type="button" id="editorFilmHintCancel" data-film-hint-dismiss>取消</button>
-                <button type="button" id="editorFilmHintConfirm" class="editor-btn-primary">开始重构</button>
+                <button type="button" id="editorFilmHintConfirm" class="editor-btn-primary">生成 Brief</button>
             </div>
         </div>
     </div>
@@ -3330,29 +3456,70 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <div id="editorFilmBriefModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFilmBriefTitle" inert>
         <div class="editor-modal-backdrop" data-film-brief-dismiss></div>
         <div class="editor-modal-panel film-brief-panel">
-            <h3 id="editorFilmBriefTitle">影片简要预览</h3>
-            <p id="editorFilmBriefLead">已由模型自动归纳全片理解，确认或微调后再开始场景改写。</p>
-            <label class="film-hint-field">
-                <span>片名推测</span>
-                <textarea id="editorFilmBriefTitleGuess" maxlength="120" rows="2"></textarea>
-            </label>
-            <label class="film-hint-field">
-                <span>类型</span>
-                <textarea id="editorFilmBriefGenre" maxlength="80" rows="1"></textarea>
-            </label>
-            <label class="film-hint-field">
-                <span>梗概</span>
-                <textarea id="editorFilmBriefSynopsis" maxlength="800" rows="3"></textarea>
-            </label>
-            <label class="film-hint-field">
-                <span>语气 / 风格</span>
-                <textarea id="editorFilmBriefTone" maxlength="200" rows="2"></textarea>
-            </label>
-            <label class="film-hint-field">
-                <span>字幕文风备注</span>
-                <textarea id="editorFilmBriefStyleNotes" maxlength="400" rows="2"></textarea>
-            </label>
-            <div class="editor-modal-actions">
+            <div class="film-brief-header">
+                <h3 id="editorFilmBriefTitle">影片简要预览</h3>
+                <p id="editorFilmBriefLead">请先核对人物、专名与梗概；确认后才会开始场景改写。Brief 不准时后面整片都会跟着偏。</p>
+                <p id="editorFilmBriefSourceHint" class="film-hint-source-hint hidden" aria-live="polite"></p>
+            </div>
+            <div class="film-brief-body" id="editorFilmBriefBody">
+                <section class="film-brief-section" aria-labelledby="filmBriefSecOverview">
+                    <h4 id="filmBriefSecOverview">概览</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-compact">
+                            <span>片名推测</span>
+                            <input type="text" id="editorFilmBriefTitleGuess" maxlength="120" placeholder="例如：星际穿越" autocomplete="off">
+                        </label>
+                        <label class="film-hint-field is-compact">
+                            <span>类型</span>
+                            <input type="text" id="editorFilmBriefGenre" maxlength="80" placeholder="科幻 / 剧情 / …" autocomplete="off">
+                        </label>
+                    </div>
+                    <label class="film-hint-field is-mid">
+                        <span>梗概</span>
+                        <textarea id="editorFilmBriefSynopsis" maxlength="800" rows="4" placeholder="3～5 句概括核心冲突与主线"></textarea>
+                    </label>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecStyle">
+                    <h4 id="filmBriefSecStyle">语气与文风</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-mid">
+                            <span>语气 / 风格</span>
+                            <textarea id="editorFilmBriefTone" maxlength="200" rows="3" placeholder="口语自然、克制、略带戏谑…"></textarea>
+                        </label>
+                        <label class="film-hint-field is-mid">
+                            <span>字幕文风备注</span>
+                            <textarea id="editorFilmBriefStyleNotes" maxlength="400" rows="3" placeholder="勿文言；专名统一；句末语气词可保留…"></textarea>
+                        </label>
+                    </div>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecNames">
+                    <h4 id="filmBriefSecNames">人物与专名</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-tall">
+                            <span>人物 <span class="hint-sub">每行：姓名（身份）：备注</span></span>
+                            <textarea id="editorFilmBriefCharacters" maxlength="2000" rows="6" placeholder="香水纯（叙述者）&#10;丈夫（配偶）"></textarea>
+                        </label>
+                        <label class="film-hint-field is-tall">
+                            <span>专名 <span class="hint-sub">每行：规范译名：说明/旧译</span></span>
+                            <textarea id="editorFilmBriefTerms" maxlength="2000" rows="6" placeholder="XX市：故事发生地&#10;旧名：规范名"></textarea>
+                        </label>
+                    </div>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecPlot">
+                    <h4 id="filmBriefSecPlot">主线与约束</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-mid">
+                            <span>主线要点 <span class="hint-sub">每行一条</span></span>
+                            <textarea id="editorFilmBriefTimeline" maxlength="1200" rows="4" placeholder="开场设定&#10;中段转折&#10;收束冲突"></textarea>
+                        </label>
+                        <label class="film-hint-field is-mid">
+                            <span>避免项 <span class="hint-sub">每行一条</span></span>
+                            <textarea id="editorFilmBriefAvoid" maxlength="800" rows="4" placeholder="勿过度文言&#10;勿混淆人物称呼"></textarea>
+                        </label>
+                    </div>
+                </section>
+            </div>
+            <div class="editor-modal-actions film-brief-actions">
                 <button type="button" id="editorFilmBriefCancel" data-film-brief-dismiss>取消</button>
                 <button type="button" id="editorFilmBriefConfirm" class="editor-btn-primary">确认并开始改写</button>
             </div>

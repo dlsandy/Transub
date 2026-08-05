@@ -440,7 +440,9 @@
             : { ok: false };
         try {
             if (!isStandaloneSettings && !isStandaloneWizard) {
-                document.title = advancedEntitled ? 'Transub Pro' : 'Transub';
+                const brand = advancedEntitled ? 'Transub Pro' : 'Transub';
+                document.title = brand;
+                if (els.appBrandName) els.appBrandName.textContent = brand;
             }
         } catch (_) { /* ignore */ }
         // After status is known, drop Advanced-only flags so free users are not stuck
@@ -771,6 +773,11 @@
         qcFixing: false,
         qcSmartFixing: false,
         postBatchBusy: false,
+        /** Main-window retranslate-from-kept-transcript batch. */
+        retranslateBusy: false,
+        retranslateAbort: false,
+        /** @type {Array<{ item: object, sourcePath: string, destPath: string, sourceKind: string }>|null} */
+        retranslatePlan: null,
         /** Cross-window engine / LLM single-slot busy (main process lock). */
         computeBusy: false,
         computeBusyLabel: '',
@@ -779,6 +786,34 @@
         lastContentProfile: null,
         autoSenseUi: null,
         senseBusy: false,
+        /** @type {{ key: string, dir: 'asc'|'desc' }|null} */
+        listSort: null,
+    };
+
+    /** @type {Record<string, number>} user-fitted column widths (px) */
+    const taskColumnWidths = Object.create(null);
+
+    const TASK_TABLE_COLS = [
+        { key: 'check', sortable: false, min: 28, max: 48, pad: 8 },
+        { key: 'file', sortable: true, min: 96, max: 2400, pad: 16 },
+        { key: 'duration', sortable: true, min: 40, max: 160, pad: 16 },
+        { key: 'elapsed', sortable: true, min: 40, max: 160, pad: 16 },
+        { key: 'progress', sortable: true, min: 64, max: 240, pad: 16 },
+        { key: 'status', sortable: true, min: 120, max: 960, pad: 16 },
+        { key: 'qc', sortable: true, min: 36, max: 100, pad: 8 },
+        { key: 'actions', sortable: false, min: 72, max: 220, pad: 8 },
+    ];
+
+    const TASK_STATUS_SORT_RANK = {
+        pending: 0,
+        probing: 1,
+        ready: 2,
+        running: 3,
+        done: 4,
+        skipped: 5,
+        cancelled: 6,
+        failed: 7,
+        error: 8,
     };
 
     const etaApi = global.TransubEta || null;
@@ -880,11 +915,11 @@
     function startElapsedTicker() {
         if (state.elapsedTicker) return;
         state.elapsedTicker = setInterval(() => {
-            if (!state.running) {
+            if (!state.running && !state.retranslateBusy) {
                 stopElapsedTicker();
                 return;
             }
-            updateProgressUi();
+            if (state.running) updateProgressUi();
             // Avoid full-table rebuild every second — only refresh running rows
             state.items.forEach((item, idx) => {
                 if (item.status === 'running') refreshListRowByIndex(idx);
@@ -897,6 +932,7 @@
         clearInterval(state.elapsedTicker);
         state.elapsedTicker = null;
     }
+
 
     function isShowTaskResourceUsageEnabled() {
         if (els.showTaskResourceUsageCheck) {
@@ -1039,7 +1075,7 @@
     function cacheEls() {
         [
             'loadingOverlay', 'loadingMessage',
-            'appVersionLabel', 'headerSettingsDirtyBadge', 'paramsSummary', 'paramsChips',
+            'appBrandName', 'appVersionLabel', 'headerSettingsDirtyBadge', 'paramsSummary', 'paramsChips',
             'quickTaskSelect', 'quickLanguageSelect', 'quickTargetLangSelect', 'quickTargetLangWrap',
             'quickFormatBtn', 'quickFormatLabel', 'quickTranslateModeBtn', 'quickTranslateModeLabel',
             'translateModeMenuWrap', 'translateModeMenu',
@@ -1104,6 +1140,7 @@
             'trayProgressCheck', 'showTaskResourceUsageCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
             'startupWindowSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
+            'postBatchCompactPureInterjectionsCheck',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
@@ -1120,9 +1157,15 @@
             'jobStatusBadge', 'progressLabel', 'progressCount', 'progressBar', 'resourceUsageLabel',
             'currentFile', 'logHost',
             'removeSelectedBtn', 'clearListBtn', 'startBtn', 'selectAllCheck',
-            'openSubtitleFileBtn',
+            'openSubtitleFileBtn', 'retranslateBtn', 'reconstructBtn',
+            'retranslateModal', 'retranslateModalSummary', 'retranslateModalMissing',
+            'retranslateModeEngine', 'retranslateModeLlm', 'retranslateModeSmart',
+            'retranslateModeSmartWrap', 'retranslateModelWrap', 'retranslateModelLabel',
+            'retranslateModelSelect', 'retranslateModelHint', 'retranslateCancelBtn',
+            'retranslateConfirmBtn',
             'fileListBody', 'emptyListRow', 'stopBtn', 'filePanel', 'dropZone', 'dropOverlay',
-            'mainSplitHost', 'mainLogSplitter',
+            'mainSplitHost', 'mainLogSplitter', 'taskRowContextMenu', 'taskColContextMenu',
+            'subtitleTaskTable', 'taskTableHead', 'taskTableColgroup',
         ].forEach((id) => { els[id] = document.getElementById(id); });
         els.paramsTabBtns = Array.from(document.querySelectorAll('.params-tab-btn'));
         els.paramsTabPanels = Array.from(document.querySelectorAll('.params-tab-panel'));
@@ -1313,6 +1356,17 @@
         log.style.flex = '0 0 auto';
     }
 
+    function syncLocalThemeKeys(theme) {
+        const t = theme === 'dark' ? 'dark' : 'light';
+        try {
+            localStorage.setItem('transub.mainTheme', t);
+            localStorage.setItem('transub-editor-theme', t);
+        } catch (_) { /* ignore */ }
+        const sel = document.getElementById('appThemeSelect')
+            || document.getElementById('editorThemeSelect');
+        if (sel) sel.value = t;
+    }
+
     function applyUiPrefs() {
         let density = 'comfort';
         let logCollapsed = true;
@@ -1320,8 +1374,12 @@
         try {
             density = localStorage.getItem('transub.density') || 'comfort';
             logCollapsed = localStorage.getItem('transub.logCollapsed') !== '0';
-            mainTheme = localStorage.getItem('transub.mainTheme') || 'light';
+            mainTheme = localStorage.getItem('transub.mainTheme')
+                || localStorage.getItem('transub-editor-theme')
+                || 'light';
         } catch (_) { /* ignore */ }
+        mainTheme = mainTheme === 'dark' ? 'dark' : 'light';
+        syncLocalThemeKeys(mainTheme);
         document.body.classList.toggle('density-compact', density === 'compact');
         document.body.classList.toggle('log-collapsed', logCollapsed);
         document.documentElement.classList.toggle('main-theme-dark', mainTheme === 'dark');
@@ -1338,6 +1396,28 @@
             els.logCollapseBtn.setAttribute('aria-expanded', logCollapsed ? 'false' : 'true');
         }
         applyLogSplitLayout();
+    }
+
+    async function hydrateAppThemeFromMain() {
+        try {
+            const res = await electron?.transubGetAppTheme?.();
+            let theme = res?.theme === 'dark' ? 'dark' : 'light';
+            if (!res?.persisted) {
+                let localDark = false;
+                try {
+                    localDark = localStorage.getItem('transub.mainTheme') === 'dark'
+                        || localStorage.getItem('transub-editor-theme') === 'dark';
+                } catch (_) { /* ignore */ }
+                if (localDark && theme !== 'dark') {
+                    await electron?.transubSetAppTheme?.({ theme: 'dark' });
+                    theme = 'dark';
+                }
+            }
+            syncLocalThemeKeys(theme);
+            applyUiPrefs();
+        } catch (_) {
+            applyUiPrefs();
+        }
     }
 
     function bindMainLogSplitter() {
@@ -1434,8 +1514,9 @@
 
     function toggleMainTheme() {
         const next = document.documentElement.classList.contains('main-theme-dark') ? 'light' : 'dark';
-        try { localStorage.setItem('transub.mainTheme', next); } catch (_) { /* ignore */ }
+        syncLocalThemeKeys(next);
         applyUiPrefs();
+        void electron?.transubSetAppTheme?.({ theme: next });
     }
 
     function toggleDensity() {
@@ -1649,9 +1730,26 @@
                 }
                 return;
             }
-            if (key === 'Escape' && state.running) {
-                event.preventDefault();
-                stopTask();
+            if (key === 'Escape') {
+                if (els.retranslateModal && !els.retranslateModal.classList.contains('hidden')) {
+                    event.preventDefault();
+                    closeRetranslateModal();
+                    return;
+                }
+                if (els.taskColContextMenu && !els.taskColContextMenu.classList.contains('hidden')) {
+                    event.preventDefault();
+                    closeTaskColContextMenu();
+                    return;
+                }
+                if (els.taskRowContextMenu && !els.taskRowContextMenu.classList.contains('hidden')) {
+                    event.preventDefault();
+                    closeTaskRowContextMenu();
+                    return;
+                }
+                if (state.running || state.retranslateBusy) {
+                    event.preventDefault();
+                    stopTask();
+                }
                 return;
             }
             if ((key === '?' || (key === '/' && event.shiftKey)) && !event.ctrlKey && !event.metaKey) {
@@ -2529,7 +2627,9 @@
     }
 
     function computeStartBlockReason() {
-        if (state.running || state.postBatchBusy) return '任务或后处理进行中';
+        if (state.running || state.postBatchBusy || state.retranslateBusy) {
+            return '任务或后处理进行中';
+        }
         if (state.computeBusy) {
             return state.computeBusyLabel
                 ? `已有${state.computeBusyLabel}正在运行`
@@ -3751,6 +3851,9 @@
         if (els.postBatchCompressRepCheck) {
             els.postBatchCompressRepCheck.checked = options.postBatchCompressRepetition !== false;
         }
+        if (els.postBatchCompactPureInterjectionsCheck) {
+            els.postBatchCompactPureInterjectionsCheck.checked = !!options.postBatchCompactPureInterjections;
+        }
         syncDeviceOptionsForMode();
         syncBatchSizeUi();
         syncExpertCustomHints();
@@ -3880,6 +3983,7 @@
             postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
             postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
             postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
+            postBatchCompactPureInterjections: !!els.postBatchCompactPureInterjectionsCheck?.checked,
             outputMode: els.outputModeSelect?.value === 'custom' ? 'custom' : 'same',
             outputDir: resolveOutputDirFromForm(),
             audioSuffixes: els.audioSuffixesInput?.value.trim() || DEFAULT_AUDIO_SUFFIXES,
@@ -4203,15 +4307,38 @@
         }
     }
 
+    /** Retranslate batch progress → 引擎日志 tab (same panel as engine/LLM lines). */
+    function appendRetranslateLog(line, tone, opts = {}) {
+        const ts = new Date().toLocaleTimeString();
+        const text = `[${ts}] [重新翻译] ${line}`;
+        const features = global.TransubFeatures;
+        if (typeof features?.appendInferLog === 'function') {
+            features.appendInferLog(text, tone);
+        } else {
+            appendLog(line, tone);
+            return;
+        }
+        const wantToast = opts.toast !== false;
+        if (wantToast && !isStandaloneSettings && (tone === 'err' || tone === 'warn')) {
+            showToast(line, tone);
+        }
+    }
+
+    function activateInferLogTab() {
+        global.TransubFeatures?.activateLogTab?.('infer');
+    }
+
     function findItem(path) {
         const key = normPath(path);
         return state.items.find((i) => normPath(i.path) === key);
     }
 
     function updateStartButton() {
-        const busy = state.running || state.postBatchBusy;
+        const busy = state.running || state.postBatchBusy || state.retranslateBusy;
         const blockReason = computeStartBlockReason();
         if (els.startBtn) els.startBtn.disabled = !!blockReason;
+        if (els.retranslateBtn) els.retranslateBtn.disabled = !!busy;
+        if (els.reconstructBtn) els.reconstructBtn.disabled = !!busy;
         if (els.addMenuBtn) els.addMenuBtn.disabled = false;
         if (els.removeSelectedBtn) els.removeSelectedBtn.disabled = busy;
         if (els.clearListBtn) els.clearListBtn.disabled = busy;
@@ -4221,19 +4348,34 @@
     }
 
     function updateStopButton() {
-        if (els.stopBtn) els.stopBtn.disabled = !state.running;
+        if (els.stopBtn) {
+            els.stopBtn.disabled = !(state.running || state.retranslateBusy);
+        }
     }
 
     async function stopTask() {
-        if (!state.running) return;
+        if (!state.running && !state.retranslateBusy) return;
         const ok = await appConfirm({
-            title: '停止任务',
-            message: '确定停止当前字幕任务？',
+            title: state.retranslateBusy ? '停止重新翻译' : '停止任务',
+            message: state.retranslateBusy
+                ? '确定停止当前重新翻译？'
+                : '确定停止当前字幕任务？',
             primaryLabel: '停止',
             secondaryLabel: '继续运行',
             danger: true,
         });
         if (!ok) return;
+        if (state.retranslateBusy) {
+            state.retranslateAbort = true;
+            ensureLogExpanded();
+            activateInferLogTab();
+            appendRetranslateLog('正在停止重新翻译…', 'warn');
+            setBadge('正在停止…', 'error');
+            try { await electron?.transubSakuraCancelTranslate?.(); } catch { /* ignore */ }
+            try { await electron?.transubAdvancedCancelContextReconstruct?.(); } catch { /* ignore */ }
+            try { await electron?.transubEngineCancel?.(); } catch { /* ignore */ }
+            return;
+        }
         // Prefer the backend that started the job — form may have changed mid-run.
         const backend = state.jobBackend || readEngineBackendFromForm();
         appendLog('正在停止任务…', 'warn');
@@ -6702,8 +6844,11 @@
 
     function renderList() {
         if (!els.fileListBody) return;
+        applyListSortInPlace();
         if (!state.items.length) {
             els.fileListBody.innerHTML = '';
+            syncTaskTableSortHeaders();
+            applyTaskColumnWidths();
             updateEmptyStateUi();
             updateQcBanner();
             updateContentProfileUi();
@@ -6713,6 +6858,8 @@
         const rows = state.items.map((item, idx) => buildListRowHtml(item, idx));
         els.fileListBody.innerHTML = rows.join('');
         bindListRowEvents(els.fileListBody);
+        syncTaskTableSortHeaders();
+        applyTaskColumnWidths();
         updateEmptyStateUi();
         updateQcBanner();
         updateStartButton();
@@ -6721,6 +6868,779 @@
 
     function getSelectedItems() {
         return state.items.filter((i) => i.selected && i.status !== 'error');
+    }
+
+    function pathDirname(filePath) {
+        const p = String(filePath || '');
+        const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+        return i >= 0 ? p.slice(0, i) : '';
+    }
+
+    function pathJoin(dir, name) {
+        const d = String(dir || '');
+        const n = String(name || '');
+        if (!d) return n;
+        const sep = d.includes('/') && !d.includes('\\') ? '/' : '\\';
+        return d.endsWith('/') || d.endsWith('\\') ? `${d}${n}` : `${d}${sep}${n}`;
+    }
+
+    function stemNoExt(filePath) {
+        const base = basename(filePath);
+        const dot = base.lastIndexOf('.');
+        return dot > 0 ? base.slice(0, dot) : base;
+    }
+
+    function primarySubFormatFromForm() {
+        const parts = String(readSubFormatsFromForm() || 'srt')
+            .split(/[,;\s]+/)
+            .map((s) => s.trim().toLowerCase())
+            .filter((s) => ['srt', 'vtt', 'lrc', 'ass'].includes(s));
+        return parts[0] || 'srt';
+    }
+
+    function resolveRetranslateDestPath(item, sourcePath) {
+        const tgt = String(item?.targetSubtitlePath || '').trim();
+        if (tgt) return tgt;
+        const sub = String(item?.subtitlePath || item?.existingSubtitle || '').trim();
+        const src = String(sourcePath || '').trim();
+        if (sub && normPath(sub) !== normPath(src)) return sub;
+        const video = String(item?.path || '').trim();
+        const outDir = resolveOutputDirFromForm() || pathDirname(video) || pathDirname(src);
+        const stem = stemNoExt(video) || stemNoExt(src) || 'subtitle';
+        const fmt = primarySubFormatFromForm();
+        return pathJoin(outDir, `${stem}.${fmt}`);
+    }
+
+    /**
+     * Retranslate source = same-name transcript in the keep dir (`subtitles/`).
+     * Match by video basename stem only (e.g. SQTE-704.mp4 → SQTE-704.src.srt).
+     */
+    async function resolveTranscriptSourceForItem(item) {
+        const videoPath = String(item?.path || '').trim();
+        if (!videoPath || !electron?.transubFindKeptTranscript) {
+            return { ok: false, found: false };
+        }
+        try {
+            const kept = await electron.transubFindKeptTranscript({ videoPath });
+            if (!(kept?.ok && kept.found && kept.path)) {
+                return {
+                    ok: false,
+                    found: false,
+                    dir: kept?.dir || '',
+                    stem: kept?.stem || stemNoExt(videoPath),
+                };
+            }
+            const doc = await electron?.transubReadSubtitle?.({ path: kept.path });
+            if (doc?.ok && Array.isArray(doc.cues) && doc.cues.some((c) => String(c?.text || '').trim())) {
+                return {
+                    ok: true,
+                    path: kept.path,
+                    kind: 'kept',
+                    cues: doc.cues,
+                    format: doc.format,
+                    daysLeft: kept.daysLeft,
+                    dir: kept.dir,
+                    stem: kept.stem,
+                };
+            }
+            return {
+                ok: false,
+                found: false,
+                path: kept.path,
+                dir: kept.dir,
+                stem: kept.stem,
+                error: doc?.error || '转录字幕为空或无法读取',
+            };
+        } catch (err) {
+            return { ok: false, found: false, error: err?.message || String(err) };
+        }
+    }
+
+    function readRetranslateModeFromModal() {
+        if (els.retranslateModeSmart?.checked) return 'smart';
+        if (els.retranslateModeEngine?.checked) return 'engine';
+        return 'llm';
+    }
+
+    /** @type {{ catalog: Array, smartTranslateModelId: string, llmSource: string }|null} */
+    let cachedSmartTranslatePick = null;
+
+    function isSmartTranslateCapableModel(item) {
+        if (!item?.id) return false;
+        if (item.translateOnly) return false;
+        const catalogApi = getManagedLlmCatalogApi();
+        if (catalogApi?.isTranslateOnlyModel?.(item.id) || catalogApi?.isTranslateOnlyModel?.(item)) {
+            return false;
+        }
+        if (catalogApi?.supportsAdvancedReconstruct) {
+            return !!catalogApi.supportsAdvancedReconstruct(item.id);
+        }
+        return String(item.family || '').toLowerCase() !== 'sakura';
+    }
+
+    async function ensureSmartTranslatePickCache({ force = false } = {}) {
+        if (!force && cachedSmartTranslatePick) return cachedSmartTranslatePick;
+        try {
+            const res = await electron?.transubAdvancedManagedLlmStatus?.();
+            const managed = res?.managed || null;
+            cachedSmartTranslatePick = {
+                catalog: Array.isArray(managed?.catalog) ? managed.catalog : [],
+                smartTranslateModelId: String(
+                    managed?.smartTranslateModelId
+                    || managed?.smartTranslateModel?.id
+                    || managed?.activeModelId
+                    || '',
+                ).trim(),
+                llmSource: String(managed?.llmSource || res?.status?.llmSource || '').trim(),
+            };
+        } catch {
+            cachedSmartTranslatePick = { catalog: [], smartTranslateModelId: '', llmSource: '' };
+        }
+        return cachedSmartTranslatePick;
+    }
+
+    function fillRetranslateSmartModelSelect(pick) {
+        const selectEl = els.retranslateModelSelect;
+        if (!selectEl) return;
+        const catalog = (Array.isArray(pick?.catalog) ? pick.catalog : [])
+            .filter((item) => item?.installed && isSmartTranslateCapableModel(item));
+        catalog.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh'));
+        const want = String(pick?.smartTranslateModelId || '').trim();
+        const opts = [];
+        if (!catalog.length) {
+            opts.push('<option value="">（暂无已下载的智能翻译模型）</option>');
+        } else {
+            for (const item of catalog) {
+                const id = String(item.id || '');
+                if (!id) continue;
+                const bits = [];
+                if (item.proScale) bits.push('Pro');
+                if (item.paramBillion) bits.push(`${item.paramBillion}B`);
+                const label = bits.length
+                    ? `${item.name || id}（${bits.join(' · ')}）`
+                    : (item.name || id);
+                const sel = id === want ? ' selected' : '';
+                opts.push(`<option value="${esc(id)}"${sel}>${esc(label)}</option>`);
+            }
+            if (want && !catalog.some((m) => String(m.id) === want)) {
+                opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载或不可用于智能翻译）</option>`);
+            }
+        }
+        selectEl.innerHTML = opts.join('');
+        if (want && [...selectEl.options].some((o) => o.value === want)) {
+            selectEl.value = want;
+        } else if (catalog[0]?.id) {
+            selectEl.value = catalog[0].id;
+        } else {
+            selectEl.value = '';
+        }
+    }
+
+    function syncRetranslateModalModelUi() {
+        const mode = readRetranslateModeFromModal();
+        const smartLocked = !advancedEntitled;
+        if (els.retranslateModeSmartWrap) {
+            els.retranslateModeSmartWrap.classList.toggle('is-disabled', smartLocked);
+            if (els.retranslateModeSmart) els.retranslateModeSmart.disabled = smartLocked;
+        }
+        if (mode === 'smart') {
+            if (smartLocked) {
+                els.retranslateModelWrap?.classList.add('hidden');
+                if (els.retranslateModelHint) {
+                    els.retranslateModelHint.textContent = '智能翻译为 Pro 专属，请先激活 Pro。';
+                }
+                return;
+            }
+            els.retranslateModelWrap?.classList.remove('hidden');
+            if (els.retranslateModelLabel) els.retranslateModelLabel.textContent = '智能翻译模型';
+            if (els.retranslateModelHint) {
+                els.retranslateModelHint.textContent = '仅列出已下载且可用于智能翻译的通用对话模型（不含 Sakura 等仅译中模型）。';
+            }
+            void ensureSmartTranslatePickCache().then((pick) => {
+                if (readRetranslateModeFromModal() !== 'smart') return;
+                fillRetranslateSmartModelSelect(pick);
+            });
+            return;
+        }
+        els.retranslateModelWrap?.classList.remove('hidden');
+        if (els.retranslateModelLabel) {
+            els.retranslateModelLabel.textContent = mode === 'engine' ? '机器翻译模型' : '推理翻译模型';
+        }
+        if (!cachedEngineModels.length) {
+            void refreshEngineModels({ silent: true }).then(() => fillRetranslateModelSelect(mode));
+        } else {
+            fillRetranslateModelSelect(mode);
+        }
+        if (els.retranslateModelHint) {
+            els.retranslateModelHint.textContent = mode === 'engine'
+                ? '引擎 Opus 机器翻译；可留空按片源语言自动选择。'
+                : '本地 LLM 推理翻译（如 Sakura）。仅列出已下载项。';
+        }
+    }
+
+    function fillRetranslateModelSelect(mode) {
+        const selectEl = els.retranslateModelSelect;
+        if (!selectEl) return;
+        if (mode === 'smart') {
+            void ensureSmartTranslatePickCache().then((pick) => fillRetranslateSmartModelSelect(pick));
+            return;
+        }
+        if (mode === 'engine') {
+            const cur = String(els.engineMtModelSelect?.value || '').trim();
+            fillEngineModelSelect(selectEl, cachedEngineModels, 'mt', cur, {
+                allowEmpty: true,
+                emptyLabel: '自动（按源语言 · Opus）',
+                modelFilter: (m) => !isLlmInferencePickModelId(m.id),
+            });
+            return;
+        }
+        const cur = String(els.engineLlmMtModelSelect?.value || readLlmMtModelFromForm() || 'sakura-1.5b').trim();
+        fillEngineModelSelect(selectEl, cachedEngineModels, 'mt', cur, {
+            allowEmpty: false,
+            modelFilter: (m) => isLlmInferencePickModelId(m.id),
+        });
+    }
+
+    function closeRetranslateModal() {
+        els.retranslateModal?.classList.add('hidden');
+        els.retranslateModal?.classList.remove('flex');
+        state.retranslatePlan = null;
+    }
+
+    async function openRetranslateModal() {
+        if (state.running || state.postBatchBusy || state.retranslateBusy) {
+            showToast('当前有任务进行中', 'warn');
+            return;
+        }
+        const selected = getSelectedItems();
+        if (!selected.length) {
+            appendLog('请先勾选要重新翻译的条目', 'warn');
+            showToast('请先勾选要重新翻译的条目', 'warn');
+            return;
+        }
+        setLoading(true, '正在检查转录字幕…');
+        const ready = [];
+        const missing = [];
+        try {
+            for (const item of selected) {
+                const src = await resolveTranscriptSourceForItem(item);
+                if (src?.ok && src.path) {
+                    ready.push({
+                        item,
+                        sourcePath: src.path,
+                        destPath: resolveRetranslateDestPath(item, src.path),
+                        sourceKind: src.kind || 'source',
+                        cues: src.cues,
+                        format: src.format || 'srt',
+                    });
+                } else {
+                    missing.push(item);
+                }
+            }
+        } finally {
+            setLoading(false);
+        }
+        if (!ready.length) {
+            const names = missing.slice(0, 4).map((i) => basename(i.path)).join('、');
+            const more = missing.length > 4 ? ` 等 ${missing.length} 项` : '';
+            await appConfirm({
+                title: '无可用转录字幕',
+                message: `勾选的 ${selected.length} 项均未在「转录字幕」目录找到与影片同名的原文（如 SQTE-704.mp4 → SQTE-704.src.srt）。\n\n${names}${more}\n\n请先完成一次听写/翻译并开启「保存转录字幕」，或将同名转录字幕放入该目录。`,
+                primaryLabel: '知道了',
+                hideSecondary: true,
+            });
+            return;
+        }
+        state.retranslatePlan = ready;
+        if (els.retranslateModalSummary) {
+            els.retranslateModalSummary.textContent = `将对 ${ready.length} 项使用已有转录字幕重新翻译（跳过语音识别）。`;
+        }
+        if (els.retranslateModalMissing) {
+            if (missing.length) {
+                const names = missing.slice(0, 6).map((i) => basename(i.path)).join('、');
+                const more = missing.length > 6 ? ` 等 ${missing.length} 项` : '';
+                els.retranslateModalMissing.textContent = `将跳过无转录字幕的 ${missing.length} 项：${names}${more}`;
+                els.retranslateModalMissing.classList.remove('hidden');
+            } else {
+                els.retranslateModalMissing.textContent = '';
+                els.retranslateModalMissing.classList.add('hidden');
+            }
+        }
+        const mode = readTranslateModeFromForm();
+        if (els.retranslateModeEngine) els.retranslateModeEngine.checked = mode === 'engine';
+        if (els.retranslateModeLlm) els.retranslateModeLlm.checked = mode === 'llm';
+        if (els.retranslateModeSmart) {
+            els.retranslateModeSmart.checked = mode === 'smart' && advancedEntitled;
+            if (mode === 'smart' && !advancedEntitled && els.retranslateModeLlm) {
+                els.retranslateModeLlm.checked = true;
+            }
+        }
+        cachedSmartTranslatePick = null;
+        syncRetranslateModalModelUi();
+        els.retranslateModal?.classList.remove('hidden');
+        els.retranslateModal?.classList.add('flex');
+        try { document.body.appendChild(els.retranslateModal); } catch { /* ignore */ }
+        setTimeout(() => {
+            try { els.retranslateConfirmBtn?.focus?.({ preventScroll: true }); } catch { /* ignore */ }
+        }, 80);
+    }
+
+    async function runRetranslateFromModal() {
+        const plan = Array.isArray(state.retranslatePlan) ? state.retranslatePlan.slice() : [];
+        if (!plan.length) {
+            showToast('没有可翻译的条目', 'warn');
+            return;
+        }
+        const mode = readRetranslateModeFromModal();
+        if (mode === 'smart' && !advancedEntitled) {
+            showToast('智能翻译为 Pro 专属', 'warn');
+            return;
+        }
+        const modelId = String(els.retranslateModelSelect?.value || '').trim();
+        if (mode === 'llm' && !modelId) {
+            showToast('请选择推理翻译模型', 'warn');
+            return;
+        }
+        if (mode === 'smart') {
+            if (!modelId) {
+                showToast('请选择已下载的智能翻译模型（设置 → Pro → 大模型）', 'warn');
+                return;
+            }
+            const catalogApi = getManagedLlmCatalogApi();
+            const block = catalogApi?.getSmartTranslateModelBlock?.(modelId);
+            if (block?.ok === false) {
+                showToast(block.error || '所选模型不可用于智能翻译', 'warn');
+                return;
+            }
+        }
+        closeRetranslateModal();
+
+        const language = String(els.quickLanguageSelect?.value || els.languageSelect?.value || 'ja').trim() || 'ja';
+        const chineseSubtitleVariant = String(
+            els.quickTargetLangSelect?.value
+            || els.chineseSubtitleVariantSelect?.value
+            || 'simplified',
+        ).trim() || 'simplified';
+        const faithfulTone = !!els.smartTranslateFaithfulCheck?.checked;
+
+        state.retranslateBusy = true;
+        state.retranslateAbort = false;
+        updateStartButton();
+        setBadge('重新翻译', 'running');
+        ensureLogExpanded();
+        activateInferLogTab();
+        const modeLabel = mode === 'smart' ? '智能翻译' : (mode === 'engine' ? '机器翻译' : '推理翻译');
+        appendRetranslateLog(
+            `开始重新翻译 ${plan.length} 项（${modeLabel}${modelId ? ` · ${modelId}` : ''}）…`,
+            'info',
+        );
+
+        let okCount = 0;
+        let failCount = 0;
+        let skipCount = 0;
+        let aborted = false;
+        let activeIndex = 0;
+        let activeName = '';
+        let activePath = '';
+        let lastProgressLogAt = 0;
+        let lastProgressLogKey = '';
+        const startedAt = Date.now();
+
+        const clampPct = (n) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+        const setRetranslateProgress = ({
+            index = activeIndex,
+            itemPct = 0,
+            detail = '',
+            name = activeName,
+            path = activePath,
+            log = false,
+        } = {}) => {
+            const total = Math.max(1, plan.length);
+            const idx = Math.max(0, Math.min(total - 1, Number(index) || 0));
+            const within = Math.max(0, Math.min(1, (Number(itemPct) || 0) / 100));
+            // Cap mid-item at 99% so the bar keeps moving until the batch finishes.
+            const overall = clampPct(((idx + within) / total) * 100);
+            const displayOverall = overall >= 100 && idx < total - 1 ? 99 : Math.min(99, overall);
+            const labelDetail = String(detail || '').trim();
+            if (els.progressBar) els.progressBar.style.width = `${displayOverall}%`;
+            if (els.progressLabel) {
+                els.progressLabel.textContent = labelDetail
+                    ? `重新翻译 ${idx + 1}/${total}：${labelDetail}`
+                    : `重新翻译 ${idx + 1}/${total}${name ? `：${name}` : ''}`;
+            }
+            if (els.progressCount) {
+                els.progressCount.textContent = `${idx + 1} / ${total} · ${displayOverall}%`;
+            }
+            if (els.currentFile && (name || path)) {
+                els.currentFile.textContent = `${name || basename(path)}（${idx + 1}/${total}）`;
+                els.currentFile.title = path || name || '';
+            }
+            if (path) {
+                updateItem(path, {
+                    status: 'running',
+                    progress: clampPct(itemPct),
+                    detail: labelDetail || '重新翻译中…',
+                });
+            }
+            if (log && labelDetail) {
+                const key = `${idx}|${labelDetail}`;
+                const now = Date.now();
+                if (key !== lastProgressLogKey && now - lastProgressLogAt >= 1200) {
+                    lastProgressLogKey = key;
+                    lastProgressLogAt = now;
+                    appendRetranslateLog(`· ${name || basename(path) || '条目'} · ${labelDetail}`, 'info');
+                }
+            }
+        };
+
+        const onTranslateProgress = (info) => {
+            if (!info || !state.retranslateBusy) return;
+            const pctRaw = Number(info.pct ?? info.percent);
+            let itemPct = Number.isFinite(pctRaw) ? pctRaw : 0;
+            if (!Number.isFinite(pctRaw) && info.chunk && info.total) {
+                itemPct = (Number(info.chunk) / Math.max(1, Number(info.total))) * 90;
+            }
+            // Leave headroom for write-back (≈90–100).
+            itemPct = Math.min(92, Math.max(4, itemPct || 8));
+            const phase = String(info.phase || '').trim();
+            let detail = String(info.message || info.detail || '').trim();
+            if (!detail) {
+                if (phase === 'brief' || phase === 'brief-done') detail = '理解全文…';
+                else if (phase === 'consistency') detail = '一致性校对…';
+                else if (info.chunk && info.total) detail = `翻译分块 ${info.chunk}/${info.total}`;
+                else if (phase === 'chunk' || phase === 'chunk-done' || phase === 'chunk-retry') {
+                    detail = phase === 'chunk-retry' ? '分块重试中…' : '分块翻译中…';
+                } else if (phase === 'start') detail = '启动翻译引擎…';
+                else if (phase === 'done') detail = '翻译完成，准备写回…';
+                else detail = '翻译中…';
+            }
+            setRetranslateProgress({
+                index: activeIndex,
+                itemPct,
+                detail,
+                name: activeName,
+                path: activePath,
+                log: true,
+            });
+        };
+
+        const unsubs = [];
+        if (mode === 'engine' && electron?.onEngineTranslateProgress) {
+            unsubs.push(electron.onEngineTranslateProgress(onTranslateProgress));
+        } else if (mode === 'smart' && electron?.onAdvancedReconstructProgress) {
+            unsubs.push(electron.onAdvancedReconstructProgress(onTranslateProgress));
+        } else if (mode === 'llm' && electron?.onSakuraTranslateProgress) {
+            unsubs.push(electron.onSakuraTranslateProgress(onTranslateProgress));
+        }
+
+        setRetranslateProgress({
+            index: 0,
+            itemPct: 0,
+            detail: '准备中…',
+        });
+        if (els.progressBar) els.progressBar.style.width = '0%';
+        if (els.progressCount) els.progressCount.textContent = `0 / ${plan.length}`;
+
+        try {
+            for (let i = 0; i < plan.length; i += 1) {
+                if (state.retranslateAbort) {
+                    aborted = true;
+                    break;
+                }
+                const row = plan[i];
+                const item = row.item;
+                const name = basename(item.path);
+                activeIndex = i;
+                activeName = name;
+                activePath = item.path;
+                lastProgressLogKey = '';
+
+                updateItem(item.path, {
+                    status: 'running',
+                    progress: 0,
+                    detail: '准备重新翻译…',
+                    startedAt: Date.now(),
+                });
+                setRetranslateProgress({
+                    index: i,
+                    itemPct: 2,
+                    detail: '读取转录字幕…',
+                    name,
+                    path: item.path,
+                });
+                appendRetranslateLog(
+                    `重新翻译 ${i + 1}/${plan.length}：${name} ← ${basename(row.sourcePath)}`
+                    + `（${modeLabel}${modelId ? ` · ${modelId}` : ''}）`,
+                    'info',
+                );
+
+                let cues = row.cues;
+                if (!Array.isArray(cues) || !cues.length) {
+                    const doc = await electron?.transubReadSubtitle?.({ path: row.sourcePath });
+                    if (!doc?.ok || !doc.cues?.length) {
+                        failCount += 1;
+                        updateItem(item.path, {
+                            status: 'failed',
+                            progress: 0,
+                            detail: doc?.error || '读取转录字幕失败',
+                            completedAt: Date.now(),
+                        });
+                        appendRetranslateLog(`失败：${name} — 无法读取转录字幕`, 'err');
+                        setRetranslateProgress({
+                            index: i,
+                            itemPct: 100,
+                            detail: '读取失败',
+                            name,
+                            path: item.path,
+                        });
+                        continue;
+                    }
+                    cues = doc.cues;
+                    row.format = doc.format || row.format;
+                }
+
+                const payloadCues = cues.map((c, idx) => ({
+                    index: Number.isInteger(Number(c.index)) ? Number(c.index) : idx,
+                    startMs: c.startMs,
+                    endMs: c.endMs,
+                    text: String(c.text || ''),
+                })).filter((c) => String(c.text || '').trim());
+
+                if (!payloadCues.length) {
+                    skipCount += 1;
+                    updateItem(item.path, {
+                        status: 'skipped',
+                        progress: 100,
+                        detail: '转录字幕为空',
+                        completedAt: Date.now(),
+                    });
+                    appendRetranslateLog(`跳过：${name} — 转录字幕为空`, 'warn');
+                    setRetranslateProgress({
+                        index: i,
+                        itemPct: 100,
+                        detail: '已跳过（空字幕）',
+                        name,
+                        path: item.path,
+                    });
+                    continue;
+                }
+
+                appendRetranslateLog(`· ${name} · 共 ${payloadCues.length} 条，开始${modeLabel}…`, 'info');
+                setRetranslateProgress({
+                    index: i,
+                    itemPct: 8,
+                    detail: `翻译中（${payloadCues.length} 条）…`,
+                    name,
+                    path: item.path,
+                });
+
+                let translated;
+                if (mode === 'smart') {
+                    translated = await electron?.transubAdvancedSmartTranslate?.({
+                        cues: payloadCues,
+                        chineseSubtitleVariant,
+                        targetLanguage: chineseSubtitleVariant,
+                        smartTranslateFaithfulTone: faithfulTone,
+                        faithfulTone,
+                        modelId,
+                        smartTranslateModelId: modelId,
+                        fileName: name,
+                        sourcePath: row.sourcePath,
+                        path: row.sourcePath,
+                        mediaPath: item.path,
+                        videoPath: item.path,
+                    });
+                } else if (mode === 'engine') {
+                    translated = await electron?.transubEngineTranslateCues?.({
+                        cues: payloadCues,
+                        language,
+                        mtModel: modelId || undefined,
+                        options: {
+                            language,
+                            engineMtModel: modelId || undefined,
+                            engineOpusMtModel: modelId || undefined,
+                        },
+                    });
+                } else {
+                    translated = await electron?.transubSakuraTranslate?.({
+                        cues: payloadCues,
+                        modelId,
+                        faithfulTone,
+                        smartTranslateFaithfulTone: faithfulTone,
+                        sakuraNsfwPrompt: faithfulTone || undefined,
+                        applyNsfwLexicon: faithfulTone || undefined,
+                        contentProfile: item.sense?.classification?.profile || undefined,
+                        fileName: name,
+                        sourcePath: row.sourcePath,
+                    });
+                }
+
+                if (state.retranslateAbort || translated?.cancelled) {
+                    aborted = true;
+                    updateItem(item.path, {
+                        status: 'cancelled',
+                        detail: '已取消',
+                        completedAt: Date.now(),
+                    });
+                    appendRetranslateLog(`已取消：${name}`, 'warn');
+                    break;
+                }
+                if (!translated?.ok) {
+                    failCount += 1;
+                    const err = translated?.error || '翻译失败';
+                    updateItem(item.path, {
+                        status: 'failed',
+                        detail: err,
+                        completedAt: Date.now(),
+                    });
+                    appendRetranslateLog(`失败：${name} — ${err}`, 'err');
+                    setRetranslateProgress({
+                        index: i,
+                        itemPct: 100,
+                        detail: '翻译失败',
+                        name,
+                        path: item.path,
+                    });
+                    continue;
+                }
+
+                setRetranslateProgress({
+                    index: i,
+                    itemPct: 94,
+                    detail: '写回译文…',
+                    name,
+                    path: item.path,
+                });
+                appendRetranslateLog(`· ${name} · 写回 ${basename(row.destPath)}…`, 'info');
+
+                const map = new Map(
+                    (translated.cues || []).map((u) => [Number(u.index), String(u.text ?? '')]),
+                );
+                const nextCues = cues.map((c, idx) => {
+                    const index = Number.isInteger(Number(c.index)) ? Number(c.index) : idx;
+                    if (!map.has(index)) return { ...c };
+                    return { ...c, text: map.get(index) };
+                });
+                const written = await electron?.transubWriteSubtitle?.({
+                    path: row.destPath,
+                    format: row.format || primarySubFormatFromForm(),
+                    cues: nextCues,
+                });
+                if (!written?.ok) {
+                    failCount += 1;
+                    const err = written?.error || '写入译文失败';
+                    updateItem(item.path, {
+                        status: 'failed',
+                        detail: err,
+                        completedAt: Date.now(),
+                    });
+                    appendRetranslateLog(`失败：${name} — ${err}`, 'err');
+                    continue;
+                }
+
+                okCount += 1;
+                updateItem(item.path, {
+                    status: 'done',
+                    progress: 100,
+                    detail: '重新翻译完成',
+                    selected: false,
+                    subtitlePath: row.destPath,
+                    existingSubtitle: row.destPath,
+                    targetSubtitlePath: row.destPath,
+                    sourceSubtitlePath: row.sourceKind === 'kept'
+                        ? (item.sourceSubtitlePath || undefined)
+                        : row.sourcePath,
+                    completedAt: Date.now(),
+                });
+                setRetranslateProgress({
+                    index: i,
+                    itemPct: 100,
+                    detail: '本条完成',
+                    name,
+                    path: item.path,
+                });
+                const via = translated.summary || translated.message || `${map.size} 条`;
+                appendRetranslateLog(`完成：${name} → ${basename(row.destPath)}（${via}）`, 'ok');
+            }
+        } finally {
+            for (const off of unsubs) {
+                try { if (typeof off === 'function') off(); } catch { /* ignore */ }
+            }
+            state.retranslateBusy = false;
+            state.retranslateAbort = false;
+            state.retranslatePlan = null;
+            updateStartButton();
+            if (els.progressBar) els.progressBar.style.width = '100%';
+            const elapsed = formatDuration(elapsedSecSince(startedAt));
+            const summary = aborted
+                ? `重新翻译已停止：成功 ${okCount}`
+                    + (failCount ? ` · 失败 ${failCount}` : '')
+                    + ` · 用时 ${elapsed}`
+                : `重新翻译结束：成功 ${okCount}`
+                    + (failCount ? ` · 失败 ${failCount}` : '')
+                    + (skipCount ? ` · 跳过 ${skipCount}` : '')
+                    + ` · 用时 ${elapsed}`;
+            if (els.progressLabel) els.progressLabel.textContent = summary;
+            if (els.progressCount) {
+                els.progressCount.textContent = `${okCount + failCount + skipCount} / ${plan.length}`;
+            }
+            appendRetranslateLog(summary, aborted || failCount ? 'warn' : 'ok', { toast: false });
+            setBadge(
+                aborted ? '已停止' : (failCount ? '部分失败' : '已完成'),
+                aborted || failCount ? 'error' : 'done',
+            );
+            showToast(summary, aborted || failCount ? 'warn' : 'ok');
+            renderList();
+        }
+    }
+
+    /**
+     * Open subtitle editor and start film understanding reconstruct (same UX as editor).
+     * Limited to exactly one selected task — multi-title batch is not supported here.
+     * @param {object|null} [onlyItem]
+     */
+    async function runFilmReconstructFromSelection(onlyItem = null) {
+        if (state.running || state.postBatchBusy || state.retranslateBusy) {
+            showToast('当前有任务进行中', 'warn');
+            return;
+        }
+        if (!advancedEntitled) {
+            appendLog('影片理解重构为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
+            showToast('理解重构为 Pro 专属', 'warn');
+            openAppSettings('pro');
+            return;
+        }
+
+        let item = onlyItem || null;
+        if (!item) {
+            const selected = getSelectedItems();
+            if (!selected.length) {
+                appendLog('请先勾选一部要理解重构的影片', 'warn');
+                showToast('请先勾选一部影片', 'warn');
+                return;
+            }
+            if (selected.length > 1) {
+                appendLog('理解重构一次只能勾选一部影片（请在字幕编辑器内操作对照确认）', 'warn');
+                showToast('请只勾选一部影片再理解重构', 'warn');
+                return;
+            }
+            item = selected[0];
+        }
+
+        const subPath = getSubtitlePathForItem(item);
+        if (!subPath) {
+            appendLog('该条目尚无字幕可重构', 'warn');
+            showToast('该条目尚无字幕', 'warn');
+            return;
+        }
+
+        appendLog(`打开字幕编辑器并启动影片理解重构：${basename(subPath)}`, 'info');
+        const ok = await global.TransubSubtitleEditor?.openEditor?.(subPath, item.path || '', {
+            action: 'film-context-reconstruct',
+        });
+        if (!ok) {
+            showToast('无法打开字幕编辑器', 'err');
+        }
     }
 
     async function addVideos() {
@@ -6744,7 +7664,7 @@
     }
 
     function removeSelected() {
-        if (state.running) return;
+        if (state.running || state.retranslateBusy) return;
         const removed = state.items.filter((i) => i.selected);
         if (!removed.length) return;
         const snapshot = removed.map((i) => ({ ...i, sense: i.sense ? { ...i.sense } : undefined }));
@@ -6759,7 +7679,7 @@
     }
 
     function clearList() {
-        if (state.running) return;
+        if (state.running || state.retranslateBusy) return;
         if (!state.items.length) return;
         const snapshot = state.items.map((i) => ({ ...i, sense: i.sense ? { ...i.sense } : undefined }));
         state.items = [];
@@ -7564,6 +8484,9 @@
         const doCompressRep = savedOpts
             ? savedOpts.postBatchCompressRepetition !== false
             : (els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true);
+        const doCompactInterjections = savedOpts
+            ? !!savedOpts.postBatchCompactPureInterjections
+            : !!els.postBatchCompactPureInterjectionsCheck?.checked;
         const taskFromSaved = savedOpts?.task === 'transcribe' || savedOpts?.task === 'dual'
             ? savedOpts.task
             : (savedOpts?.task ? 'translate' : null);
@@ -7571,14 +8494,13 @@
         const isTranslate = isTranslateLikeTask(taskNow);
         // 翻译/双语任务默认：。？！后补空格（在 CPS 拆句之前）；双语后处理只作用于译文轨
         const doSpacePunct = isTranslate;
-        if (!doCps && !doNoise && !doCompressRep && !doSpacePunct) return;
-        if (!electron?.transubApplySubtitlePostprocess) return;
+        const doPostprocess = doCps || doNoise || doCompressRep || doSpacePunct;
+        if (!doPostprocess && !doCompactInterjections) return;
 
         const targets = state.items.filter((item) => {
             if (item.status !== 'done' && item.status !== 'skipped') return false;
             return getPostBatchPathsForItem(item).length > 0;
         });
-        if (!targets.length) return;
 
         els.progressLabel.textContent = '后处理中…';
         const parts = [];
@@ -7586,59 +8508,149 @@
         if (doCps) parts.push('CPS 拆句');
         if (doNoise) parts.push('清理杂音');
         if (doCompressRep) parts.push('压缩叠词');
+        if (doCompactInterjections) parts.push('精简纯语气词');
         const dualHint = taskNow === 'dual' ? '（译文轨 + 合并双语）' : '';
-        const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
-        appendLog(`开始批量后处理（${pathCount} 个字幕文件 / ${targets.length} 条任务${dualHint} · ${parts.join(' · ')}）…`, 'info');
-        let written = 0;
-        let fileTotal = 0;
-        for (let i = 0; i < targets.length; i += 1) {
-            const item = targets[i];
-            const paths = getPostBatchPathsForItem(item);
-            for (const subPath of paths) {
-                fileTotal += 1;
-                els.progressLabel.textContent = `后处理中… ${fileTotal}/${pathCount}`;
-                try {
-                    const res = await electron.transubApplySubtitlePostprocess({
-                        path: subPath,
-                        options: {
-                            spaceAfterChinesePunctuation: doSpacePunct,
-                            cpsSplit: doCps,
-                            removeNoise: doNoise,
-                            removeHallucinations: doNoise,
-                            compressRepetition: doCompressRep,
-                            fixOverlap: true,
-                            enforceMaxDur: true,
-                            maxCps: 18,
-                            backupMode: 'off',
-                        },
-                    });
-                    if (res?.ok && res.written) {
-                        written += 1;
-                        appendLog(`${basename(subPath)}：${res.summary || '已后处理'}`, 'ok');
-                    } else if (res?.ok) {
-                        appendLog(`${basename(subPath)}：${res.summary || '无需后处理'}`, 'info');
-                    } else {
-                        appendLog(`${basename(subPath)}：${res?.error || '后处理失败'}`, 'err');
+
+        if (doPostprocess && targets.length && electron?.transubApplySubtitlePostprocess) {
+            const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
+            appendLog(`开始批量后处理（${pathCount} 个字幕文件 / ${targets.length} 条任务${dualHint} · ${parts.join(' · ')}）…`, 'info');
+            let written = 0;
+            let fileTotal = 0;
+            /** @type {Set<string>} paths already cleared by paired JA↔ZH noise removal */
+            const pairedNoiseDone = new Set();
+
+            if (doNoise && electron?.transubRemoveNoisePair) {
+                for (const item of targets) {
+                    const zhPath = String(getSubtitlePathForItem(item) || '').trim();
+                    const jaPath = String(item.sourceSubtitlePath || '').trim();
+                    if (!zhPath || !jaPath) continue;
+                    if (!/\.(srt|vtt|lrc)$/i.test(zhPath) || !/\.(srt|vtt|lrc)$/i.test(jaPath)) continue;
+                    try {
+                        const pairRes = await electron.transubRemoveNoisePair({
+                            path: zhPath,
+                            sourcePath: jaPath,
+                            options: {
+                                removeDuplicates: true,
+                                removeHallucinations: true,
+                                backupMode: 'off',
+                            },
+                        });
+                        if (pairRes?.ok && !pairRes.skipped) {
+                            pairedNoiseDone.add(zhPath);
+                            pairedNoiseDone.add(jaPath);
+                            if (pairRes.removed || pairRes.written) {
+                                written += 1;
+                                appendLog(
+                                    `${basename(zhPath)} ↔ ${basename(jaPath)}：${pairRes.summary || '成对清噪'}`,
+                                    'ok',
+                                );
+                            }
+                        }
+                    } catch (err) {
+                        appendLog(`${basename(zhPath)}：成对清噪失败（${err?.message || err}）`, 'err');
                     }
-                } catch (err) {
-                    appendLog(`${basename(subPath)}：${err?.message || '后处理失败'}`, 'err');
                 }
             }
+
+            for (let i = 0; i < targets.length; i += 1) {
+                const item = targets[i];
+                const paths = getPostBatchPathsForItem(item);
+                for (const subPath of paths) {
+                    fileTotal += 1;
+                    els.progressLabel.textContent = `后处理中… ${fileTotal}/${pathCount}`;
+                    const skipNoise = doNoise && pairedNoiseDone.has(subPath);
+                    try {
+                        const res = await electron.transubApplySubtitlePostprocess({
+                            path: subPath,
+                            options: {
+                                spaceAfterChinesePunctuation: doSpacePunct,
+                                cpsSplit: doCps,
+                                removeNoise: doNoise && !skipNoise,
+                                removeHallucinations: doNoise && !skipNoise,
+                                compressRepetition: doCompressRep,
+                                blankInsteadOfRemove: false,
+                                fixOverlap: true,
+                                enforceMaxDur: true,
+                                maxCps: 18,
+                                backupMode: 'off',
+                            },
+                        });
+                        if (res?.ok && res.written) {
+                            written += 1;
+                            appendLog(`${basename(subPath)}：${res.summary || '已后处理'}`, 'ok');
+                        } else if (res?.ok) {
+                            appendLog(`${basename(subPath)}：${res.summary || '无需后处理'}`, 'info');
+                        } else {
+                            appendLog(`${basename(subPath)}：${res?.error || '后处理失败'}`, 'err');
+                        }
+                    } catch (err) {
+                        appendLog(`${basename(subPath)}：${err?.message || '后处理失败'}`, 'err');
+                    }
+                }
+            }
+            appendLog(
+                written > 0
+                    ? `后处理完成：已写回 ${written}/${fileTotal} 个字幕`
+                    : `后处理完成：${fileTotal} 个字幕均无需写回`,
+                written > 0 ? 'ok' : 'info',
+            );
+        } else if (doCompactInterjections) {
+            appendLog(`开始批量后处理（${parts.join(' · ')}）…`, 'info');
         }
-        appendLog(
-            written > 0
-                ? `后处理完成：已写回 ${written}/${fileTotal} 个字幕`
-                : `后处理完成：${fileTotal} 个字幕均无需写回`,
-            written > 0 ? 'ok' : 'info',
-        );
+
+        if (doCompactInterjections && electron?.transubCompactPureInterjections) {
+            const compactTargets = state.items.filter((item) => {
+                if (item.status !== 'done' && item.status !== 'skipped') return false;
+                const zh = String(getSubtitlePathForItem(item) || '').trim();
+                const ja = String(item.sourceSubtitlePath || '').trim();
+                return zh && ja
+                    && /\.(srt|vtt|lrc)$/i.test(zh)
+                    && /\.(srt|vtt|lrc)$/i.test(ja);
+            });
+            let compactWritten = 0;
+            for (let i = 0; i < compactTargets.length; i += 1) {
+                const item = compactTargets[i];
+                const zhPath = getSubtitlePathForItem(item);
+                const jaPath = item.sourceSubtitlePath;
+                els.progressLabel.textContent = `精简纯语气词… ${i + 1}/${compactTargets.length}`;
+                try {
+                    const res = await electron.transubCompactPureInterjections({
+                        path: zhPath,
+                        sourcePath: jaPath,
+                        options: { backupMode: 'off' },
+                    });
+                    if (res?.ok && res.dropped) {
+                        compactWritten += 1;
+                        appendLog(`${basename(zhPath)}：${res.summary || '已精简纯语气词'}`, 'ok');
+                    } else if (res?.ok && !res.skipped) {
+                        appendLog(`${basename(zhPath)}：${res.summary || '无需精简纯语气词'}`, 'info');
+                    } else if (res?.ok && res.skipped) {
+                        appendLog(`${basename(zhPath)}：跳过精简（${res.reason || '无原文对照'}）`, 'info');
+                    } else {
+                        appendLog(`${basename(zhPath)}：${res?.error || '精简纯语气词失败'}`, 'err');
+                    }
+                } catch (err) {
+                    appendLog(`${basename(zhPath)}：${err?.message || '精简纯语气词失败'}`, 'err');
+                }
+            }
+            if (compactTargets.length) {
+                appendLog(
+                    compactWritten > 0
+                        ? `精简纯语气词完成：已写回 ${compactWritten}/${compactTargets.length} 个字幕对`
+                        : `精简纯语气词完成：${compactTargets.length} 个字幕对均无需写回`,
+                    compactWritten > 0 ? 'ok' : 'info',
+                );
+            }
+        }
+
         els.progressLabel.textContent = '后处理完成';
     }
 
-    /** 整条完成后处理的最后一步：简繁转换（须在 CPS/清噪/叠词/QC 之后） */
+    /** 整条完成后处理的最后一步：简→繁（须在 CPS/清噪/叠词/QC 之后；简体目标跳过） */
     async function runPostBatchChineseConvert() {
         if (!electron?.transubApplySubtitlePostprocess) return;
         const chineseSubtitleVariant = await resolvePostBatchChineseVariant();
-        if (!chineseSubtitleVariant) return;
+        if (!chineseSubtitleVariant || chineseSubtitleVariant === 'simplified') return;
 
         const targets = state.items.filter((item) => {
             if (item.status !== 'done' && item.status !== 'skipped') return false;
@@ -8273,9 +9285,550 @@
         document.body.addEventListener('dragover', (e) => e.preventDefault());
     }
 
+    let taskRowContextIdx = -1;
+    let taskColContextKey = '';
+
+    function taskColMeta(key) {
+        return TASK_TABLE_COLS.find((c) => c.key === key) || null;
+    }
+
+    function syncTaskTableSortHeaders() {
+        const head = els.taskTableHead;
+        if (!head) return;
+        const sort = state.listSort;
+        head.querySelectorAll('th[data-sort-key]').forEach((th) => {
+            const key = th.getAttribute('data-sort-key') || '';
+            const active = !!(sort && sort.key === key);
+            th.classList.toggle('is-sort-asc', active && sort.dir === 'asc');
+            th.classList.toggle('is-sort-desc', active && sort.dir === 'desc');
+            const label = (th.textContent || '').replace(/\s+/g, ' ').trim().replace(/[▲▼↕]/g, '').trim();
+            const baseTitle = th.getAttribute('data-base-title') || th.getAttribute('title') || label;
+            if (!th.getAttribute('data-base-title')) th.setAttribute('data-base-title', baseTitle);
+            if (active) {
+                th.setAttribute('aria-sort', sort.dir === 'asc' ? 'ascending' : 'descending');
+                th.title = `${baseTitle}（${sort.dir === 'asc' ? '升序' : '降序'}，再点切换）`;
+            } else {
+                th.removeAttribute('aria-sort');
+                th.title = baseTitle;
+            }
+        });
+    }
+
+    function measureTaskColumnFitWidth(colKey) {
+        const meta = taskColMeta(colKey);
+        const table = els.subtitleTaskTable;
+        if (!meta || !table) return meta?.min || 64;
+        const colIdx = TASK_TABLE_COLS.findIndex((c) => c.key === colKey);
+        const targets = [];
+        table.querySelectorAll('tr').forEach((tr) => {
+            const cell = tr.children[colIdx];
+            if (cell) targets.push(cell);
+        });
+        if (!targets.length) return meta.min;
+
+        const probe = document.createElement('div');
+        probe.setAttribute('aria-hidden', 'true');
+        probe.style.cssText = [
+            'position:absolute',
+            'left:-99999px',
+            'top:0',
+            'visibility:hidden',
+            'height:auto',
+            'width:max-content',
+            'max-width:none',
+            'white-space:nowrap',
+            'display:inline-block',
+            'pointer-events:none',
+            'box-sizing:border-box',
+        ].join(';');
+        document.body.appendChild(probe);
+
+        let max = 0;
+        targets.forEach((cell) => {
+            const cs = getComputedStyle(cell);
+            probe.style.font = cs.font;
+            probe.style.letterSpacing = cs.letterSpacing;
+            probe.style.paddingLeft = cs.paddingLeft;
+            probe.style.paddingRight = cs.paddingRight;
+            const clone = cell.cloneNode(true);
+            if (cell.tagName === 'TH') {
+                clone.querySelectorAll('.task-col-sort-ind').forEach((n) => n.remove());
+            }
+            // Flatten flex/block layout so content width is measurable
+            clone.querySelectorAll('*').forEach((n) => {
+                if (!(n instanceof HTMLElement)) return;
+                n.style.maxWidth = 'none';
+                n.style.width = 'auto';
+                n.style.overflow = 'visible';
+                n.style.textOverflow = 'clip';
+                n.style.whiteSpace = 'nowrap';
+                if (n.classList.contains('file-cell-main')
+                    || n.classList.contains('row-actions')
+                    || n.classList.contains('qc-cell')
+                    || n.classList.contains('row-mini-progress')) {
+                    n.style.display = 'inline-flex';
+                } else if (n.tagName !== 'BUTTON' && n.tagName !== 'INPUT' && n.tagName !== 'SPAN'
+                    && n.tagName !== 'I' && n.tagName !== 'A') {
+                    n.style.display = 'inline';
+                }
+            });
+            probe.innerHTML = '';
+            while (clone.firstChild) probe.appendChild(clone.firstChild);
+            max = Math.max(max, Math.ceil(probe.getBoundingClientRect().width));
+        });
+        probe.remove();
+        return Math.max(meta.min, Math.min(meta.max, max + (meta.pad || 0)));
+    }
+
+    function applyTaskColumnWidths() {
+        const group = els.taskTableColgroup;
+        const table = els.subtitleTaskTable;
+        if (!group) return;
+        let sum = 0;
+        let fittedCount = 0;
+        group.querySelectorAll('col[data-col]').forEach((col) => {
+            const key = col.getAttribute('data-col') || '';
+            const px = taskColumnWidths[key];
+            if (Number.isFinite(px) && px > 0) {
+                col.style.width = `${Math.round(px)}px`;
+                sum += px;
+                fittedCount += 1;
+            } else {
+                col.style.width = '';
+            }
+        });
+        if (!table) return;
+        // After fitting every column, size the table to content (scroll if needed)
+        if (fittedCount === TASK_TABLE_COLS.length && sum > 0) {
+            const hostW = els.listScroll?.clientWidth || 0;
+            table.style.width = `${Math.max(Math.round(sum), hostW || 0)}px`;
+            table.style.minWidth = `${Math.round(sum)}px`;
+        } else if (fittedCount > 0) {
+            table.style.width = '100%';
+            table.style.minWidth = '';
+        } else {
+            table.style.width = '';
+            table.style.minWidth = '';
+        }
+    }
+
+    function remapExpandedErrorRows(prevItems) {
+        if (!expandedErrorRows.size) return;
+        const next = new Set();
+        for (const oldIdx of expandedErrorRows) {
+            const item = prevItems[oldIdx];
+            if (!item) continue;
+            const newIdx = state.items.indexOf(item);
+            if (newIdx >= 0) next.add(newIdx);
+        }
+        expandedErrorRows.clear();
+        for (const i of next) expandedErrorRows.add(i);
+    }
+
+    function listSortValue(item, key) {
+        switch (key) {
+            case 'file':
+                return basename(item.path).toLocaleLowerCase('zh-CN');
+            case 'duration':
+                return Number(item.duration) || 0;
+            case 'elapsed':
+                return itemElapsedSec(item);
+            case 'progress': {
+                const pct = Number(item.progress);
+                if (Number.isFinite(pct)) return pct;
+                const total = Number(item.duration) || Number(item.processedTotalSec) || 0;
+                const processed = Number(item.processedSec) || 0;
+                if (total > 0 && processed > 0) return (processed / total) * 100;
+                return processed > 0 ? 100 : 0;
+            }
+            case 'status':
+                return TASK_STATUS_SORT_RANK[item.status] ?? 50;
+            case 'qc': {
+                if (item.qcError) return -1;
+                if (!Number.isFinite(Number(item.qcIssueCount))) return -2;
+                return Number(item.qcIssueCount) || 0;
+            }
+            default:
+                return '';
+        }
+    }
+
+    function compareListSortValues(a, b, key) {
+        const va = listSortValue(a, key);
+        const vb = listSortValue(b, key);
+        if (typeof va === 'number' && typeof vb === 'number') {
+            return va - vb;
+        }
+        return String(va).localeCompare(String(vb), 'zh-CN', { numeric: true, sensitivity: 'base' });
+    }
+
+    function sortTaskListBy(key) {
+        if (!taskColMeta(key)?.sortable) return;
+        const cur = state.listSort;
+        const dir = (cur && cur.key === key && cur.dir === 'asc') ? 'desc' : 'asc';
+        state.listSort = { key, dir };
+        renderList();
+    }
+
+    function applyListSortInPlace() {
+        const sort = state.listSort;
+        if (!sort?.key || !taskColMeta(sort.key)?.sortable) return;
+        if (state.items.length < 2) return;
+        const prev = state.items.slice();
+        const mult = sort.dir === 'asc' ? 1 : -1;
+        const key = sort.key;
+        state.items.sort((a, b) => {
+            const cmp = compareListSortValues(a, b, key);
+            if (cmp !== 0) return cmp * mult;
+            return basename(a.path).localeCompare(basename(b.path), 'zh-CN');
+        });
+        let changed = false;
+        for (let i = 0; i < prev.length; i += 1) {
+            if (prev[i] !== state.items[i]) {
+                changed = true;
+                break;
+            }
+        }
+        if (changed) remapExpandedErrorRows(prev);
+    }
+
+    function autoFitTaskColumn(colKey) {
+        if (!taskColMeta(colKey)) return;
+        taskColumnWidths[colKey] = measureTaskColumnFitWidth(colKey);
+        applyTaskColumnWidths();
+    }
+
+    function autoFitAllTaskColumns() {
+        TASK_TABLE_COLS.forEach((c) => {
+            taskColumnWidths[c.key] = measureTaskColumnFitWidth(c.key);
+        });
+        applyTaskColumnWidths();
+    }
+
+    function closeTaskColContextMenu() {
+        taskColContextKey = '';
+        if (!els.taskColContextMenu) return;
+        els.taskColContextMenu.classList.add('hidden');
+        els.taskColContextMenu.style.left = '';
+        els.taskColContextMenu.style.top = '';
+    }
+
+    function isTaskColContextMenuOpen() {
+        return !!(els.taskColContextMenu && !els.taskColContextMenu.classList.contains('hidden'));
+    }
+
+    function showTaskColContextMenu(colKey, clientX, clientY) {
+        const menu = els.taskColContextMenu;
+        if (!menu || !taskColMeta(colKey)) return;
+        closeTaskRowContextMenu();
+        setPostTaskMenuOpen(false);
+        setAddMenuOpen(false);
+        setMoreMenuOpen(false);
+        setTranslateModeMenuOpen(false);
+        setPostBatchQcFixMenuOpen(false);
+        taskColContextKey = colKey;
+        const fitOne = menu.querySelector('[data-task-col-ctx="fit-one"]');
+        if (fitOne) {
+            const label = fitOne.querySelector('span');
+            if (label) label.textContent = '将列调整为合适的大小';
+            fitOne.disabled = false;
+        }
+        menu.classList.remove('hidden');
+        try { document.body.appendChild(menu); } catch { /* ignore */ }
+        const pad = 8;
+        const mw = menu.offsetWidth || 220;
+        const mh = menu.offsetHeight || 80;
+        const vw = window.innerWidth || 800;
+        const vh = window.innerHeight || 600;
+        let left = Number(clientX) || 0;
+        let top = Number(clientY) || 0;
+        if (left + mw + pad > vw) left = Math.max(pad, vw - mw - pad);
+        if (top + mh + pad > vh) top = Math.max(pad, vh - mh - pad);
+        if (left < pad) left = pad;
+        if (top < pad) top = pad;
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+    }
+
+    function runTaskColContextAction(action) {
+        const colKey = taskColContextKey;
+        closeTaskColContextMenu();
+        if (action === 'fit-one' && colKey) autoFitTaskColumn(colKey);
+        else if (action === 'fit-all') autoFitAllTaskColumns();
+    }
+
+    function bindTaskTableColumns() {
+        const head = els.taskTableHead;
+        if (!head || head.dataset.colBound) return;
+        head.dataset.colBound = '1';
+
+        head.addEventListener('click', (e) => {
+            if (e.target.closest('input, button, a, label')) return;
+            const th = e.target.closest('th[data-sort-key]');
+            if (!th || !head.contains(th)) return;
+            e.preventDefault();
+            const key = th.getAttribute('data-sort-key') || '';
+            if (key) sortTaskListBy(key);
+        });
+
+        const onHeaderContextMenu = (e) => {
+            const th = e.target.closest('th[data-col]');
+            if (!th || !head.contains(th)) return;
+            if (e.target.closest('input, textarea, select')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const colKey = th.getAttribute('data-col') || '';
+            if (!colKey) return;
+            showTaskColContextMenu(colKey, e.clientX, e.clientY);
+        };
+        head.addEventListener('contextmenu', onHeaderContextMenu);
+
+        // Also allow right-click on body cells to auto-fit that column (Excel-like),
+        // but only when not on a task row action — row menu takes priority on rows.
+        // Header-only is enough per product ask; keep header path only.
+
+        els.taskColContextMenu?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-task-col-ctx]');
+            if (!btn || btn.disabled) return;
+            e.preventDefault();
+            e.stopPropagation();
+            runTaskColContextAction(btn.getAttribute('data-task-col-ctx'));
+        });
+        els.taskColContextMenu?.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+        document.addEventListener('click', (e) => {
+            if (!isTaskColContextMenuOpen()) return;
+            if (els.taskColContextMenu.contains(e.target)) return;
+            closeTaskColContextMenu();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isTaskColContextMenuOpen()) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeTaskColContextMenu();
+            }
+        }, true);
+        els.listScroll?.addEventListener('scroll', () => {
+            if (isTaskColContextMenuOpen()) closeTaskColContextMenu();
+        }, { passive: true });
+        window.addEventListener('resize', () => {
+            if (isTaskColContextMenuOpen()) closeTaskColContextMenu();
+        });
+
+        // Ensure default col widths apply once DOM is ready
+        applyTaskColumnWidths();
+        syncTaskTableSortHeaders();
+    }
+
+    function closeTaskRowContextMenu() {
+        taskRowContextIdx = -1;
+        if (!els.taskRowContextMenu) return;
+        els.taskRowContextMenu.classList.add('hidden');
+        els.taskRowContextMenu.style.left = '';
+        els.taskRowContextMenu.style.top = '';
+    }
+
+    function isTaskRowContextMenuOpen() {
+        return !!(els.taskRowContextMenu && !els.taskRowContextMenu.classList.contains('hidden'));
+    }
+
+    /** If the row is not already selected, select only that row (keeps multi-select when right-clicking a selected row). */
+    function ensureContextRowSelected(idx) {
+        const item = state.items[idx];
+        if (!item) return null;
+        if (!item.selected) {
+            state.items.forEach((it, i) => { it.selected = i === idx; });
+            if (els.selectAllCheck) {
+                els.selectAllCheck.checked = state.items.length > 0
+                    && state.items.every((it) => it.selected);
+            }
+            renderList();
+            updateStartButton();
+        }
+        return state.items[idx] || item;
+    }
+
+    function syncTaskRowContextMenuState(idx) {
+        const menu = els.taskRowContextMenu;
+        if (!menu) return;
+        const item = state.items[idx];
+        if (!item) {
+            closeTaskRowContextMenu();
+            return;
+        }
+        const subPath = getSubtitlePathForItem(item);
+        const canEdit = !!subPath;
+        const busy = state.running || state.postBatchBusy || state.retranslateBusy;
+        const canRetranslate = !busy;
+        const canReconstruct = !busy && !!getSubtitlePathForItem(item);
+        const canQcFix = !state.running && !state.qcFixing
+            && Number(item.qcIssueCount) > 0
+            && getPostBatchPathsForItem(item).length > 0;
+        const canQcSmart = canQcFix && advancedEntitled && !!electron?.transubAdvancedQcSmartFix;
+        const canRetry = (item.status === 'failed' || item.status === 'error') && !state.running;
+        const canShowFolder = !!showPathForItem(item);
+        const sense = item.sense;
+        const hasSenseOverrides = !!(sense?.overrides && Object.keys(sense.overrides).length);
+        const canToggleSense = sense?.status === 'done'
+            && !state.running
+            && (sense.adopted || hasSenseOverrides);
+        const canResense = !state.running
+            && !!sense
+            && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')
+            && sense.status !== 'sensing';
+        const canRemove = !state.running && !state.retranslateBusy;
+
+        const setEnabled = (action, enabled) => {
+            const btn = menu.querySelector(`[data-task-ctx="${action}"]`);
+            if (btn) btn.disabled = !enabled;
+        };
+        setEnabled('edit', canEdit);
+        setEnabled('retranslate', canRetranslate);
+        setEnabled('reconstruct', canReconstruct);
+        setEnabled('qc-fix', canQcFix);
+        setEnabled('qc-smart-fix', canQcSmart);
+        setEnabled('retry', canRetry);
+        setEnabled('show-folder', canShowFolder);
+        setEnabled('sense-toggle', canToggleSense);
+        setEnabled('sense-resense', canResense);
+        setEnabled('remove', canRemove);
+
+        const senseLabel = menu.querySelector('[data-task-ctx-label="sense-toggle"]');
+        if (senseLabel) {
+            senseLabel.textContent = sense?.adopted ? '取消采纳感知' : '采纳感知';
+        }
+    }
+
+    function showTaskRowContextMenu(idx, clientX, clientY) {
+        const menu = els.taskRowContextMenu;
+        if (!menu || !state.items[idx]) return;
+        taskRowContextIdx = idx;
+        closeTaskColContextMenu();
+        setPostTaskMenuOpen(false);
+        setAddMenuOpen(false);
+        setMoreMenuOpen(false);
+        setTranslateModeMenuOpen(false);
+        setPostBatchQcFixMenuOpen(false);
+        ensureContextRowSelected(idx);
+        syncTaskRowContextMenuState(idx);
+        menu.classList.remove('hidden');
+        try { document.body.appendChild(menu); } catch { /* ignore */ }
+        const pad = 8;
+        const mw = menu.offsetWidth || 200;
+        const mh = menu.offsetHeight || 280;
+        const vw = window.innerWidth || 800;
+        const vh = window.innerHeight || 600;
+        let left = Number(clientX) || 0;
+        let top = Number(clientY) || 0;
+        if (left + mw + pad > vw) left = Math.max(pad, vw - mw - pad);
+        if (top + mh + pad > vh) top = Math.max(pad, vh - mh - pad);
+        if (left < pad) left = pad;
+        if (top < pad) top = pad;
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+    }
+
+    function runTaskRowContextAction(action) {
+        const idx = taskRowContextIdx;
+        const item = state.items[idx];
+        closeTaskRowContextMenu();
+        if (!item || idx < 0) return;
+        switch (action) {
+            case 'edit':
+                openItemEditor(item);
+                break;
+            case 'retranslate':
+                ensureContextRowSelected(idx);
+                void openRetranslateModal();
+                break;
+            case 'reconstruct':
+                // Force single selection — editor film reconstruct is one title at a time.
+                state.items.forEach((it, i) => { it.selected = i === idx; });
+                if (els.selectAllCheck) {
+                    els.selectAllCheck.checked = state.items.length === 1;
+                }
+                renderList();
+                updateStartButton();
+                void runFilmReconstructFromSelection(state.items[idx]);
+                break;
+            case 'qc-fix':
+                void runPostBatchQcFix(item);
+                break;
+            case 'qc-smart-fix':
+                void runPostBatchQcSmartFix(item);
+                break;
+            case 'retry':
+                retrySingleItem(idx);
+                break;
+            case 'show-folder':
+                void openItemInFolder(item);
+                break;
+            case 'sense-toggle':
+                toggleItemSenseAdopt(item);
+                break;
+            case 'sense-resense':
+                resenseItem(item);
+                break;
+            case 'remove':
+                ensureContextRowSelected(idx);
+                removeSelected();
+                break;
+            default:
+                break;
+        }
+    }
+
+    function bindTaskRowContextMenu() {
+        if (!els.fileListBody || els.fileListBody.dataset.ctxBound) return;
+        els.fileListBody.dataset.ctxBound = '1';
+        els.fileListBody.addEventListener('contextmenu', (e) => {
+            const row = e.target.closest('tr[data-idx]');
+            if (!row || !els.fileListBody.contains(row)) return;
+            if (e.target.closest('input, textarea, select')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = Number(row.dataset.idx);
+            if (!Number.isFinite(idx) || !state.items[idx]) return;
+            showTaskRowContextMenu(idx, e.clientX, e.clientY);
+        });
+        els.taskRowContextMenu?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-task-ctx]');
+            if (!btn || btn.disabled) return;
+            e.preventDefault();
+            e.stopPropagation();
+            runTaskRowContextAction(btn.getAttribute('data-task-ctx'));
+        });
+        els.taskRowContextMenu?.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+        document.addEventListener('click', (e) => {
+            if (!isTaskRowContextMenuOpen()) return;
+            if (els.taskRowContextMenu.contains(e.target)) return;
+            closeTaskRowContextMenu();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isTaskRowContextMenuOpen()) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeTaskRowContextMenu();
+            }
+        }, true);
+        els.listScroll?.addEventListener('scroll', () => {
+            if (isTaskRowContextMenuOpen()) closeTaskRowContextMenu();
+            if (isTaskColContextMenuOpen()) closeTaskColContextMenu();
+        }, { passive: true });
+        window.addEventListener('resize', () => {
+            if (isTaskRowContextMenuOpen()) closeTaskRowContextMenu();
+            if (isTaskColContextMenuOpen()) closeTaskColContextMenu();
+        });
+    }
+
     function bindListActions() {
         if (!els.fileListBody || els.fileListBody.dataset.actionsBound) return;
         els.fileListBody.dataset.actionsBound = '1';
+        bindTaskTableColumns();
+        bindTaskRowContextMenu();
         els.fileListBody.addEventListener('click', (e) => {
             const resenseBtn = e.target.closest('[data-sense-resense]');
             if (resenseBtn) {
@@ -8394,10 +9947,29 @@
             bindPostTaskMenu();
             bindAddMenu();
             bindMainUiExtras();
-            applyUiPrefs();
             els.removeSelectedBtn?.addEventListener('click', removeSelected);
             els.clearListBtn?.addEventListener('click', clearList);
             els.startBtn?.addEventListener('click', startSubtitleGeneration);
+            els.retranslateBtn?.addEventListener('click', () => {
+                void openRetranslateModal();
+            });
+            els.reconstructBtn?.addEventListener('click', () => {
+                void runFilmReconstructFromSelection();
+            });
+            els.retranslateCancelBtn?.addEventListener('click', () => closeRetranslateModal());
+            els.retranslateConfirmBtn?.addEventListener('click', () => {
+                void runRetranslateFromModal();
+            });
+            els.retranslateModal?.addEventListener('click', (event) => {
+                if (event.target === els.retranslateModal) closeRetranslateModal();
+            });
+            [
+                els.retranslateModeEngine,
+                els.retranslateModeLlm,
+                els.retranslateModeSmart,
+            ].forEach((radio) => {
+                radio?.addEventListener('change', () => syncRetranslateModalModelUi());
+            });
             els.selectAllCheck?.addEventListener('change', () => {
                 const checked = els.selectAllCheck.checked;
                 state.items.forEach((i) => { i.selected = checked; });
@@ -8405,6 +9977,15 @@
                 updateStartButton();
             });
         }
+        applyUiPrefs();
+        void hydrateAppThemeFromMain();
+        try {
+            electron?.onAppThemeChanged?.((payload) => {
+                const theme = payload?.theme === 'dark' ? 'dark' : 'light';
+                syncLocalThemeKeys(theme);
+                applyUiPrefs();
+            });
+        } catch (_) { /* ignore */ }
         els.saveParamsBtn?.addEventListener('click', () => {
             void saveParamsSettings({ closeAfter: false });
         });

@@ -2629,6 +2629,55 @@ async function runEngineBatchLocked({
                 }
             }
 
+            // Optional compact delivery: drop pure interjection pairs from ZH+JA and renumber.
+            if (translateLike && merged.postBatchCompactPureInterjections === true) {
+                try {
+                    const { compactPureInterjectionSubtitlePair } = require('./extensions-bridge');
+                    const srcResolved = outPaths.sourceSubtitlePath
+                        ? path.resolve(String(outPaths.sourceSubtitlePath))
+                        : '';
+                    const zhCandidates = [
+                        outPaths.targetSubtitlePath,
+                        outPaths.subtitlePath,
+                    ].filter(Boolean);
+                    const uniqueZh = [...new Set(zhCandidates.map((p) => path.resolve(String(p))))]
+                        .filter((subPath) => {
+                            if (!/\.(srt|vtt|lrc)$/i.test(subPath)) return false;
+                            if (srcResolved && subPath === srcResolved) return false;
+                            return fs.existsSync(subPath);
+                        });
+                    for (const zhPath of uniqueZh) {
+                        sendProgress(invokeSender, {
+                            stage: 'translate',
+                            index1,
+                            total: list.length,
+                            file: mediaPath,
+                            detail: '后处理：精简纯语气词…',
+                            percent: 97.5,
+                        });
+                        const cm = compactPureInterjectionSubtitlePair(
+                            zhPath,
+                            outPaths.sourceSubtitlePath,
+                            {
+                                sourceCues: waited.data?.result?.cues?.source,
+                                backupMode: 'off',
+                            },
+                        );
+                        if (cm?.ok && cm.dropped) {
+                            appendEngineLogLine(
+                                `[engine] ${cm.summary || '精简纯语气词'} ${path.basename(zhPath)}`,
+                                invokeSender,
+                            );
+                        }
+                    }
+                } catch (err) {
+                    appendEngineLogLine(
+                        `[engine] 精简纯语气词跳过：${err.message || err}`,
+                        invokeSender,
+                    );
+                }
+            }
+
             // Keep ASR/source transcript archive before optional dual-track deletion.
             // translate_mt normally deletes `.src.partial.*` and only returns zh outputs —
             // fall back to result.cues.source so「保存转录字幕」 still works.
@@ -2689,47 +2738,36 @@ async function runEngineBatchLocked({
                 );
             }
 
-            // Optional: keep only merged dual when user asked to delete source tracks after merge.
-            // Prefer an editable merged SRT when deleting source tracks; ASS remains editable as fallback.
-            if (
-                merged.mergeBilingualSubtitles
-                && merged.deleteSourcesAfterMergeBilingual
-                && outPaths.bilingualSubtitlePath
-                && engineTask === 'dual'
-            ) {
-                let editableMerged = '';
+            // 「合并双语」：写出与影片同名的可编辑 SRT（与 TWAI 一致）；可选再删原/译单轨。
+            // 不再依赖 *.dual.ass 已存在——仅勾选合并、未勾选删原轨时也应合并。
+            let doneDetail = outPaths.bilingualSubtitlePath ? '完成（含双语 ASS）' : '完成';
+            if (fileMerged.mergeBilingualSubtitles && engineTask === 'dual') {
                 try {
-                    if (outPaths.sourceSubtitlePath && outPaths.targetSubtitlePath) {
-                        const { writeMergedBilingualSubtitleFiles } = require('./subtitle-fs-helpers');
-                        editableMerged = writeMergedBilingualSubtitleFiles(
-                            outPaths.sourceSubtitlePath,
-                            outPaths.targetSubtitlePath,
-                            {
-                                primaryTrack: merged.dualPrimaryTrack || 'target',
-                                lineOrder: merged.dualLineOrder || 'target-first',
-                                nameAsVideoStem: true,
-                            },
+                    const { finalizeEngineDualMerge } = require('./subtitle-fs-helpers');
+                    const finalized = finalizeEngineDualMerge(outPaths, {
+                        mergeBilingualSubtitles: true,
+                        deleteSourcesAfterMergeBilingual: !!fileMerged.deleteSourcesAfterMergeBilingual,
+                        dualPrimaryTrack: fileMerged.dualPrimaryTrack || 'target',
+                        dualLineOrder: fileMerged.dualLineOrder || 'target-first',
+                    });
+                    Object.assign(outPaths, finalized.outPaths);
+                    doneDetail = finalized.detail || doneDetail;
+                    if (finalized.error) {
+                        appendEngineLogLine(
+                            `[engine] 双语合并跳过：${finalized.error.message || finalized.error}`,
+                            invokeSender,
+                        );
+                    } else if (finalized.mergedPath) {
+                        appendEngineLogLine(
+                            `[engine] 已合并双语 → ${path.basename(finalized.mergedPath)}`,
+                            invokeSender,
                         );
                     }
                 } catch (err) {
                     appendEngineLogLine(
-                        `[engine] 可编辑双语合并跳过：${err.message || err}`,
+                        `[engine] 双语合并跳过：${err.message || err}`,
                         invokeSender,
                     );
-                }
-                for (const p of [outPaths.sourceSubtitlePath, outPaths.targetSubtitlePath]) {
-                    if (!p || p === outPaths.bilingualSubtitlePath || p === editableMerged) continue;
-                    try {
-                        if (fs.existsSync(p)) fs.unlinkSync(p);
-                    } catch { /* ignore */ }
-                }
-                outPaths.sourceSubtitlePath = '';
-                outPaths.targetSubtitlePath = '';
-                if (editableMerged) {
-                    outPaths.subtitlePath = editableMerged;
-                } else {
-                    // Keep dual ASS as last resort; post-batch will skip non-editable formats.
-                    outPaths.subtitlePath = outPaths.bilingualSubtitlePath;
                 }
             }
 
@@ -2746,7 +2784,7 @@ async function runEngineBatchLocked({
                 total: list.length,
                 file: mediaPath,
                 percent: 100,
-                detail: outPaths.bilingualSubtitlePath ? '完成（含双语 ASS）' : '完成',
+                detail: doneDetail,
                 ...outPaths,
             });
         }

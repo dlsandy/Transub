@@ -216,4 +216,34 @@ describe('transcript-keep find + pin', () => {
             fs.rmSync(dir, { recursive: true, force: true });
         } catch { /* ignore */ }
     });
+
+    it('matches subtitles by video basename only (same-name), prefers .src over fuzzy', () => {
+        const keep = require('../electron/transcript-keep');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-keep-same-'));
+        try {
+            const src = path.join(dir, 'SQTE-704.src.srt');
+            const zh = path.join(dir, 'SQTE-704.zh.srt');
+            const other = path.join(dir, 'prefix-SQTE-704-extra.srt');
+            fs.writeFileSync(src, '1\n00:00:00,000 --> 00:00:01,000\nja\n', 'utf8');
+            fs.writeFileSync(zh, '1\n00:00:00,000 --> 00:00:01,000\nzh\n', 'utf8');
+            fs.writeFileSync(other, '1\n00:00:00,000 --> 00:00:01,000\nx\n', 'utf8');
+
+            const found = keep.findKeptTranscript({
+                videoPath: 'D:\\media\\SQTE-704.mp4',
+                options: { transcriptKeepDir: dir, transcriptKeepDays: 90 },
+            });
+            assert.strictEqual(found.found, true);
+            assert.strictEqual(path.resolve(found.path), path.resolve(src));
+
+            const miss = keep.findKeptTranscript({
+                videoPath: 'D:\\media\\OTHER-999.mp4',
+                options: { transcriptKeepDir: dir, transcriptKeepDays: 90 },
+            });
+            assert.strictEqual(miss.found, false);
+        } finally {
+            try {
+                fs.rmSync(dir, { recursive: true, force: true });
+            } catch { /* ignore */ }
+        }
+    });
 });

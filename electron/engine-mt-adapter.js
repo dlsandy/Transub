@@ -87,6 +87,10 @@ function parseEngineMtRequest(body) {
  */
 function buildEngineMtResponse(requestCues, translatedCues, options = {}) {
     const mtSanitize = require('../src/js/mt-sanitize-core');
+    let smartCore = null;
+    try {
+        smartCore = require('../src/js/advanced-smart-translate-core');
+    } catch (_) { /* optional closed path */ }
     const opts = asPlainObject(options);
     const cleaned = mtSanitize.sanitizeMtCues(
         (translatedCues || []).map((u) => ({
@@ -108,18 +112,54 @@ function buildEngineMtResponse(requestCues, translatedCues, options = {}) {
             senseProfile: opts.senseProfile || opts.contentProfile,
             faithfulTone: opts.faithfulTone || opts.smartTranslateFaithfulTone,
             smartTranslateFaithfulTone: opts.smartTranslateFaithfulTone || opts.faithfulTone,
-            applyNsfwLexicon: opts.applyNsfwLexicon,
+            applyNsfwLexicon: opts.applyNsfwLexicon != null
+                ? !!opts.applyNsfwLexicon
+                : !!(
+                    opts.faithfulTone
+                    || opts.smartTranslateFaithfulTone
+                    || opts.sakuraNsfwPrompt
+                    || opts.nsfwPrompt
+                    || String(opts.contentProfile || opts.senseProfile || '').toLowerCase() === 'av_soft'
+                ),
         },
     );
     const map = new Map(
         cleaned.cues.map((u) => [Number(u.index), String(u.text ?? '')]),
     );
+    // Final fill: sanitize may still leave «…» when LLM missed short JA;
+    // recover again from request source so engine never ships empty dialogue.
+    const fillOpts = {
+        contentProfile: opts.contentProfile || opts.senseProfile,
+        senseProfile: opts.senseProfile || opts.contentProfile,
+        smartTranslateFaithfulTone: opts.smartTranslateFaithfulTone || opts.faithfulTone,
+        faithfulTone: opts.faithfulTone || opts.smartTranslateFaithfulTone,
+        sakuraNsfwPrompt: opts.sakuraNsfwPrompt,
+        nsfwPrompt: opts.nsfwPrompt,
+    };
     return {
-        cues: (requestCues || []).map((c) => ({
-            id: c.id,
-            // Missing index → empty (never echo JA into the ZH track).
-            text: map.has(c.index) ? map.get(c.index) : '',
-        })),
+        cues: (requestCues || []).map((c, i) => {
+            const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
+            let text = map.has(idx) ? map.get(idx) : '';
+            const src = String(c.text ?? '');
+            if (
+                src.trim()
+                && mtSanitize.isEllipsisOrEmptyZh?.(text)
+            ) {
+                const recovered = mtSanitize.recoverBlankedAdultZh?.(text, src, fillOpts);
+                if (recovered?.changed && String(recovered.text || '').trim()) {
+                    text = recovered.text;
+                } else {
+                    const fb = smartCore?.fallbackShortJaCue?.(src);
+                    if (fb && String(fb).trim() && !mtSanitize.isEllipsisOrEmptyZh?.(fb)) {
+                        text = fb;
+                    }
+                }
+            }
+            return {
+                id: c.id,
+                text: text == null ? '' : String(text),
+            };
+        }),
     };
 }
 
@@ -143,6 +183,37 @@ function preprocessSourceCuesForMt(cues) {
         }
     } catch { /* optional */ }
     return list;
+}
+
+/**
+ * Peel moans / discourse / wet-SFX off the LLM batch; merge after translate.
+ * Works for both closed `_advanced` and builtin smart-translate.
+ */
+function partitionMtCuesForLlm(cues) {
+    try {
+        const smartCore = require('../src/js/advanced-smart-translate-core');
+        if (typeof smartCore.partitionDeterministicCues === 'function') {
+            return smartCore.partitionDeterministicCues(cues);
+        }
+    } catch { /* optional */ }
+    return { llmCues: Array.isArray(cues) ? cues : [], prefilled: [], skipped: 0 };
+}
+
+function mergePrefillWithTranslated(allSourceCues, prefilled, translatedCues) {
+    const map = new Map();
+    for (const u of prefilled || []) {
+        map.set(Number(u.index), String(u.text ?? ''));
+    }
+    for (const u of translatedCues || []) {
+        map.set(Number(u.index), String(u.text ?? ''));
+    }
+    return (allSourceCues || []).map((c, i) => {
+        const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
+        return {
+            index: idx,
+            text: map.has(idx) ? map.get(idx) : '',
+        };
+    });
 }
 
 async function translateExternalBatch(parsed, session) {
@@ -182,8 +253,25 @@ async function translateExternalBatch(parsed, session) {
             max: 10,
             fallback: DEFAULT_SMART_OVERLAP_CUES,
         });
+        // Skip LLM for deterministic moans / discourse / wet-SFX — biggest batch speedup.
+        const { llmCues, prefilled, skipped } = partitionMtCuesForLlm(sourceCues);
+        if (skipped > 0) {
+            onProgress?.({
+                phase: 'prefill',
+                message: `确定性回填 ${skipped}/${sourceCues.length} 条语气词/拟声（跳过模型）`,
+            });
+            session.deterministicPrefill = (session.deterministicPrefill || 0) + skipped;
+        }
+        if (!llmCues.length) {
+            return {
+                ok: true,
+                cues: mergePrefillWithTranslated(sourceCues, prefilled, []),
+                filmBrief: session.filmBrief || null,
+                deterministicPrefill: skipped,
+            };
+        }
         const result = await runSmartTranslate({
-            cues: sourceCues,
+            cues: llmCues,
             chineseSubtitleVariant: options.chineseSubtitleVariant,
             targetLanguage: options.targetLanguage || parsed.targetLanguage || 'zh',
             note: options.note,
@@ -214,7 +302,12 @@ async function translateExternalBatch(parsed, session) {
         if (result.filmBrief && !session.filmBrief) {
             session.filmBrief = result.filmBrief;
         }
-        return { ok: true, cues: result.cues || [], filmBrief: result.filmBrief || session.filmBrief };
+        return {
+            ok: true,
+            cues: mergePrefillWithTranslated(sourceCues, prefilled, result.cues || []),
+            filmBrief: result.filmBrief || session.filmBrief,
+            deterministicPrefill: skipped,
+        };
     }
 
     if (mode === 'sakura') {

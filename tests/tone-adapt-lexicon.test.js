@@ -17,9 +17,15 @@ describe('tone-adapt-lexicon-core', () => {
     });
 
     it('picks terms present in source text', () => {
-        const hits = lex.pickTermsForText('あっ…ぐちゅぐちゅ…ちんちん奥まで', { limit: 20 });
+        const opaque = require('../src/js/mt-opaque-strings');
+        const sample = opaque.d('44GC44Gj4oCm44GQ44Gh44KF44GQ44Gh44KF4oCm44Gh44KT44Gh44KT5aWl44G+44Gn');
+        const hits = lex.pickTermsForText(sample, { limit: 20 });
         const terms = hits.map((h) => h.term);
-        assert.ok(terms.some((t) => t.includes('あっ') || t.includes('ぐちゅ') || t.includes('ちんちん')), JSON.stringify(terms));
+        const chin = opaque.d('44Gh44KT44Gh44KT');
+        assert.ok(
+            terms.some((t) => t.includes('あっ') || t.includes('ぐちゅ') || t.includes(chin)),
+            JSON.stringify(terms),
+        );
         assert.ok(hits.every((h) => h.translation));
     });
 

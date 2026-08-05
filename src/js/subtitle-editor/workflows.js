@@ -387,7 +387,7 @@
 
         /**
          * 重构结果对照确认。
-         * @param {Array<{ index: number, before: string, after: string, changed: boolean, fallback?: boolean }>} rows
+         * @param {Array<{ index: number, before: string, after: string, changed: boolean, fallback?: boolean, fallbackReason?: string }>} rows
          * @param {{ title?: string, lead?: string, failedIndexes?: number[], onRetryFailed?: () => Promise<Array<{ index: number, text: string }>|null> }} [options]
          * @returns {Promise<Array<{ index: number, text: string }>|null>}
          */
@@ -398,7 +398,7 @@
             const listEl = els.reconstructReviewList;
             if (!modal || !listEl || !showEditorModal || !hideEditorModal) {
                 return Promise.resolve(
-                    rows.filter((r) => r.changed).map((r) => ({ index: r.index, text: r.after })),
+                    rows.filter((r) => r.changed && !r.fallback).map((r) => ({ index: r.index, text: r.after })),
                 );
             }
 
@@ -414,7 +414,7 @@
                     if (raw === 'false') onlyChanged = false;
                 } catch (_) { /* ignore */ }
 
-                // Do not auto-check fallback / failed rows (e.g. MT source-echo)
+                // Do not auto-check fallback / failed rows (e.g. MT source-echo / alignment revert)
                 const selected = new Set(
                     rows
                         .filter((r) => r.changed && !r.fallback && !failedSet.has(r.index))
@@ -444,8 +444,10 @@
 
                 const updateMeta = () => {
                     if (!els.reconstructReviewMeta) return;
-                    const changed = rows.filter((r) => r.changed).length;
-                    els.reconstructReviewMeta.textContent = `变更 ${changed} / 共 ${rows.length} 条 · 已勾选 ${selected.size}`;
+                    const changed = rows.filter((r) => r.changed && !r.fallback).length;
+                    const reverted = rows.filter((r) => r.fallback || failedSet.has(r.index)).length;
+                    const revertPart = reverted ? ` · 已回退 ${reverted}` : '';
+                    els.reconstructReviewMeta.textContent = `变更 ${changed} / 共 ${rows.length} 条${revertPart} · 已勾选 ${selected.size}`;
                 };
 
                 const syncOnlyChangedBtn = () => {
@@ -455,30 +457,40 @@
                         : '仅显示变更';
                 };
 
+                const fallbackTagHtml = (row) => {
+                    if (!(row.fallback || failedSet.has(row.index))) return '';
+                    const reason = String(row.fallbackReason || '').trim();
+                    const label = reason === 'alignment'
+                        ? '已回退原文'
+                        : (reason === 'failed' ? '块失败回退' : '回退');
+                    return `<span class="recon-fallback-tag" title="${escape(label)}">${escape(label)}</span>`;
+                };
+
                 const renderList = () => {
-                    const visible = onlyChanged ? rows.filter((r) => r.changed) : rows;
+                    // 变更与回退条目默认可见，便于核对防合并回退
+                    const visible = onlyChanged
+                        ? rows.filter((r) => r.changed || r.fallback || failedSet.has(r.index))
+                        : rows;
                     if (!visible.length) {
                         listEl.innerHTML = '<div class="recon-review-empty">没有文本变更</div>';
                         updateMeta();
                         return;
                     }
                     listEl.innerHTML = visible.map((row) => {
+                        const isFallback = row.fallback || failedSet.has(row.index);
                         const checked = selected.has(row.index) ? ' checked' : '';
-                        const disabled = row.changed ? '' : ' disabled';
+                        const disabled = (row.changed && !isFallback) ? '' : ' disabled';
                         const rowClass = [
-                            row.changed ? '' : ' is-unchanged',
-                            row.fallback || failedSet.has(row.index) ? ' is-fallback' : '',
+                            row.changed && !isFallback ? '' : ' is-unchanged',
+                            isFallback ? ' is-fallback' : '',
                         ].join('');
                         const label = Number.isInteger(row.index) ? `#${row.index + 1}` : '—';
-                        const fallbackTag = (row.fallback || failedSet.has(row.index))
-                            ? '<span class="recon-fallback-tag">回退</span>'
-                            : '';
                         return `
                             <div class="recon-review-row${rowClass}" role="listitem" data-recon-index="${row.index}">
                                 <input type="checkbox" class="recon-check" data-recon-check="${row.index}"${checked}${disabled}>
-                                <button type="button" class="recon-idx" data-recon-jump="${row.index}">${escape(label)}${fallbackTag}</button>
+                                <button type="button" class="recon-idx" data-recon-jump="${row.index}">${escape(label)}${fallbackTagHtml(row)}</button>
                                 <span class="recon-review-cell is-before">${escape(row.before || '（空）')}</span>
-                                <textarea class="recon-review-after recon-review-cell is-after" data-recon-after="${row.index}" rows="2">${escape(row.after || '')}</textarea>
+                                <textarea class="recon-review-after recon-review-cell is-after" data-recon-after="${row.index}" rows="2"${isFallback ? ' readonly' : ''}>${escape(row.after || '')}</textarea>
                             </div>
                         `;
                     }).join('');
@@ -507,7 +519,7 @@
                     resolve(payload);
                 };
                 const readAcceptedFromUi = () => rows
-                    .filter((r) => r.changed && selected.has(r.index))
+                    .filter((r) => r.changed && !r.fallback && !failedSet.has(r.index) && selected.has(r.index))
                     .map((r) => {
                         const ta = listEl.querySelector(`[data-recon-after="${r.index}"]`);
                         const text = ta ? String(ta.value ?? '') : String(r.after ?? '');
@@ -616,9 +628,11 @@
 
         /**
          * 影片简要预览确认（可编辑后再改写）。
+         * @param {object} brief
+         * @param {{ sourceCoverage?: { message?: string, level?: string } }} [options]
          * @returns {Promise<object|null>}
          */
-        function promptFilmBriefPreview(brief) {
+        function promptFilmBriefPreview(brief, options = {}) {
             const modal = els.filmBriefModal;
             if (!modal || !showEditorModal || !hideEditorModal) {
                 return Promise.resolve(brief || null);
@@ -628,12 +642,90 @@
                 ? filmCore.normalizeFilmBrief(brief)
                 : (brief || {});
 
+            const formatChars = (list) => {
+                if (filmCore?.formatCharactersForEdit) return filmCore.formatCharactersForEdit(list);
+                return (Array.isArray(list) ? list : []).map((c) => {
+                    if (typeof c === 'string') return c;
+                    let line = c?.name || '';
+                    if (c?.role) line += `（${c.role}）`;
+                    if (c?.notes) line += `：${c.notes}`;
+                    return line;
+                }).filter(Boolean).join('\n');
+            };
+            const formatTerms = (list) => {
+                if (filmCore?.formatTermsForEdit) return filmCore.formatTermsForEdit(list);
+                return (Array.isArray(list) ? list : []).map((t) => {
+                    if (typeof t === 'string') return t;
+                    return t?.meaning ? `${t.term}：${t.meaning}` : (t?.term || '');
+                }).filter(Boolean).join('\n');
+            };
+            const formatLines = (list) => (Array.isArray(list) ? list : [])
+                .map((x) => String(x || '').trim())
+                .filter(Boolean)
+                .join('\n');
+
             return new Promise((resolve) => {
-                if (els.filmBriefTitleGuess) els.filmBriefTitleGuess.value = normalized.titleGuess || '';
-                if (els.filmBriefGenre) els.filmBriefGenre.value = normalized.genre || '';
-                if (els.filmBriefSynopsis) els.filmBriefSynopsis.value = normalized.synopsis || '';
-                if (els.filmBriefTone) els.filmBriefTone.value = normalized.tone || '';
-                if (els.filmBriefStyleNotes) els.filmBriefStyleNotes.value = normalized.styleNotes || '';
+                const audienceOpts = {
+                    fileName: state.videoPath || state.path || '',
+                    path: state.videoPath || state.path || '',
+                };
+                try {
+                    const profileApi = global.TransubContentProfile;
+                    const hit = profileApi?.classifyContentProfile?.({
+                        path: state.videoPath || state.path || '',
+                        fileName: String(state.videoPath || state.path || '').split(/[/\\]/).pop() || '',
+                    });
+                    if (hit?.profile) audienceOpts.contentProfile = hit.profile;
+                    if (hit?.strongAv) audienceOpts.strongAv = true;
+                } catch (_) { /* ignore */ }
+                const cleaned = filmCore?.scrubAvoidForAudience
+                    ? filmCore.scrubAvoidForAudience(normalized, audienceOpts)
+                    : normalized;
+
+                if (els.filmBriefTitleGuess) els.filmBriefTitleGuess.value = cleaned.titleGuess || '';
+                if (els.filmBriefGenre) els.filmBriefGenre.value = cleaned.genre || '';
+                if (els.filmBriefSynopsis) els.filmBriefSynopsis.value = cleaned.synopsis || '';
+                if (els.filmBriefTone) els.filmBriefTone.value = cleaned.tone || '';
+                if (els.filmBriefStyleNotes) els.filmBriefStyleNotes.value = cleaned.styleNotes || '';
+                if (els.filmBriefCharacters) {
+                    els.filmBriefCharacters.value = formatChars(cleaned.characters);
+                }
+                if (els.filmBriefTerms) {
+                    els.filmBriefTerms.value = formatTerms(cleaned.terms);
+                }
+                if (els.filmBriefTimeline) {
+                    els.filmBriefTimeline.value = filmCore?.formatTimelineForEdit
+                        ? filmCore.formatTimelineForEdit(cleaned.timeline)
+                        : formatLines(cleaned.timeline);
+                }
+                if (els.filmBriefAvoid) {
+                    els.filmBriefAvoid.value = filmCore?.formatAvoidForEdit
+                        ? filmCore.formatAvoidForEdit(cleaned.avoid)
+                        : formatLines(cleaned.avoid);
+                }
+
+                const coverage = options.sourceCoverage || null;
+                const leadEl = document.getElementById('editorFilmBriefLead');
+                if (leadEl) {
+                    const baseLead = '请先核对人物、专名与梗概；确认后才会开始场景改写。Brief 不准时后面整片都会跟着偏。';
+                    const coverMsg = String(coverage?.message || '').trim();
+                    leadEl.textContent = coverMsg ? `${baseLead}\n${coverMsg}` : baseLead;
+                }
+                const coverHint = document.getElementById('editorFilmBriefSourceHint');
+                if (coverHint) {
+                    const coverMsg = String(coverage?.message || '').trim();
+                    const level = String(coverage?.level || '');
+                    if (coverMsg) {
+                        coverHint.textContent = coverMsg;
+                        coverHint.classList.remove('hidden');
+                        coverHint.classList.toggle('is-warn', level === 'none' || level === 'low');
+                        coverHint.classList.toggle('is-ok', level === 'full' || level === 'partial');
+                    } else {
+                        coverHint.textContent = '';
+                        coverHint.classList.add('hidden');
+                        coverHint.classList.remove('is-warn', 'is-ok');
+                    }
+                }
 
                 let settled = false;
                 const finish = (payload) => {
@@ -649,20 +741,36 @@
                 };
                 const onCancel = () => finish(null);
                 const onConfirm = () => {
+                    const draft = {
+                        titleGuess: els.filmBriefTitleGuess?.value || '',
+                        genre: els.filmBriefGenre?.value || '',
+                        synopsis: els.filmBriefSynopsis?.value || '',
+                        tone: els.filmBriefTone?.value || '',
+                        styleNotes: els.filmBriefStyleNotes?.value || '',
+                        characters: els.filmBriefCharacters?.value || '',
+                        terms: els.filmBriefTerms?.value || '',
+                        timeline: els.filmBriefTimeline?.value || '',
+                        avoid: els.filmBriefAvoid?.value || '',
+                    };
                     const next = filmCore?.normalizeFilmBrief
-                        ? filmCore.normalizeFilmBrief({
-                            titleGuess: els.filmBriefTitleGuess?.value || '',
-                            genre: els.filmBriefGenre?.value || '',
-                            synopsis: els.filmBriefSynopsis?.value || '',
-                            tone: els.filmBriefTone?.value || '',
-                            styleNotes: els.filmBriefStyleNotes?.value || '',
-                            characters: normalized.characters,
-                            terms: normalized.terms,
-                            timeline: normalized.timeline,
-                            avoid: normalized.avoid,
+                        ? filmCore.normalizeFilmBrief(draft)
+                        : {
+                            ...normalized,
+                            ...draft,
+                            characters: String(draft.characters || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+                            terms: String(draft.terms || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+                            timeline: String(draft.timeline || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+                            avoid: String(draft.avoid || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+                        };
+                    const scrubbed = filmCore?.scrubAvoidForAudience
+                        ? filmCore.scrubAvoidForAudience(next, {
+                            ...audienceOpts,
+                            genre: next.genre,
+                            titleGuess: next.titleGuess,
+                            synopsis: next.synopsis,
                         })
-                        : normalized;
-                    finish(next);
+                        : next;
+                    finish(scrubbed);
                 };
                 const onKey = (ev) => {
                     if (ev.key === 'Escape') {
@@ -676,6 +784,8 @@
                 });
                 els.filmBriefConfirm?.addEventListener('click', onConfirm);
                 document.addEventListener('keydown', onKey);
+                const body = modal.querySelector('.film-brief-body');
+                if (body) body.scrollTop = 0;
                 showEditorModal(modal, els.filmBriefTitleGuess || els.filmBriefConfirm);
             });
         }
@@ -763,6 +873,63 @@
             const effectiveSynopsis = String(filmSynopsis || '').trim();
             const effectiveTerms = String(filmTerms || '').trim();
             const effectiveIntensity = String(intensity || 'balanced').trim() || 'balanced';
+            const filmCoreApi = global.TransubAdvancedFilmReconstruct;
+            const rewriteLimits = filmMode && filmCoreApi?.suggestSceneRewriteLimits
+                ? filmCoreApi.suggestSceneRewriteLimits({ intensity: effectiveIntensity })
+                : (filmMode ? ({
+                    light: { sceneMaxCues: 40 },
+                    strong: { sceneMaxCues: 22 },
+                    balanced: { sceneMaxCues: 36 },
+                }[effectiveIntensity] || { sceneMaxCues: 36 }) : null);
+            const effectiveSceneMaxCues = rewriteLimits?.sceneMaxCues
+                || Number(sceneMaxCues) || 36;
+
+            const summarizeCoverageLocal = (probe) => {
+                const list = Array.isArray(probe) ? probe : [];
+                const total = list.length;
+                const withSource = list.filter((c) => String(c?.sourceText || '').trim()).length;
+                const ratio = total ? withSource / total : 0;
+                if (!total) return { total: 0, withSource: 0, ratio: 0, level: 'none', message: '' };
+                if (withSource === 0) {
+                    return {
+                        total, withSource, ratio, level: 'none',
+                        message: '未找到原字幕：影片理解将依据译文字幕，建议先挂载或生成原文轨。',
+                    };
+                }
+                if (ratio < 0.5) {
+                    return {
+                        total, withSource, ratio, level: 'low',
+                        message: `原字幕覆盖约 ${Math.round(ratio * 100)}%（${withSource}/${total}）：无原文的条目将用译文补齐理解。`,
+                    };
+                }
+                if (withSource < total) {
+                    return {
+                        total, withSource, ratio, level: 'partial',
+                        message: `原字幕覆盖 ${withSource}/${total} 条；Brief 优先依据原文，缺原文条用译文补齐。`,
+                    };
+                }
+                return {
+                    total, withSource, ratio, level: 'full',
+                    message: `已挂载原字幕（${total} 条），Brief 将优先依据原文理解。`,
+                };
+            };
+
+            // 原文覆盖率（Brief 优先原字幕）
+            let sourceCoverage = null;
+            if (filmMode) {
+                try {
+                    const probe = buildCuesPayload(
+                        state.cues.length > indexes.length
+                            ? state.cues.map((_, i) => i)
+                            : indexes,
+                    );
+                    sourceCoverage = filmCoreApi?.summarizeSourceCoverage
+                        ? filmCoreApi.summarizeSourceCoverage(probe)
+                        : summarizeCoverageLocal(probe);
+                } catch (_) {
+                    sourceCoverage = null;
+                }
+            }
 
             state.reconstructBusy = true;
             const titleText = filmMode ? '影片理解重构中' : '语境重构中';
@@ -785,6 +952,7 @@
                 }
                 let countText = `${indexes.length} 条`;
                 if (info.phase === 'brief' || info.phase === 'brief-done') countText = 'Brief';
+                else if (info.phase === 'consistency') countText = '校对';
                 else if (info.chunk && info.total) countText = `块 ${info.chunk} / ${info.total}`;
 
                 const elapsed = info.elapsedMs != null ? ` · 已用时 ${formatElapsed(info.elapsedMs)}` : '';
@@ -797,7 +965,9 @@
                     }
                 }
                 const hint = filmMode
-                    ? `先分析全片 Brief，再按场景改写，可随时取消${elapsed}${eta}`
+                    ? (info.phase === 'consistency'
+                        ? `正在按影片简要统一专名与人称，可随时取消${elapsed}`
+                        : `先分析全片 Brief，再按场景改写，可随时取消${elapsed}${eta}`)
                     : `正在按块调用大模型改写译文，可随时取消${elapsed}${eta}`;
 
                 if (typeof showInferenceProgress === 'function') {
@@ -849,23 +1019,45 @@
                 return [...out];
             };
 
-            const buildRowsFromUpdates = (updates, failedIndexes = []) => {
+            const buildRowsFromUpdates = (updates, failedIndexes = [], alignmentRevertedIndexes = []) => {
                 const failedSet = new Set(failedIndexes);
+                const alignmentSet = new Set(
+                    (Array.isArray(alignmentRevertedIndexes) ? alignmentRevertedIndexes : [])
+                        .filter((n) => Number.isInteger(n)),
+                );
                 const rows = [];
                 for (const u of updates) {
                     const idx = Number(u.index);
                     if (!Number.isInteger(idx) || !state.cues[idx]) continue;
                     const before = String(state.cues[idx].text ?? '');
                     const after = String(u.text ?? '');
+                    const isAlignment = alignmentSet.has(idx);
+                    const isFailed = failedSet.has(idx);
+                    const fallback = isAlignment || isFailed;
                     rows.push({
                         index: idx,
                         before,
                         after,
-                        changed: before !== after,
-                        fallback: failedSet.has(idx),
+                        changed: before !== after || fallback,
+                        fallback,
+                        fallbackReason: isAlignment ? 'alignment' : (isFailed ? 'failed' : ''),
                     });
                 }
-                return rows;
+                // 整块回退时 after===before，仍要把回退 index 补进列表
+                for (const idx of alignmentSet) {
+                    if (rows.some((r) => r.index === idx)) continue;
+                    if (!state.cues[idx]) continue;
+                    const text = String(state.cues[idx].text ?? '');
+                    rows.push({
+                        index: idx,
+                        before: text,
+                        after: text,
+                        changed: true,
+                        fallback: true,
+                        fallbackReason: 'alignment',
+                    });
+                }
+                return rows.sort((a, b) => a.index - b.index);
             };
 
             const invokeReconstruct = async ({
@@ -879,7 +1071,7 @@
                     scope,
                     windowCues,
                     preserveTiming,
-                    sceneMaxCues,
+                    sceneMaxCues: filmMode ? effectiveSceneMaxCues : sceneMaxCues,
                     sceneGapMs,
                     glossary: getEffectiveGlossary(),
                     filmTitle: effectiveTitle,
@@ -888,8 +1080,20 @@
                     userNote: effectiveNote,
                     note: effectiveNote,
                     intensity: effectiveIntensity,
+                    fileName: state.videoPath || state.path || '',
+                    path: state.videoPath || state.path || '',
+                    videoPath: state.videoPath || '',
                     _keepManagedServer: keepServer,
                 };
+                try {
+                    const profileApi = global.TransubContentProfile;
+                    const hit = profileApi?.classifyContentProfile?.({
+                        path: state.videoPath || state.path || '',
+                        fileName: String(state.videoPath || state.path || '').split(/[/\\]/).pop() || '',
+                    });
+                    if (hit?.profile) payload.contentProfile = hit.profile;
+                    if (hit?.strongAv) payload.strongAv = true;
+                } catch (_) { /* ignore */ }
                 if (brief) payload.filmBrief = brief;
                 if (briefOnly) payload.briefOnly = true;
                 return invoke(payload);
@@ -909,8 +1113,12 @@
             try {
                 let resolvedBrief = filmBrief;
                 if (filmMode && !resolvedBrief) {
+                    // 局部改写也用全片抽样生成 Brief，避免「影片理解」只见选区
+                    const briefIndexes = state.cues.length > indexes.length
+                        ? state.cues.map((_, i) => i)
+                        : indexes;
                     const briefRes = await invokeReconstruct({
-                        idxList: indexes,
+                        idxList: briefIndexes,
                         brief: null,
                         keepServer: true,
                         briefOnly: true,
@@ -924,7 +1132,9 @@
                     }
                     if (briefRes.briefOnly && briefRes.filmBrief) {
                         hideProgress();
-                        const confirmedBrief = await promptFilmBriefPreview(briefRes.filmBrief);
+                        const confirmedBrief = await promptFilmBriefPreview(briefRes.filmBrief, {
+                            sourceCoverage,
+                        });
                         if (!confirmedBrief) {
                             try { await electron?.transubAdvancedManagedLlmStopServer?.(); } catch (_) { /* ignore */ }
                             return { status: 'cancelled', summary: '已取消 Brief 确认' };
@@ -957,17 +1167,26 @@
                 }
 
                 let failedIndexes = collectFailedIndexes(res);
-                let rows = buildRowsFromUpdates(updates, failedIndexes);
+                const alignmentRevertedIndexes = Array.isArray(res.stats?.alignmentRevertedIndexes)
+                    ? res.stats.alignmentRevertedIndexes
+                    : [];
+                let rows = buildRowsFromUpdates(updates, failedIndexes, alignmentRevertedIndexes);
                 if (!rows.length) {
                     return { status: 'skipped', summary: '未返回可应用条目' };
                 }
-                const changedCount = rows.filter((r) => r.changed).length;
-                if (!changedCount) {
+                const changedCount = rows.filter((r) => r.changed && !r.fallback).length;
+                const revertedCount = rows.filter((r) => r.fallback).length;
+                if (!changedCount && !revertedCount) {
                     return { status: 'skipped', summary: '无文本变更' };
                 }
-
-                hideProgress();
-                setStatus(`重构完成，请对照确认（变更 ${changedCount} 条）…`);
+                // 若只有回退、无真正改写，仍展示对照，方便用户知情
+                if (!changedCount && revertedCount) {
+                    hideProgress();
+                    setStatus(`重构未产生可用改写（已回退 ${revertedCount} 条防合并/失败）`, 'warn');
+                } else {
+                    hideProgress();
+                    setStatus(`重构完成，请对照确认（变更 ${changedCount} 条）…`);
+                }
 
                 const via = res.via === 'mock' ? '模拟'
                     : (res.via === 'module' ? '模块'
@@ -975,16 +1194,19 @@
                 const failHint = res.stats?.failedChunks
                     ? `，${res.stats.failedChunks} 块回退`
                     : '';
+                const alignHint = alignmentRevertedIndexes.length
+                    ? `，防合并回退 ${alignmentRevertedIndexes.length} 条`
+                    : '';
 
                 let accepted = null;
                 if (skipReview) {
                     accepted = rows
-                        .filter((r) => r.changed)
+                        .filter((r) => r.changed && !r.fallback)
                         .map((r) => ({ index: r.index, text: r.after }));
                 } else {
                     accepted = await promptReconstructReview(rows, {
                         title: filmMode ? '影片理解重构 · 结果对照' : '语境重构 · 结果对照',
-                        lead: `来源：${via}${failHint}。确认后才会覆盖原字幕；放弃则不做任何修改。`,
+                        lead: `来源：${via}${failHint}${alignHint}。带「已回退原文」的条目因合并/错位已自动保留原译，不会勾选。确认后才会覆盖字幕。`,
                         failedIndexes,
                         onRetryFailed: failedIndexes.length
                             ? async () => {
@@ -1466,7 +1688,7 @@
             }
 
             let faithfulPreferred = faithfulTone;
-            if (useSmart && faithfulPreferred == null) {
+            if ((useSmart || (!useOpus)) && faithfulPreferred == null) {
                 try {
                     const res = await electron?.transWithAiGetOptions?.({});
                     faithfulPreferred = !!res?.options?.smartTranslateFaithfulTone;
@@ -1653,11 +1875,20 @@
                     cues: cuesPayload,
                     glossary: getEffectiveGlossary(),
                     fileName: state.path || state.videoPath || '',
+                    sourcePath: state.path || '',
                 };
                 if (useSmart) {
                     payload.smartTranslateFaithfulTone = !!faithfulPreferred;
-                } else if (!useOpus && modelId) {
-                    payload.modelId = modelId;
+                    payload.faithfulTone = !!faithfulPreferred;
+                } else if (!useOpus) {
+                    if (modelId) payload.modelId = modelId;
+                    // Align Sakura with smart-translate NSFW / faithful postprocess.
+                    payload.smartTranslateFaithfulTone = !!faithfulPreferred;
+                    payload.faithfulTone = !!faithfulPreferred;
+                    if (faithfulPreferred) {
+                        payload.sakuraNsfwPrompt = true;
+                        payload.applyNsfwLexicon = true;
+                    }
                 }
 
                 const res = await invoke(payload);
@@ -2484,10 +2715,19 @@
                 },
                 'text.sakuraTranslate': async (_c, step) => {
                     const scope = String(step.params?.scope || 'all');
+                    let faithfulTone = null;
+                    if (step.params?.faithfulTone === true
+                        || step.params?.smartTranslateFaithfulTone === true) {
+                        faithfulTone = true;
+                    } else if (step.params?.faithfulTone === false
+                        || step.params?.smartTranslateFaithfulTone === false) {
+                        faithfulTone = false;
+                    }
                     return runTextTranslateOnce({
                         scope,
                         engine: 'llm',
                         modelId: String(step.params?.modelId || '').trim(),
+                        faithfulTone,
                         skipReview: step.params?.skipReview === true,
                     });
                 },
