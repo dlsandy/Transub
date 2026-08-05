@@ -509,6 +509,171 @@
         #paramsChips .settings-tip-bubble {
             z-index: 60;
         }
+        /* One-time 3.0.5 Anime Whisper preset coachmark */
+        .feature-tip-bubble {
+            position: relative;
+            z-index: 40;
+            max-width: 28rem;
+            margin-top: 0.15rem;
+        }
+        .feature-tip-bubble.hidden {
+            display: none !important;
+        }
+        .feature-tip-bubble-arrow {
+            position: absolute;
+            left: 11.5rem;
+            top: -6px;
+            width: 12px;
+            height: 12px;
+            background: #111827;
+            transform: rotate(45deg);
+            border-radius: 2px;
+            box-shadow: -1px -1px 0 rgba(0, 0, 0, 0.06);
+        }
+        .feature-tip-bubble-body {
+            position: relative;
+            background: #111827;
+            color: #f9fafb;
+            border-radius: 0.75rem;
+            padding: 0.7rem 0.85rem 0.75rem;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+        }
+        .feature-tip-title {
+            margin: 0;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            color: #e9d5ff;
+        }
+        .feature-tip-text {
+            margin: 0.35rem 0 0;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            color: #e5e7eb;
+        }
+        .feature-tip-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            margin-top: 0.65rem;
+        }
+        .feature-tip-btn {
+            border-radius: 0.5rem;
+            padding: 0.3rem 0.7rem;
+            font-size: 0.72rem;
+            font-weight: 550;
+            line-height: 1.25;
+            cursor: pointer;
+        }
+        .feature-tip-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .feature-tip-btn-primary {
+            border: 1px solid #7c3aed;
+            background: #7c3aed;
+            color: #fff;
+        }
+        .feature-tip-btn-primary:hover:not(:disabled) {
+            background: #6d28d9;
+            border-color: #6d28d9;
+        }
+        .feature-tip-btn-ghost {
+            border: 1px solid #4b5563;
+            background: transparent;
+            color: #d1d5db;
+        }
+        .feature-tip-btn-ghost:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.06);
+            color: #f3f4f6;
+        }
+        html.main-theme-dark .feature-tip-bubble-arrow,
+        html.main-theme-dark .feature-tip-bubble-body {
+            background: #0b1220;
+        }
+        html.main-theme-dark .feature-tip-bubble-arrow {
+            box-shadow: -1px -1px 0 rgba(255, 255, 255, 0.04);
+        }
+        .anime-whisper-quick-btn {
+            position: relative;
+            gap: 0.3rem;
+            padding-left: 0.45rem;
+            padding-right: 0.55rem;
+            border-color: #e5e7eb;
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+        .anime-whisper-quick-btn:hover {
+            border-color: #d1d5db;
+            background: #e5e7eb;
+            color: #4b5563;
+        }
+        .anime-whisper-quick-btn[aria-pressed="true"] {
+            border-color: #8b5cf6;
+            background: #ede9fe;
+            color: #5b21b6;
+            box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.35);
+        }
+        .anime-whisper-quick-btn[aria-pressed="true"]:hover {
+            border-color: #7c3aed;
+            background: #ddd6fe;
+            color: #5b21b6;
+        }
+        .anime-whisper-quick-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .anime-whisper-quick-new {
+            position: absolute;
+            top: -0.42rem;
+            right: -0.35rem;
+            z-index: 1;
+            padding: 0.05rem 0.28rem;
+            border-radius: 9999px;
+            font-size: 0.55rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            line-height: 1.2;
+            color: #fff;
+            background: #dc2626;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+            pointer-events: none;
+        }
+        .anime-whisper-quick-label {
+            max-width: 3rem;
+            font-size: 0.7rem;
+            font-weight: 650;
+            color: inherit;
+        }
+        .anime-whisper-quick-btn > .fa {
+            font-size: 0.7rem;
+            opacity: 0.85;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn {
+            border-color: #4b5563;
+            background: #374151;
+            color: #9ca3af;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn:hover {
+            border-color: #6b7280;
+            background: #4b5563;
+            color: #d1d5db;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn[aria-pressed="true"] {
+            border-color: #a78bfa;
+            background: rgba(76, 29, 149, 0.45);
+            color: #e9d5ff;
+            box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.4);
+        }
+        html.main-theme-dark .anime-whisper-quick-btn[aria-pressed="true"]:hover {
+            border-color: #c4b5fd;
+            background: rgba(91, 33, 182, 0.55);
+            color: #f5f3ff;
+        }
+        html.main-theme-dark .anime-whisper-quick-label {
+            color: inherit;
+        }
         .settings-row {
             display: flex;
             align-items: flex-start;
@@ -1940,6 +2105,16 @@
                             </button>
                         </div>
                     </div>
+                    <button type="button"
+                        id="animeWhisperPresetQuickBtn"
+                        class="param-chip param-chip-btn anime-whisper-quick-btn"
+                        title="切换到「日语 · Anime Whisper 翻译」预设（关闭智能感知并写入参数）"
+                        aria-label="切换 Anime Whisper 翻译预设"
+                        aria-pressed="false">
+                        <span class="anime-whisper-quick-new" aria-hidden="true">New</span>
+                        <i class="fa fa-magic" aria-hidden="true"></i>
+                        <span class="param-chip-value anime-whisper-quick-label">AW</span>
+                    </button>
                     <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
                     <div class="ml-auto shrink-0 flex items-center gap-2">
                         <button type="button" id="reconstructBtn"
@@ -1956,6 +2131,17 @@
                             <i class="fa fa-language" aria-hidden="true"></i>
                             <span>重新翻译</span>
                         </button>
+                    </div>
+                </div>
+                <div id="animeWhisperPresetTip" class="feature-tip-bubble hidden" role="dialog" aria-labelledby="animeWhisperPresetTipTitle" aria-describedby="animeWhisperPresetTipText">
+                    <div class="feature-tip-bubble-arrow" aria-hidden="true"></div>
+                    <div class="feature-tip-bubble-body">
+                        <p id="animeWhisperPresetTipTitle" class="feature-tip-title">新预设推荐</p>
+                        <p id="animeWhisperPresetTipText" class="feature-tip-text">可尝试「日语 · Anime Whisper 翻译」——动画 / Galgame 日语听写更稳。使用后将关闭智能感知并写入该预设全部参数。</p>
+                        <div class="feature-tip-actions">
+                            <button type="button" id="animeWhisperPresetTipAccept" class="feature-tip-btn feature-tip-btn-primary">使用</button>
+                            <button type="button" id="animeWhisperPresetTipDismiss" class="feature-tip-btn feature-tip-btn-ghost">不使用</button>
+                        </div>
                     </div>
                 </div>
                 <div id="readinessStrip" class="readiness-strip hidden" aria-live="polite">
@@ -2570,7 +2756,7 @@
                                 <input type="checkbox" id="postBatchCompactPureInterjectionsCheck" class="rounded">
                                 <span class="settings-label font-medium text-gray-700">
                                     完成后精简纯语气词
-                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。开启后，日中两侧均为纯语气/拟声（如「うん」↔「嗯」、哈啊）的字幕块会从原文轨与译文轨同时删除并重新编号；含具体语义的对白（含句末语气词）会保留。需同时保留原文与译文轨。与「清理杂音」不同：本项只针对双侧纯语气，杂音清理会删更广一类碎片/幻觉。</span></span>
+                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。开启后，日中两侧均为纯语气/拟声的字幕块会成对删除并重编号，包括带顿号的喘息与轻笑（如「うん」↔「嗯」、「はぁ、はぁ」↔「哈啊…哈啊」、「ふふっ」↔「呵呵」）；含具体语义的对白（含句末语气词、いいえ/好的 等）会保留。需同时保留原文与译文轨。与「清理杂音」不同：本项只针对双侧纯语气。</span></span>
                                 </span>
                             </label>
                         </fieldset>
@@ -3760,6 +3946,7 @@
     <script src="js/transwithai-model-core.js"></script>
     <script src="js/dual-subtitle-core.js"></script>
     <script src="js/main-ui-ux.js"></script>
+    <script src="js/anime-whisper-preset-tip.js"></script>
     <script src="js/app.js"></script>
     <script src="js/settings-editor-prefs.js"></script>
     <script src="js/manual-whl-install.js"></script>

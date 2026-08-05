@@ -22,24 +22,30 @@ describe('compactPureInterjectionSubtitlePair', () => {
             { index: 1, text: 'うん' },
             { index: 2, text: 'うん、大丈夫？' },
             { index: 3, text: 'はぁ' },
+            { index: 4, text: 'はぁ、はぁ' },
+            { index: 5, text: 'ふふっ' },
         ]);
         writeSrt(zhPath, [
             { index: 1, text: '嗯' },
             { index: 2, text: '嗯，没问题吧？' },
             { index: 3, text: '哈啊' },
+            { index: 4, text: '哈啊…哈啊' },
+            { index: 5, text: '呵呵' },
         ]);
 
         const res = compactPureInterjectionSubtitlePair(zhPath, jaPath, { backupMode: 'off' });
         assert.strictEqual(res.ok, true);
-        assert.strictEqual(res.dropped, 2);
+        assert.strictEqual(res.dropped, 4);
         assert.strictEqual(res.afterCount, 1);
 
         const zhOut = fs.readFileSync(zhPath, 'utf8');
         const jaOut = fs.readFileSync(jaPath, 'utf8');
         assert.ok(zhOut.includes('嗯，没问题吧？'));
         assert.ok(!zhOut.includes('哈啊'));
+        assert.ok(!zhOut.includes('呵呵'));
         assert.ok(jaOut.includes('うん、大丈夫？'));
         assert.ok(!jaOut.includes('はぁ'));
+        assert.ok(!jaOut.includes('ふふっ'));
         // Renumbered to a single cue index 1
         assert.ok(/^1\n/m.test(zhOut));
         assert.ok(!/^2\n/m.test(zhOut));

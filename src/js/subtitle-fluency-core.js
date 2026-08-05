@@ -853,25 +853,72 @@
         return `将删除 ${stats.removed} 条（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条`;
     }
 
+    /** Strip hearts / music / soft decoration so moan detectors see the kana/CJK core. */
+    function stripInterjectionDecor(text) {
+        return String(text || '')
+            .replace(/[♡♥❤♪☆★\*＊]+/g, '')
+            .trim();
+    }
+
     /**
-     * Pure JA interjection / moan cue (no concrete dialogue).
-     * Used by optional compact-delivery to drop paired JA+ZH blocks.
+     * One JA token that is only a discourse filler / laugh / moan run (no concrete dialogue).
+     * Tokens are split on 、，,・ and whitespace by the caller.
      */
-    function isPureInterjectionJa(text) {
-        const t = String(text || '').trim();
-        if (!t) return false;
-        // Short discourse fillers / greetings with no trailing content.
-        if (/^(?:うん+|ええ+|はい+|ああ+|あぁ+|あっ|ねえ+|ねぇ+|はぁ+|はあ+|ふぅ+|へえ+|へー+|ほう+|そう|よし|ん+|んん+|うぅ+)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+    function isPureInterjectionJaToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[。．.!！?？]+$/g, '').trim();
+        if (!t) return true;
+        // Meaningful short words that are kana-only and must never be compacted away.
+        if (/^(?:いいえ|いや+|おはよう.*|おかえり.*|お願い.*|あなた|あいつ|あいつめ)$/i.test(t)) {
+            return false;
+        }
+        // Discourse fillers / soft calls (whole token).
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)$/i.test(t)) {
             return true;
         }
-        // Moan / breath-only (kana + punctuation).
-        if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡♥❤ク]+$/i.test(t)) {
+        // Soft laughs / muffled crumbs.
+        if (/^(?:[うウ]?ふふ+[うっゥッ]*|[えエ]?へへ+[えっェッ]*|[あア]?はは+[あっァッ]*|んふ[ぅうゥウっッ]*|くぅ+[っッ]?|くっ|むぅ+|んむ+|もぐ+|むにゃ[ぁア]*)$/i.test(t)) {
             return true;
         }
-        if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+)[ー〜～っッ…。．.!！?？\s]*$/i.test(t)) {
+        // Katakana shout / breath runs.
+        if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+|ヒャッ?|ヤッ)$/i.test(t)) {
+            return true;
+        }
+        // Breath / moan run: only vowel·h·n·small-tsu style kana (after decor strip).
+        if (/^[あぁアァいぃイィうぅウゥえぇエェおぉオォはハひヒふフへヘほホッッんンくクむムー〜～ー]+$/i.test(t)) {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Pure JA interjection / moan cue (no concrete dialogue).
+     * Used by optional compact-delivery to drop paired JA+ZH blocks.
+     * Accepts internal separators (はぁ、はぁ / うん、うん) and soft laughs (ふふっ / くぅ).
+     */
+    function isPureInterjectionJa(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        // Ellipsis / symbol-only placeholders.
+        if (/^[。．.!！?？…·.•\s\-—_~～ー]+$/.test(t)) return true;
+        // Fast path: single filler / moan without internal dialogue commas of content.
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+            return true;
+        }
+        if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム]+$/i.test(t)) {
+            if (!/^(?:いいえ|いや+|おはよう)/i.test(t.replace(/[。．.!！?？…·.•\s\-—_~～ー、，,・]+/g, ''))) {
+                return true;
+            }
+        }
+        // Separator-tolerant: every token must be a pure atom / moan run.
+        const parts = t
+            .replace(/[。．.!！?？]+$/g, '')
+            .split(/[、，,・·.•…\s]+/)
+            .map((p) => p.trim())
+            .filter(Boolean);
+        if (!parts.length) return true;
+        return parts.every((p) => isPureInterjectionJaToken(p));
     }
 
     /**
@@ -879,25 +926,26 @@
      * Excludes meaningful short replies like 好的 / 等一下 / 好厉害.
      */
     function isPureInterjectionZh(text) {
-        const t = String(text || '').trim();
+        const t = stripInterjectionDecor(text);
         if (!t) return true;
         if (/^(?:…+|\.{2,}|……)$/.test(t)) return true;
-        // Soft-AV moan fills that smart-translate may prefill.
-        if (/^(?:哈啊?|嗯嗯?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+)[…·.•。．.!！?？\s]*$/u.test(t)) {
+        // Soft-AV moan fills that smart-translate may prefill (allow mid separators).
+        if (/^(?:(?:哈啊?|嗯嗯?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶)[…·.•。．.!！?？\s]*)+$/u.test(t)) {
             return true;
         }
         // Filler stubs (aligned with mt-sanitize isFillerOnlyZh, minus discourse 请/来 used in long-JA recovery).
         if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?)$/.test(t)) {
             return true;
         }
-        const bare = t.replace(/[。．.、，,\s…·•\-—_~～！!？?]+/g, '');
+        const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
         if (!bare) return true;
-        return /^(?:嗯+|啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|哎呀|嗨|嘿|哼)+$/.test(bare);
+        return /^(?:嗯+|啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|哎呀|嗨|嘿|哼|嘶)+$/.test(bare);
     }
 
     /**
      * Drop cues where BOTH JA and ZH are pure interjections / moans / blank placeholders.
      * Keeps meaningful dialogue even when it ends with particles (好舒服啊 / うん、大丈夫？).
+     * Blank JA slots count as pure so placeholder↔语气 pairs also compact.
      * @returns {{ zhCues: object[], jaCues: object[], dropped: number, droppedIndexes: number[] }}
      */
     function dropPureInterjectionPairs(zhCues, jaCues) {
@@ -930,7 +978,8 @@
         for (let i = 0; i < zhList.length; i += 1) {
             const zhText = String(zhList[i]?.text || '');
             const jaText = String(jaList[i]?.text || '');
-            if (isPureInterjectionJa(jaText) && isPureInterjectionZh(zhText)) {
+            const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
+            if (jaPure && isPureInterjectionZh(zhText)) {
                 droppedIndexes.push(i);
                 continue;
             }

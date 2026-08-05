@@ -281,28 +281,48 @@ function testDropPureInterjectionPairs() {
 
     assert.ok(isPureInterjectionJa('うん'));
     assert.ok(isPureInterjectionJa('はぁ…'));
+    assert.ok(isPureInterjectionJa('はぁ、はぁ'));
+    assert.ok(isPureInterjectionJa('あっ、あっ'));
+    assert.ok(isPureInterjectionJa('うん、うん'));
+    assert.ok(isPureInterjectionJa('えっ'));
+    assert.ok(isPureInterjectionJa('え？'));
+    assert.ok(isPureInterjectionJa('くぅ'));
+    assert.ok(isPureInterjectionJa('ふふっ'));
+    assert.ok(isPureInterjectionJa('うふふ'));
+    assert.ok(isPureInterjectionJa('んっ…んっ'));
+    assert.ok(isPureInterjectionJa('はぁ♡'));
     assert.ok(!isPureInterjectionJa('うん、大丈夫？'));
+    assert.ok(!isPureInterjectionJa('いいえ'));
+    assert.ok(!isPureInterjectionJa('おはよう'));
     assert.ok(isPureInterjectionZh('嗯'));
     assert.ok(isPureInterjectionZh('哈啊'));
     assert.ok(isPureInterjectionZh('…'));
+    assert.ok(isPureInterjectionZh('哈啊…哈啊'));
+    assert.ok(isPureInterjectionZh('哈啊♡'));
+    assert.ok(isPureInterjectionZh('啊…啊'));
     assert.ok(!isPureInterjectionZh('好舒服啊'));
     assert.ok(!isPureInterjectionZh('等一下'));
     assert.ok(!isPureInterjectionZh('好厉害'));
+    assert.ok(!isPureInterjectionZh('好的'));
 
     const ja = [
         { startMs: 0, endMs: 400, text: 'うん' },
         { startMs: 500, endMs: 1200, text: 'うん、大丈夫？' },
         { startMs: 1300, endMs: 1800, text: 'はぁ…' },
         { startMs: 1900, endMs: 2600, text: 'ちょっと待って' },
+        { startMs: 2700, endMs: 3200, text: 'はぁ、はぁ' },
+        { startMs: 3300, endMs: 3800, text: 'ふふっ' },
     ];
     const zh = [
         { startMs: 0, endMs: 400, text: '嗯' },
         { startMs: 500, endMs: 1200, text: '嗯，没问题吧？' },
         { startMs: 1300, endMs: 1800, text: '哈啊' },
         { startMs: 1900, endMs: 2600, text: '等一下' },
+        { startMs: 2700, endMs: 3200, text: '哈啊…哈啊' },
+        { startMs: 3300, endMs: 3800, text: '呵呵' },
     ];
     const dropped = dropPureInterjectionPairs(zh, ja);
-    assert.strictEqual(dropped.dropped, 2);
+    assert.strictEqual(dropped.dropped, 4);
     assert.strictEqual(dropped.zhCues.length, 2);
     assert.strictEqual(dropped.jaCues.length, 2);
     assert.strictEqual(dropped.zhCues[0].text, '嗯，没问题吧？');
@@ -312,6 +332,14 @@ function testDropPureInterjectionPairs() {
     const mismatch = dropPureInterjectionPairs(zh, ja.slice(0, 2));
     assert.strictEqual(mismatch.dropped, 0);
     assert.strictEqual(mismatch.skipped, true);
+
+    // Blank JA + filler ZH still compact.
+    const blanked = dropPureInterjectionPairs(
+        [{ startMs: 0, endMs: 300, text: '嗯' }, { startMs: 400, endMs: 800, text: '等一下' }],
+        [{ startMs: 0, endMs: 300, text: '' }, { startMs: 400, endMs: 800, text: 'ちょっと待って' }],
+    );
+    assert.strictEqual(blanked.dropped, 1);
+    assert.strictEqual(blanked.zhCues[0].text, '等一下');
 }
 
 describe("subtitle-fluency", () => {

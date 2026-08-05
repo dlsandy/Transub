@@ -2716,6 +2716,7 @@
         syncTranslateModeChipUi();
         syncPostBatchQcFixChipUi();
         updateReadinessStrip();
+        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
     }
 
     function isAutoSenseEnabled() {
@@ -2749,6 +2750,7 @@
             els.autoSenseToggleLabel.textContent = enabled ? '开' : '关';
         }
         updateAutoSenseUi();
+        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
         renderList();
         if (persist) {
             void persistFormOptionsQuiet();
@@ -2809,6 +2811,7 @@
             els.autoSenseToggle.title = ui.title || ui.detail || '智能感知';
         }
         updateStartButton();
+        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
     }
 
     /** @deprecated */
@@ -10733,6 +10736,17 @@
                 });
             }
         } catch (_) { /* ignore */ }
+
+        global.TransubAnimeWhisperPresetTip?.initQuickAccess?.();
+        void global.TransubAnimeWhisperPresetTip?.maybeShow?.({
+            getVersion: async () => {
+                try {
+                    return await electron?.getAppVersion?.();
+                } catch (_) {
+                    return { version: '' };
+                }
+            },
+        });
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
@@ -10754,6 +10768,11 @@
         updateStartButton,
         getSelectedItems,
         resolveOutputDirFromForm,
+        setAutoSenseEnabled,
+        updateParamsSummary,
+        setSavedOptionsSnapshot: (opts) => {
+            savedOptionsSnapshot = opts && typeof opts === 'object' ? opts : null;
+        },
         state,
         isStandaloneSettings: () => isStandaloneSettings,
     };

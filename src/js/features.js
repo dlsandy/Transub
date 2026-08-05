@@ -88,12 +88,45 @@
         if (current) sel.value = current;
     }
 
-    async function applyPreset(presetId) {
+    async function applyPreset(presetId, { persist = false, autoSense } = {}) {
         const res = await electron?.transWithAiGetPresets?.();
         const preset = res?.presets?.find((p) => p.id === presetId);
         if (!preset?.options || !core()?.applyOptionsToForm) return;
         const current = core().buildSavedOptionsFromForm();
-        core().applyOptionsToForm({ ...current, ...preset.options });
+        const next = { ...current, ...preset.options };
+        if (autoSense !== undefined) next.autoSense = !!autoSense;
+        await core().applyOptionsToForm(next);
+        if (autoSense !== undefined) {
+            core().setAutoSenseEnabled?.(!!autoSense, { persist: false });
+        }
+        const sel = document.getElementById('presetSelect');
+        if (sel) {
+            const has = [...sel.options].some((o) => o.value === presetId);
+            if (has) sel.value = presetId;
+        }
+        core().updateParamsSummary?.();
+        if (persist) {
+            const opts = {
+                ...core().buildSavedOptionsFromForm(),
+                ...(autoSense !== undefined ? { autoSense: !!autoSense } : {}),
+                ...(preset.options.contentProfile
+                    ? { contentProfile: preset.options.contentProfile }
+                    : {}),
+            };
+            const saveRes = await electron?.transWithAiSaveOptions?.(opts);
+            if (saveRes?.ok !== false) {
+                core().setSavedOptionsSnapshot?.(opts);
+                core().markSettingsDirty?.(false);
+                core().setSaveParamsStatus?.(`已应用并保存预设「${preset.name}」`, 'ok');
+                core().appendLog(
+                    autoSense === false
+                        ? `已应用并保存预设：${preset.name}（已关闭智能感知）`
+                        : `已应用并保存预设：${preset.name}`,
+                    'ok',
+                );
+                return;
+            }
+        }
         core().markSettingsDirty?.(true);
         core().setSaveParamsStatus?.(`已应用预设「${preset.name}」，请点「保存设置」写入磁盘`, 'warn');
         core().appendLog(`已应用预设：${preset.name}（尚未保存）`, 'info');
@@ -812,6 +845,7 @@
 
     global.TransubFeatures = {
         loadPresets,
+        applyPreset,
         showInstallWizard,
         showSubtitlePreview,
         appendInferLog,
