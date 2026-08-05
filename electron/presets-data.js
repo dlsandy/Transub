@@ -221,7 +221,7 @@ const BUILTIN_PRESETS = [
             language: 'ja',
             engineAsrModel: 'anime-whisper',
             // WhisperSeg is skipped for anime CT2 (clip gating drops dialogue).
-            // Timeline comes from TEN VAD short frames (ChronosJAV / WhisperJAV).
+            // Timeline comes from TEN VAD short frames.
             engineVadModel: 'silero-vad',
             engineMtModel: 'sakura-1.5b',
             engineLlmMtModel: 'sakura-1.5b',
@@ -238,7 +238,8 @@ const BUILTIN_PRESETS = [
             // ten = VAD owns timeline (default for anime); set 'rate' to disable.
             timingAlign: true,
             timingAlignModel: 'ten',
-            beamSize: 5,
+            // TEN island ASR forces greedy (beam=1); match litagin / WhisperJAV.
+            beamSize: 1,
             audioLightDenoise: false,
             filmAudioEnhance: false,
             filmVadPreset: false,

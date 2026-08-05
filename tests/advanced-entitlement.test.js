@@ -146,6 +146,52 @@ describe('advanced-entitlement-core', () => {
         });
         assert.strictEqual(installed.ok, true);
     });
+    it('rejects entitlement after expiresAt (timed trial)', () => {
+        let lic = entitlement.emptyLicenseState();
+        lic.key = 'k';
+        lic.licenseId = 'lic-trial';
+        lic.features = ['*'];
+        lic.expiresAt = '2026-01-08T00:00:00.000Z';
+        const t0 = Date.parse('2026-01-01T00:00:00.000Z');
+        lic = entitlement.bindDevice(lic, 'dev-a', { now: t0 }).license;
+        lic = entitlement.markValidated(lic, t0);
+
+        const mid = entitlement.evaluateEntitlement(lic, 'dev-a', { now: t0 + 3 * 24 * 60 * 60 * 1000 });
+        assert.strictEqual(mid.entitled, true);
+        assert.ok(/体验/.test(mid.message));
+
+        const after = entitlement.evaluateEntitlement(lic, 'dev-a', {
+            now: Date.parse('2026-01-08T00:00:00.001Z'),
+        });
+        assert.strictEqual(after.entitled, false);
+        assert.strictEqual(after.reason, 'expired');
+
+        const view = entitlement.buildStatusView(lic, 'dev-a', { now: t0 + 24 * 60 * 60 * 1000 });
+        assert.strictEqual(view.isTrial, true);
+        assert.strictEqual(view.expired, false);
+        assert.ok(view.expiresInMs > 0);
+
+        const expiredView = entitlement.buildStatusView(lic, 'dev-a', {
+            now: Date.parse('2026-01-09T00:00:00.000Z'),
+        });
+        assert.strictEqual(expiredView.expired, true);
+        assert.strictEqual(expiredView.entitled, false);
+    });
+
+    it('buyout without expiresAt stays entitled until revalidation', () => {
+        let lic = entitlement.emptyLicenseState();
+        lic.key = 'k';
+        lic.licenseId = 'lic-buyout';
+        const t0 = Date.parse('2026-01-01T00:00:00.000Z');
+        lic = entitlement.bindDevice(lic, 'dev-a', { now: t0 }).license;
+        lic = entitlement.markValidated(lic, t0);
+        assert.strictEqual(lic.expiresAt, null);
+        assert.strictEqual(entitlement.isTimedLicense(lic), false);
+        assert.strictEqual(
+            entitlement.evaluateEntitlement(lic, 'dev-a', { now: t0 + 7 * 24 * 60 * 60 * 1000 }).entitled,
+            true,
+        );
+    });
 });
 describe('advanced-license-crypto-core', () => {
     it('signs and verifies with matching keypair', () => {
@@ -162,20 +208,26 @@ describe('advanced-license-crypto-core', () => {
         assert.strictEqual(verified.payload.licenseId, 'test-lic-1');
     });
 
-    it('rejects tampered payload', () => {
+    it('rejects expired keys', () => {
         const { publicKey, privateKey } = generateKeyPairSync('ed25519');
         const pubB64 = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
         const privB64 = privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64');
-        const key = cryptoApi.signLicensePayload({ licenseId: 'x' }, privB64);
-        const parts = key.split('.');
-        parts[1] = cryptoApi.b64urlEncode(Buffer.from(JSON.stringify({
-            v: 1,
-            licenseId: 'hacked',
+        const key = cryptoApi.signLicensePayload({
+            licenseId: 'trial-1',
             features: ['*'],
-            product: 'transub-advanced',
-        }), 'utf8'));
-        const bad = parts.join('.');
-        const verified = cryptoApi.verifyLicenseKey(bad, { publicKeySpkiB64: pubB64 });
-        assert.strictEqual(verified.ok, false);
+            expiresAt: '2026-01-01T00:00:00.000Z',
+        }, privB64);
+        const expired = cryptoApi.verifyLicenseKey(key, {
+            publicKeySpkiB64: pubB64,
+            now: Date.parse('2026-01-02T00:00:00.000Z'),
+        });
+        assert.strictEqual(expired.ok, false);
+        assert.ok(/过期/.test(expired.error || ''));
+        const ok = cryptoApi.verifyLicenseKey(key, {
+            publicKeySpkiB64: pubB64,
+            now: Date.parse('2025-12-31T00:00:00.000Z'),
+        });
+        assert.strictEqual(ok.ok, true);
+        assert.strictEqual(ok.payload.expiresAt, '2026-01-01T00:00:00.000Z');
     });
 });

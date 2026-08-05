@@ -44,7 +44,7 @@ describe('tdp-pack-core', () => {
                 url: 'https://www.transub.cc/tdp/packs/tdp-1.0.3.tpack',
                 sha256: 'a'.repeat(64),
                 sig: 'x',
-                notes: '领域识别与用语修正更新',
+                notes: 'Update 2026-01-01 00:00:00',
             },
         });
         assert.strictEqual(good.ok, true);

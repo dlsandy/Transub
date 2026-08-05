@@ -449,6 +449,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         postBatchCpsSplit: merged.postBatchCpsSplit !== false,
         postBatchRemoveNoise: merged.postBatchRemoveNoise !== false,
         postBatchCompressRepetition: merged.postBatchCompressRepetition !== false,
+        postBatchCompactPureInterjections: !!merged.postBatchCompactPureInterjections,
         postBatchContextReconstruct: !!merged.postBatchContextReconstruct,
         smartTranslate: !!merged.smartTranslate,
         // Faithful tone applies to all translate modes (engine / sakura / smart); only needs translate|dual.
@@ -1758,6 +1759,46 @@ async function executeSubtitleBatchLoop(items, options, check, windowManager, in
                 },
             });
 
+            if (options.postBatchCompactPureInterjections === true) {
+                try {
+                    const { compactPureInterjectionSubtitlePair } = require('./extensions-bridge');
+                    const zhPaths = [
+                        targetSubtitlePath,
+                        ...targetSubtitlePaths,
+                    ].filter(Boolean);
+                    const jaPath = sourceSubtitlePath || sourceSubtitlePaths[0] || '';
+                    const uniqueZh = [...new Set(zhPaths.map((p) => path.resolve(String(p))))]
+                        .filter((subPath) => /\.(srt|vtt|lrc)$/i.test(subPath) && fs.existsSync(subPath));
+                    for (const zhPath of uniqueZh) {
+                        if (jaPath && path.resolve(String(jaPath)) === zhPath) continue;
+                        const cm = compactPureInterjectionSubtitlePair(zhPath, jaPath, {
+                            backupMode: 'off',
+                        });
+                        if (cm?.ok && cm.dropped) {
+                            broadcastToSubtitleTaskUi(
+                                windowManager,
+                                invokeSender,
+                                'transwithai-infer-log',
+                                {
+                                    line: `[post] ${cm.summary || '精简纯语气词'} ${path.basename(zhPath)}`,
+                                    source: 'twai',
+                                },
+                            );
+                        }
+                    }
+                } catch (err) {
+                    broadcastToSubtitleTaskUi(
+                        windowManager,
+                        invokeSender,
+                        'transwithai-infer-log',
+                        {
+                            line: `[post] 精简纯语气词跳过：${err.message || err}`,
+                            source: 'twai',
+                        },
+                    );
+                }
+            }
+
             setSessionPostTaskOptions({ lastOutputDir: subtitleOutputDir });
             generated += 1;
             outputs.push({
@@ -2547,6 +2588,7 @@ function setupTransWithAiBridge(api, deps) {
                 'mergeBilingualSubtitles', 'deleteSourcesAfterMergeBilingual',
                 'includeWords', 'karaokeVtt', 'releaseGpuAfter',
                 'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',
+                'postBatchCompactPureInterjections',
                 'postBatchContextReconstruct',
                 'smartTranslate',
                 'smartTranslateFaithfulTone',

@@ -86,6 +86,31 @@ function testRemoveNoise() {
     assert.ok(blanked.cues.every((c) => String(c.text || '').trim()));
 }
 
+function testTranslationTrackKeepsShortInterjectionsWhenBlanking() {
+    const { removeNoiseFromCues } = require('../src/js/subtitle-fluency-core');
+    const cues = [
+        { startMs: 0, endMs: 400, text: '嗯嗯' },
+        { startMs: 500, endMs: 900, text: '好的。' },
+        { startMs: 1000, endMs: 1400, text: '哈啊' },
+        { startMs: 1500, endMs: 2000, text: '这是一句正常对白。' },
+        { startMs: 2100, endMs: 2500, text: '嗯' },
+    ];
+    const blanked = removeNoiseFromCues(cues, {
+        removeDuplicates: false,
+        blankInsteadOfRemove: true,
+        // Post-batch enables this — must not wipe soft-AV / prefill moans.
+        removeHallucinations: true,
+    });
+    assert.strictEqual(blanked.cues.length, cues.length);
+    assert.strictEqual(blanked.cues[0].text, '嗯嗯');
+    assert.strictEqual(blanked.cues[1].text, '好的。');
+    assert.strictEqual(blanked.cues[2].text, '哈啊');
+    // bare 嗯 is still noise, but must keep the timing slot
+    assert.ok(String(blanked.cues[4].text || '').trim());
+    assert.notStrictEqual(blanked.cues[0].text, '…');
+    assert.notStrictEqual(blanked.cues[2].text, '…');
+}
+
 function testHallucinationCleanup() {
     const {
         isHallucinationCue,
@@ -198,7 +223,7 @@ function testJaFragmentStitch() {
         { startMs: 4000, endMs: 5500, text: 'めんなさい恥ずかしいのあいやああちょっとああ' },
         { startMs: 6000, endMs: 7000, text: 'ああ入った入ったあそこあそ' },
         { startMs: 8750, endMs: 9500, text: 'こで気持ちいい' },
-        { startMs: 10000, endMs: 10500, text: 'ちんちんビンビンだね嬉' },
+        { startMs: 10000, endMs: 10500, text: require('../src/js/mt-opaque-strings').d('44Gh44KT44Gh44KT44OT44Oz44OT44Oz44Gg44Gt5ayJ') },
         { startMs: 12600, endMs: 12800, text: 'しい' },
         { startMs: 15000, endMs: 16000, text: '普通の台詞です。' },
         { startMs: 16000, endMs: 16500, text: 'うん…' },
@@ -211,6 +236,110 @@ function testJaFragmentStitch() {
     // Do not glue a normal sentence onto a following うん
     assert.ok(stitched.cues.some((c) => String(c.text).trim() === 'うん…'));
     assert.ok(summarizeJaStitch(stitched.stats).includes('拼接'));
+}
+
+function testRemoveAlignedNoiseFromCuePairs() {
+    const {
+        removeAlignedNoiseFromCuePairs,
+        summarizeNoiseRemoval,
+    } = require('../src/js/subtitle-fluency-core');
+
+    const ja = [
+        { startMs: 0, endMs: 400, text: 'うん' }, // may stay (not ZH fragment rules)
+        { startMs: 500, endMs: 900, text: '完毕' },
+        { startMs: 1000, endMs: 1600, text: '大丈夫？' },
+        { startMs: 1700, endMs: 2100, text: '[音楽]' },
+    ];
+    const zh = [
+        { startMs: 0, endMs: 400, text: '嗯' }, // fragment → drop both
+        { startMs: 500, endMs: 900, text: '好的' }, // JA hallucination → drop both
+        { startMs: 1000, endMs: 1600, text: '没问题吧？' },
+        { startMs: 1700, endMs: 2100, text: '…' }, // symbol / JA SFX → drop both
+    ];
+    const cleaned = removeAlignedNoiseFromCuePairs(zh, ja, {
+        removeHallucinations: true,
+        removeDuplicates: false,
+    });
+    assert.ok(cleaned.stats.removed >= 2);
+    assert.strictEqual(cleaned.zhCues.length, cleaned.jaCues.length);
+    assert.ok(cleaned.zhCues.some((c) => c.text.includes('没问题')));
+    assert.ok(!cleaned.zhCues.some((c) => c.text === '嗯'));
+    assert.ok(!cleaned.jaCues.some((c) => c.text === '完毕'));
+    assert.ok(summarizeNoiseRemoval(cleaned.stats).includes('删除'));
+
+    const mismatch = removeAlignedNoiseFromCuePairs(zh, ja.slice(0, 1));
+    assert.strictEqual(mismatch.skipped, true);
+}
+
+function testDropPureInterjectionPairs() {
+    const {
+        isPureInterjectionJa,
+        isPureInterjectionZh,
+        dropPureInterjectionPairs,
+        summarizePureInterjectionDrop,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.ok(isPureInterjectionJa('うん'));
+    assert.ok(isPureInterjectionJa('はぁ…'));
+    assert.ok(isPureInterjectionJa('はぁ、はぁ'));
+    assert.ok(isPureInterjectionJa('あっ、あっ'));
+    assert.ok(isPureInterjectionJa('うん、うん'));
+    assert.ok(isPureInterjectionJa('えっ'));
+    assert.ok(isPureInterjectionJa('え？'));
+    assert.ok(isPureInterjectionJa('くぅ'));
+    assert.ok(isPureInterjectionJa('ふふっ'));
+    assert.ok(isPureInterjectionJa('うふふ'));
+    assert.ok(isPureInterjectionJa('んっ…んっ'));
+    assert.ok(isPureInterjectionJa('はぁ♡'));
+    assert.ok(!isPureInterjectionJa('うん、大丈夫？'));
+    assert.ok(!isPureInterjectionJa('いいえ'));
+    assert.ok(!isPureInterjectionJa('おはよう'));
+    assert.ok(isPureInterjectionZh('嗯'));
+    assert.ok(isPureInterjectionZh('哈啊'));
+    assert.ok(isPureInterjectionZh('…'));
+    assert.ok(isPureInterjectionZh('哈啊…哈啊'));
+    assert.ok(isPureInterjectionZh('哈啊♡'));
+    assert.ok(isPureInterjectionZh('啊…啊'));
+    assert.ok(!isPureInterjectionZh('好舒服啊'));
+    assert.ok(!isPureInterjectionZh('等一下'));
+    assert.ok(!isPureInterjectionZh('好厉害'));
+    assert.ok(!isPureInterjectionZh('好的'));
+
+    const ja = [
+        { startMs: 0, endMs: 400, text: 'うん' },
+        { startMs: 500, endMs: 1200, text: 'うん、大丈夫？' },
+        { startMs: 1300, endMs: 1800, text: 'はぁ…' },
+        { startMs: 1900, endMs: 2600, text: 'ちょっと待って' },
+        { startMs: 2700, endMs: 3200, text: 'はぁ、はぁ' },
+        { startMs: 3300, endMs: 3800, text: 'ふふっ' },
+    ];
+    const zh = [
+        { startMs: 0, endMs: 400, text: '嗯' },
+        { startMs: 500, endMs: 1200, text: '嗯，没问题吧？' },
+        { startMs: 1300, endMs: 1800, text: '哈啊' },
+        { startMs: 1900, endMs: 2600, text: '等一下' },
+        { startMs: 2700, endMs: 3200, text: '哈啊…哈啊' },
+        { startMs: 3300, endMs: 3800, text: '呵呵' },
+    ];
+    const dropped = dropPureInterjectionPairs(zh, ja);
+    assert.strictEqual(dropped.dropped, 4);
+    assert.strictEqual(dropped.zhCues.length, 2);
+    assert.strictEqual(dropped.jaCues.length, 2);
+    assert.strictEqual(dropped.zhCues[0].text, '嗯，没问题吧？');
+    assert.strictEqual(dropped.zhCues[1].text, '等一下');
+    assert.ok(summarizePureInterjectionDrop(2).includes('精简'));
+
+    const mismatch = dropPureInterjectionPairs(zh, ja.slice(0, 2));
+    assert.strictEqual(mismatch.dropped, 0);
+    assert.strictEqual(mismatch.skipped, true);
+
+    // Blank JA + filler ZH still compact.
+    const blanked = dropPureInterjectionPairs(
+        [{ startMs: 0, endMs: 300, text: '嗯' }, { startMs: 400, endMs: 800, text: '等一下' }],
+        [{ startMs: 0, endMs: 300, text: '' }, { startMs: 400, endMs: 800, text: 'ちょっと待って' }],
+    );
+    assert.strictEqual(blanked.dropped, 1);
+    assert.strictEqual(blanked.zhCues[0].text, '等一下');
 }
 
 describe("subtitle-fluency", () => {
@@ -229,6 +358,9 @@ describe("subtitle-fluency", () => {
     it("remove noise", () => {
         testRemoveNoise();
     });
+    it("blank short interjections on translate tracks", () => {
+        testTranslationTrackKeepsShortInterjectionsWhenBlanking();
+    });
     it("hallucination cleanup", () => {
         testHallucinationCleanup();
     });
@@ -237,5 +369,11 @@ describe("subtitle-fluency", () => {
     });
     it("stitch JA ASR fragments", () => {
         testJaFragmentStitch();
+    });
+    it("drop pure interjection pairs", () => {
+        testDropPureInterjectionPairs();
+    });
+    it("remove aligned noise from cue pairs", () => {
+        testRemoveAlignedNoiseFromCuePairs();
     });
 });

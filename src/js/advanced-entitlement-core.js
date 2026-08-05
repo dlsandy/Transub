@@ -1,6 +1,7 @@
 /**
- * Transub Pro 许可策略（大版本内买断 / 设备 / 换机 / 复核）
+ * Transub Pro 许可策略（大版本内买断 / 限时体验 / 设备 / 换机 / 复核）
  * 纯逻辑，可在 Node 测试与主进程共用。
+ * 限时体验：密钥 payload 带 expiresAt；本地持续校验，到期回免费（不可抵扣买断）。
  */
 (function (global, factory) {
     const api = factory();
@@ -76,6 +77,7 @@
             activatedAt: null,
             lastValidatedAt: null,
             lastTransferAt: null,
+            expiresAt: null,
             devices: [],
             product: 'transub-advanced',
         };
@@ -141,9 +143,27 @@
             activatedAt: asIso(raw.activatedAt),
             lastValidatedAt: asIso(raw.lastValidatedAt),
             lastTransferAt: asIso(raw.lastTransferAt),
+            expiresAt: asIso(raw.expiresAt),
             devices,
             product: String(raw.product || 'transub-advanced').trim() || 'transub-advanced',
         };
+    }
+
+    /** 有 expiresAt 的许可视为限时体验（买断通常为 null） */
+    function isTimedLicense(license) {
+        return !!parseTime(license?.expiresAt);
+    }
+
+    function isLicenseExpired(license, now = Date.now()) {
+        const exp = parseTime(license?.expiresAt);
+        if (exp == null) return false;
+        return now > exp;
+    }
+
+    function msUntilExpiry(license, now = Date.now()) {
+        const exp = parseTime(license?.expiresAt);
+        if (exp == null) return null;
+        return Math.max(0, exp - now);
     }
 
     function normalizeByok(raw) {
@@ -239,6 +259,14 @@
         if (!lic.key || !lic.licenseId) {
             return { entitled: false, reason: 'inactive', message: '未激活 Pro 许可' };
         }
+        if (isLicenseExpired(lic, now)) {
+            return {
+                entitled: false,
+                reason: 'expired',
+                message: 'Pro 体验已到期，已回免费功能；可购买大版本内买断继续使用',
+                expiresAt: lic.expiresAt,
+            };
+        }
         if (!isDeviceBound(lic, deviceId)) {
             return { entitled: false, reason: 'device_unbound', message: '本机未绑定此许可，请激活或换机到本机' };
         }
@@ -249,11 +277,13 @@
                 message: '需联网复核许可（每 30 天一次）',
             };
         }
+        const timed = isTimedLicense(lic);
         return {
             entitled: true,
             reason: 'ok',
-            message: 'Pro 已解锁',
+            message: timed ? 'Pro 体验已解锁' : 'Pro 已解锁',
             features: lic.features,
+            expiresAt: lic.expiresAt,
         };
     }
 
@@ -419,6 +449,8 @@
         const lic = normalizeLicenseState(license);
         const ev = evaluateEntitlement(lic, deviceId, { now });
         const transfer = canTransfer(lic, now);
+        const timed = isTimedLicense(lic);
+        const expiresInMs = timed ? msUntilExpiry(lic, now) : null;
         return {
             active: !!lic.key && !!lic.licenseId,
             entitled: ev.entitled,
@@ -434,6 +466,10 @@
             activatedAt: lic.activatedAt,
             lastValidatedAt: lic.lastValidatedAt,
             lastTransferAt: lic.lastTransferAt,
+            expiresAt: lic.expiresAt,
+            isTrial: timed,
+            expired: ev.reason === 'expired' || (timed && isLicenseExpired(lic, now)),
+            expiresInMs,
             needsRevalidation: needsRevalidation(lic, now),
             revalidateInMs: msUntilRevalidation(lic, now),
             canTransfer: transfer.ok,
@@ -471,6 +507,9 @@
         normalizeAdvancedDoc,
         findDevice,
         isDeviceBound,
+        isTimedLicense,
+        isLicenseExpired,
+        msUntilExpiry,
         needsRevalidation,
         msUntilRevalidation,
         canTransfer,

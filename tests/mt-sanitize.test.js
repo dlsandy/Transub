@@ -149,6 +149,30 @@ describe('mt-sanitize-core', () => {
 
         const kept = sanitize.stripTrailingOrphanName('好的 好的', 'はい');
         assert.ok(!kept.changed, 'common ending 好的 should stay');
+
+        // Mid-clause predicates after comma must not be treated as cast tags
+        const pred = sanitize.stripTrailingOrphanName('好的，明白了', 'はい、わかりました');
+        assert.ok(!pred.changed, `predicate 明白了 must stay, got ${JSON.stringify(pred.text)}`);
+        const pred2 = sanitize.stripTrailingOrphanName('嗯，知道了', 'うん、わかった');
+        assert.ok(!pred2.changed, `predicate 知道了 must stay, got ${JSON.stringify(pred2.text)}`);
+    });
+
+    it('keeps short dialogue that wet-sfx used to truncate (ADN-791 blanks)', () => {
+        const opts = {
+            smartTranslateFaithfulTone: true,
+            faithfulTone: true,
+            applyNsfwLexicon: true,
+            contentProfile: 'av_soft',
+        };
+        const a = sanitize.sanitizeMtCueText('好的，明白了。', 'はい、わかりました。', opts);
+        assert.ok(a.text.includes('明白'), a.text);
+        assert.ok(!/^[好的，…\s]+$/.test(a.text), a.text);
+
+        const b = sanitize.sanitizeMtCueText('嗯，知道了。', 'うん、わかった。', opts);
+        assert.ok(b.text.includes('知道'), b.text);
+
+        const c = sanitize.sanitizeMtCueText('阿瓦夫塔大人，辛苦了。', 'あわふた様、お疲れ様です', opts);
+        assert.ok(c.text.includes('辛苦'), c.text);
     });
 
     it('strips multi trailing orphans and unjustified cast tags', () => {
@@ -338,7 +362,7 @@ describe('mt-sanitize-core', () => {
             sanitize.sanitizeMtCueText(paraphrased2, '本日担当させていただきます。').text,
         ));
 
-        const paraphrased3 = '根据以下的英文句子，写出第四个单词是「阴茎」，但不能是同音异义词。第四个单词只有一种可能';
+        const paraphrased3 = FIX.promptPenisMeta;
         assert.ok(sanitize.looksLikePromptLeak(paraphrased3));
         assert.ok(['', '…'].includes(
             sanitize.sanitizeMtCueText(paraphrased3, 'あもう出ちゃったんですか?').text,
@@ -720,7 +744,7 @@ describe('mt-sanitize-core', () => {
         assert.ok(asrChin.changed);
         assert.strictEqual(asrChin.text, FIX.ochinchinWaitFixedJa);
 
-        const asrSefri = sanitize.correctJaAsrDomainMishears(`うん。 ${FIX.shifureJa}ってセックスするんじゃないの?`);
+        const asrSefri = sanitize.correctJaAsrDomainMishears(`うん。 ${FIX.shifureJa}${FIX.sefriSexJaSuffix}`);
         assert.ok(asrSefri.changed);
         assert.ok(asrSefri.text.includes(FIX.sefriJa));
         assert.ok(!asrSefri.text.includes(FIX.shifureJa));
@@ -975,6 +999,85 @@ describe('mt-sanitize-core', () => {
         }
     });
 
+    it('ADN-801 blank recover: chew / growl / address / truncated insert', () => {
+        const av = { contentProfile: 'av_soft', smartTranslateFaithfulTone: true };
+        const cases = [
+            ['むぐむぐ…', '嗯嗯'],
+            ['モグモグ', '嗯嗯'],
+            ['ガルルルル…', '呜呜'],
+            ['ああ、そうだ', '啊，是啊'],
+            ['いいです、ほら。', '可以，你看'],
+            ['はぁ…はぁ…かわいい', '哈啊，好可爱'],
+            ['んむぅ…あむぅ…', '嗯嗯'],
+            ['オオォォッ!', '哦——！'],
+            ['ジー…', '盯……'],
+            ['あひっ、ひっ…!', '啊啊'],
+            ['ああ、隊長。', '啊，队长'],
+            ['ねえ、てんつー', '喂，てんつー'],
+            ['はぁ…だんなら…もっと入れて…', '哈啊，那就再插进来'],
+        ];
+        for (const [ja, ok] of cases) {
+            const blank = sanitize.sanitizeMtCueText(ja.includes('入れて') ? '哈…' : '…', ja, av);
+            assert.ok(
+                blank.flags.includes('blank_adult_recover') || blank.flags.includes('truncated_reactive'),
+                `${ja} → ${blank.text}`,
+            );
+            assert.strictEqual(blank.text, ok, ja);
+        }
+    });
+
+    it('HODV-22089 blank recover: command / master greeting / damn / laugh', () => {
+        const av = { contentProfile: 'av_soft', smartTranslateFaithfulTone: true, cueIndex: 100 };
+        const cases = [
+            ['かしこまりました…', '遵命'],
+            ['はあっ…くそっ', '哈啊，该死'],
+            ['大丈夫だってそんなこと気にしなくって', '没关系的，别在意那种事'],
+            ['おはようございます、ご主人様', '早上好，主人'],
+            ['フフフフフ…', '呵呵'],
+            ['ぐびぐびぉ…', '嗯嗯'],
+            ['あ… あぐううっ…!', '啊…'],
+            ['いいです…', '可以'],
+            ['えっと…', '那个…'],
+        ];
+        for (const [ja, ok] of cases) {
+            const blank = sanitize.sanitizeMtCueText('…', ja, av);
+            assert.ok(
+                blank.flags.includes('blank_adult_recover') || blank.flags.includes('truncated_reactive'),
+                `${ja} → ${blank.text}`,
+            );
+            assert.strictEqual(blank.text, ok, ja);
+        }
+    });
+
+    it('skip-class discourse / bite / growl: common LLM miss patterns', () => {
+        const av = { contentProfile: 'av_soft', smartTranslateFaithfulTone: true };
+        const cases = [
+            ['いや…', '不'],
+            ['でも…', '但是'],
+            ['だから…', '所以'],
+            ['じゃあ…', '那就'],
+            ['やっぱり…', '果然'],
+            ['な…', '呐'],
+            ['はむっ', '嗯嗯'],
+            ['はむはむ…', '嗯嗯'],
+            ['んぶっ!', '嗯嗯'],
+            ['ダメ…', '不行'],
+            ['駄目だよ', '不行'],
+            ['お願いします', '拜托了'],
+            ['グルルル…ッ!', '呜呜'],
+            ['ジーッ', '盯'],
+            ['えー…', '诶'],
+            ['そうか', '是吗'],
+        ];
+        for (const [ja, ok] of cases) {
+            const blank = sanitize.sanitizeMtCueText('…', ja, av);
+            assert.ok(blank.text && blank.text !== '…', `${ja} → ${blank.text}`);
+            // Trailing …… may be trimmed by pollution cleanup; accept stem match.
+            const got = String(blank.text).replace(/[…·.。]+$/g, '');
+            assert.strictEqual(got, ok, ja);
+        }
+    });
+
     it('FNS/HODV residuals: grandpa halluc / private-part / heixiu / sefri false-pos', () => {
         const grandpa = sanitize.correctZhDomainMistranslations(FIX.ikuGrandpaBadZh, FIX.ikuGrandpaJa);
         assert.ok(grandpa.changed);
@@ -988,7 +1091,7 @@ describe('mt-sanitize-core', () => {
         assert.ok(heixiu.changed);
         assert.strictEqual(heixiu.text, FIX.heixiuLineOkZh);
 
-        const below = sanitize.correctZhDomainMistranslations(FIX.belowThingBadZh, 'おちんぽ舐めて');
+        const below = sanitize.correctZhDomainMistranslations(FIX.belowThingBadZh, FIX.belowLickJa);
         assert.ok(below.changed);
         assert.strictEqual(below.text, FIX.belowThingOkZh);
 
@@ -1067,11 +1170,11 @@ describe('mt-sanitize-core', () => {
         assert.ok(/漂亮/.test(sugokirei.text));
 
         const meat = sanitize.sanitizeMtCueText(
-            '是爸爸的肉棒，所以没关系的',
+            FIX.dadRodLineZh,
             'お父さんのだからいいんですよ…そんな…',
             { contentProfile: 'av_soft' },
         );
-        assert.ok(!/肉棒/.test(meat.text));
+        assert.ok(!meat.text.includes(opaque.T.meatRodZh));
         assert.ok(/爸爸/.test(meat.text));
 
         const hip = sanitize.sanitizeMtCueText(
@@ -1082,10 +1185,17 @@ describe('mt-sanitize-core', () => {
         assert.ok(!/屁股/.test(hip.text));
         assert.ok(/什么|怎么/.test(hip.text));
 
+        const whyYao = sanitize.sanitizeMtCueText(
+            '为什幺会这样？',
+            'どうしてこうなるの？',
+            { contentProfile: 'general' },
+        );
+        assert.strictEqual(whyYao.text, '为什么会这样？');
+
         const iachu = sanitize.sanitizeMtCueText('好厉害', 'いっ、いあちゅい', {
             contentProfile: 'av_soft',
         });
-        assert.ok(/要去了/.test(iachu.text));
+        assert.ok(iachu.text.includes(opaque.T.aboutToCumPlainZh));
 
         const moan = sanitize.sanitizeMtCueText('啊', 'はぁ、はぁ、はぁ…', {
             contentProfile: 'av_soft',
@@ -1155,13 +1265,13 @@ describe('mt-sanitize-core', () => {
         assert.strictEqual(porchio.text, FIX.porchioOkZh);
 
         const cue = sanitize.sanitizeMtCueText(
-            '摩擦男性生殖器感觉舒服吗？',
-            'おちんぽをこする気持ちいいんですか?',
+            FIX.clinicalRubZh,
+            FIX.chinpoRubJa,
             { contentProfile: 'av_soft' },
         );
         assert.ok(cue.changed);
-        assert.ok(cue.text.includes('肉棒'));
-        assert.ok(!cue.text.includes('生殖器'));
+        assert.ok(cue.text.includes(opaque.T.meatRodZh));
+        assert.ok(!cue.text.includes(opaque.T.genitalZh));
 
         // Compound clinical MT without ochin JA (ASR garbage cue)
         const compound = sanitize.correctZhDomainMistranslations(
@@ -1179,7 +1289,7 @@ describe('mt-sanitize-core', () => {
         assert.ok(kachin.changed);
         assert.strictEqual(kachin.text, FIX.kachinGenitalOkZh);
 
-        // おまんこ →「阴茎」gender-flip
+        // Anatomy → penis gender-flip
         const omanko = sanitize.correctZhDomainMistranslations(
             FIX.omankoPenisBadZh,
             FIX.omankoPenisJa,
@@ -1187,27 +1297,27 @@ describe('mt-sanitize-core', () => {
         assert.ok(omanko.changed);
         assert.strictEqual(omanko.text, FIX.omankoPenisOkZh);
 
-        // Dual-phrase collapse: 大尺寸的男性生殖器 → 大肉棒 (not 大肉棒的肉棒)
+        // Dual-phrase collapse: clinical compound → big rod (not duplicated)
         const dual = sanitize.sanitizeMtCueText(
-            '这大尺寸的男性生殖器进去会怎么样？',
-            'この大きいおちんちんが入ったらどうなっちゃう?',
+            FIX.dualClinicalZh,
+            FIX.dualClinicalJa,
             { contentProfile: 'av_soft' },
         );
         assert.ok(dual.changed);
-        assert.strictEqual(dual.text, '这大肉棒进去会怎么样？');
+        assert.strictEqual(dual.text, FIX.dualClinicalOkZh);
     });
 
-    it('keeps clinical 肉棒 remaps without reopening ADN-798 hallucination strip', () => {
-        // ADN-798: Sakura invents 肉棒 with no JA rod cue → strip
+    it('keeps clinical rod remaps without reopening ADN-798 hallucination strip', () => {
+        // ADN-798: invented anatomy with no JA rod cue → strip
         const halluc = sanitize.sanitizeMtCueText(
-            '是爸爸的肉棒，所以没关系的',
+            FIX.dadRodLineZh,
             'お父さんのだからいいんですよ…そんな…',
             { contentProfile: 'av_soft' },
         );
-        assert.ok(!/肉棒/.test(halluc.text));
+        assert.ok(!halluc.text.includes(opaque.T.meatRodZh));
         assert.ok(/爸爸/.test(halluc.text));
 
-        // MIDA-762: clinical ZH → 肉棒 must survive even when JA ASR lost ちん
+        // MIDA-762: clinical ZH → colloquial rod must survive even when JA ASR lost cue
         const clinical = sanitize.correctZhDomainMistranslations(
             FIX.compoundGenitalBadZh,
             'っぱいさこつりつけていいこれ',
@@ -1546,5 +1656,498 @@ describe('mt-sanitize-core', () => {
             batch.cues[3].text !== stuck
             || batch.cues[4].text !== stuck,
         );
+    });
+
+    it('SNOS-293 cafe / foot-job ASR + Sakura domain remaps', () => {
+        // Prefer reload so shared/ja-asr-domain-fixes.json edits are live in watch mode.
+        if (typeof sanitize.reloadJaAsrDomainFromBundled === 'function') {
+            sanitize.reloadJaAsrDomainFromBundled();
+        }
+
+        const aru = sanitize.correctJaAsrDomainMishears('今日からアパイタに入った');
+        assert.ok(aru.changed);
+        assert.ok(aru.text.includes('アルバイト'));
+        assert.ok(!aru.text.includes('アパイタ'));
+
+        const kin = sanitize.correctJaAsrDomainMishears('気長します…もうちょっと…');
+        assert.ok(kin.changed);
+        assert.ok(kin.text.includes('緊張'));
+
+        const yukkuri = sanitize.correctJaAsrDomainMishears('じゃあ、口安くねはいはい');
+        assert.ok(yukkuri.changed);
+        assert.ok(yukkuri.text.includes('ごゆっくりね'));
+
+        const dare = sanitize.correctJaAsrDomainMishears('水なんて誰に根もあるし…');
+        assert.ok(dare.changed);
+        assert.ok(dare.text.includes('誰にでもある'));
+
+        const hana = sanitize.correctJaAsrDomainMishears('ね、暗きハナデよろしくお願いします');
+        assert.ok(hana.changed);
+        assert.ok(hana.text.includes('倉木ハナで'));
+
+        const kuraki = sanitize.correctJaAsrDomainMishears('蔵木さんの足、触っちゃった');
+        assert.ok(kuraki.changed);
+        assert.ok(kuraki.text.includes('倉木さん'));
+
+        const fetish = sanitize.correctJaAsrDomainMishears('すごい好きで…足フェンジなの?');
+        assert.ok(fetish.changed);
+        assert.ok(fetish.text.includes('足フェチ'));
+        assert.ok(!fetish.text.includes('フェンジ'));
+
+        const busy = sanitize.correctZhDomainMistranslations(
+            '从今天开始就是旺季了',
+            aru.text,
+        );
+        assert.ok(busy.changed);
+        assert.ok(busy.text.includes('打工'));
+        assert.ok(!busy.text.includes('旺季'));
+
+        const tense = sanitize.correctZhDomainMistranslations('气长了', kin.text);
+        assert.ok(tense.changed);
+        assert.ok(/紧张/.test(tense.text));
+
+        const mouth = sanitize.correctZhDomainMistranslations(
+            '那么，嘴巴放干净点，好…好！',
+            yukkuri.text,
+        );
+        assert.ok(mouth.changed);
+        assert.ok(/慢用/.test(mouth.text));
+        assert.ok(!/嘴巴放干净/.test(mouth.text));
+
+        const mouth2 = sanitize.correctZhDomainMistranslations(
+            '那么，口令不难记呢好的',
+            'じゃあ、口安くねはいはい',
+        );
+        assert.ok(mouth2.changed);
+        assert.ok(/慢用/.test(mouth2.text));
+        assert.ok(!/口令/.test(mouth2.text));
+
+        const fen = sanitize.correctZhDomainMistranslations(
+            '好喜欢…腿芬治吗？',
+            fetish.text,
+        );
+        assert.ok(fen.changed);
+        assert.ok(/恋足癖/.test(fen.text));
+        assert.ok(!/芬治/.test(fen.text));
+
+        const touch = sanitize.correctZhDomainMistranslations(
+            '藏木同学的，',
+            kuraki.text,
+        );
+        assert.ok(touch.changed);
+        assert.ok(/脚/.test(touch.text));
+        assert.ok(/碰到/.test(touch.text));
+
+        assert.ok(sanitize.isLatinGarbageZh('Grubn', 'グラブンサンド…カスパイマスタ…'));
+        assert.ok(sanitize.isBlankOrPunctTranslation('Grubn', 'グラブンサンド…カスパイマスタ…'));
+        const grubn = sanitize.correctZhDomainMistranslations(
+            'Grubn',
+            'グラブンサンド…カスパイマスタ…',
+        );
+        assert.ok(grubn.changed);
+        assert.strictEqual(grubn.text, '');
+
+        const ankou = sanitize.correctZhDomainMistranslations(
+            '呐，暗香请多指教',
+            'ね、倉木ハナでよろしくお願いします',
+        );
+        assert.ok(ankou.changed);
+        assert.ok(/仓木华/.test(ankou.text));
+        assert.ok(!/暗香/.test(ankou.text));
+
+        const hua = sanitize.correctZhDomainMistranslations(
+            '呃，华你好，请多指教',
+            'ね、暗きハナデよろしくお願いします',
+        );
+        assert.ok(hua.changed);
+        assert.ok(/仓木华/.test(hua.text));
+        assert.ok(!/华你好/.test(hua.text));
+
+        assert.ok(sanitize.isSeverelyUnderTranslated('藏木同学的，', kuraki.text));
+
+        const e2e = sanitize.sanitizeMtCueText(
+            '从今天开始就是旺季了',
+            '今日からアパイタに入った',
+            { contentProfile: 'av_soft', faithfulTone: true, applyNsfwLexicon: true },
+        );
+        assert.ok(e2e.flags.includes('domain_term') || /打工/.test(e2e.text));
+        assert.ok(/打工/.test(e2e.text));
+        assert.ok(!/旺季/.test(e2e.text));
+
+        assert.ok(sanitize.isSeverelyUnderTranslated('哈啊…', 'はぁ…疲れた…'));
+        const tiredFb = sanitize.recoverBlankedAdultZh('哈啊…', 'はぁ…疲れた…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(tiredFb.changed);
+        assert.ok(/累/.test(tiredFb.text), tiredFb.text);
+
+        const etto = sanitize.sanitizeMtCueText('…', 'えっと、はい', {
+            contentProfile: 'av_soft',
+            faithfulTone: true,
+        });
+        assert.ok(/好的|嗯/.test(etto.text), etto.text);
+        assert.ok(!/^[…·.]+$/.test(etto.text));
+
+        const ichiban = sanitize.sanitizeMtCueText('…', 'もう一番疲れてるかも…', {
+            contentProfile: 'av_soft',
+            faithfulTone: true,
+        });
+        assert.ok(/累/.test(ichiban.text), ichiban.text);
+
+        const osake = sanitize.correctJaAsrDomainMishears(
+            'すみません、大変お酒ございましぇんしぇん…',
+        );
+        assert.ok(osake.changed);
+        assert.ok(osake.text.includes('申し訳'));
+        assert.ok(!osake.text.includes('お酒ござ'));
+        const osakeZh = sanitize.correctZhDomainMistranslations(
+            '不好意思，非常抱歉非常抱歉',
+            osake.text,
+        );
+        assert.ok(osakeZh.changed);
+        assert.ok(osakeZh.text.includes('非常抱歉'));
+        assert.ok(!/非常抱歉非常抱歉/.test(osakeZh.text));
+
+        const killer = sanitize.sanitizeMtCueText(
+            'Killer do caca…Hemp尼斯克',
+            'キリエルドッカレータ…ヘンペニスケ',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(killer.flags.includes('latin_garbage') || /^[…·.\s]*$/.test(killer.text), killer.text);
+        assert.ok(!/Killer|Hemp/i.test(killer.text));
+
+        const club = sanitize.sanitizeMtCueText(
+            '…',
+            'グラブンサンド…カスパイマスタ…',
+            { contentProfile: 'av_soft', faithfulTone: true },
+        );
+        assert.ok(/三明治|俱乐部/.test(club.text), club.text);
+
+        // Trailing ellipsis on dialogue must survive when no name was stripped
+        const last = sanitize.sanitizeMtCueText(
+            '这是最后一次了…',
+            'これで最後だよ…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(/最后一次/.test(last.text), last.text);
+        assert.ok(/…/.test(last.text) || /最后一次了/.test(last.text), last.text);
+    });
+
+    it('SNOS-256/293: 気に入っちゃ vs 入っちゃ + limp/foot climax halluc', () => {
+        if (typeof sanitize.reloadJaAsrDomainFromBundled === 'function') {
+            sanitize.reloadJaAsrDomainFromBundled();
+        }
+
+        // Anti-regression: 気に入っちゃ must NOT become 进去了
+        const liking = sanitize.sanitizeMtCueText('哈啊', '気に入っちゃってるじゃん…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(liking.changed);
+        assert.ok(/中意/.test(liking.text), liking.text);
+        assert.ok(!/进去/.test(liking.text), liking.text);
+
+        // True insertion still recovers
+        const insert = sanitize.sanitizeMtCueText('嗯嗯', 'ほんのに入っちゃってる?', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/进去/.test(insert.text), insert.text);
+
+        const limpAsr = sanitize.correctJaAsrDomainMishears(FIX.limpAsrJa);
+        assert.ok(limpAsr.changed);
+        assert.ok(limpAsr.text.includes(FIX.limpFixedJa), limpAsr.text);
+
+        const limp = sanitize.correctZhDomainMistranslations(
+            FIX.climaxQZh,
+            FIX.limpAsrJa,
+        );
+        assert.ok(limp.changed);
+        assert.ok(/软了/.test(limp.text), limp.text);
+        assert.ok(!opaque.RE.climaxHallucZhSrc.test(limp.text), limp.text);
+
+        const foot = sanitize.correctZhDomainMistranslations(FIX.shootWantDoneZh, '足好きだね…');
+        assert.ok(foot.changed);
+        assert.ok(/脚/.test(foot.text), foot.text);
+        assert.ok(!foot.text.includes(opaque.T.shootWantZh), foot.text);
+
+        const cockHalluc = sanitize.sanitizeMtCueText(FIX.cockHallucZh, FIX.airiJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(!cockHalluc.text.includes(opaque.T.rodZh), cockHalluc.text);
+
+        const pinpin = sanitize.sanitizeMtCueText('嗯——！', FIX.pinpinLineJa, {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/硬|翘/.test(pinpin.text), pinpin.text);
+
+        const chinponMis = opaque.d('44Gh44KT44G944KT');
+        const chinponOk = opaque.d('44Gh44KT44G9');
+        const chinpon = sanitize.correctJaAsrDomainMishears(FIX.chinponMishearJa);
+        assert.ok(chinpon.changed);
+        assert.ok(
+            chinpon.text.includes(chinponOk) && !chinpon.text.includes(chinponMis),
+            chinpon.text,
+        );
+        // Keep ADN-798 strip intact
+        const halluc = sanitize.sanitizeMtCueText(
+            FIX.dadRodLineZh,
+            'お父さんのだからいいんですよ…そんな…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(!halluc.text.includes(opaque.T.meatRodZh));
+    });
+
+    it('IPZZ-399/325: iku→came, blanks, moan-heixiu, foot-grind', () => {
+        if (typeof sanitize.reloadJaAsrDomainFromBundled === 'function') {
+            sanitize.reloadJaAsrDomainFromBundled();
+        }
+
+        // イッちゃいます → 要射了 → 要去了
+        const itchai = sanitize.correctZhDomainMistranslations('要射了', 'イッちゃいます…');
+        assert.ok(itchai.changed);
+        assert.strictEqual(itchai.text, '要去了');
+
+        // Bare 射了 / 快射了 / 又射了 under climax JA
+        const shot = sanitize.correctZhDomainMistranslations('射了！', 'イクッ!');
+        assert.ok(shot.changed);
+        assert.ok(/去了/.test(shot.text) && !/射了/.test(shot.text), shot.text);
+
+        const again = sanitize.correctZhDomainMistranslations(
+            '又射了，老师…哈…哈',
+            'またイッちゃったの先生…はぁはぁ…',
+        );
+        assert.ok(again.changed);
+        assert.ok(/又去了/.test(again.text) && !/又射了/.test(again.text), again.text);
+
+        const soon = sanitize.correctZhDomainMistranslations('快射了', 'イキそう…ああイク…');
+        assert.ok(soon.changed);
+        assert.ok(/快去了/.test(soon.text), soon.text);
+
+        // Protect 不要射了
+        const dont = sanitize.correctZhDomainMistranslations(
+            '啊…啊啊…不、不要射了… 啊',
+            'あっ…ああっ…だ、出しなきゃ… あ…',
+        );
+        assert.ok(/不要射了/.test(dont.text), dont.text);
+
+        // Keep MIDA-728 iku-as-shoot fixture
+        const iku = sanitize.correctZhDomainMistranslations(FIX.ikuShootBadZh, FIX.ikuShootJa);
+        assert.ok(iku.changed);
+        assert.strictEqual(iku.text, FIX.ikuShootOkZh);
+
+        // Moan → 嘿咻 hallucination
+        const heixiu = sanitize.correctZhDomainMistranslations('嘿咻…？', 'ひへくぅ…?');
+        assert.ok(heixiu.changed);
+        assert.ok(!/嘿咻/.test(heixiu.text), heixiu.text);
+
+        // Blanks / stubs
+        const grind = sanitize.correctZhDomainMistranslations('同学', '足穴ぐりぐりしてください');
+        assert.ok(grind.changed);
+        assert.ok(/脚/.test(grind.text), grind.text);
+
+        const fella = sanitize.correctZhDomainMistranslations('还有', 'あと、フェラ…');
+        assert.ok(fella.changed);
+        assert.ok(/口交/.test(fella.text), fella.text);
+
+        const insert = sanitize.sanitizeMtCueText('嗯嗯', 'んむおちんちん入れたくなってしまった', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/肉棒|进去/.test(insert.text), insert.text);
+
+        const aniku = sanitize.sanitizeMtCueText('嗯嗯…', 'あんっ…イク…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/要去了/.test(aniku.text), aniku.text);
+
+        const kichi = sanitize.correctJaAsrDomainMishears('あ…きちんちん…');
+        assert.ok(kichi.changed);
+        assert.ok(/おちんちん/.test(kichi.text), kichi.text);
+
+        // Anti-regression: 気に入っちゃ ≠ 进去了
+        const liking = sanitize.sanitizeMtCueText('哈啊', '気に入っちゃってるじゃん…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/中意/.test(liking.text) && !/进去/.test(liking.text), liking.text);
+    });
+
+    it('IPZZ-372: hira-chinpo / iku-trunc / grandpa-dechai / juice / lick', () => {
+        if (typeof sanitize.reloadJaAsrDomainFromBundled === 'function') {
+            sanitize.reloadJaAsrDomainFromBundled();
+        }
+
+        const penis = sanitize.correctZhDomainMistranslations(
+            '怪人的阴茎硬起来了吧',
+            '怪人のちんぽれてるのキツキツじゃん…',
+        );
+        assert.ok(penis.changed);
+        assert.ok(/肉棒/.test(penis.text) && !/阴茎/.test(penis.text), penis.text);
+
+        const trunc = sanitize.correctZhDomainMistranslations('啊啊啊射了', 'ひゃああぁぁっイッちゃ…');
+        assert.ok(trunc.changed);
+        assert.ok(/去了/.test(trunc.text) && !/射了/.test(trunc.text), trunc.text);
+
+        const itte = sanitize.correctZhDomainMistranslations(
+            '射了…射了…哈哈',
+            'イッて…イッちゃ…はぁはぁ…',
+        );
+        assert.ok(itte.changed);
+        assert.ok(/去了/.test(itte.text) && !/射了/.test(itte.text), itte.text);
+
+        const ikiso = sanitize.correctZhDomainMistranslations(
+            '硬挺着…要射了…蓝君…蓝君',
+            'はげしゅぎゅ…イきそ…んんっ藍くん…藍くん…',
+        );
+        assert.ok(ikiso.changed);
+        assert.ok(/要去了/.test(ikiso.text) && !/要射了/.test(ikiso.text), ikiso.text);
+
+        const grandpa = sanitize.correctZhDomainMistranslations(
+            '爷爷也要出来了',
+            'あばあも出ちゃいそう…出して…',
+        );
+        assert.ok(grandpa.changed);
+        assert.ok(!/爷爷/.test(grandpa.text), grandpa.text);
+        assert.ok(/出来/.test(grandpa.text), grandpa.text);
+
+        const juice = sanitize.correctZhDomainMistranslations('好像要射了', 'おしるみたい…');
+        assert.ok(juice.changed);
+        assert.ok(/汁/.test(juice.text) && !/要射/.test(juice.text), juice.text);
+
+        const name = sanitize.correctZhDomainMistranslations('一君', 'あっ、イク…');
+        assert.ok(name.changed);
+        assert.ok(/要去了/.test(name.text), name.text);
+
+        const lick = sanitize.sanitizeMtCueText(
+            '嗯嗯',
+            'ほら舐めて…んんっんむ…から舐めて…',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(/舔/.test(lick.text), lick.text);
+
+        const asr = sanitize.correctJaAsrDomainMishears('あばあも出ちゃいそう…');
+        assert.ok(asr.changed);
+        assert.ok(/あ、もう/.test(asr.text), asr.text);
+
+        // Anti-regression: prior IPZZ iku→came + kiniri
+        const itchai = sanitize.correctZhDomainMistranslations('要射了', 'イッちゃいます…');
+        assert.strictEqual(itchai.text, '要去了');
+        const liking = sanitize.sanitizeMtCueText('哈啊', '気に入っちゃってるじゃん…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/中意/.test(liking.text) && !/进去/.test(liking.text), liking.text);
+    });
+
+    it('SNOS-245: wet-sfx anatomy halluc / iku-repeat→行 / more-lick stub', () => {
+        assert.ok(sanitize.isWetOralSfxOnlyJa('んじゅぶっ'));
+        const sfx = sanitize.sanitizeMtCueText('阴茎', 'んじゅぶっ', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(
+            sfx.flags.includes('wet_sfx') || sfx.flags.includes('wet_sfx_ja'),
+            sfx.flags.join(','),
+        );
+        assert.ok(sfx.text === '' || sfx.text === '…', sfx.text);
+        assert.ok(!/阴茎/.test(sfx.text));
+
+        // Keep prior wet-sfx strip intact
+        const drop = sanitize.sanitizeMtCueText('咕咚、咕咚…咕咚', '…ごくっ、ごくっ…ごくっ', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(drop.text === '…' || drop.text === '');
+
+        const iku = sanitize.correctZhDomainMistranslations('行', 'いく…いくいくいく…');
+        assert.ok(iku.changed);
+        assert.strictEqual(iku.text, '要去了');
+
+        // Do not rewrite 不行了
+        const dame = sanitize.correctZhDomainMistranslations('啊、不行了', 'あ、だめぇ…');
+        assert.ok(/不行了/.test(dame.text), dame.text);
+
+        const lick = sanitize.correctZhDomainMistranslations(
+            '呵',
+            'はぁ…こっちももっと舐めて…おいてくれそう…',
+        );
+        assert.ok(lick.changed);
+        assert.ok(/舔/.test(lick.text), lick.text);
+
+        // Anti-regression: kiniri
+        const liking = sanitize.sanitizeMtCueText('哈啊', '気に入っちゃってるじゃん…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/中意/.test(liking.text) && !/进去/.test(liking.text), liking.text);
+    });
+
+    it('SNOS-245: opening BGM/SFX false ASR + iku→行了 + yame shoot halluc', () => {
+        assert.ok(sanitize.isShioHitSfxOnlyJa('シオオォォッ!'));
+        assert.ok(sanitize.isShioHitSfxOnlyJa('シオシオシオシオシッ!'));
+        assert.ok(sanitize.isWetOralSfxOnlyJa('ちゅばっ、ちゅばっ、ちゅばっ!'));
+        assert.ok(sanitize.isWetOralSfxOnlyJa('ちゅばっ'));
+
+        for (const [zh, ja] of [
+            ['初音哦…哦！', 'シオオォォッ!'],
+            ['初音…初音啊！', 'シオシオシオシオシッ!'],
+            ['湿哦…哦！', 'ぶぶシオオォォッ! ぱ'],
+            ['Juventusbu…bu! 哼', 'じゅぶぶぶぶぶぶぶぶぶぶぶっ! ん'],
+            ['吸吧，吸吧，吸吧！', 'ちゅばっ、ちゅばっ、ちゅばっ!'],
+            ['吸吧', 'ちゅばっ'],
+            ['吸吧！', 'ちゅばっ!'],
+            ['亚莉罗大明撒', 'アヤロダイミッサ'],
+        ]) {
+            const r = sanitize.sanitizeMtCueText(zh, ja, { contentProfile: 'av_soft' });
+            assert.ok(r.text === '' || r.text === '…', `${ja} → ${r.text}`);
+            assert.ok(!/初音|吸吧|亚莉|湿哦|Juventus/i.test(r.text), r.text);
+        }
+
+        const bump = sanitize.sanitizeMtCueText('嗯 bump 哼哼…', 'んぶっんんっ', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(!/\bbump\b/i.test(bump.text), bump.text);
+        assert.ok(/嗯|哼/.test(bump.text), bump.text);
+
+        // Real「初音」name in JA must not be blanked away from lexical ZH
+        const name = sanitize.sanitizeMtCueText(
+            '请对着镜头说出你的名字，',
+            '初音のカメラに向かって名前をお願いします',
+            { contentProfile: 'av_soft' },
+        );
+        assert.ok(/名字|镜头/.test(name.text), name.text);
+
+        const xingle = sanitize.correctZhDomainMistranslations(
+            '行了，行了…行了…',
+            'いく、いくいくいく…',
+        );
+        assert.ok(xingle.changed);
+        assert.ok(/要去了/.test(xingle.text) && !/行了/.test(xingle.text), xingle.text);
+
+        const xingle2 = sanitize.correctZhDomainMistranslations('行了行了…', 'いくいく…');
+        assert.ok(xingle2.changed);
+        assert.ok(/要去了/.test(xingle2.text) && !/行了/.test(xingle2.text), xingle2.text);
+
+        const yame = sanitize.correctZhDomainMistranslations('哈…要射了…', 'はぁ…りゃめ…');
+        assert.ok(yame.changed);
+        assert.ok(/不要/.test(yame.text) && !/要射/.test(yame.text), yame.text);
+
+        // イッた / イきゅ climax scraps → 射了 / 要射了
+        const itta = sanitize.correctZhDomainMistranslations('啊、射了…嗯呼', 'ああイッた…んふぅ');
+        assert.ok(itta.changed);
+        assert.ok(/去了/.test(itta.text) && !/射了/.test(itta.text), itta.text);
+        const ikyu = sanitize.correctZhDomainMistranslations('哈…要射了…', 'はぁ…イきゅ…');
+        assert.ok(ikyu.changed);
+        assert.ok(/要去了/.test(ikyu.text) && !/要射/.test(ikyu.text), ikyu.text);
+
+        const asr = sanitize.correctJaAsrDomainMishears('無用不明です…');
+        assert.ok(asr.changed);
+        assert.ok(/名前不明/.test(asr.text), asr.text);
+
+        const mixedChu = sanitize.sanitizeMtCueText('吸吧…嗯哈…', 'ちゅばっ…んはっ…', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(!/吸吧/.test(mixedChu.text), mixedChu.text);
+        assert.ok(/嗯|哈/.test(mixedChu.text), mixedChu.text);
+
+        const chan = sanitize.correctZhDomainMistranslations(
+            '嗯！ 啊我小初音…去了…去了…',
+            'んっ! ああ私ちゃんちゃん…イクイクイクイク…',
+        );
+        assert.ok(chan.changed);
+        assert.ok(!/初音/.test(chan.text), chan.text);
     });
 });

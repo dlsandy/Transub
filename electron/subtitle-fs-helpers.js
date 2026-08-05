@@ -123,9 +123,85 @@ function unlinkSubtitleFilesQuietly(filePaths) {
     }
 }
 
+/**
+ * After an Engine dual job: write player-friendly merged SRT (same as TWAI),
+ * optionally delete source/target tracks. Always merges when mergeBilingualSubtitles
+ * is on — do not require *.dual.ass to exist first.
+ *
+ * @param {object} outPaths - { sourceSubtitlePath, targetSubtitlePath, bilingualSubtitlePath, subtitlePath }
+ * @param {object} options
+ * @returns {{ outPaths: object, mergedPath: string, deletedSources: boolean, detail: string }}
+ */
+function finalizeEngineDualMerge(outPaths = {}, options = {}) {
+    const next = {
+        sourceSubtitlePath: String(outPaths.sourceSubtitlePath || '').trim(),
+        targetSubtitlePath: String(outPaths.targetSubtitlePath || '').trim(),
+        bilingualSubtitlePath: String(outPaths.bilingualSubtitlePath || '').trim(),
+        subtitlePath: String(outPaths.subtitlePath || '').trim(),
+    };
+    const wantMerge = !!options.mergeBilingualSubtitles;
+    const wantDelete = wantMerge && !!options.deleteSourcesAfterMergeBilingual;
+    if (!wantMerge || !next.sourceSubtitlePath || !next.targetSubtitlePath) {
+        return {
+            outPaths: next,
+            mergedPath: '',
+            deletedSources: false,
+            detail: next.bilingualSubtitlePath ? '完成（含双语 ASS）' : '完成',
+        };
+    }
+
+    let mergedPath = '';
+    try {
+        mergedPath = writeMergedBilingualSubtitleFiles(
+            next.sourceSubtitlePath,
+            next.targetSubtitlePath,
+            {
+                primaryTrack: options.dualPrimaryTrack || 'target',
+                lineOrder: options.dualLineOrder || 'target-first',
+                nameAsVideoStem: true,
+            },
+        );
+    } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        return {
+            outPaths: next,
+            mergedPath: '',
+            deletedSources: false,
+            detail: next.bilingualSubtitlePath ? '完成（含双语 ASS）' : '完成',
+            error,
+        };
+    }
+
+    if (mergedPath) {
+        next.bilingualSubtitlePath = mergedPath;
+        next.subtitlePath = mergedPath;
+    }
+
+    let deletedSources = false;
+    if (wantDelete && mergedPath) {
+        for (const p of [next.sourceSubtitlePath, next.targetSubtitlePath]) {
+            if (!p || p === next.bilingualSubtitlePath || p === mergedPath) continue;
+            try {
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            } catch { /* ignore */ }
+        }
+        next.sourceSubtitlePath = '';
+        next.targetSubtitlePath = '';
+        deletedSources = true;
+    }
+
+    return {
+        outPaths: next,
+        mergedPath,
+        deletedSources,
+        detail: deletedSources ? '已合并并清理原轨' : '已合并双语',
+    };
+}
+
 module.exports = {
     dualTargetPathFromSource,
     renameStemSubtitlesWithSuffix,
     writeMergedBilingualSubtitleFiles,
     unlinkSubtitleFilesQuietly,
+    finalizeEngineDualMerge,
 };

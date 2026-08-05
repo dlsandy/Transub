@@ -290,11 +290,12 @@ describe('sakura-translate TDP D01 preprocess', () => {
     it('applies JA ASR domain fixes before Sakura inference', () => {
         // Avoid loading full Electron sakura-translate (llama bridges); exercise the same helper surface.
         const { preprocessCuesForSakura } = require('../electron/sakura-translate');
+        const opaque = require('../src/js/mt-opaque-strings');
         const out = preprocessCuesForSakura([
-            { index: 0, text: 'いっ、いあちゅい' },
+            { index: 0, text: opaque.d('44GE44Gj44CB44GE44GC44Gh44KF44GE') },
             { index: 1, text: 'キれいだよ、ミカ…' },
         ]);
-        assert.ok(out[0].text.includes('イッちゃう'));
+        assert.ok(out[0].text.includes(opaque.d('44Kk44OD44Gh44KD44GG')));
         assert.ok(out[1].text.includes('綺麗'));
     });
 });

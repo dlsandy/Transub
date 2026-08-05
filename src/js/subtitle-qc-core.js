@@ -516,7 +516,7 @@
                 removeSymbolOnly: opts.removeNoise,
                 removeDuplicates: opts.removeDuplicates,
                 removeHallucinations: opts.removeNoise && opts.removeHallucinations,
-                blankInsteadOfRemove: false,
+                blankInsteadOfRemove: options.blankInsteadOfRemove === true,
             });
             working = noise.cues.map((c) => ({
                 startMs: c.startMs,
@@ -524,6 +524,7 @@
                 text: c.text ?? '',
             }));
             stats.noiseRemoved = Number(noise.stats?.removed) || 0;
+            stats.noiseBlanked = Number(noise.stats?.blanked) || 0;
             stats.duplicatesRemoved = Number(noise.stats?.duplicate) || 0;
         }
 

@@ -22,6 +22,16 @@
         global.TransubSubtitleFluency = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleFluencyCoreFactory(splitCore, jaNames) {
+    let mtOpaque = null;
+    try {
+        mtOpaque = (typeof module !== 'undefined' && module.exports)
+            ? require('./mt-opaque-strings')
+            : (globalThis && globalThis.TransubMtOpaque);
+    } catch (_) {
+        mtOpaque = null;
+    }
+    const JA_MID_CUT_RE = mtOpaque?.RE?.chinchiTruncSrc || /(?:ご|少)$/;
+
     const CJK_PARTICLES = new Set([
         '的', '了', '着', '过', '和', '与', '及', '或', '在', '把', '被', '对', '向', '从', '给',
         '吗', '呢', '吧', '啊', '呀', '嘛', '哎', '嗯',
@@ -332,8 +342,8 @@
         const t = String(text || '').trim();
         if (!t || /[。！？!?]$/.test(t)) return false;
         const plain = t.replace(/\s+/g, '');
-        // Explicit mid-word cuts seen in AV ASR (ごめん / 少し / ちんちん …)
-        if (/(?:ご|少|ちんち|あたよ|ちょっと少)$/.test(plain)) return true;
+        // Explicit mid-word cuts seen in AV ASR
+        if (JA_MID_CUT_RE.test(plain)) return true;
         if (/[てでにとをはがのっンん]$/.test(plain) && plain.length >= 6) return true;
         return false;
     }
@@ -467,12 +477,15 @@
         '字幕：', 'subtitles by', 'thanks for watching', 'thank you for watching', 'the end',
         '本集', '本集。',
         '寂寞', '寂寞酷', '寂寞曲', '寂寞笑',
-        '好厉害', '准备',
+        // Do NOT list soft-AV fills like 好厉害 / 哈啊 — post-batch would wipe MT prefills.
+        '准备',
         // Opening BGM / logo echoes (IPZZ-745)
         'おわり', 'おわり。', '終わり', '終わり。',
         'ユーモア', 'ユーモア。',
         'the end.', 'The End', 'THE END',
     ]);
+    // Soft-AV / smart-translate deterministic fills — never treat as short-duration hallucination.
+    const SOFT_INTERJECTION_KEEP_RE = /^(?:哈啊?|嗯嗯?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|好的?|是啊|这个|那个|不|呐|喂|咦|可以|遵命|好厉害|谢谢|再见|再见啦|原来如此|等一下|糟了|真棒|好大|啧|因为|那就)[…·.•。．.!！?？\s]*$/u;
     // JA YouTube / soft-scene filler often emitted as whole cues by Whisper
     // Single "." / "…" music-bed hallucinations are common on film English ASR.
     const HALLUCINATION_RE = /^(?:[Oo○〇◯●]{2,}|[・･.。…]{1,}|[♪♫♩♬◆◇■□★☆●○◎※]+|字幕\s*[:：by].*|thanks?\s+for\s+watching.*|ご視聴.*ありがとう.*|チャンネル登録.*|高評価.*|グッドボタン.*|李宗盛.*)$/i;
@@ -544,6 +557,8 @@
         if (raw.length <= 24 && LATIN_CJK_JAM_RE.test(raw)) return true;
         if (hasHeavyRepetition(raw) && textCharCount(raw) <= 24) return true;
         if (/https?:\/\/|www\./i.test(raw) && textCharCount(raw) <= 40) return true;
+        // Keep soft-AV moan / short stock fills (嗯嗯 / 哈啊) on translate tracks.
+        if (SOFT_INTERJECTION_KEEP_RE.test(raw)) return false;
         if (cue) {
             const chars = textCharCount(raw);
             const dur = cueDurationMs(cue);
@@ -598,7 +613,8 @@
             normalizeAsrText: options.normalizeAsrText !== false,
             hallucinationMaxChars: options.hallucinationMaxChars,
             hallucinationMaxDurMs: options.hallucinationMaxDurMs,
-            // Translate tracks: blank noise instead of deleting so cue count stays aligned
+            // Opt-in: blank noise to a placeholder instead of deleting (legacy align mode).
+            // Prefer paired JA↔ZH deletion via removeAlignedNoiseFromCuePairs.
             blankInsteadOfRemove: options.blankInsteadOfRemove === true,
             blankPlaceholder: String(options.blankPlaceholder || '…'),
         };
@@ -670,6 +686,151 @@
         return { cues: kept, stats, removedIndexes };
     }
 
+    /**
+     * Classify why a cue is noise (empty / fragment / SFX / symbol / hallucination / duplicate).
+     * Returns '' when the cue should be kept.
+     */
+    function classifyNoiseCue(cue, options = {}, prevKeptText = '') {
+        const opts = {
+            removeEmpty: options.removeEmpty !== false,
+            removeFragments: options.removeFragments !== false,
+            removeSoundEffects: options.removeSoundEffects !== false,
+            removeSymbolOnly: options.removeSymbolOnly !== false,
+            removeDuplicates: options.removeDuplicates === true,
+            removeHallucinations: options.removeHallucinations === true,
+            hallucinationMaxChars: options.hallucinationMaxChars,
+            hallucinationMaxDurMs: options.hallucinationMaxDurMs,
+        };
+        const text = String(cue?.text || '').trim();
+        let reason = isNoiseCue(text, opts);
+        if (!reason && opts.removeHallucinations && isHallucinationCue(cue, {
+            maxChars: opts.hallucinationMaxChars,
+            maxDurMs: opts.hallucinationMaxDurMs,
+        })) {
+            reason = 'hallucination';
+        }
+        if (!reason && opts.removeDuplicates && prevKeptText && text === prevKeptText && text.length >= 1) {
+            reason = 'duplicate';
+        }
+        return reason || '';
+    }
+
+    /**
+     * Delete noise from aligned JA+ZH cue lists together (union of noisy indexes),
+     * so cue counts stay matched without blanking ZH to 「…」.
+     * @returns {{ zhCues: object[], jaCues: object[], stats: object, removedIndexes: number[], skipped?: boolean, reason?: string }}
+     */
+    function removeAlignedNoiseFromCuePairs(zhCues, jaCues, options = {}) {
+        const zhList = Array.isArray(zhCues) ? zhCues : [];
+        const jaList = Array.isArray(jaCues) ? jaCues : [];
+        if (!zhList.length || !jaList.length) {
+            return {
+                zhCues: zhList,
+                jaCues: jaList,
+                stats: { removed: 0, kept: 0 },
+                removedIndexes: [],
+                skipped: true,
+                reason: 'empty',
+            };
+        }
+        if (zhList.length !== jaList.length) {
+            return {
+                zhCues: zhList,
+                jaCues: jaList,
+                stats: { removed: 0, kept: 0 },
+                removedIndexes: [],
+                skipped: true,
+                reason: 'length_mismatch',
+            };
+        }
+
+        const zhOpts = {
+            removeEmpty: options.removeEmpty !== false,
+            removeFragments: options.removeFragments !== false,
+            removeSoundEffects: options.removeSoundEffects !== false,
+            removeSymbolOnly: options.removeSymbolOnly !== false,
+            removeDuplicates: false,
+            removeHallucinations: options.removeHallucinations !== false,
+            hallucinationMaxChars: options.hallucinationMaxChars,
+            hallucinationMaxDurMs: options.hallucinationMaxDurMs,
+        };
+        // Dedupe consecutive identical lines on JA only (moans may repeat on ZH).
+        const jaOpts = {
+            ...zhOpts,
+            removeDuplicates: options.removeDuplicates !== false,
+            normalizeAsrText: options.normalizeAsrText !== false,
+            stripAsrNameLoops: options.stripAsrNameLoops !== false,
+        };
+
+        let zhWork = zhList;
+        let jaWork = jaList;
+        let asrLoopChanged = 0;
+        let asrNormChanged = 0;
+        if (jaOpts.normalizeAsrText) {
+            const normalized = normalizeAsrTextInCues(jaWork);
+            jaWork = normalized.cues;
+            asrNormChanged = normalized.changed || 0;
+        }
+        if (jaOpts.stripAsrNameLoops) {
+            const cleaned = stripAsrNameLoopsInCues(jaWork);
+            jaWork = cleaned.cues;
+            asrLoopChanged = cleaned.changed || 0;
+        }
+
+        const drop = new Set();
+        const reasonAt = [];
+        let prevJaKept = '';
+        let prevZhKept = '';
+        for (let i = 0; i < zhWork.length; i += 1) {
+            const zhReason = classifyNoiseCue(zhWork[i], zhOpts, prevZhKept);
+            const jaReason = classifyNoiseCue(jaWork[i], jaOpts, prevJaKept);
+            const reason = zhReason || jaReason;
+            if (reason) {
+                drop.add(i);
+                reasonAt[i] = reason;
+                continue;
+            }
+            prevZhKept = String(zhWork[i]?.text || '').trim();
+            prevJaKept = String(jaWork[i]?.text || '').trim();
+        }
+
+        const zhOut = [];
+        const jaOut = [];
+        const removedIndexes = [];
+        const stats = {
+            removed: 0,
+            kept: 0,
+            blanked: 0,
+            empty: 0,
+            fragment: 0,
+            soundEffect: 0,
+            symbolOnly: 0,
+            duplicate: 0,
+            hallucination: 0,
+            asrNameLoops: asrLoopChanged,
+            asrNormalize: asrNormChanged,
+            paired: true,
+        };
+        for (let i = 0; i < zhWork.length; i += 1) {
+            if (drop.has(i)) {
+                removedIndexes.push(i);
+                stats.removed += 1;
+                const reason = reasonAt[i];
+                if (reason && stats[reason] != null) stats[reason] += 1;
+                continue;
+            }
+            zhOut.push(zhWork[i]);
+            jaOut.push(jaWork[i]);
+            stats.kept += 1;
+        }
+        return {
+            zhCues: zhOut,
+            jaCues: jaOut,
+            stats,
+            removedIndexes,
+        };
+    }
+
     function summarizeNoiseRemoval(stats) {
         const parts = [];
         if (stats?.asrNormalize) parts.push(`ASR规范化 ${stats.asrNormalize}`);
@@ -690,6 +851,153 @@
             return `已清理（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条时间轴`;
         }
         return `将删除 ${stats.removed} 条（${parts.join(' · ') || '杂音'}），保留 ${stats.kept} 条`;
+    }
+
+    /** Strip hearts / music / soft decoration so moan detectors see the kana/CJK core. */
+    function stripInterjectionDecor(text) {
+        return String(text || '')
+            .replace(/[♡♥❤♪☆★\*＊]+/g, '')
+            .trim();
+    }
+
+    /**
+     * One JA token that is only a discourse filler / laugh / moan run (no concrete dialogue).
+     * Tokens are split on 、，,・ and whitespace by the caller.
+     */
+    function isPureInterjectionJaToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[。．.!！?？]+$/g, '').trim();
+        if (!t) return true;
+        // Meaningful short words that are kana-only and must never be compacted away.
+        if (/^(?:いいえ|いや+|おはよう.*|おかえり.*|お願い.*|あなた|あいつ|あいつめ)$/i.test(t)) {
+            return false;
+        }
+        // Discourse fillers / soft calls (whole token).
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)$/i.test(t)) {
+            return true;
+        }
+        // Soft laughs / muffled crumbs.
+        if (/^(?:[うウ]?ふふ+[うっゥッ]*|[えエ]?へへ+[えっェッ]*|[あア]?はは+[あっァッ]*|んふ[ぅうゥウっッ]*|くぅ+[っッ]?|くっ|むぅ+|んむ+|もぐ+|むにゃ[ぁア]*)$/i.test(t)) {
+            return true;
+        }
+        // Katakana shout / breath runs.
+        if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+|ヒャッ?|ヤッ)$/i.test(t)) {
+            return true;
+        }
+        // Breath / moan run: only vowel·h·n·small-tsu style kana (after decor strip).
+        if (/^[あぁアァいぃイィうぅウゥえぇエェおぉオォはハひヒふフへヘほホッッんンくクむムー〜～ー]+$/i.test(t)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Pure JA interjection / moan cue (no concrete dialogue).
+     * Used by optional compact-delivery to drop paired JA+ZH blocks.
+     * Accepts internal separators (はぁ、はぁ / うん、うん) and soft laughs (ふふっ / くぅ).
+     */
+    function isPureInterjectionJa(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        // Ellipsis / symbol-only placeholders.
+        if (/^[。．.!！?？…·.•\s\-—_~～ー]+$/.test(t)) return true;
+        // Fast path: single filler / moan without internal dialogue commas of content.
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+            return true;
+        }
+        if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム]+$/i.test(t)) {
+            if (!/^(?:いいえ|いや+|おはよう)/i.test(t.replace(/[。．.!！?？…·.•\s\-—_~～ー、，,・]+/g, ''))) {
+                return true;
+            }
+        }
+        // Separator-tolerant: every token must be a pure atom / moan run.
+        const parts = t
+            .replace(/[。．.!！?？]+$/g, '')
+            .split(/[、，,・·.•…\s]+/)
+            .map((p) => p.trim())
+            .filter(Boolean);
+        if (!parts.length) return true;
+        return parts.every((p) => isPureInterjectionJaToken(p));
+    }
+
+    /**
+     * Pure ZH interjection / moan / blank slot (no concrete dialogue).
+     * Excludes meaningful short replies like 好的 / 等一下 / 好厉害.
+     */
+    function isPureInterjectionZh(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return true;
+        if (/^(?:…+|\.{2,}|……)$/.test(t)) return true;
+        // Soft-AV moan fills that smart-translate may prefill (allow mid separators).
+        if (/^(?:(?:哈啊?|嗯嗯?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶)[…·.•。．.!！?？\s]*)+$/u.test(t)) {
+            return true;
+        }
+        // Filler stubs (aligned with mt-sanitize isFillerOnlyZh, minus discourse 请/来 used in long-JA recovery).
+        if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?)$/.test(t)) {
+            return true;
+        }
+        const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
+        if (!bare) return true;
+        return /^(?:嗯+|啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|哎呀|嗨|嘿|哼|嘶)+$/.test(bare);
+    }
+
+    /**
+     * Drop cues where BOTH JA and ZH are pure interjections / moans / blank placeholders.
+     * Keeps meaningful dialogue even when it ends with particles (好舒服啊 / うん、大丈夫？).
+     * Blank JA slots count as pure so placeholder↔语气 pairs also compact.
+     * @returns {{ zhCues: object[], jaCues: object[], dropped: number, droppedIndexes: number[] }}
+     */
+    function dropPureInterjectionPairs(zhCues, jaCues) {
+        const zhList = Array.isArray(zhCues) ? zhCues : [];
+        const jaList = Array.isArray(jaCues) ? jaCues : [];
+        if (!zhList.length || !jaList.length) {
+            return {
+                zhCues: zhList,
+                jaCues: jaList,
+                dropped: 0,
+                droppedIndexes: [],
+                skipped: true,
+                reason: 'empty',
+            };
+        }
+        // Conservative: require equal length for index-aligned paired drop.
+        if (zhList.length !== jaList.length) {
+            return {
+                zhCues: zhList,
+                jaCues: jaList,
+                dropped: 0,
+                droppedIndexes: [],
+                skipped: true,
+                reason: 'length_mismatch',
+            };
+        }
+        const zhOut = [];
+        const jaOut = [];
+        const droppedIndexes = [];
+        for (let i = 0; i < zhList.length; i += 1) {
+            const zhText = String(zhList[i]?.text || '');
+            const jaText = String(jaList[i]?.text || '');
+            const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
+            if (jaPure && isPureInterjectionZh(zhText)) {
+                droppedIndexes.push(i);
+                continue;
+            }
+            zhOut.push(zhList[i]);
+            jaOut.push(jaList[i]);
+        }
+        return {
+            zhCues: zhOut,
+            jaCues: jaOut,
+            dropped: droppedIndexes.length,
+            droppedIndexes,
+        };
+    }
+
+    function summarizePureInterjectionDrop(dropped) {
+        const n = Number(dropped) || 0;
+        if (n <= 0) return '未发现可精简的纯语气词条目';
+        return `精简纯语气词 ${n} 条（日中成对删除并重编号）`;
     }
 
     function lacksPunctuation(text) {
@@ -848,7 +1156,13 @@
         normalizeAsrTextInCues,
         stripAsrNameLoopsInCues,
         removeNoiseFromCues,
+        classifyNoiseCue,
+        removeAlignedNoiseFromCuePairs,
         summarizeNoiseRemoval,
+        isPureInterjectionJa,
+        isPureInterjectionZh,
+        dropPureInterjectionPairs,
+        summarizePureInterjectionDrop,
         compressRepetitionInText,
         compressRepetitionInCues,
         summarizeRepetitionCompress,

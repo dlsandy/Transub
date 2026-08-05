@@ -10,7 +10,7 @@ const outDir = path.join(root, '_advanced');
 const outfile = path.join(outDir, 'index.js');
 const entry = path.join(__dirname, 'advanced-module-entry.js');
 
-function main() {
+async function main() {
     let esbuild;
     try {
         esbuild = require('esbuild');
@@ -21,7 +21,9 @@ function main() {
 
     fs.mkdirSync(outDir, { recursive: true });
 
-    const result = esbuild.buildSync({
+    const hostHelperRe = /(?:^|[\\/])(?:advanced-llm-client|advanced-llama-server|advanced-managed-llm|advanced-license-data|advanced-llm-resolve|advanced-llm-fs|ipc-validate|app-paths)(?:\.js)?$/;
+
+    const result = await esbuild.build({
         entryPoints: [entry],
         bundle: true,
         platform: 'node',
@@ -35,6 +37,21 @@ function main() {
             'electron',
             'undici',
             'json5',
+        ],
+        plugins: [
+            {
+                name: 'external-host-llm-helpers',
+                setup(build) {
+                    build.onResolve({ filter: hostHelperRe }, (args) => {
+                        if (args.path.includes('node_modules')) return null;
+                        const resolved = path.isAbsolute(args.path)
+                            ? args.path
+                            : path.join(args.resolveDir, args.path);
+                        const withJs = resolved.endsWith('.js') ? resolved : `${resolved}.js`;
+                        return { path: withJs, external: true };
+                    });
+                },
+            },
         ],
         logLevel: 'warning',
     });
@@ -60,4 +77,7 @@ function main() {
     console.log(`[build-advanced] wrote ${path.relative(root, outfile)} (${stat.size} bytes)`);
 }
 
-main();
+main().catch((err) => {
+    console.error('[build-advanced]', err?.message || err);
+    process.exit(1);
+});

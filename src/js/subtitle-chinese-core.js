@@ -69,7 +69,11 @@
         return normalizeVariant(variant) !== 'simplified';
     }
 
-    /** @returns {{ direction: 's2t'|'t2s', locale: 'twp'|'tw'|'hk'|'t' }} */
+    /**
+     * 批量翻译后处理仅对繁体变体调用 OpenCC（简体目标跳过）。
+     * simplified → t2s 供编辑器手动「繁→简」等显式转换使用。
+     * @returns {{ direction: 's2t'|'t2s', locale: 'twp'|'tw'|'hk'|'t' }}
+     */
     function variantToConvertOptions(variant) {
         const v = normalizeVariant(variant);
         if (v === 'traditional-tw') return { direction: 's2t', locale: 'tw' };
@@ -221,6 +225,22 @@
     }
 
     /**
+     * OpenCC twp/tw→cn maps particle 么 (U+4E48) to 幺 (U+5E7A).
+     * Restore interrogative/particle forms; keep 老幺 / 幺蛾子 / 读数「幺」.
+     */
+    function fixMeYaoOpenCcSlip(text) {
+        const raw = String(text ?? '');
+        if (!raw.includes('幺')) return raw;
+        return raw
+            .replace(/怎幺/g, '怎么')
+            .replace(/什幺/g, '什么')
+            .replace(/那幺/g, '那么')
+            .replace(/这幺/g, '这么')
+            .replace(/多幺/g, '多么')
+            .replace(/要幺/g, '要么');
+    }
+
+    /**
      * @param {string} text
      * @param {'s2t'|'t2s'} [direction]
      * @param {{ protectTerms?: string[], locale?: 'twp'|'tw'|'hk'|'t' }} [options]
@@ -234,7 +254,10 @@
         const masked = maskProtectedTerms(raw, options.protectTerms);
         const convert = getConverter(dir, locale);
         const converted = convert(masked.text);
-        const textOut = unmaskProtectedTerms(converted, masked.slots);
+        let textOut = unmaskProtectedTerms(converted, masked.slots);
+        if (dir === 't2s') {
+            textOut = fixMeYaoOpenCcSlip(textOut);
+        }
         return {
             text: textOut,
             changed: countChangedChars(raw, textOut),

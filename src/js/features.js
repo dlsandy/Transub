@@ -16,7 +16,7 @@
             || window.alert(message);
     }
 
-    function appendInferLog(line) {
+    function appendInferLog(line, tone) {
         const host = document.getElementById('inferLogHost');
         if (!host) return;
         const placeholder = host.textContent || '';
@@ -24,16 +24,35 @@
             placeholder.includes('引擎日志将显示在此处')
             || placeholder.includes('TransWithAI日志将显示在此处')
             || placeholder.includes('infer 日志将显示在此处')
+            || placeholder.includes('Transub Engine 日志将显示在此处')
         ) {
             host.textContent = '';
         }
         const row = document.createElement('div');
-        row.className = 'infer-log-line text-gray-600';
+        const colors = {
+            ok: 'text-emerald-700',
+            warn: 'text-amber-700',
+            err: 'text-red-700',
+            info: 'text-gray-600',
+        };
+        row.className = `infer-log-line ${colors[tone] || colors.info}`;
         row.textContent = line;
         host.appendChild(row);
         while (host.childElementCount > 400) host.firstChild?.remove();
         const panel = host.closest('.log-panel') || host;
         panel.scrollTop = panel.scrollHeight;
+    }
+
+    function activateLogTab(tab) {
+        const want = tab === 'infer' ? 'infer' : 'app';
+        document.querySelectorAll('.log-tab-btn').forEach((b) => {
+            b.classList.toggle('active', b.dataset.logTab === want);
+        });
+        document.querySelectorAll('.log-panel').forEach((p) => {
+            const active = p.id === (want === 'infer' ? 'logPanelInfer' : 'logPanelApp');
+            p.classList.toggle('active', active);
+            if (active) p.scrollTop = p.scrollHeight;
+        });
     }
 
     async function openEngineRawLog() {
@@ -48,13 +67,7 @@
     function bindLogTabs() {
         document.querySelectorAll('.log-tab-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
-                const tab = btn.dataset.logTab;
-                document.querySelectorAll('.log-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.logTab === tab));
-                document.querySelectorAll('.log-panel').forEach((p) => {
-                    const active = p.id === (tab === 'infer' ? 'logPanelInfer' : 'logPanelApp');
-                    p.classList.toggle('active', active);
-                    if (active) p.scrollTop = p.scrollHeight;
-                });
+                activateLogTab(btn.dataset.logTab);
             });
         });
     }
@@ -75,12 +88,45 @@
         if (current) sel.value = current;
     }
 
-    async function applyPreset(presetId) {
+    async function applyPreset(presetId, { persist = false, autoSense } = {}) {
         const res = await electron?.transWithAiGetPresets?.();
         const preset = res?.presets?.find((p) => p.id === presetId);
         if (!preset?.options || !core()?.applyOptionsToForm) return;
         const current = core().buildSavedOptionsFromForm();
-        core().applyOptionsToForm({ ...current, ...preset.options });
+        const next = { ...current, ...preset.options };
+        if (autoSense !== undefined) next.autoSense = !!autoSense;
+        await core().applyOptionsToForm(next);
+        if (autoSense !== undefined) {
+            core().setAutoSenseEnabled?.(!!autoSense, { persist: false });
+        }
+        const sel = document.getElementById('presetSelect');
+        if (sel) {
+            const has = [...sel.options].some((o) => o.value === presetId);
+            if (has) sel.value = presetId;
+        }
+        core().updateParamsSummary?.();
+        if (persist) {
+            const opts = {
+                ...core().buildSavedOptionsFromForm(),
+                ...(autoSense !== undefined ? { autoSense: !!autoSense } : {}),
+                ...(preset.options.contentProfile
+                    ? { contentProfile: preset.options.contentProfile }
+                    : {}),
+            };
+            const saveRes = await electron?.transWithAiSaveOptions?.(opts);
+            if (saveRes?.ok !== false) {
+                core().setSavedOptionsSnapshot?.(opts);
+                core().markSettingsDirty?.(false);
+                core().setSaveParamsStatus?.(`已应用并保存预设「${preset.name}」`, 'ok');
+                core().appendLog(
+                    autoSense === false
+                        ? `已应用并保存预设：${preset.name}（已关闭智能感知）`
+                        : `已应用并保存预设：${preset.name}`,
+                    'ok',
+                );
+                return;
+            }
+        }
         core().markSettingsDirty?.(true);
         core().setSaveParamsStatus?.(`已应用预设「${preset.name}」，请点「保存设置」写入磁盘`, 'warn');
         core().appendLog(`已应用预设：${preset.name}（尚未保存）`, 'info');
@@ -797,5 +843,12 @@
         setTimeout(init, 0);
     }
 
-    global.TransubFeatures = { loadPresets, showInstallWizard, showSubtitlePreview, appendInferLog };
+    global.TransubFeatures = {
+        loadPresets,
+        applyPreset,
+        showInstallWizard,
+        showSubtitlePreview,
+        appendInferLog,
+        activateLogTab,
+    };
 }(window));

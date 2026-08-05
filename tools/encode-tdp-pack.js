@@ -32,7 +32,8 @@ function parseArgs(argv) {
         am1: DEFAULT_AM1,
         domain: DEFAULT_DOMAIN,
         minAppVersion: '3.0.0',
-        notes: '领域识别与用语修正更新',
+        notes: '',
+        notesSet: false,
         cdnBase: 'https://www.transub.cc/tdp',
     };
     for (const a of argv) {
@@ -44,10 +45,26 @@ function parseArgs(argv) {
         else if (a.startsWith('--am1=')) out.am1 = path.resolve(a.slice(6).trim());
         else if (a.startsWith('--domain=')) out.domain = path.resolve(a.slice(9).trim());
         else if (a.startsWith('--min-app=')) out.minAppVersion = a.slice(10).trim();
-        else if (a.startsWith('--notes=')) out.notes = a.slice(8).trim();
+        else if (a.startsWith('--notes=')) {
+            out.notes = a.slice(8).trim();
+            out.notesSet = true;
+        }
         else if (a.startsWith('--cdn-base=')) out.cdnBase = a.slice(11).trim().replace(/\/+$/, '');
     }
+    if (!out.notesSet) out.notes = defaultUpdateNotes();
     return out;
+}
+
+/** Default CDN notes: `Update YYYY-MM-DD HH:mm:ss` (local time). */
+function defaultUpdateNotes(now = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const y = now.getFullYear();
+    const m = pad(now.getMonth() + 1);
+    const d = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const mm = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `Update ${y}-${m}-${d} ${hh}:${mm}:${ss}`;
 }
 
 function loadPrivateKeyB64() {

@@ -8,6 +8,18 @@
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="vendor/app.css">
+    <script>
+        (function () {
+            try {
+                var dark = localStorage.getItem('transub.mainTheme') === 'dark'
+                    || localStorage.getItem('transub-editor-theme') === 'dark';
+                if (dark) {
+                    document.documentElement.classList.add('main-theme-dark');
+                    document.documentElement.style.colorScheme = 'dark';
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
     <style>
         /* Prefer % over 100vh: Electron/Windows maximize often leaves vh stuck at the pre-max size. */
         html, body { height: 100%; width: 100%; }
@@ -20,6 +32,52 @@
             width: 18rem;
             min-width: 16rem;
         }
+        .subtitle-task-table th.task-col-sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        .subtitle-task-table th.task-col-sortable:hover {
+            color: #4b5563;
+        }
+        .subtitle-task-table th.task-col-sortable .task-col-sort-ind {
+            display: inline-block;
+            margin-left: 0.2rem;
+            font-size: 9px;
+            line-height: 1;
+            opacity: 0.35;
+            vertical-align: middle;
+        }
+        .subtitle-task-table th.task-col-sortable.is-sort-asc .task-col-sort-ind,
+        .subtitle-task-table th.task-col-sortable.is-sort-desc .task-col-sort-ind {
+            opacity: 0.9;
+            color: #7c3aed;
+        }
+        .subtitle-task-table th.task-col-sortable .task-col-sort-ind::before {
+            content: '\f0dc'; /* fa-sort */
+            font-family: FontAwesome;
+        }
+        .subtitle-task-table th.task-col-sortable.is-sort-asc .task-col-sort-ind::before {
+            content: '\f0de'; /* fa-sort-asc */
+        }
+        .subtitle-task-table th.task-col-sortable.is-sort-desc .task-col-sort-ind::before {
+            content: '\f0dd'; /* fa-sort-desc */
+        }
+        html.main-theme-dark .subtitle-task-table th.task-col-sortable:hover {
+            color: #e5e7eb;
+        }
+        html.main-theme-dark .subtitle-task-table th.task-col-sortable.is-sort-asc .task-col-sort-ind,
+        html.main-theme-dark .subtitle-task-table th.task-col-sortable.is-sort-desc .task-col-sort-ind {
+            color: #c4b5fd;
+        }
+        .task-col-context-menu {
+            position: fixed;
+            z-index: 80;
+            margin-top: 0;
+            right: auto;
+            top: auto;
+            width: 14rem;
+        }
+        .task-col-context-menu.hidden { display: none !important; }
         .subtitle-task-table td.col-status {
             overflow: hidden;
         }
@@ -93,6 +151,40 @@
             padding: 0;
             flex-shrink: 0;
             border-radius: 0.25rem;
+        }
+        .task-row-context-menu {
+            position: fixed;
+            z-index: 80;
+            margin-top: 0;
+            right: auto;
+            top: auto;
+            width: 12.5rem;
+        }
+        .task-row-context-menu.hidden { display: none !important; }
+        .task-row-context-menu .post-task-menu-sep {
+            height: 1px;
+            margin: 0.25rem 0;
+            background: #f3f4f6;
+        }
+        .task-row-context-menu .post-task-menu-item:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        .task-row-context-menu .post-task-menu-item.is-danger {
+            color: #dc2626;
+        }
+        .task-row-context-menu .post-task-menu-item.is-danger:hover:not(:disabled) {
+            background: #fef2f2;
+        }
+        html.main-theme-dark .task-row-context-menu .post-task-menu-sep {
+            background: #374151;
+        }
+        html.main-theme-dark .task-row-context-menu .post-task-menu-item.is-danger {
+            color: #fca5a5;
+        }
+        html.main-theme-dark .task-row-context-menu .post-task-menu-item.is-danger:hover:not(:disabled) {
+            background: rgba(69, 10, 10, 0.45);
         }
         /* Solid amber CTA — Tailwind purge may omit bg-amber-600 / text-white combo */
         #qcBannerFixBtn.qc-banner-fix-btn {
@@ -416,6 +508,171 @@
         /* Main toolbar tip sits above chips / drop zone */
         #paramsChips .settings-tip-bubble {
             z-index: 60;
+        }
+        /* One-time 3.0.5 Anime Whisper preset coachmark */
+        .feature-tip-bubble {
+            position: relative;
+            z-index: 40;
+            max-width: 28rem;
+            margin-top: 0.15rem;
+        }
+        .feature-tip-bubble.hidden {
+            display: none !important;
+        }
+        .feature-tip-bubble-arrow {
+            position: absolute;
+            left: 11.5rem;
+            top: -6px;
+            width: 12px;
+            height: 12px;
+            background: #111827;
+            transform: rotate(45deg);
+            border-radius: 2px;
+            box-shadow: -1px -1px 0 rgba(0, 0, 0, 0.06);
+        }
+        .feature-tip-bubble-body {
+            position: relative;
+            background: #111827;
+            color: #f9fafb;
+            border-radius: 0.75rem;
+            padding: 0.7rem 0.85rem 0.75rem;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+        }
+        .feature-tip-title {
+            margin: 0;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            color: #e9d5ff;
+        }
+        .feature-tip-text {
+            margin: 0.35rem 0 0;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            color: #e5e7eb;
+        }
+        .feature-tip-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            margin-top: 0.65rem;
+        }
+        .feature-tip-btn {
+            border-radius: 0.5rem;
+            padding: 0.3rem 0.7rem;
+            font-size: 0.72rem;
+            font-weight: 550;
+            line-height: 1.25;
+            cursor: pointer;
+        }
+        .feature-tip-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .feature-tip-btn-primary {
+            border: 1px solid #7c3aed;
+            background: #7c3aed;
+            color: #fff;
+        }
+        .feature-tip-btn-primary:hover:not(:disabled) {
+            background: #6d28d9;
+            border-color: #6d28d9;
+        }
+        .feature-tip-btn-ghost {
+            border: 1px solid #4b5563;
+            background: transparent;
+            color: #d1d5db;
+        }
+        .feature-tip-btn-ghost:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.06);
+            color: #f3f4f6;
+        }
+        html.main-theme-dark .feature-tip-bubble-arrow,
+        html.main-theme-dark .feature-tip-bubble-body {
+            background: #0b1220;
+        }
+        html.main-theme-dark .feature-tip-bubble-arrow {
+            box-shadow: -1px -1px 0 rgba(255, 255, 255, 0.04);
+        }
+        .anime-whisper-quick-btn {
+            position: relative;
+            gap: 0.3rem;
+            padding-left: 0.45rem;
+            padding-right: 0.55rem;
+            border-color: #e5e7eb;
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+        .anime-whisper-quick-btn:hover {
+            border-color: #d1d5db;
+            background: #e5e7eb;
+            color: #4b5563;
+        }
+        .anime-whisper-quick-btn[aria-pressed="true"] {
+            border-color: #8b5cf6;
+            background: #ede9fe;
+            color: #5b21b6;
+            box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.35);
+        }
+        .anime-whisper-quick-btn[aria-pressed="true"]:hover {
+            border-color: #7c3aed;
+            background: #ddd6fe;
+            color: #5b21b6;
+        }
+        .anime-whisper-quick-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .anime-whisper-quick-new {
+            position: absolute;
+            top: -0.42rem;
+            right: -0.35rem;
+            z-index: 1;
+            padding: 0.05rem 0.28rem;
+            border-radius: 9999px;
+            font-size: 0.55rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            line-height: 1.2;
+            color: #fff;
+            background: #dc2626;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+            pointer-events: none;
+        }
+        .anime-whisper-quick-label {
+            max-width: 3rem;
+            font-size: 0.7rem;
+            font-weight: 650;
+            color: inherit;
+        }
+        .anime-whisper-quick-btn > .fa {
+            font-size: 0.7rem;
+            opacity: 0.85;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn {
+            border-color: #4b5563;
+            background: #374151;
+            color: #9ca3af;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn:hover {
+            border-color: #6b7280;
+            background: #4b5563;
+            color: #d1d5db;
+        }
+        html.main-theme-dark .anime-whisper-quick-btn[aria-pressed="true"] {
+            border-color: #a78bfa;
+            background: rgba(76, 29, 149, 0.45);
+            color: #e9d5ff;
+            box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.4);
+        }
+        html.main-theme-dark .anime-whisper-quick-btn[aria-pressed="true"]:hover {
+            border-color: #c4b5fd;
+            background: rgba(91, 33, 182, 0.55);
+            color: #f5f3ff;
+        }
+        html.main-theme-dark .anime-whisper-quick-label {
+            color: inherit;
         }
         .settings-row {
             display: flex;
@@ -1210,6 +1467,232 @@
             background: #a78bfa;
         }
 
+        /* Remap light Tailwind utilities under dark theme (keep out of app.css @layer) */
+        html.main-theme-dark .text-gray-800 { color: #f3f4f6 !important; }
+        html.main-theme-dark .text-gray-700 { color: #e5e7eb !important; }
+        html.main-theme-dark .text-gray-600 { color: #d1d5db !important; }
+        html.main-theme-dark .text-gray-500 { color: #9ca3af !important; }
+        html.main-theme-dark .text-gray-400 { color: #9ca3af !important; }
+        html.main-theme-dark .bg-white { background-color: #1f2937 !important; }
+        html.main-theme-dark .bg-gray-50 { background-color: #111827 !important; }
+        html.main-theme-dark .bg-gray-50\/40 { background-color: rgb(17 24 39 / 0.45) !important; }
+        html.main-theme-dark .bg-gray-50\/80 { background-color: rgb(31 41 55 / 0.85) !important; }
+        html.main-theme-dark .border-gray-200 { border-color: #4b5563 !important; }
+        html.main-theme-dark .border-gray-100 { border-color: #374151 !important; }
+        html.main-theme-dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+            border-color: #374151 !important;
+        }
+        html.main-theme-dark .hover\:bg-gray-50:hover { background-color: #374151 !important; }
+        html.main-theme-dark .hover\:bg-white:hover { background-color: #374151 !important; }
+        html.main-theme-dark .hover\:text-gray-800:hover { color: #f9fafb !important; }
+        html.main-theme-dark .hover\:text-gray-700:hover { color: #f9fafb !important; }
+
+        /* Settings / inline chrome — dark theme */
+        html.main-theme-dark .params-tab-btn {
+            color: #d1d5db;
+        }
+        html.main-theme-dark .params-tab-btn:hover {
+            background: #374151;
+            color: #f3f4f6;
+        }
+        html.main-theme-dark .params-tab-btn.active {
+            color: #c4b5fd;
+            background-color: rgba(91, 33, 182, 0.28);
+        }
+        html.main-theme-dark .params-tab-btn.is-pro-locked {
+            color: #9ca3af;
+        }
+        html.main-theme-dark .params-tab-btn.is-pro-locked:hover {
+            background: #374151;
+            color: #d1d5db;
+        }
+        html.main-theme-dark .settings-nav-group + .settings-nav-group {
+            border-top-color: #374151;
+        }
+        html.main-theme-dark .settings-nav-group-label {
+            color: #9ca3af;
+        }
+        html.main-theme-dark #paramsModal .settings-section {
+            border-color: #374151;
+            background: rgba(17, 24, 39, 0.55);
+        }
+        html.main-theme-dark #paramsModal .settings-section > legend.settings-section-title,
+        html.main-theme-dark #paramsModal .settings-section > legend {
+            color: #e5e7eb;
+        }
+        html.main-theme-dark .translate-mode-choice {
+            border-color: #4b5563;
+            background: #1f2937;
+            color: #e5e7eb;
+        }
+        html.main-theme-dark .translate-mode-choice:hover {
+            border-color: #8b5cf6;
+            background: rgba(76, 29, 149, 0.25);
+        }
+        html.main-theme-dark .translate-mode-choice:has(input:checked) {
+            border-color: #a78bfa;
+            background: rgba(76, 29, 149, 0.35);
+            box-shadow: inset 0 0 0 1px #a78bfa;
+        }
+        html.main-theme-dark .translate-mode-choice .font-medium {
+            color: #f3f4f6;
+        }
+        html.main-theme-dark #retranslateBtn,
+        html.main-theme-dark #reconstructBtn {
+            border-color: rgba(167, 139, 250, 0.45);
+            color: #c4b5fd;
+        }
+        html.main-theme-dark #retranslateBtn:hover,
+        html.main-theme-dark #reconstructBtn:hover {
+            background: rgba(76, 29, 149, 0.28);
+            border-color: #a78bfa;
+        }
+        html.main-theme-dark .engine-model-hint-pro { color: #9ca3af; }
+        html.main-theme-dark .engine-model-hint-pro strong { color: #c4b5fd; }
+        html.main-theme-dark .engine-model-card.is-ram-tight {
+            border-color: #b45309;
+            background: rgba(120, 53, 15, 0.35);
+        }
+        html.main-theme-dark .engine-model-badge.is-pro {
+            background: rgba(76, 29, 149, 0.4);
+            color: #ddd6fe;
+            border-color: #6d28d9;
+        }
+        html.main-theme-dark .engine-model-badge.is-free {
+            background: rgba(6, 78, 59, 0.45);
+            color: #6ee7b7;
+        }
+        html.main-theme-dark .engine-model-meta-row { color: #9ca3af; }
+        html.main-theme-dark .engine-model-meta-row .btn,
+        html.main-theme-dark .engine-model-card-actions .btn,
+        html.main-theme-dark .engine-model-foot-row .btn {
+            border-color: #4b5563;
+            background: #1f2937;
+            color: #e5e7eb;
+        }
+        html.main-theme-dark .engine-model-meta-row .btn:hover,
+        html.main-theme-dark .engine-model-card-actions .btn:hover,
+        html.main-theme-dark .engine-model-foot-row .btn:hover {
+            background: #374151;
+        }
+        html.main-theme-dark .engine-model-cards {
+            background: #111827;
+        }
+        html.main-theme-dark .engine-model-card {
+            border-color: #4b5563;
+            background: #1f2937;
+        }
+        html.main-theme-dark .engine-model-card.is-selected {
+            border-color: #818cf8;
+            box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.35);
+        }
+        html.main-theme-dark .engine-model-card-title { color: #f9fafb; }
+        html.main-theme-dark .engine-model-card-sub,
+        html.main-theme-dark .engine-model-card-note,
+        html.main-theme-dark .engine-model-status { color: #9ca3af; }
+        html.main-theme-dark .engine-model-badge {
+            background: #374151;
+            color: #d1d5db;
+        }
+        html.main-theme-dark .engine-model-badge.is-rec {
+            background: rgba(49, 46, 129, 0.55);
+            color: #c7d2fe;
+        }
+        html.main-theme-dark .engine-model-badge.is-ok {
+            background: rgba(6, 78, 59, 0.45);
+            color: #6ee7b7;
+        }
+        html.main-theme-dark .engine-model-badge.is-warn,
+        html.main-theme-dark .engine-model-badge.is-use {
+            background: rgba(120, 53, 15, 0.5);
+            color: #fcd34d;
+        }
+        html.main-theme-dark .engine-model-empty { color: #6b7280; }
+        html.main-theme-dark .engine-model-foot {
+            border-top-color: #374151;
+            background: #1f2937;
+        }
+        html.main-theme-dark .engine-model-foot-row .btn-primary,
+        html.main-theme-dark .engine-model-card-actions .btn-primary {
+            border-color: #6366f1;
+            background: #4f46e5;
+            color: #fff;
+        }
+        html.main-theme-dark .engine-model-foot-row .btn-danger {
+            border-color: #7f1d1d;
+            color: #fca5a5;
+        }
+        html.main-theme-dark .engine-model-status.is-ok { color: #6ee7b7; }
+        html.main-theme-dark .engine-model-status.is-err { color: #fca5a5; }
+        html.main-theme-dark .engine-model-dl-log {
+            border-color: #4b5563;
+            background: #111827;
+            color: #d1d5db;
+        }
+        html.main-theme-dark .settings-tip-btn {
+            color: #9ca3af;
+            border-color: #4b5563;
+            background: #1f2937;
+        }
+        html.main-theme-dark .settings-tip-btn:hover {
+            color: #e5e7eb;
+            border-color: #6b7280;
+            background: #374151;
+        }
+        html.main-theme-dark .settings-tip-btn:hover,
+        html.main-theme-dark .settings-tip.is-open > .settings-tip-btn {
+            border-color: #a78bfa;
+            color: #c4b5fd;
+            background: rgba(76, 29, 149, 0.35);
+        }
+        html.main-theme-dark #paramsModal .btn,
+        html.main-theme-dark button.btn {
+            border: 1px solid #4b5563;
+            background: #1f2937;
+            color: #e5e7eb;
+            border-radius: 0.5rem;
+            padding: 0.35rem 0.75rem;
+        }
+        html.main-theme-dark #paramsModal .btn:hover,
+        html.main-theme-dark button.btn:hover {
+            background: #374151;
+        }
+        html.main-theme-dark #paramsModal .btn-danger,
+        html.main-theme-dark button.btn-danger {
+            border-color: #7f1d1d;
+            color: #fca5a5;
+            background: rgba(127, 29, 29, 0.25);
+        }
+        html.main-theme-dark .log-tab-btn { color: #9ca3af; }
+        html.main-theme-dark .log-tab-btn.active {
+            color: #c4b5fd;
+            border-bottom-color: #a78bfa;
+        }
+        html.main-theme-dark #envBannerBtn,
+        html.main-theme-dark #qcBannerViewBtn {
+            background: #1f2937;
+            border-color: #b45309;
+            color: #fcd34d;
+        }
+        html.main-theme-dark #envBannerBtn:hover,
+        html.main-theme-dark #qcBannerViewBtn:hover {
+            background: #374151;
+        }
+        html.main-theme-dark #stopBtn:hover {
+            border-color: #f87171;
+            color: #fca5a5;
+            background: rgba(127, 29, 29, 0.35);
+        }
+        html.main-theme-dark.settings-standalone,
+        html.main-theme-dark.settings-standalone body {
+            background: #111827;
+        }
+        html.main-theme-dark.wizard-standalone,
+        html.main-theme-dark.wizard-standalone body,
+        html.main-theme-dark.wizard-standalone #setupWizardModal {
+            background: #111827;
+        }
+
         /* Standalone settings BrowserWindow: show only the settings chrome */
         html.settings-standalone,
         html.settings-standalone body {
@@ -1379,7 +1862,7 @@
     <header class="app-header bg-white border-b border-gray-200 px-4 py-2.5 shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-base font-bold text-gray-900 flex items-baseline gap-1.5 shrink-0 tracking-tight">
             <img src="icon.png" alt="" class="w-7 h-7 shrink-0 self-center" width="28" height="28" decoding="async">
-            <span>Transub</span>
+            <span id="appBrandName">Transub</span>
             <span id="appVersionLabel" class="text-xs font-normal text-gray-400 tracking-normal leading-none" aria-label="软件版本"></span>
         </h1>
         <div class="flex items-center gap-2 shrink-0 ml-auto">
@@ -1560,9 +2043,9 @@
                         <span class="param-chip-label">目标</span>
                         <select id="quickTargetLangSelect" class="param-chip-select" aria-label="目标语言">
                             <option value="simplified">简体中文</option>
-                            <option value="traditional">繁体（台湾）</option>
-                            <option value="traditional-tw">繁体（台湾字形）</option>
-                            <option value="traditional-hk">繁体（香港）</option>
+                            <option value="traditional">繁体(台湾)</option>
+                            <option value="traditional-tw">繁体(字形)</option>
+                            <option value="traditional-hk">繁体(香港)</option>
                         </select>
                     </label>
                     <div class="relative shrink-0" id="translateModeMenuWrap">
@@ -1614,15 +2097,52 @@
                             </button>
                             <button type="button" class="post-task-menu-item" data-qc-fix-mode="fix" role="menuitem">
                                 <i class="fa fa-check post-task-check" aria-hidden="true"></i>
-                                <span>一键QC修复</span>
+                                <span>自动QC修复</span>
                             </button>
                             <button type="button" class="post-task-menu-item" data-qc-fix-mode="smart" role="menuitem">
                                 <i class="fa fa-check post-task-check" aria-hidden="true"></i>
-                                <span>◆ 智能QC修复 Pro</span>
+                                <span>智能QC修复 ◆ Pro</span>
                             </button>
                         </div>
                     </div>
+                    <button type="button"
+                        id="animeWhisperPresetQuickBtn"
+                        class="param-chip param-chip-btn anime-whisper-quick-btn"
+                        title="切换到「日语 · Anime Whisper 翻译」预设（关闭智能感知并写入参数）"
+                        aria-label="切换 Anime Whisper 翻译预设"
+                        aria-pressed="false">
+                        <span class="anime-whisper-quick-new" aria-hidden="true">New</span>
+                        <i class="fa fa-magic" aria-hidden="true"></i>
+                        <span class="param-chip-value anime-whisper-quick-label">AW</span>
+                    </button>
                     <span id="pendingQueueBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">队列 0</span>
+                    <div class="ml-auto shrink-0 flex items-center gap-2">
+                        <button type="button" id="reconstructBtn"
+                            class="shrink-0 px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 hover:border-violet-300 rounded-lg text-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none"
+                            title="Pro：打开字幕编辑器并对勾选的一部影片启动影片理解重构（一次仅一部）"
+                            aria-label="理解重构">
+                            <i class="fa fa-film" aria-hidden="true"></i>
+                            <span>理解重构 ◆</span>
+                        </button>
+                        <button type="button" id="retranslateBtn"
+                            class="shrink-0 px-3 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 hover:border-violet-300 rounded-lg text-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none"
+                            title="对已勾选且存在转录字幕的条目重新翻译（跳过语音识别）"
+                            aria-label="重新翻译">
+                            <i class="fa fa-language" aria-hidden="true"></i>
+                            <span>重新翻译</span>
+                        </button>
+                    </div>
+                </div>
+                <div id="animeWhisperPresetTip" class="feature-tip-bubble hidden" role="dialog" aria-labelledby="animeWhisperPresetTipTitle" aria-describedby="animeWhisperPresetTipText">
+                    <div class="feature-tip-bubble-arrow" aria-hidden="true"></div>
+                    <div class="feature-tip-bubble-body">
+                        <p id="animeWhisperPresetTipTitle" class="feature-tip-title">新预设推荐</p>
+                        <p id="animeWhisperPresetTipText" class="feature-tip-text">可尝试「日语 · Anime Whisper 翻译」——动画 / Galgame 日语听写更稳。使用后将关闭智能感知并写入该预设全部参数。</p>
+                        <div class="feature-tip-actions">
+                            <button type="button" id="animeWhisperPresetTipAccept" class="feature-tip-btn feature-tip-btn-primary">使用</button>
+                            <button type="button" id="animeWhisperPresetTipDismiss" class="feature-tip-btn feature-tip-btn-ghost">不使用</button>
+                        </div>
+                    </div>
                 </div>
                 <div id="readinessStrip" class="readiness-strip hidden" aria-live="polite">
                     <span id="readinessStripText" class="readiness-strip-text">—</span>
@@ -1656,17 +2176,27 @@
                     </p>
                 </div>
                 <div id="listScroll" class="h-full min-h-[8rem] overflow-auto hidden">
-                <table class="w-full text-sm subtitle-task-table">
-                    <thead class="sticky top-0 bg-gray-50/95 backdrop-blur-sm text-xs text-gray-500 z-[1]">
+                <table id="subtitleTaskTable" class="w-full text-sm subtitle-task-table">
+                    <colgroup id="taskTableColgroup">
+                        <col data-col="check">
+                        <col data-col="file">
+                        <col data-col="duration">
+                        <col data-col="elapsed">
+                        <col data-col="progress">
+                        <col data-col="status">
+                        <col data-col="qc">
+                        <col data-col="actions">
+                    </colgroup>
+                    <thead id="taskTableHead" class="sticky top-0 bg-gray-50/95 backdrop-blur-sm text-xs text-gray-500 z-[1]">
                         <tr>
-                            <th class="px-2 py-2 w-8"><input type="checkbox" id="selectAllCheck" title="全选 (Ctrl+A)"></th>
-                            <th class="px-2 py-2 text-left col-file">文件</th>
-                            <th class="px-2 py-2 text-right col-duration" title="媒体时长">片长</th>
-                            <th class="px-2 py-2 text-right col-elapsed" title="任务所耗时">耗时</th>
-                            <th class="px-2 py-2 text-left col-progress" style="width:7rem">进度</th>
-                            <th class="px-2 py-2 text-left col-status">状态</th>
-                            <th class="px-1 py-2 text-center col-qc" title="质量检查">QC</th>
-                            <th class="px-2 py-2 col-actions text-center" title="操作"></th>
+                            <th class="px-2 py-2 w-8" data-col="check"><input type="checkbox" id="selectAllCheck" title="全选 (Ctrl+A)"></th>
+                            <th class="px-2 py-2 text-left col-file task-col-sortable" data-col="file" data-sort-key="file" title="点击排序">文件<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-2 py-2 text-right col-duration task-col-sortable" data-col="duration" data-sort-key="duration" title="媒体时长 · 点击排序">片长<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-2 py-2 text-right col-elapsed task-col-sortable" data-col="elapsed" data-sort-key="elapsed" title="任务所耗时 · 点击排序">耗时<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-2 py-2 text-left col-progress task-col-sortable" data-col="progress" data-sort-key="progress" title="点击排序">进度<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-2 py-2 text-left col-status task-col-sortable" data-col="status" data-sort-key="status" title="点击排序">状态<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-1 py-2 text-center col-qc task-col-sortable" data-col="qc" data-sort-key="qc" title="质量检查 · 点击排序">QC<span class="task-col-sort-ind" aria-hidden="true"></span></th>
+                            <th class="px-2 py-2 col-actions text-center" data-col="actions" title="操作"></th>
                         </tr>
                     </thead>
                     <tbody id="fileListBody" class="divide-y divide-gray-100 bg-white"></tbody>
@@ -1777,7 +2307,7 @@
                     </aside>
                     <div class="flex-1 min-h-0 overflow-y-auto p-4 settings-content" id="settingsContent">
 
-                    <div class="params-tab-panel active" data-tab-panel="runtime" data-settings-search="常规 任务 翻译 界面 启动 编辑器 密度 缩放 4K 向导 CPU GPU 内存 资源 占用">
+                    <div class="params-tab-panel active" data-tab-panel="runtime" data-settings-search="常规 任务 翻译 界面 启动 编辑器 密度 缩放 4K 向导 CPU GPU 内存 资源 占用 主题 深色 浅色">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">任务默认</legend>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1868,6 +2398,16 @@
                                 <select id="startupWindowSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm max-w-xs">
                                     <option value="generator">Transub 字幕生成器</option>
                                     <option value="editor">Transub Editor 字幕编辑器</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    界面主题
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主窗口、字幕编辑器与窗口标题栏的浅色 / 深色外观。与主界面「更多 → 深色界面」及编辑器主题开关同步。</span></span>
+                                </span>
+                                <select id="appThemeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm max-w-xs">
+                                    <option value="light">浅色</option>
+                                    <option value="dark">深色</option>
                                 </select>
                             </label>
                             <label class="block text-sm">
@@ -2111,7 +2651,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 VAD 降噪 QC CPS 拆句 杂音 叠词 素材 集束 智能感知 深度感知 修复QC 一键修复 智能修复">
+                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 VAD 降噪 QC CPS 拆句 杂音 叠词 语气词 精简 素材 集束 智能感知 深度感知 修复QC 一键修复 智能修复">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 智能感知
@@ -2202,7 +2742,7 @@
                                 <input type="checkbox" id="postBatchRemoveNoiseCheck" class="rounded" checked>
                                 <span class="settings-label font-medium text-gray-700">
                                     完成后清理杂音 / 幻觉短句
-                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。删除空句、语气碎片、音效标签、纯符号及常见幻觉短句（如「完毕」）。</span></span>
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。删除空句、语气碎片、音效标签、纯符号及常见幻觉短句（如「完毕」）。有原文+译文对照且条数一致时，从两侧成对删除以保持对齐，不再把译文置空为「…」。</span></span>
                                 </span>
                             </label>
                             <label class="settings-row text-sm">
@@ -2210,6 +2750,13 @@
                                 <span class="settings-label font-medium text-gray-700">
                                     完成后压缩叠词
                                     <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。将连续重复 ≥3 次的短语/单字压成「词…词！」，降低 CPS（如「好的」×8 →「好的…好的！」）。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="postBatchCompactPureInterjectionsCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    完成后精简纯语气词
+                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。开启后，日中两侧均为纯语气/拟声的字幕块会成对删除并重编号，包括带顿号的喘息与轻笑（如「うん」↔「嗯」、「はぁ、はぁ」↔「哈啊…哈啊」、「ふふっ」↔「呵呵」）；含具体语义的对白（含句末语气词、いいえ/好的 等）会保留。需同时保留原文与译文轨。与「清理杂音」不同：本项只针对双侧纯语气。</span></span>
                                 </span>
                             </label>
                         </fieldset>
@@ -2397,16 +2944,9 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="editor" data-settings-search="字幕编辑器 主题 波形 CPS 断句 分割 重转写 备份">
+                    <div class="params-tab-panel" data-tab-panel="editor" data-settings-search="字幕编辑器 波形 CPS 断句 分割 重转写 备份 外观 布局">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">外观与布局</legend>
-                            <label class="block text-sm">
-                                <span class="settings-label text-gray-700 font-medium">主题<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">字幕编辑器窗口的浅色 / 深色外观。</span></span></span>
-                                <select id="editorThemeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
-                                    <option value="light">浅色</option>
-                                    <option value="dark">深色</option>
-                                </select>
-                            </label>
                             <label class="settings-row text-sm">
                                 <input type="checkbox" id="editorAutoFocusCheck" class="rounded">
                                 <span class="settings-label font-medium text-gray-700">自动焦点<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">播放时字幕选中跟随进度。</span></span></span>
@@ -2544,12 +3084,12 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="pro" data-settings-search="Pro 许可 买断 大版本 激活 爱发电 密钥 闭源 模块">
+                    <div class="params-tab-panel" data-tab-panel="pro" data-settings-search="Pro 许可 买断 体验 试用 9.9 大版本 激活 爱发电 密钥 闭源 模块">
                         <div class="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-xs text-violet-900 leading-relaxed flex items-start gap-2">
                             <span class="settings-adv-mark mt-0.5" aria-hidden="true">◆</span>
                             <span>
-                                Transub Pro 为<strong>大版本内买断</strong>（覆盖当前主版本如 3.x 内专有能力；下一主版本需另行购买）。本页许可操作<strong>保存后立即生效</strong>（与底部「保存设置」无关）。
-                                <span class="settings-tip ml-1 align-middle"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">软件内模型可下载用于本地推理；智能翻译、BYOK、更大模型、语境/影片重构与影视音频增强需开通本大版本 Pro。许可费用不包含云端 API 额度。取消设置窗口不会回滚此处更改。</span></span>
+                                Transub Pro 支持<strong>大版本内买断</strong>，以及<strong>9.9 元 / 7 天体验包</strong>（每爱发电账号限 1 次；到期自动回免费，不可抵扣买断）。本页许可操作<strong>保存后立即生效</strong>（与底部「保存设置」无关）。
+                                <span class="settings-tip ml-1 align-middle"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">软件内模型可下载用于本地推理；智能翻译、BYOK、更大模型、语境/影片重构与影视音频增强需开通 Pro。许可费用不包含云端 API 额度。取消设置窗口不会回滚此处更改。</span></span>
                             </span>
                         </div>
                         <fieldset class="settings-section">
@@ -2557,7 +3097,7 @@
                             <p id="advancedLicenseStatus" class="text-sm text-gray-700 min-h-[1.25rem]">加载中…</p>
                             <p id="advancedLicenseMeta" class="text-xs text-gray-500 leading-relaxed"></p>
                             <div id="advancedPurchaseActivateBlock" class="space-y-3">
-                                <p id="advancedBuyProHint" class="text-xs text-gray-600 leading-relaxed">在爱发电购买本大版本 Pro 后，填写订单号一键领取并激活；也可粘贴收到的许可密钥（<code class="text-[0.7rem]">TSUB1.…</code>）。</p>
+                                <p id="advancedBuyProHint" class="text-xs text-gray-600 leading-relaxed">可先购买 9.9 元 Pro 体验包（7 天，每爱发电账号限 1 次），或直接购买本大版本买断。付款后填写订单号领取并激活；也可粘贴许可密钥（<code class="text-[0.7rem]">TSUB1.…</code>）。体验不可抵扣买断。</p>
                                 <div class="flex flex-wrap gap-2">
                                     <button type="button" id="advancedBuyProBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">在爱发电购买 Pro</button>
                                 </div>
@@ -2727,7 +3267,7 @@
                         <div class="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-xs text-violet-900 leading-relaxed flex items-start gap-2">
                             <span class="settings-adv-mark mt-0.5" aria-hidden="true">◆</span>
                             <span>
-                                语境重构与影片理解重构需开通本大版本 Pro，并在「大模型设置」中配置可用模型。可在字幕编辑器 AI 工具中使用。
+                                语境重构与影片理解重构需开通本大版本 Pro，并在「大模型设置」中配置可用模型。主窗口任务列表「理解重构」会打开字幕编辑器（一次一部），也可在编辑器 AI 工具中直接使用。
                             </span>
                         </div>
                         <fieldset class="settings-section">
@@ -3220,6 +3760,102 @@
 
     <div id="toastHost" class="toast-host" aria-live="polite" aria-relevant="additions"></div>
 
+    <div id="taskColContextMenu" class="post-task-menu task-col-context-menu hidden" role="menu" aria-label="列操作">
+        <button type="button" class="post-task-menu-item" data-task-col-ctx="fit-one" role="menuitem">
+            <i class="fa fa-arrows-h w-3 text-center text-xs text-gray-400" aria-hidden="true"></i>
+            <span>将列调整为合适的大小</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-col-ctx="fit-all" role="menuitem">
+            <i class="fa fa-arrows-alt w-3 text-center text-xs text-gray-400" aria-hidden="true"></i>
+            <span>将所有列调整为合适的大小</span>
+        </button>
+    </div>
+
+    <div id="taskRowContextMenu" class="post-task-menu task-row-context-menu hidden" role="menu" aria-label="任务操作">
+        <button type="button" class="post-task-menu-item" data-task-ctx="edit" role="menuitem">
+            <i class="fa fa-pencil w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
+            <span>编辑字幕</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="retranslate" role="menuitem">
+            <i class="fa fa-language w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
+            <span>重新翻译</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="reconstruct" role="menuitem">
+            <i class="fa fa-film w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
+            <span>理解重构 ◆ Pro</span>
+        </button>
+        <div class="post-task-menu-sep" role="separator"></div>
+        <button type="button" class="post-task-menu-item" data-task-ctx="qc-fix" role="menuitem">
+            <i class="fa fa-wrench w-3 text-center text-xs text-amber-600" aria-hidden="true"></i>
+            <span>一键修复 QC</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="qc-smart-fix" role="menuitem">
+            <i class="fa fa-magic w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
+            <span>智能修复 QC ◆ Pro</span>
+        </button>
+        <div class="post-task-menu-sep" role="separator"></div>
+        <button type="button" class="post-task-menu-item" data-task-ctx="retry" role="menuitem">
+            <i class="fa fa-repeat w-3 text-center text-xs text-amber-600" aria-hidden="true"></i>
+            <span>重试本条</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="show-folder" role="menuitem">
+            <i class="fa fa-folder-open w-3 text-center text-xs text-gray-400" aria-hidden="true"></i>
+            <span>在文件夹中显示</span>
+        </button>
+        <div class="post-task-menu-sep" role="separator"></div>
+        <button type="button" class="post-task-menu-item" data-task-ctx="sense-toggle" role="menuitem">
+            <i class="fa fa-magic w-3 text-center text-xs text-violet-500" aria-hidden="true"></i>
+            <span data-task-ctx-label="sense-toggle">采纳感知</span>
+        </button>
+        <button type="button" class="post-task-menu-item" data-task-ctx="sense-resense" role="menuitem">
+            <i class="fa fa-search-plus w-3 text-center text-xs text-sky-600" aria-hidden="true"></i>
+            <span>深度感知</span>
+        </button>
+        <div class="post-task-menu-sep" role="separator"></div>
+        <button type="button" class="post-task-menu-item is-danger" data-task-ctx="remove" role="menuitem">
+            <i class="fa fa-trash-o w-3 text-center text-xs" aria-hidden="true"></i>
+            <span>从列表移除</span>
+        </button>
+    </div>
+
+    <div id="retranslateModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="retranslateModalTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100">
+                <h2 id="retranslateModalTitle" class="text-base font-semibold text-gray-900">重新翻译</h2>
+            </div>
+            <div class="px-4 py-4 space-y-3">
+                <p id="retranslateModalSummary" class="text-sm text-gray-700 leading-relaxed"></p>
+                <p id="retranslateModalMissing" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed"></p>
+                <fieldset class="space-y-2">
+                    <legend class="text-xs font-semibold text-gray-600">翻译方式</legend>
+                    <div class="translate-mode-row">
+                        <label class="translate-mode-choice">
+                            <input type="radio" name="retranslateMode" id="retranslateModeEngine" value="engine" class="accent-violet-600">
+                            <span class="text-sm text-gray-800">机器翻译</span>
+                        </label>
+                        <label class="translate-mode-choice">
+                            <input type="radio" name="retranslateMode" id="retranslateModeLlm" value="llm" class="accent-violet-600" checked>
+                            <span class="text-sm text-gray-800">推理翻译</span>
+                        </label>
+                        <label class="translate-mode-choice" id="retranslateModeSmartWrap">
+                            <input type="radio" name="retranslateMode" id="retranslateModeSmart" value="smart" class="accent-violet-600">
+                            <span class="text-sm text-gray-800">◆ 智能翻译</span>
+                        </label>
+                    </div>
+                </fieldset>
+                <label class="block text-sm" id="retranslateModelWrap">
+                    <span class="settings-label text-gray-700 font-medium" id="retranslateModelLabel">翻译模型</span>
+                    <select id="retranslateModelSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono"></select>
+                </label>
+                <p id="retranslateModelHint" class="text-xs text-gray-500 leading-relaxed"></p>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80">
+                <button type="button" id="retranslateCancelBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消</button>
+                <button type="button" id="retranslateConfirmBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">开始翻译</button>
+            </div>
+        </div>
+    </div>
+
     <div id="appConfirmModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
         <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
             <div class="px-4 py-3 border-b border-gray-100">
@@ -3262,6 +3898,7 @@
                 <div class="flex justify-between gap-4"><dt class="text-gray-600">停止任务</dt><dd class="font-mono text-xs text-gray-800">Esc</dd></div>
                 <div class="flex justify-between gap-4"><dt class="text-gray-600">全选</dt><dd class="font-mono text-xs text-gray-800">Ctrl+A</dd></div>
                 <div class="flex justify-between gap-4"><dt class="text-gray-600">移除选中</dt><dd class="font-mono text-xs text-gray-800">Delete</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">任务行菜单</dt><dd class="font-mono text-xs text-gray-800">右键</dd></div>
                 <div class="flex justify-between gap-4"><dt class="text-gray-600">快捷键帮助</dt><dd class="font-mono text-xs text-gray-800">?</dd></div>
             </dl>
             <div class="px-4 py-3 border-t border-gray-100 bg-gray-50/80 flex justify-end">
@@ -3309,6 +3946,7 @@
     <script src="js/transwithai-model-core.js"></script>
     <script src="js/dual-subtitle-core.js"></script>
     <script src="js/main-ui-ux.js"></script>
+    <script src="js/anime-whisper-preset-tip.js"></script>
     <script src="js/app.js"></script>
     <script src="js/settings-editor-prefs.js"></script>
     <script src="js/manual-whl-install.js"></script>

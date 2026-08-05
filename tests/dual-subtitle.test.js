@@ -1,7 +1,11 @@
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const dual = require('../src/js/dual-subtitle-core');
 const { pickPreferredSidecar } = require('../electron/subtitle-utils');
 const { normalizeTransWithAiRuntimeOptions } = require('../electron/transwithai-bridge');
+const { finalizeEngineDualMerge } = require('../electron/subtitle-fs-helpers');
 
 describe('dual-subtitle-core', () => {
     it('resolves source suffix and avoids zh/zh collision', () => {
@@ -263,5 +267,87 @@ describe('pickPreferredSidecar', () => {
             'D:/v/demo.srt',
         ]);
         assert.ok(String(picked).toLowerCase().endsWith('demo.srt'));
+    });
+});
+
+describe('finalizeEngineDualMerge', () => {
+    const sampleSrt = (texts) => [
+        '1',
+        '00:00:00,000 --> 00:00:01,000',
+        texts[0],
+        '',
+        '2',
+        '00:00:02,000 --> 00:00:03,000',
+        texts[1],
+        '',
+    ].join('\n');
+
+    it('writes merged SRT when merge is on even without dual ASS / delete', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-dual-merge-'));
+        try {
+            const sourcePath = path.join(dir, 'clip.src.srt');
+            const targetPath = path.join(dir, 'clip.zh.srt');
+            fs.writeFileSync(sourcePath, sampleSrt(['こんにちは', '世界']), 'utf8');
+            fs.writeFileSync(targetPath, sampleSrt(['你好', '世界']), 'utf8');
+            const result = finalizeEngineDualMerge(
+                {
+                    sourceSubtitlePath: sourcePath,
+                    targetSubtitlePath: targetPath,
+                    bilingualSubtitlePath: '',
+                    subtitlePath: targetPath,
+                },
+                {
+                    mergeBilingualSubtitles: true,
+                    deleteSourcesAfterMergeBilingual: false,
+                    dualLineOrder: 'target-first',
+                },
+            );
+            assert.ok(result.mergedPath);
+            assert.ok(result.mergedPath.toLowerCase().endsWith(`${path.sep}clip.srt`.toLowerCase())
+                || path.basename(result.mergedPath).toLowerCase() === 'clip.srt');
+            assert.strictEqual(result.deletedSources, false);
+            assert.strictEqual(result.detail, '已合并双语');
+            assert.ok(fs.existsSync(result.mergedPath));
+            assert.ok(fs.existsSync(sourcePath));
+            assert.ok(fs.existsSync(targetPath));
+            const body = fs.readFileSync(result.mergedPath, 'utf8');
+            assert.ok(body.includes('你好'));
+            assert.ok(body.includes('こんにちは'));
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('deletes source tracks only when delete-after-merge is on', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-dual-merge-del-'));
+        try {
+            const sourcePath = path.join(dir, 'clip.src.srt');
+            const targetPath = path.join(dir, 'clip.zh.srt');
+            fs.writeFileSync(sourcePath, sampleSrt(['A', 'B']), 'utf8');
+            fs.writeFileSync(targetPath, sampleSrt(['甲', '乙']), 'utf8');
+            const result = finalizeEngineDualMerge(
+                {
+                    sourceSubtitlePath: sourcePath,
+                    targetSubtitlePath: targetPath,
+                    bilingualSubtitlePath: path.join(dir, 'clip.dual.ass'),
+                    subtitlePath: targetPath,
+                },
+                {
+                    mergeBilingualSubtitles: true,
+                    deleteSourcesAfterMergeBilingual: true,
+                    dualLineOrder: 'target-first',
+                },
+            );
+            assert.ok(result.mergedPath);
+            assert.strictEqual(result.deletedSources, true);
+            assert.strictEqual(result.detail, '已合并并清理原轨');
+            assert.ok(fs.existsSync(result.mergedPath));
+            assert.ok(!fs.existsSync(sourcePath));
+            assert.ok(!fs.existsSync(targetPath));
+            assert.strictEqual(result.outPaths.sourceSubtitlePath, '');
+            assert.strictEqual(result.outPaths.targetSubtitlePath, '');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

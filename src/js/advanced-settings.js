@@ -83,6 +83,16 @@
         return String(Math.ceil(n / (24 * 60 * 60 * 1000)));
     }
 
+    /** 体验剩余：≥1 天按天；否则按小时 */
+    function formatExpiryRemaining(ms) {
+        const n = Math.max(0, Number(ms) || 0);
+        if (n <= 0) return '已到期';
+        const dayMs = 24 * 60 * 60 * 1000;
+        if (n >= dayMs) return `约 ${Math.ceil(n / dayMs)} 天`;
+        const hours = Math.max(1, Math.ceil(n / (60 * 60 * 1000)));
+        return `约 ${hours} 小时`;
+    }
+
     function currentLlmSource() {
         if (els.sourceManaged()?.checked) return 'managed';
         return 'byok';
@@ -884,23 +894,37 @@
         try {
             window.TransubCore?.setAdvancedEntitled?.(entitled, status.freePipelineTranslate);
         } catch (_) { /* ignore */ }
-        const line = entitled
-            ? (status.devUnlock ? '已解锁（开发模式）' : '已解锁 Pro')
-            : (status.message || '未解锁');
+        let line;
+        if (entitled) {
+            if (status.devUnlock) {
+                line = '已解锁（开发模式）';
+            } else if (status.isTrial && status.expiresInMs != null) {
+                line = `已解锁 Pro 体验（剩余 ${formatExpiryRemaining(status.expiresInMs)}）`;
+            } else {
+                line = '已解锁 Pro';
+            }
+        } else {
+            line = status.message || '未解锁';
+        }
         setText(els.status(), line);
         if (els.status()) {
-            els.status().className = entitled
-                ? 'text-sm text-emerald-700 min-h-[1.25rem]'
-                : 'text-sm text-gray-700 min-h-[1.25rem]';
+            let cls = 'text-sm text-gray-700 min-h-[1.25rem]';
+            if (entitled) cls = 'text-sm text-emerald-700 min-h-[1.25rem]';
+            else if (status.reason === 'expired' || status.expired) cls = 'text-sm text-amber-700 min-h-[1.25rem]';
+            els.status().className = cls;
         }
 
         const parts = [];
         if (status.licenseId) parts.push(`许可 ID：${status.licenseId}`);
+        if (status.isTrial) parts.push('类型：7 天体验');
         parts.push(`设备 ${status.deviceCount || 0}/${status.maxDevices || 1}`);
         if (status.deviceBound) parts.push('本机已绑定');
+        if (status.isTrial && status.expiresAt && !status.expired && status.expiresInMs != null) {
+            parts.push(`到期剩余 ${formatExpiryRemaining(status.expiresInMs)}`);
+        }
         if (status.needsRevalidation) {
             parts.push('需联网复核');
-        } else if (status.lastValidatedAt) {
+        } else if (status.lastValidatedAt && !status.isTrial) {
             parts.push(`复核剩余约 ${formatDays(status.revalidateInMs)} 天`);
         }
         if (!status.canTransfer && status.transferRetryInMs) {
@@ -912,6 +936,14 @@
         if (purchaseBlock) {
             purchaseBlock.classList.toggle('hidden', entitled);
             purchaseBlock.setAttribute('aria-hidden', entitled ? 'true' : 'false');
+        }
+        const buyHint = document.getElementById('advancedBuyProHint');
+        if (buyHint && !entitled) {
+            if (status.reason === 'expired' || status.expired) {
+                buyHint.textContent = '体验已到期。可购买大版本内买断继续使用 Pro；体验包不可抵扣买断，每爱发电账号限购体验包 1 次。';
+            } else {
+                buyHint.textContent = '可先购买 9.9 元 Pro 体验包（7 天，每爱发电账号限 1 次），或直接购买本大版本买断。付款后填写订单号领取并激活；也可粘贴许可密钥（TSUB1.…）。体验不可抵扣买断。';
+            }
         }
         const moreAfdianBtn = document.getElementById('openAfdianFromSettingsBtn');
         if (moreAfdianBtn) {

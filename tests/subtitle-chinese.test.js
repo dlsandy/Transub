@@ -161,6 +161,16 @@ function testEnsureSpaceAfterChinesePunctuation() {
     assert.strictEqual(res.stats.cueTouched, 1);
 }
 
+function testT2SFixesMeYaoOpenCcSlip() {
+    // OpenCC twp→cn wrongly maps 么→幺; simplified postprocess must restore.
+    assert.strictEqual(convertText('为什么', 't2s').text, '为什么');
+    assert.strictEqual(convertText('怎么了？什么时候那么这么多么要么', 't2s').text,
+        '怎么了？什么时候那么这么多么要么');
+    assert.strictEqual(convertText('為什麼這麼做', 't2s').text, '为什么这么做');
+    // Legitimate 幺 must survive.
+    assert.strictEqual(convertText('老幺和幺蛾子', 't2s').text, '老幺和幺蛾子');
+}
+
 describe('subtitle-chinese', () => {
     it('normalize direction', () => {
         testNormalizeDirection();
@@ -209,5 +219,8 @@ describe('subtitle-chinese', () => {
     });
     it('ensures space after Chinese punctuation', () => {
         testEnsureSpaceAfterChinesePunctuation();
+    });
+    it('t2s restores 么 after OpenCC 幺 slip', () => {
+        testT2SFixesMeYaoOpenCcSlip();
     });
 });

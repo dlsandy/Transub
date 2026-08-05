@@ -19,6 +19,13 @@ const IDLE_STOP_MS = 5 * 60 * 1000;
 let idleStopTimer = null;
 /** @type {{ exePath: string, mtimeMs: number, size: number, tag: string } | null} */
 let probedTagCache = null;
+/** Last stderr/stdout snippet from llama-server (for crash diagnostics). */
+let lastServerLogTail = '';
+
+function getLastServerLogTail(maxLen = 800) {
+    const n = Math.max(80, Math.min(4000, Number(maxLen) || 800));
+    return String(lastServerLogTail || '').slice(-n);
+}
 
 /**
  * 从 llama-server --version 输出解析构建号（如 b10077）。
@@ -1024,6 +1031,7 @@ async function ensureLlamaServer(options = {}) {
         let logTail = '';
         const appendLog = (buf) => {
             logTail = `${logTail}${buf.toString('utf8')}`.slice(-6000);
+            lastServerLogTail = logTail;
         };
 
         let spawnError = null;
@@ -1047,11 +1055,19 @@ async function ensureLlamaServer(options = {}) {
             spawnError = err;
             if (serverProc === spawnedProc) {
                 serverProc = null;
+                serverState = null;
             }
         });
-        spawnedProc.on('exit', () => {
+        spawnedProc.on('exit', (code, signal) => {
+            lastServerLogTail = logTail;
             if (serverProc === spawnedProc) {
                 serverProc = null;
+                serverState = null;
+            }
+            if (code != null && code !== 0) {
+                console.warn(
+                    `[llama-server] exited code=${code} signal=${signal || ''} tail=${logTail.slice(-400)}`,
+                );
             }
         });
 
@@ -1157,5 +1173,6 @@ module.exports = {
     IDLE_STOP_MS,
     isServerHealthy,
     getServerBaseUrl,
+    getLastServerLogTail,
     getServerState: () => (serverState ? { ...serverState } : null),
 };

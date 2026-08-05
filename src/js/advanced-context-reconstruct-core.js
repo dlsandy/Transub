@@ -103,17 +103,20 @@
             '你是影视字幕润色助手，负责在保留原意的前提下重构译文，使跨句语境更连贯、用词更统一、口语更自然。',
             timing,
             intensityLine,
+            '严格一对一：每个输入 index 只改写该条本身；禁止把邻条内容并入本条，禁止把后文提前塞进当前条。',
+            '单条长度应与输入该条大致相当；不要把多条内容塞进一条，也不要让后续条目整体错位。',
             '不要编造剧情、不要添加原文没有的信息、不要翻译成其它语言（保持目标语言）。',
             '若提供了原文对照，以原文语义为准修正明显误译，但仍输出目标语言译文。',
             '若提供了术语表，专有名词必须使用术语表中的标准译名。',
             '只输出 JSON，不要 Markdown，不要解释。格式：',
             '{"cues":[{"index":0,"text":"改写后的字幕文本"}]}',
-            'cues 必须覆盖输入中的每一个 index，text 可为多行（用 \\n）。',
+            'cues 必须覆盖输入中的每一个 index，每个 index 恰好一条；text 可为多行（用 \\n）。',
         ].filter(Boolean).join('\n');
     }
 
     function buildUserPrompt({ cues, glossaryTerms = [], note = '' }) {
         const lines = [];
+        const list = normalizeCueList(cues);
         if (note) lines.push(`补充要求：${note}`, '');
         if (glossaryTerms.length) {
             lines.push('术语表（必须遵守）：');
@@ -123,8 +126,9 @@
             }
             lines.push('');
         }
+        lines.push(`本块共 ${list.length} 条，请返回恰好 ${list.length} 条（每个 index 一条，禁止合并邻条）。`);
         lines.push('待重构字幕（JSON）：');
-        const payload = cues.map((c) => {
+        const payload = list.map((c) => {
             const row = { index: c.index, text: c.text };
             if (c.sourceText) row.source = c.sourceText;
             return row;
@@ -522,6 +526,173 @@
         }));
     }
 
+    function normalizeForAlignCompare(text) {
+        return String(text || '')
+            .replace(/[\s\u3000]+/g, '')
+            .replace(/[…⋯.。，,、！!？?：:；;"""''「」『』（）()【】\[\]~～—\-·・]/g, '')
+            .toLowerCase();
+    }
+
+    /**
+     * 粗略包含：needle 整段或较长半段出现在 haystack 中。
+     */
+    function textAbsorbsNeighbor(haystack, needle, { minNeedle = 4 } = {}) {
+        const h = normalizeForAlignCompare(haystack);
+        const n = normalizeForAlignCompare(needle);
+        if (!h || !n || n.length < minNeedle) return false;
+        if (h.includes(n)) return true;
+        if (n.length >= 8) {
+            const half = Math.max(4, Math.floor(n.length / 2));
+            if (h.includes(n.slice(0, half)) && h.includes(n.slice(-half))) return true;
+        }
+        return false;
+    }
+
+    function alignOverlapScore(a, b) {
+        const x = normalizeForAlignCompare(a);
+        const y = normalizeForAlignCompare(b);
+        if (!x || !y) return 0;
+        if (x === y) return 1;
+        if (x.includes(y) || y.includes(x)) {
+            return Math.min(x.length, y.length) / Math.max(x.length, y.length);
+        }
+        // 前缀/后缀重合（错位时常整句挪到邻条）
+        const n = Math.min(x.length, y.length, 24);
+        if (n < 4) return 0;
+        let pref = 0;
+        while (pref < n && x[pref] === y[pref]) pref += 1;
+        let suf = 0;
+        while (suf < n && x[x.length - 1 - suf] === y[y.length - 1 - suf]) suf += 1;
+        return Math.max(pref, suf) / Math.max(x.length, y.length);
+    }
+
+    /**
+     * 检测改写结果是否把邻条并入本条，或整段台词相对原文整体错位。
+     * @returns {{
+     *   merges: {index:number, absorbedIndexes:number[], reason:string}[],
+     *   shifts: {index:number, matchedIndex:number, reason:string}[],
+     *   badIndexes: number[],
+     *   severe: boolean
+     * }}
+     */
+    function detectCueAlignmentIssues(originalCues, rewrittenCues) {
+        const originals = normalizeCueList(originalCues);
+        const byOrig = new Map(originals.map((c) => [c.index, String(c.text || '')]));
+        const byRewritten = new Map(
+            (Array.isArray(rewrittenCues) ? rewrittenCues : [])
+                .map((u) => [Number(u?.index), String(u?.text ?? '')])
+                .filter(([idx]) => Number.isInteger(idx)),
+        );
+        const order = originals.map((c) => c.index);
+        const merges = [];
+        const shifts = [];
+        const bad = new Set();
+
+        for (let i = 0; i < order.length; i += 1) {
+            const idx = order[i];
+            const orig = byOrig.get(idx) || '';
+            const rewritten = byRewritten.has(idx) ? byRewritten.get(idx) : orig;
+            if (!rewritten || rewritten === orig) continue;
+
+            const absorbed = [];
+            for (let look = 1; look <= 3 && i + look < order.length; look += 1) {
+                const nextIdx = order[i + look];
+                const nextOrig = byOrig.get(nextIdx) || '';
+                if (!nextOrig.trim()) continue;
+                const nextNorm = normalizeForAlignCompare(nextOrig);
+                if (nextNorm.length < 4) continue;
+                const absorbs = textAbsorbsNeighbor(rewritten, nextOrig, {
+                    minNeedle: Math.min(6, Math.max(4, Math.floor(nextNorm.length * 0.45))),
+                });
+                if (!absorbs) continue;
+                // 自身也变长，或几乎能拼出「本条+邻条」
+                const grew = rewritten.length >= Math.max(orig.length + 4, Math.floor(orig.length * 1.35));
+                const concatHit = textAbsorbsNeighbor(
+                    rewritten,
+                    `${orig}${nextOrig}`,
+                    { minNeedle: 8 },
+                );
+                if (grew || concatHit || look === 1) {
+                    absorbed.push(nextIdx);
+                }
+            }
+            if (absorbed.length) {
+                merges.push({
+                    index: idx,
+                    absorbedIndexes: absorbed,
+                    reason: 'merged_neighbors',
+                });
+                bad.add(idx);
+                for (const a of absorbed) bad.add(a);
+            }
+        }
+
+        for (let i = 0; i < order.length; i += 1) {
+            const idx = order[i];
+            if (bad.has(idx)) continue;
+            const orig = byOrig.get(idx) || '';
+            const rewritten = byRewritten.has(idx) ? byRewritten.get(idx) : orig;
+            if (!rewritten || rewritten === orig) continue;
+            const selfScore = alignOverlapScore(rewritten, orig);
+            let bestScore = selfScore;
+            let bestIdx = idx;
+            for (let look = 1; look <= 6 && i + look < order.length; look += 1) {
+                const laterIdx = order[i + look];
+                const laterOrig = byOrig.get(laterIdx) || '';
+                if (!laterOrig.trim()) continue;
+                const score = alignOverlapScore(rewritten, laterOrig);
+                if (score > bestScore + 0.12) {
+                    bestScore = score;
+                    bestIdx = laterIdx;
+                }
+            }
+            // 与本条几乎不像，却很像后面某条 → 顺移错位
+            if (bestIdx !== idx && bestScore >= 0.55 && selfScore <= 0.35) {
+                shifts.push({
+                    index: idx,
+                    matchedIndex: bestIdx,
+                    reason: 'shifted_to_later',
+                });
+                bad.add(idx);
+                bad.add(bestIdx);
+            }
+        }
+
+        const badIndexes = [...bad].sort((a, b) => a - b);
+        const severe = merges.length >= 1
+            || shifts.length >= 2
+            || (order.length > 0 && badIndexes.length / order.length >= 0.35);
+        return { merges, shifts, badIndexes, severe };
+    }
+
+    /**
+     * 将疑似合并/错位的条目回退为原文（按 index）。
+     */
+    function revertAlignmentIssueUpdates(originalCues, rewrittenCues, issues) {
+        const originals = normalizeCueList(originalCues);
+        const origMap = new Map(originals.map((c) => [c.index, String(c.text || '')]));
+        const bad = new Set(
+            Array.isArray(issues?.badIndexes) ? issues.badIndexes : [],
+        );
+        const list = Array.isArray(rewrittenCues) ? rewrittenCues : [];
+        const byIdx = new Map();
+        for (const u of list) {
+            const index = Number(u?.index);
+            if (!Number.isInteger(index)) continue;
+            byIdx.set(index, String(u?.text ?? ''));
+        }
+        for (const idx of bad) {
+            if (origMap.has(idx)) byIdx.set(idx, origMap.get(idx));
+        }
+        // 保证块内所有原文 index 都有条目
+        for (const c of originals) {
+            if (!byIdx.has(c.index)) byIdx.set(c.index, c.text);
+        }
+        return [...byIdx.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([index, text]) => ({ index, text }));
+    }
+
     return {
         DEFAULT_WINDOW_CUES,
         DEFAULT_OVERLAP_CUES,
@@ -543,5 +714,10 @@
         parseModelResponse,
         mergeCueUpdates,
         mockReconstructCues,
+        normalizeForAlignCompare,
+        textAbsorbsNeighbor,
+        alignOverlapScore,
+        detectCueAlignmentIssues,
+        revertAlignmentIssueUpdates,
     };
 }));

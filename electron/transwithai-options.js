@@ -116,6 +116,7 @@ function mergeTransWithAiOptions(input = {}) {
         postBatchCpsSplit: true,
         postBatchRemoveNoise: true,
         postBatchCompressRepetition: true,
+        postBatchCompactPureInterjections: false,
         postBatchContextReconstruct: false,
         smartTranslate: false,
         smartTranslateFaithfulTone: true,

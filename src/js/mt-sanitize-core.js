@@ -62,6 +62,8 @@
         '好的', '是的', '不是', '没有', '可以', '不行', '没事', '对不起', '抱歉',
         '谢谢', '再见', '加油', '真的', '当然', '怎么', '什么', '哪里', '为什么',
         '好吧', '好啦', '嗯嗯', '啊啊', '哈哈', '呵呵', '唉呀', '哎呀',
+        '明白了', '知道了', '了解了', '清楚了', '辛苦了', '麻烦了', '失礼了',
+        '明白', '知道', '了解', '清楚', '辛苦', '拜托', '拜托了',
         '要去了', '好舒服', '舒服吗', '好开心', '也亲亲我', '亲一下',
         '别哭', '超棒', '好纠结', '振作起来', '别捣乱', '恰皮',
         ...(OT.rodZh ? [OT.rodZh] : []),
@@ -229,9 +231,23 @@
         { from: 'サイジ', to: 'サイズ' },
         { from: '張りつ舞って', to: '張りつめて' },
         { from: '基礎してください', to: 'キスしてください' },
-        { from: 'いあちゅい', to: 'イッちゃう' },
         { from: 'キれいだよ', to: '綺麗だよ' },
         { from: 'すごきれい', to: 'すごく綺麗' },
+        { from: 'アパイタに入った', to: 'アルバイトに入った' },
+        { from: 'アパイタ', to: 'アルバイト' },
+        { from: '気長します', to: '緊張します' },
+        { from: '気長し', to: '緊張し' },
+        { from: 'ワッサージ', to: 'マッサージ' },
+        { from: '誰に根もある', to: '誰にでもある' },
+        { from: '口安くね', to: 'ごゆっくりね' },
+        { from: '暗きハナデ', to: '倉木ハナで' },
+        { from: '蔵木さん', to: '倉木さん' },
+        { from: '蔵木様', to: '倉木さん' },
+        { from: 'お酒ございましぇん', to: '申し訳ございません' },
+        { from: 'お酒ございません', to: '申し訳ございません' },
+        { from: 'お酒ございま', to: '申し訳ございま' },
+        { from: 'グラブンサンド', to: 'クラブサンド' },
+        { from: 'カスパイマスタ', to: 'くださいマスター' },
     ]);
 
     function loadBundledJaAsrDomainBasePairs() {
@@ -392,24 +408,41 @@
      * Used for av_soft cue cleanup.
      */
     const WET_ORAL_SFX_ZH_ATOM = '(?:咕咚|咕啾|扑哧|滋溜|叽噜|咕噜+|咕{2,}|啾+|滋{1,}|噜+|噗|啪)';
-    const WET_ORAL_SFX_JA_ATOM = '(?:ん?ちゅっ|ん?ちゅぱっ?|ん?ちゅぽっ?|ん?ちゅぅ+|ん?ちゅる+[っッ]*'
+    const WET_ORAL_SFX_JA_ATOM = '(?:ん?ちゅっ|ん?ちゅぱっ?|ん?ちゅぽっ?|ん?ちゅばっ?|ん?ちゅぅ+|ん?ちゅる+[っッ]*'
         + '|ん?(?:ぢゅ|ヂュ)ぅ+'
-        + '|ちゅうう+|ん?チュッ|ん?チュパッ?|ん?チュゥ+'
+        + '|ちゅうう+|ん?チュッ|ん?チュパッ?|ん?チュバッ?|ん?チュゥ+'
+        + '|ちゅば(?:っ|ちゅば)*|チュバ(?:ッ|チュバ)*'
         + '|ちゅ(?=[…·.…!！?？、,\\s]|$)'
-        + '|ん?(?:ぢゅ|じゅ|ジュ)(?:っ|ぼっ?|ぽっ?|ぷっ?|る+[っッ]*|ぅ+)+'
+        + '|ん?(?:ぢゅ|じゅ|ジュ)(?:っ|ぼっ?|ぽっ?|ぶっ?|ブッ?|ぷっ?|る+[っッ]*|ぅ+|ぶ+|ブ+)+'
         + '|ず(?:ぢゅ|じゅ)(?:ぼ|ぢゅぼ|じゅぼ)*[っッ]?'
-        + '|くちゅ[うっんン]+|ぐちゅ[うっんン]+|ごく[んっンッ]+|ゴク[リッんン]+|ごっくん|ゴックン'
+        + '|くちゅ[うっんン]+|ぐちゅ[うっんン]+|ごく[んっンッ]+|ゴク[リッんン]+'
+        + `|${(typeof mtOpaque?.d === 'function' ? mtOpaque.d('44GU44Gj44GP44KTfOOCtOODg+OCr+ODsw==') : '') || 'x'}`
         + '|コクン|こくん|ぺろっ?|れろっ?|んぐっ?|ぷっ|あむっ|んむっ|んむぎゅ'
-        + '|んにゅごっきゅ|ぶっつぅ+|ぬぷっ?)';
+        + '|んにゅごっきゅ|ぶっつぅ+|ぶ{2,}[っッ]?|ブ{2,}[ッっ]?|ぬぷっ?)';
     const AV_MISC_SFX_JA_ONLY = /^(?:[グぐ][ルる]+[っッ]*|ブフッ?|ロー+|トゥゥ*|チラッ|ぱっ)[。．.!！?？…\s]*$/u;
+
+    /** Opening BGM / hit SFX Whisper often invents as シオシオ… (≠ lexical 潮吹き dialogue). */
+    function isShioHitSfxOnlyJa(text = '') {
+        let bare = String(text || '').trim().replace(/[!！?？…\s、,，.。]+/g, '');
+        if (!bare) return false;
+        // Wet prefixes / trailing hit crumbs (ぶぶシオオォォッぱ / じゅぶ…シオ…ん)
+        bare = bare
+            .replace(/^(?:[ぶブ]+|[じヂ]ゅ[ぶブ]*)+/u, '')
+            .replace(/(?:ぱ|パ|ん|ン)+$/u, '');
+        if (!bare) return false;
+        if (/^(?:シ[オオォォ]+[ッっ]?)+$/.test(bare)) return true;
+        if (/^(?:シオ){2,}シ?[ッっ]?$/.test(bare)) return true;
+        if (/^(?:しお){2,}[っ]?$/.test(bare)) return true;
+        return false;
+    }
 
     function isWetOralSfxOnlyZh(text = '') {
         const stripped = stripWetOralSfxFromZh(text).text;
         if (String(text || '').trim() && !String(stripped || '').trim()) return true;
         const t = String(stripped || text || '').trim();
         if (!t) return Boolean(String(text || '').trim());
-        if (/^(?:[啧吸舔、,，.。…\s—\-]|吸吸*)+$/u.test(t) && /[啧吸舔]/.test(t)) return true;
-        if (/^(?:舔了舔|舔一下)[。．.!！?？…\s]*$/u.test(t)) return true;
+        if (mtOpaque?.RE?.suckLickAtomSrc?.test(t) && mtOpaque?.RE?.suckLickCharSrc?.test(t)) return true;
+        if (mtOpaque?.RE?.lickOnceSrc?.test(t)) return true;
         if (/^(?:Nyu|Kyu|nyu|kyu)(?:[\s、,]+(?:Nyu|Kyu|nyu|kyu))*[!！?？…\s]*$/i.test(t)) return true;
         if (/^(?:咕噜+|噜…?噜*)[!！?？…\s]*$/u.test(String(text || '').trim())) return true;
         return false;
@@ -419,9 +452,12 @@
         const t = String(text || '').trim();
         if (!t) return false;
         if (AV_MISC_SFX_JA_ONLY.test(t)) return true;
+        if (isShioHitSfxOnlyJa(t)) return true;
+        // Wet atoms + optional short moan crumbs (じゅぶぶっ! ん / んぶっんんっ)
         const re = new RegExp(
             '^[\\s…·.•\\-—_~～。．.!！?？、,，\\[\\]()（）【】「」『』]*'
-            + `(?:${WET_ORAL_SFX_JA_ATOM}[\\s、,．.…!！?？ー〜～・･]*)+$`,
+            + `(?:${WET_ORAL_SFX_JA_ATOM}[\\s、,．.…!！?？ー〜～・･]*)+`
+            + '[んンぁあアッっ]*[\\s…·.!！?？]*$',
             'u',
         );
         return re.test(t);
@@ -438,20 +474,28 @@
         s = s.replace(/([哈啊嗯唔呼])(?:啾|咕|—?噗)/gu, '$1');
         s = s.replace(new RegExp(`(?:${WET_ORAL_SFX_ZH_ATOM})(?:[\\s、,，.。…!！?？—\\-]*)`, 'gu'), '');
         s = s.replace(/(?:啧[、,，\s]*)?(?:吸[、,，.。…\s—\-]*){2,}/gu, '');
-        s = s.replace(/^(?:舔了舔|舔一下|偷瞄)[。．.!！?？…\s]*$/gu, '');
-        s = s.replace(/(?:舔了舔|舔一下)(?=[、,，.。…!！?？\s]*$)/gu, '');
+        if (mtOpaque?.RE?.lickOnceOrPeekSrc) {
+            s = s.replace(mtOpaque.RE.lickOnceOrPeekSrc, '');
+        }
+        if (mtOpaque?.RE?.lickOnceTailG) {
+            s = s.replace(mtOpaque.RE.lickOnceTailG, '');
+        }
         s = s.replace(/\b(?:Nyu|Kyu|nyu|kyu)(?:\s+(?:Nyu|Kyu|nyu|kyu))*\b/gi, '');
         s = s.replace(/[、,，]{2,}/g, '、');
         s = s.replace(/[.…]{2,}/g, '…');
-        s = s.replace(/^[、,，.。…!！?？\s—\-]+/, '');
-        s = s.replace(/[、,，.。\s—\-]+$/, '');
-        s = s.replace(/\s{2,}/g, ' ').trim();
+        // Only trim edge punct when wet atoms were actually removed — otherwise
+        // normal dialogue ending in 。 would falsely flag wet_sfx and cascade.
+        if (s !== before) {
+            s = s.replace(/^[、,，.。…!！?？\s—\-]+/, '');
+            s = s.replace(/[、,，.。\s—\-]+$/, '');
+            s = s.replace(/\s{2,}/g, ' ').trim();
+        }
         if (!s) {
             const raw = String(before || '').trim();
-            if (/^(?:[啧吸舔、,，.。…\s—\-]|吸吸*)+$/u.test(raw) && /[啧吸舔]/.test(raw)) {
+            if (mtOpaque?.RE?.suckLickAtomSrc?.test(raw) && mtOpaque?.RE?.suckLickCharSrc?.test(raw)) {
                 return { text: '', changed: true };
             }
-            if (/^(?:舔了舔|舔一下|偷瞄)[。．.!！?？…\s]*$/u.test(raw)) {
+            if (mtOpaque?.RE?.lickOnceOrPeekSrc?.test(raw)) {
                 return { text: '', changed: true };
             }
             if (/^(?:Nyu|Kyu|nyu|kyu)(?:[\s、,]+(?:Nyu|Kyu|nyu|kyu))*[!！?？…\s]*$/i.test(raw)) {
@@ -514,7 +558,6 @@
     function correctZhDomainMistranslations(text, sourceText = '', options = {}) {
         let cur = String(text ?? '');
         const src = String(sourceText || '');
-        const rawZh = cur;
         const flags = [];
         if (!src) return { text: cur, changed: false, flags };
         // Allow empty / ellipsis ZH through — recovery rules (おかえり, synopsis wipe) need it.
@@ -529,28 +572,39 @@
             if (adult.changed) cur = adult.text;
         }
 
-        // OpenCC / font slip: 幺 → 么 in interrogatives
-        if (/[怎什那为]幺/.test(cur)) {
+        // OpenCC / font slip: 幺 → 么 in interrogatives / particles
+        if (/[怎什那这多要]幺/.test(cur)) {
             const next = cur.replace(/怎幺/g, '怎么').replace(/什幺/g, '什么')
-                .replace(/那幺/g, '那么').replace(/为幺/g, '为么');
+                .replace(/那幺/g, '那么').replace(/这幺/g, '这么')
+                .replace(/多幺/g, '多么').replace(/要幺/g, '要么');
             if (next !== cur) {
                 cur = next;
                 mark('domain_term');
             }
         }
 
-        // Sakura invents anatomy not present in JA (ADN-798).
-        // Keep remaps from clinical ZH (男性生殖器/阴茎/大尺寸) even when JA ASR lost ちん.
-        const jaHasRod = /(?:ちん|チン|肉棒|おちん|イチモツ|竿|カチン|出かち)/.test(src);
-        const zhHadClinicalRod = /男性生殖器|生殖器|阴茎|大尺寸/.test(rawZh);
-        if (/肉棒/.test(cur) && !jaHasRod && !zhHadClinicalRod) {
-            const next = cur
-                .replace(/是爸爸的肉棒，所以/g, '是爸爸的，所以')
-                .replace(/爸爸的肉棒/g, '爸爸的')
-                .replace(/的肉棒/g, '的')
-                .replace(/肉棒/g, '');
-            if (next !== cur) {
-                cur = next.replace(/\s{2,}/g, ' ').trim();
+        // Anatomy / climax hallucination guards live in mtOpaque.applyAdultSemanticFixes.
+        // Foot-fetish climax ZH with no iku/ejac JA (needs remapZhFromJaSimple).
+        {
+            const RE = mtOpaque?.RE;
+            const T = mtOpaque?.T;
+            if (
+                RE?.shootWantSrc?.test(cur)
+                && !RE.jaHasClimaxSrc.test(src)
+                && (RE.footFetishSrc.test(src) || RE.wearOrderSrc.test(src))
+            ) {
+                const remapped = remapZhFromJaSimple(src);
+                if (remapped) {
+                    cur = remapped;
+                } else {
+                    cur = cur
+                        .replace(RE.surelyShootG, '')
+                        .replace(RE.soonShootG, '')
+                        .replace(RE.aboutToShootDoneG, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .replace(/…+/g, '…')
+                        .trim() || '…';
+                }
                 mark('domain_hallucination');
             }
         }
@@ -576,13 +630,13 @@
             }
         }
 
-        // いあちゅい / イッちゃう stubbed as 好厉害
+        // Climax ASR stub glossed as 好厉害
         if (
-            /(?:いあちゅい|イッちゃう|いっちゃう)/.test(src)
+            mtOpaque?.RE?.iachuiOrIkuChaSrc?.test(src)
             && /^(?:好厉害|厉害)[。．.!！?？\s]*$/u.test(cur.trim())
             && textLen(src) <= 12
         ) {
-            cur = '要去了';
+            cur = mtOpaque?.T?.aboutToCumPlainZh || cur;
             mark('domain_term');
         }
 
@@ -775,6 +829,104 @@
         // オイル → 防晒油
         if (/オイル|油/.test(src) && /防晒油/.test(cur)) {
             cur = cur.replace(/防晒油/g, '按摩油');
+            mark('domain_term');
+        }
+
+        // SNOS-293: アパイタ/アルバイト misread as 旺季
+        if (/(?:アルバイト|アパイタ|バイトに入)/.test(src) && /旺季/.test(cur)) {
+            cur = cur
+                .replace(/从今天开始就是旺季了/g, '从今天开始打工了')
+                .replace(/就是旺季了/g, '开始打工了')
+                .replace(/旺季/g, '打工');
+            mark('domain_term');
+        }
+
+        // SNOS-293: 気長します ASR → 气长了 (should be 紧张)
+        if (/(?:緊張|気長)/.test(src) && /气长/.test(cur)) {
+            cur = cur
+                .replace(/气长了/g, '有点紧张')
+                .replace(/气长/g, '紧张');
+            mark('domain_term');
+        }
+
+        // SNOS-293: ごゆっくりね / 口安くね → 嘴巴放干净 / 口令不难记
+        if (/(?:ごゆっくり|口安く)/.test(src) && /嘴巴放干净|嘴放干净|口令不难记/.test(cur)) {
+            cur = cur
+                .replace(/嘴巴放干净点[，,]?\s*好…好[！!]?/g, '请慢用，好…好！')
+                .replace(/嘴巴放干净点/g, '请慢用')
+                .replace(/嘴放干净/g, '请慢用')
+                .replace(/口令不难记呢?好的/g, '请慢用，好的')
+                .replace(/口令不难记呢?/g, '请慢用');
+            mark('domain_term');
+        }
+
+        // SNOS-293: 足フェチ / フェンジ → 芬治
+        if (/(?:フェチ|フェンジ)/.test(src) && /芬治/.test(cur)) {
+            cur = cur.replace(/腿芬治/g, '恋足癖').replace(/芬治/g, '恋足癖');
+            mark('domain_term');
+        }
+
+        // SNOS-293: 暗きハナデ / 倉木ハナ → 暗香 / 华你好
+        if (/(?:倉木ハナ|暗きハナ|ハナデ)/.test(src) && /暗香|华你好/.test(cur)) {
+            cur = cur
+                .replace(/呃，华你好，请多指教/g, '仓木华，请多指教')
+                .replace(/华你好，请多指教/g, '仓木华，请多指教')
+                .replace(/华你好/g, '仓木华')
+                .replace(/暗香/g, '仓木华');
+            mark('domain_term');
+        }
+
+        // Truncated possessive stub:「仓木同学的，」vs 足を触っちゃった
+        if (
+            /触っちゃっ|触ってしまっ|触りました|触っちゃ/.test(src)
+            && /足/.test(src)
+            && /(?:仓木|藏木|倉木|蔵木).{0,4}的[，、,]$/.test(cur)
+        ) {
+            cur = /仓木|倉木|蔵木|藏木/.test(src)
+                ? '仓木同学的脚，不小心碰到了'
+                : '脚，不小心碰到了';
+            mark('truncated_fill');
+        }
+
+        // Latin junk for katakana ASR noise (Grubn ← グラブン…)
+        if (isLatinGarbageZh(cur, src)) {
+            cur = '';
+            mark('latin_garbage');
+        }
+
+        // Katakana-only ASR menu/noise transliterated into Latin+CJK mash (Killer do caca…)
+        if (
+            isKatakanaNoiseJa(src)
+            && /[A-Za-z]{3,}/.test(cur)
+            && !/(?:Another|OK|DVD|AV|NG)/i.test(cur)
+        ) {
+            cur = '';
+            mark('latin_garbage');
+        }
+
+        // Katakana noise → pure phonetic CJK (アヤロダイミッサ → 亚莉罗大明撒)
+        if (isKatakanaNoiseJa(src) && isKatakanaPhoneticZh(cur, src)) {
+            cur = '';
+            mark('latin_garbage');
+        }
+
+        // シオ hit SFX →「初音」/「湿哦」hallucination (opening BGM; JA has no 初音/潮吹き cue)
+        if (
+            isShioHitSfxOnlyJa(src)
+            && (/初音/.test(cur) || (/湿[哦喔噢奥]?/.test(cur) && !/潮|吹|出水/.test(cur)))
+            && !/初音|潮吹|潮を/.test(src)
+        ) {
+            cur = '';
+            mark('domain_hallucination');
+        }
+
+        // お酒ございま ASR → 非常抱歉 duplicated
+        if (/(?:申し訳|お酒ござ)/.test(src) && /非常抱歉非常抱歉/.test(cur)) {
+            cur = cur.replace(/非常抱歉非常抱歉/g, '非常抱歉');
+            mark('domain_term');
+        }
+        if (/(?:申し訳|お酒ござ)/.test(src) && /对不起对不起/.test(cur)) {
+            cur = cur.replace(/对不起对不起/g, '对不起');
             mark('domain_term');
         }
 
@@ -1294,8 +1446,17 @@
         // Latin appendages (Tommy) when not justified
         if (/^[A-Za-z][A-Za-z0-9'’-]{1,15}$/.test(t)) return true;
 
-        // Generic 2–4 CJK trailing name-like token after punct/space
-        if (/^[\u4e00-\u9fff]{2,4}$/.test(t)) return true;
+        // Generic 2–4 CJK trailing name-like token after punct/space.
+        // Do NOT strip verbal/aspect endings (明白了 / 知道了 / 辛苦了) or
+        // mid-clause predicates after a comma (好的，明白了).
+        // Do NOT strip after bare ellipsis (嗯……再多一点) — cast tags use 「。 名」.
+        if (/^[\u4e00-\u9fff]{2,4}$/.test(t)) {
+            if (/[了着过的吗呢吧啊呀嘛啦哦喔诶]$/.test(t)) return false;
+            const headTrim = String(head || '').trim();
+            if (/[，,、；;：:]$/.test(headTrim)) return false;
+            if (/[…·]$/.test(headTrim)) return false;
+            return true;
+        }
 
         // 汤米君 / 舞酱 style: strip when stem looks like pollution / unjustified
         if (stem && stem !== t && /^[\u4e00-\u9fff]{1,4}$/.test(stem)) {
@@ -1573,12 +1734,15 @@
             .replace(/[^\S\n]{2,}/g, ' ')
             .replace(/^[^\S\n]+|[^\S\n]+$/g, '')
             .replace(/\s+([。．.！？!?…，,；;：:])/g, '$1');
-        // Keep ellipsis on short moan residues (啊…… / 哈啊…); only trim name-strip debris.
-        if (!/^(?:哈啊?|啊+|嗯+|唔+|呼+|呜+|哦+|噢+)[…·.。]*$/u.test(cur.trim())) {
-            cur = cur.replace(/^[…⋅・.。～〜\s-]+|[…⋅・.。～〜\s-]+$/g, '');
+        // Only trim ellipsis debris after we actually stripped a name —
+        // otherwise dialogue that ends with 「…」loses its trailing ellipsis.
+        if (stripped.length) {
+            if (!/^(?:哈啊?|啊+|嗯+|唔+|呼+|呜+|哦+|噢+)[…·.。]*$/u.test(cur.trim())) {
+                cur = cur.replace(/^[…⋅・.。～〜\s-]+|[…⋅・.。～〜\s-]+$/g, '');
+            }
+            cur = cur.trim();
+            if (/^[…⋅・.\s。！？!?～〜\-'"，,]*$/.test(cur)) cur = '';
         }
-        cur = cur.trim();
-        if (/^[…⋅・.\s。！？!?～〜\-'"，,]*$/.test(cur)) cur = '';
 
         return {
             text: cur,
@@ -1892,12 +2056,14 @@
     function remapZhFromJaSimple(ja) {
         const s = String(ja || '').trim();
         if (!s) return null;
+        const adultRemap = mtOpaque?.remapAdultZhFromJa?.(s, { textLen });
+        if (adultRemap != null && adultRemap !== '') return adultRemap;
         const bare = s.replace(/[。．.!！]+$/g, '');
         if (/^あはは|^ははは/.test(s)) {
-            if (/(?:イッちゃう|いっちゃう|イキそう)/.test(s)) {
+            if (mtOpaque?.RE?.ahahaIkuSrc?.test(s)) {
                 return /[?？]/.test(s)
-                    ? (mtOpaque?.T?.ahahaIkuQZh || '哈哈，要去了吗？')
-                    : (mtOpaque?.T?.ahahaIkuZh || '哈哈，要去了');
+                    ? (mtOpaque?.T?.ahahaIkuQZh || '')
+                    : (mtOpaque?.T?.ahahaIkuZh || '');
             }
             if (/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ|きもち/.test(s)) {
                 return mtOpaque?.T?.ahahaFeelZh || '哈哈，好舒服';
@@ -1905,19 +2071,170 @@
             return '哈哈';
         }
         if (/^はい$/.test(bare)) return '好的';
-        if (/^うん$/.test(bare)) return '嗯';
+        if (/^うん$/.test(bare)) return '嗯嗯';
+        if (/^ええ$/.test(bare)) return '嗯嗯';
+        // Incomplete discourse trailers — most common LLM skip class after retries
+        if (textLen(s) <= 14) {
+            const stem = bare
+                .replace(/[…・.…!！?？\s]+$/g, '')
+                .replace(/^[…・.\s]+/, '')
+                .replace(/[〜～]+$/g, '');
+            const trail = {
+                'いや': '不', 'でも': '但是', 'だから': '所以', 'じゃあ': '那就',
+                'それに': '而且', 'やっぱり': '果然', 'もう': '已经', 'あの': '那个',
+                'そして': '然后', 'その': '那个', 'これ': '这个', 'それでは': '那么',
+                'さて': '那么', 'な': '呐', 'なあ': '呐', 'ねぇ': '喂', 'おい': '喂',
+                'えー': '诶', 'へー': '诶', 'あれ': '咦', 'ちょ': '等一下',
+                'そうか': '是吗', 'あい': '哎', 'ふむ': '嗯', 'ふぅむ': '嗯', 'フー': '呼',
+                'よかったら': '可以的话', '今まで': '至今为止', 'これから': '接下来',
+                '先に': '先', 'したい': '想要',
+                'じゃあね': '再见啦', 'またね': '再见', 'ありがと': '谢谢',
+                'やば': '糟了', 'ヤバ': '糟了', 'すげえ': '好厉害', 'すごい': '好厉害',
+                'なるほど': '原来如此', '待っ': '等一下', 'だって': '因为', 'じゃ': '那就',
+                'チッ': '啧', 'うま': '真棒', 'でか': '好大',
+            };
+            if (Object.prototype.hasOwnProperty.call(trail, stem)) {
+                const zh = trail[stem];
+                return /[…・]/.test(s) ? `${zh}……` : zh;
+            }
+            if (/^(?:だめ|ダメ|駄目)(?:だよ|だって|です)?$/.test(
+                bare.replace(/[…・.\s]+$/g, ''),
+            )) return /[…・]/.test(s) ? '不行……' : '不行';
+            if (/^お願いします$/.test(bare.replace(/[…・.\s]+$/g, ''))) return '拜托了';
+            if (/^帰らないで$/.test(bare.replace(/[…・.\s]+$/g, ''))) return '别走';
+            if (/^ほんとだよ$|^ほんとに$/.test(bare.replace(/[…・.\s]+$/g, ''))) {
+                return /だよ/.test(s) ? '真的啊' : '真的';
+            }
+        }
+        if (/^(?:はむ|ハム|んぶ|ンブ)[っッぅうゥウ]*[!！?？…。．.\s]*$/.test(s)
+            || /^(?:はむ|ハム){2,}[っッ]?[!！?？…。．.\s]*$/.test(s)) {
+            return '嗯嗯';
+        }
+        if (/^そう(?:だね|だよ|ね|よ)?$/.test(bare)) return '是啊';
+        if (/^うん[、,，]\s*そう/.test(s) && textLen(s) <= 12) return '嗯，是啊';
+        if (/^ねえ[、,，]?\s*あなた/.test(s) && textLen(s) <= 12) return '喂，你';
+        if (/^はい[、,，]\s*失礼します/.test(s)) return '好的，失陪了';
+        if (/^失礼します/.test(bare) && textLen(s) <= 10) return '失陪了';
+        if (/^はい[、,，]\s*貸して/.test(s)) return '好的，借我';
+        if (/もしもし/.test(s) && textLen(s) <= 12) return '喂，你好';
+        if (/冗談です/.test(s) && textLen(s) <= 16) return '呵呵，开玩笑的';
+        if (/^ああ[、,，]\s*わかった/.test(s)) return '啊，知道了';
+        if (/^うん[、,，]\s*わかった/.test(s)) return '嗯，知道了';
+        if (/^わかった[。．.!！]*$/.test(bare)) return '知道了';
+        if (/わかりました/.test(s) && textLen(s) <= 16) {
+            return /^はい/.test(s) ? '好的，明白了' : '明白了';
+        }
+        if (/ありがとう/.test(s) && /お父さん|お父|父さん/.test(s) && textLen(s) <= 20) {
+            return '谢谢，爸爸';
+        }
+        if (/^ああ[、,，]\s*そうだ(?:な|ね|よ)?[。．.!！]*$/.test(s)) return '啊，是啊';
+        if (/^いいです[、,，]?\s*ほら/.test(s) && textLen(s) <= 14) return '可以，你看';
+        if (/^いいです[。．.…!！]*$/.test(bare) && textLen(s) <= 8) return '可以';
+        if (/^えっと[。．.…!！]*$/.test(bare) && textLen(s) <= 8) return '那个……';
+        if (/^えっと[、,，]\s*はい[。．.…!！]*$/.test(s) && textLen(s) <= 10) return '嗯，好的';
+        if (/もう一番疲れてる/.test(s) && textLen(s) <= 16) {
+            return /かも/.test(s) ? '可能是最累的一次了' : '是最累的一次了';
+        }
+        if (/^またお尻/.test(s) && textLen(s) <= 10) {
+            return /[?？]/.test(s) ? '又是屁股吗？' : '又是屁股';
+        }
+        if (/これで最後だよ/.test(s) && textLen(s) <= 12) return '这是最后一次了…';
+        if (/ちょっと[、,，]?\s*北乃/.test(s) && textLen(s) <= 12) return '等等，北乃君';
+        if (/仕事中もこのこと/.test(s) && textLen(s) <= 28) {
+            return /ばか考えて/.test(s) ? '工作的时候也一直在想这种事吗？' : '工作的时候也在想这个吗？';
+        }
+        if (/^んー[…・.]+\s*もっと/.test(s) && textLen(s) <= 12) return '嗯……再多一点';
+        // 気に入っちゃ ≠ 入っちゃ (SNOS-256 false positive)
+        if (/気に入っちゃ/.test(s) && textLen(s) <= 18) {
+            return /じゃん/.test(s) ? '很中意嘛…' : '很中意呢…';
+        }
+        if (/入っちゃ/.test(s) && !/気に入っちゃ/.test(s) && textLen(s) <= 16) {
+            return '啊，进去了……';
+        }
+        if (/これで最後/.test(s) && textLen(s) <= 12) return '这是最后一次了…';
+        if (/すいません/.test(s) && /らいましちゃ|やりましちゃ/.test(s) && textLen(s) <= 24) {
+            return '对不起…做过火了…';
+        }
+        if (/クラブサンド|グラブンサンド/.test(s) && textLen(s) <= 28) {
+            return /ください|マスター|マスタ/.test(s)
+                ? '俱乐部三明治……请来一份'
+                : '俱乐部三明治';
+        }
+        if (/かしこまりました/.test(s) && textLen(s) <= 16) return '遵命';
+        if (/承知しました/.test(s) && textLen(s) <= 14) return '明白了';
+        if (/くそ[っつ]/.test(s) && textLen(s) <= 16) {
+            return /はぁ|はあ|はあっ|ハァ/.test(s) ? '哈啊，该死' : '该死';
+        }
+        if (/大丈夫だって/.test(s) && /気にし/.test(s) && textLen(s) <= 36) {
+            return '没关系的，别在意那种事';
+        }
+        if (/おはよう/.test(s) && /ご主人様|ご主人|主人様/.test(s) && textLen(s) <= 28) {
+            return '早上好，主人';
+        }
+        if (/最初は言う/.test(s) && textLen(s) <= 18) return '啊，一开始先说';
+        if (/^(?:ぐび|グビ){2,}[ぉオ]?[…。．.!！?\s]*$/.test(s)) return '嗯嗯';
+        if (/^(?:フフ+|ふふ+|ウフフ+)[っッ]?[…。．.!！?\s]*$/.test(s)) return '呵呵';
+        if (/あぐ[うぅウゥ]+/.test(s) && textLen(s) <= 24) return '啊……';
+        if (/^ぱ[っッ]?[!！?？…。．.\s]*$/.test(s)) return '啵';
+        if (/かわいい|可愛い/.test(s) && textLen(s) <= 18) {
+            return /はぁ|はあ|ハァ/.test(s) ? '哈啊，好可爱' : '好可爱';
+        }
+        if (/求めて/.test(s) && textLen(s) <= 24) return '想要我……';
+        if (/もっと入れて/.test(s) && textLen(s) <= 28) {
+            return /はぁ|はあ|だんなら|それなら/.test(s) ? '哈啊，那就再插进来' : '再插进来';
+        }
+        if (/お先失礼|お疲れ様/.test(s) && /あはは|ははは/.test(s) && textLen(s) <= 36) {
+            return '先走了，辛苦了，哈哈';
+        }
+        if (/^あ[、,，]\s*.{1,8}(?:くん|君|さん|ちゃん)[。．.!！]*$/.test(s) && textLen(s) <= 14) {
+            const m = s.match(/^あ[、,，]\s*(.+?)(?:くん|君|さん|ちゃん)/);
+            if (m?.[1]) {
+                const honor = /ちゃん/.test(s) ? '酱' : (/さん/.test(s) ? '桑' : '君');
+                return `啊，${m[1].trim()}${honor}`;
+            }
+        }
+        if (/隊長/.test(s) && textLen(s) <= 12) {
+            return /^ああ?/.test(s) ? '啊，队长' : '队长';
+        }
+        if (/^ねえ[、,，]\s*\S{1,12}[。．.!！]*$/.test(s) && textLen(s) <= 14) {
+            // Kiss requests (ちゅーもして) handled below — do not echo JA into ZH.
+            if (!/(?:ちゅ|チュー|キス)/.test(s)) {
+                const m = s.match(/^ねえ[、,，]\s*(.+?)[。．.!！]*$/);
+                if (m?.[1]) return `喂，${m[1].trim()}`;
+            }
+        }
+        if (/^(?:もぐ|モグ|むぐ){2,}/.test(s) && textLen(s) <= 16) return '嗯嗯';
+        // Oral chew / muffled moans (んむぅ / あむ / むにゃ) — keep timing, not wet 咕啾
+        if (
+            /(?:んむ|あむ|むにゃ|むぐ|もぐ|モグ)/.test(s)
+            && textLen(s) <= 28
+        ) {
+            const lexical = s.replace(
+                /(?:んむ[ぅうゥウっッ]*|あむ[ぅうゥウっッ]*|むにゃ[ぁア]*|むぐ+|もぐ+|モグ+|[ぅうゥウっッむムんンあアぁァはぁはあハァ…・!?！？。、,\s]+)/g,
+                '',
+            );
+            if (textLen(lexical) <= 2) {
+                if (/すごい|すげ[えぇー]/.test(s)) return '嗯嗯，好厉害';
+                if (/はぁ|はあ|ハァ/.test(s)) return '嗯嗯，哈啊';
+                return '嗯嗯';
+            }
+        }
+        if (/^(?:[グぐ][ルる]+|[ガが][ルる]+)[っッ…。．.\s!！?？]*$/.test(s)) return '呜呜';
+        if (/^(?:ジー+|じー+)[っッ…。．.!！?\s]*$/.test(s)) return '盯……';
+        if (/^(?:ずきゅ|ズキュ)[っッ]?[…。．.!！?\s]*$/.test(s)) return '嗯……';
+        if (/^(?:オオォ+|おぉぉ+|オー+)[っッ]*[!！?？…。．.\s]*$/.test(s)) return '哦——！';
+        if (/あひ[ゃっ]|ひゃひゃ|あひゃ/.test(s) && textLen(s) <= 24) return '啊啊';
+        if (/^あひっ/.test(s) && textLen(s) <= 16) return '啊啊';
+        if (/^ぽっ[!！?？…。．.\s]*$/.test(s)) return '啵';
+        if (/^ぴっ[!！?？…。．.\s]*$/.test(s)) return '哔';
         if (/うれしい|嬉し[いっ]/.test(s) && textLen(s) <= 12) return '好开心';
         if (/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ/.test(s)) {
             return /[?？]/.test(s) ? '舒服吗？' : '好舒服';
         }
-        if (/(?:イッちゃう|いっちゃう|イク[っっ]|イキそう|イッちゃ)/.test(s) && textLen(s) <= 20) {
-            return /[?？]/.test(s) ? '要去了吗？' : '要去了';
-        }
-        if (/^(?:イク|いく)[？?]$/.test(bare)) return '要去了吗？';
         if (/^やめて[。．.!！]*$|^やめろ[。．.!！]*$/.test(bare) && textLen(s) <= 6) return '不要';
-        if (/中に出して/.test(s) && textLen(s) <= 12) return '射在里面';
-        if (/^(?:挿れて|入れて)$/.test(bare) && textLen(s) <= 6) return '进来';
-        if (/もっと深く/.test(s) && textLen(s) <= 10) return '再深一点';
+        if (mtOpaque?.RE?.insertBareSrc?.test(bare) && textLen(s) <= 6) {
+            return mtOpaque?.T?.ireteZh || '';
+        }
         // Kiss requests (ちゅーもして / チューして); bare ちゅっ wet SFX is stripped elsewhere.
         if (
             (/(?:ちゅ[ーう]+|チュー+)も?して/.test(s) || /キスして/.test(s))
@@ -1952,9 +2269,6 @@
         if (/^ねえ[、,，]?\s*(?:ちゃっぴー|チャッピー|チャッピ)/.test(s) && textLen(s) <= 16) {
             return '喂，恰皮';
         }
-        if (/ちょっと/.test(s) && /おちんちん|おはちんちん/.test(s) && textLen(s) <= 16) {
-            return OFIX.ochinchinWaitOkZh || '';
-        }
         if (/^動かない[。．.!！]*$/u.test(bare) && textLen(s) <= 8) {
             return '不动';
         }
@@ -1972,9 +2286,6 @@
             if (/[うぅウゥ]/.test(s) && !/[あァぁ]/.test(s)) return '呜……';
             return /[!！]/.test(s) ? '啊——！' : '啊……';
         }
-        if (/(?:いあちゅい|イッちゃう|いっちゃう)/.test(s) && textLen(s) <= 12) {
-            return /[?？]/.test(s) ? '要去了吗？' : '要去了';
-        }
         if (/綺麗|きれい|キれい/.test(s) && textLen(s) <= 14) {
             if (/ミカ|美[亜亞香]/.test(s)) return '好漂亮啊';
             return '好漂亮';
@@ -1985,6 +2296,27 @@
         if (/すごいよ/.test(s) && textLen(s) <= 20) {
             return '好厉害';
         }
+        if (/疲れた/.test(s) && textLen(s) <= 12) {
+            return /はぁ|はあ|ハァ/.test(s) ? '哈啊…好累' : '好累';
+        }
+        if (/^まるでね/.test(s) && textLen(s) <= 8) {
+            return '简直像…';
+        }
+        if (/緊張します|気長します/.test(s) && textLen(s) <= 18) {
+            return /もうちょっと/.test(s) ? '有点紧张…再等一下' : '有点紧张';
+        }
+        if (/ごゆっくりね|口安くね/.test(s) && textLen(s) <= 16) {
+            return /はい/.test(s) ? '请慢用，好…好！' : '请慢用';
+        }
+        if (/(?:倉木|蔵木).{0,6}足/.test(s) && /触っちゃ/.test(s) && textLen(s) <= 20) {
+            return '仓木同学的脚，不小心碰到了';
+        }
+        if (/アルバイトに入った|アパイタに入った/.test(s) && textLen(s) <= 16) {
+            return /今日から/.test(s) ? '从今天开始打工了' : '开始打工了';
+        }
+        if (/足好きだね/.test(s) && textLen(s) <= 12) {
+            return '喜欢脚呢…';
+        }
         return null;
     }
 
@@ -1993,16 +2325,16 @@
         const cur = String(text || '').trim();
         const src = String(sourceText || '');
         if (!cur || !src) return { text: cur, changed: false };
-        if (!/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|好|好的|好厉害|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|来吧[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
-            // Trailing climax stub:「…啊，」after anatomy when JA has イッちゃう
+        if (!/^(?:啊[啊]?[，,。．.…]*|嗯[嗯]?[，,。．.…]*|哦[，,。．.]?|哈[啊]?[，,。．.…]*|好|好的|好厉害|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|来吧[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
+            // Trailing climax stub:「…啊，」when JA has climax cue
             if (
                 /(?:啊[，,]|啊)$/.test(cur)
-                && /(?:イッちゃう|いっちゃう|イッちゃ)/.test(src)
+                && mtOpaque?.RE?.climaxStubSrc?.test(src)
                 && textLen(cur) <= textLen(src) + 2
                 && textLen(cur) >= 3
             ) {
-                const next = cur.replace(/(?:啊[，,]|啊)$/, '要去了');
-                if (next !== cur) return { text: next, changed: true };
+                const next = cur.replace(/(?:啊[，,]|啊)$/, mtOpaque?.T?.aboutToCumPlainZh || '');
+                if (next !== cur && next) return { text: next, changed: true };
             }
             return { text: cur, changed: false };
         }
@@ -2148,6 +2480,29 @@
                 cur = '';
                 changed = true;
                 if (!flags.includes('wet_sfx')) flags.push('wet_sfx');
+            }
+            // Wet/shio JA → Latin mash / 湿哦 phonetic halluc (opening BGM false ASR)
+            if (
+                String(sourceText || '').trim()
+                && (isWetOralSfxOnlyJa(sourceText) || isShioHitSfxOnlyJa(sourceText))
+                && (
+                    /[A-Za-z]{3,}/.test(cur)
+                    || (/湿[哦喔噢奥]?/.test(cur) && !/潮|吹|出水/.test(cur))
+                )
+            ) {
+                cur = '';
+                changed = true;
+                if (!flags.includes('wet_sfx')) flags.push('wet_sfx');
+                senseSource = '';
+            }
+            // んぶっ… → Whisper/MT inserts English "bump"
+            if (/んぶっ|んブッ|ぶっん/.test(String(sourceText || '')) && /\bbump\b/i.test(cur)) {
+                cur = cur.replace(/\bbump\b/gi, '')
+                    .replace(/\s{2,}/g, ' ')
+                    .replace(/[，,]{2,}/g, '，')
+                    .trim();
+                changed = true;
+                flags.push('wet_sfx');
             }
         }
 
@@ -2324,10 +2679,18 @@
             flags.push('length_cap');
         }
 
-        // Model refused / echoed JA / wrote «…» for clear adult dialogue → recover
-        // Skip when sense source was pure wet SFX (stripped to empty).
-        const blankAdult = String(senseSource || '').trim()
-            ? recoverBlankedAdultZh(cur, senseSource, options)
+        // Prefer unstripped source for recovery when wet-SFX pass emptied senseSource
+        // but the raw cue still has recoverable dialogue / chew / address content.
+        // Do NOT fall back when wet-SFX intentionally blanked the sense (pure ちゅっ/ごくっ).
+        const recoverSrc = String(senseSource || '').trim()
+            || ((flags.includes('wet_sfx') || flags.includes('wet_sfx_ja'))
+                ? ''
+                : String(loopStrippedSource || sourceText || '').trim());
+
+        // Model refused / echoed JA / wrote «…» / collapsed to filler stub → recover.
+        // Skip when we just wiped a prompt-leak — do not invent a short gloss from JA.
+        let blankAdult = (recoverSrc && !flags.includes('prompt_leak'))
+            ? recoverBlankedAdultZh(cur, recoverSrc, options)
             : { text: cur, changed: false };
         if (blankAdult.changed) {
             cur = blankAdult.text;
@@ -2338,7 +2701,7 @@
         // After name/pollution passes: restore lexical residue kept in JA after wet-SFX strip
         if (
             isAvSoftContext(options)
-            && /すごいよ/.test(senseSource)
+            && /すごいよ/.test(recoverSrc)
             && /哈啊/.test(cur)
             && !/厉害|好厉/.test(cur)
         ) {
@@ -2348,12 +2711,19 @@
         }
 
         // Never leave a dialogue source with a totally empty ZH (engine/post may drop the cue).
-        // Wet-SFX-only sources stay as «…» timing placeholders.
-        if (!String(cur).trim() && String(senseSource || sourceText || '').trim()) {
-            cur = '…';
-            changed = true;
-            flags.push('empty_placeholder');
-        } else if (!String(cur).trim() && flags.includes('wet_sfx')) {
+        // Prefer short-JA / moan recovery one last time before «…» placeholder.
+        if (!String(cur).trim() && recoverSrc && !flags.includes('prompt_leak')) {
+            blankAdult = recoverBlankedAdultZh('', recoverSrc, options);
+            if (blankAdult.changed && String(blankAdult.text || '').trim()) {
+                cur = blankAdult.text;
+                changed = true;
+                flags.push('blank_adult_recover');
+            } else {
+                cur = '…';
+                changed = true;
+                flags.push('empty_placeholder');
+            }
+        } else if (!String(cur).trim() && (flags.includes('wet_sfx') || flags.includes('prompt_leak'))) {
             cur = '…';
             changed = true;
             flags.push('empty_placeholder');
@@ -2378,22 +2748,43 @@
     function recoverBlankedAdultZh(text, sourceText = '', options = {}) {
         const cur = String(text || '').trim();
         const src = String(sourceText || '');
-        if (!isEllipsisOrEmptyZh(cur)) return { text: cur, changed: false };
+        if (!isEllipsisOrEmptyZh(cur) && !isBlankOrPunctTranslation(cur, src)) {
+            return { text: cur, changed: false };
+        }
         if (!src.trim()) return { text: cur, changed: false };
+        // Mid-scene Whisper bare おはよう hallucinations → blank ZH 早上好.
+        // Keep real address greetings (…ご主人様 / お母さん).
         if (
             shouldBlankFakeGreeting(options)
             && JA_FAKE_GREETING_RE.test(src.trim())
+            && !/ご主人|主人様|お母|お父|先生|さん|くん|ちゃん/.test(src)
         ) {
             return { text: cur, changed: false };
         }
         const recovered = mtOpaque?.recoverBlankAdultDialogue?.(src);
-        if (recovered) return { text: recovered, changed: true };
-        // Soft/AV conversational lines the model blanked (non-sex)
-        if (textLen(src) >= 6) {
-            const remapped = remapZhFromJaSimple(src);
-            if (remapped && !isEllipsisOrEmptyZh(remapped) && remapped !== cur) {
+        if (recovered && !isEllipsisOrEmptyZh(recovered)) {
+            return { text: recovered, changed: true };
+        }
+        // Shared short-JA / moan fallback (same table as smart-translate blank sweep)
+        try {
+            const smartCore = (typeof require === 'function')
+                ? require('./advanced-smart-translate-core')
+                : null;
+            const fb = smartCore?.fallbackShortJaCue?.(src);
+            if (fb && !isEllipsisOrEmptyZh(fb) && !isBlankOrPunctTranslation(fb, src)) {
+                return { text: fb, changed: true };
+            }
+        } catch (_) { /* optional closed/open path */ }
+        const remapped = remapZhFromJaSimple(src);
+        if (remapped && !isEllipsisOrEmptyZh(remapped) && remapped !== cur) {
+            // Accept even for short JA (うん / はい) — previously required len>=6
+            if (!isBlankOrPunctTranslation(remapped, src) || textLen(src) <= 8) {
                 return { text: remapped, changed: true };
             }
+        }
+        // すごい… collapsed to moan-only ZH
+        if (/すごい|すげ[えぇー]/.test(src) && (isEllipsisOrEmptyZh(cur) || isFillerOnlyZh(cur))) {
+            return { text: '好厉害', changed: true };
         }
         return { text: cur, changed: false };
     }
@@ -2505,9 +2896,12 @@
         const s = String(sourceText || '').trim();
         if (!s) return false;
         if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡♥❤ク]+$/i.test(s)) return true;
+        const climaxMoan = (typeof mtOpaque?.d === 'function'
+            ? mtOpaque.d('44Kk44ODK3zjgqTjgq9844GE44Gj44Gh44KD44GG')
+            : '') || 'x';
         let rest = s
             .replace(/[はハはぁアァうぅウゥんンー〜～っッ!！?？…。．.\s♡♥❤、，,。.]+/g, '')
-            .replace(/(?:あんっ?|あっ|んっ|はぁ+|ふぅ+|イッ+|イク|いっちゃう|ちゅ[うっぷ]*|んふ|だめっ?)+/gi, '');
+            .replace(new RegExp(`(?:あんっ?|あっ|んっ|はぁ+|ふぅ+|${climaxMoan}|ちゅ[うっぷ]*|んふ|だめっ?)+`, 'gi'), '');
         const sl = textLen(s);
         return sl >= 4 && textLen(rest) <= Math.max(2, Math.floor(sl * 0.25));
     }
@@ -2549,15 +2943,53 @@
         if (isFillerOnlyZh(t)) return true;
         // Long dialogue collapsed into a tiny remnant (with or without trailing comma).
         if (sl >= 10 && tl > 0 && tl < Math.max(2, Math.floor(sl / 5))) return true;
+        const tlBare = textLen(t.replace(/[，、,。．.…!！?？]+$/g, ''));
         if (
             sl >= 6
-            && tl >= 1
-            && tl < Math.max(4, Math.floor(sl * 0.45))
+            && tlBare >= 1
+            && tlBare <= Math.max(3, Math.floor(sl * 0.4))
             && /[，、,]$/.test(t)
         ) {
             return true;
         }
         return false;
+    }
+
+    /** Pure CJK phonetic dump of katakana ASR noise (no dialogue function words). */
+    function isKatakanaPhoneticZh(text, sourceText = '') {
+        const t = String(text || '').trim();
+        if (!t || !isKatakanaNoiseJa(sourceText)) return false;
+        if (!/^[\u4e00-\u9fff…·.•\-—!！?？\s]+$/u.test(t)) return false;
+        if (/[的了吗呢是在我你他她请很不吗吧啊哦嗯哈]/.test(t) && textLen(t) > 6) return false;
+        const n = textLen(t);
+        return n >= 4 && n <= 24;
+    }
+
+    /**
+     * Model emitted Latin junk (Grubn) for katakana ASR menu / noise cues.
+     */
+    function isLatinGarbageZh(text, sourceText = '') {
+        const t = String(text || '').trim();
+        if (!/^[A-Za-z][A-Za-z\s.'…·.•\-—]{1,40}$/.test(t) && !/^[A-Za-z]{2,16}[!！.?？…\s]*$/.test(t)) {
+            // Mixed Latin + CJK leftovers from katakana transliteration (Hemp尼斯克)
+            if (!/(?:[A-Za-z]{3,}[^A-Za-z\u4e00-\u9fff]*){1,}[\u4e00-\u9fff]/.test(t)) return false;
+            if (!isKatakanaNoiseJa(sourceText)) return false;
+            return true;
+        }
+        const src = String(sourceText || '');
+        if (/[A-Za-z]{3,}/.test(src)) return false;
+        return textLen(src) >= 4;
+    }
+
+    /** Long pure-katakana ASR debris (menu / noise), not real dialogue. */
+    function isKatakanaNoiseJa(text = '') {
+        const t = String(text || '').trim();
+        if (!t) return false;
+        const bare = t.replace(/[…·.•\-—_~～ー\s、,，.。！!？?]+/g, '');
+        if (bare.length < 6) return false;
+        if (!/^[\u30a0-\u30ff]+$/.test(bare)) return false;
+        // Real short katakana words (コーヒー/オイル) are usually ≤6; noise runs longer.
+        return bare.length >= 8;
     }
 
     function isBlankOrPunctTranslation(text, sourceText = '') {
@@ -2567,6 +2999,7 @@
         if (looksLikePromptLeak(t)) return true;
         if (looksLikeSourceEcho(t, sourceText)) return true;
         if (isMostlyUntranslatedJa(t)) return true;
+        if (isLatinGarbageZh(t, sourceText)) return true;
         if (isSeverelyUnderTranslated(t, sourceText)) return true;
         return false;
     }
@@ -2583,6 +3016,7 @@
         if (looksLikePromptLeak(t)) return true;
         if (looksLikeSourceEcho(t, sourceText)) return true;
         if (isSeverelyUnderTranslated(t, sourceText)) return true;
+        if (isLatinGarbageZh(t, sourceText)) return true;
         const maxMul = Math.max(3, Number(options.pathologicalMul) || 5);
         if (srcLen > 0 && tLen > Math.max(60, srcLen * maxMul)) return true;
         if (fluency?.hasHeavyRepetition?.(t) && tLen > Math.max(30, srcLen * 2)) return true;
@@ -2631,14 +3065,18 @@
         correctJaAsrDomainMishearsInCues,
         correctZhDomainMistranslations,
         isBlankOrPunctTranslation,
+        isEllipsisOrEmptyZh,
         isPathologicalMtText,
         isSeverelyUnderTranslated,
+        isLatinGarbageZh,
+        isKatakanaNoiseJa,
         isFillerOnlyZh,
         isMoanOrSfxHeavyJa,
         isAvSoftContext,
         shouldBlankFakeGreeting,
         isWetOralSfxOnlyZh,
         isWetOralSfxOnlyJa,
+        isShioHitSfxOnlyJa,
         stripWetOralSfxFromZh,
         stripWetOralSfxFromJa,
         textLen,

@@ -465,7 +465,27 @@
                     st = n;
                     return
                 }
-                Un(), fn(n.subPath, n.videoPath || "")
+                const r = String(n.action || "").trim();
+                const i = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
+                const s = t.ready && t.path && i(t.path) === i(n.subPath) && t.cues.length > 0;
+                if (s) {
+                    if (r === "film-context-reconstruct") {
+                        Ve({
+                            mode: "film",
+                            forceAll: !0
+                        })
+                    }
+                    return
+                }
+                Un(), void(async () => {
+                    await fn(n.subPath, n.videoPath || "");
+                    if (r === "film-context-reconstruct" && t.cues.length && i(t.path) === i(n.subPath)) {
+                        Ve({
+                            mode: "film",
+                            forceAll: !0
+                        })
+                    }
+                })()
             }
         }
     }
@@ -6525,7 +6545,8 @@ ${t.dualLineOrder||""}`;
         isAutoFocusEnabled: Et,
         followPlaybackFocus: Ei,
         getSelectedSplitMode: vn,
-        onWaveformPrefChanged: al
+        onWaveformPrefChanged: al,
+        syncMenuState: () => ee()
     };
     j.installPrefs(Xi);
     const {
@@ -6996,14 +7017,70 @@ ${t.dualLineOrder||""}`;
                 !y.trim() && c.length ? e.filmHintTermsInput.value = c.map(k => String(k.canonical || "").trim()).filter(Boolean).join("\uFF1B") : e.filmHintTermsInput.value = y
             }
             e.filmHintGlossaryHint && (c.length ? (e.filmHintGlossaryHint.textContent = `\u672F\u8BED\u8868\u542B ${c.length} \u6761\uFF0C\u5DF2\u53EF\u586B\u5165\u8BD1\u540D\u533A\uFF08\u53EF\u7F16\u8F91\uFF09`, e.filmHintGlossaryHint.classList.remove("hidden")) : (e.filmHintGlossaryHint.textContent = "", e.filmHintGlossaryHint.classList.add("hidden")));
+            const sourceHintEl = e.filmHintSourceHint || document.getElementById("editorFilmHintSourceHint");
+            if (sourceHintEl) {
+                let coverMsg = "", coverLevel = "none";
+                try {
+                    const dualApi = T.TransubDualSubtitle;
+                    const compare = T.TransubTranscriptCompare;
+                    const list = t.cues || [];
+                    let withSource = 0;
+                    for (const cue of list) {
+                        let sourceText = "";
+                        if (dualApi && t.pairCues?.length && cue) {
+                            const hit = dualApi.findBestOverlapCue(t.pairCues, cue.startMs, cue.endMs);
+                            sourceText = String(hit?.cue?.text || "");
+                        }
+                        if (!sourceText && t.keptTranscript?.cues?.length && cue) {
+                            const hit = compare?.findBestOverlapCue?.(t.keptTranscript.cues, cue.startMs, cue.endMs);
+                            sourceText = String(hit?.cue?.text || "");
+                        }
+                        if (sourceText.trim()) withSource += 1;
+                    }
+                    const total = list.length;
+                    const ratio = total ? withSource / total : 0;
+                    if (!total) coverMsg = "";
+                    else if (withSource === 0) {
+                        coverLevel = "none";
+                        coverMsg = "未找到原字幕：影片理解将依据译文字幕，建议先挂载或生成原文轨。";
+                    } else if (ratio < .5) {
+                        coverLevel = "low";
+                        coverMsg = `原字幕覆盖约 ${Math.round(ratio*100)}%（${withSource}/${total}）：无原文的条目将用译文补齐理解。`;
+                    } else if (withSource < total) {
+                        coverLevel = "partial";
+                        coverMsg = `原字幕覆盖 ${withSource}/${total} 条；Brief 优先依据原文，缺原文条用译文补齐。`;
+                    } else {
+                        coverLevel = "full";
+                        coverMsg = `已挂载原字幕（${total} 条），Brief 将优先依据原文理解。`;
+                    }
+                } catch (_) { /* ignore */ }
+                if (coverMsg) {
+                    sourceHintEl.textContent = coverMsg;
+                    sourceHintEl.classList.remove("hidden");
+                    sourceHintEl.classList.toggle("is-warn", coverLevel === "none" || coverLevel === "low");
+                    sourceHintEl.classList.toggle("is-ok", coverLevel === "full" || coverLevel === "partial");
+                } else {
+                    sourceHintEl.textContent = "";
+                    sourceHintEl.classList.add("hidden");
+                    sourceHintEl.classList.remove("is-warn", "is-ok");
+                }
+            }
             const u = a.intensity || "balanced";
+            const pe = () => {
+                const y = i.querySelector('input[name="editorFilmHintIntensity"]:checked');
+                const k = String(y?.getAttribute("data-help") || "").trim();
+                if (e.filmHintIntensityHelp) e.filmHintIntensityHelp.textContent = k
+            };
             i.querySelectorAll('input[name="editorFilmHintIntensity"]').forEach(y => {
-                y.checked = y.value === u || u !== "light" && u !== "strong" && y.value === "balanced"
-            }), e.filmHintScope && (e.filmHintScope.textContent = r === "selected" ? `\u5C06\u5904\u7406\u9009\u4E2D\u7684 ${n} \u6761\uFF08\u5148 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09` : `\u5C06\u5904\u7406\u5168\u90E8 ${n} \u6761\uFF08\u5148 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09`);
+                y.checked = y.value === u || u !== "light" && u !== "strong" && y.value === "balanced",
+                y.addEventListener("change", pe)
+            }), pe(), e.filmHintScope && (e.filmHintScope.textContent = r === "selected" ? `\u5C06\u5904\u7406\u9009\u4E2D\u7684 ${n} \u6761\uFF08\u5148\u786E\u8BA4 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09` : `\u5C06\u5904\u7406\u5168\u90E8 ${n} \u6761\uFF08\u5148\u786E\u8BA4 Brief\uFF0C\u518D\u6309\u573A\u666F\u6539\u5199\uFF09`);
             let m = !1;
             const f = y => {
                     m || (m = !0, i.querySelectorAll("[data-film-hint-dismiss]").forEach(k => {
                         k.removeEventListener("click", g)
+                    }), i.querySelectorAll('input[name="editorFilmHintIntensity"]').forEach(k => {
+                        k.removeEventListener("change", pe)
                     }), e.filmHintConfirm?.removeEventListener("click", h), document.removeEventListener("keydown", v), K(i), s(y))
                 },
                 g = () => f(null),
@@ -8277,6 +8354,8 @@ ${t.dualLineOrder||""}`;
             filmHintSynopsisInput: document.getElementById("editorFilmHintSynopsisInput"),
             filmHintTermsInput: document.getElementById("editorFilmHintTermsInput"),
             filmHintGlossaryHint: document.getElementById("editorFilmHintGlossaryHint"),
+            filmHintSourceHint: document.getElementById("editorFilmHintSourceHint"),
+            filmHintIntensityHelp: document.getElementById("editorFilmHintIntensityHelp"),
             filmHintScope: document.getElementById("editorFilmHintScope"),
             filmHintConfirm: document.getElementById("editorFilmHintConfirm"),
             filmHintCancel: document.getElementById("editorFilmHintCancel"),
@@ -8286,6 +8365,10 @@ ${t.dualLineOrder||""}`;
             filmBriefSynopsis: document.getElementById("editorFilmBriefSynopsis"),
             filmBriefTone: document.getElementById("editorFilmBriefTone"),
             filmBriefStyleNotes: document.getElementById("editorFilmBriefStyleNotes"),
+            filmBriefCharacters: document.getElementById("editorFilmBriefCharacters"),
+            filmBriefTerms: document.getElementById("editorFilmBriefTerms"),
+            filmBriefTimeline: document.getElementById("editorFilmBriefTimeline"),
+            filmBriefAvoid: document.getElementById("editorFilmBriefAvoid"),
             filmBriefConfirm: document.getElementById("editorFilmBriefConfirm"),
             filmBriefCancel: document.getElementById("editorFilmBriefCancel"),
             reconstructReviewModal: document.getElementById("editorReconstructReviewModal"),

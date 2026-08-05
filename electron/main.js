@@ -162,6 +162,12 @@ const windowManager = createWindowManager({
     getUserDataPath,
 });
 
+const appTheme = require('./app-theme');
+appTheme.linkSuppressMinimizeToTray((ms) => {
+    try { windowManager.beginSuppressMinimizeToTray?.(ms); } catch (_) { /* ignore */ }
+});
+appTheme.registerAppThemeIpc(ipcMain);
+
 // Cold-start IPC: answer without loading heavy bridges (extensions / full transwithai).
 ipcMain.handle('transub-get-app-version', async () => {
     try {
@@ -482,6 +488,10 @@ app.on('second-instance', (_event, commandLine) => {
 
 app.whenReady().then(() => {
     registerMediaProtocolHandler();
+    // Apply nativeTheme before any BrowserWindow so title bars match on first paint.
+    try { appTheme.initAppTheme(); } catch (err) {
+        console.warn('[main] initAppTheme failed:', err?.message || err);
+    }
     // 尽早探测 NVIDIA，供 llama-server 默认选 CUDA 13/12（无独显则仍为 Vulkan）
     try {
         require('./advanced-runtime-prefer').refreshPreferCuda().catch(() => {});
@@ -549,6 +559,20 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
     if (windowManager.isQuitting()) return;
+    // Spurious last-window close (seen when a dark editor flipped nativeTheme)
+    // must not force-quit while the tray is still alive — recreate main instead.
+    try {
+        if (typeof windowManager.isSuppressMinimizeToTrayActive === 'function'
+            && windowManager.isSuppressMinimizeToTrayActive()) {
+            setImmediate(() => {
+                try {
+                    if (windowManager.isQuitting()) return;
+                    windowManager.createMainWindow();
+                } catch (_) { /* ignore */ }
+            });
+            return;
+        }
+    } catch (_) { /* ignore */ }
     // Windows-only app: always quit when all windows close
     windowManager.quitApp();
 });

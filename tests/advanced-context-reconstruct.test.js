@@ -111,4 +111,93 @@ describe('advanced-context-reconstruct-core', () => {
         assert.ok(!out[0].text.startsWith(' '));
         assert.ok(!/\n{3}/.test(out[0].text));
     });
+
+    it('detects merged neighbors and shifted cascade misalignment', () => {
+        const originals = [
+            { index: 17, text: '十年前，妈妈再婚了…' },
+            { index: 18, text: '现在爸爸带来的继妹香' },
+            { index: 19, text: '很沉默，不知道在想什么。' },
+            { index: 20, text: '呐，小智。' },
+            { index: 21, text: '补习班要上到什么时候？' },
+            { index: 22, text: '到晚上七点。' },
+        ];
+        // 模型把 17+18+19 并入 17，后续顺移（对齐用户截图场景）
+        const rewritten = [
+            {
+                index: 17,
+                text: '十年前，妈妈再婚了…现在爸爸带来的继妹香很沉默，不知道在想什么。',
+            },
+            { index: 18, text: '呐，小智。' },
+            { index: 19, text: '补习班要上到什么时候？' },
+            { index: 20, text: '到晚上七点。' },
+            { index: 21, text: '到晚上七点。' },
+            { index: 22, text: '到晚上七点。' },
+        ];
+        const issues = core.detectCueAlignmentIssues(originals, rewritten);
+        assert.ok(issues.merges.length >= 1, 'should detect merge at 17');
+        assert.ok(issues.merges.some((m) => m.index === 17));
+        assert.ok(issues.badIndexes.includes(17));
+        assert.ok(issues.badIndexes.includes(18) || issues.shifts.some((s) => s.index === 18));
+        assert.ok(issues.severe);
+
+        const repaired = core.revertAlignmentIssueUpdates(originals, rewritten, issues);
+        const byIdx = new Map(repaired.map((c) => [c.index, c.text]));
+        assert.strictEqual(byIdx.get(17), originals[0].text);
+        assert.strictEqual(byIdx.get(18), originals[1].text);
+        assert.strictEqual(byIdx.get(19), originals[2].text);
+    });
+
+    it('detects second merge cluster mid-scene (dress-up cascade)', () => {
+        const originals = [
+            { index: 26, text: '从一二年前开始，就连打扮和化妆也变得讲究了呢。' },
+            { index: 27, text: '意识到我们没有血缘关系的这个时期' },
+            { index: 28, text: '我也开始注意起她了。' },
+            { index: 29, text: '你在睡什么觉？' },
+        ];
+        const rewritten = [
+            {
+                index: 26,
+                text: '从一二年前开始，就连打扮和化妆也变得讲究了呢。意识到我们没有血缘关系的这个时期我也开始注意起她了。',
+            },
+            { index: 27, text: '你在睡什么觉？' },
+            { index: 28, text: '你在睡什么觉？' },
+            { index: 29, text: '你在睡什么觉？' },
+        ];
+        const issues = core.detectCueAlignmentIssues(originals, rewritten);
+        assert.ok(issues.merges.some((m) => m.index === 26));
+        assert.ok(issues.severe);
+        const repaired = core.revertAlignmentIssueUpdates(originals, rewritten, {
+            ...issues,
+            badIndexes: originals.map((c) => c.index),
+        });
+        assert.strictEqual(repaired.find((c) => c.index === 26).text, originals[0].text);
+        assert.strictEqual(repaired.find((c) => c.index === 27).text, originals[1].text);
+    });
+
+    it('does not flag normal light rewrites as merges', () => {
+        const originals = [
+            { index: 0, text: '十年前，妈妈再婚了…' },
+            { index: 1, text: '现在爸爸带来的继妹香' },
+            { index: 2, text: '很沉默，不知道在想什么。' },
+        ];
+        const rewritten = [
+            { index: 0, text: '十年前，妈妈再婚了。' },
+            { index: 1, text: '现在爸爸带来的继妹香，' },
+            { index: 2, text: '很沉默，不知道在想些什么。' },
+        ];
+        const issues = core.detectCueAlignmentIssues(originals, rewritten);
+        assert.deepStrictEqual(issues.merges, []);
+        assert.deepStrictEqual(issues.shifts, []);
+        assert.deepStrictEqual(issues.badIndexes, []);
+        assert.strictEqual(issues.severe, false);
+    });
+
+    it('mentions anti-merge one-to-one rules in prompts', () => {
+        const msgs = core.buildChatMessages([
+            { index: 0, text: '你好' },
+            { index: 1, text: '世界' },
+        ]);
+        assert.ok(msgs[0].content.includes('禁止把邻条') || msgs[0].content.includes('一对一'));
+        assert.ok(msgs[1].content.includes('恰好 2 条'));
+    });
 });

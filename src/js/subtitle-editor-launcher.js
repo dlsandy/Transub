@@ -5,13 +5,16 @@
     const electron = global.__ELECTRON__;
     const core = () => global.TransubCore;
 
-    async function openEditor(subPath, videoPath) {
+    async function openEditor(subPath, videoPath, opts = {}) {
         if (!subPath) return false;
         try {
-            const res = await electron?.transubOpenSubtitleEditor?.({
+            const payload = {
                 subPath,
                 videoPath: videoPath || '',
-            });
+            };
+            const action = String(opts?.action || '').trim();
+            if (action) payload.action = action;
+            const res = await electron?.transubOpenSubtitleEditor?.(payload);
             if (res?.ok === false) {
                 core()?.appendLog(res?.error || '无法打开字幕编辑器', 'err');
                 return false;
