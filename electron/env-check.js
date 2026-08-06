@@ -227,6 +227,66 @@ function checkLidModel(engineRoot) {
  * Run a short Python probe in the engine runtime (no HTTP server).
  * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number|null }>}
  */
+
+/** Strip pydub/FunASR ffmpeg noise so probe stderr is not shown as a runtime failure. */
+function sanitizeEngineProbeStderr(stderr) {
+    return String(stderr || '')
+        .split(/\r?\n/)
+        .filter((line) => {
+            const s = String(line || '').trim();
+            if (!s) return false;
+            return !/couldn't find ffmpeg|couldn't find avconv|defaulting to ffmpeg|ffmpeg is not installed|RuntimeWarning:\s*Couldn't find ffmpeg|from pydub|Notice:\s*ffmpeg/i.test(s);
+        })
+        .join('\n')
+        .trim();
+}
+
+/** Put bundled ffmpeg on PATH so funasr→pydub import does not warn during env probes. */
+function buildEngineProbeEnv(engineRoot) {
+    const env = {
+        ...process.env,
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONWARNINGS: 'ignore::RuntimeWarning',
+    };
+    try {
+        const root = path.resolve(String(engineRoot || '').trim() || '.');
+        const ffmpegBridge = require('./ffmpeg-bridge');
+        let exe = '';
+        try {
+            const resolved = ffmpegBridge.resolveFfmpegForExecution?.('');
+            exe = resolved?.ok ? String(resolved.path || '').trim() : '';
+        } catch { /* ignore */ }
+        if (!exe || exe === 'ffmpeg') {
+            exe = String(ffmpegBridge.findBundledFfmpegPath?.() || '').trim();
+        }
+        if (!exe || exe === 'ffmpeg') {
+            for (const candidate of [
+                path.join(root, 'ffmpeg', 'ffmpeg.exe'),
+                path.join(root, 'bin', 'ffmpeg.exe'),
+                path.join(root, 'runtime', 'ffmpeg.exe'),
+            ]) {
+                if (fs.existsSync(candidate)) {
+                    exe = candidate;
+                    break;
+                }
+            }
+        }
+        if (exe && exe !== 'ffmpeg' && fs.existsSync(exe)) {
+            const dir = path.dirname(exe);
+            const sep = path.delimiter;
+            const current = String(env.PATH || process.env.PATH || '');
+            if (!current.toLowerCase().split(sep).includes(dir.toLowerCase())) {
+                env.PATH = `${dir}${sep}${current}`;
+            }
+            env.FFMPEG_BINARY = exe;
+            env.FFMPEG_PATH = exe;
+        }
+        env.TRANSUB_ENGINE_HOME = root;
+    } catch { /* ignore */ }
+    return env;
+}
+
 function runEnginePython(engineRoot, code, timeoutMs = 12000) {
     const py = resolveEnginePython(engineRoot);
     if (!py) {
@@ -241,7 +301,7 @@ function runEnginePython(engineRoot, code, timeoutMs = 12000) {
         const child = spawn(py, ['-c', code], {
             cwd: path.resolve(String(engineRoot || '').trim() || '.'),
             windowsHide: true,
-            env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+            env: buildEngineProbeEnv(engineRoot),
         });
         let stdout = '';
         let stderr = '';
@@ -279,10 +339,13 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     const needSv = prefersSensevoice(engineAsrModel);
     const modelInstalled = checkModelInstalled(engineRoot, 'sensevoice-small').installed;
     // Import torch + FunASR stack deps — catches missing VC++ / Smart App Control / slim-pack gaps.
+    // Silence pydub's import-time ffmpeg RuntimeWarning (PATH may lack ffmpeg; app injects it separately).
     const probe = await runEnginePython(
         engineRoot,
         [
-            'import json,sys',
+            'import json,sys,warnings',
+            'warnings.filterwarnings("ignore", message=r".*ffmpeg.*", category=RuntimeWarning)',
+            'warnings.filterwarnings("ignore", message=r".*avconv.*", category=RuntimeWarning)',
             'out={"torch":"","funasr":"","numba":"","scipy":"","librosa":"","missing":[],"error":""}',
             'try:',
             ' import torch',
@@ -309,7 +372,8 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
         data = null;
     }
     const missingList = Array.isArray(data?.missing) ? data.missing.map(String) : [];
-    if (probe.ok && data?.torch && missingList.length === 0) {
+    // Trust structured JSON when imports succeeded, even if stderr still has ffmpeg noise.
+    if (data?.torch && missingList.length === 0) {
         const bits = [`torch ${data.torch}`];
         if (data.funasr) bits.push(`funasr ${data.funasr}`);
         if (data.numba) bits.push(`numba ${data.numba}`);
@@ -322,7 +386,8 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
             blocking: false,
         };
     }
-    const err = String(data?.error || probe.stderr || '').trim();
+    const stderrClean = sanitizeEngineProbeStderr(probe.stderr);
+    const err = String(data?.error || stderrClean || '').trim();
     const low = err.toLowerCase();
     let missingPkg = missingList[0] || '';
     if (!missingPkg) {
@@ -1134,6 +1199,7 @@ module.exports = {
     findCublasInEngine,
     hasNonAscii,
     resolveEnginePython,
+    sanitizeEngineProbeStderr,
     ASR_MODEL_MARKERS,
     VC_REDIST_URL,
     SUPPORT_URL,

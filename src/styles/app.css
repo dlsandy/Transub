@@ -93,6 +93,10 @@
     .post-task-menu-item {
         @apply flex items-center gap-2 w-full px-3 py-2 text-left text-gray-700 hover:bg-violet-50 transition-colors;
     }
+    /* flex above beats Tailwind .hidden (same specificity, later in cascade) */
+    .post-task-menu-item.hidden {
+        display: none !important;
+    }
     .post-task-menu-item.active {
         @apply text-violet-700 font-medium bg-violet-50/60;
     }
@@ -641,7 +645,15 @@
     html.main-theme-dark .file-sense-label { @apply text-violet-300; }
     html.main-theme-dark .param-chip-label { color: #9ca3af; }
     html.main-theme-dark .param-chip-value,
-    html.main-theme-dark .param-chip-select { @apply text-gray-100; }
+    html.main-theme-dark .param-chip-select {
+        @apply text-gray-100;
+        color-scheme: dark;
+    }
+    /* Native <option> popup on Windows often stays light; force readable contrast. */
+    html.main-theme-dark .param-chip-select option {
+        background-color: #1f2937;
+        color: #f3f4f6;
+    }
     html.main-theme-dark #dropZone { @apply border-gray-600 bg-gray-900/40; }
     html.main-theme-dark .subtitle-task-table thead {
         background-color: rgb(31 41 55 / 0.95);

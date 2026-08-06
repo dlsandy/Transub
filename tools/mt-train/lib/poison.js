@@ -44,7 +44,7 @@ function buildPoisonDraft(opts = {}) {
         } else if (issues.includes('prompt_leak') || issues.includes('sfx_halluc') || issues.includes('latin')) {
             lines.push("        assert.ok(r.text === '' || r.text === '…', r.text);");
         } else if (issues.includes('iku_shoot')) {
-            lines.push('        assert.ok(!/要射|射了|射出来|能射|请射/.test(r.text) || /出して|出され|射精/.test(ja), r.text);');
+            lines.push('        assert.ok(!/射精/.test(r.text) || /射精/.test(ja), r.text);');
         } else if (issues.includes('dechau_out')) {
             lines.push('        assert.ok(!/要出来了|又要出来了/.test(r.text), r.text);');
             lines.push('        assert.ok(/要射|射了/.test(r.text), r.text);');

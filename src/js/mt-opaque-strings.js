@@ -103,7 +103,7 @@
         rodAlsoBigZh: d('6bih5be05Lmf5b6I5aSn'),
         rodZh: d('6bih5be0'),
         aboutToStartZh: d('6KaB5byA5aeL5LqG'),
-        aboutToCumZh: d('6KaB5Y675LqG'),
+        aboutToCumZh: d('6KaB5bCE5LqG'),
         ochinchinJa: d('44GK44Gh44KT44Gh44KT'),
         ochinpoJa: d('44GK44Gh44KT44G9'),
         chinChinHiraJa: d('44Gh44KT44Gh44KT'),
@@ -126,7 +126,7 @@
         faceReleaseZh: d('6IS45LiK5Lmf6YeK5pS+5Ye65p2l'),
         ikuAlsoDashiteJa: d('44Kk44Kv44Gu44KC5Ye644GX44Gm'),
         climaxFeelZh: d('6auY5r2u55qE5oSf6KeJ'),
-        ikuAlsoDashiteZh: d('6KaB5Y6755qE5pe25YCZ5Lmf5bCE5Ye65p2l'),
+        ikuAlsoDashiteZh: d('6KaB5bCE55qE5pe25YCZ5Lmf5bCE5Ye65p2l'),
         acchiJa: d('44GC44Gj44Gh44GC44Gj44Gh'),
         softCottonZh: d('6L2v57u157u1'),
         hotHotZh: d('54Ot54Ot'),
@@ -135,8 +135,8 @@
         wetMessyZh: d('5rm/5ryJ5ryJ'),
         ahFeelGoodZh: d('5ZWK77yM5aW96IiS5pyN'),
         ahahaFeelZh: d('5ZOI5ZOI77yM5aW96IiS5pyN'),
-        ahahaIkuZh: d('5ZOI5ZOI77yM6KaB5Y675LqG'),
-        ahahaIkuQZh: d('5ZOI5ZOI77yM6KaB5Y675LqG5ZCn77yf'),
+        ahahaIkuZh: d('5ZOI5ZOI77yM6KaB5bCE5LqG'),
+        ahahaIkuQZh: d('5ZOI5ZOI77yM6KaB5bCE5LqG5ZCn77yf'),
         sexJa: d('44K744OD44Kv44K5'),
         sexHiraJa: d('44Gb44Gj44GP44GZ'),
         wantSexZh: d('5oOz5YGa54ix'),
@@ -155,13 +155,13 @@
         tinyChickZh: d('5bCP5bCP6bih6bih'),
         shootCumZh: d('6KaB5bCE5LqG'),
         shootCumShortZh: d('6KaB5bCE'),
-        goCumShortZh: d('6KaB5Y67'),
+        goCumShortZh: d('6KaB5bCE'),
         shotZh: d('5bCE5LqG'),
-        cameZh: d('5Y675LqG'),
+        cameZh: d('5bCE5LqG'),
         fastShotZh: d('5b+r5bCE5LqG'),
-        fastCameZh: d('5b+r5Y675LqG'),
+        fastCameZh: d('5b+r5bCE5LqG'),
         againShotZh: d('5Y+I5bCE5LqG'),
-        againCameZh: d('5Y+I5Y675LqG'),
+        againCameZh: d('5Y+I5bCE5LqG'),
         dontShootZh: d('5LiN6KaB5bCE5LqG'),
         footGrindJa: d('6Laz56m044GQ44KK44GQ44KK44GX44Gm44GP44Gg44GV44GE'),
         footGrindOkZh: d('6K+355So6ISa5pCF5byE'),
@@ -171,7 +171,7 @@
         alsoFellaOkZh: d('6L+Y5pyJ77yM5Y+j5Lqk4oCm'),
         chinCutJa: d('44Gh44KT44Gh44KT44CB44KC44GG5YiH44Gj44Gm44Gt'),
         chinIkuNeJa: d('44Gh44KT44Gh44KT44CB44KC44GG44Kk44Gj44Gm44Gt'),
-        chinIkuNeOkZh: d('6IKJ5qOS77yM5bey57uP6KaB5Y675LqG5ZOm'),
+        chinIkuNeOkZh: d('6IKJ5qOS77yM5bey57uP6KaB5bCE5LqG5ZOm'),
         kichinchinJa: d('44GN44Gh44KT44Gh44KT'),
         kichinchinLineJa: d('44GC4oCm44GN44Gh44KT44Gh44KT4oCm'),
         kichinchinOkZh: d('5ZWK4oCm6IKJ5qOS4oCm'),
@@ -201,7 +201,7 @@
         horaLickJa: d('44G744KJ6IiQ44KB44Gm'),
         horaLickOkZh: d('5p2l77yM6IiU6IiU4oCm'),
         thanksCameBadZh: d('6LCi6LCi5L2g5bCE5LqG'),
-        thanksCameOkZh: d('6LCi6LCi5L2g5Y675LqG'),
+        thanksCameOkZh: d('6LCi6LCi5L2g5bCE5LqG'),
         omankoDashiteJa: d('44GK44G+44KT44GT5Ye644GX44Gm'),
         spitSomethingZh: d('5Ye654K55LuA5LmI'),
         showPussyZh: d('5oqK5bCP56m06Zyy5Ye65p2l'),
@@ -209,15 +209,15 @@
         rodDupZh: d('6bih5be06bih5be0'),
         breakupZh: d('5YiG5omL'),
         aboutToSoonZh: d('6ams5LiK6KaB5LqG'),
-        aboutToSoonOkZh: d('6ams5LiK6KaB5Y675LqG'),
+        aboutToSoonOkZh: d('6ams5LiK6KaB5bCE5LqG'),
         noLickNippleOkZh: d('5aWz5Lq65LiN5biu6IiU5Lmz5aS05ZCX77yf'),
         chinpoMilkJa: d('44GK44Gh44KT44G944Of44Or44Kv'),
         milkWaterZh: d('5aW25rC0'),
         semenZh: d('57K+5ray'),
         alreadyShotZh: d('5bey57uP5bCE5LqG'),
-        alreadyCameZh: d('5bey57uP5Y675LqG'),
+        alreadyCameZh: d('5bey57uP5bCE5LqG'),
         wantShootZh: d('5oOz5bCE'),
-        wantGoZh: d('5oOz5Y67'),
+        wantGoZh: d('5oOz5bCE'),
         giveMeZh: d('5rGC5L2g57uZ5oiR'),
         cowMilkZh: d('54mb5aW2'),
         hardThingZh: d('56Gs5Lic6KW/'),
@@ -265,7 +265,7 @@
         yameteZh: d('5LiN6KaB'),
         mottoFukakuZh: d('5YaN5rex5LiA54K5'),
         ireteZh: d('6L+b5p2l'),
-        ikuQZh: d('6KaB5Y675LqG5ZCX77yf'),
+        ikuQZh: d('6KaB5bCE5LqG5ZCX77yf'),
         putInsideZh: d('5b6A6YeM6Z2i5pS+'),
         grandpaZh: d('54i354i3'),
         oldGrandpaZh: d('6ICB54i354i3'),
@@ -312,8 +312,8 @@
         nakadashiOkZh: d('5bCE5Zyo6YeM6Z2i'),
         deeperOkZh: d('5YaN5rex5LiA54K5'),
         pinpinOkZh: d('57+Y5b6X5aW956Gs5ZGi4oCm'),
-        aboutToCumPlainZh: d('6KaB5Y675LqG'),
-        aboutToCumQZh: d('6KaB5Y675LqG5ZCX77yf'),
+        aboutToCumPlainZh: d('6KaB5bCE5LqG'),
+        aboutToCumQZh: d('6KaB5bCE5LqG5ZCX77yf'),
         shootOutPrefixZh: d('5bCE5Ye6'),
     });
 
@@ -433,7 +433,7 @@
         erectingSrc: re('5YuD6LW344GX44Gm44KL'),
         limpMataSrc: re('KD8644GK44Gh44KT44G9fOOBiuOBoeOCk+OBoeOCkykuezAsOH0oPzrjgb7jgZ/jgaPjgaHjgoN86JCO44GI44Gh44KDKQ=='),
         limpMataShortSrc: re('KD8644GK44Gh44KT44G9fOOBiuOBoeOCk+OBoeOCkykuezAsNn0oPzrjgb7jgZ/jgaPjgaHjgoN86JCO44GI44Gh44KDKQ=='),
-        climaxHallucZhSrc: re('6auY5r2ufOimgeWwhHzopoHljrvkuoY='),
+        climaxHallucZhSrc: re('6auY5r2ufOimgeWwhHzopoHlsITkuoY='),
         jaHasRodSrc: re('KD8644Gh44KTfOODgeODs3zogonmo5J844GK44Gh44KTfOOCpOODgeODouODhHznq79844Kr44OB44OzfOWHuuOBi+OBoSk='),
         clinicalRodZhSrc: re('55S35oCn55Sf5q6W5ZmofOeUn+auluWZqHzpmLTojI585aSn5bC65a+4'),
         meatRodSrc: new RegExp(T.meatRodZh),
@@ -462,7 +462,7 @@
         isOchinDeshoSrc: re('44Gg44KILj/jgYrjgaHjgpPjgaHjgpPjgafjgZfjgoc='),
         pinpinErectSrc: re('44OU44Oz44OU44Oz44Gr5YuD44Gj44Gm'),
         ahahaIkuSrc: re('KD8644Kk44OD44Gh44KD44GGfOOBhOOBo+OBoeOCg+OBhnzjgqTjgq3jgZ3jgYYp'),
-        heixiuCueSrc: re('44Ko44OD44OBfOimgeWOu+S6hnzjgqTjg4N844Kk44Kv'),
+        heixiuCueSrc: re('44Ko44OD44OBfOimgeWwhOS6hnzjgqTjg4N844Kk44Kv'),
         dekachinTruncSrc: re('KD8644OHfOOBpyk/44Kr44OB44OzfOOBp+OBi+OBoeOCk3zjg4fjgqvjgaHjgpN85Ye644GL44GhfOOBruODh1xccyok'),
         dekaiSrc: re('44Gn44GL44GE'),
         suckLickAtomSrc: re('Xig/OlvllaflkLjoiJTjgIEs77yMLuOAguKAplxz4oCUXC1dfOWQuOWQuCopKyQ=', 'u'),
@@ -715,35 +715,31 @@
             cur = cur.replace(RE.aboutToStartG, T.aboutToCumZh);
             note('domain_term');
         }
+
         if (
-            (
-                RE.climaxIkuSrc.test(src)
-                || RE.climaxIkuExtraSrc.test(src)
-                || RE.itchaimasuSrc.test(src)
-                || RE.ikuTruncSrc.test(src)
-                || RE.ikuRepeatSrc.test(src)
-            )
-            && (
-                cur.includes(T.shootCumShortZh)
-                || cur.includes(T.shotZh)
-                || cur.includes(T.fastShotZh)
-                || cur.includes(T.againShotZh)
-                || /射出来|能射/.test(cur)
-            )
-            && !RE.ejacHintSrc.test(src)
-            && !/出して|出され|射精/.test(src)
+            cur.includes(T.shootCumZh)
+            || cur.includes(T.shootCumShortZh)
+            || cur.includes(T.shotZh)
+            || cur.includes(T.fastShotZh)
+            || cur.includes(T.againShotZh)
+            || cur.includes(T.aboutToCumZh)
+            || cur.includes('要去了')
+            || cur.includes('去了')
+            || /射出来|能射|射精/.test(cur)
         ) {
             const marked = cur.split(T.dontShootZh).join('\uE000');
+            // NSFW口径：临床「射精」→「射了」；软化「去了」升格为「射了」
             const next = marked
-                .replace(/能射出来/g, '能去')
-                .replace(/射出来吧/g, '去吧')
-                .replace(/射出来/g, '去了')
-                .replace(/能射/g, '能去')
-                .replace(RE.shootCumG, T.aboutToCumZh)
-                .replace(RE.shootCumShortG, T.goCumShortZh)
-                .replace(RE.fastShotG, T.fastCameZh)
-                .replace(RE.againShotG, T.againCameZh)
-                .replace(RE.shotG, T.cameZh)
+                .replace(/射精了/g, '射了')
+                .replace(/射精/g, '射了')
+                .replace(/要去了/g, T.aboutToCumZh)
+                .replace(/要去(?![的了])/g, T.goCumShortZh)
+                .replace(/快去了/g, T.fastCameZh)
+                .replace(/又去了/g, T.againCameZh)
+                .replace(/已经去了/g, T.alreadyCameZh)
+                .replace(/马上要去了/g, T.aboutToSoonOkZh)
+                .replace(/想去/g, T.wantGoZh)
+                .replace(/(^|[^进出来])去了/g, `$1${T.cameZh}`)
                 .split('\uE000').join(T.dontShootZh);
             if (next !== cur) {
                 cur = next;
@@ -762,7 +758,7 @@
             const marked = cur.split('不行了').join('\uE000');
             let next = marked.replace(/行了/g, T.aboutToCumZh);
             // Bare「行」tokens (comma/ellipsis separated)
-            next = next.replace(/(^|[，,、\s…])行(?=$|[。．.…!！?？，,、\s…]|要去了)/g, `$1${T.aboutToCumZh}`);
+            next = next.replace(/(^|[，,、\s…])行(?=$|[。．.…!！?？，,、\s…]|要射了)/g, `$1${T.aboutToCumZh}`);
             next = next.split('\uE000').join('不行了');
             if (next !== cur) {
                 cur = next;
@@ -897,7 +893,7 @@
         if (
             /いちゃう/.test(src)
             && /開いちゃう|ひらいちゃう/.test(src)
-            && (/^要去了[，,]?$/.test(cur) || cur === T.aboutToCumZh || cur === `${T.aboutToCumZh}，`)
+            && (/^要射了[，,]?$/.test(cur) || cur === T.aboutToCumZh || cur === `${T.aboutToCumZh}，`)
         ) {
             cur = FIX.itchaunStartOkZh;
             note('domain_term');
@@ -1365,7 +1361,7 @@
             cur = T.juiceLikeOkZh;
             note('domain_term');
         }
-        // Climax cue stubbed as short name (あっ、イク… → 一君). Do not touch … / 要去了吗.
+        // Climax cue stubbed as short name (あっ、イク… → 一君). Do not touch … / 要射了吗.
         if (
             (RE.climaxIkuSrc.test(src) || RE.ikuTruncSrc.test(src))
             && [...src.replace(/\s/g, '')].length <= 10
@@ -1580,7 +1576,7 @@
         orphanStuckZh: d('5ZOl5ZOl55qE6IKJ5qOS5aW96IiS5pyN77yM5Zev5ZWK5ZWK5ZWK77yB'),
         breastJa: T.breastJa,
         notFuzokuJa: T.notFuzokuJa,
-        climaxGlossMeta: d('44GE44GPLT7ljrvkuoYgI+mrmOa9rueUqOivre+8jA=='),
+        climaxGlossMeta: d('44GE44GPLT7lsITkuoYgI+mrmOa9rueUqOivre+8jA=='),
         cannotRepeatZh: d('5LiN5Y+v5Lul4oCm5LiN5Y+v5Lul'),
         notSoaplandSrcJa: d('5YWN56iO44GX44Gm44Gv6aKo5L+X44Gn44Gv44GC44KK44G+44Gb44KT44CC'),
         tommyMeatZh: d('6YKj5qC56IKJ5qOS5bCx5piv6L+Z5LmI5Y6J5a6z44CCIOaxpOexsw=='),
@@ -1608,7 +1604,7 @@
         chinkuBadZh: d('5ZOH77yM5aW555qE6IS455yL6LW35p2l5bCP5LiA5Lqb77yM6IO46YOo5Lmf5oy65aSn55qE'),
         ikuLineJa: d('44GC44Cc6KGM44GP'),
         ikuBadZh: d('5ZWK772e6KaB5byA5aeL5LqG'),
-        ikuOkZh: d('5ZWK772e6KaB5Y675LqG'),
+        ikuOkZh: d('5ZWK772e6KaB5bCE5LqG'),
         bigProjectLineZh: d('5Zev77yM5bCx5piv6YKj56eN5aSn6aG555uu5ZCn'),
         dekachinLineJa: d('44GL44OH44Kr44OB44Oz55qE44Gq44KE44Gk44Gn44GZ44KI44Gt'),
         bigRodPhraseZh: T.bigRodZh,
@@ -1648,10 +1644,10 @@
         koufunCorrectJa: d('6IiI5aWu44GX44Gm44Gm44GP44Gg44GV44GE'),
         namaIkuJa: d('44GC44GC55Sf6KGM44GP5b6F44Gj44Gm6KGM44GP4oCm'),
         namaIkuBadZh: d('5ZWK77yM6KaB5byA5aeL5LqGLi4u562J562J'),
-        namaIkuOkZh: d('5ZWK77yM6KaB5Y675LqGLi4u562J562J'),
+        namaIkuOkZh: d('5ZWK77yM6KaB5bCE5LqGLi4u562J562J'),
         namaIkuQJa: d('55Sf6KGM44Gj44Gh44KD44GG44KT44Gn44GZ44GLPyDjgYLjgYI='),
         namaIkuQBadZh: d('6KaB5byA5aeL5LqG77yfIOWVig=='),
-        namaIkuQOkZh: d('6KaB5Y675LqG77yfIOWVig=='),
+        namaIkuQOkZh: d('6KaB5bCE5LqG77yfIOWVig=='),
         chikubiLineJa: d('44GT44Gj44Gh44Gu44OB44Kv44OT44Gu5pa544GM5rCX5oyB44Gh44GE44GE44KI44Gt'),
         earBadZh: d('5oiR6L+Z6L6555qE6ICz5py15pu06IiS5pyN5ZCn'),
         nippleOkZh: d('5oiR6L+Z6L6555qE5Lmz5aS05pu06IiS5pyN5ZCn'),
@@ -1665,7 +1661,7 @@
         faceCumOkZh: d('5bCE5Zyo6IS45LiK4oCm5bCE5Zyo6IS45LiK4oCm6auY5r2u5LqG4oCm5Zev77yB'),
         ikuDashiteJa: d('44GC44GC44CB44Kk44Kv44Gu44KC5Ye644GX44Gm44CC'),
         ikuDashiteBadZh: d('5ZWK5ZWK77yM5oqK6auY5r2u55qE5oSf6KeJ5Lmf6YeK5pS+5Ye65p2l'),
-        ikuDashiteOkZh: d('5ZWK5ZWK77yM6KaB5Y6755qE5pe25YCZ5Lmf5bCE5Ye65p2l'),
+        ikuDashiteOkZh: d('5ZWK5ZWK77yM6KaB5bCE55qE5pe25YCZ5Lmf5bCE5Ye65p2l'),
         acchiLineJa: d('44KC44GG44GK44Gh44KT44Gh44KT44GC44Gj44Gh44GC44Gj44Gh44Gg44KI44CC'),
         acchiBadZh: d('546w5Zyo5bey57uP6L2v57u157u155qE5LqG'),
         acchiOkZh: d('546w5Zyo5bey57uP54Ot54Ot55qE5LqG'),
@@ -1685,13 +1681,13 @@
         toroOkZh: d('5Lik5Lq655yf5piv5rm/5ryJ5ryJ55qE'),
         ahahaIkuJa: d('44GC44Gv44Gv44CB44Kk44OD44Gh44KD44GG44CB44Kk44OD44Gh44KD44GG44CC'),
         ahahaIkuBadZh: d('5ZOI5ZOI'),
-        ahahaIkuOkZh: d('5ZOI5ZOI77yM6KaB5Y675LqG'),
+        ahahaIkuOkZh: d('5ZOI5ZOI77yM6KaB5bCE5LqG'),
         ahahaFeelJa: d('44GC44Gv44Gv44Gv44Gj44CB44GC44GC44Gj44CB5rCX5oyB44Gh44GE44GE44Gj44GC44GC44GC44KT44GjIQ=='),
         ahahaFeelBadZh: d('5ZOI5ZOI'),
         ahahaFeelOkZh: d('5ZOI5ZOI77yM5aW96IiS5pyN'),
         trailIkuJa: d('44GK44Gh44KT44G94oCm44GC44GC44Gj44CB44Kk44OD44Gh44KD44GG'),
         trailIkuBadZh: d('546p5oSP5YS/4oCm5ZWK77yM'),
-        trailIkuOkZh: d('546p5oSP5YS/4oCm6KaB5Y675LqG'),
+        trailIkuOkZh: d('546p5oSP5YS/4oCm6KaB5bCE5LqG'),
         ikemenChinJa: d('44GC44O844CB44Kk44Kx44Oh44Oz44Gh44KT44CC'),
         ikemenChinFixed: d('44GC44O844CB44GK44Gh44KT44Gh44KT44CC'),
         ikuchaDupJa: d('44GC44Gj44GE44Gj44Gh44KD44GE44Gj44Gh44KD44CC'),
@@ -1706,7 +1702,7 @@
         asaSexOkZh: d('5LuK5aSp5ZKM5oiR5YGa5Yiw5pep5LiK5oCO5LmI5qC377yf'),
         ikuShootJa: d('44GC44Gj44CB44GC44KT44Gj44CB44GC44GC44Kk44OD44Gh44KD44GG44Kk44OD44Gh44KD44GG44CC'),
         ikuShootBadZh: d('5ZWK44CB5Zev77yM6KaB5bCE5LqG6KaB5bCE5LqG'),
-        ikuShootOkZh: d('5ZWK44CB5Zev77yM6KaB5Y675LqG6KaB5Y675LqG'),
+        ikuShootOkZh: d('5ZWK44CB5Zev77yM6KaB5bCE5LqG6KaB5bCE5LqG'),
         chinChickJa: d('44GZ44GU44GE44GK44Gh44KT44Gh44KT44OU44Kv44OU44Kv44GX44Gm44KL44CC'),
         chinChickBadZh: d('5LuW55qE5bCP6bih6bih5Zyo5Ymn54OI5oqW5Yqo'),
         chinChickOkZh: d('5LuW55qE6bih5be05Zyo5Ymn54OI5oqW5Yqo'),
@@ -1753,7 +1749,7 @@
         chinDupOkZh: d('5oyJ5pGp55qE5pe25YCZ5oSf6KeJ5L2g55qE6bih5be05ZOm'),
         ikuNippleJa: d('44Gj44Gh44KD44GG44GL44KJ44GE44Gj44Gh44KD44GG44KT44Gg5Lmz6aaW6Kem44KL44Go44Gh44KH44Gj44Go6KGM44Gj44Gh44KD44GG44Gu44CC'),
         ikuNippleBadZh: d('5LiA56Kw5Yiw5Lmz5aS05bCx6ams5LiK6KaB5LqG55qE'),
-        ikuNippleOkZh: d('5LiA56Kw5Yiw5Lmz5aS05bCx6ams5LiK6KaB5Y675LqG55qE'),
+        ikuNippleOkZh: d('5LiA56Kw5Yiw5Lmz5aS05bCx6ams5LiK6KaB5bCE5LqG55qE'),
         shifureJa: d('44K344OV44Os'),
         sefriJa: d('44K744OV44Os'),
         hiraChinJa: d('5YGl44Gh44KD44KT44Gu44Gh44KT44Gh44KT44GL44CC'),
@@ -1761,10 +1757,10 @@
         hiraChinOkZh: d('5YGl55qE6bih5be0'),
         ikuSouJa: d('44Kk44OD44Gh44KD44GE44Gd44GG'),
         ikuSouBadZh: d('6KaB5bCE5LqG'),
-        ikuSouOkZh: d('6KaB5Y675LqG'),
+        ikuSouOkZh: d('6KaB5bCE5LqG'),
         ikaSareJa: d('44GZ44GQ44Kk44GL44GV44KM44Gh44KD44GE44Gd44GG44CC'),
         ikaSareBadZh: d('6ams5LiK5bCx6KaB5bCE5LqG'),
-        ikaSareOkZh: d('6ams5LiK5bCx6KaB5Y675LqG'),
+        ikaSareOkZh: d('6ams5LiK5bCx6KaB5bCE5LqG'),
         ballsChinJa: d('44Gh44KT44Gh44KT44KB44Gh44KD44GP44Gh44KD54ax44GP44Gq44Gj44Gm44GN44Gm44KL44KI44CC'),
         ballsChinBadZh: d('6JuL6JuL54Ot5b6X5LiN5b6X5LqG'),
         ballsChinOkZh: d('6bih5be054Ot5b6X5LiN5b6X5LqG'),
@@ -1776,7 +1772,7 @@
         ouchinBadZh: d('5ZaC77yM5L2g6L+Z5bCP6bih6bih5o+S6L+b5Y675Lya5oCO5LmI5qC3'),
         ouchinOkZh: d('5ZaC77yM5L2g6L+Z6bih5be05o+S6L+b5Y675Lya5oCO5LmI5qC3'),
         blankIkuJa: d('44GC44GC44KE44Gw44GE44KE44Gw44GE44GC44GC44KC44GG44G+44Gf44Kk44OD44Gh44KD44GG44KI44GT44KT44Gq44Gv'),
-        blankIkuOkZh: d('6KaB5Y675LqG'),
+        blankIkuOkZh: d('6KaB5bCE5LqG'),
         // CAWD-999 / ADN-801 fixtures
         chinpoMilkJa: d('44Gv44GC44GK44Gh44KT44G944Of44Or44Kv44Gf44GP44GV44KT5Ye644GX44Gm44GC44GS44KL44GL44KJ44Gt'),
         chinpoMilkBadZh: d('5ZOI77yM57uZ5L2g5aSa5Ye654K55aW25rC077yM5aW95ZCX77yf'),
@@ -1792,13 +1788,13 @@
         choudaiHallOkZh: d('5rGC5L2g57uZ5oiR77yM5rGC5L2g57uZ5oiR'),
         ittaJa: d('44GC44KT44Gf44Kk44OD44Gh44KD44Gj44Gf44KT44Gn44GZ44GL44GtPw=='),
         ittaBadZh: d('5L2g5piv5LiN5piv5bey57uP5bCE5LqG77yf'),
-        ittaOkZh: d('5L2g5piv5LiN5piv5bey57uP5Y675LqG77yf'),
+        ittaOkZh: d('5L2g5piv5LiN5piv5bey57uP5bCE5LqG77yf'),
         ikitaiJa: d('44Gm44Gj44Gh44KD44KT5Ye644Gh44KD44GGPyDjgYbjgpPooYzjgY3jgZ/jgYQ/'),
         ikitaiBadZh: d('6KaB5bCE5LqG5ZCX77yfIOWXr++8jOaDs+WwhO+8nw=='),
-        ikitaiOkZh: d('6KaB5bCE5LqG5ZCX77yfIOWXr++8jOaDs+WOu++8nw=='),
+        ikitaiOkZh: d('6KaB5bCE5LqG5ZCX77yfIOWXr++8jOaDs+WwhO+8nw=='),
         ikuBareJa: d('6KGM44GP4oCm44GC44Gh44KH44Gj44G+44Gg'),
         ikuBareBadZh: d('6KaB5bCE5LqG4oCm5ZWK77yM'),
-        ikuBareOkZh: d('6KaB5Y675LqG4oCm5ZWK77yM'),
+        ikuBareOkZh: d('6KaB5bCE5LqG4oCm5ZWK77yM'),
         arigatouHaiJa: d('44Gv44GE44CB44GC44KK44GM44Go44GG44Gv44O844GE'),
         arigatouHaiOkZh: d('5aW955qE77yM6LCi6LCi'),
         mouDameJa: d('44GC44GC44KC44GG44OA44Oh'),
@@ -1828,7 +1824,7 @@
         seedSexOkZh: d('5oiR5Lus5Zyo5pKt56eN5YGa54ix'),
         ikuStartJa: d('6KGM44GP'),
         ikuStartBadZh: d('6KaB5byA5aeL5LqG4oCm5ZWK5ZWK'),
-        ikuStartOkZh: d('6KaB5Y675LqG4oCm5ZWK5ZWK'),
+        ikuStartOkZh: d('6KaB5bCE5LqG4oCm5ZWK5ZWK'),
         dashichauComeJa: d('5Ye644Gh44KD44GG44KI'),
         dashichauComeBadZh: d('5p2l5LqG'),
         dashichauComeOkZh: d('6KaB5bCE5LqG'),
@@ -1884,7 +1880,7 @@
         fukakuBlankJa: d('44KC44Gj44Go5rex44GP'),
         fukakuBlankOkZh: d('5YaN5rex5LiA54K5'),
         ikuQBlankJa: d('44Kk44Kv77yf'),
-        ikuQBlankOkZh: d('6KaB5Y675LqG5ZCX77yf'),
+        ikuQBlankOkZh: d('6KaB5bCE5LqG5ZCX77yf'),
         fellaAsrJa: d('44OV44Kn44Op44O8'),
         fellaAsrFixed: d('44OV44Kn44Op'),
         tekokiAsrJa: d('5omL44GT44GN'),
@@ -1892,13 +1888,13 @@
         // FNS/HODV/YUJ residual expansion
         ikuGrandpaJa: d('44KC44GG5LiA5bqm44KE44KJ44Gq44GE44Gn44Gj4oCm44Kk44OD44Gh44KD44GG44Gu44Gg44KB44GH44Gj4oCmIQ=='),
         ikuGrandpaBadZh: d('5ZWK44CB54i354i35Zac5qyi55qE5ZOq6YeM6YO96KGM'),
-        ikuGrandpaOkZh: d('5ZWK77yM5LiN6KaB5YaN5p2l5LqG77yM6KaB5Y675LqG5LiN6KGM5LqG'),
+        ikuGrandpaOkZh: d('5ZWK77yM5LiN6KaB5YaN5p2l5LqG77yM6KaB5bCE5LqG5LiN6KGM5LqG'),
         omankoPrivateJa: d('44GG44KT44OA44Oh44Gg44KI44Gh44KD44KT44Go44GK44G+44KT44GT6IiQ44KB44Gq44GN44KD'),
         omankoPrivateBadZh: d('5L2g5aaI55qE56eB5aSE'),
         omankoPrivateOkZh: d('5LiN6KGM77yM6KaB5aW95aW96IiU5bCP56m0'),
         omankoPrivateSoftOkZh: d('5L2g5aaI55qE5bCP56m0'),
-        heixiuLineBadZh: d('5ZOI5ZWK77yM5ZOI5ZWK77yM5ZWK5ZWK4oCm5Zi/5ZK75oiR5Lmf6KaB77yM6KaB5Y675LqG'),
-        heixiuLineOkZh: d('5ZOI5ZWK77yM5ZOI5ZWK77yM5ZWK5ZWK4oCm5YGa54ix5oiR5Lmf6KaB77yM6KaB5Y675LqG'),
+        heixiuLineBadZh: d('5ZOI5ZWK77yM5ZOI5ZWK77yM5ZWK5ZWK4oCm5Zi/5ZK75oiR5Lmf6KaB77yM6KaB5bCE5LqG'),
+        heixiuLineOkZh: d('5ZOI5ZWK77yM5ZOI5ZWK77yM5ZWK5ZWK4oCm5YGa54ix5oiR5Lmf6KaB77yM6KaB5bCE5LqG'),
         heixiuLineJa: d('44GC44GC'),
         belowThingBadZh: d('5ZWK77yM6IiU5LiL6Z2i6YKj5Liq5Lic6KW/77yM5LiL6Z2i5pu056Gs5LqG'),
         belowThingOkZh: d('5ZWK77yM6IiU6bih5be077yM5LiL6Z2i5pu056Gs5LqG'),
@@ -1915,10 +1911,10 @@
         // ADN-791 residuals
         itchaunStartJa: d('44GE44Gh44KD44GG44CB6ZaL44GE44Gh44KD44GG44CC'),
         itchaunStartBadZh: d('6KaB5byA5aeL5LqG77yM'),
-        itchaunStartOkZh: d('6KaB5Y675LqG77yM6KaB5byg5byA5LqG'),
+        itchaunStartOkZh: d('6KaB5bCE5LqG77yM6KaB5byg5byA5LqG'),
         ikuDoneJa: d('44Kk44Kv44ODIQ=='),
         ikuDoneBadZh: d('6KGM5LqG77yB'),
-        ikuDoneOkZh: d('6KaB5Y675LqG77yB'),
+        ikuDoneOkZh: d('6KaB5bCE5LqG77yB'),
         chinPenisJa: d('44GK44Gh44KT44G944OT44Kv44OT44Kv44Gj44Gm44CC'),
         chinPenisBadZh: d('6Zi06IyO6YO95Zyo6aKk5oqW'),
         chinPenisOkZh: d('6IKJ5qOS6YO95Zyo6aKk5oqW'),

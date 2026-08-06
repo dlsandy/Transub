@@ -68,7 +68,7 @@ describe('mt-train forceShortestFragment + regression gate', () => {
             zhFrom: '射了',
             zhTo: '去了',
             zh: '要射了',
-            expect: '要去了',
+            expect: '要射了',
             ja: 'イッちゃうよ',
         };
         const corpus = [
