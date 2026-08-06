@@ -5,7 +5,7 @@ const sanitize = require('../src/js/mt-sanitize-core.js');
 const autoPropose = require('../tools/mt-train/lib/auto-propose.js');
 
 describe('mt-train auto-propose', () => {
-    after(() => {
+    afterEach(() => {
         sanitize.reloadTrainedRemaps();
     });
 

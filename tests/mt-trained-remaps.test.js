@@ -8,7 +8,7 @@ const train = require('../tools/mt-train/lib/train.js');
 describe('trained remaps (console train loop)', () => {
     const av = { contentProfile: 'av_soft' };
 
-    after(() => {
+    afterEach(() => {
         // Restore from repo shared file
         sanitize.reloadTrainedRemaps();
     });

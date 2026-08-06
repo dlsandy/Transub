@@ -7,7 +7,7 @@ const autoPropose = require('../tools/mt-train/lib/auto-propose.js');
 const train = require('../tools/mt-train/lib/train.js');
 
 describe('mt-train auto-quality', () => {
-    after(() => {
+    afterEach(() => {
         sanitize.reloadTrainedRemaps();
     });
 
