@@ -1348,6 +1348,7 @@
                 'reazonspeech-k2',
                 'qwen3-asr-0.6b',
                 'whisper-large-v3-turbo',
+                'whisper-large-v2',
                 'whisper-large-v3',
                 'sensevoice-small',
             );
@@ -1358,20 +1359,22 @@
                 'anime-whisper',
                 'qwen3-asr-0.6b',
                 'whisper-large-v3-turbo',
+                'whisper-large-v2',
                 'whisper-large-v3',
                 'sensevoice-small',
             );
         } else if (profile === PROFILES.film) {
             // Prefer installed turbo when present; otherwise stick to default SenseVoice.
-            asrWanted.push('sensevoice-small', 'whisper-large-v3-turbo', 'whisper-large-v3', 'whisper-tiny');
+            asrWanted.push('sensevoice-small', 'whisper-large-v3-turbo', 'whisper-large-v2', 'whisper-large-v3', 'whisper-tiny');
         } else if (lang === 'zh' || lang === 'en' || lang === 'ko') {
-            asrWanted.push('sensevoice-small', 'whisper-tiny', 'whisper-large-v3-turbo');
+            asrWanted.push('sensevoice-small', 'whisper-tiny', 'whisper-large-v3-turbo', 'whisper-large-v2');
         } else {
             asrWanted.push(
                 out.engineAsrModel || '',
                 'sensevoice-small',
                 'whisper-tiny',
                 'whisper-large-v3-turbo',
+                'whisper-large-v2',
             );
         }
         if (out.engineAsrModel && !asrWanted.includes(out.engineAsrModel)) {
@@ -1564,7 +1567,7 @@
                 kind: 'model',
                 role: 'asr',
                 label: '识别 sensevoice-small',
-                altIds: ['whisper-tiny', 'whisper-large-v3-turbo', 'whisper-large-v3'],
+                altIds: ['whisper-tiny', 'whisper-large-v3-turbo', 'whisper-large-v2', 'whisper-large-v3'],
             });
         } else if (overrides.engineAsrModel) {
             push({

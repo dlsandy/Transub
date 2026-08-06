@@ -857,7 +857,14 @@
     function stripInterjectionDecor(text) {
         return String(text || '')
             .replace(/[♡♥❤♪☆★\*＊]+/g, '')
+            .replace(/[゛゜゙゚]/g, '')
+            .replace(/[―—–‐]/g, 'ー')
             .trim();
+    }
+
+    /** Semantic いい / 良い (feels good) — never treat as a pure moan atom. */
+    function isSemanticIiJaToken(token) {
+        return /^(?:いい+|良い)[っッ]?$/i.test(String(token || '').trim());
     }
 
     /**
@@ -873,8 +880,9 @@
         if (/^(?:いいえ|いや+|おはよう.*|おかえり.*|お願い.*|あなた|あいつ|あいつめ)$/i.test(t)) {
             return false;
         }
+        if (isSemanticIiJaToken(t)) return false;
         // Discourse fillers / soft calls (whole token).
-        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)$/i.test(t)) {
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|(?:よし)+|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?|えっと+|えーと+|えー+|あのー+)$/i.test(t)) {
             return true;
         }
         // Soft laughs / muffled crumbs.
@@ -886,6 +894,8 @@
             return true;
         }
         // Breath / moan run: only vowel·h·n·small-tsu style kana (after decor strip).
+        // Exclude cues that embed semantic いい (あっいい / いい…), which the class would otherwise match.
+        if (/いい|良い/.test(t)) return false;
         if (/^[あぁアァいぃイィうぅウゥえぇエェおぉオォはハひヒふフへヘほホッッんンくクむムー〜～ー]+$/i.test(t)) {
             return true;
         }
@@ -903,13 +913,15 @@
         // Ellipsis / symbol-only placeholders.
         if (/^[。．.!！?？…·.•\s\-—_~～ー]+$/.test(t)) return true;
         // Fast path: single filler / moan without internal dialogue commas of content.
-        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|よし|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ああ+|あぁ+|あっ+|あん+|ああん+|ねえ+|ねぇ+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|そう|(?:よし)+|ん+|んん+|うぅ+|あら|おや|やっ|ひゃっ?|えっと+|えーと+|えー+|あのー+)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
             return true;
         }
         if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム]+$/i.test(t)) {
-            if (!/^(?:いいえ|いや+|おはよう)/i.test(t.replace(/[。．.!！?？…·.•\s\-—_~～ー、，,・]+/g, ''))) {
-                return true;
-            }
+            const compact = t.replace(/[。．.!！?？…·.•\s\-—_~～ー、，,・]+/g, '');
+            if (/^(?:いいえ|いや+|おはよう)/i.test(compact)) return false;
+            // いい / あっいい are feel-good dialogue, not pure moans.
+            if (/いい|良い/.test(compact)) return false;
+            return true;
         }
         // Separator-tolerant: every token must be a pure atom / moan run.
         const parts = t
@@ -922,8 +934,27 @@
     }
 
     /**
-     * Pure ZH interjection / moan / blank slot (no concrete dialogue).
-     * Excludes meaningful short replies like 好的 / 等一下 / 好厉害.
+     * One ZH token that is only a moan / filler / short acknowledgment (はい→好的 / そう→是啊).
+     * Longer dialogue (等一下 / 好厉害 / 好的，明白了) stays via multi-token or non-matching forms.
+     */
+    function isPureInterjectionZhToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[。．.!！?？]+$/g, '').trim();
+        if (!t) return true;
+        // Short discourse acknowledgments paired with pure JA はい/うん/そう/よし.
+        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯好|好[哦喔]|没错)$/u.test(t)) {
+            return true;
+        }
+        if (/^(?:哈啊?|嗯+|啊+|呜+|呼+|诶+|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|喂|哎呀|嘻+|啧)$/u.test(t)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Pure ZH interjection / moan / blank slot / short acknowledgment (no concrete dialogue).
+     * Keeps contentful shorts: 等一下 / 好厉害 / 好舒服啊 / 好的，明白了.
      */
     function isPureInterjectionZh(text) {
         const t = stripInterjectionDecor(text);
@@ -937,8 +968,24 @@
         if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?)$/.test(t)) {
             return true;
         }
+        // Bare short acknowledgments (sanitize maps はい→好的, そう→是啊).
+        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯好|好[哦喔]|没错)[。．.!！?？\s…·.•]*$/u.test(t)) {
+            return true;
+        }
+        // Separator-tolerant: 嗯，好的 / 啊，是啊 / 哈啊、好的
+        const parts = t
+            .replace(/[。．.!！?？]+$/g, '')
+            .split(/[、，,\s…·.•]+/)
+            .map((p) => p.trim())
+            .filter(Boolean);
+        if (parts.length >= 1 && parts.every((p) => isPureInterjectionZhToken(p))) {
+            return true;
+        }
         const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
         if (!bare) return true;
+        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯好|好哦|好喔|没错)$/u.test(bare)) {
+            return true;
+        }
         return /^(?:嗯+|啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|哎呀|嗨|嘿|哼|嘶)+$/.test(bare);
     }
 

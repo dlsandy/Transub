@@ -40,6 +40,27 @@ describe('sanitize contracts', () => {
         assert.ok(String(fixed.text).includes('メンエスは'));
     });
 
+    it('corrects soft-AV / anime-whisper JA ASR mishears without slowing ASR', () => {
+        const cases = [
+            ['大好きなアップル', 'おっぱい'],
+            ['マイクロビッキン', 'マイクロビキニ'],
+            ['祖父とは違います', '風俗とは違います'],
+            ['購入しててください', '興奮しててください'],
+            ['いあちゅい', 'イッちゃう'],
+            ['きもちいい', '気持ちいい'],
+            ['マイトに入った', 'バイトに入った'],
+            ['アパイタに入った', 'アルバイトに入った'],
+        ];
+        for (const [raw, expect] of cases) {
+            const fixed = mtSanitize.correctJaAsrDomainMishears(raw);
+            assert.ok(fixed.changed, raw);
+            assert.ok(String(fixed.text).includes(expect), `${raw} -> ${fixed.text}`);
+        }
+        // Paired: keep oil remap; do not invent メンエス from unrelated 免税 absence
+        const oil = mtSanitize.correctJaAsrDomainMishears('トイレ追加しますね');
+        assert.ok(String(oil.text).includes('オイル追加'));
+    });
+
     it('desktop MT path may strip unjustified trailing 2–4 Han; keep tokens survive', () => {
         // Documented path divergence: desktop sanitize is stricter than engine Opus subset.
         const dirty = mtSanitize.sanitizeMtCueText('……舒服。 过来', '気持ちいい', {});

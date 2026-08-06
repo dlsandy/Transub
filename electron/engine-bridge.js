@@ -102,6 +102,12 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         name: 'Whisper large-v3-turbo',
         note: '可选 · 质量与速度较均衡；多语种高精度识别（非默认安装）',
     },
+    'whisper-large-v2': {
+        hubId: 'Systran/faster-whisper-large-v2',
+        kind: 'asr',
+        name: 'Whisper large-v2',
+        note: '可选 · 经典 large-v2 CT2；多语种高质量识别（非默认安装）',
+    },
     'whisper-large-v3': {
         hubId: 'Systran/faster-whisper-large-v3',
         kind: 'asr',
@@ -483,6 +489,52 @@ function buildHubUrls(hubId, hfEndpoint) {
     };
 }
 
+/**
+ * Manual-install weight cue for Hub models (ASR / MT / VAD).
+ * @param {{ id?: string, kind?: string, backend?: string }} spec
+ * @returns {{ weightFile: string, placeSteps: string }}
+ */
+function manualPlaceHintForModel(spec = {}) {
+    const mid = String(spec.id || '').toLowerCase();
+    const kindName = String(spec.kind || '').toLowerCase();
+    const be = String(spec.backend || '').toLowerCase();
+    let weightFile = '模型权重文件';
+    if (
+        be.includes('whisper')
+        || mid.includes('whisper')
+        || mid === 'anime-whisper'
+        || mid.startsWith('kotoba-')
+    ) {
+        weightFile = 'model.bin';
+    } else if (be === 'reazon-k2' || mid.includes('reazon')) {
+        weightFile = 'encoder-*.onnx 与 tokens.txt';
+    } else if (be.includes('qwen') || mid.includes('qwen3')) {
+        weightFile = 'model.safetensors（或分片）';
+    } else if (be.includes('whisperseg') || mid.includes('whisperseg')) {
+        weightFile = 'model.onnx';
+    } else if (kindName === 'mt' || be.includes('opus') || be.includes('marian')) {
+        weightFile = 'pytorch_model.bin 或 model.safetensors';
+    } else if (
+        kindName === 'vad'
+        || mid.includes('sensevoice')
+        || mid.includes('fsmn')
+        || be.includes('sensevoice')
+        || be.includes('fsmn')
+    ) {
+        weightFile = 'model.pt';
+    } else if (kindName === 'asr') {
+        weightFile = 'model.pt 或 model.bin';
+    }
+    return {
+        weightFile,
+        placeSteps: [
+            '在打开的仓库页下载全部文件（可用「下载整个仓库」或逐个下载）',
+            '将文件直接放入下方目录（不要再套一层同名文件夹）',
+            `确认关键权重「${weightFile}」为完整文件（不能是几十字节的 LFS 指针）`,
+        ].join('\n'),
+    };
+}
+
 /** @param {string} value @returns {'models'|'gpu'|'demucs'|'sensevoice'|'whisper'} */
 function normalizeEngineDownloadKind(value) {
     const k = String(value || 'models').trim().toLowerCase();
@@ -810,16 +862,26 @@ async function buildEngineDownloadInfo(payload = {}) {
         const urls = buildHubUrls(hubId, hfEndpoint || 'https://hf-mirror.com');
         const localDirName = String(live.local_dirname || live.localDirname || id).trim();
         const localDir = path.join(modelsRoot, kindName || 'asr', localDirName);
+        const backend = String(live.backend || fallback.backend || '').trim();
+        const place = manualPlaceHintForModel({ id, kind: kindName, backend });
+        const sizeHint = Number(live.size_hint_mb) > 0
+            ? `约 ${live.size_hint_mb} MB`
+            : (fallback.sizeHint || '');
         return {
             id,
             name,
             kind: kindName,
             hubId,
+            backend,
             bundled: !hubId,
             officialUrl: urls.officialUrl,
             mirrorUrl: urls.mirrorUrl,
             defaultUrl: urls.mirrorUrl || urls.officialUrl,
             localDir,
+            folder: localDir,
+            sizeHint,
+            weightFile: place.weightFile,
+            placeSteps: place.placeSteps,
             note: hubId
                 ? `Hub：${hubId} · 默认镜像`
                 : '无需单独下载（运行时内置）',
@@ -834,7 +896,7 @@ async function buildEngineDownloadInfo(payload = {}) {
             folder: modelsRoot,
             hfEndpoint: normalizeHfEndpoint(hfEndpoint || 'https://hf-mirror.com'),
             profile,
-            hint: '勾选需要的模型后点「开始下载」。Opus/ASR/VAD 走引擎 Hub；Sakura 走本地 GGUF（含 llama-server）。也可下方手动镜像下载。',
+            hint: '勾选需要的模型后点「开始下载」。Opus/ASR/VAD 走引擎 Hub；Sakura 走本地 GGUF（含 llama-server）。网络不佳时可在卡片上「手动下载」。',
             catalog,
             selectedIds: catalog.filter((c) => c.selected).map((c) => c.id),
             items,
@@ -3789,22 +3851,39 @@ function setupEngineBridge(api, {
         try {
             const { shell } = require('electron');
             const options = await readMergedOptions(payload || {});
-            const info = await buildEngineDownloadInfo({
-                ...options,
-                ...(payload || {}),
-                profile: (payload && payload.profile) || options.engineProfile,
-                hfEndpoint: payload && payload.hfEndpoint != null
-                    ? payload.hfEndpoint
-                    : options.engineHfEndpoint,
-            });
-            const folder = String(
-                info?.info?.folder
-                || getEngineModelsRoot(options.engineInstallPath || (payload && payload.engineInstallPath)),
-            ).trim();
+            let folder = String(payload.folder || payload.localDir || '').trim();
+            const modelId = String(payload.modelId || '').trim();
+            if (!folder) {
+                const info = await buildEngineDownloadInfo({
+                    ...options,
+                    ...(payload || {}),
+                    kind: payload.kind || 'models',
+                    modelIds: modelId
+                        ? [modelId]
+                        : (Array.isArray(payload.modelIds) ? payload.modelIds : undefined),
+                    profile: (payload && payload.profile) || options.engineProfile,
+                    hfEndpoint: payload && payload.hfEndpoint != null
+                        ? payload.hfEndpoint
+                        : options.engineHfEndpoint,
+                });
+                if (modelId) {
+                    const item = (Array.isArray(info?.info?.items) ? info.info.items : [])
+                        .find((it) => String(it?.id || '') === modelId);
+                    folder = String(item?.localDir || item?.folder || '').trim();
+                }
+                if (!folder) {
+                    folder = String(
+                        info?.info?.folder
+                        || getEngineModelsRoot(
+                            options.engineInstallPath || (payload && payload.engineInstallPath),
+                        ),
+                    ).trim();
+                }
+            }
             fs.mkdirSync(folder, { recursive: true });
             const err = await shell.openPath(folder);
             if (err) return { ok: false, error: err };
-            return { ok: true, path: folder };
+            return { ok: true, path: folder, folder };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -4546,4 +4625,8 @@ module.exports = {
     resolveEngineInstallPath,
     getBundledEnginePath,
     appendEngineLogLine,
+    // Test helpers
+    buildHubUrls,
+    manualPlaceHintForModel,
+    getEngineModelsRoot,
 };

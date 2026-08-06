@@ -356,6 +356,12 @@ deferredBridges.installLazyRoutes({
     'transub-open-setup-wizard': 'editorWindow',
     'transub-open-update-window': 'editorWindow',
     'transub-open-about-window': 'editorWindow',
+    'transub-open-mt-train': 'editorWindow',
+    'transub-is-dev-build': 'editorWindow',
+    'transub-mt-train-infer-suggest': 'editorWindow',
+    'transub-mt-train-list-history-pairs': 'editorWindow',
+    'transub-mt-train-load-history-pair': 'editorWindow',
+    'transub-mt-train-load-history-pairs': 'editorWindow',
     'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
     'transub-consume-pending-setup-wizard': 'editorWindow',
@@ -437,6 +443,12 @@ deferredBridges.defer('editorWindow', (api) => {
         },
         windowManager,
     });
+    try {
+        const { registerMtTrainBridge } = require('./mt-train-bridge');
+        registerMtTrainBridge(api.register, app);
+    } catch (err) {
+        console.warn('[main] mt-train bridge init failed:', err.message || err);
+    }
 });
 
 deferredBridges.defer('engine', (api) => {
@@ -602,6 +614,10 @@ app.on('before-quit', () => {
     try {
         const { forceRelease } = require('./compute-task-lock');
         forceRelease();
+    } catch { /* ignore */ }
+    try {
+        const { stopTrainServerChild } = require('./mt-train-window');
+        stopTrainServerChild();
     } catch { /* ignore */ }
 });
 

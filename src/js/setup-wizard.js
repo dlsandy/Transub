@@ -43,6 +43,7 @@
         { id: 'sensevoice-small', label: 'SenseVoice Small（多语种·推荐）', langs: ['auto', 'ja', 'zh', 'en', 'ko', 'yue'] },
         { id: 'whisper-tiny', label: 'Whisper tiny（最快）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
         { id: 'whisper-large-v3-turbo', label: 'Whisper large-v3-turbo（可选·高质量）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
+        { id: 'whisper-large-v2', label: 'Whisper large-v2（可选·经典）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
         { id: 'whisper-large-v3', label: 'Whisper large-v3（最高质量）', langs: ['auto', 'en', 'ja', 'ko', 'zh', 'yue'] },
         { id: 'anime-whisper', label: 'Anime Whisper（动画/Galgame）', langs: ['ja', 'auto'] },
         { id: 'whisper-ja-1.5b', label: 'Whisper JA 1.5B（日语微调）', langs: ['ja', 'auto'] },

@@ -180,4 +180,103 @@ describe('engine-client against mock HTTP', () => {
             await new Promise((r) => server.close(r));
         }
     });
+
+    it('allows jobs longer than idle window while engine keeps responding', async () => {
+        let polls = 0;
+        const server = http.createServer((req, res) => {
+            const url = new URL(req.url, 'http://127.0.0.1');
+            const send = (code, obj) => {
+                res.writeHead(code, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(obj));
+            };
+            if (url.pathname === '/v1/jobs' && req.method === 'POST') {
+                return send(200, { ok: true, id: 'long1', status: 'queued' });
+            }
+            const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
+            if (jobMatch && req.method === 'GET') {
+                polls += 1;
+                if (polls < 6) {
+                    return send(200, {
+                        ok: true,
+                        id: jobMatch[1],
+                        status: 'running',
+                        progress: { stage: 'asr', percent: polls * 10, detail: `tick ${polls}` },
+                    });
+                }
+                return send(200, {
+                    ok: true,
+                    id: jobMatch[1],
+                    status: 'done',
+                    result: { outputs: [{ path: 'C:/tmp/long.srt' }] },
+                });
+            }
+            return send(404, { ok: false });
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        const baseUrl = `http://127.0.0.1:${port}`;
+        try {
+            const created = await createJob(baseUrl, { task: 'transcribe', mediaPath: 'C:/tmp/long.wav' });
+            assert.strictEqual(created.ok, true);
+            const started = Date.now();
+            const waited = await waitJob(baseUrl, created.data.id, {
+                intervalMs: 40,
+                idleTimeoutMs: 80,
+                pollTimeoutMs: 1000,
+            });
+            assert.strictEqual(waited.ok, true);
+            assert.strictEqual(waited.data.status, 'done');
+            // Wall time exceeds idle window; success proves idle (not absolute) timeout.
+            assert.ok(Date.now() - started > 80);
+            assert.ok(polls >= 6);
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
+
+    it('fails when engine stops responding for longer than idleTimeoutMs', async () => {
+        let polls = 0;
+        const server = http.createServer((req, res) => {
+            const url = new URL(req.url, 'http://127.0.0.1');
+            const send = (code, obj) => {
+                res.writeHead(code, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(obj));
+            };
+            if (url.pathname === '/v1/jobs' && req.method === 'POST') {
+                return send(200, { ok: true, id: 'idle1', status: 'queued' });
+            }
+            const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
+            if (jobMatch && req.method === 'GET') {
+                polls += 1;
+                if (polls === 1) {
+                    return send(200, {
+                        ok: true,
+                        id: jobMatch[1],
+                        status: 'running',
+                        progress: { stage: 'asr', percent: 5 },
+                    });
+                }
+                // Subsequent polls hang → idle timeout after last successful response.
+                return;
+            }
+            return send(404, { ok: false });
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        const baseUrl = `http://127.0.0.1:${port}`;
+        try {
+            const created = await createJob(baseUrl, { task: 'transcribe', mediaPath: 'C:/tmp/idle.wav' });
+            assert.strictEqual(created.ok, true);
+            const waited = await waitJob(baseUrl, created.data.id, {
+                intervalMs: 10,
+                idleTimeoutMs: 120,
+                pollTimeoutMs: 40,
+            });
+            assert.strictEqual(waited.ok, false);
+            assert.strictEqual(waited.error, '任务长时间无响应');
+            assert.strictEqual(waited.code, 'idle_timeout');
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
 });
