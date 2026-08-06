@@ -13,9 +13,22 @@ const {
     checkLidModel,
     checkModelInstalled,
     findCublasInEngine,
+    sanitizeEngineProbeStderr,
 } = require('../electron/env-check');
 
 describe('env-check', () => {
+    it('sanitizeEngineProbeStderr drops pydub ffmpeg RuntimeWarning noise', () => {
+        const raw = [
+            'C:\\x\\pydub\\utils.py:170: RuntimeWarning: Couldn\'t find ffmpeg or avconv - defaulting to ffmpeg, but may not work',
+            '  warn("Couldn\'t find ffmpeg or avconv - defaulting to ffmpeg, but may not work", RuntimeWarning)',
+            'No module named \'funasr\'',
+        ].join('\n');
+        const clean = sanitizeEngineProbeStderr(raw);
+        assert.match(clean, /funasr/i);
+        assert.doesNotMatch(clean, /Couldn't find ffmpeg/i);
+        assert.doesNotMatch(clean, /RuntimeWarning/i);
+    });
+
     it('hasNonAscii detects CJK and accepts ASCII paths', () => {
         assert.equal(hasNonAscii('D:\\Transub-2.0.0-win'), false);
         assert.equal(hasNonAscii('C:\\Users\\user\\AppData'), false);

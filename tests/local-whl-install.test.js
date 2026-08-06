@@ -125,5 +125,10 @@ describe('local-whl-install', () => {
         );
         assert.ok(!/numpy-2\.5\./.test(src), 'numpy 2.5+ breaks numba binary wheels');
         assert.ok(src.includes("id: 'numba'"), 'missing numba manual package');
+        assert.ok(src.includes("id: 'scipy'"), 'missing scipy manual package');
+        assert.ok(
+            /scipy-1\.1[0-9]\.[0-9]+-cp312-cp312-win_amd64\.whl/.test(src),
+            'scipy manual wheel should be cp312 win_amd64',
+        );
     });
 });

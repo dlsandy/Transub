@@ -25,13 +25,13 @@ describe('trained remaps (console train loop)', () => {
                 mode: 'replace',
                 pinFinal: false,
                 jaIncludes: ['テストいく'],
-                zhFrom: '要射了',
-                zhTo: '要去了',
+                zhFrom: '要去了',
+                zhTo: '要射了',
             })],
             asrPairs: [],
         });
-        const r = sanitize.applyTrainedZhRemaps('啊要射了', 'テストいく', { pinFinalPass: false });
-        assert.strictEqual(r.text, '啊要去了');
+        const r = sanitize.applyTrainedZhRemaps('啊要去了', 'テストいく', { pinFinalPass: false });
+        assert.strictEqual(r.text, '啊要射了');
         assert.ok(r.flags.includes('trained_remap'));
     });
 

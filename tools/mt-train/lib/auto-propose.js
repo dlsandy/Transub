@@ -50,16 +50,20 @@ function heuristicExpect(hit) {
         return { expect: '…', mode: 'blank', reason: `${issue} → 清空弱化` };
     }
     if (issue === 'iku_shoot') {
+        // NSFW口径：保留/升格为「射了」；临床「射精」→「射了」；软化「去了」→「射了」
         let next = dirty
-            .replace(/要射了/g, '要去了')
-            .replace(/快射了/g, '快去了')
-            .replace(/射出来了/g, '去了')
-            .replace(/能射/g, '能去')
-            .replace(/请射/g, '请让我去')
-            .replace(/射了/g, '去了');
+            .replace(/射精了/g, '射了')
+            .replace(/射精/g, '射了')
+            .replace(/要去了/g, '要射了')
+            .replace(/快去了/g, '快射了')
+            .replace(/又去了/g, '又射了')
+            .replace(/已经去了/g, '已经射了')
+            .replace(/想去/g, '想射')
+            .replace(/(^|[^进出来])去了/g, '$1射了');
         if (next === dirty) return null;
-        return { expect: next, mode: 'replace', reason: 'iku_shoot：射→去（启发式）' };
+        return { expect: next, mode: 'replace', reason: 'iku_shoot：去了/射精→射了（启发式）' };
     }
+
     if (issue === 'dechau_out') {
         let next = dirty
             .replace(/又要出来了/g, '又要射了')
@@ -79,9 +83,9 @@ function heuristicExpect(hit) {
         return { expect: next, mode: 'replace', reason: 'yame_shoot：误射→停下（启发式）' };
     }
     if (issue === 'iku_xing') {
-        let next = dirty.replace(/行了/g, '要去了');
+        let next = dirty.replace(/行了/g, '要射了');
         if (next === dirty) return null;
-        return { expect: next, mode: 'replace', reason: 'iku_xing：行了→要去了' };
+        return { expect: next, mode: 'replace', reason: 'iku_xing：行了→要射了' };
     }
     if (issue === 'kiniri') {
         let next = dirty.replace(/进去了/g, '喜欢上了').replace(/进入了/g, '喜欢上了');
@@ -92,15 +96,17 @@ function heuristicExpect(hit) {
         return { expect: '好舒服', mode: 'replace', reason: 'kimochi_stub：补全「舒服」' };
     }
     if (issue === 'clinical_rod' || issue === 'invent_rod') {
+        // NSFW domain: clinical invent → 肉棒 (not euphemism)
         let next = dirty
-            .replace(/阴茎/g, '那里')
-            .replace(/生殖器/g, '那里')
-            .replace(/大尺寸/g, '好大')
-            .replace(/小鸡鸡/g, '那里')
-            .replace(/那东西/g, '那里');
+            .replace(/阴茎/g, '肉棒')
+            .replace(/生殖器/g, '肉棒')
+            .replace(/性器官/g, '肉棒')
+            .replace(/小鸡鸡/g, '肉棒')
+            .replace(/那东西/g, '肉棒');
         if (next === dirty) return null;
-        return { expect: next, mode: 'replace', reason: `${issue}：临床词弱化` };
+        return { expect: next, mode: 'replace', reason: `${issue}：临床词→肉棒` };
     }
+
     if (issue === 'ja_echo') {
         return { expect: '…', mode: 'blank', reason: 'ja_echo：日文残留→清空' };
     }

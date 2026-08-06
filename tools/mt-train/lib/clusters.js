@@ -11,7 +11,7 @@ function classifyIssues(src, dst, after) {
     // Avoid ダイッ false-positive (イッ inside ダイッ)
     if (
         /(?:イッちゃ|イッた|イッて|イキ|イク|いく|イき|いけろ|いくぞ|はいくぞ)/.test(s)
-        && /要射|射了|快射|射出来|能射|请射/.test(a)
+        && /要去了|快去了|又去了/.test(a)
         && !/出して|出され|射精|出ちゃう|出すぞ|出してやる|ザーメン|精液|出しちゃ/.test(s)
     ) {
         issues.push('iku_shoot');

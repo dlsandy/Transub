@@ -118,7 +118,7 @@
     /** Internal keys → Chinese labels shown in UI */
     const ISSUE_LABEL = {
         prompt_leak: '提示词泄漏',
-        iku_shoot: 'イク误成「射」',
+        iku_shoot: 'イク软化「去了」→应升「射了」',
         dechau_out: '「出来了」该改「射」',
         yame_shoot: '「别/停」误成「射」',
         iku_xing: 'いく误成「行了」',

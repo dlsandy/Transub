@@ -21,8 +21,8 @@ describe('mt-train auto-propose', () => {
             {
                 ji: 2,
                 src: 'イッちゃう',
-                dst: '要射了啊',
-                after: '要射了啊',
+                dst: '要去了啊',
+                after: '要去了啊',
                 issues: ['iku_shoot'],
             },
         ];
@@ -33,7 +33,7 @@ describe('mt-train auto-propose', () => {
         assert.ok(iku, 'iku proposal missing');
         assert.ok(['ready', 'review', 'failed'].includes(iku.status), iku.status);
         assert.ok(iku.payload?.expect);
-        assert.ok(!/要射了/.test(iku.payload.expect));
+        assert.ok(/要射了/.test(iku.payload.expect), iku.payload.expect);
     });
 
     it('applyProposals requires accepted flag', () => {
@@ -68,8 +68,8 @@ describe('mt-train auto-propose', () => {
     it('dedupes identical rule keys across hits', () => {
         sanitize.reloadTrainedRemaps({ version: 1, zhRemaps: [], asrPairs: [] });
         const hits = [
-            { ji: 1, src: 'イッちゃうよ', dst: '要射了啊', after: '要射了啊', issues: ['iku_shoot'] },
-            { ji: 2, src: 'イッちゃうよ', dst: '要射了啊', after: '要射了啊', issues: ['iku_shoot'] },
+            { ji: 1, src: 'イッちゃうよ', dst: '要去了啊', after: '要去了啊', issues: ['iku_shoot'] },
+            { ji: 2, src: 'イッちゃうよ', dst: '要去了啊', after: '要去了啊', issues: ['iku_shoot'] },
         ];
         const out = autoPropose.proposeFromHits(sanitize, hits, { max: 8 });
         const actionable = out.proposals.filter((p) => ['ready', 'review', 'failed'].includes(p.status));

@@ -9,8 +9,8 @@ const { isDevBuild } = require('../electron/mt-train-window.js');
 
 describe('mt-train electron bridge helpers', () => {
     it('parseJsonObject accepts raw and fenced JSON', () => {
-        assert.deepStrictEqual(parseJsonObject('{"expectZh":"要去了","mode":"replace"}'), {
-            expectZh: '要去了',
+        assert.deepStrictEqual(parseJsonObject('{"expectZh":"要射了","mode":"replace"}'), {
+            expectZh: '要射了',
             mode: 'replace',
         });
         assert.strictEqual(

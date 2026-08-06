@@ -382,6 +382,13 @@ const SENSEVOICE_MANUAL_PACKAGES = [
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/16/78/d824ffff7521cd140dc2006e44ce2bc82e64b48d1b32e90e956308c85a74/llvmlite-0.48.0-cp312-cp312-win_amd64.whl',
     },
     {
+        id: 'scipy',
+        name: 'SciPy（funasr / librosa 依赖）',
+        fileName: 'scipy-1.15.3-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/e6/eb/3bf6ea8ab7f1503dca3a10df2e4b9c3f6b3316df07f6c0ded94b281c7101/scipy-1.15.3-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/eb/3bf6ea8ab7f1503dca3a10df2e4b9c3f6b3316df07f6c0ded94b281c7101/scipy-1.15.3-cp312-cp312-win_amd64.whl',
+    },
+    {
         id: 'torch',
         name: 'PyTorch（torch）',
         fileName: 'torch-2.9.1-cp312-cp312-win_amd64.whl',
@@ -695,7 +702,7 @@ async function buildEngineDownloadInfo(payload = {}) {
                 folder,
                 pipCommand: `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba torch torchaudio funasr`,
                 hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。请用下方直链下载 .whl（勿装 numpy 2.5+，否则 numba 会源码编译失败）。',
-                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite/scipy，再装 torch / funasr。可多选后一次安装。',
+                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite/scipy，再装 torch / torchaudio / funasr。可多选后一次安装。',
                 items: SENSEVOICE_MANUAL_PACKAGES.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
@@ -971,22 +978,35 @@ function modelIdsNeedWhisperExtras(modelIds) {
     });
 }
 
+function modelIdsNeedSensevoiceExtras(modelIds) {
+    const list = Array.isArray(modelIds) ? modelIds : [];
+    return list.some((id) => String(id || '').toLowerCase().includes('sensevoice'));
+}
+
 /**
- * Install Whisper pip extras with engine stopped (fresh python.exe).
+ * Install ASR pip extras with engine stopped (fresh python.exe).
  * Avoids WinError 5 when the HTTP server already imported native wheels.
+ * @param {object} opts
+ * @param {'ensure-asr-whisper'|'ensure-asr-sensevoice'} opts.command
+ * @param {string} [opts.label]
  */
-function ensureAsrWhisperOffline(opts = {}) {
+function ensureRuntimeExtrasOffline(opts = {}) {
     const pythonPath = String(opts.pythonPath || '').trim();
     const cwd = String(opts.cwd || '').trim();
+    const command = String(opts.command || '').trim();
+    const label = String(opts.label || '运行库').trim() || '运行库';
     if (!pythonPath || !fs.existsSync(pythonPath)) {
         return Promise.resolve({ ok: false, error: '找不到引擎 Python（runtime\\python.exe）' });
+    }
+    if (!command) {
+        return Promise.resolve({ ok: false, error: '缺少 runtime ensure 命令' });
     }
     const force = !!opts.force;
     const timeoutMs = Math.max(60_000, Number(opts.timeoutMs) || 1_800_000);
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const signal = opts.signal;
     const args = [
-        '-m', 'transub_engine', 'runtime', 'ensure-asr-whisper',
+        '-m', 'transub_engine', 'runtime', command,
         '--progress', 'jsonl',
     ];
     if (force) args.push('--force');
@@ -1035,7 +1055,7 @@ function ensureAsrWhisperOffline(opts = {}) {
         }
         const timer = setTimeout(() => {
             try { child.kill(); } catch { /* ignore */ }
-            finish({ ok: false, error: `Whisper 运行库安装超时（${Math.round(timeoutMs / 1000)} 秒）` });
+            finish({ ok: false, error: `${label}安装超时（${Math.round(timeoutMs / 1000)} 秒）` });
         }, timeoutMs);
 
         const handleLine = (raw) => {
@@ -1079,7 +1099,7 @@ function ensureAsrWhisperOffline(opts = {}) {
             }
             const err = resultPayload?.message
                 || resultPayload?.error
-                || (logTail ? logTail.slice(-400) : `Whisper 运行库安装失败（exit ${code}）`);
+                || (logTail ? logTail.slice(-400) : `${label}安装失败（exit ${code}）`);
             finish({
                 ok: false,
                 error: err,
@@ -1088,6 +1108,30 @@ function ensureAsrWhisperOffline(opts = {}) {
                 ...(resultPayload || {}),
             });
         });
+    });
+}
+
+/**
+ * Install Whisper pip extras with engine stopped (fresh python.exe).
+ * Avoids WinError 5 when the HTTP server already imported native wheels.
+ */
+function ensureAsrWhisperOffline(opts = {}) {
+    return ensureRuntimeExtrasOffline({
+        ...opts,
+        command: 'ensure-asr-whisper',
+        label: 'Whisper 运行库',
+    });
+}
+
+/**
+ * Install SenseVoice / FunASR pip extras with engine stopped.
+ * Same WinError 5 rationale as Whisper (torch / numba already mapped in-process).
+ */
+function ensureAsrSensevoiceOffline(opts = {}) {
+    return ensureRuntimeExtrasOffline({
+        ...opts,
+        command: 'ensure-asr-sensevoice',
+        label: 'SenseVoice 运行库',
     });
 }
 
@@ -3314,77 +3358,126 @@ function setupEngineBridge(api, {
                 await sleep(600);
             }
 
-            // Whisper extras must install while the engine is stopped: a running
-            // server already imports ctranslate2/onnxruntime and Windows then
-            // denies --force-reinstall (WinError 5).
+            // ASR extras must install while the engine is stopped: a running
+            // server already imports native wheels and Windows then denies
+            // --force-reinstall (WinError 5 / 拒绝访问).
             const earlyModelIds = Array.isArray(payload.modelIds)
                 ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
                 : [];
             const needWhisperExtras = !!payload.force || modelIdsNeedWhisperExtras(earlyModelIds);
-            if (kind === 'models' && needWhisperExtras) {
-                const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
-                const pythonPath = resolveEngineRuntimePython(installPath);
-                if (pythonPath) {
+            const needSensevoiceExtras = !!payload.force || modelIdsNeedSensevoiceExtras(earlyModelIds);
+            const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
+            const pythonPath = resolveEngineRuntimePython(installPath);
+
+            const runOfflineExtras = async ({ need, ensureFn, label, pctBase }) => {
+                if (!need || !pythonPath) return { ok: true, skipped: true };
+                emit({
+                    phase: 'progress',
+                    message: `正在补齐 ${label}（引擎已停止，避免文件占用）…`,
+                    pct: pctBase,
+                });
+                let pre = await ensureFn({
+                    pythonPath,
+                    cwd: installPath,
+                    force: false,
+                    signal,
+                    onProgress: (ev) => {
+                        const pct = Number(ev.percent);
+                        emit({
+                            phase: 'progress',
+                            message: ev.detail || ev.message || `正在安装 ${label}…`,
+                            pct: Number.isFinite(pct)
+                                ? Math.min(pctBase + 12, pctBase + Math.round(pct * 0.12))
+                                : pctBase + 2,
+                            raw: ev,
+                        });
+                    },
+                });
+                if (
+                    !pre.ok
+                    && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
+                    && !signal?.aborted
+                ) {
                     emit({
                         phase: 'progress',
-                        message: '正在补齐 Whisper 运行库（引擎已停止，避免文件占用）…',
-                        pct: 3,
+                        message: `${label}需强制重装，正在独立进程中重写（引擎已停止）…`,
+                        pct: pctBase + 2,
                     });
-                    let pre = await ensureAsrWhisperOffline({
+                    pre = await ensureFn({
                         pythonPath,
                         cwd: installPath,
-                        force: false,
+                        force: true,
                         signal,
                         onProgress: (ev) => {
                             const pct = Number(ev.percent);
                             emit({
                                 phase: 'progress',
-                                message: ev.detail || ev.message || '正在安装 Whisper 运行库…',
-                                pct: Number.isFinite(pct) ? Math.min(18, 3 + Math.round(pct * 0.15)) : 6,
+                                message: ev.detail || ev.message || `正在强制重装 ${label}…`,
+                                pct: Number.isFinite(pct)
+                                    ? Math.min(pctBase + 14, pctBase + 2 + Math.round(pct * 0.12))
+                                    : pctBase + 4,
                                 raw: ev,
                             });
                         },
                     });
-                    if (
-                        !pre.ok
-                        && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
-                        && !signal?.aborted
-                    ) {
-                        emit({
-                            phase: 'progress',
-                            message: '运行库需强制重装，正在独立进程中重写（引擎已停止）…',
-                            pct: 5,
-                        });
-                        pre = await ensureAsrWhisperOffline({
-                            pythonPath,
-                            cwd: installPath,
-                            force: true,
-                            signal,
-                            onProgress: (ev) => {
-                                const pct = Number(ev.percent);
-                                emit({
-                                    phase: 'progress',
-                                    message: ev.detail || ev.message || '正在强制重装 Whisper 运行库…',
-                                    pct: Number.isFinite(pct) ? Math.min(18, 5 + Math.round(pct * 0.13)) : 8,
-                                    raw: ev,
-                                });
-                            },
-                        });
-                    }
+                }
+                return pre;
+            };
+
+            if (kind === 'models' && (needWhisperExtras || needSensevoiceExtras)) {
+                if (needWhisperExtras) {
+                    const pre = await runOfflineExtras({
+                        need: true,
+                        ensureFn: ensureAsrWhisperOffline,
+                        label: 'Whisper 运行库',
+                        pctBase: 3,
+                    });
                     if (pre.cancelled || signal.aborted) {
                         emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
                         return { ok: false, cancelled: true, error: 'cancelled' };
                     }
-                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL') {
+                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
                         const err = pre.error || pre.message || 'Whisper 运行库安装失败';
+                        // Do not block SenseVoice repair when LID/Whisper extras fail first.
+                        if (needSensevoiceExtras) {
+                            emit({
+                                phase: 'progress',
+                                message: `Whisper 运行库暂未装好：${err}；继续补齐 SenseVoice…`,
+                                pct: 8,
+                            });
+                        } else {
+                            emit({ phase: 'error', ok: false, message: err, pct: 0 });
+                            return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
+                        }
+                    } else if (pre.code === 'SMART_APP_CONTROL') {
+                        emit({
+                            phase: 'progress',
+                            message: pre.message || pre.error || 'Whisper 运行库受系统策略拦截，将继续尝试其它项…',
+                            pct: 8,
+                        });
+                    }
+                }
+                if (needSensevoiceExtras) {
+                    const pre = await runOfflineExtras({
+                        need: true,
+                        ensureFn: ensureAsrSensevoiceOffline,
+                        label: 'SenseVoice 运行库',
+                        pctBase: needWhisperExtras ? 10 : 3,
+                    });
+                    if (pre.cancelled || signal.aborted) {
+                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
+                        return { ok: false, cancelled: true, error: 'cancelled' };
+                    }
+                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
+                        const err = pre.error || pre.message || 'SenseVoice 运行库安装失败';
                         emit({ phase: 'error', ok: false, message: err, pct: 0 });
                         return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
                     }
                     if (pre.code === 'SMART_APP_CONTROL') {
                         emit({
                             phase: 'progress',
-                            message: pre.message || pre.error || 'Whisper 运行库受系统策略拦截，将继续尝试其它项…',
-                            pct: 8,
+                            message: pre.message || pre.error || 'SenseVoice 运行库受系统策略拦截，将继续尝试其它项…',
+                            pct: 14,
                         });
                     }
                 }
