@@ -1903,6 +1903,10 @@
                         <i class="fa fa-info-circle w-3 text-center text-gray-400" aria-hidden="true"></i>
                         <span>关于 Transub</span>
                     </button>
+                    <button type="button" id="openMtTrainMenuBtn" class="post-task-menu-item hidden" role="menuitem" title="仅开发模式">
+                        <i class="fa fa-flask w-3 text-center text-gray-400" aria-hidden="true"></i>
+                        <span>Sanitize 训练台</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -2568,7 +2572,7 @@
                                     <div class="engine-model-foot-row">
                                         <button type="button" id="engineCancelDownloadBtn" class="btn btn-danger" disabled>取消</button>
                                     </div>
-                                        <p id="engineModelsSelectedHint" class="engine-model-status">点卡片上的「下载」获取模型；LLM GGUF 可「手动下载」到 advanced-llm/models · 任务选用请到「运行环境」页设置</p>
+                                        <p id="engineModelsSelectedHint" class="engine-model-status">点卡片上的「下载」获取模型；网络不佳时可「手动下载」（Hub 模型放到引擎 models，GGUF 放到 advanced-llm/models）· 任务选用请到「运行环境」页设置</p>
                                     <div id="engineDownloadProgress" class="hidden space-y-1.5">
                                         <div class="h-2 rounded-full bg-indigo-100 overflow-hidden">
                                             <div id="engineDownloadProgressBar" class="h-full w-0 rounded-full bg-indigo-500 transition-[width] duration-150"></div>
@@ -2756,7 +2760,7 @@
                                 <input type="checkbox" id="postBatchCompactPureInterjectionsCheck" class="rounded">
                                 <span class="settings-label font-medium text-gray-700">
                                     完成后精简纯语气词
-                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。开启后，日中两侧均为纯语气/拟声的字幕块会成对删除并重编号，包括带顿号的喘息与轻笑（如「うん」↔「嗯」、「はぁ、はぁ」↔「哈啊…哈啊」、「ふふっ」↔「呵呵」）；含具体语义的对白（含句末语气词、いいえ/好的 等）会保留。需同时保留原文与译文轨。与「清理杂音」不同：本项只针对双侧纯语气。</span></span>
+                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认关闭。开启后，日中两侧均为纯语气/拟声/短应和的字幕块会成对删除并重编号，包括带顿号的喘息与轻笑（如「うん」↔「嗯」、「はぁ、はぁ」↔「哈啊…哈啊」、「ふふっ」↔「呵呵」），以及短应和（「はい」↔「好的」、「そう」↔「是啊」、「よし」↔「好」）；含具体语义的对白（含句末语气词、いいえ、うん大丈夫？、好的明白了 等）会保留。需同时保留原文与译文轨。与「清理杂音」不同：本项只针对双侧纯语气。</span></span>
                                 </span>
                             </label>
                         </fieldset>
@@ -3088,7 +3092,7 @@
                         <div class="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-xs text-violet-900 leading-relaxed flex items-start gap-2">
                             <span class="settings-adv-mark mt-0.5" aria-hidden="true">◆</span>
                             <span>
-                                Transub Pro 支持<strong>大版本内买断</strong>，以及<strong>9.9 元 / 7 天体验包</strong>（每爱发电账号限 1 次；到期自动回免费，不可抵扣买断）。本页许可操作<strong>保存后立即生效</strong>（与底部「保存设置」无关）。
+                                Transub Pro 支持<strong>大版本内买断</strong>，解锁更多功能和能力
                                 <span class="settings-tip ml-1 align-middle"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">软件内模型可下载用于本地推理；智能翻译、BYOK、更大模型、语境/影片重构与影视音频增强需开通 Pro。许可费用不包含云端 API 额度。取消设置窗口不会回滚此处更改。</span></span>
                             </span>
                         </div>
@@ -3136,7 +3140,7 @@
                         </fieldset>
                         <fieldset class="settings-section" data-settings-search="语言优化包 领域数据 TDP 更新">
                             <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>语言优化包</legend>
-                            <p class="text-xs text-gray-600 leading-relaxed mb-2">独立于软件发版的领域识别与用语修正数据。开通 Pro 后可热加载使用；更新包可从官方站点获取。</p>
+                            <p class="text-xs text-gray-600 leading-relaxed mb-2">更新包含过滤、清理、翻译优化规则等内容，及时更新有助于字幕输出质量</p>
                             <p id="tdpStatusLine" class="text-sm text-gray-700 min-h-[1.25rem]">检测中…</p>
                             <p id="tdpMetaLine" class="text-xs text-gray-500 leading-relaxed mb-2"></p>
                             <div class="flex flex-wrap gap-2">

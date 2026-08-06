@@ -179,6 +179,21 @@
         moanHeixiuJa: d('44Gy44G444GP44KP4oCmPw=='),
         goXingZh: d('6KGM'),
         moreLickOkZh: d('5YaN6IiU6IiU4oCm'),
+        firstLickOkZh: d('56ys5LiA5qyh6KKr6L+Z5qC36IiU4oCm'),
+        dameDameZh: d('5LiN6KaB5LiN6KaB'),
+        aboutToOutZh: d('6KaB5Ye65p2l5LqG'),
+        againAboutToOutZh: d('5Y+I6KaB5Ye65p2l5LqG'),
+        againShootZh: d('5Y+I6KaB5bCE5LqG'),
+        patientZh: d('55eF5Lq6'),
+        bigOkZh: d('5aW95aSn4oCm'),
+        hotZh: d('5aW954Ot'),
+        feelGoodStubZh: d('5oSf6KeJ5aW9'),
+        feelGoodQZh: d('6IiS5pyN5ZCX77yf'),
+        thisFeelQZh: d('6L+Z5Liq77yM6IiS5pyN5ZCX77yf'),
+        feelGoodEllZh: d('5aW96IiS5pyN4oCm'),
+        feelGoodZh: d('5aW96IiS5pyN'),
+        pleaseShootZh: d('6K+35bCE5Ye65p2l5ZCn'),
+        againCantShootQZh: d('5Y+I6K+05LiN6IO95bCE5LqG5ZCX4oCm'),
         grandpaAlsoOutBadZh: d('54i354i35Lmf6KaB5Ye65p2l5LqG'),
         grandpaAlsoOutOkZh: d('5Lmf6KaB5Ye65p2l5LqG'),
         juiceLikeJa: d('44GK44GX44KL44Gq44GE44Gf'),
@@ -395,13 +410,13 @@
         okDoneG: new RegExp(T.okDoneZh, 'g'),
         classStartG: new RegExp(T.classStartZh, 'g'),
         comingSoonG: new RegExp(T.comingSoonZh, 'g'),
-        ejacHintSrc: re('5bCE57K+fOOCtuODvOODoeODs3znsr7mtrJ85Ye644GX44Gm'),
+        ejacHintSrc: re('5bCE57K+fOOCtuODvOODoeODs3znsr7mtrJ85Ye644GX44GmfOWHuuOBleOCjHzlh7rjgaHjgoPjgYZ85Ye644GZ44GefOWHuuOBl+OBpuOChOOCiw=='),
         ejacOutSrc: re('5Ye644Gh44KD44GGfOWHuuOCi+OCiHzlh7rjgovjgoLjgpN85bCE57K+fOOCtuODvOODoeODs3znsr7mtrJ85Ye644GX44Gm'),
         ejacShortSrc: re('5Ye644Gh44KD44GGfOWwhOeyvnzjgrbjg7zjg6Hjg7M='),
         erectOrHardSrc: re('5YuD6LW3fOODk+ODs+ODk+ODs3zjgbPjgpPjgbPjgpN844Ks44OB44Ks44OB'),
         binbinGachiSrc: re('44OT44Oz44OT44OzfOOCrOODgeOCrOODgQ=='),
         breakupSefriSrc: re('5Yil44KMfOOBteOCieOCjOOCi3zpmY3moLx844K744OV44OsfOW9vOawj3zlvbzlpbN85LuY44GN5ZCI44GG'),
-        climaxIkuExtraSrc: re('44GE44Gh44KD44GGfOOCpOOBo+OBoeOCg+OBhnzjgqTjg4PjgaHjgoPjgYZ844GE44GP44GjfOOCpOOCr+ODgw=='),
+        climaxIkuExtraSrc: re('44GE44Gh44KD44GGfOOCpOOBo+OBoeOCg+OBhnzjgqTjg4PjgaHjgoPjgYZ844GE44GP44GjfOOCpOOCr+ODg3zjgYTjgY/jgZ5844Kk44Kv44GefOOCpOOCseOCjXzjgYTjgZHjgo1844Gv44GE44GP44Ge'),
         chinpoMilkAltSrc: re('44OB44Oz44OR44Of44Or44KvfOODgeODs+ODneODn+ODq+OCrw=='),
         squeezeMilkSrc: re('5oyk5Ye65aW2fOaMpOS6my4q5aW2fOaMpC4q5aW25p2lfOaMpOS6m+eJm+Wltg=='),
         squeezeOutMilkG: new RegExp(T.squeezeOutMilkZh, 'g'),
@@ -463,7 +478,7 @@
     });
 
     /** Sensitive JA ASR pairs omitted from shared/ja-asr-domain-fixes.json plaintext. */
-    const ASR_ADULT_PAIRS_B64 = 'W3siZnJvbSI6IuODleOCp+ODqeODs+ODh+ODouODs+OCueODiOODrOODvOOCt+ODp+ODsyIsInRvIjoi44OV44Kn44Op44Gu44OH44Oi44Oz44K544OI44Os44O844K344On44OzIn0seyJmcm9tIjoi44Kq44O844Kv5YWl44KM44KL44KI44Kq44O844OpIiwidG8iOiLlpaXlhaXjgozjgovjgojjgbvjgokifSx7ImZyb20iOiLlpKflpb3jgY3jgarjgqLjg4Pjg5fjgafmjJ8iLCJ0byI6IuWkp+WlveOBjeOBquOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiOOBs+OCk+OBs+OCkyIsInRvIjoi44GK44Gh44KT44Gh44KT44OT44Oz44OT44OzIn0seyJmcm9tIjoi6LO85YWl44GX44Gm44Gm44GP44Gg44GV44GEIiwidG8iOiLoiIjlpa7jgZfjgabjgabjgY/jgaDjgZXjgYQifSx7ImZyb20iOiLjgaHjgpPjgaHjgoPjgpPjgafotbfjgY3jgaYiLCJ0byI6IuODgeODs+ODgeODs+OBp+i1t+OBjeOBpiJ9LHsiZnJvbSI6IuWkp+WlveOBjeOBquOCouODg+ODl+ODqyIsInRvIjoi5aSn5aW944GN44Gq44GK44Gj44Gx44GEIn0seyJmcm9tIjoi5oKU44GE44Gr44GV44KM44Gh44KD44GGIiwidG8iOiLlpaXjgavjgZXjgozjgaHjgoPjgYYifSx7ImZyb20iOiLkuIDml6Xjga7lvaLjgoTlpKfjgY3jgZUiLCJ0byI6IuOCpOODgeODouODhOOBruW9ouOChOWkp+OBjeOBlSJ9LHsiZnJvbSI6IuellueItuOBqOOBr+mBleOBhOOBvuOBmSIsInRvIjoi6aKo5L+X44Go44Gv6YGV44GE44G+44GZIn0seyJmcm9tIjoi44GC44Gj44CB44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgaPjgIHmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYTjgaPjgaHjgoPjgYTjgaPjgaHjgoMiLCJ0byI6IuOCpOODg+OBoeOCg+OCpOODg+OBoeOCgyJ9LHsiZnJvbSI6IuOBiuOBoeOCk+OBmOOCheOBhuOBleOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44Kz44O844OB44Oz5pWj44KM44Gf44KJIiwidG8iOiLnsr7mtrLmlaPjgozjgZ/jgokifSx7ImZyb20iOiLjgrnjgr/jgqTjg4jjgZfjgb7jgZnjga0iLCJ0byI6IuWHuuOBn+OBhOOBp+OBmeOBrSJ9LHsiZnJvbSI6IuOCu+ODleODrOOCquOCu+ODg+OCr+OCuSIsInRvIjoi44K744OV44Os44Gu44K744OD44Kv44K5In0seyJmcm9tIjoi44OB44Oz44OB44Oz5Y+W44KK5a+d44GmIiwidG8iOiLjg4Hjg7Pjg4Hjg7Plj5bjgorlhaXjgozjgaYifSx7ImZyb20iOiLjg57jgqTjgq/jg63jg5Pjg4Pjgq3jg7MiLCJ0byI6IuODnuOCpOOCr+ODreODk+OCreODiyJ9LHsiZnJvbSI6IuWIneatr+OCkuS7iuiIkOOCgeOBpiIsInRvIjoi5YWI44Gj44G944KS5LuK6IiQ44KB44GmIn0seyJmcm9tIjoi44GC44GC44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgYLmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYLjgaPjgY3jgoLjgaHjgYTjgYQiLCJ0byI6IuOBguOBo+awl+aMgeOBoeOBhOOBhCJ9LHsiZnJvbSI6IuOCuOODo+ODkeODi+ODvOOCuuS8miIsInRvIjoi44K444Oj44OR44OL44O844K644Ks44KkIn0seyJmcm9tIjoi5YWl44KK44Gb44GE44Gn44GZIiwidG8iOiLlhaXjgorjgZ3jgYbjgafjgZkifSx7ImZyb20iOiLnlJ/ooYzjgaPjgaHjgoPjgYYiLCJ0byI6IuOCpOOBo+OBoeOCg+OBhiJ9LHsiZnJvbSI6IuOCouOCt+OCq+aPj+OBhOOBpiIsInRvIjoi6Laz6ZaL44GE44GmIn0seyJmcm9tIjoi44GC44Gj44Gx44GE44Gn5oyfIiwidG8iOiLjgYrjgaPjgbHjgYTjgafmjJ8ifSx7ImZyb20iOiLjgqLjg4Pjg5fjg6vjgafmjJ8iLCJ0byI6IuOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuOCpOOCseODoeODs+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44GK44GG44Gh44KT44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgYrjgaHjgpPjgaHjgoPjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOBiuOBr+OBoeOCk+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44OB44Ol44Oz44OB44Ol44OzIiwidG8iOiLjg4Hjg7Pjg4Hjg7MifSx7ImZyb20iOiLjg4fjgqvjg4Hjg43jgr/jg7MiLCJ0byI6IuODh+OCq+ODgeODs+OBryJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiCIsInRvIjoi44GK44Gh44KT44Gh44KT44GMIn0seyJmcm9tIjoi5p2l44KI44Kq44O844OpIiwidG8iOiLmnaXjgabjgbvjgokifSx7ImZyb20iOiLkuIDml6Xjga7lhYjjga8iLCJ0byI6IuOCpOODgeODouODhOOBruWFiOOBryJ9LHsiZnJvbSI6IuOCouODg+ODl+OBp+aMnyIsInRvIjoi44GK44Gj44Gx44GE44Gn5oyfIn0seyJmcm9tIjoi44K044Op6KGM44GP44KIIiwidG8iOiLjgbvjgonooYzjgY/jgogifSx7ImZyb20iOiLjg4jjg6rjgYzkvY7jgYQiLCJ0byI6IuODiOODquOCrOODvOOBjOS9juOBhCJ9LHsiZnJvbSI6IuWlpeOBp+a/gOWKsSIsInRvIjoi5aWl44Gn5Yi65r+AIn0seyJmcm9tIjoi5oCS6IG044GX44GmIiwidG8iOiLli4PotbfjgZfjgaYifSx7ImZyb20iOiLml6XmnKznq6XlrZAiLCJ0byI6IuaXpeacrOOBruerpeiyniJ9LHsiZnJvbSI6IuODgeODs+OCr+OCgiIsInRvIjoi44Gh44KT44GT44KCIn0seyJmcm9tIjoi44OZ44K/44OB44OzIiwidG8iOiLjg4fjgqvjg4Hjg7MifSx7ImZyb20iOiLjgbvjgaPjgbHjgYQiLCJ0byI6IuOBiuOBo+OBseOBhCJ9LHsiZnJvbSI6IuOBu+OBvuOCk+OBkyIsInRvIjoi44GK44G+44KT44GTIn0seyJmcm9tIjoi6YeR5pyq5p2lIiwidG8iOiLph5HnjonmnKrmnaUifSx7ImZyb20iOiLph5Hjg5Hjg7MiLCJ0byI6IuODgeODs+ODnSJ9LHsiZnJvbSI6IueUn+ihjOOBjyIsInRvIjoi44Kk44GPIn0seyJmcm9tIjoi44GK5q2j5rCXIiwidG8iOiLjgYrku5Xnva7jgY0ifSx7ImZyb20iOiLjgrfjg5Xjg6wiLCJ0byI6IuOCu+ODleODrCJ9LHsiZnJvbSI6IuS5s+i+siIsInRvIjoi5Lmz5oi/In0seyJmcm9tIjoi6YqA6YqAIiwidG8iOiLjg5Pjg7Pjg5Pjg7MifSx7ImZyb20iOiLjg4Hjg7Pjg5Hjg5/jg6vjgq8iLCJ0byI6IuOBiuOBoeOCk+OBveODn+ODq+OCryJ9LHsiZnJvbSI6IuOCs+ODvOODiOOCguOBhuaIkeaFoiIsInRvIjoi44Gh44KH44Gj44Go44KC44GG5oiR5oWiIn0seyJmcm9tIjoi5Luy5Ye644GXIiwidG8iOiLkuK3lh7rjgZcifSx7ImZyb20iOiLjg5Xjgqjjg6kiLCJ0byI6IuODleOCp+ODqSJ9LHsiZnJvbSI6IuODleOCp+ODqeODvCIsInRvIjoi44OV44Kn44OpIn0seyJmcm9tIjoi5omL44GT44GNIiwidG8iOiLmiYvjgrPjgq0ifSx7ImZyb20iOiLjgZfjgYrjgbXjgY0iLCJ0byI6Iua9ruWQueOBjSJ9LHsiZnJvbSI6Iua9ruOBteOBjSIsInRvIjoi5r2u5ZC544GNIn0seyJmcm9tIjoi44Gc44Gj44Gh44KH44GGIiwidG8iOiLntbbpoIIifSx7ImZyb20iOiLjg57jg7PjgrMiLCJ0byI6IuOBiuOBvuOCk+OBkyJ9LHsiZnJvbSI6IuOBquOBvuOBr+OCgSIsInRvIjoi55Sf44OP44OhIn0seyJmcm9tIjoi55Sf44Gv44KBIiwidG8iOiLnlJ/jg4/jg6EifSx7ImZyb20iOiLjgY/jgpPjgavjgorjgpPjgZAiLCJ0byI6IuOCr+ODs+ODi+ODquODs+OCsCJ9LHsiZnJvbSI6IuOBiuOBmOOBhOOBoeOCg+OCk+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44GK44GY44GE44GV44G+44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgqrjg7zjg4rjg7zjgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuWFqOijuOOBjOODhuODs+ODgCIsInRvIjoi5YWo6KO444GMIn0seyJmcm9tIjoi44OG44Oz44OA5YWo6KO4IiwidG8iOiLlhajoo7gifSx7ImZyb20iOiLmjojmpa3kuIvjgYwiLCJ0byI6IuWtkOWuruS4i+OBjCJ9LHsiZnJvbSI6IuOBp+OBoeOCg+OBhCIsInRvIjoi5Ye644Gh44KD44GEIn0seyJmcm9tIjoi44Gn44Gh44KD44GGIiwidG8iOiLlh7rjgaHjgoPjgYYifSx7ImZyb20iOiLlh7rjgYvjgaHlr50iLCJ0byI6IuODh+OCq+ODgeODs+WvnSJ9LHsiZnJvbSI6IuWHuuOBi+OBoSIsInRvIjoi44OH44Kr44OBIn0seyJmcm9tIjoi6Laz44OV44Kn44Oz44K4IiwidG8iOiLotrPjg5Xjgqfjg4EifSx7ImZyb20iOiLjg5Xjgqfjg7Pjgrjjgarjga4iLCJ0byI6IuODleOCp+ODgeOBquOBriJ9LHsiZnJvbSI6IuOBvuOBn+OBo+OBoeOCg+OBo+OBnyIsInRvIjoi6JCO44GI44Gh44KD44Gj44GfIn0seyJmcm9tIjoi44G+44Gf44Gj44Gh44KDIiwidG8iOiLokI7jgYjjgaHjgoMifSx7ImZyb20iOiLjgaHjgpPjgb3jgpMiLCJ0byI6IuOBoeOCk+OBvSJ9LHsiZnJvbSI6IuOBoeOCk+OBoeOCh+OBmeOBjuOCiyIsInRvIjoi44Gh44KT44G944GZ44GO44KLIn0seyJmcm9tIjoi44GE44GC44Gh44KF44GEIiwidG8iOiLjgqTjg4PjgaHjgoPjgYYifSx7ImZyb20iOiLjgY3jgaHjgpPjgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuWHuuOBl+OBquOBjuOCgyIsInRvIjoi5Ye644GX44Gq44GN44KDIn0seyJmcm9tIjoi44GE44G+44Gp44OA44OhIiwidG8iOiLku4rjga/jg4Djg6EifSx7ImZyb20iOiLjgoLjgYbliIfjgaPjgabjga0iLCJ0byI6IuOCguOBhuOCpOOBo+OBpuOBrSJ9LHsiZnJvbSI6IuOBoeOCk+OBveOCjOOBpuOCiyIsInRvIjoi44Gh44KT44G944GM5YuD44Gj44Gm44KLIn0seyJmcm9tIjoi44Kk44GN44GdIiwidG8iOiLjgqTjgq3jgZ3jgYYifSx7ImZyb20iOiLjgYLjgbDjgYLjgoIiLCJ0byI6IuOBguOAgeOCguOBhiJ9LHsiZnJvbSI6IuOBiuOBl+OCiyIsInRvIjoi44GK5rGBIn0seyJmcm9tIjoi44OR44Kk44OD44Gm44GP44KM44GfIiwidG8iOiLjgqTjg4PjgabjgY/jgozjgZ8ifSx7ImZyb20iOiLnhKHnlKjkuI3mmI4iLCJ0byI6IuWQjeWJjeS4jeaYjiJ9LHsiZnJvbSI6IuOCiuOCg+OCgSIsInRvIjoi44KE44KBIn1d';
+    const ASR_ADULT_PAIRS_B64 = 'W3siZnJvbSI6IuODleOCp+ODqeODs+ODh+ODouODs+OCueODiOODrOODvOOCt+ODp+ODsyIsInRvIjoi44OV44Kn44Op44Gu44OH44Oi44Oz44K544OI44Os44O844K344On44OzIn0seyJmcm9tIjoi5Ye644GX44Gh44KD44OA44Kk44OD44Gm44GK44GG44GLIiwidG8iOiLlh7rjgZfjgaHjgoPjg4Djg6HjgaPjgabjgYTjgYbjgYsifSx7ImZyb20iOiLjgqrjg7zjgq/lhaXjgozjgovjgojjgqrjg7zjg6kiLCJ0byI6IuWlpeWFpeOCjOOCi+OCiOOBu+OCiSJ9LHsiZnJvbSI6IuWkp+WlveOBjeOBquOCouODg+ODl+OBp+aMnyIsInRvIjoi5aSn5aW944GN44Gq44GK44Gj44Gx44GE44Gn5oyfIn0seyJmcm9tIjoi6ICz44Gu44OQ44OD44OI44Gz44KT44Gz44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpPjg5Pjg7Pjg5Pjg7MifSx7ImZyb20iOiLos7zlhaXjgZfjgabjgabjgY/jgaDjgZXjgYQiLCJ0byI6IuiIiOWlruOBl+OBpuOBpuOBj+OBoOOBleOBhCJ9LHsiZnJvbSI6IuOBoeOCk+OBoeOCg+OCk+OBp+i1t+OBjeOBpiIsInRvIjoi44OB44Oz44OB44Oz44Gn6LW344GN44GmIn0seyJmcm9tIjoi5aSn5aW944GN44Gq44Ki44OD44OX44OrIiwidG8iOiLlpKflpb3jgY3jgarjgYrjgaPjgbHjgYQifSx7ImZyb20iOiLmgpTjgYTjgavjgZXjgozjgaHjgoPjgYYiLCJ0byI6IuWlpeOBq+OBleOCjOOBoeOCg+OBhiJ9LHsiZnJvbSI6IuS4gOaXpeOBruW9ouOChOWkp+OBjeOBlSIsInRvIjoi44Kk44OB44Oi44OE44Gu5b2i44KE5aSn44GN44GVIn0seyJmcm9tIjoi56WW54i244Go44Gv6YGV44GE44G+44GZIiwidG8iOiLpoqjkv5fjgajjga/pgZXjgYTjgb7jgZkifSx7ImZyb20iOiLjgYLjgaPjgIHjgY3jgoLjgaHjgYTjgYQiLCJ0byI6IuOBguOBo+OAgeawl+aMgeOBoeOBhOOBhCJ9LHsiZnJvbSI6IuOBhOOBo+OBoeOCg+OBhOOBo+OBoeOCgyIsInRvIjoi44Kk44OD44Gh44KD44Kk44OD44Gh44KDIn0seyJmcm9tIjoi44GK44GY44GE44Gh44KD44KT44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgYrjgaHjgpPjgZjjgoXjgYbjgZXjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOCs+ODvOODgeODs+aVo+OCjOOBn+OCiSIsInRvIjoi57K+5ray5pWj44KM44Gf44KJIn0seyJmcm9tIjoi44K544K/44Kk44OI44GX44G+44GZ44GtIiwidG8iOiLlh7rjgZ/jgYTjgafjgZnjga0ifSx7ImZyb20iOiLjgrvjg5Xjg6zjgqrjgrvjg4Pjgq/jgrkiLCJ0byI6IuOCu+ODleODrOOBruOCu+ODg+OCr+OCuSJ9LHsiZnJvbSI6IuODgeODs+ODgeODs+WPluOCiuWvneOBpiIsInRvIjoi44OB44Oz44OB44Oz5Y+W44KK5YWl44KM44GmIn0seyJmcm9tIjoi44Oe44Kk44Kv44Ot44OT44OD44Kt44OzIiwidG8iOiLjg57jgqTjgq/jg63jg5Pjgq3jg4sifSx7ImZyb20iOiLliJ3mra/jgpLku4roiJDjgoHjgaYiLCJ0byI6IuWFiOOBo+OBveOCkuS7iuiIkOOCgeOBpiJ9LHsiZnJvbSI6IuOBguOBguOBjeOCguOBoeOBhOOBhCIsInRvIjoi44GC44GC5rCX5oyB44Gh44GE44GEIn0seyJmcm9tIjoi44GC44Gj44GN44KC44Gh44GE44GEIiwidG8iOiLjgYLjgaPmsJfmjIHjgaHjgYTjgYQifSx7ImZyb20iOiLjgYrjgZjjgYTjgZXjgb7jgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOCs+ODvOODiOOCguOBhuaIkeaFoiIsInRvIjoi44Gh44KH44Gj44Go44KC44GG5oiR5oWiIn0seyJmcm9tIjoi44K444Oj44OR44OL44O844K65LyaIiwidG8iOiLjgrjjg6Pjg5Hjg4vjg7zjgrrjgqzjgqQifSx7ImZyb20iOiLjg4DjgqTjg4PjgabjgYrjgYbjgYsiLCJ0byI6IuODgOODoeOBo+OBpuOBhOOBhuOBiyJ9LHsiZnJvbSI6IuOBoeOCk+OBoeOCh+OBmeOBjuOCiyIsInRvIjoi44Gh44KT44G944GZ44GO44KLIn0seyJmcm9tIjoi44OR44Kk44OD44Gm44GP44KM44GfIiwidG8iOiLjgqTjg4PjgabjgY/jgozjgZ8ifSx7ImZyb20iOiLjgb7jgZ/jgaPjgaHjgoPjgaPjgZ8iLCJ0byI6IuiQjuOBiOOBoeOCg+OBo+OBnyJ9LHsiZnJvbSI6IueXheS6uuWHuuOBoeOCg+OBhiIsInRvIjoi44Gz44KT44Gz44KT5Ye644Gh44KD44GGIn0seyJmcm9tIjoi5YWo6KO444GM44OG44Oz44OAIiwidG8iOiLlhajoo7jjgYwifSx7ImZyb20iOiLlhaXjgorjgZvjgYTjgafjgZkiLCJ0byI6IuWFpeOCiuOBneOBhuOBp+OBmSJ9LHsiZnJvbSI6IueUn+ihjOOBo+OBoeOCg+OBhiIsInRvIjoi44Kk44Gj44Gh44KD44GGIn0seyJmcm9tIjoi44Ki44K344Kr5o+P44GE44GmIiwidG8iOiLotrPplovjgYTjgaYifSx7ImZyb20iOiLjgYLjgaPjgbHjgYTjgafmjJ8iLCJ0byI6IuOBiuOBo+OBseOBhOOBp+aMnyJ9LHsiZnJvbSI6IuOCouODg+ODl+ODq+OBp+aMnyIsInRvIjoi44GK44Gj44Gx44GE44Gn5oyfIn0seyJmcm9tIjoi44Kk44Kx44Oh44Oz44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgqrjg7zjg4rjg7zjgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOBiuOBhuOBoeOCk+OBoeOCkyIsInRvIjoi44GK44Gh44KT44Gh44KTIn0seyJmcm9tIjoi44GK44Gh44KT44Gh44KD44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgYrjga/jgaHjgpPjgaHjgpMiLCJ0byI6IuOBiuOBoeOCk+OBoeOCkyJ9LHsiZnJvbSI6IuOBj+OCk+OBq+OCiuOCk+OBkCIsInRvIjoi44Kv44Oz44OL44Oq44Oz44KwIn0seyJmcm9tIjoi44K144Kk44OD44OB44OA44OhIiwidG8iOiLlsITnsr7jg4Djg6EifSx7ImZyb20iOiLjg4Hjg6Xjg7Pjg4Hjg6Xjg7MiLCJ0byI6IuODgeODs+ODgeODsyJ9LHsiZnJvbSI6IuODgeODs+ODkeODn+ODq+OCryIsInRvIjoi44GK44Gh44KT44G944Of44Or44KvIn0seyJmcm9tIjoi44Gh44KT44G944KM44Gm44KLIiwidG8iOiLjgaHjgpPjgb3jgYzli4PjgaPjgabjgosifSx7ImZyb20iOiLjg4fjgqvjg4Hjg43jgr/jg7MiLCJ0byI6IuODh+OCq+ODgeODs+OBryJ9LHsiZnJvbSI6IuODleOCp+ODs+OCuOOBquOBriIsInRvIjoi44OV44Kn44OB44Gq44GuIn0seyJmcm9tIjoi44KC44GG5YiH44Gj44Gm44GtIiwidG8iOiLjgoLjgYbjgqTjgaPjgabjga0ifSx7ImZyb20iOiLlh7rjgZfjgarjgY7jgoMiLCJ0byI6IuWHuuOBl+OBquOBjeOCgyJ9LHsiZnJvbSI6IuiAs+OBruODkOODg+ODiCIsInRvIjoi44GK44Gh44KT44Gh44KT44GMIn0seyJmcm9tIjoi5p2l44KI44Kq44O844OpIiwidG8iOiLmnaXjgabjgbvjgokifSx7ImZyb20iOiLkuIDml6Xjga7lhYjjga8iLCJ0byI6IuOCpOODgeODouODhOOBruWFiOOBryJ9LHsiZnJvbSI6Iui2s+ODleOCp+ODs+OCuCIsInRvIjoi6Laz44OV44Kn44OBIn0seyJmcm9tIjoi44Ki44OD44OX44Gn5oyfIiwidG8iOiLjgYrjgaPjgbHjgYTjgafmjJ8ifSx7ImZyb20iOiLjgYTjgYLjgaHjgoXjgYQiLCJ0byI6IuOCpOODg+OBoeOCg+OBhiJ9LHsiZnJvbSI6IuOBhOOBvuOBqeODgOODoSIsInRvIjoi5LuK44Gv44OA44OhIn0seyJmcm9tIjoi44GN44Gh44KT44Gh44KTIiwidG8iOiLjgYrjgaHjgpPjgaHjgpMifSx7ImZyb20iOiLjgrTjg6nooYzjgY/jgogiLCJ0byI6IuOBu+OCieihjOOBj+OCiCJ9LHsiZnJvbSI6IuOBnOOBo+OBoeOCh+OBhiIsInRvIjoi57W26aCCIn0seyJmcm9tIjoi44OG44Oz44OA5YWo6KO4IiwidG8iOiLlhajoo7gifSx7ImZyb20iOiLjg4jjg6rjgYzkvY7jgYQiLCJ0byI6IuODiOODquOCrOODvOOBjOS9juOBhCJ9LHsiZnJvbSI6IuOBvuOBn+OBo+OBoeOCgyIsInRvIjoi6JCO44GI44Gh44KDIn0seyJmcm9tIjoi5aWl44Gn5r+A5YqxIiwidG8iOiLlpaXjgafliLrmv4AifSx7ImZyb20iOiLlh7rjgYvjgaHlr50iLCJ0byI6IuODh+OCq+ODgeODs+WvnSJ9LHsiZnJvbSI6IuaAkuiBtOOBl+OBpiIsInRvIjoi5YuD6LW344GX44GmIn0seyJmcm9tIjoi5pel5pys56ul5a2QIiwidG8iOiLml6XmnKzjga7nq6Xosp4ifSx7ImZyb20iOiLmjojmpa3kuIvjgYwiLCJ0byI6IuWtkOWuruS4i+OBjCJ9LHsiZnJvbSI6IueEoeeUqOS4jeaYjiIsInRvIjoi5ZCN5YmN5LiN5piOIn0seyJmcm9tIjoi44GC44Gw44GC44KCIiwidG8iOiLjgYLjgIHjgoLjgYYifSx7ImZyb20iOiLjgYrjgaTjgY3jgaciLCJ0byI6IuOBiuOBo+OBjeOBj+OBpiJ9LHsiZnJvbSI6IuOBl+OBiuOBteOBjSIsInRvIjoi5r2u5ZC544GNIn0seyJmcm9tIjoi44OB44Oz44Kv44KCIiwidG8iOiLjgaHjgpPjgZPjgoIifSx7ImZyb20iOiLjgaHjgpPjgb3jgpMiLCJ0byI6IuOBoeOCk+OBvSJ9LHsiZnJvbSI6IuOBp+OBoeOCg+OBhCIsInRvIjoi5Ye644Gh44KD44GEIn0seyJmcm9tIjoi44Gn44Gh44KD44GGIiwidG8iOiLlh7rjgaHjgoPjgYYifSx7ImZyb20iOiLjgarjgb7jga/jgoEiLCJ0byI6IueUn+ODj+ODoSJ9LHsiZnJvbSI6IuODleOCp+ODqeODvCIsInRvIjoi44OV44Kn44OpIn0seyJmcm9tIjoi44OZ44K/44OB44OzIiwidG8iOiLjg4fjgqvjg4Hjg7MifSx7ImZyb20iOiLjgbvjgaPjgbHjgYQiLCJ0byI6IuOBiuOBo+OBseOBhCJ9LHsiZnJvbSI6IuOBu+OBvuOCk+OBkyIsInRvIjoi44GK44G+44KT44GTIn0seyJmcm9tIjoi5r2u44G144GNIiwidG8iOiLmva7lkLnjgY0ifSx7ImZyb20iOiLlh7rjgYvjgaEiLCJ0byI6IuODh+OCq+ODgSJ9LHsiZnJvbSI6IumHkeacquadpSIsInRvIjoi6YeR546J5pyq5p2lIn0seyJmcm9tIjoi6YeR44OR44OzIiwidG8iOiLjg4Hjg7Pjg50ifSx7ImZyb20iOiLnlJ/ooYzjgY8iLCJ0byI6IuOCpOOBjyJ9LHsiZnJvbSI6IueUn+OBr+OCgSIsInRvIjoi55Sf44OP44OhIn0seyJmcm9tIjoi5omL44GT44GNIiwidG8iOiLmiYvjgrPjgq0ifSx7ImZyb20iOiLku7Llh7rjgZciLCJ0byI6IuS4reWHuuOBlyJ9LHsiZnJvbSI6IuOCpOOBjeOBnSIsInRvIjoi44Kk44Kt44Gd44GGIn0seyJmcm9tIjoi44GK5q2j5rCXIiwidG8iOiLjgYrku5Xnva7jgY0ifSx7ImZyb20iOiLjgYrjgZfjgosiLCJ0byI6IuOBiuaxgSJ9LHsiZnJvbSI6IuOCt+ODleODrCIsInRvIjoi44K744OV44OsIn0seyJmcm9tIjoi44OV44Ko44OpIiwidG8iOiLjg5Xjgqfjg6kifSx7ImZyb20iOiLjg57jg7PjgrMiLCJ0byI6IuOBiuOBvuOCk+OBkyJ9LHsiZnJvbSI6IuOCiuOCg+OCgSIsInRvIjoi44KE44KBIn0seyJmcm9tIjoi5Lmz6L6yIiwidG8iOiLkubPmiL8ifSx7ImZyb20iOiLpioDpioAiLCJ0byI6IuODk+ODs+ODk+ODsyJ9XQ==';
 
     function getAsrAdultDomainPairs() {
         try {
@@ -713,12 +728,17 @@
                 || cur.includes(T.shotZh)
                 || cur.includes(T.fastShotZh)
                 || cur.includes(T.againShotZh)
+                || /射出来|能射/.test(cur)
             )
             && !RE.ejacHintSrc.test(src)
-            && !/出して|射精/.test(src)
+            && !/出して|出され|射精/.test(src)
         ) {
             const marked = cur.split(T.dontShootZh).join('\uE000');
             const next = marked
+                .replace(/能射出来/g, '能去')
+                .replace(/射出来吧/g, '去吧')
+                .replace(/射出来/g, '去了')
+                .replace(/能射/g, '能去')
                 .replace(RE.shootCumG, T.aboutToCumZh)
                 .replace(RE.shootCumShortG, T.goCumShortZh)
                 .replace(RE.fastShotG, T.fastCameZh)
@@ -749,10 +769,10 @@
                 note('domain_term');
             }
         }
-        // やめ / りゃめ →「要射了」hallucination
+        // やめ / りゃめ →「要射了」/「射了」hallucination
         if (
             /(?:やめ|りゃめ|ヤメ)/.test(src)
-            && cur.includes(T.shootCumShortZh)
+            && (cur.includes(T.shootCumShortZh) || cur.includes(T.shotZh))
             && !RE.climaxIkuSrc.test(src)
             && !RE.ikuTruncSrc.test(src)
             && !RE.ikuRepeatSrc.test(src)
@@ -760,7 +780,13 @@
         ) {
             cur = cur
                 .replace(RE.shootCumG, '不要')
-                .replace(RE.shootCumShortG, '不要');
+                .replace(RE.shootCumShortG, '不要')
+                .replace(RE.shotG, '')
+                .replace(/[，,]{2,}/g, '，')
+                .replace(/[，,]\s*…/g, '…')
+                .replace(/\s{2,}/g, ' ')
+                .replace(/…{2,}/g, '…')
+                .trim();
             note('domain_hallucination');
         }
         // 無用不明 →「无用不明」(名前不明 ASR)
@@ -768,8 +794,8 @@
             cur = cur.replace(/无用不明/g, '名字不明');
             note('domain_term');
         }
-        // ちゅばっ mixed with moans →「吸吧/吃吧」hallucination
-        if (/ちゅば|チュバ/.test(src) && /吸吧|吃吧|吱巴/.test(cur)) {
+        // ちゅばっ / ちゅぷ mixed with moans →「吸吧/吃吧」hallucination
+        if (/ちゅば|チュバ|ちゅぷ|チュプ/.test(src) && /吸吧|吃吧|吱巴/.test(cur)) {
             cur = cur
                 .replace(/吸吧|吃吧|吱巴/g, '')
                 .replace(/[，,]{2,}/g, '，')
@@ -1011,6 +1037,30 @@
             cur = T.shootCumZh;
             note('domain_term');
         }
+        // 出ちゃいそう / 出ちゃいます →「要出来了」(ejac euphemism)
+        // Keep 外に出し (cum outside); only skip literal leave-the-place 外に出る/出て.
+        if (
+            /出ちゃ|でちゃ/.test(src)
+            && !/どこ|店|エラー|外に出ちゃ|外に出[るて]|外へ出|残り出|出て行|出かけ|出てく|あばあ|おじい|祖父|爺/.test(src)
+            && !cur.includes(T.grandpaZh)
+            && !cur.includes(T.oldGrandpaZh)
+            && (/要出来了|又要出来了/.test(cur) || (/出来了/.test(cur) && !/射在|射到|射出来/.test(cur)))
+        ) {
+            const next = cur
+                .replace(/又要出来了/g, T.againShootZh)
+                .replace(/要出来了/g, T.shootCumZh)
+                .replace(/出来了/g, T.shotZh)
+                .replace(new RegExp(T.patientZh, 'g'), '');
+            if (next !== cur) {
+                cur = next.replace(/\s{2,}/g, ' ').replace(/…{2,}/g, '…').trim();
+                note('domain_term');
+            }
+        }
+        // 病人 leftover after びんびん ASR fix
+        if (/びんびん出ちゃ|出ちゃ/.test(src) && cur.includes(T.patientZh) && !/病人|患者/.test(src)) {
+            cur = cur.replace(new RegExp(T.patientZh, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+            note('domain_hallucination');
+        }
         // Balls JA → clinical ZH → colloquial ZH
         if (src.includes(T.kintamaJa) && cur.includes(T.testicleZh)) {
             cur = cur.replace(RE.testicleG, T.ballsZh);
@@ -1189,14 +1239,76 @@
             cur = T.alsoFellaOkZh;
             note('domain_term');
         }
-        // もっと舐めて stubbed as 呵 / 好
+        // もっと/いっぱい舐めて stubbed as 呵 / 好 / 遍 / 舔了
         if (
             /舐めて/.test(src)
-            && /もっと|こっち|ほら/.test(src)
-            && /^(?:呵|好|嗯|哈)[。．.!！?？…\s]*$/u.test(cur.trim())
+            && /もっと|こっち|ほら|いっぱい/.test(src)
+            && /^(?:呵|好|嗯|哈|遍|多|舔了)[。．.!！?？…\s]*$/u.test(cur.trim())
         ) {
             cur = /ほら/.test(src) ? T.horaLickOkZh : T.moreLickOkZh;
             note('domain_term');
+        }
+        // 舐めてくれるの初めて stubbed as 那个…
+        if (
+            /舐めて/.test(src)
+            && /初めて/.test(src)
+            && /^(?:那个|這个|这个|啊|嗯)[。．.!！?？…\s]*$/u.test(cur.trim())
+        ) {
+            cur = T.firstLickOkZh;
+            note('domain_term');
+        }
+        // らめらめ →「不要不要」(baby だめだめ); drop long invent
+        if (
+            /らめらめ|ラメラメ/.test(src)
+            && !/ダメ|だめ|いや|やめ/.test(src)
+            && (
+                /^(?:好棒|不要|不行)[\s\S]{0,24}$/u.test(cur.trim())
+                || (cur.includes('好舒服') && cur.includes('不行') && [...cur.replace(/\s/g, '')].length >= 10)
+                || cur === T.dameDameZh
+            )
+        ) {
+            cur = T.dameDameZh;
+            note('domain_term');
+        }
+        // Bare イクッ! invent as long 不行 moan stack
+        if (
+            RE.ikuBareBangSrc.test(src)
+            && [...src.replace(/\s/g, '')].length <= 6
+            && [...cur.replace(/\s/g, '')].length >= 8
+            && !/要去|去了|射/.test(cur)
+            && /不行|啊/.test(cur)
+        ) {
+            cur = T.aboutToCumZh;
+            note('domain_term');
+        }
+        // おつきで / おっきくて → geographic invent (螃蟹/城市)
+        if (
+            /おつきで|おっきくて/.test(src)
+            && /螃蟹|城市|著名/.test(cur)
+            && [...src.replace(/\s/g, '')].length <= 12
+        ) {
+            cur = T.bigOkZh;
+            note('domain_hallucination');
+        }
+        // 気持ちいい stubbed as 好热 / 感觉好 / moan-only / 好厉害
+        if (/気持ちいい|きもちいい|きもちぃ|キモチイイ/.test(src)) {
+            const stub = /^(?:好热|感觉好|好厉害|(?:哈啊)+|嗯)[…。．.!！?\s]*$/u.test(cur.trim());
+            if (stub || cur.trim() === T.hotZh || cur.trim() === T.feelGoodStubZh) {
+                if (/[?？]/.test(src)) {
+                    cur = /これ/.test(src) ? T.thisFeelQZh : T.feelGoodQZh;
+                } else {
+                    cur = /[…・]/.test(src) ? T.feelGoodEllZh : T.feelGoodZh;
+                }
+                note('domain_term');
+            }
+        }
+        // 出しちゃダメっていうか / ASR ダイッて →「请射出来吧」(polarity flip)
+        if (
+            (/出しちゃダメ|出しちゃだめ|出しちゃダイッて/.test(src))
+            && (cur.includes(T.pleaseShootZh) || /请射出来/.test(cur))
+        ) {
+            cur = T.againCantShootQZh;
+            note('domain_hallucination');
         }
         // 「下面那个东西」
         if (cur.includes(T.belowThingZh) && (RE.dekachinSrc.test(src) || /舔|含|口/.test(cur))) {
@@ -1413,8 +1525,17 @@
         if (s.includes(T.horaLickJa) || (/舐めて/.test(s) && /ほら|から/.test(s) && len(s) <= 28)) {
             return T.horaLickOkZh;
         }
-        if (/舐めて/.test(s) && /もっと|こっち/.test(s) && len(s) <= 32) {
+        if (/舐めて/.test(s) && /もっと|こっち|いっぱい/.test(s) && len(s) <= 32) {
             return T.moreLickOkZh;
+        }
+        if (/舐めて/.test(s) && /初めて/.test(s) && len(s) <= 28) {
+            return T.firstLickOkZh;
+        }
+        if (/^(?:らめらめ|ラメラメ)[…。．.!！?\s]*$/u.test(s.trim())) {
+            return T.dameDameZh;
+        }
+        if (/おつきで|おっきくて/.test(s) && len(s) <= 12) {
+            return T.bigOkZh;
         }
         if (RE.ikuRepeatSrc.test(s) && len(s) <= 24) {
             return T.aboutToCumPlainZh;

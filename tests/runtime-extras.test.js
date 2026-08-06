@@ -165,6 +165,10 @@ print(json.dumps({
             payload.pkgs.some((p) => /^tokenizers/.test(p) && /<=0\.23\.0/.test(p)),
             `expected tokenizers<=0.23.0 in ${payload.pkgs}`,
         );
+        assert.ok(
+            payload.pkgs.some((p) => /^huggingface-hub/.test(p) && /<1\.0/.test(p)),
+            `expected huggingface-hub<1.0 in ${payload.pkgs}`,
+        );
     });
 
     it('probe_asr_whisper returns a structured readiness payload', function () {

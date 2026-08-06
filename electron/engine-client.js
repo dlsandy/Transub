@@ -362,19 +362,28 @@ async function cancelJob(baseUrl, jobId, options = {}) {
 
 /**
  * Poll job until terminal state; optional onEvent for progress snapshots.
+ * Fails only on prolonged idle (no successful engine response), not total wall time —
+ * long ASR/MT jobs may run well past one hour while still reporting progress.
  * @param {object} [options]
+ * @param {number} [options.timeoutMs] - alias of idleTimeoutMs (compat)
+ * @param {number} [options.idleTimeoutMs] - abort after this long with no successful poll (default 1h)
  * @param {() => boolean} [options.shouldStop] - return true to abort wait early (UI cancel)
  */
 async function waitJob(baseUrl, jobId, {
     intervalMs = 500,
-    timeoutMs = 3600000,
+    timeoutMs = undefined,
+    idleTimeoutMs = undefined,
     /** Per-poll HTTP timeout; keep high so ASR-busy engines don't fail the wait. */
     pollTimeoutMs = 60000,
     onEvent = null,
     signal = undefined,
     shouldStop = null,
 } = {}) {
-    const started = Date.now();
+    const idleMs = Math.max(
+        1000,
+        Number(idleTimeoutMs ?? timeoutMs) || 3600000,
+    );
+    let lastActivityAt = Date.now();
     let lastStatus = '';
     let lastProgressKey = '';
     const perPollMs = Math.max(1000, Number(pollTimeoutMs) || 60000);
@@ -385,8 +394,8 @@ async function waitJob(baseUrl, jobId, {
         if (signal?.aborted) {
             return { ok: false, error: '已取消', cancelled: true };
         }
-        if (Date.now() - started > timeoutMs) {
-            return { ok: false, error: '任务超时' };
+        if (Date.now() - lastActivityAt > idleMs) {
+            return { ok: false, error: '任务长时间无响应', code: 'idle_timeout' };
         }
         // Poll timeout must tolerate engine blocking HTTP while ASR runs.
         const res = await getJob(baseUrl, jobId, { signal, timeoutMs: perPollMs });
@@ -404,12 +413,15 @@ async function waitJob(baseUrl, jobId, {
         }
         if (!res.ok) {
             // Timeout/network while engine is busy on inference — keep polling.
+            // Do not refresh lastActivityAt: prolonged silence still trips idle timeout.
             if (typeof shouldStop === 'function' && shouldStop()) {
                 return { ok: false, error: '已取消', cancelled: true };
             }
             await new Promise((r) => setTimeout(r, intervalMs));
             continue;
         }
+        // Engine answered — job may still take many hours; only idle silence fails.
+        lastActivityAt = Date.now();
         const status = res.data?.status || '';
         const progress = res.data?.progress || null;
         const progressKey = progress

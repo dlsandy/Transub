@@ -474,6 +474,24 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         }
     });
 
+    register('transub-open-mt-train', async () => {
+        try {
+            const { isDevBuild, openMtTrainWindow } = require('./mt-train-window');
+            if (!isDevBuild(app)) {
+                return { ok: false, error: '仅开发模式可用' };
+            }
+            warmBridges?.();
+            return await openMtTrainWindow(app);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-is-dev-build', async () => ({
+        ok: true,
+        isDev: !app.isPackaged,
+    }));
+
     register('transub-show-main-window', async () => {
         try {
             warmBridges?.();

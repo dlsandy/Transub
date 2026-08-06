@@ -114,7 +114,7 @@
      * and NSFW / faithful system-prompt echoes (first-cue classic):
      * 「你是日译中字幕翻译。按汉化组习惯…严禁净化…」
      */
-    const PROMPT_LEAK_RE = /将下面的日文|将下面术语表|只输出译文|共\s*\d+\s*行|翻译的行数|请不要超过|根据以下术语表|根据以下的?.{0,16}(?:描述|翻译记录|英文句子)|不要编号[、，,]?\s*不要解释|碎句与拟声|lex-\d|请勿翻译成别的词|不翻译任何注释|如果描述中含有|请在不翻译|无须复译|照译出来|同音异义词|[你我]是(?:一个)?日译中字幕翻译|汉化组习惯|严禁净化|和谐或委婉改写|禁止照抄假名|每行只译对应一行|无意义叠词循环|忠实语气模式|译名表/i;
+    const PROMPT_LEAK_RE = /将下面的日文|将下面术语表|将下面的?[【\[]|将下面这句|只输出译文|共\s*\d+\s*行|翻译的行数|请不要超过|请勿删除|根据以下术语表|根据以下的?.{0,16}(?:描述|翻译记录|英文句子)|不要编号[、，,]?\s*不要解释|碎句与拟声|lex-\d|请勿翻译成别的词|不翻译任何注释|如果描述中含有|请在不翻译|无须复译|照译出来|同音异义词|[你我]是(?:一个)?日译中字幕翻译|汉化组习惯|严禁净化|和谐或委婉改写|禁止照抄假名|每行只译对应一行|无意义叠词循环|忠实语气模式|译名表|移至对应句中/i;
 
     /**
      * Model echoed a glossary / 译名表 dump instead of dialogue
@@ -151,103 +151,120 @@
      * Sensitive adult pairs: mt-opaque-strings (merged at load).
      */
     const JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK = Object.freeze([
-        { from: '免税しては', to: 'メンエスは' },
-        { from: '免税して来', to: 'メンエスに来' },
-        { from: '免税して', to: 'メンエス' },
-        { from: '免税者', to: 'メンエス' },
-        { from: '免税制', to: 'メンエス' },
-        { from: '免税', to: 'メンエス' },
-        { from: 'メンズレスト', to: 'メンズエステ' },
-        { from: 'メンズエスタ', to: 'メンズエステ' },
-        { from: 'メンエース', to: 'メンエス' },
-        { from: 'メースは', to: 'メンエスは' },
-        { from: 'メインエスは', to: 'メンエスは' },
-        { from: 'メインエス', to: 'メンエス' },
-        { from: 'インエス遊び', to: 'メンエス遊び' },
-        { from: '髪パンツ', to: '半パンツ' },
-        { from: '紙パンツ', to: '半パンツ' },
-        { from: '髪パン', to: '半パン' },
-        { from: '丹念に省して', to: '丹念にほぐして' },
-        { from: '丹念にはぐして', to: '丹念にほぐして' },
-        { from: 'に省していく', to: 'にほぐしていく' },
-        { from: 'に省して', to: 'にほぐして' },
-        { from: 'を省して', to: 'をほぐして' },
-        { from: 'も省して', to: 'もほぐして' },
+        { from: 'お客様のペースが柔らかい', to: 'お客様の肌が柔らかい' },
+        { from: 'お酒ございましぇん', to: '申し訳ございません' },
+        { from: 'パンパンエスニャー', to: 'パンパンですねー' },
+        { from: '大好きなアップで挟', to: '大好きなおっぱいで挟' },
+        { from: '購入しててください', to: '興奮しててください' },
+        { from: 'あいみょんのせい', to: 'オイルのせい' },
+        { from: 'お手紙できますか', to: '仰向けできますか' },
+        { from: 'お酒ございません', to: '申し訳ございません' },
+        { from: 'はぶれていきます', to: 'ほぐれていきます' },
+        { from: 'アパイタに入った', to: 'アルバイトに入った' },
+        { from: 'トイレ追加します', to: 'オイル追加します' },
+        { from: 'トロックになって', to: 'トロトロになって' },
+        { from: 'マイクロビッキン', to: 'マイクロビキニ' },
+        { from: '基礎してください', to: 'キスしてください' },
+        { from: '大好きなアップル', to: '大好きなおっぱい' },
+        { from: '座を抜けになって', to: 'うつ伏せになって' },
+        { from: '祖父とは違います', to: '風俗とは違います' },
+        { from: 'いいこねだった', to: 'いい子ねだった' },
+        { from: 'いい子に捨てて', to: 'いい子にしてて' },
         { from: 'にはぐしていく', to: 'にほぐしていく' },
+        { from: 'アイルたくさん', to: 'オイルたくさん' },
+        { from: 'カスパイマスタ', to: 'くださいマスター' },
+        { from: 'カッカリオイル', to: 'たっぷりオイル' },
+        { from: 'グラブンサンド', to: 'クラブサンド' },
+        { from: 'マイトに入った', to: 'バイトに入った' },
+        { from: 'リンプを伸ばす', to: 'リンパを流す' },
+        { from: '丹念にはぐして', to: '丹念にほぐして' },
+        { from: '前向けになって', to: '仰向けになって' },
+        { from: '関東いたします', to: '担当いたします' },
+        { from: 'あっぱいで挟', to: 'おっぱいで挟' },
+        { from: 'おかみせずに', to: 'おかまいなく' },
+        { from: 'お酒ございま', to: '申し訳ございま' },
+        { from: 'さんとリンパ', to: 'ちゃんとリンパ' },
+        { from: 'に省していく', to: 'にほぐしていく' },
+        { from: 'はぐしていく', to: 'ほぐしていく' },
+        { from: 'アップルで挟', to: 'おっぱいで挟' },
+        { from: 'インエス遊び', to: 'メンエス遊び' },
+        { from: 'ウェルで塗る', to: 'オイルで塗る' },
+        { from: 'テープリンパ', to: 'たっぷりリンパ' },
+        { from: 'メインエスは', to: 'メンエスは' },
+        { from: 'メスはいい子', to: 'ゲストはいい子' },
+        { from: 'メスは良い子', to: 'ゲストは良い子' },
+        { from: 'メンズエスタ', to: 'メンズエステ' },
+        { from: 'メンズレスト', to: 'メンズエステ' },
+        { from: 'リンプを流す', to: 'リンパを流す' },
+        { from: '丹念に省して', to: '丹念にほぐして' },
+        { from: '入れたくさん', to: 'オイルたくさん' },
+        { from: '入れ足します', to: 'オイル足します' },
+        { from: '張りつ舞って', to: '張りつめて' },
+        { from: '本島より追加', to: 'オイルを追加' },
+        { from: '誰に根もある', to: '誰にでもある' },
+        { from: 'あいみょん', to: 'オイル' },
+        { from: 'いあちゅい', to: 'イッちゃう' },
+        { from: 'きもちいい', to: '気持ちいい' },
+        { from: 'きもちいー', to: '気持ちいい' },
+        { from: 'すごきれい', to: 'すごく綺麗' },
+        { from: 'とかボリー', to: 'とかオイル' },
         { from: 'にはぐして', to: 'にほぐして' },
         { from: 'をはぐして', to: 'をほぐして' },
-        { from: 'はぐしていく', to: 'ほぐしていく' },
+        { from: 'アップで挟', to: 'おっぱいで挟' },
+        { from: 'キれいだよ', to: '綺麗だよ' },
+        { from: 'キモチいい', to: '気持ちいい' },
+        { from: 'トイレ追加', to: 'オイル追加' },
+        { from: 'メインエス', to: 'メンエス' },
+        { from: 'メンエース', to: 'メンエス' },
+        { from: 'リムを流す', to: 'リンパを流す' },
+        { from: 'ワッサージ', to: 'マッサージ' },
+        { from: '免税しては', to: 'メンエスは' },
+        { from: '免税して来', to: 'メンエスに来' },
+        { from: '暗きハナデ', to: '倉木ハナで' },
+        { from: '気持ちいー', to: '気持ちいい' },
+        { from: '気長します', to: '緊張します' },
+        { from: 'くらはぎ', to: 'ふくらはぎ' },
+        { from: 'に省して', to: 'にほぐして' },
         { from: 'はぐして', to: 'ほぐして' },
-        { from: 'はぶれていきます', to: 'ほぐれていきます' },
         { from: 'はぶれて', to: 'ほぐれて' },
+        { from: 'ほっぱい', to: 'おっぱい' },
+        { from: 'も省して', to: 'もほぐして' },
+        { from: 'わびさび', to: 'ギリギリの塩梅' },
+        { from: 'を省して', to: 'をほぐして' },
+        { from: 'アパイタ', to: 'アルバイト' },
+        { from: 'ウェルで', to: 'オイルで' },
+        { from: 'ホエルで', to: 'オイルで' },
+        { from: 'ボリーを', to: 'オイルを' },
+        { from: 'マビサビ', to: 'ギリギリの塩梅' },
         { from: 'メイスは', to: 'ゲストは' },
         { from: 'メスは、', to: 'ゲストは、' },
-        { from: 'メスは良い子', to: 'ゲストは良い子' },
-        { from: 'メスはいい子', to: 'ゲストはいい子' },
-        { from: 'とかボリー', to: 'とかオイル' },
-        { from: 'ボリーを', to: 'オイルを' },
-        { from: 'トイレ追加します', to: 'オイル追加します' },
-        { from: 'トイレ追加', to: 'オイル追加' },
-        { from: '入れ足します', to: 'オイル足します' },
-        { from: '入れたくさん', to: 'オイルたくさん' },
-        { from: 'カッカリオイル', to: 'たっぷりオイル' },
-        { from: 'ホエルで', to: 'オイルで' },
-        { from: 'ウェルで塗る', to: 'オイルで塗る' },
-        { from: 'ウェルで', to: 'オイルで' },
-        { from: '歯圧', to: '指圧' },
-        { from: '試圧', to: '指圧' },
-        { from: '脂圧', to: '指圧' },
-        { from: 'リムを流す', to: 'リンパを流す' },
-        { from: 'リンプを伸ばす', to: 'リンパを流す' },
-        { from: 'リンプを流す', to: 'リンパを流す' },
-        { from: '脳リンプ', to: 'リンパ' },
-        { from: 'テープリンパ', to: 'たっぷりリンパ' },
-        { from: 'さんとリンパ', to: 'ちゃんとリンパ' },
-        { from: 'くらはぎ', to: 'ふくらはぎ' },
-        { from: 'パンパンエスニャー', to: 'パンパンですねー' },
-        { from: '本島より追加', to: 'オイルを追加' },
-        { from: '本島より', to: 'オイルを' },
-        { from: 'アイルたくさん', to: 'オイルたくさん' },
-        { from: 'あいみょんのせい', to: 'オイルのせい' },
-        { from: 'あいみょん', to: 'オイル' },
-        { from: 'お手紙できますか', to: '仰向けできますか' },
-        { from: '前向けになって', to: '仰向けになって' },
+        { from: 'メースは', to: 'メンエスは' },
+        { from: '免税して', to: 'メンエス' },
         { from: '前向けも', to: '仰向けも' },
-        { from: '座を抜けになって', to: 'うつ伏せになって' },
-        { from: '逆反省', to: 'うつ伏せ' },
-        { from: 'おかみせずに', to: 'おかまいなく' },
-        { from: '羽織失礼', to: 'では失礼' },
-        { from: '結衣失礼', to: 'では失礼' },
-        { from: 'マビサビ', to: 'ギリギリの塩梅' },
-        { from: 'わびさび', to: 'ギリギリの塩梅' },
-        { from: '関東いたします', to: '担当いたします' },
-        { from: '本日関東', to: '本日担当' },
-        { from: 'いい子に捨てて', to: 'いい子にしてて' },
-        { from: 'いいこねだった', to: 'いい子ねだった' },
-        { from: '下半戦', to: '下半身' },
-        { from: '肩膀を', to: '肩を' },
-        { from: 'トロックになって', to: 'トロトロになって' },
-        { from: 'お客様のペースが柔らかい', to: 'お客様の肌が柔らかい' },
-        { from: 'サイジ', to: 'サイズ' },
-        { from: '張りつ舞って', to: '張りつめて' },
-        { from: '基礎してください', to: 'キスしてください' },
-        { from: 'キれいだよ', to: '綺麗だよ' },
-        { from: 'すごきれい', to: 'すごく綺麗' },
-        { from: 'アパイタに入った', to: 'アルバイトに入った' },
-        { from: 'アパイタ', to: 'アルバイト' },
-        { from: '気長します', to: '緊張します' },
-        { from: '気長し', to: '緊張し' },
-        { from: 'ワッサージ', to: 'マッサージ' },
-        { from: '誰に根もある', to: '誰にでもある' },
         { from: '口安くね', to: 'ごゆっくりね' },
-        { from: '暗きハナデ', to: '倉木ハナで' },
+        { from: '本島より', to: 'オイルを' },
+        { from: '本日関東', to: '本日担当' },
+        { from: '気持いい', to: '気持ちいい' },
+        { from: '紙パンツ', to: '半パンツ' },
+        { from: '結衣失礼', to: 'では失礼' },
+        { from: '羽織失礼', to: 'では失礼' },
+        { from: '脳リンプ', to: 'リンパ' },
         { from: '蔵木さん', to: '倉木さん' },
+        { from: '髪パンツ', to: '半パンツ' },
+        { from: 'お正気', to: 'お仕置き' },
+        { from: 'サイジ', to: 'サイズ' },
+        { from: '下半戦', to: '下半身' },
+        { from: '免税制', to: 'メンエス' },
+        { from: '免税者', to: 'メンエス' },
+        { from: '気長し', to: '緊張し' },
+        { from: '肩膀を', to: '肩を' },
         { from: '蔵木様', to: '倉木さん' },
-        { from: 'お酒ございましぇん', to: '申し訳ございません' },
-        { from: 'お酒ございません', to: '申し訳ございません' },
-        { from: 'お酒ございま', to: '申し訳ございま' },
-        { from: 'グラブンサンド', to: 'クラブサンド' },
-        { from: 'カスパイマスタ', to: 'くださいマスター' },
+        { from: '逆反省', to: 'うつ伏せ' },
+        { from: '髪パン', to: '半パン' },
+        { from: '免税', to: 'メンエス' },
+        { from: '歯圧', to: '指圧' },
+        { from: '脂圧', to: '指圧' },
+        { from: '試圧', to: '指圧' },
     ]);
 
     function loadBundledJaAsrDomainBasePairs() {
@@ -265,6 +282,153 @@
         return JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK;
     }
 
+    function decodeTrainedB64(b64) {
+        const s = String(b64 || '');
+        if (!s) return '';
+        try {
+            if (typeof Buffer !== 'undefined') {
+                return Buffer.from(s, 'base64').toString('utf8');
+            }
+            if (typeof atob === 'function') {
+                const bin = atob(s);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+                if (typeof TextDecoder !== 'undefined') {
+                    return new TextDecoder('utf-8').decode(bytes);
+                }
+                return bin;
+            }
+        } catch (_) { /* ignore */ }
+        return '';
+    }
+
+    /** Hot-loaded table from shared/mt-trained-remaps.json (train console). */
+    let TRAINED_ZH_REMAPS = Object.freeze([]);
+    let TRAINED_ASR_PAIRS = Object.freeze([]);
+
+    function normalizeTrainedPack(raw) {
+        const pack = raw && typeof raw === 'object' ? raw : {};
+        const zhRemaps = Array.isArray(pack.zhRemaps) ? pack.zhRemaps : [];
+        const asrPairs = Array.isArray(pack.asrPairs) ? pack.asrPairs : [];
+        return {
+            version: Number(pack.version) || 1,
+            zhRemaps,
+            asrPairs,
+        };
+    }
+
+    function loadBundledTrainedRemaps() {
+        if (typeof module !== 'undefined' && module.exports) {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const filePath = path.join(__dirname, '..', '..', 'shared', 'mt-trained-remaps.json');
+                if (fs.existsSync(filePath)) {
+                    return normalizeTrainedPack(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+                }
+            } catch (_) { /* fall through */ }
+        }
+        return { version: 1, zhRemaps: [], asrPairs: [] };
+    }
+
+    function decodeTrainedZhRule(rule) {
+        const jaIncludes = Array.isArray(rule.jaIncludesB64)
+            ? rule.jaIncludesB64.map(decodeTrainedB64).filter(Boolean)
+            : (Array.isArray(rule.jaIncludes) ? rule.jaIncludes.map(String) : []);
+        const zhFrom = rule.zhFromB64 != null
+            ? decodeTrainedB64(rule.zhFromB64)
+            : String(rule.zhFrom || '');
+        const zhTo = rule.zhToB64 != null
+            ? decodeTrainedB64(rule.zhToB64)
+            : String(rule.zhTo || '');
+        return {
+            id: String(rule.id || ''),
+            enabled: rule.enabled !== false,
+            mode: rule.mode === 'blank' ? 'blank' : 'replace',
+            pinFinal: rule.pinFinal !== false,
+            flag: String(rule.flag || 'trained_remap'),
+            jaIncludes,
+            zhFrom,
+            zhTo,
+        };
+    }
+
+    function decodeTrainedAsrPair(rule) {
+        const from = rule.fromB64 != null
+            ? decodeTrainedB64(rule.fromB64)
+            : String(rule.from || '');
+        const to = rule.toB64 != null
+            ? decodeTrainedB64(rule.toB64)
+            : String(rule.to || '');
+        return {
+            id: String(rule.id || ''),
+            enabled: rule.enabled !== false,
+            from,
+            to,
+        };
+    }
+
+    function rebuildTrainedRemaps(pack) {
+        const norm = normalizeTrainedPack(pack);
+        TRAINED_ZH_REMAPS = Object.freeze(norm.zhRemaps.slice());
+        TRAINED_ASR_PAIRS = Object.freeze(
+            norm.asrPairs
+                .map(decodeTrainedAsrPair)
+                .filter((p) => p.enabled && p.from && p.to)
+                .map((p) => ({ from: p.from, to: p.to })),
+        );
+        return true;
+    }
+
+    function reloadTrainedRemaps(pack) {
+        const next = pack != null ? normalizeTrainedPack(pack) : loadBundledTrainedRemaps();
+        rebuildTrainedRemaps(next);
+        rebuildJaAsrDomainFixes(loadBundledJaAsrDomainBasePairs());
+        return {
+            zhRemaps: TRAINED_ZH_REMAPS.length,
+            asrPairs: TRAINED_ASR_PAIRS.length,
+        };
+    }
+
+    /**
+     * Apply console-trained ZH remaps.
+     * @param {string} text
+     * @param {string} sourceText
+     * @param {{ pinFinalPass?: boolean }} [options]
+     */
+    function applyTrainedZhRemaps(text, sourceText = '', options = {}) {
+        let cur = String(text ?? '');
+        const src = String(sourceText || '');
+        const pinFinalPass = options.pinFinalPass === true;
+        const flags = [];
+        if (!TRAINED_ZH_REMAPS.length) {
+            return { text: cur, changed: false, flags };
+        }
+        const before = cur;
+        for (const raw of TRAINED_ZH_REMAPS) {
+            if (raw && raw.enabled === false) continue;
+            const rule = decodeTrainedZhRule(raw || {});
+            if (!rule.enabled) continue;
+            if (pinFinalPass && !rule.pinFinal) continue;
+            if (rule.jaIncludes.length && !rule.jaIncludes.every((j) => src.includes(j))) continue;
+            if (rule.mode === 'blank') {
+                if (rule.zhFrom && !cur.includes(rule.zhFrom)) continue;
+                cur = '…';
+                const flag = pinFinalPass ? 'trained_remap_final' : (rule.flag || 'trained_remap');
+                if (!flags.includes(flag)) flags.push(flag);
+                continue;
+            }
+            if (!rule.zhFrom || !cur.includes(rule.zhFrom)) continue;
+            const next = cur.split(rule.zhFrom).join(rule.zhTo);
+            if (next !== cur) {
+                cur = next;
+                const flag = pinFinalPass ? 'trained_remap_final' : (rule.flag || 'trained_remap');
+                if (!flags.includes(flag)) flags.push(flag);
+            }
+        }
+        return { text: cur, changed: cur !== before, flags };
+    }
+
     function mergeJaAsrDomainFixPairs(basePairs) {
         const base = Array.isArray(basePairs) && basePairs.length
             ? basePairs
@@ -272,9 +436,10 @@
         const adult = (typeof mtOpaque?.getAsrAdultDomainPairs === 'function')
             ? mtOpaque.getAsrAdultDomainPairs()
             : [];
+        const trained = Array.isArray(TRAINED_ASR_PAIRS) ? TRAINED_ASR_PAIRS : [];
         const seen = new Set();
         const merged = [];
-        for (const p of [...base, ...adult]) {
+        for (const p of [...base, ...adult, ...trained]) {
             const from = String(p?.from || '');
             const to = String(p?.to || '');
             if (!from || !to || seen.has(from)) continue;
@@ -319,6 +484,7 @@
         return rebuildJaAsrDomainFixes(loadBundledJaAsrDomainBasePairs());
     }
 
+    rebuildTrainedRemaps(loadBundledTrainedRemaps());
     rebuildJaAsrDomainFixes(loadBundledJaAsrDomainBasePairs());
 
     /** Standalone mid-scene greetings Whisper often invents in soft AV. */
@@ -413,13 +579,13 @@
         + '|ちゅうう+|ん?チュッ|ん?チュパッ?|ん?チュバッ?|ん?チュゥ+'
         + '|ちゅば(?:っ|ちゅば)*|チュバ(?:ッ|チュバ)*'
         + '|ちゅ(?=[…·.…!！?？、,\\s]|$)'
-        + '|ん?(?:ぢゅ|じゅ|ジュ)(?:っ|ぼっ?|ぽっ?|ぶっ?|ブッ?|ぷっ?|る+[っッ]*|ぅ+|ぶ+|ブ+)+'
+        + '|ん?(?:ぢゅ|じゅ|ジュ)(?:っ|ぼっ?|ぽっ?|ぶっ?|ブッ?|ぷっ?|ぱっ?|パッ?|る+[っッ]*|ぅ+|ぶ+|ブ+|ば+|バ+)+'
         + '|ず(?:ぢゅ|じゅ)(?:ぼ|ぢゅぼ|じゅぼ)*[っッ]?'
         + '|くちゅ[うっんン]+|ぐちゅ[うっんン]+|ごく[んっンッ]+|ゴク[リッんン]+'
         + `|${(typeof mtOpaque?.d === 'function' ? mtOpaque.d('44GU44Gj44GP44KTfOOCtOODg+OCr+ODsw==') : '') || 'x'}`
         + '|コクン|こくん|ぺろっ?|れろっ?|んぐっ?|ぷっ|あむっ|んむっ|んむぎゅ'
-        + '|んにゅごっきゅ|ぶっつぅ+|ぶ{2,}[っッ]?|ブ{2,}[ッっ]?|ぬぷっ?)';
-    const AV_MISC_SFX_JA_ONLY = /^(?:[グぐ][ルる]+[っッ]*|ブフッ?|ロー+|トゥゥ*|チラッ|ぱっ)[。．.!！?？…\s]*$/u;
+        + '|んにゅごっきゅ|ぶっつぅ+|ぶ{2,}[っッ]?|ブ{2,}[ッっ]?|じゅば[ばっッ]*|ジュバ[バッっ]*|ちゅぷん?|チュプン?|ごぼっ?|ゴボッ?|ぬぷっ?)';
+    const AV_MISC_SFX_JA_ONLY = /^(?:[グぐ][ルる]+[っッ]*|ブフッ?|ロー+|トゥゥ*|チラッ|ぱっ|ちょむ|チョム)[。．.!！?？…\s]*$/u;
 
     /** Opening BGM / hit SFX Whisper often invents as シオシオ… (≠ lexical 潮吹き dialogue). */
     function isShioHitSfxOnlyJa(text = '') {
@@ -570,6 +736,15 @@
         if (mtOpaque?.applyAdultSemanticFixes) {
             const adult = mtOpaque.applyAdultSemanticFixes(cur, src, mark);
             if (adult.changed) cur = adult.text;
+        }
+
+        // Console-trained ZH remaps (shared/mt-trained-remaps.json) — domain pass
+        {
+            const trainedTable = applyTrainedZhRemaps(cur, src, { pinFinalPass: false });
+            if (trainedTable.changed) {
+                cur = trainedTable.text;
+                for (const f of trainedTable.flags) mark(f);
+            }
         }
 
         // OpenCC / font slip: 幺 → 么 in interrogatives / particles
@@ -1137,6 +1312,21 @@
             || String(b).localeCompare(String(a), 'zh-CN'));
 
     /**
+     * Drop Chinese/English commas glued to cue edges (MT leftovers like「，真的」/「蓝，」).
+     * Does not touch mid-cue commas or Japanese顿号「、」.
+     * @param {string} text
+     * @returns {{ text: string, changed: boolean }}
+     */
+    function stripEdgeCommas(text) {
+        const raw = String(text ?? '');
+        if (!raw) return { text: '', changed: false };
+        const next = raw
+            .replace(/^[，,\s]+/u, '')
+            .replace(/[，,\s]+$/u, '');
+        return { text: next, changed: next !== raw };
+    }
+
+    /**
      * Remove Engine/LLM glossary placeholder debris from one string.
      * @param {string} text
      * @returns {{ text: string, changed: boolean, glossHit: boolean }}
@@ -1256,6 +1446,8 @@
         if (/字幕翻译/.test(t)) meta += 1;
         const compactLen = Array.from(t.replace(/\s+/g, '')).length;
         if (meta >= 3 && compactLen >= 20) return true;
+        if (/翻译成中文/.test(t) && /请勿删除|将下面/.test(t)) return true;
+        if (/将下面的日文单词/.test(t) && /移至对应句中|不输出句尾/.test(t)) return true;
         return hits >= 2 || (/将下面的日文/.test(t) && /翻译成中文/.test(t));
     }
 
@@ -1267,6 +1459,10 @@
         let next = raw;
         next = next.replace(/将下面的日文[\s\S]{0,160}?翻译成中文[。.]?/g, '');
         next = next.replace(/将下面术语表[\s\S]{0,80}?翻译成中文[。.]?/g, '');
+        next = next.replace(/将下面的?[【\[][】\]]?号?句子[\s\S]{0,80}?翻译成中文[。.]?/g, '');
+        next = next.replace(/你?将下面这句话翻译成中文了?[。.]?/g, '');
+        next = next.replace(/将下面的日文单词[\s\S]{0,120}?(?:对应句中|不输出句尾)[^。\n]{0,40}[。.]?/g, '');
+        next = next.replace(/请勿删除[。.]?/g, '');
         next = next.replace(/[，,]?翻译的行数是\d+行[^。\n]{0,40}/g, '');
         next = next.replace(/请不要超过[^。\n]{0,40}/g, '');
         next = next.replace(/根据以下术语表[\s\S]{0,120}?(?:：|:)?/g, '');
@@ -1300,7 +1496,7 @@
         if (
             looksLikePromptLeak(next)
             || looksLikeGlossaryDump(next)
-            || /输出译文|不要解释|术语表|译名表|请勿翻译|不翻译任何注释|根据以下|无须复译|照译|同音异义词|第.{0,4}单词|日译中字幕翻译|汉化组|严禁净化|忠实语气模式/.test(next)
+            || /输出译文|不要解释|术语表|译名表|请勿翻译|请勿删除|不翻译任何注释|根据以下|无须复译|照译|同音异义词|第.{0,4}单词|日译中字幕翻译|汉化组|严禁净化|忠实语气模式|移至对应句中/.test(next)
             || (Array.from(next.replace(/\s+/g, '')).length <= 4 && /[「『"'“]/.test(raw))
             // Strong paraphrase cues in the original → residual fragments are not dialogue
             || (/根据以下的?.{0,16}(?:翻译记录|英文句子|描述)/.test(raw)
@@ -2451,6 +2647,7 @@
      */
     function sanitizeMtCueText(text, sourceText = '', options = {}) {
         const flags = [];
+        const stages = options.captureStages ? {} : null;
         let cur = String(text ?? '');
         let changed = false;
         const loopStrippedSource = options.loopStrippedSource != null
@@ -2495,14 +2692,24 @@
                 if (!flags.includes('wet_sfx')) flags.push('wet_sfx');
                 senseSource = '';
             }
-            // んぶっ… → Whisper/MT inserts English "bump"
-            if (/んぶっ|んブッ|ぶっん/.test(String(sourceText || '')) && /\bbump\b/i.test(cur)) {
-                cur = cur.replace(/\bbump\b/gi, '')
+            // んぶっ / ちゅぷ / あいぐっ → Whisper/MT inserts English scraps
+            if (
+                /んぶっ|んブッ|ぶっん|ちゅぷ|チュプ|あいぐっ/.test(String(sourceText || ''))
+                && /\b(?:bump|gross|pun)\b/i.test(cur)
+            ) {
+                cur = cur.replace(/\b(?:bump|gross|pun)\b/gi, '')
+                    .replace(/吃(?=[…·.\s]|$)/g, '')
                     .replace(/\s{2,}/g, ' ')
                     .replace(/[，,]{2,}/g, '，')
                     .trim();
                 changed = true;
                 flags.push('wet_sfx');
+            }
+            // Short pain scrap あいぐっ →「啊衣gross」leftover
+            if (/^あいぐっ[!！?？…\s]*$/u.test(String(sourceText || '').trim()) && /gross|衣/i.test(cur)) {
+                cur = '啊';
+                changed = true;
+                flags.push('truncated_reactive');
             }
         }
 
@@ -2519,6 +2726,7 @@
             changed = true;
             flags.push('truncated_reactive');
         }
+        if (stages) stages.afterPolish = cur;
 
         const stripped = stripMtArtifacts(cur);
         if (stripped.changed) {
@@ -2635,6 +2843,7 @@
             changed = true;
             for (const f of domain.flags) flags.push(f);
         }
+        if (stages) stages.afterDomain = cur;
 
         // Dash cleanup again after orphan strip (e.g. "ー? … 汤米" → strip name → leftover ー)
         const dash2 = stripKatakanaDashDebris(cur);
@@ -2671,6 +2880,7 @@
                 }
             }
         }
+        if (stages) stages.afterFluency = cur;
 
         const capped = capPathologicalLength(cur, sourceText, options);
         if (capped.changed) {
@@ -2728,7 +2938,47 @@
             changed = true;
             flags.push('empty_placeholder');
         }
+        if (stages) stages.afterRecover = cur;
 
+        // Re-pin console-trained remaps after fluency / blank recovery so polish cannot undo them.
+        {
+            const pinned = applyTrainedZhRemaps(cur, recoverSrc || senseSource || sourceText, {
+                pinFinalPass: true,
+            });
+            if (pinned.changed) {
+                cur = pinned.text;
+                changed = true;
+                for (const f of pinned.flags) {
+                    if (!flags.includes(f)) flags.push(f);
+                }
+            }
+        }
+
+        // Final tidy: never leave leading/trailing ，/, on translated cues.
+        {
+            const edge = stripEdgeCommas(cur);
+            if (edge.changed) {
+                cur = edge.text;
+                changed = true;
+                flags.push('edge_comma');
+            }
+            if (!String(cur).trim()) {
+                if (recoverSrc && !flags.includes('prompt_leak')) {
+                    cur = '…';
+                    changed = true;
+                    if (!flags.includes('empty_placeholder')) flags.push('empty_placeholder');
+                } else if (flags.includes('wet_sfx') || flags.includes('prompt_leak')) {
+                    cur = '…';
+                    changed = true;
+                    if (!flags.includes('empty_placeholder')) flags.push('empty_placeholder');
+                }
+            }
+        }
+
+        if (stages) {
+            stages.final = cur;
+            return { text: cur, changed, flags, stages };
+        }
         return { text: cur, changed, flags };
     }
 
@@ -3033,6 +3283,7 @@
         GENERIC_PLACEHOLDER_RE,
         POLLUTION_NAME_STEMS,
         stripMtArtifacts,
+        stripEdgeCommas,
         stripPromptLeak,
         looksLikePromptLeak,
         looksLikeGlossaryDump,
@@ -3064,6 +3315,11 @@
         correctJaAsrDomainMishears,
         correctJaAsrDomainMishearsInCues,
         correctZhDomainMistranslations,
+        applyTrainedZhRemaps,
+        reloadTrainedRemaps,
+        loadBundledTrainedRemaps,
+        get TRAINED_ZH_REMAPS() { return TRAINED_ZH_REMAPS; },
+        get TRAINED_ASR_PAIRS() { return TRAINED_ASR_PAIRS; },
         isBlankOrPunctTranslation,
         isEllipsisOrEmptyZh,
         isPathologicalMtText,

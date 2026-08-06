@@ -59,6 +59,10 @@ describe('anime-whisper-preset-tip', () => {
         );
         assert.ok(raw.includes(`id: '${tip.PRESET_ID}'`));
         assert.ok(raw.includes('Anime Whisper'));
+        assert.ok(
+            /id:\s*'ja-av-anime-whisper-translate'[\s\S]*?postBatchCompactPureInterjections:\s*true/.test(raw),
+            'Anime Whisper preset should enable compact pure interjections by default',
+        );
     });
 
     it('exposes quick-access helpers for the New chip button', () => {

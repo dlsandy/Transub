@@ -197,6 +197,8 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubOpenSetupWizard: (payload) => ipcRenderer.invoke('transub-open-setup-wizard', payload || {}),
     transubOpenUpdateWindow: (payload) => ipcRenderer.invoke('transub-open-update-window', payload || {}),
     transubOpenAboutWindow: (payload) => ipcRenderer.invoke('transub-open-about-window', payload || {}),
+    transubOpenMtTrain: (payload) => ipcRenderer.invoke('transub-open-mt-train', payload || {}),
+    transubIsDevBuild: () => ipcRenderer.invoke('transub-is-dev-build'),
     transubShowMainWindow: (payload) => ipcRenderer.invoke('transub-show-main-window', payload || {}),
     transubConsumePendingOpenParams: () => ipcRenderer.invoke('transub-consume-pending-open-params'),
     transubConsumePendingSetupWizard: () => ipcRenderer.invoke('transub-consume-pending-setup-wizard'),

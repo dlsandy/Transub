@@ -3,7 +3,7 @@
 **智能化字幕生成工具 & 字幕优化编辑**
 
 批量生成 · 精修成片 · Windows 桌面  
-当前版本 **3.0.5** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
+当前版本 **3.0.6** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
 
 包含：Transub字幕生成器、Transub Editor字幕编辑器、Transub Engine引擎
 

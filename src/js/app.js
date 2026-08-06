@@ -1085,7 +1085,7 @@
             'senseMemoryStatus', 'clearSenseMemoryBtn',
             'transWithAiStatus', 'openFeedbackBtn', 'openParamsBtn',
             'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
-            'openAboutBtn',
+            'openAboutBtn', 'openMtTrainMenuBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
             'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerSmartFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
             'emptyStateEnvHint', 'emptyStateWizardBtn', 'emptyStateEnvBtn',
@@ -1563,6 +1563,23 @@
             setMoreMenuOpen(false);
             void electron?.transubOpenAboutWindow?.();
         });
+        (async () => {
+            const btn = els.openMtTrainMenuBtn;
+            if (!btn || typeof electron?.transubIsDevBuild !== 'function') return;
+            try {
+                const st = await electron.transubIsDevBuild();
+                if (!st?.isDev) return;
+                btn.classList.remove('hidden');
+                btn.addEventListener('click', () => {
+                    setMoreMenuOpen(false);
+                    void electron?.transubOpenMtTrain?.().then((res) => {
+                        if (res?.ok === false) {
+                            appendLog?.(res.error || '打开训练台失败', 'err');
+                        }
+                    });
+                });
+            } catch (_) { /* ignore */ }
+        })();
         els.openHistoryMenuBtn?.addEventListener('click', () => {
             setMoreMenuOpen(false);
             document.getElementById('openHistoryBtn')?.click();
@@ -5144,6 +5161,7 @@
                 group,
                 source: model.source
                     || (isSakuraMtModelId(id) ? 'sakura' : (managedEntry ? 'managed' : 'engine')),
+                hubId: String(model.hubId || model.hub_id || managedEntry?.hubId || '').trim(),
                 installed: !!model.installed,
                 incomplete: !!model.incomplete,
                 shipped: !!model.shipped || !!model.bundled,
@@ -5308,6 +5326,10 @@
             const subParts = [item.id, item.sizeHint];
             if (item.paramBillion) subParts.push(`${item.paramBillion}B`);
             const sub = subParts.filter(Boolean).join(' · ');
+            const managedManual = item.source === 'managed'
+                || item.source === 'sakura'
+                || isManagedLlmDownloadId(item.id, item.source);
+            const hubManual = !managedManual && canManualEngineHubDownload(item);
             return `
                 <article class="engine-model-card" data-model-id="${esc(item.id)}" data-installed="${item.installed ? '1' : '0'}" data-source="${esc(item.source || 'engine')}">
                     <div class="engine-model-card-top">
@@ -5324,9 +5346,11 @@
                                 ? '补齐 CUDA PyTorch'
                                 : (item.installed ? '重新下载' : '下载')}
                         </button>
-                        ${(item.source === 'managed' || item.source === 'sakura' || isManagedLlmDownloadId(item.id, item.source))
+                        ${managedManual
                             ? `<button type="button" class="btn" data-model-action="manual" data-model-id="${esc(item.id)}" ${engineModelsBusy ? 'disabled' : ''} title="浏览器下载 GGUF 后放到指定目录">手动下载</button>`
-                            : ''}
+                            : (hubManual
+                                ? `<button type="button" class="btn" data-model-action="manual-hub" data-model-id="${esc(item.id)}" ${engineModelsBusy ? 'disabled' : ''} title="浏览器打开仓库页，按说明放到引擎 models 目录">手动下载</button>`
+                                : '')}
                     </div>
                 </article>`;
         }).join('');
@@ -6020,6 +6044,238 @@
         return !!findManagedLlmCatalogEntry(id);
     }
 
+    /** Hub ASR/MT/VAD models that can be placed manually under engine models/. */
+    function canManualEngineHubDownload(item) {
+        if (!item || typeof item !== 'object') return false;
+        const id = String(item.id || '').trim();
+        if (!id || id === ENGINE_DEMUCS_MODEL_ID || /^demucs$/i.test(id)) return false;
+        if (item.group === 'separate' || item.group === 'llm') return false;
+        if (item.source === 'managed' || item.source === 'sakura') return false;
+        if (isManagedLlmDownloadId(id, item.source)) return false;
+        if (id === 'silero-vad') return false;
+        // Bundled / empty-hub models need no Hub fetch.
+        if (item.shipped && !item.hubId) return false;
+        if (item.hubId) return true;
+        return item.group === 'asr' || item.group === 'mt' || item.group === 'vad';
+    }
+
+    function buildManualHubModelHint(info = {}) {
+        const name = String(info.name || info.modelId || info.id || '模型').trim();
+        const hubId = String(info.hubId || '').trim();
+        const mirrorUrl = String(info.mirrorUrl || info.defaultUrl || '').trim();
+        const officialUrl = String(info.officialUrl || '').trim();
+        const folder = String(info.localDir || info.folder || '').trim();
+        const sizeHint = String(info.sizeHint || '').trim();
+        const weightFile = String(info.weightFile || '').trim();
+        const placeSteps = String(info.placeSteps || '').trim();
+        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
+        const urlLines = [
+            mirrorUrl ? `镜像下载页：\n${mirrorUrl}` : '',
+            officialUrl && officialUrl !== mirrorUrl ? `官方仓库：\n${officialUrl}` : '',
+            !mirrorUrl && !officialUrl && hubId ? `Hub：${hubId}` : '',
+        ].filter(Boolean).join('\n\n');
+        const steps = placeSteps || [
+            '在打开的仓库页下载全部文件',
+            '将文件直接放入下方目录（不要再套一层同名文件夹）',
+            weightFile ? `确认关键权重「${weightFile}」为完整文件` : '确认权重文件完整（非 LFS 指针）',
+        ].join('\n');
+        return (
+            `将在浏览器打开「${name}」的模型仓库。${sizeLine}\n\n`
+            + (urlLines ? `${urlLines}\n\n` : '')
+            + `${steps}\n\n`
+            + `放置目录：\n${folder || '（引擎目录）/models/{asr|mt|vad}/<模型名>'}`
+        );
+    }
+
+    async function verifyManualEngineHubModel(modelId, info = null) {
+        const id = String(modelId || '').trim();
+        await refreshEngineModels({ silent: true });
+        const row = (cachedEnginePickCatalog || []).find((m) => m.id === id);
+        if (row?.installed && !row?.incomplete) {
+            const msg = `已检测到本地模型：${row.name || id}`;
+            appendLog(msg, 'ok');
+            setEngineStatusText(msg, 'ok');
+            return { ok: true, message: msg };
+        }
+        const folder = String(info?.localDir || info?.folder || row?.localDir || '').trim();
+        const weightFile = String(info?.weightFile || '').trim();
+        const err = [
+            row?.incomplete ? `「${id}」目录不完整` : `未检测到已安装的「${id}」`,
+            weightFile ? `请确认 ${weightFile} 已完整放入目录` : '',
+            folder ? `目录：${folder}` : '',
+        ].filter(Boolean).join('\n');
+        appendLog(err, 'err');
+        setEngineStatusText(err, 'err');
+        return { ok: false, error: err };
+    }
+
+    async function openEngineHubModelFolder(modelId, info = null) {
+        const id = String(modelId || '').trim();
+        const folderHint = String(info?.localDir || info?.folder || '').trim();
+        if (!electron?.transubEngineOpenDownloadFolder && !electron?.openPath) {
+            return { ok: false, error: '当前环境无法打开目录' };
+        }
+        try {
+            if (electron.transubEngineOpenDownloadFolder) {
+                const res = await electron.transubEngineOpenDownloadFolder({
+                    ...engineFormPayload(),
+                    kind: 'models',
+                    modelId: id,
+                    folder: folderHint || undefined,
+                    hfEndpoint: els.engineHfEndpointInput?.value.trim() || '',
+                });
+                if (res?.ok) {
+                    return {
+                        ok: true,
+                        folder: res.folder || res.path || folderHint,
+                    };
+                }
+                return { ok: false, error: res?.error || '无法打开存放目录' };
+            }
+            if (folderHint && electron.openPath) {
+                await electron.openPath(folderHint);
+                return { ok: true, folder: folderHint };
+            }
+            return { ok: false, error: '无法打开存放目录' };
+        } catch (err) {
+            return { ok: false, error: err?.message || '无法打开存放目录' };
+        }
+    }
+
+    /**
+     * Hub 模型（非 GGUF）：弹窗给出仓库网址、放置说明，并可打开存放目录。
+     */
+    async function manualEngineHubModelDownload(modelId) {
+        const id = String(modelId || '').trim();
+        if (!id) return { ok: false, error: '未选择模型' };
+        if (engineModelsBusy) return { ok: false, error: 'busy' };
+        if (!electron?.transubEngineDownloadInfo) {
+            setEngineStatusText('当前环境不支持手动下载模型', 'err');
+            return { ok: false, error: 'unsupported' };
+        }
+        setEngineStatusText('正在准备手动下载说明…', 'busy');
+        let infoRes;
+        try {
+            infoRes = await electron.transubEngineDownloadInfo({
+                ...engineFormPayload(),
+                kind: 'models',
+                modelIds: [id],
+                hfEndpoint: els.engineHfEndpointInput?.value.trim() || '',
+            });
+        } catch (err) {
+            const msg = err?.message || '无法获取下载信息';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        if (!infoRes?.ok) {
+            const msg = infoRes?.error || '无法获取下载信息';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        const item = (Array.isArray(infoRes.info?.items) ? infoRes.info.items : [])
+            .find((it) => String(it?.id || '') === id)
+            || (Array.isArray(infoRes.info?.items) ? infoRes.info.items[0] : null);
+        if (!item) {
+            setEngineStatusText('未找到该模型的下载信息', 'err');
+            return { ok: false, error: 'missing_item' };
+        }
+        if (item.bundled || !item.hubId) {
+            const msg = `「${item.name || id}」无需单独下载（运行时内置）`;
+            setEngineStatusText(msg, 'info');
+            return { ok: true, bundled: true, message: msg };
+        }
+        const info = {
+            ...item,
+            modelId: id,
+            folder: item.localDir || item.folder || '',
+        };
+        await new Promise((r) => setTimeout(r, 50));
+        const choice = await appConfirmChoice({
+            title: '手动下载模型',
+            message: buildManualHubModelHint(info),
+            primaryLabel: '打开下载页',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '取消',
+        });
+        if (choice === 'secondary') {
+            setEngineStatusText('已取消手动下载', 'warn');
+            return { ok: false, cancelled: true };
+        }
+        if (choice === 'tertiary') {
+            const folderRes = await openEngineHubModelFolder(id, info);
+            if (folderRes.ok) {
+                setEngineStatusText(`已打开存放目录：${folderRes.folder || info.folder || ''}`, 'info');
+            } else {
+                setEngineStatusText(folderRes.error || '无法打开存放目录', 'err');
+            }
+            const again = await appConfirmChoice({
+                title: '手动下载模型',
+                message: `${buildManualHubModelHint(info)}\n\n目录已打开。是否继续打开下载页？`,
+                primaryLabel: '打开下载页',
+                secondaryLabel: '稍后',
+            });
+            if (again !== 'primary') return { ok: true, folderOnly: true };
+        }
+        const url = String(info.defaultUrl || info.mirrorUrl || info.officialUrl || '').trim();
+        if (!url) {
+            setEngineStatusText('未找到模型下载链接', 'err');
+            return { ok: false, error: 'no_url' };
+        }
+        try {
+            if (electron.transubEngineOpenManualUrl) {
+                const openRes = await electron.transubEngineOpenManualUrl({ url });
+                if (!openRes?.ok) {
+                    const msg = openRes?.error || '无法打开下载链接';
+                    setEngineStatusText(msg, 'err');
+                    return { ok: false, error: msg };
+                }
+            } else if (electron.openExternal) {
+                await electron.openExternal(url);
+            } else {
+                setEngineStatusText('无法打开下载链接', 'err');
+                return { ok: false, error: 'no_open' };
+            }
+        } catch (err) {
+            const msg = err?.message || '无法打开下载链接';
+            setEngineStatusText(msg, 'err');
+            return { ok: false, error: msg };
+        }
+        const folder = String(info.localDir || info.folder || '').trim();
+        const placedMsg = folder
+            ? `已打开下载页。请将仓库文件放到：${folder}`
+            : '已打开下载页。请按提示将文件放到引擎 models 目录';
+        appendLog(placedMsg, 'info');
+        setEngineStatusText(placedMsg, 'info');
+        const verifyChoice = await appConfirmChoice({
+            title: '检测本地文件',
+            message: (
+                `若已将文件放到指定目录，可立即检测是否可用。\n\n`
+                + (info.weightFile ? `关键权重：${info.weightFile}\n` : '')
+                + (folder ? `目录：${folder}` : '')
+            ),
+            primaryLabel: '我已放入，检测',
+            tertiaryLabel: '打开存放目录',
+            secondaryLabel: '稍后',
+        });
+        if (verifyChoice === 'tertiary') {
+            try {
+                await openEngineHubModelFolder(id, info);
+            } catch (_) { /* ignore */ }
+            const retry = await appConfirm({
+                title: '检测本地文件',
+                message: '文件放好后，是否现在检测？',
+                primaryLabel: '检测',
+                secondaryLabel: '稍后',
+            });
+            if (!retry) return { ok: true, opened: true, message: placedMsg };
+            return verifyManualEngineHubModel(id, info);
+        }
+        if (verifyChoice === 'primary') {
+            return verifyManualEngineHubModel(id, info);
+        }
+        return { ok: true, opened: true, message: placedMsg };
+    }
+
     function classifyManualKindsForModelIds(modelIds) {
         const ids = (Array.isArray(modelIds) ? modelIds : [])
             .map((id) => String(id || '').trim())
@@ -6539,19 +6795,28 @@
                 appendLog(err, 'err');
                 setEngineStatusText(err, 'err');
                 setEngineDownloadBusy(false);
-                const { kinds } = classifyManualKindsForModelIds(modelIds);
-                const manualKinds = kinds.length ? kinds : ['sensevoice', 'whisper'];
+                const { kinds, hubIds } = classifyManualKindsForModelIds(modelIds);
+                const singleHubId = modelIds.length === 1 && hubIds.includes(modelIds[0])
+                    ? modelIds[0]
+                    : '';
                 const proceed = await appConfirm({
                     title: '模型下载失败',
-                    message: `${String(err).slice(0, 500)}\n\n是否改为手动下载安装（运行库 .whl / 模型镜像）？`,
-                    primaryLabel: '手动下载安装',
+                    message: singleHubId
+                        ? `${String(err).slice(0, 500)}\n\n是否改为浏览器手动下载，并按说明放到引擎 models 目录？`
+                        : `${String(err).slice(0, 500)}\n\n是否改为手动下载安装（运行库 .whl / 模型镜像）？`,
+                    primaryLabel: singleHubId ? '手动下载' : '手动下载安装',
                     secondaryLabel: '取消',
                 });
                 if (proceed) {
-                    await manualEngineDownloadInstall({
-                        modelIds: [...modelIds, ...(wantDemucs ? [ENGINE_DEMUCS_MODEL_ID] : [])],
-                        kinds: manualKinds,
-                    });
+                    if (singleHubId) {
+                        await manualEngineHubModelDownload(singleHubId);
+                    } else {
+                        const manualKinds = kinds.length ? kinds : ['sensevoice', 'whisper'];
+                        await manualEngineDownloadInstall({
+                            modelIds: [...modelIds, ...(wantDemucs ? [ENGINE_DEMUCS_MODEL_ID] : [])],
+                            kinds: manualKinds,
+                        });
+                    }
                 }
                 return;
             }
@@ -6562,16 +6827,26 @@
             appendLog(msg, 'err');
             setEngineStatusText(msg, 'err');
             setEngineDownloadBusy(false);
+            const { hubIds } = classifyManualKindsForModelIds(modelIds);
+            const singleHubId = modelIds.length === 1 && hubIds.includes(modelIds[0])
+                ? modelIds[0]
+                : '';
             const proceed = await appConfirm({
                 title: '模型下载失败',
-                message: `${String(msg).slice(0, 500)}\n\n是否改为手动下载安装？`,
-                primaryLabel: '手动下载安装',
+                message: singleHubId
+                    ? `${String(msg).slice(0, 500)}\n\n是否改为浏览器手动下载，并按说明放到引擎 models 目录？`
+                    : `${String(msg).slice(0, 500)}\n\n是否改为手动下载安装？`,
+                primaryLabel: singleHubId ? '手动下载' : '手动下载安装',
                 secondaryLabel: '取消',
             });
             if (proceed) {
-                await manualEngineDownloadInstall({
-                    modelIds: [...modelIds, ...(wantDemucs ? [ENGINE_DEMUCS_MODEL_ID] : [])],
-                });
+                if (singleHubId) {
+                    await manualEngineHubModelDownload(singleHubId);
+                } else {
+                    await manualEngineDownloadInstall({
+                        modelIds: [...modelIds, ...(wantDemucs ? [ENGINE_DEMUCS_MODEL_ID] : [])],
+                    });
+                }
             }
             return;
         } finally {
@@ -10264,6 +10539,8 @@
                 void downloadEngineModels({ modelIds: [id] });
             } else if (action === 'manual') {
                 void manualManagedLlmDownload(id);
+            } else if (action === 'manual-hub') {
+                void manualEngineHubModelDownload(id);
             }
         });
         els.engineEnsureGpuBtn?.addEventListener('click', () => {

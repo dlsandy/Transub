@@ -239,6 +239,7 @@ const BUILTIN_PRESETS = [
             timingAlign: true,
             timingAlignModel: 'ten',
             // TEN island ASR forces greedy (beam=1); match litagin / WhisperJAV.
+            // Zero-latency dictation: domain post-fixes only — no Demucs / dual ASR.
             beamSize: 1,
             audioLightDenoise: false,
             filmAudioEnhance: false,
@@ -246,6 +247,42 @@ const BUILTIN_PRESETS = [
             glossaryMtEnabled: true,
             sakuraNsfwPrompt: true,
             contentProfile: 'av_soft',
+            // Soft AV often leaves bilateral filler cues; compact them after translate.
+            postBatchCompactPureInterjections: true,
+        },
+    },
+    {
+        id: 'ja-av-large-v2-translate',
+        name: '日语 · large-v2 翻译（可选）',
+        builtin: true,
+        options: {
+            device: 'cuda',
+            task: 'translate',
+            language: 'ja',
+            engineAsrModel: 'whisper-large-v2',
+            engineVadModel: 'whisperseg-asmr',
+            engineMtModel: 'sakura-1.5b',
+            engineLlmMtModel: 'sakura-1.5b',
+            translateMode: 'llm',
+            vadEnabled: true,
+            vadSensitive: true,
+            vadAggressive: false,
+            // Match Engine WhisperSeg PRESETS["sensitive"] / soft-AV defaults
+            // (0.12/40ms was too noisy on real titles).
+            vadThreshold: 0.18,
+            vadMinSpeechDurationMs: 60,
+            vadMinSilenceDurationMs: 140,
+            vadSpeechPadMs: 350,
+            vadMaxSingleSegmentMs: 30000,
+            hallucinationSilenceThreshold: 4,
+            beamSize: 5,
+            audioLightDenoise: false,
+            filmAudioEnhance: false,
+            filmVadPreset: false,
+            glossaryMtEnabled: true,
+            sakuraNsfwPrompt: true,
+            contentProfile: 'av_soft',
+            postBatchCompactPureInterjections: true,
         },
     },
 ];

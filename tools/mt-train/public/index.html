@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transub Sanitize训练台</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <section id="wizardApp" class="wizard-app">
+    <div class="wizard-shell">
+      <header class="wizard-head">
+        <div>
+          <h1>学习向导</h1>
+          <p>拖入或导入字幕，学习<strong>可复用清洗规则</strong>（短片段 + 日文锚点）。先测试再写入；整句润色不会入库。</p>
+        </div>
+        <button type="button" id="btnOpenPro" class="btn ghost">打开专业台</button>
+      </header>
+
+      <div id="wizardDrop" class="wizard-drop">
+        <div class="wizard-zones">
+          <label class="wizard-zone" id="zoneJa">
+            <input id="fileJa" type="file" accept=".srt,text/plain" hidden />
+            <strong>日文 / 原文字幕</strong>
+            <span id="zoneJaName" class="wizard-file">拖放到此处，或点击选择</span>
+          </label>
+          <label class="wizard-zone" id="zoneZh">
+            <input id="fileZh" type="file" accept=".srt,text/plain" hidden />
+            <strong>中文 / 译文字幕</strong>
+            <span id="zoneZhName" class="wizard-file">拖放到此处，或点击选择</span>
+          </label>
+        </div>
+        <p class="wizard-tip">也可一次拖入两个 `.srt`，或从 Transub 历史任务导入。内置情形策略优先；模型只辅助抽短片段 / blank。</p>
+        <div class="wizard-actions">
+          <button type="button" id="btnWizardHistory" class="btn ghost hidden">从历史任务导入</button>
+          <label class="wizard-model hidden" id="wizardModelWrap">抽规则模型
+            <select id="wizardModel" class="sel"></select>
+          </label>
+          <button type="button" id="btnWizardLearn" class="btn primary" disabled>开始学规则</button>
+        </div>
+      </div>
+
+      <dialog id="historyDlg" class="wizard-history-dlg">
+        <form method="dialog" class="dlg-head">
+          <strong>从历史任务导入</strong>
+          <button type="submit" class="btn ghost" value="cancel">关闭</button>
+        </form>
+        <p class="wizard-tip">勾选多部可跨片合并学规则；单击标题仍可只导入一对。</p>
+        <div class="wizard-history-toolbar">
+          <input id="historyFilter" type="search" placeholder="筛番号 / 文件名…" spellcheck="false" />
+          <button type="button" id="btnHistoryRefresh" class="btn ghost">刷新</button>
+        </div>
+        <div id="historyList" class="wizard-history-list"></div>
+        <div id="historyEmpty" class="wizard-history-empty hidden">暂无可用的日中字幕对。请确认任务已生成译文，且保留了原文转录（`.src.srt`）。</div>
+        <div class="wizard-actions" style="padding:0 14px 14px">
+          <button type="button" id="btnHistorySelectVisible" class="btn ghost">全选可见</button>
+          <button type="button" id="btnHistoryImportChecked" class="btn primary">导入勾选并学规则</button>
+        </div>
+      </dialog>
+
+      <div id="wizardStatus" class="wizard-status">等待字幕…</div>
+
+      <div id="wizardReport" class="wizard-report hidden">
+        <div class="wizard-report-head">
+          <h2>规则草案</h2>
+          <span id="wizardReportMeta" class="wizard-meta"></span>
+        </div>
+        <div class="wizard-cols">
+          <section>
+            <h3>建议写入 <span class="badge" id="wizAdoptN">0</span></h3>
+            <div id="wizAdopt" class="wizard-list"></div>
+          </section>
+          <section>
+            <h3>需收窄 <span class="badge" id="wizReviewN">0</span></h3>
+            <div id="wizReview" class="wizard-list"></div>
+          </section>
+          <section>
+            <h3>已排除 <span class="badge" id="wizSkipN">0</span></h3>
+            <div id="wizSkip" class="wizard-list"></div>
+          </section>
+        </div>
+        <div class="wizard-actions">
+          <button type="button" id="btnWizardAgain" class="btn ghost">再学一对</button>
+          <button type="button" id="btnWizardTest" class="btn ghost" disabled>测试勾选规则</button>
+          <button type="button" id="btnWizardAdopt" class="btn primary" disabled>写入勾选规则</button>
+        </div>
+        <div id="wizardTestOut" class="wizard-test-out hidden" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="proApp" class="pro-app hidden">
+  <header class="top">
+    <div class="brand">
+      <h1>Transub Sanitize训练台</h1>
+      <p class="sub">专业调试 · 对照 · 规则试跑
+        <button type="button" id="btnBackWizard" class="btn ghost" style="margin-left:8px">返回学习向导</button>
+        <span class="kbd-hint">j/k 片名 · / 搜索 · Enter 对照 · r 重扫</span>
+      </p>
+    </div>
+    <div class="top-meta">
+      <div class="roots" id="roots"></div>
+      <div class="top-ops">
+        <button type="button" id="btnMocha" class="btn ghost">跑全部测试</button>
+        <label class="inline">术语包
+          <input id="tdpVersion" type="text" size="7" />
+        </label>
+        <input id="tdpNotes" type="text" class="notes" value="训练台：领域规则修补" title="更新说明" />
+        <button type="button" id="btnTdp" class="btn ghost">签发</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel titles">
+      <div class="panel-head">
+        <h2>片名 <span class="badge soft" id="titleCount">0</span></h2>
+        <div class="row-actions">
+          <select id="batchLimit" class="sel" title="一次扫几部">
+            <option value="8">8</option>
+            <option value="12" selected>12</option>
+            <option value="20">20</option>
+          </select>
+          <button type="button" id="btnBatch" class="btn ghost" title="依次对照多部片子">批量</button>
+          <button type="button" id="btnRefresh" class="btn ghost">刷新</button>
+        </div>
+      </div>
+      <div class="title-filter-row">
+        <input id="titleFilter" type="search" placeholder="筛番号 / 文件名…" spellcheck="false" />
+        <label class="chk tight"><input type="checkbox" id="sortLive" /> 待修优先</label>
+      </div>
+      <div id="batchBar" class="batch-bar hidden"></div>
+      <ul id="titleList" class="title-list"></ul>
+      <details class="manual">
+        <summary>手动路径</summary>
+        <label>日文字幕</label>
+        <input id="jaPath" type="text" spellcheck="false" />
+        <label>中文字幕</label>
+        <input id="zhPath" type="text" spellcheck="false" />
+        <div class="row-actions">
+          <button type="button" id="btnReload" class="btn ghost" title="重新加载清洗规则，并清空对照缓存">重载规则</button>
+          <button type="button" id="btnScan" class="btn primary" title="Enter">开始对照</button>
+        </div>
+      </details>
+    </aside>
+
+    <section class="panel results">
+      <div class="panel-head">
+        <div>
+          <h2>问题报告</h2>
+          <div class="summary" id="summary">尚未对照</div>
+        </div>
+        <div class="row-actions wrap">
+          <label class="chk" title="隐藏「对齐可疑 / 短吟扩写 / 已修好」等次要项，专心看待修"><input type="checkbox" id="hideAlign" checked /> 只看待修</label>
+          <label class="chk"><input type="checkbox" id="useCache" checked /> 用缓存</label>
+          <button type="button" id="btnGuide" class="btn ghost" title="打开使用说明">怎么用</button>
+        </div>
+      </div>
+      <div id="serverBanner" class="server-banner hidden" role="status"></div>
+      <details id="guidePanel" class="guide-panel">
+        <summary>怎么训练与修改（点此展开）</summary>
+        <div class="guide-body">
+          <ol>
+            <li><b>选片子 → 对照</b>：左侧点番号，看「待修」数字。待修为 0 就不用训。</li>
+            <li><b>只盯真问题</b>：保持「只看待修」。彩色标签（如「イク误成射」）才值得改；「对齐可疑」「已修好」一般别写规则。</li>
+            <li><b>勾一条 → 填短片段</b>：右侧填日文锚点与 `错误片段→改成`。整句预览只用于试跑，不以整句入库。</li>
+            <li><b>先试跑再写入</b>：试跑通过后再点「写入并验证」。写入后建议点「跑全部测试」防回归。</li>
+            <li><b>懒人方式</b>：点「生成规则草案」→ 默认只勾短片段、低误伤项 → 写入。整句润色勿写。</li>
+            <li><b>批量抽片段</b>：勾选若干句 →「抽规则片段」→ 弹窗确认短 `zhFrom→zhTo` 后再写入。</li>
+            <li><b>改错了怎么办</b>：点「已学规则」→ 停用 / 删除；或用同一锚点重新写入覆盖。</li>
+          </ol>
+          <p class="guide-note"><b>别写规则的情况：</b>日文是 <code>&</code>、乱码、对不上的长中文（对齐坏了，去改字幕文件）；拟声被洗成「…」通常是对的；「规则已改好的样例」只是成功演示，不是待办。</p>
+          <p class="guide-note"><b>三种类型：</b>「改中文」= 译文错了；「听写纠错」= 日文听写错了；「清空弱化」= 整句变成「…」（很少用）。</p>
+        </div>
+      </details>
+      <div class="toolbar">
+        <input id="searchHits" type="search" placeholder="搜日文 / 中文 / 问题类型…" />
+        <div id="clusterChips" class="chips"></div>
+      </div>
+      <div class="toolbar tight actions-bar">
+        <div class="action-group">
+          <button type="button" id="btnSelectVisible" class="btn ghost">全选重点</button>
+          <button type="button" id="btnClearSel" class="btn ghost">清空</button>
+        </div>
+        <div class="action-group">
+          <button type="button" id="btnPreview" class="btn ghost" disabled>预览用例</button>
+          <button type="button" id="btnPoison" class="btn primary" disabled>导出用例</button>
+          <button type="button" id="btnCopyMocha" class="btn ghost" disabled>复制测试</button>
+          <button type="button" id="btnCopyJson" class="btn ghost" disabled>复制数据</button>
+        </div>
+        <div class="action-group">
+          <button type="button" id="btnAutoPropose" class="btn ghost" title="根据高热度问题生成可复用规则草案，需确认后才写入">生成规则草案</button>
+          <button type="button" id="btnAutoSmart" class="btn ghost hidden" title="规则草案 + 模型补抽缺片段的项">智能草案</button>
+          <button type="button" id="btnDrafts" class="btn ghost">历史草稿</button>
+          <button type="button" id="btnRules" class="btn ghost">规则库</button>
+        </div>
+      </div>
+      <details id="fixesPanel" class="fixes-panel hidden">
+        <summary>规则已改好的样例 <span class="badge" id="fixesCount">0</span>
+          <span class="soft-explain">（成功示例，一般不用再训）</span>
+        </summary>
+        <p class="fixes-help" id="fixesHelp">这里是清洗规则已经改动过的句子：改前→改后。拟声变「…」、错译被纠正，都算正常。只有你觉得「改后更糟」时，才到右侧针对那句重新训练。</p>
+        <pre id="fixesBody" class="fixes-body"></pre>
+      </details>
+      <div id="clusters" class="clusters"></div>
+    </section>
+
+    <aside class="panel train-dock">
+      <section id="trainPanel" class="train-panel">
+        <div class="train-head">
+          <h2>学规则</h2>
+          <span class="train-hint" id="trainHint">勾选问题后填写短片段规则</span>
+        </div>
+        <div id="trainCoach" class="train-coach">
+          <div class="coach-title" id="trainCoachTitle">还没选句子</div>
+          <div class="coach-body" id="trainCoachBody">在中间列表勾选一条「待修」问题。优先写短 `zhFrom→zhTo` + 日文锚点，不要整句重译。</div>
+        </div>
+        <div class="train-grid">
+          <label>类型
+            <select id="trainKind" class="sel" title="改中文=局部替换；清空=弱化；听写=日文错">
+              <option value="replace">改中文（局部替换）</option>
+              <option value="blank">清空弱化（泄漏/乱入）</option>
+              <option value="asr">听写纠错（日文错）</option>
+            </select>
+          </label>
+          <label class="chk tight" title="勾选后，后面润色步骤不会把你刚改对的结果冲掉"><input type="checkbox" id="trainPinFinal" checked /> 防润色冲掉</label>
+        </div>
+        <label>日文锚点
+          <input id="trainJaAnchor" type="text" spellcheck="false" placeholder="具体短语（勿用过短泛词）" />
+        </label>
+        <div class="train-grid" id="trainFragRow">
+          <label>错误片段
+            <input id="trainZhFrom" type="text" spellcheck="false" placeholder="zhFrom：要替换的短中文" />
+          </label>
+          <label>改成
+            <input id="trainZhTo" type="text" spellcheck="false" placeholder="zhTo：改成的短片段" />
+          </label>
+        </div>
+        <label id="trainExpectLabel">整句预览（可选）
+          <input id="trainExpect" type="text" spellcheck="false" placeholder="用于试跑对照；写入以片段为准" />
+        </label>
+        <label id="trainAsrRow" class="hidden">听写纠正为
+          <input id="trainAsrTo" type="text" spellcheck="false" placeholder="日文纠正结果" />
+        </label>
+        <div id="trainLocalPreview" class="train-preview hidden"></div>
+        <div id="trainQualityTips" class="train-tips hidden"></div>
+        <div id="electronTrainRow" class="electron-row hidden">
+          <span class="train-hint" id="electronTrainStatus">Transub 内嵌</span>
+          <label class="train-model-label">抽规则模型
+            <select id="trainTranslateModel" class="sel" title="已下载且可用于智能翻译的模型"></select>
+          </label>
+          <div class="row-actions">
+            <button type="button" id="btnTrainInfer" class="btn ghost" disabled>抽片段</button>
+            <button type="button" id="btnTrainTranslate" class="btn ghost" disabled title="整句翻译仅作参考，默认不要当规则写入">整句翻译</button>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="btnBatchInfer" class="btn ghost" title="批量抽短片段/blank，确认后再写入规则">抽规则片段</button>
+            <button type="button" id="btnBatchTranslate" class="btn ghost" title="整句翻译仅供对照，写入前会拦截接近整句的项">批量整句翻译</button>
+          </div>
+        </div>
+        <div class="row-actions train-actions">
+          <button type="button" id="btnTrainTry" class="btn ghost" disabled>试跑</button>
+          <button type="button" id="btnTrainApply" class="btn primary" disabled>写入并验证</button>
+        </div>
+        <pre id="trainTryOut" class="train-try hidden"></pre>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="bottom">
+    <details class="log-drawer" open>
+      <summary>运行日志</summary>
+      <pre id="log" class="log" aria-label="运行日志"></pre>
+    </details>
+  </footer>
+
+  <dialog id="previewDlg" class="dlg">
+    <form method="dialog" class="dlg-head">
+      <strong id="dlgTitle">预览</strong>
+      <button type="submit" class="btn ghost" value="close">关闭</button>
+    </form>
+    <div id="dlgBody" class="dlg-body"></div>
+    <div class="dlg-actions">
+      <button type="button" id="dlgCopy" class="btn ghost">复制</button>
+      <button type="button" id="dlgWrite" class="btn primary hidden">写入文件</button>
+    </div>
+  </dialog>
+
+  <dialog id="autoDlg" class="dlg auto-dlg">
+    <form method="dialog" class="dlg-head">
+      <strong id="autoDlgTitle">自动训练建议</strong>
+      <button type="submit" class="btn ghost" value="close">关闭</button>
+    </form>
+    <p class="auto-help" id="autoDlgHelp">只写入可复用短规则。整句润色会标成「别写」；对齐问题与过宽锚点会被跳过。</p>
+    <div class="auto-filters" id="autoFilters">
+      <button type="button" class="chip active" data-filter="actionable">待处理</button>
+      <button type="button" class="chip" data-filter="ready">可直接写</button>
+      <button type="button" class="chip" data-filter="all">全部</button>
+    </div>
+    <div id="autoDlgBody" class="auto-body"></div>
+    <div class="dlg-actions wrap">
+      <button type="button" id="btnAutoSelectReady" class="btn ghost">只勾可直接写</button>
+      <button type="button" id="btnAutoInferMissing" class="btn ghost hidden">模型补片段</button>
+      <button type="button" id="btnAutoApply" class="btn primary" disabled>写入勾选</button>
+    </div>
+  </dialog>
+
+  <dialog id="batchDlg" class="dlg auto-dlg">
+    <form method="dialog" class="dlg-head">
+      <strong id="batchDlgTitle">批量结果</strong>
+      <button type="submit" class="btn ghost" value="close">关闭</button>
+    </form>
+    <p class="auto-help" id="batchDlgHelp">确认短片段后再写入。接近整句的项默认不勾选。</p>
+    <div id="batchProgress" class="batch-progress hidden"></div>
+    <div id="batchDlgBody" class="auto-body"></div>
+    <div class="dlg-actions wrap">
+      <button type="button" id="btnBatchSelectAll" class="btn ghost">全选短片段</button>
+      <button type="button" id="btnBatchConfirm" class="btn primary" disabled>确认写入</button>
+    </div>
+  </dialog>
+
+  </div><!-- #proApp -->
+
+  <script src="/wizard.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

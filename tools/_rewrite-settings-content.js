@@ -156,6 +156,7 @@ const content = `
                                         <option value="sensevoice-small">sensevoice-small</option>
                                         <option value="whisper-tiny">whisper-tiny</option>
                                         <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
+                                        <option value="whisper-large-v2">whisper-large-v2</option>
                                         <option value="whisper-large-v3">whisper-large-v3</option>
                                         <option value="whisper-ja-1.5b">whisper-ja-1.5b · 日语微调（可选）</option>
                                         <option value="anime-whisper">anime-whisper · 动画/Galgame（可选）</option>

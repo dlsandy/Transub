@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -44,6 +44,9 @@
     "fetch:av-makers": "node tools/fetch-av-makers.js",
     "encode:tdp": "node tools/encode-tdp-pack.js",
     "encode:tdp:sign": "node tools/encode-tdp-pack.js --sign",
+    "train:mt": "node tools/mt-train/server.js",
+    "train:mt:open": "node tools/mt-train/server.js --open",
+    "train:mt:restart": "node tools/mt-train/server.js --force --open",
     "lint": "eslint electron src/js tests tools --max-warnings 200",
     "lint:fix": "eslint electron src/js tests tools --fix",
     "format": "prettier --write \"electron/**/*.js\" \"src/js/**/*.js\" \"tests/**/*.js\" \"tools/**/*.js\"",
@@ -107,6 +110,7 @@
       "src/js/av-makers.am1",
       "src/js/av-makers-embed.js",
       "shared/ja-asr-domain-fixes.json",
+      "shared/mt-trained-remaps.json",
       "shared/tdp/tdp-bundled.tpack"
     ],
     "asarUnpack": [

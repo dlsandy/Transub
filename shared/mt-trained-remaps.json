@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "zhRemaps": [
+    {
+      "id": "tr_msgupbie_bb5523",
+      "enabled": true,
+      "title": "FNS-238",
+      "note": "under_stub",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GK6aGY4oCm6Kem44Gj44Gm4oCm57aa44GR44Gm4oCm6IiQ44KB44Gm4oCm"
+      ],
+      "zhFromB64": "6K+3",
+      "zhToB64": "6K+35pG45oiR77yM57un57ut6IiU5oiRLi4u",
+      "createdAt": "2026-08-06T01:42:24.134Z"
+    },
+    {
+      "id": "tr_msgurdzz_0007d7",
+      "enabled": true,
+      "title": "FNS-238",
+      "note": "under_stub",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5ZC444Gj44Gm4oCm5r+A44GX44GP6IiQ44KB44Gm44KI4oCm"
+      ],
+      "zhFromB64": "5ZC45LiA5LiL",
+      "zhToB64": "5ZCu5a6D4oCm55So5Yqb6IiU4oCm",
+      "createdAt": "2026-08-06T01:44:00.671Z"
+    },
+    {
+      "id": "tr_msgv47nv_25695c",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KTPw=="
+      ],
+      "zhFromB64": "6L+Z5qC35bCx5Y+Y5oiQM1DkuobigKbmnInngrnigKY=",
+      "zhToB64": "5Zev77yf",
+      "createdAt": "2026-08-06T01:53:58.987Z"
+    },
+    {
+      "id": "tr_msgv49pq_841745",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gg44KB4oCm"
+      ],
+      "zhFromB64": "6YKj5a625LyZ4oCm5Zev5Zev5Lmf6K+05LiN6KGM4oCm5Zev5ZOI5ZWK",
+      "zhToB64": "5LiN6KGM4oCm",
+      "createdAt": "2026-08-06T01:54:01.646Z"
+    },
+    {
+      "id": "tr_msgv4boq_e14d23",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GC44Gj4oCm"
+      ],
+      "zhFromB64": "5aW95Y6J5a6z4oCm5ZOI5ZWK5ZOI5ZWK4oCm5ZWK",
+      "zhToB64": "5ZWK4oCm",
+      "createdAt": "2026-08-06T01:54:04.202Z"
+    },
+    {
+      "id": "tr_msgv4dup_e49948",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GG44KT"
+      ],
+      "zhFromB64": "5ZWK77yM5ZWK5ZWK77yM5LiN6KGM4oCm5LiN6KGM5LqG4oCm",
+      "zhToB64": "5Zev",
+      "createdAt": "2026-08-06T01:54:07.009Z"
+    },
+    {
+      "id": "tr_msgv4ftn_b5ee83",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gg44KB4oCm"
+      ],
+      "zhFromB64": "77yM5LiN6KGM77yM6K+05Ye65p2l5LqG",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T01:54:09.563Z"
+    },
+    {
+      "id": "tr_msgv4hek_024e53",
+      "enabled": true,
+      "title": "FNS-235",
+      "note": "align_suspect",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB4oCmIOOBvg=="
+      ],
+      "zhFromB64": "5ZOI5ZWK4oCm562J77yM562J5LiA5LiL77yM5oiR5YaN5LiA5LiL5bCx4oCm5ZGc5ZGc",
+      "zhToB64": "5ZWK4oCm562J562J4oCm",
+      "createdAt": "2026-08-06T01:54:11.612Z"
+    },
+    {
+      "id": "tr_msgzlbr9_c1ed75",
+      "enabled": true,
+      "title": "SNOS-274 打工处的后辈周五夜宿我家.src",
+      "note": "latin",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OG44Oz44K344On44Oz"
+      ],
+      "zhFromB64": "5aSq5aW95LqG77yM5aSq5aW95LqG5qy45Zi/5Zi/77yM5aSq5aW95LqG4oCm5aSn5a6255qE5oOF57uq6YO95aW9aGlnaOKApg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T03:59:15.909Z"
+    },
+    {
+      "id": "tr_msh6r3si_5008ad",
+      "enabled": true,
+      "title": "IPZZ-894 温柔美丽的永野老师AV出道 认真负责的幼师竟是闷骚抖M.src",
+      "note": "latin",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kz44K544OX44Os"
+      ],
+      "zhFromB64": "Y29zcGxheQ==",
+      "zhToB64": "Y29zcGxheQ==",
+      "createdAt": "2026-08-06T07:19:42.834Z"
+    },
+    {
+      "id": "tr_msh6r7na_e3d91a",
+      "enabled": true,
+      "title": "IPZZ-894 温柔美丽的永野老师AV出道 认真负责的幼师竟是闷骚抖M.src",
+      "note": "latin",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kw44Or44O844O0"
+      ],
+      "zhFromB64": "5pS25LiL5ZCJ5LuW5ZCnR3Jvb3Zl",
+      "zhToB64": "6IqC5aWP5oSf",
+      "createdAt": "2026-08-06T07:19:47.830Z"
+    }
+  ],
+  "asrPairs": []
+}
