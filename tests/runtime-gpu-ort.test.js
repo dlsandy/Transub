@@ -115,6 +115,7 @@ print(json.dumps({"rows": rows, "hint12": hint12, "hint13": hint13}))
     });
 
     it('probe_gpu_runtime exposes ortGpuTarget fields', function () {
+        // runPy already caps at 60s; avoid mocha-only this.timeout under Vitest.
         if (process.platform !== 'win32') {
             this.skip();
         }
@@ -183,6 +184,8 @@ print(json.dumps({
         assert.ok(!/^GPU /.test(payload.partial_ort));
         assert.ok(/CTranslate2/.test(payload.partial_ct2));
         assert.ok(/WhisperSeg ONNX GPU/.test(payload.partial_ct2));
+        // Do not tell users to "restart the engine" — PATH must be injected before CT2 load.
+        assert.ok(!/重启引擎/.test(payload.partial_ct2));
         assert.ok(/ASR\/CTranslate2/.test(payload.ready_asr_only));
         assert.ok(!/WhisperSeg ONNX/.test(payload.ready_asr_only));
     });

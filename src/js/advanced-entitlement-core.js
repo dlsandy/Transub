@@ -20,10 +20,12 @@
     const FEATURE_FILM_AUDIO_ENHANCE = 'filmAudioEnhance';
     /** Bilingual semantic review via LLM */
     const FEATURE_BILINGUAL_SEMANTIC_REVIEW = 'bilingualSemanticReview';
-    /** ASS export with speaker styles */
+    /** ASS export with document styles (Pro) */
     const FEATURE_ASS_STYLE_EXPORT = 'assStyleExport';
     /** QC 一键智能处理（规则修复后对剩余通顺度等做 LLM 润色） */
     const FEATURE_QC_SMART_FIX = 'qcSmartFix';
+    /** 字幕库 Pro：多配方 A/B、高保留、diff、发布包、语料导出等 */
+    const FEATURE_SUBTITLE_LIBRARY_PRO = 'subtitleLibraryPro';
     const FEATURE_ALL = '*';
 
     /** 同时绑定设备上限 */
@@ -304,8 +306,8 @@
     }
 
     /**
-     * 免费管线翻译资格（不查许可）：仅软件内托管白名单 ≤7B 模型，且仅译中管线。
-     * BYOK / 更大托管模型 / 重构等仍需 Pro；忠实语气对免费管线可用。
+     * 未解锁 Pro 时「轻量托管模型」是否已选用（白名单 ≤7B，字段名 freePipelineTranslate 保留兼容）。
+     * 不代表可免费用智能翻译——智能翻译始终需 Pro；免费侧请用推理翻译（Sakura）或引擎 Opus。
      * @param {object} doc advanced doc 或 { llmSource, managedLlm }
      * @param {{ isModelInstalled?: (id: string) => boolean, modelInstalled?: boolean }} [options]
      */
@@ -322,7 +324,7 @@
             return {
                 ok: false,
                 reason: 'byok_requires_advanced',
-                message: `免费管线翻译仅限软件内选模型（白名单 ≤${maxB}B）。外接 API / BYOK 需解锁 Pro`,
+                message: `外接 API / BYOK 需解锁 Pro。未开通时可先下载软件内轻量模型（≤${maxB}B）备用`,
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -331,7 +333,7 @@
             return {
                 ok: false,
                 reason: 'model_missing',
-                message: `请先在「Pro」页选用软件内白名单模型（≤${maxB}B，如 Qwen2.5 7B）`,
+                message: `请先在「智能翻译模型」中选用软件内轻量模型（≤${maxB}B，如 Qwen2.5 7B）`,
                 maxParamBillion: maxB,
                 modelId: '',
             };
@@ -342,7 +344,7 @@
             return {
                 ok: false,
                 reason: 'model_not_free',
-                message: `当前模型不在免费管线白名单（需 ≤${maxB}B 且目录标记可用）。更大模型或 BYOK 需解锁 Pro`,
+                message: `当前模型不在轻量白名单（需 ≤${maxB}B）。更大规格需解锁 Pro`,
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -355,7 +357,7 @@
             return {
                 ok: false,
                 reason: 'model_not_installed',
-                message: `请先下载软件内模型「${modelId}」后再使用免费智能翻译`,
+                message: `请先下载软件内模型「${modelId}」`,
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -363,7 +365,7 @@
         return {
             ok: true,
             reason: 'ok',
-            message: '免费管线翻译可用',
+            message: `已选用轻量模型（≤${maxB}B）；智能翻译仍需解锁 Pro`,
             maxParamBillion: maxB,
             modelId,
         };
@@ -492,6 +494,7 @@
         FEATURE_BILINGUAL_SEMANTIC_REVIEW,
         FEATURE_ASS_STYLE_EXPORT,
         FEATURE_QC_SMART_FIX,
+        FEATURE_SUBTITLE_LIBRARY_PRO,
         FEATURE_ALL,
         MAX_DEVICES,
         TRANSFER_COOLDOWN_MS,

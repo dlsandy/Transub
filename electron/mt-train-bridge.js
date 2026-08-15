@@ -403,6 +403,17 @@ function registerMtTrainBridge(register, _app) {
             return { ok: false, error: err.message || String(err) };
         }
     });
+
+    register('transub-mt-train-consume-pending-pair', async (event) => {
+        try {
+            const gate = assertMtTrainSender(event);
+            if (!gate.ok) return gate;
+            const { consumePendingLibraryPair } = require('./mt-train-window');
+            return consumePendingLibraryPair();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
 }
 
 module.exports = {

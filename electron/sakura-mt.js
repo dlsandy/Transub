@@ -172,5 +172,6 @@ module.exports = {
     isLlmInferenceMtModel,
     isSakuraMtModel: sakuraCatalog.isSakuraMtModel,
     findCatalogEntry: sakuraCatalog.findCatalogEntry,
+    resolvePromptFamily: sakuraCatalog.resolvePromptFamily,
     DEFAULT_MODEL_ID: sakuraCatalog.DEFAULT_MODEL_ID,
 };

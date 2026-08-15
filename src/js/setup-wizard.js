@@ -11,11 +11,12 @@
     }
     const DISMISS_KEY = 'transub.setupWizard.dismissed';
     const HF_MIRROR = 'https://hf-mirror.com';
-    const STEPS = ['goals', 'detect', 'samples', 'network', 'plan', 'apply', 'done'];
+    const STEPS = ['goals', 'detect', 'samples', 'runtime', 'network', 'plan', 'apply', 'done'];
     const STEP_TITLES = {
         goals: '你要做什么',
         detect: '检查电脑',
         samples: '常用影片',
+        runtime: '听写运行库',
         network: '下载网络',
         plan: '确认推荐',
         apply: '应用设置',
@@ -140,6 +141,18 @@
         return listGeneralLlmOptions().some((o) => o.id === raw);
     }
 
+    /** 未解锁 Pro 仍可用于推理翻译的轻量托管模型（非 Pro 规格）。 */
+    function isLightManagedLlmModelId(id) {
+        const raw = String(id || '').trim();
+        if (!raw || !isManagedLlmModelId(raw)) return false;
+        const api = global.TransubAdvancedManagedLlmCatalog;
+        if (typeof api?.isProScaleModel === 'function' && api.isProScaleModel(raw)) return false;
+        if (typeof api?.isFreePipelineTranslateModel === 'function') {
+            return api.isFreePipelineTranslateModel(raw);
+        }
+        return listGeneralLlmOptions().some((o) => o.id === raw);
+    }
+
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
     const isStandaloneWizard = pageQuery.get('standaloneWizard') === '1';
@@ -166,6 +179,8 @@
             numpyVersion: '',
             fasterWhisperVersion: '',
             envResult: null,
+            runtimeResult: null,
+            activeScope: 'base',
         },
         samples: [],
         sense: null,
@@ -188,6 +203,15 @@
 
     function core() {
         return global.TransubCore;
+    }
+
+    async function readAdvancedEntitled() {
+        try {
+            const res = await electron?.transubAdvancedGetStatus?.();
+            return !!(res?.ok && res.status?.entitled);
+        } catch {
+            return false;
+        }
     }
 
     function $(id) {
@@ -648,16 +672,18 @@
             } else if (id === 'samples') {
                 nextBtn.textContent = state.samples.length ? '下一步' : '跳过';
                 nextBtn.disabled = !!state.sensing;
-            } else if (id === 'detect') {
+            } else if (id === 'detect' || id === 'runtime') {
                 nextBtn.textContent = '下一步';
-                nextBtn.disabled = !detectAllowsNext();
+                // Stay clickable when check failed — onNext prompts to fix first.
+                nextBtn.disabled = !!busy;
             } else {
                 nextBtn.textContent = '下一步';
                 nextBtn.disabled = false;
             }
         }
 
-        if (id === 'detect') void runDetect();
+        if (id === 'detect') void runDetect({ scope: 'base' });
+        if (id === 'runtime') void runDetect({ scope: 'runtime' });
         if (id === 'samples') renderSampleStep();
         if (id === 'plan') {
             applySenseToPlanForm();
@@ -672,25 +698,100 @@
         return global.TransubEnvCheck;
     }
 
-    /** Step 2: Next only after a successful env check (no blocking fails). */
-    function detectAllowsNext() {
-        if (state.detecting || state.fixing) return false;
-        return !!state.detect.envResult?.ok;
+    function detectScopeFromStep(stepId) {
+        return stepId === 'runtime' ? 'runtime' : 'base';
     }
 
-    function setDetectBusy(busy) {
-        const fixBtn = $('setupWizardFixBtn');
-        const manualBtn = $('setupWizardManualBtn');
-        const retryBtn = $('setupWizardRetryDetectBtn');
-        if (retryBtn) retryBtn.disabled = !!busy;
-        envApi()?.applyFixButtons?.(fixBtn, manualBtn, state.detect.envResult, {
+    function detectUi(scope) {
+        const runtime = scope === 'runtime';
+        return {
+            scope: runtime ? 'runtime' : 'base',
+            list: $(runtime ? 'setupWizardRuntimeList' : 'setupWizardDetectList'),
+            status: $(runtime ? 'setupWizardRuntimeStatus' : 'setupWizardDetectStatus'),
+            fixHint: $(runtime ? 'setupWizardRuntimeFixHint' : 'setupWizardFixHint'),
+            fixBtn: $(runtime ? 'setupWizardRuntimeFixBtn' : 'setupWizardFixBtn'),
+            manualBtn: $(runtime ? 'setupWizardRuntimeManualBtn' : 'setupWizardManualBtn'),
+            retryBtn: $(runtime ? 'setupWizardRuntimeRetryBtn' : 'setupWizardRetryDetectBtn'),
+            resultKey: runtime ? 'runtimeResult' : 'envResult',
+            waitMessage: runtime ? '正在按听写推荐检查运行库…' : '正在检查本机依赖…',
+            checkingText: runtime ? '正在检查听写运行库…' : '正在检查依赖项…',
+        };
+    }
+
+    function getDetectResult(scope) {
+        return scope === 'runtime' ? state.detect.runtimeResult : state.detect.envResult;
+    }
+
+    function setDetectResult(scope, result) {
+        if (scope === 'runtime') state.detect.runtimeResult = result;
+        else state.detect.envResult = result;
+    }
+
+    /** Prefer adopted sample sense ASR; else goals / hardware default. */
+    function resolveWizardAsrHint() {
+        if (senseIsAdopted() && state.sense) {
+            const fromSense = state.sense.asrModels?.[0]
+                || state.sense.patch?.engineAsrModel
+                || '';
+            if (fromSense) return String(fromSense).trim();
+        }
+        const goals = readGoals();
+        return goals.asrModel
+            || defaultAsrFor(goals.language, goals.profile, state.detect.recommend)
+            || 'sensevoice-small';
+    }
+
+    /** Base / runtime step: proceed only after a successful scoped env check. */
+    function detectAllowsNext(scope = detectScopeFromStep(STEPS[state.stepIndex])) {
+        if (state.detecting || state.fixing) return false;
+        return !!getDetectResult(scope)?.ok;
+    }
+
+    function setDetectBusy(busy, scope = state.detect.activeScope || 'base') {
+        const ui = detectUi(scope);
+        if (ui.retryBtn) ui.retryBtn.disabled = !!busy;
+        envApi()?.applyFixButtons?.(ui.fixBtn, ui.manualBtn, getDetectResult(scope), {
             busy: !!busy,
             fixing: state.fixing,
         });
         const nextBtn = $('setupWizardNextBtn');
-        if (nextBtn && STEPS[state.stepIndex] === 'detect') {
-            nextBtn.disabled = !!busy || !detectAllowsNext();
+        const stepId = STEPS[state.stepIndex];
+        if (nextBtn && (stepId === 'detect' || stepId === 'runtime')) {
+            nextBtn.disabled = !!busy;
         }
+    }
+
+    /** When detect/runtime failed: ask user to fix before continuing; offer one-click fix. */
+    async function promptDetectFixBeforeNext(scope) {
+        const result = getDetectResult(scope);
+        const fails = (result?.items || []).filter((it) => it.status === 'fail');
+        const names = fails.map((it) => it.label).filter(Boolean).join('、');
+        const message = names
+            ? `以下项未通过：${names}。\n请先完成修复后再继续。`
+            : '检测未通过，请先完成修复后再继续。';
+        const vis = envApi()?.computeFixVisibility?.(result)
+            || { showFix: !!result?.fix?.fixable };
+
+        if (vis.showFix) {
+            const ok = await appConfirmMsg(message, {
+                title: '请先修复依赖',
+                primaryLabel: '一键修复',
+                secondaryLabel: '返回',
+            });
+            if (ok) void runWizardFix(scope);
+            return;
+        }
+
+        await appConfirmMsg(
+            vis.showManual
+                ? `${message}\n可使用「手动下载」安装缺失项。`
+                : message,
+            {
+                title: '请先修复依赖',
+                primaryLabel: '知道了',
+                hideSecondary: true,
+            },
+        );
     }
 
     function setDetectWaitVisible(visible, message) {
@@ -708,19 +809,19 @@
 
     async function runDetect(opts = {}) {
         const duringFix = !!opts.duringFix;
+        const scope = opts.scope === 'runtime' ? 'runtime' : 'base';
         // Mid-fix recheck must run; only block unrelated detects while fixing.
-        if (state.fixing && !duringFix) return state.detect.envResult;
+        if (state.fixing && !duringFix) return getDetectResult(scope);
         const api = envApi();
-        const status = $('setupWizardDetectStatus');
-        const list = $('setupWizardDetectList');
+        const ui = detectUi(scope);
+        state.detect.activeScope = scope;
         state.detecting = true;
-        setDetectBusy(true);
-        setDetectWaitVisible(true, duringFix ? '正在重新检测，请稍候…' : '正在检查本机依赖…');
-        if (status) status.textContent = '正在检查依赖项…';
-        api?.renderItemsInto?.(
-            list,
-            (api.DEFAULT_ITEMS || []).map((it) => ({ ...it, status: 'checking' })),
-        );
+        setDetectBusy(true, scope);
+        setDetectWaitVisible(true, duringFix ? '正在重新检测，请稍候…' : ui.waitMessage);
+        if (ui.status) ui.status.textContent = ui.checkingText;
+        const placeholderItems = (api?.itemsForScope?.(scope) || api?.DEFAULT_ITEMS || [])
+            .map((it) => ({ ...it, status: 'checking' }));
+        api?.renderItemsInto?.(ui.list, placeholderItems);
 
         let result = null;
         try {
@@ -742,104 +843,110 @@
             state.detect.enginePath = payload.engineInstallPath;
             state.detect.engineUrl = payload.engineUrl;
 
-            const asrHint = goals.asrModel
-                || defaultAsrFor(goals.language, goals.profile, state.detect.recommend)
-                || 'sensevoice-small';
+            const asrHint = scope === 'runtime'
+                ? resolveWizardAsrHint()
+                : (goals.asrModel
+                    || defaultAsrFor(goals.language, goals.profile, state.detect.recommend)
+                    || 'sensevoice-small');
+            const checkPayload = {
+                engineInstallPath: payload.engineInstallPath,
+                engineAsrModel: asrHint,
+                syncLlamaBackend: scope === 'base',
+                scope,
+            };
             if (api?.performEnvCheck) {
-                result = await api.performEnvCheck({
-                    engineInstallPath: payload.engineInstallPath,
-                    engineAsrModel: asrHint,
-                    syncLlamaBackend: true,
-                });
+                result = await api.performEnvCheck(checkPayload);
             } else {
                 try {
-                    result = await electron?.transubEnvCheck?.({
-                        engineInstallPath: payload.engineInstallPath,
-                        engineAsrModel: asrHint,
-                        syncLlamaBackend: true,
-                    });
+                    result = await electron?.transubEnvCheck?.(checkPayload);
                 } catch (err) {
                     result = { ok: false, error: err?.message || String(err), items: [], fix: { fixable: false } };
                 }
             }
 
-            state.detect.envResult = result;
-            api?.renderItemsInto?.(list, result?.items || []);
-            if (status) {
-                status.textContent = api?.summarizeCheckResult?.(result)
+            setDetectResult(scope, result);
+            api?.renderItemsInto?.(ui.list, result?.items || []);
+            if (ui.status) {
+                ui.status.textContent = api?.summarizeCheckResult?.(result)
                     || (result?.ok ? '检测完成。' : '检测未通过，请先修复后再继续。');
             }
 
-            const items = result?.items || [];
-            const gpuItem = items.find((it) => it.id === 'gpu');
-            const gpuRuntime = items.find((it) => it.id === 'gpuRuntime');
-            const engineItem = items.find((it) => it.id === 'engine');
-            const whisperItem = items.find((it) => it.id === 'whisperRuntime');
+            // Hardware / engine summary comes from the base check (or full).
+            if (scope === 'base') {
+                const items = result?.items || [];
+                const gpuItem = items.find((it) => it.id === 'gpu');
+                const gpuRuntime = items.find((it) => it.id === 'gpuRuntime');
+                const engineItem = items.find((it) => it.id === 'engine');
 
-            state.detect.gpuOk = gpuItem?.status === 'ok';
-            state.detect.gpuName = String(gpuItem?.detail || '').split('·')[0].trim();
-            const cudaReady = state.detect.gpuOk && gpuRuntime?.status === 'ok';
-            state.detect.suggestedDevice = cudaReady ? 'cuda' : (state.detect.gpuOk ? 'cuda' : 'cpu');
-            if (state.detect.gpuOk && gpuRuntime?.status === 'warn') {
-                // NVIDIA present but cuBLAS missing — still allow choosing GPU.
-                state.detect.suggestedDevice = 'cuda';
-            }
-            state.detect.engineOk = engineItem?.status === 'ok';
-            state.detect.engineError = state.detect.engineOk ? '' : (engineItem?.detail || result?.error || '引擎未就绪');
-            state.detect.asrWhisperOk = whisperItem?.status === 'ok';
-            state.detect.numpyVersion = '';
-            state.detect.fasterWhisperVersion = '';
-            if (whisperItem?.detail) {
-                const np = String(whisperItem.detail).match(/numpy\s+([\d.]+)/i);
-                const fw = String(whisperItem.detail).match(/faster-whisper\s+([\d.]+|ok)/i);
-                if (np) state.detect.numpyVersion = np[1];
-                if (fw) state.detect.fasterWhisperVersion = fw[1];
+                state.detect.gpuOk = gpuItem?.status === 'ok';
+                state.detect.gpuName = String(gpuItem?.detail || '').split('·')[0].trim();
+                const cudaReady = state.detect.gpuOk && gpuRuntime?.status === 'ok';
+                state.detect.suggestedDevice = cudaReady ? 'cuda' : (state.detect.gpuOk ? 'cuda' : 'cpu');
+                if (state.detect.gpuOk && gpuRuntime?.status === 'warn') {
+                    // NVIDIA present but cuBLAS missing — still allow choosing GPU.
+                    state.detect.suggestedDevice = 'cuda';
+                }
+                state.detect.engineOk = engineItem?.status === 'ok';
+                state.detect.engineError = state.detect.engineOk ? '' : (engineItem?.detail || result?.error || '引擎未就绪');
+
+                state.detect.recommend = null;
+                if (state.detect.engineOk) {
+                    try {
+                        const rec = await electron?.transubEngineRecommend?.({
+                            ...payload,
+                            engineProfile: goals.profile,
+                            engineHfEndpoint: hfEndpointFromGoals(goals),
+                        });
+                        if (rec?.ok) state.detect.recommend = rec;
+                    } catch { /* ignore */ }
+                }
+
+                const deviceSel = $('wizardDeviceSelect');
+                if (deviceSel) deviceSel.value = state.detect.suggestedDevice;
+                const profileSel = $('wizardProfileSelect');
+                if (profileSel) profileSel.value = goals.profile;
+            } else {
+                const items = result?.items || [];
+                const whisperItem = items.find((it) => it.id === 'whisperRuntime');
+                state.detect.asrWhisperOk = whisperItem?.status === 'ok';
+                state.detect.numpyVersion = '';
+                state.detect.fasterWhisperVersion = '';
+                if (whisperItem?.detail) {
+                    const np = String(whisperItem.detail).match(/numpy\s+([\d.]+)/i);
+                    const fw = String(whisperItem.detail).match(/faster-whisper\s+([\d.]+|ok)/i);
+                    if (np) state.detect.numpyVersion = np[1];
+                    if (fw) state.detect.fasterWhisperVersion = fw[1];
+                }
             }
 
-            state.detect.recommend = null;
-            if (state.detect.engineOk) {
-                try {
-                    const rec = await electron?.transubEngineRecommend?.({
-                        ...payload,
-                        engineProfile: goals.profile,
-                        engineHfEndpoint: hfEndpointFromGoals(goals),
-                    });
-                    if (rec?.ok) state.detect.recommend = rec;
-                } catch { /* ignore */ }
-            }
-
-            const deviceSel = $('wizardDeviceSelect');
-            if (deviceSel) deviceSel.value = state.detect.suggestedDevice;
-            const profileSel = $('wizardProfileSelect');
-            if (profileSel) profileSel.value = goals.profile;
+            syncModelSelects({ preserve: false });
         } finally {
             state.detecting = false;
             // Keep detect buttons busy while one-click fix is still running.
-            setDetectBusy(!!state.fixing);
+            setDetectBusy(!!state.fixing, scope);
             setDetectWaitVisible(false);
-            syncModelSelects({ preserve: false });
         }
         return result;
     }
 
-    async function runWizardFix() {
+    async function runWizardFix(scope = state.detect.activeScope || detectScopeFromStep(STEPS[state.stepIndex])) {
         const api = envApi();
+        const ui = detectUi(scope);
         if (!api?.runAutoFixSession || state.detecting || state.fixing) return;
+        state.detect.activeScope = scope;
         await api.runAutoFixSession({
-            getResult: () => state.detect.envResult,
-            setResult: (r) => { state.detect.envResult = r; },
+            getResult: () => getDetectResult(scope),
+            setResult: (r) => { setDetectResult(scope, r); },
             setSubtitle: (t) => {
-                const el = $('setupWizardDetectStatus');
-                if (el) el.textContent = t;
+                if (ui.status) ui.status.textContent = t;
             },
-            setBusy: (b) => setDetectBusy(b),
+            setBusy: (b) => setDetectBusy(b, scope),
             setFixHintVisible: (v) => {
-                const el = $('setupWizardFixHint');
-                if (el) el.classList.toggle('hidden', !v);
+                if (ui.fixHint) ui.fixHint.classList.toggle('hidden', !v);
             },
-            fixBtn: $('setupWizardFixBtn'),
-            manualBtn: $('setupWizardManualBtn'),
-            fixHintEl: $('setupWizardFixHint'),
+            fixBtn: ui.fixBtn,
+            manualBtn: ui.manualBtn,
+            fixHintEl: ui.fixHint,
             downloadPayload: {
                 engineInstallPath: enginePayloadFromForm().engineInstallPath,
                 engineUrl: enginePayloadFromForm().engineUrl,
@@ -849,30 +956,30 @@
             isRunning: () => state.detecting,
             recheck: async (opts) => {
                 if (opts?.duringFix) {
-                    const status = $('setupWizardDetectStatus');
-                    if (status) status.textContent = '本轮修复完成，正在重新检测…';
+                    if (ui.status) ui.status.textContent = '本轮修复完成，正在重新检测…';
                 }
-                return runDetect({ duringFix: !!opts?.duringFix });
+                return runDetect({ duringFix: !!opts?.duringFix, scope });
             },
             onDone: () => {
                 state.fixing = false;
-                setDetectBusy(false);
+                setDetectBusy(false, scope);
             },
         });
     }
 
-    async function runWizardManual() {
+    async function runWizardManual(scope = state.detect.activeScope || detectScopeFromStep(STEPS[state.stepIndex])) {
         const api = envApi();
+        const ui = detectUi(scope);
         if (!api?.runManualDownloadSession) return;
         if (state.fixing && api.requestFixSwitchToManual?.()) return;
         if (state.detecting || state.fixing) return;
+        state.detect.activeScope = scope;
         await api.runManualDownloadSession({
-            getResult: () => state.detect.envResult,
+            getResult: () => getDetectResult(scope),
             setSubtitle: (t) => {
-                const el = $('setupWizardDetectStatus');
-                if (el) el.textContent = t;
+                if (ui.status) ui.status.textContent = t;
             },
-            recheck: () => runDetect(),
+            recheck: () => runDetect({ scope }),
         });
     }
 
@@ -997,20 +1104,102 @@
         renderSampleStep();
     }
 
+    /**
+     * Deep language prior for wizard samples — same stack as main-window 深度感知.
+     * Never trust bare container `eng` over AV 番号 / filename priors.
+     */
+    async function resolveWizardSampleLanguage({
+        samplePath,
+        metaLanguage = '',
+        durationSec = 0,
+        formLang = 'auto',
+        nameClassification = null,
+        profileApi = null,
+        senseFinalizeApi = null,
+        lidBudget = { used: 0, max: SAMPLE_MAX },
+    } = {}) {
+        const senseHints = {
+            profile: nameClassification?.profile,
+            profileConfidence: nameClassification?.confidence,
+            profileConfident: false,
+            strongAv: !!nameClassification?.strongAv,
+            forceDeep: true,
+        };
+        const planned = senseFinalizeApi?.planSenseLanguagePrior?.({
+            formLang,
+            metaRaw: metaLanguage,
+            itemPath: samplePath,
+            senseHints,
+            backend: 'transub',
+            hasDetectApi: !!(state.detect.engineOk && electron?.transubEngineDetectLanguage),
+            senseBase: { language: formLang || 'auto' },
+            profileApi,
+        }) || { done: true, prior: { language: formLang || 'auto', source: 'form', confidence: 0 } };
+
+        if (planned.done) return planned.prior || { language: 'auto', source: 'form', confidence: 0 };
+
+        if (!planned.needSniff
+            || lidBudget.used >= lidBudget.max
+            || !electron?.transubEngineDetectLanguage) {
+            const fallback = planned.pathPrior;
+            if (fallback?.language) {
+                return {
+                    language: fallback.language,
+                    source: fallback === planned.nameGuess ? 'name' : 'meta',
+                    confidence: fallback.confidence,
+                    reason: fallback.reason,
+                };
+            }
+            return { language: 'auto', source: 'form', confidence: 0 };
+        }
+
+        const sniffWin = profileApi?.resolveSenseSniffWindow?.({
+            durationSec,
+            windowSec: 12,
+        }) || { startSec: 0, durationSec: 12, reason: '片头区', skippedIntro: false };
+
+        let sniffRes = null;
+        let sniffError = '';
+        try {
+            sniffRes = await electron.transubEngineDetectLanguage({
+                mediaPath: samplePath,
+                durationSec: sniffWin.durationSec,
+                startSec: sniffWin.startSec,
+                ...enginePayloadFromForm(),
+            });
+            lidBudget.used += 1;
+        } catch (err) {
+            sniffError = err?.message || String(err);
+        }
+
+        const after = senseFinalizeApi?.resolveSenseLanguagePriorAfterSniff?.({
+            sniffRes,
+            sniffWin,
+            pathPrior: planned.pathPrior,
+            metaGuess: planned.metaGuess,
+            nameGuess: planned.nameGuess,
+            senseHints,
+            profileApi,
+            sniffError,
+        });
+        return after?.prior || planned.pathPrior || { language: 'auto', source: 'form', confidence: 0 };
+    }
+
     async function senseSamples() {
         if (state.sensing || !state.samples.length) return;
         state.sensing = true;
         renderSampleStep();
         const status = $('setupWizardSampleStatus');
-        if (status) status.textContent = '正在分析样片…';
+        if (status) status.textContent = '正在深度分析样片…';
         const goals = readGoals();
         const profileApi = global.TransubContentProfile;
-        let lidUsed = 0;
-        const LID_MAX = 2;
+        const senseFinalizeApi = global.TransubSenseFinalize;
+        const lidBudget = { used: 0, max: SAMPLE_MAX };
+        const formLang = String(goals.language || 'auto').trim().toLowerCase() || 'auto';
 
         for (const sample of state.samples) {
             sample.status = 'running';
-            sample.message = '探测中…';
+            sample.message = '深度探测中…';
             renderSampleList();
             try {
                 let durationSec = 0;
@@ -1024,43 +1213,38 @@
                 } catch { /* ignore */ }
                 sample.durationSec = durationSec;
 
-                let language = metaLanguage || '';
-                const nameGuess = profileApi?.guessLanguageFromName?.(sample.name || sample.path);
-                if (!language && nameGuess?.language) language = nameGuess.language;
-
-                const quick = profileApi?.classifyContentProfile?.({
+                const nameClassification = profileApi?.classifyContentProfile?.({
                     path: sample.path,
                     fileName: sample.name,
                     durationSec,
-                    language: language || goals.language || 'auto',
+                    language: formLang,
                     task: goals.task,
                 }) || null;
 
-                // Deep LID when engine ready and language still unclear.
-                const needLid = state.detect.engineOk
-                    && lidUsed < LID_MAX
-                    && (!language || language === 'auto')
-                    && (!quick || quick.confidence < 0.7 || !quick.strongAv);
-                if (needLid && electron?.transubEngineDetectLanguage) {
-                    sample.message = '语种探测中…';
-                    renderSampleList();
-                    try {
-                        const windowSec = 12;
-                        const startSec = durationSec > 240 ? 90 : (durationSec > 60 ? 30 : 0);
-                        const lid = await electron.transubEngineDetectLanguage({
-                            mediaPath: sample.path,
-                            durationSec: windowSec,
-                            startSec,
-                            ...enginePayloadFromForm(),
-                        });
-                        lidUsed += 1;
-                        if (lid?.ok && lid.language && Number(lid.confidence || 0) >= 0.35) {
-                            language = String(lid.language);
-                        }
-                    } catch { /* ignore LID failure */ }
+                sample.message = '深度语种探测中…';
+                renderSampleList();
+                const langPrior = await resolveWizardSampleLanguage({
+                    samplePath: sample.path,
+                    metaLanguage,
+                    durationSec,
+                    formLang,
+                    nameClassification,
+                    profileApi,
+                    senseFinalizeApi,
+                    lidBudget,
+                });
+                let language = (langPrior?.language && langPrior.language !== 'auto')
+                    ? String(langPrior.language)
+                    : '';
+                // Soft-AV: drop exotic/wrong tags (nn/en…) so Anime Whisper + JA MT win.
+                if (profileApi?.coerceLanguageForSoftAv) {
+                    language = profileApi.coerceLanguageForSoftAv(language, {
+                        strongAv: !!nameClassification?.strongAv,
+                        profile: nameClassification?.profile || '',
+                    }) || language;
                 }
 
-                const sense = profileApi?.resolveItemSense?.(
+                let sense = profileApi?.resolveItemSense?.(
                     {
                         path: sample.path,
                         fileName: sample.name,
@@ -1073,13 +1257,82 @@
                     { autoSense: true },
                 ) || null;
 
+                // Deep acoustic when filename is not already decisive (same gate as main deep path,
+                // but without force — strong AV keeps its recipe).
+                const profile = sense?.classification?.profile || nameClassification?.profile || 'unknown';
+                const strongAv = !!(sense?.classification?.strongAv || nameClassification?.strongAv);
+                if (electron?.ffmpegProbeAcoustic
+                    && profileApi?.shouldProbeAcoustic?.({
+                        profile,
+                        strongAv,
+                        confidence: sense?.classification?.confidence || nameClassification?.confidence,
+                    })) {
+                    sample.message = '声学探测中…';
+                    renderSampleList();
+                    try {
+                        const acWin = profileApi.resolveSenseSniffWindow?.({
+                            durationSec,
+                            windowSec: 12,
+                        }) || { startSec: 0, durationSec: 12 };
+                        const acoustic = await electron.ffmpegProbeAcoustic({
+                            path: sample.path,
+                            durationSec: acWin.durationSec,
+                            startSec: acWin.startSec,
+                        });
+                        if (acoustic && (acoustic.ok || acoustic.hint) && profileApi.applyAcousticHints) {
+                            const ac = profileApi.applyAcousticHints(
+                                { ...(sense?.overrides || {}) },
+                                acoustic,
+                                {
+                                    profile,
+                                    language: language || 'auto',
+                                },
+                            );
+                            if (ac?.overrides && sense) {
+                                sense = {
+                                    ...sense,
+                                    overrides: ac.overrides,
+                                };
+                            }
+                        }
+                    } catch { /* ignore acoustic failure */ }
+                }
+
+                if (profileApi?.promoteClassificationFromEvidence
+                    && profileApi.resolveSenseFromClassification) {
+                    const promo = profileApi.promoteClassificationFromEvidence(
+                        sense?.classification || nameClassification,
+                        {
+                            language: language || langPrior?.language,
+                            languageConfidence: langPrior?.confidence || 0,
+                            durationSec,
+                            path: sample.path,
+                            strongAv,
+                            avLikely: strongAv
+                                || /软声/.test(String(langPrior?.reason || '')),
+                        },
+                    );
+                    if (promo?.promoted && promo.classification) {
+                        const rebuilt = profileApi.resolveSenseFromClassification(
+                            promo.classification,
+                            {
+                                language: language || 'auto',
+                                task: goals.task,
+                            },
+                            { autoSense: true },
+                        );
+                        if (rebuilt) sense = rebuilt;
+                    }
+                }
+
                 sample.language = language || sense?.overrides?.language || '';
-                sample.classification = sense?.classification || quick;
+                sample.classification = sense?.classification || nameClassification;
+                sample.languagePrior = langPrior || null;
                 sample.status = 'done';
                 const label = sample.classification?.label || '未识别';
                 const langLabel = LANG_LABELS[sample.language] || sample.language || '';
                 sample.tag = [langLabel, label].filter(Boolean).join(' · ');
-                sample.message = sense?.message || (langLabel ? `识别为 ${sample.tag}` : '分析完成');
+                sample.message = sense?.message || (langLabel ? `深度识别为 ${sample.tag}` : '分析完成');
             } catch (err) {
                 sample.status = 'error';
                 sample.message = err?.message || '分析失败';
@@ -1112,10 +1365,17 @@
             }
         });
         if (batch.mixed || bestLangCount === 0) bestLang = 'auto';
+        if (batch.profile === 'av_soft' && profileApi?.coerceLanguageForSoftAv) {
+            bestLang = profileApi.coerceLanguageForSoftAv(bestLang, {
+                strongAv: true,
+                profile: 'av_soft',
+            }) || 'ja';
+        }
 
+        const advancedEntitled = await readAdvancedEntitled();
         let overrides = profileApi?.optionPatchForProfile?.(batch.profile, {
             task: goals.task,
-            advancedEntitled: true,
+            advancedEntitled,
         }) || {};
         if (bestLang && bestLang !== 'auto') overrides.language = bestLang;
 
@@ -1132,6 +1392,13 @@
                     language: bestLang,
                     task: goals.task,
                     installedModels,
+                    device: state.detect?.suggestedDevice || 'cuda',
+                    vramGb: Number(state.detect?.recommend?.vramGb
+                        || state.detect?.recommend?.vram_gb
+                        || (Number(state.detect?.recommend?.vramMb) > 0
+                            ? Number(state.detect.recommend.vramMb) / 1024
+                            : NaN)) || undefined,
+                    hwProfile: state.detect?.recommend?.profile || '',
                 });
                 // refineSenseModels returns { overrides, notes } — not a flat patch.
                 if (refined?.overrides && typeof refined.overrides === 'object') {
@@ -1145,7 +1412,7 @@
         if (!overrides.engineAsrModel) {
             const fallbackPatch = profileApi?.optionPatchForProfile?.(batch.profile, {
                 task: goals.task,
-                advancedEntitled: true,
+                advancedEntitled,
             }) || {};
             if (fallbackPatch.engineAsrModel) overrides.engineAsrModel = fallbackPatch.engineAsrModel;
             if (!overrides.engineMtModel && fallbackPatch.engineMtModel) {
@@ -1201,7 +1468,7 @@
             mtModels: mtId && goals.task !== 'transcribe' ? [mtId] : [],
             patch: { ...overrides },
             summary: `根据你的片子，建议：${bits.join(' · ')}`,
-            lidUsed: lidUsed > 0,
+            lidUsed: lidBudget.used > 0,
         };
         const adopt = $('wizardSenseAdopt');
         if (adopt) adopt.checked = true;
@@ -1209,7 +1476,7 @@
         state.sensing = false;
         if (status) {
             status.textContent = state.sense.summary
-                ? '分析完成，可下一步确认推荐。'
+                ? '分析完成，下一步将按推荐检查听写运行库。'
                 : '分析完成。';
         }
         renderSampleStep();
@@ -1949,17 +2216,39 @@
         const managedPick = mtList.find((id) => isManagedLlmModelId(id));
         const primaryIsSakura = isSakuraModelId(mt);
         const primaryIsManaged = isManagedLlmModelId(mt);
+        const advancedEntitled = await readAdvancedEntitled();
+        // Smart translate is Pro-only. Free users may still use light managed LLMs as 推理翻译.
+        const enableSmart = primaryIsManaged && advancedEntitled;
+        const lightManagedPrimary = primaryIsManaged && isLightManagedLlmModelId(mt);
+        const lightManagedPick = managedPick && isLightManagedLlmModelId(managedPick) ? managedPick : '';
+        const enableLlm = !enableSmart && (
+            primaryIsSakura
+            || lightManagedPrimary
+            || !!sakuraPick
+            || (!!lightManagedPick && !opusPick)
+        );
+        const llmModelId = primaryIsSakura
+            ? mt
+            : (lightManagedPrimary
+                ? mt
+                : (sakuraPick || lightManagedPick || ''));
         if (opusPick) {
             patch.engineOpusMtModel = opusPick;
-            if (!primaryIsSakura && !primaryIsManaged) patch.engineMtModel = opusPick;
+            if (!enableLlm && !enableSmart) patch.engineMtModel = opusPick;
         }
-        if (sakuraPick) {
-            patch.engineLlmMtModel = sakuraPick;
-            if (primaryIsSakura) patch.engineMtModel = sakuraPick;
+        if (llmModelId) {
+            patch.engineLlmMtModel = llmModelId;
+            if (enableLlm && isSakuraModelId(llmModelId)) patch.engineMtModel = llmModelId;
         }
-        if (primaryIsManaged) {
+        if (enableSmart) {
             patch.smartTranslate = true;
             patch.engineMtModel = '';
+        } else {
+            patch.smartTranslate = false;
+        }
+        if (!advancedEntitled) {
+            patch.filmAudioEnhance = false;
+            patch.filmVadPreset = false;
         }
         if (vad) patch.engineVadModel = vad;
 
@@ -1973,12 +2262,16 @@
                 const sakuraRadio = $('translateModeSakura');
                 const engineRadio = $('translateModeEngine');
                 const smartRadio = $('translateModeSmart');
-                if (primaryIsSakura && sakuraRadio) {
+                if (enableLlm && sakuraRadio) {
                     sakuraRadio.checked = true;
                     if (engineRadio) engineRadio.checked = false;
                     if (smartRadio) smartRadio.checked = false;
                     if ($('smartTranslateCheck')) $('smartTranslateCheck').checked = false;
-                } else if (primaryIsManaged && smartRadio) {
+                    try {
+                        const llmSel = document.getElementById('engineLlmMtModelSelect');
+                        if (llmSel && llmModelId) llmSel.value = llmModelId;
+                    } catch { /* ignore */ }
+                } else if (enableSmart && smartRadio) {
                     smartRadio.checked = true;
                     if (engineRadio) engineRadio.checked = false;
                     if (sakuraRadio) sakuraRadio.checked = false;
@@ -2005,7 +2298,14 @@
                     const sel = await electron.transubAdvancedManagedLlmSelect({ modelId: managedPick });
                     if (!sel?.ok) throw new Error(sel?.error || `选用模型失败：${managedPick}`);
                 }
-                appendApplyLine(`已选用 ${modelLabel(managedPick)}`, true);
+                let managedTip = `已选用 ${modelLabel(managedPick)}`;
+                if (enableSmart) managedTip += '（智能翻译）';
+                else if (enableLlm && (lightManagedPrimary || managedPick === llmModelId)) {
+                    managedTip += '（推理翻译）';
+                } else if (!advancedEntitled) {
+                    managedTip += '（解锁 Pro 后可用于智能翻译）';
+                }
+                appendApplyLine(managedTip, true);
             }
 
             appendApplyLine('设置已保存', true);
@@ -2193,6 +2493,8 @@
             state.sensing = false;
             state.detect.recommend = null;
             state.detect.envResult = null;
+            state.detect.runtimeResult = null;
+            state.detect.activeScope = 'base';
             state.samples = [];
             state.sense = null;
             setDetectWaitVisible(false);
@@ -2230,7 +2532,13 @@
     async function onNext() {
         if (state.detecting || state.fixing || state.sensing) return;
         const id = STEPS[state.stepIndex];
-        if (id === 'detect' && !detectAllowsNext()) return;
+        if (id === 'detect' || id === 'runtime') {
+            const scope = detectScopeFromStep(id);
+            if (!detectAllowsNext(scope)) {
+                await promptDetectFixBeforeNext(scope);
+                return;
+            }
+        }
         if (id === 'done') {
             markOnboardingDone();
             closeWizard({ dismiss: false });
@@ -2262,15 +2570,20 @@
         $('setupWizardSkipBtn')?.addEventListener('click', () => closeWizard({ dismiss: true }));
         $('setupWizardBackBtn')?.addEventListener('click', onBack);
         $('setupWizardNextBtn')?.addEventListener('click', () => { void onNext(); });
-        $('setupWizardRetryDetectBtn')?.addEventListener('click', () => { void runDetect(); });
-        $('setupWizardFixBtn')?.addEventListener('click', () => { void runWizardFix(); });
-        $('setupWizardManualBtn')?.addEventListener('click', () => { void runWizardManual(); });
-        $('setupWizardDetectList')?.addEventListener('click', (event) => {
+        $('setupWizardRetryDetectBtn')?.addEventListener('click', () => { void runDetect({ scope: 'base' }); });
+        $('setupWizardFixBtn')?.addEventListener('click', () => { void runWizardFix('base'); });
+        $('setupWizardManualBtn')?.addEventListener('click', () => { void runWizardManual('base'); });
+        $('setupWizardRuntimeRetryBtn')?.addEventListener('click', () => { void runDetect({ scope: 'runtime' }); });
+        $('setupWizardRuntimeFixBtn')?.addEventListener('click', () => { void runWizardFix('runtime'); });
+        $('setupWizardRuntimeManualBtn')?.addEventListener('click', () => { void runWizardManual('runtime'); });
+        const onEnvActionClick = (event) => {
             const btn = event.target?.closest?.('[data-env-action-url]');
             if (!btn) return;
             const url = btn.getAttribute('data-env-action-url');
             if (url) void electron?.openExternal?.(url);
-        });
+        };
+        $('setupWizardDetectList')?.addEventListener('click', onEnvActionClick);
+        $('setupWizardRuntimeList')?.addEventListener('click', onEnvActionClick);
 
         const sampleDrop = $('setupWizardSampleDrop');
         const sampleInput = $('setupWizardSampleFileInput');

@@ -54,10 +54,13 @@ function allowBuiltinProAlgorithms() {
     return !isAppPackaged();
 }
 
-function missingClosedModuleError(featureLabel = 'Pro') {
+function missingClosedModuleError(featureLabel = 'Pro', detail = '') {
+    const hint = String(detail || '').trim();
     return {
         ok: false,
-        error: `未找到闭源 ${featureLabel} 模块（安装目录 _advanced）。请使用完整发行包或重新安装。`,
+        error: hint
+            ? `未找到闭源 ${featureLabel} 模块：${hint}`
+            : `未找到闭源 ${featureLabel} 模块（安装目录 _advanced）。请使用完整发行包或重新安装。`,
         code: 'advanced_module_missing',
     };
 }
@@ -1291,7 +1294,7 @@ async function runContextReconstructBody(payload = {}, event = null) {
         }
 
         if (!allowBuiltinProAlgorithms()) {
-            return missingClosedModuleError('语境重构');
+            return missingClosedModuleError('语境重构', modLoad.error || modLoad.message);
         }
         const { runBuiltinContextReconstruct } = require('./advanced-context-reconstruct');
         const result = await runBuiltinContextReconstruct({
@@ -1542,6 +1545,10 @@ async function runQcRetranscribeOnCues(cues, issues, input, event) {
                 startMs: range.startMs,
                 endMs: range.endMs,
                 padMs: Number(input.padMs) >= 0 ? Number(input.padMs) : smartCore.DEFAULT_PAD_MS,
+                subtitlePath: asString(
+                    input.subtitlePath || input.sourceSubtitlePath || input.subPath || '',
+                    4096,
+                ).trim(),
                 options: { task: 'transcribe', mergeSegments: false, subFormats: 'srt' },
             }, {
                 onProgress: (info) => sendQcSmartProgress(event, input, {
@@ -1856,13 +1863,16 @@ async function prepareQcSmartFixState(input, event) {
             scanIsFull = true;
         }
     }
-    // 润色目标需要 fluency；若上一趟是结构扫则补一次完整扫
+    // 润色目标需要 fluency / 怪句；若上一趟是结构扫则补一次完整扫
     if (!scanIsFull) {
         workingScan = qc.scanCueIssues(cues, ruleOpts);
         scanIsFull = true;
     }
 
-    const beforeSmartScan = workingScan;
+    const beforeSmartScan = {
+        ...workingScan,
+        issues: smartCore.mergeWeirdTextIssues(cues, workingScan.issues),
+    };
     const targets = smartCore.selectQcSmartTargets(beforeSmartScan.issues, {
         maxSmartCues: input.maxSmartCues,
         types: input.smartTypes,
@@ -2037,6 +2047,52 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
             allowIndexes: targetIndexes,
         });
         cues = applied.cues;
+
+        // Light domain-safe pin after LLM polish so weird cleanup cannot undo sanitize remaps.
+        if (applied.changed > 0 && Array.isArray(applied.changedIndexes) && applied.changedIndexes.length) {
+            try {
+                const mtSanitize = require('../src/js/mt-sanitize-core');
+                const pairCues = Array.isArray(input.pairCues) ? input.pairCues : [];
+                const dual = (() => {
+                    try { return require('../src/js/dual-subtitle-core'); } catch { return null; }
+                })();
+                let pinChanged = 0;
+                for (const idx of applied.changedIndexes) {
+                    const cue = cues[idx];
+                    if (!cue) continue;
+                    let sourceText = '';
+                    if (pairCues.length && dual?.findBestOverlapCue) {
+                        try {
+                            const hit = dual.findBestOverlapCue(
+                                pairCues,
+                                Number(cue.startMs) || 0,
+                                cue.endMs != null
+                                    ? Number(cue.endMs)
+                                    : (Number(cue.startMs) || 0) + 2000,
+                            );
+                            sourceText = String(hit?.cue?.text || '');
+                        } catch { /* ignore */ }
+                    }
+                    const before = String(cue.text ?? '');
+                    const sanitized = mtSanitize.sanitizeMtCueText(before, sourceText, {
+                        faithfulTone: input.faithfulTone,
+                        adultLexicon: input.adultLexicon,
+                    });
+                    const after = String(sanitized?.text ?? before);
+                    if (after !== before) {
+                        cues[idx] = { ...cue, text: after };
+                        pinChanged += 1;
+                    }
+                }
+                if (pinChanged > 0) {
+                    applied = {
+                        ...applied,
+                        changed: applied.changedIndexes.length,
+                        pinSanitized: pinChanged,
+                    };
+                }
+            } catch (_) { /* optional pin */ }
+        }
     }
 
     let workingScan = prepared.beforeSmartScan;
@@ -2232,7 +2288,7 @@ async function runBilingualSemanticReviewBody(payload = {}, event = null) {
         }
 
         if (!allowBuiltinProAlgorithms()) {
-            return missingClosedModuleError('双语语义审阅');
+            return missingClosedModuleError('双语语义审阅', modLoad.error || modLoad.message);
         }
         const { runBuiltinBilingualSemanticReview } = require('./advanced-bilingual-semantic');
         const result = await runBuiltinBilingualSemanticReview({
@@ -2326,7 +2382,7 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
         }
 
         if (!allowBuiltinProAlgorithms()) {
-            return missingClosedModuleError('影片理解重构');
+            return missingClosedModuleError('影片理解重构', modLoad.error || modLoad.message);
         }
         const { runBuiltinFilmContextReconstruct } = require('./advanced-film-reconstruct');
         const result = await runBuiltinFilmContextReconstruct({
@@ -2342,7 +2398,7 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
 }
 
 /**
- * 智能翻译：原文 cues → LLM 译文（Pro 专属：影片简要 → 分块译 → 一致性）。
+ * 智能翻译：原文 cues → LLM 译文（Pro 专属：影片简要 → 句级译；默认可混推理模型）。
  * 许可：smartTranslate / contextReconstruct。
  */
 async function runSmartTranslate(payload = {}, event = null) {
@@ -2370,6 +2426,27 @@ async function runSmartTranslateBody(payload = {}, event = null) {
             }
         } catch (_) { /* ignore */ }
     }
+    if (input.smartTranslateHybridMt == null) {
+        try {
+            const { loadSettings } = require('./settings-data');
+            const opts = loadSettings()?.options || {};
+            input.smartTranslateHybridMt = opts.smartTranslateHybridMt !== false;
+            if (!input.engineLlmMtModel && opts.engineLlmMtModel) {
+                input.engineLlmMtModel = opts.engineLlmMtModel;
+            }
+            if (!input.hybridMtModelId && (opts.engineLlmMtModel || opts.hybridMtModelId)) {
+                input.hybridMtModelId = opts.hybridMtModelId || opts.engineLlmMtModel;
+            }
+            if (input.smartTranslatePlotPolish == null) {
+                input.smartTranslatePlotPolish = opts.smartTranslatePlotPolish !== false;
+            }
+        } catch (_) {
+            input.smartTranslateHybridMt = true;
+        }
+    }
+    if (input.smartTranslatePlotPolish == null) {
+        input.smartTranslatePlotPolish = true;
+    }
     if (!input.contentProfile && !input.senseProfile) {
         const name = String(input.fileName || input.sourcePath || input.path || '').trim();
         if (name) {
@@ -2391,38 +2468,128 @@ async function runSmartTranslateBody(payload = {}, event = null) {
     }
 
     const doc = readAdvancedDoc().doc;
-    const dryRun = !!input.dryRun
-        || !!doc.reconstructMock
+    // Engine external MT must always resolve a real LLM — reconstructMock is for
+    // UI/dev reconstruct probes only. If dryRun is forced, also set input.dryRun so
+    // the Pro module takes the mock path instead of failing on empty byok.
+    const mockForced = !!doc.reconstructMock
         || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim() === '1'
         || String(process.env.TRANSUB_ADVANCED_RECONSTRUCT_MOCK || '').trim().toLowerCase() === 'true';
+    const dryRun = !!input.dryRun
+        || (!!mockForced && !input._engineExternalMt);
+    if (dryRun) input.dryRun = true;
 
     let llm = { ok: true, apiKey: '', baseUrl: '', model: '', source: 'mock' };
     let smartChoice = { modelId: '', requestedId: '', fallbackFrom: '' };
+    const polishOnly = !!(input.polishOnly || input.plotPolishOnly);
+    if (polishOnly) {
+        input.smartTranslateHybridMt = false;
+        input.skipFilmBrief = true;
+        input._hybridChunkOnly = false;
+        input.smartTranslatePlotPolish = input.smartTranslatePlotPolish !== false;
+    }
 
     try {
         if (!dryRun) {
-            const overrideId = String(
-                input.modelId || input.smartTranslateModelId || '',
-            ).trim();
-            if (overrideId) {
-                const block = managedCatalog.getSmartTranslateModelBlock?.(overrideId)
-                    || null;
-                if (block?.ok === false) return block;
-                smartChoice = {
-                    modelId: overrideId,
-                    requestedId: overrideId,
-                    fallbackFrom: '',
+            const hybrid = require('./smart-translate-hybrid');
+            const llmSource = managedCatalog.normalizeLlmSource(doc.llmSource);
+            let hasByokKey = false;
+            if (llmSource === 'byok') {
+                try {
+                    hasByokKey = !!require('./advanced-byok').getByokApiKey()?.apiKey;
+                } catch (_) { hasByokKey = false; }
+            }
+            if (!polishOnly && !input.filmBrief && typeof hybrid.shouldSkipLlmFilmBrief === 'function') {
+                const skipBrief = hybrid.shouldSkipLlmFilmBrief({
+                    enabled: input.smartTranslateHybridMt,
+                    language: input.language || input.sourceLanguage,
+                    cues: input.cues,
+                    hybridMtModelId: input.hybridMtModelId,
+                    engineLlmMtModel: input.engineLlmMtModel,
+                    llmSource,
+                    hasByokKey,
+                    filmBrief: input.filmBrief,
+                    skipFilmBrief: input.skipFilmBrief,
+                });
+                if (skipBrief) {
+                    input.skipFilmBrief = true;
+                    input._hybridSkipLlmBrief = true;
+                }
+            }
+            const chunkOnly = !polishOnly && typeof hybrid.canRunHybridChunkOnly === 'function'
+                ? hybrid.canRunHybridChunkOnly(input)
+                : { ok: false };
+            if (chunkOnly.ok) {
+                input._hybridChunkOnly = true;
+                llm = {
+                    ok: true,
+                    apiKey: 'local',
+                    baseUrl: '',
+                    model: chunkOnly.modelId || '',
+                    source: 'hybrid-chunk',
                 };
             } else {
-                smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
+                const overrideId = String(
+                    input.modelId || input.smartTranslateModelId || '',
+                ).trim();
+                if (overrideId) {
+                    const block = managedCatalog.getSmartTranslateModelBlock?.(overrideId)
+                        || null;
+                    if (block?.ok === false) return block;
+                    smartChoice = {
+                        modelId: overrideId,
+                        requestedId: overrideId,
+                        fallbackFrom: '',
+                    };
+                } else {
+                    smartChoice = managedCatalog.resolveSmartTranslateModelChoice(doc.managedLlm);
+                }
+                if (typeof hybrid.pickInstalledSmartTranslateModelId === 'function') {
+                    const installedId = String(
+                        hybrid.pickInstalledSmartTranslateModelId(smartChoice.modelId) || '',
+                    ).trim();
+                    if (installedId && installedId !== smartChoice.modelId) {
+                        smartChoice = {
+                            ...smartChoice,
+                            modelId: installedId,
+                            missingFallbackFrom: smartChoice.modelId || smartChoice.requestedId,
+                        };
+                    }
+                }
+                const hybridChunk = typeof hybrid.decideHybridChunkMt === 'function'
+                    ? hybrid.decideHybridChunkMt({
+                        enabled: input.smartTranslateHybridMt,
+                        language: input.language || input.sourceLanguage,
+                        cues: input.cues,
+                        preferredId: input.hybridMtModelId || input.engineLlmMtModel,
+                    })
+                    : { ok: false };
+                if (hybridChunk.ok && typeof hybrid.pickHybridBriefModelId === 'function') {
+                    const briefId = String(hybrid.pickHybridBriefModelId(smartChoice.modelId) || '').trim();
+                    if (briefId && briefId !== smartChoice.modelId) {
+                        smartChoice = {
+                            ...smartChoice,
+                            modelId: briefId,
+                            briefDownshiftFrom: smartChoice.modelId,
+                        };
+                    }
+                }
+                const smartModelId = smartChoice.modelId;
+                llm = await resolveAdvancedLlmConfig(doc, {
+                    activeModelId: smartModelId || undefined,
+                    requireSmartTranslateCapable: true,
+                });
+                if (!llm.ok && llm.code === 'byok_missing' && smartModelId) {
+                    llm = await resolveAdvancedLlmConfig({ ...doc, llmSource: 'managed' }, {
+                        activeModelId: smartModelId,
+                        requireSmartTranslateCapable: true,
+                    });
+                    if (llm.ok && !smartChoice.missingFallbackFrom) {
+                        smartChoice.missingFallbackFrom = 'byok';
+                    }
+                }
+                if (!llm.ok) return llm;
+                logAdvancedLlmToEngine(llm, { feature: '智能翻译' });
             }
-            const smartModelId = smartChoice.modelId;
-            llm = await resolveAdvancedLlmConfig(doc, {
-                activeModelId: smartModelId || undefined,
-                requireSmartTranslateCapable: true,
-            });
-            if (!llm.ok) return llm;
-            logAdvancedLlmToEngine(llm, { feature: '智能翻译' });
         }
         const sendProgress = (info) => {
             const payloadOut = {
@@ -2449,6 +2616,37 @@ async function runSmartTranslateBody(payload = {}, event = null) {
                 modelId: smartChoice.modelId,
             });
         }
+        if (smartChoice.briefDownshiftFrom) {
+            sendProgress({
+                phase: 'start',
+                message: `混合翻译：影片简要用较小的「${smartChoice.modelId}」，句级仍走推理模型`,
+                pct: 0,
+                briefDownshift: true,
+                briefDownshiftFrom: smartChoice.briefDownshiftFrom,
+                modelId: smartChoice.modelId,
+            });
+        }
+        if (smartChoice.missingFallbackFrom) {
+            sendProgress({
+                phase: 'start',
+                message: smartChoice.missingFallbackFrom === 'byok'
+                    ? `未配置云端 API Key，已改用本机「${smartChoice.modelId || llm.modelId || llm.model}」`
+                    : `智能翻译模型尚未下载，已改用已安装的「${smartChoice.modelId || llm.modelId || llm.model}」`,
+                pct: 0,
+                missingFallback: true,
+                missingFallbackFrom: smartChoice.missingFallbackFrom,
+                modelId: smartChoice.modelId,
+            });
+        }
+        if (input._hybridSkipLlmBrief) {
+            sendProgress({
+                phase: 'start',
+                message: '混合翻译：跳过对话模型简要，人名由原文敬称收获，直接加载推理模型',
+                pct: 0,
+                hybridSkipLlmBrief: true,
+                hybridMt: true,
+            });
+        }
 
         const byokPayload = {
             provider: llm.provider || doc.byok?.provider || 'openai',
@@ -2467,9 +2665,25 @@ async function runSmartTranslateBody(payload = {}, event = null) {
         }
 
         const modLoad = loadAdvancedModule();
+        // polishOnly must use builtin (or rebuilt module); old closed blobs would re-run full MT.
+        if (polishOnly && allowBuiltinProAlgorithms()) {
+            const { runBuiltinSmartTranslate } = require('./advanced-smart-translate');
+            const result = await runBuiltinSmartTranslate({
+                ...input,
+                byok: byokPayload,
+                glossary,
+                onProgress: sendProgress,
+            });
+            if (!result?.ok) return result;
+            return {
+                ...result,
+                via: result.mock ? 'mock' : 'builtin-smart-translate',
+                llmSource: llm.source,
+            };
+        }
         if (modLoad.loaded && typeof modLoad.module.smartTranslate === 'function') {
             try {
-                sendProgress({ phase: 'start', message: '正在调用 Pro 智能翻译模块…', pct: 0 });
+                sendProgress({ phase: 'start', message: polishOnly ? '剧情贴合润色…' : '正在调用 Pro 智能翻译模块…', pct: 0 });
                 const result = await modLoad.module.smartTranslate({
                     ...input,
                     byok: byokPayload,
@@ -2484,7 +2698,7 @@ async function runSmartTranslateBody(payload = {}, event = null) {
 
         // Packaged installs must use `_advanced` (film brief helpers are closed-source).
         if (!allowBuiltinProAlgorithms()) {
-            return missingClosedModuleError('智能翻译');
+            return missingClosedModuleError('智能翻译', modLoad.error || modLoad.message);
         }
         const { runBuiltinSmartTranslate } = require('./advanced-smart-translate');
         const result = await runBuiltinSmartTranslate({
@@ -2540,6 +2754,12 @@ async function smartTranslateSubtitleFile(options = {}) {
             ?? nested.smartTranslateFaithfulTone
             ?? nested.faithfulTone
         ),
+        smartTranslateHybridMt: opts.smartTranslateHybridMt ?? nested.smartTranslateHybridMt,
+        smartTranslatePlotPolish: opts.smartTranslatePlotPolish ?? nested.smartTranslatePlotPolish,
+        engineLlmMtModel: opts.engineLlmMtModel ?? nested.engineLlmMtModel,
+        hybridMtModelId: opts.hybridMtModelId ?? nested.hybridMtModelId
+            ?? opts.engineLlmMtModel ?? nested.engineLlmMtModel,
+        language: opts.language ?? nested.language,
         dryRun: opts.dryRun ?? nested.dryRun,
         signal: opts.signal,
         onProgress: opts.onProgress,
@@ -2816,8 +3036,8 @@ function setupAdvancedBridge(api, deps = {}) {
     ));
 
     register('transub-advanced-managed-llm-open-pick', async () => {
-        // 独立选模窗口已移除；请在设置 → Pro → 大模型设置（软件内选模型）内选用/下载
-        return { ok: true, removed: true, message: '请在大模型设置页内选用模型' };
+        // 独立选模窗口已移除；请在设置 → Pro → 智能翻译模型（软件内选模型）内选用/下载
+        return { ok: true, removed: true, message: '请在智能翻译模型页内选用模型' };
     });
 
     register('transub-advanced-managed-llm-open-download', async (_event, payload = {}) => {

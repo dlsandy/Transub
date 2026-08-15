@@ -41,7 +41,7 @@ describe('engine-audio-options', () => {
         assert.strictEqual(vad.model, 'whisperseg-asmr');
     });
 
-    it('keeps sensitive flag under film enhance for Whisper soft-dialogue path', () => {
+    it('forces sensitive off under film enhance (no WhisperSeg + Demucs)', () => {
         const vad = buildVadJobOptions({
             engineAsrModel: 'whisper-large-v3-turbo',
             filmAudioEnhance: true,
@@ -49,8 +49,18 @@ describe('engine-audio-options', () => {
             vadThreshold: 0.5,
         });
         assert.strictEqual(vad.filmPreset, true);
-        assert.strictEqual(vad.sensitive, true);
+        assert.strictEqual(vad.sensitive, false);
         assert.strictEqual(vad.aggressive, false);
+        assert.notStrictEqual(vad.model, 'whisperseg-asmr');
+    });
+
+    it('forces denoise off when film enhance is entitled', () => {
+        const audio = buildAudioJobOptions({
+            filmAudioEnhance: true,
+            audioLightDenoise: true,
+        }, { entitled: true });
+        assert.strictEqual(audio.separate, true);
+        assert.strictEqual(audio.denoise, 'off');
     });
 
     it('keeps explicit threshold with aggressive', () => {
@@ -96,6 +106,13 @@ describe('engine-audio-options', () => {
         assert.strictEqual(ok.filmAudioEnhance, true);
         assert.strictEqual(ok.separate, true);
         assert.strictEqual(ok.filmPreset, true);
+    });
+
+    it('does not set diarize on audio options', () => {
+        const off = buildAudioJobOptions({ neuralDiarize: true }, { entitled: true });
+        assert.strictEqual(off.diarize, undefined);
+        const on = buildAudioJobOptions({}, { entitled: true });
+        assert.strictEqual(on.diarize, undefined);
     });
 
     it('supports film VAD preset without Demucs', () => {

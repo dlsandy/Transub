@@ -203,7 +203,7 @@ describe('normalize dual task options', () => {
         assert.strictEqual(opts.dualPrimaryTrack, 'target');
         assert.strictEqual(opts.dualDisplayMode, 'both');
         assert.strictEqual(opts.dualLineOrder, 'target-first');
-        assert.strictEqual(opts.mergeBilingualSubtitles, false);
+        assert.strictEqual(opts.mergeBilingualSubtitles, true);
         assert.strictEqual(opts.deleteSourcesAfterMergeBilingual, false);
     });
 
@@ -220,7 +220,7 @@ describe('normalize dual task options', () => {
         assert.strictEqual(sourceFirst.dualLineOrder, 'source-first');
     });
 
-    it('enables merge bilingual only for dual task', () => {
+    it('preserves merge bilingual preference across tasks', () => {
         const dual = normalizeTransWithAiRuntimeOptions({
             task: 'dual',
             mergeBilingualSubtitles: true,
@@ -232,8 +232,15 @@ describe('normalize dual task options', () => {
             mergeBilingualSubtitles: true,
             deleteSourcesAfterMergeBilingual: true,
         });
-        assert.strictEqual(translate.mergeBilingualSubtitles, false);
-        assert.strictEqual(translate.deleteSourcesAfterMergeBilingual, false);
+        assert.strictEqual(translate.mergeBilingualSubtitles, true);
+        assert.strictEqual(translate.deleteSourcesAfterMergeBilingual, true);
+        const off = normalizeTransWithAiRuntimeOptions({
+            task: 'dual',
+            mergeBilingualSubtitles: false,
+            deleteSourcesAfterMergeBilingual: true,
+        });
+        assert.strictEqual(off.mergeBilingualSubtitles, false);
+        assert.strictEqual(off.deleteSourcesAfterMergeBilingual, false);
     });
 
     it('enables delete sources after merge only when merge bilingual is on', () => {

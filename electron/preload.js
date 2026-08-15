@@ -83,6 +83,9 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         return () => ipcRenderer.removeListener('transub-engine-download-progress', listener);
     },
     transubEngineGenerateSubtitles: (payload) => ipcRenderer.invoke('transub-engine-generate-subtitles', payload || {}),
+    transubLiveBatchAppend: (payload) => ipcRenderer.invoke('transub-live-batch-append', payload || {}),
+    transubLiveBatchSkip: (payload) => ipcRenderer.invoke('transub-live-batch-skip', payload || {}),
+    transubLiveBatchUpdateOverrides: (payload) => ipcRenderer.invoke('transub-live-batch-update-overrides', payload || {}),
     transubEngineTranslateCues: (payload) => ipcRenderer.invoke('transub-engine-translate-cues', payload || {}),
     onEngineTranslateProgress: (callback) => {
         if (typeof callback !== 'function') return () => {};
@@ -91,11 +94,16 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
         return () => ipcRenderer.removeListener('transub-engine-translate-progress', handler);
     },
     transubEngineCancel: () => ipcRenderer.invoke('transub-engine-cancel'),
+    transubEngineResumeJob: (payload) => ipcRenderer.invoke('transub-engine-resume-job', payload || {}),
+    transubEngineJobCheckpoint: (payload) => ipcRenderer.invoke('transub-engine-job-checkpoint', payload || {}),
+    transubEngineExportDiagnostics: (payload) => ipcRenderer.invoke('transub-engine-export-diagnostics', payload || {}),
     transubEngineOpenLatestLog: () => ipcRenderer.invoke('transub-engine-open-latest-log'),
     transubEngineGetLogPath: () => ipcRenderer.invoke('transub-engine-get-log-path'),
     transubEngineSaveOptions: (payload) => ipcRenderer.invoke('transub-engine-save-options', payload || {}),
     transubGenerateSubtitles: (payload) => ipcRenderer.invoke('transub-generate-subtitles', payload || {}),
     transubComputeTaskStatus: () => ipcRenderer.invoke('transub-compute-task-status'),
+    transubComputeTaskForceRelease: () => ipcRenderer.invoke('transub-compute-task-force-release'),
+    transubComputeTaskCancel: () => ipcRenderer.invoke('transub-compute-task-cancel'),
     onTransubComputeTaskChanged: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const handler = (_event, payload) => callback(payload);
@@ -135,6 +143,30 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transWithAiImportPreset: () => ipcRenderer.invoke('transwithai-import-preset'),
     transWithAiGetTaskHistory: () => ipcRenderer.invoke('transwithai-get-task-history'),
     transWithAiClearTaskHistory: () => ipcRenderer.invoke('transwithai-clear-task-history'),
+    transubLibraryStatus: () => ipcRenderer.invoke('transub-library-status'),
+    transubLibraryList: (payload) => ipcRenderer.invoke('transub-library-list', payload || {}),
+    transubLibraryGetMedia: (payload) => ipcRenderer.invoke('transub-library-get-media', payload || {}),
+    transubLibrarySetActive: (payload) => ipcRenderer.invoke('transub-library-set-active', payload || {}),
+    transubLibraryOpenVersion: (payload) => ipcRenderer.invoke('transub-library-open-version', payload || {}),
+    transubLibraryPreviewVersion: (payload) => ipcRenderer.invoke('transub-library-preview-version', payload || {}),
+    transubLibraryLoadVersionCues: (payload) => ipcRenderer.invoke('transub-library-load-version-cues', payload || {}),
+    transubLibraryDiff: (payload) => ipcRenderer.invoke('transub-library-diff', payload || {}),
+    transubLibrarySetStatus: (payload) => ipcRenderer.invoke('transub-library-set-status', payload || {}),
+    transubLibraryDeleteVersion: (payload) => ipcRenderer.invoke('transub-library-delete-version', payload || {}),
+    transubLibraryDeleteMedia: (payload) => ipcRenderer.invoke('transub-library-delete-media', payload || {}),
+    transubLibrarySetNote: (payload) => ipcRenderer.invoke('transub-library-set-note', payload || {}),
+    transubLibrarySetAbTag: (payload) => ipcRenderer.invoke('transub-library-set-ab-tag', payload || {}),
+    transubLibraryPrepareMtTrain: (payload) => ipcRenderer.invoke('transub-library-prepare-mt-train', payload || {}),
+    transubLibraryStartMtTrain: (payload) => ipcRenderer.invoke('transub-library-start-mt-train', payload || {}),
+    transubLibraryExportPack: (payload) => ipcRenderer.invoke('transub-library-export-pack', payload || {}),
+    transubLibraryExportTags: (payload) => ipcRenderer.invoke('transub-library-export-tags', payload || {}),
+    transubLibraryExportCorpus: (payload) => ipcRenderer.invoke('transub-library-export-corpus', payload || {}),
+    transubLibraryPrepareRerun: (payload) => ipcRenderer.invoke('transub-library-prepare-rerun', payload || {}),
+    transubLibrarySetMediaPath: (payload) => ipcRenderer.invoke('transub-library-set-media-path', payload || {}),
+    transubLibraryRenameMedia: (payload) => ipcRenderer.invoke('transub-library-rename-media', payload || {}),
+    transubLibrarySuggestMedia: (payload) => ipcRenderer.invoke('transub-library-suggest-media', payload || {}),
+    transubLibraryAutoLinkMedia: (payload) => ipcRenderer.invoke('transub-library-auto-link-media', payload || {}),
+    transubLibraryAutoLinkMediaBatch: (payload) => ipcRenderer.invoke('transub-library-auto-link-media-batch', payload || {}),
     transubClearTranscriptCache: (payload) => ipcRenderer.invoke('transub-clear-transcript-cache', payload || {}),
     transubFindKeptTranscript: (payload) => ipcRenderer.invoke('transub-find-kept-transcript', payload || {}),
     transubPinKeptTranscript: (payload) => ipcRenderer.invoke('transub-pin-kept-transcript', payload || {}),
@@ -147,10 +179,12 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubReadSubtitle: (payload) => ipcRenderer.invoke('transub-read-subtitle', payload || {}),
     transubWriteSubtitle: (payload) => ipcRenderer.invoke('transub-write-subtitle', payload || {}),
     transubExportSubtitle: (payload) => ipcRenderer.invoke('transub-export-subtitle', payload || {}),
+    transubListSystemFonts: () => ipcRenderer.invoke('transub-list-system-fonts'),
     transubDeleteSubtitleFiles: (payload) => ipcRenderer.invoke('transub-delete-subtitle-files', payload || {}),
     transubScanSubtitleQc: (payload) => ipcRenderer.invoke('transub-scan-subtitle-qc', payload || {}),
     transubApplySubtitlePostprocess: (payload) => ipcRenderer.invoke('transub-apply-subtitle-postprocess', payload || {}),
     transubCompactPureInterjections: (payload) => ipcRenderer.invoke('transub-compact-pure-interjections', payload || {}),
+    transubMergeBilingualSubtitles: (payload) => ipcRenderer.invoke('transub-merge-bilingual-subtitles', payload || {}),
     transubRemoveNoisePair: (payload) => ipcRenderer.invoke('transub-remove-noise-pair', payload || {}),
     transWithAiListModels: (payload) => ipcRenderer.invoke('transwithai-list-models', payload || {}),
     transWithAiValidateModel: (payload) => ipcRenderer.invoke('transwithai-validate-model', payload || {}),
@@ -197,6 +231,32 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubOpenSetupWizard: (payload) => ipcRenderer.invoke('transub-open-setup-wizard', payload || {}),
     transubOpenUpdateWindow: (payload) => ipcRenderer.invoke('transub-open-update-window', payload || {}),
     transubOpenAboutWindow: (payload) => ipcRenderer.invoke('transub-open-about-window', payload || {}),
+    transubOpenSubtitleLibrary: (payload) => ipcRenderer.invoke('transub-open-subtitle-library', payload || {}),
+    transubLibraryStartRetranslate: (payload) => ipcRenderer.invoke('transub-library-start-retranslate', payload || {}),
+    onTransubLibraryStartRetranslate: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-library-start-retranslate', handler);
+        return () => ipcRenderer.removeListener('transub-library-start-retranslate', handler);
+    },
+    onTransubLibraryFocusMedia: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-library-focus-media', handler);
+        return () => ipcRenderer.removeListener('transub-library-focus-media', handler);
+    },
+    onTransubLibraryCatalogChanged: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-library-catalog-changed', handler);
+        return () => ipcRenderer.removeListener('transub-library-catalog-changed', handler);
+    },
+    onTransubLibraryMediaUpdated: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-library-media-updated', handler);
+        return () => ipcRenderer.removeListener('transub-library-media-updated', handler);
+    },
     transubOpenMtTrain: (payload) => ipcRenderer.invoke('transub-open-mt-train', payload || {}),
     transubIsDevBuild: () => ipcRenderer.invoke('transub-is-dev-build'),
     transubShowMainWindow: (payload) => ipcRenderer.invoke('transub-show-main-window', payload || {}),

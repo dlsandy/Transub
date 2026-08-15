@@ -167,8 +167,8 @@ function checkAsrModel(engineRoot, engineAsrModel = '') {
         label: 'ASR 模型',
         status: 'fail',
         detail: preferred
-            ? `未找到 ${preferred}。请运行「设置向导」或在「处理模型」下载模型`
-            : '未找到可用 ASR 模型。请运行「设置向导」或在「处理模型」下载 SenseVoice / Whisper',
+            ? `未找到 ${preferred}。请运行「设置向导」或在「模型」页下载模型`
+            : '未找到可用 ASR 模型。请运行「设置向导」或在「模型」页下载 SenseVoice / Whisper',
         blocking: true,
     };
 }
@@ -198,7 +198,7 @@ function checkVadModel(engineRoot, engineAsrModel = '') {
         id: 'vadModel',
         label: 'VAD 模型（FSMN）',
         status: 'fail',
-        detail: 'SenseVoice 默认 VAD 未找到。请重新安装或在「处理模型」下载 fsmn-vad',
+        detail: 'SenseVoice 默认 VAD 未找到。请重新安装或在「模型」页下载 fsmn-vad',
         blocking: true,
     };
 }
@@ -241,7 +241,7 @@ function sanitizeEngineProbeStderr(stderr) {
         .trim();
 }
 
-/** Put bundled ffmpeg on PATH so funasr→pydub import does not warn during env probes. */
+/** Put bundled ffmpeg + nvidia CUDA wheel bins on PATH for engine Python probes. */
 function buildEngineProbeEnv(engineRoot) {
     const env = {
         ...process.env,
@@ -251,6 +251,37 @@ function buildEngineProbeEnv(engineRoot) {
     };
     try {
         const root = path.resolve(String(engineRoot || '').trim() || '.');
+        const sep = path.delimiter;
+        const prepend = [];
+
+        // CUDA 12 wheels (cuBLAS etc.) must be visible before CTranslate2 loads.
+        const sitePkgs = [
+            path.join(root, 'runtime', 'Lib', 'site-packages'),
+            path.join(root, 'runtime', 'lib', 'site-packages'),
+            path.join(root, '.venv', 'Lib', 'site-packages'),
+            path.join(root, 'venv', 'Lib', 'site-packages'),
+        ];
+        for (const sp of sitePkgs) {
+            if (!fs.existsSync(sp)) continue;
+            const nvidiaRoot = path.join(sp, 'nvidia');
+            if (fs.existsSync(nvidiaRoot)) {
+                let pkgs = [];
+                try {
+                    pkgs = fs.readdirSync(nvidiaRoot, { withFileTypes: true })
+                        .filter((d) => d.isDirectory())
+                        .map((d) => d.name);
+                } catch { /* ignore */ }
+                for (const name of pkgs) {
+                    for (const sub of ['bin', path.join('lib', 'x64'), 'lib']) {
+                        const dir = path.join(nvidiaRoot, name, sub);
+                        if (fs.existsSync(dir)) prepend.push(dir);
+                    }
+                }
+            }
+            const torchLib = path.join(sp, 'torch', 'lib');
+            if (fs.existsSync(torchLib)) prepend.push(torchLib);
+        }
+
         const ffmpegBridge = require('./ffmpeg-bridge');
         let exe = '';
         try {
@@ -273,14 +304,26 @@ function buildEngineProbeEnv(engineRoot) {
             }
         }
         if (exe && exe !== 'ffmpeg' && fs.existsSync(exe)) {
-            const dir = path.dirname(exe);
-            const sep = path.delimiter;
-            const current = String(env.PATH || process.env.PATH || '');
-            if (!current.toLowerCase().split(sep).includes(dir.toLowerCase())) {
-                env.PATH = `${dir}${sep}${current}`;
-            }
+            prepend.push(path.dirname(exe));
             env.FFMPEG_BINARY = exe;
             env.FFMPEG_PATH = exe;
+        }
+
+        if (prepend.length) {
+            const current = String(env.PATH || process.env.PATH || '');
+            const lower = new Set(
+                current.split(sep).filter(Boolean).map((p) => p.toLowerCase()),
+            );
+            const unique = [];
+            for (const dir of prepend) {
+                const key = String(dir).toLowerCase();
+                if (lower.has(key)) continue;
+                lower.add(key);
+                unique.push(dir);
+            }
+            if (unique.length) {
+                env.PATH = `${unique.join(sep)}${sep}${current}`;
+            }
         }
         env.TRANSUB_ENGINE_HOME = root;
     } catch { /* ignore */ }
@@ -405,7 +448,7 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err) || low.includes('torch_python')) {
         detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
     } else if (modelInstalled && missingLabel) {
-        detail = `模型权重已安装，但缺少运行库 ${missingLabel}（与「已安装」不是同一项）。在「处理模型」对 SenseVoice Small 点重新下载可补齐`;
+        detail = `模型权重已安装，但缺少运行库 ${missingLabel}（与「已安装」不是同一项）。在「模型」页对 SenseVoice Small 点重新下载可补齐`;
     } else if (missingLabel) {
         detail = `缺少运行库 ${missingLabel}；下载 SenseVoice 模型时会自动安装`;
     } else {
@@ -433,48 +476,54 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
 
 async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     const needWhisper = prefersWhisper(engineAsrModel) || !prefersSensevoice(engineAsrModel);
-    const probe = await runEnginePython(
-        engineRoot,
-        [
-            'import json,sys',
-            'out={"numpy":"","fw":"","av":"","ct2":"","ort":"","missing":[],"errors":[],"policy":False,"dll":False}',
-            'try:',
-            ' import numpy as np',
-            ' out["numpy"]=str(getattr(np,"__version__","") or "")',
-            'except Exception as e:',
-            ' out["missing"].append("numpy"); out["errors"].append(str(e))',
-            'try:',
-            ' import av',
-            ' out["av"]=str(getattr(av,"__version__","") or "ok")',
-            'except Exception as e:',
-            ' out["missing"].append("av"); out["errors"].append(str(e))',
-            'try:',
-            ' import ctranslate2 as ct2',
-            ' out["ct2"]=str(getattr(ct2,"__version__","") or "ok")',
-            'except Exception as e:',
-            ' out["missing"].append("ctranslate2"); out["errors"].append(str(e))',
-            'try:',
-            ' import onnxruntime as ort',
-            ' out["ort"]=str(getattr(ort,"__version__","") or "ok")',
-            'except Exception as e:',
-            ' out["missing"].append("onnxruntime"); out["errors"].append(str(e))',
-            'try:',
-            ' import faster_whisper as fw',
-            ' out["fw"]=str(getattr(fw,"__version__","") or "ok")',
-            'except Exception as e:',
-            ' err=str(e)',
-            ' if "ctranslate2" in err.lower() and "ctranslate2" in out["missing"]:',
-            '  out["errors"].append(err)',
-            ' else:',
-            '  out["missing"].append("faster-whisper"); out["errors"].append(err)',
-            'err=" ".join(out["errors"])',
-            'out["policy"]=("应用程序控制策略" in err) or ("智能应用控制" in err) or ("4551" in err) or ("smart app" in err.lower())',
-            'out["dll"]=(not out["policy"]) and (("dll load failed" in err.lower()) or ("找不到指定的模块" in err) or ("winerror 126" in err.lower()))',
-            'print(json.dumps(out,ensure_ascii=False))',
-            'sys.exit(0 if not out["missing"] else 1)',
-        ].join('\n'),
-        15000,
-    );
+    const probeCode = [
+        'import json,sys',
+        'out={"numpy":"","fw":"","av":"","ct2":"","ort":"","missing":[],"errors":[],"policy":False,"dll":False}',
+        'try:',
+        ' import numpy as np',
+        ' out["numpy"]=str(getattr(np,"__version__","") or "")',
+        'except Exception as e:',
+        ' out["missing"].append("numpy"); out["errors"].append(str(e))',
+        'try:',
+        ' import av',
+        ' out["av"]=str(getattr(av,"__version__","") or "ok")',
+        'except Exception as e:',
+        ' out["missing"].append("av"); out["errors"].append(str(e))',
+        'try:',
+        ' import ctranslate2 as ct2',
+        ' out["ct2"]=str(getattr(ct2,"__version__","") or "ok")',
+        'except Exception as e:',
+        ' out["missing"].append("ctranslate2"); out["errors"].append(str(e))',
+        'try:',
+        ' import onnxruntime as ort',
+        ' out["ort"]=str(getattr(ort,"__version__","") or "ok")',
+        'except Exception as e:',
+        ' out["missing"].append("onnxruntime"); out["errors"].append(str(e))',
+        'try:',
+        ' import faster_whisper as fw',
+        ' out["fw"]=str(getattr(fw,"__version__","") or "ok")',
+        'except Exception as e:',
+        ' err=str(e)',
+        ' if "ctranslate2" in err.lower() and "ctranslate2" in out["missing"]:',
+        '  out["errors"].append(err)',
+        ' else:',
+        '  out["missing"].append("faster-whisper"); out["errors"].append(err)',
+        'err=" ".join(out["errors"])',
+        'out["policy"]=("应用程序控制策略" in err) or ("智能应用控制" in err) or ("4551" in err) or ("smart app" in err.lower())',
+        'out["dll"]=(not out["policy"]) and (("dll load failed" in err.lower()) or ("找不到指定的模块" in err) or ("winerror 126" in err.lower()))',
+        'print(json.dumps(out,ensure_ascii=False))',
+        'sys.exit(0 if not out["missing"] else 1)',
+    ].join('\n');
+    // Fresh wheel install + Windows AV can make first import exceed 15s; retry once.
+    let probe = await runEnginePython(engineRoot, probeCode, 45000);
+    const probeTimedOut = (p) => {
+        const err = String(p?.stderr || '').trim().toLowerCase();
+        return !p?.ok && (err === 'timeout' || /\btimeout\b/.test(err))
+            && !String(p?.stdout || '').trim();
+    };
+    if (probeTimedOut(probe)) {
+        probe = await runEnginePython(engineRoot, probeCode, 60000);
+    }
     let data = null;
     try {
         data = JSON.parse(String(probe.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
@@ -495,6 +544,16 @@ async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
             status: 'ok',
             detail: bits.length ? bits.join(' · ') : 'numpy / ctranslate2 / onnxruntime / faster-whisper 就绪',
             blocking: false,
+        };
+    }
+    if (probeTimedOut(probe) && !data) {
+        return {
+            id: 'whisperRuntime',
+            label: 'Whisper 运行库',
+            status: 'warn',
+            detail: 'Whisper 运行库探测超时（首次导入较慢）。库可能已装好，请再点一次重新检测',
+            blocking: false,
+            probeTimedOut: true,
         };
     }
     const missLabel = missing.length ? missing.join(' / ') : 'numpy / ctranslate2 / onnxruntime / faster-whisper / av';
@@ -731,6 +790,8 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                     ' "asrGpuReady": bool(p.get("asrGpuReady")),',
                     ' "ortGpuCuda": bool(p.get("ortGpuCuda")),',
                     ' "ortGpuRequirement": p.get("ortGpuRequirement") or "",',
+                    ' "ctranslate2Cuda": bool(p.get("ctranslate2Cuda")),',
+                    ' "ctranslate2CudaReason": p.get("ctranslate2CudaReason") or "",',
                     ' "hint": p.get("hint") or "",',
                     '}, ensure_ascii=False))',
                 ].join('\n'),
@@ -753,6 +814,8 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 asrGpuReady: true,
                 ortGpuCuda: false,
                 ortGpuRequirement: probe.ortGpuRequirement || '',
+                ctranslate2Cuda: !!probe.ctranslate2Cuda,
+                ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
             };
         }
         if (probe && probe.status === 'partial') {
@@ -760,11 +823,13 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 id: 'gpuRuntime',
                 label: 'GPU 运行时',
                 status: 'warn',
-                detail: probe.hint || 'GPU 组件部分就绪，请重启引擎或再次下载 GPU 支持',
+                detail: probe.hint || 'GPU 组件部分就绪；可再次下载 GPU 支持后重新检测',
                 blocking: false,
                 asrGpuReady: !!probe.asrGpuReady,
                 ortGpuCuda: !!probe.ortGpuCuda,
                 ortGpuRequirement: probe.ortGpuRequirement || '',
+                ctranslate2Cuda: !!probe.ctranslate2Cuda,
+                ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
             };
         }
         const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
@@ -779,6 +844,8 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             asrGpuReady: probe ? !!probe.asrGpuReady : true,
             ortGpuCuda: probe ? !!probe.ortGpuCuda : undefined,
             ortGpuRequirement: probe ? (probe.ortGpuRequirement || '') : '',
+            ctranslate2Cuda: probe ? !!probe.ctranslate2Cuda : undefined,
+            ctranslate2CudaReason: probe ? (probe.ctranslate2CudaReason || '') : '',
         };
     }
     const cudaMajor = Number(String(gpuInfo.cudaVersion || '').split('.')[0]);
@@ -940,77 +1007,131 @@ function checkLlamaServerRuntime() {
     }
 }
 
+/** Wizard step 2: path / FFmpeg / VC++ / GPU / Engine（不含听写运行库）. */
+const ENV_CHECK_BASE_IDS = Object.freeze([
+    'installPath',
+    'ffmpeg',
+    'vcRedist',
+    'gpu',
+    'gpuDriver',
+    'gpuRuntime',
+    'engine',
+    'llamaServerRuntime',
+]);
+/** Wizard step after samples: ASR / VAD / LID / SenseVoice·Whisper 运行库. */
+const ENV_CHECK_RUNTIME_IDS = Object.freeze([
+    'asrModel',
+    'vadModel',
+    'lidModel',
+    'sensevoiceRuntime',
+    'whisperRuntime',
+]);
+
+function normalizeEnvCheckScope(scope) {
+    const s = String(scope || 'full').trim().toLowerCase();
+    if (s === 'base' || s === 'runtime') return s;
+    return 'full';
+}
+
 /**
- * @param {{ ffmpegPath?: string, engineInstallPath?: string, engineAsrModel?: string }} [options]
+ * @param {{
+ *   ffmpegPath?: string,
+ *   engineInstallPath?: string,
+ *   engineAsrModel?: string,
+ *   syncLlamaBackend?: boolean,
+ *   scope?: 'full'|'base'|'runtime',
+ * }} [options]
  */
 async function runEnvCheck(options = {}) {
+    const scope = normalizeEnvCheckScope(options.scope);
+    const wantBase = scope === 'full' || scope === 'base';
+    const wantRuntime = scope === 'full' || scope === 'runtime';
     const items = [];
-    items.push(checkInstallPath());
-    items.push(await checkFfmpeg(options.ffmpegPath));
-    items.push(checkVcRedist());
 
     const configuredRoot = resolveEngineInstallPath(options.engineInstallPath || '');
     const engineItem = checkEngine(configuredRoot);
     const engineRoot = engineItem.path || configuredRoot || getBundledEnginePath();
     const asrModel = String(options.engineAsrModel || '').trim();
-    const { gpu, driver, info } = await checkGpu();
-    // Keep llama backend preference aligned with detected CUDA 12 / 13 before status check.
-    try {
-        const prefer = require('./advanced-runtime-prefer');
-        if (info) prefer.applyGpuInfo(info);
-        require('./advanced-llama-server').syncRuntimePreferenceToHardware({
-            force: !!options.syncLlamaBackend,
-            gpuInfo: info || undefined,
-        });
-    } catch (_) { /* ignore */ }
-    items.push(gpu);
-    items.push(driver);
-    items.push(await checkGpuRuntime(info, engineRoot));
-    items.push(engineItem);
-    items.push(checkLlamaServerRuntime());
 
-    if (engineItem.status === 'ok') {
-        items.push(checkAsrModel(engineRoot, asrModel));
-        items.push(checkVadModel(engineRoot, asrModel));
-        items.push(checkLidModel(engineRoot));
-        items.push(await checkSensevoiceRuntime(engineRoot, asrModel));
-        items.push(await checkWhisperRuntime(engineRoot, asrModel));
-    } else {
-        items.push({
-            id: 'asrModel',
-            label: 'ASR 模型',
-            status: 'fail',
-            detail: '引擎不可用，无法检测模型',
-            blocking: true,
-        });
-        items.push({
-            id: 'vadModel',
-            label: 'VAD 模型（FSMN）',
-            status: 'fail',
-            detail: '引擎不可用，无法检测模型',
-            blocking: true,
-        });
-        items.push({
-            id: 'lidModel',
-            label: '语种探测模型',
-            status: 'warn',
-            detail: '引擎不可用，跳过',
-            blocking: false,
-        });
-        items.push({
-            id: 'sensevoiceRuntime',
-            label: 'SenseVoice 运行库',
-            status: 'fail',
-            detail: '引擎不可用，无法检测 torch / funasr',
-            blocking: true,
-        });
-        items.push({
-            id: 'whisperRuntime',
-            label: 'Whisper 运行库',
-            status: 'warn',
-            detail: '引擎不可用，跳过',
-            blocking: false,
-        });
+    if (wantBase) {
+        items.push(checkInstallPath());
+        items.push(await checkFfmpeg(options.ffmpegPath));
+        items.push(checkVcRedist());
+
+        const { gpu, driver, info } = await checkGpu();
+        // Keep llama backend preference aligned with detected CUDA 12 / 13 before status check.
+        try {
+            const prefer = require('./advanced-runtime-prefer');
+            if (info) prefer.applyGpuInfo(info);
+            require('./advanced-llama-server').syncRuntimePreferenceToHardware({
+                force: !!options.syncLlamaBackend,
+                gpuInfo: info || undefined,
+            });
+        } catch (_) { /* ignore */ }
+        items.push(gpu);
+        items.push(driver);
+        items.push(await checkGpuRuntime(info, engineRoot));
+        items.push(engineItem);
+        items.push(checkLlamaServerRuntime());
+    } else if (wantRuntime && options.syncLlamaBackend) {
+        // Runtime-only recheck: still align llama backend if caller asks.
+        try {
+            const { info } = await checkGpu();
+            const prefer = require('./advanced-runtime-prefer');
+            if (info) prefer.applyGpuInfo(info);
+            require('./advanced-llama-server').syncRuntimePreferenceToHardware({
+                force: true,
+                gpuInfo: info || undefined,
+            });
+        } catch (_) { /* ignore */ }
+    }
+
+    if (wantRuntime) {
+        if (engineItem.status === 'ok') {
+            items.push(checkAsrModel(engineRoot, asrModel));
+            items.push(checkVadModel(engineRoot, asrModel));
+            items.push(checkLidModel(engineRoot));
+            items.push(await checkSensevoiceRuntime(engineRoot, asrModel));
+            items.push(await checkWhisperRuntime(engineRoot, asrModel));
+        } else {
+            const needSv = prefersSensevoice(asrModel);
+            const needWhisper = prefersWhisper(asrModel) || !prefersSensevoice(asrModel);
+            items.push({
+                id: 'asrModel',
+                label: 'ASR 模型',
+                status: 'fail',
+                detail: '引擎不可用，无法检测模型',
+                blocking: true,
+            });
+            items.push({
+                id: 'vadModel',
+                label: 'VAD 模型（FSMN）',
+                status: 'fail',
+                detail: '引擎不可用，无法检测模型',
+                blocking: true,
+            });
+            items.push({
+                id: 'lidModel',
+                label: '语种探测模型',
+                status: 'warn',
+                detail: '引擎不可用，跳过',
+                blocking: false,
+            });
+            items.push({
+                id: 'sensevoiceRuntime',
+                label: 'SenseVoice 运行库',
+                status: needSv ? 'fail' : 'warn',
+                detail: '引擎不可用，无法检测 torch / funasr',
+                blocking: needSv,
+            });
+            items.push({
+                id: 'whisperRuntime',
+                label: 'Whisper 运行库',
+                status: needWhisper ? 'fail' : 'warn',
+                detail: '引擎不可用，跳过',
+                blocking: needWhisper,
+            });
+        }
     }
 
     const blocking = items.filter((it) => it.blocking && it.status === 'fail');
@@ -1020,6 +1141,7 @@ async function runEnvCheck(options = {}) {
         warnCount: items.filter((it) => it.status === 'warn').length,
         failCount: items.filter((it) => it.status === 'fail').length,
         items,
+        scope,
         urls: {
             vcRedist: VC_REDIST_URL,
             support: SUPPORT_URL,
@@ -1085,45 +1207,61 @@ function planEnvFixes(items, opts = {}) {
     if (statusOf('whisperRuntime') === 'fail' || statusOf('whisperRuntime') === 'warn') {
         const wr = byId.whisperRuntime || {};
         const wrDetail = detailOf('whisperRuntime');
-        const policyBlocked = !!wr.policyBlocked
-            || /应用程序控制策略|智能应用控制|smart.?app|4551/i.test(wrDetail);
-        const dllBlocked = !!wr.dllBlocked
-            || (!policyBlocked && /dll load failed|找不到指定的模块|winerror 126/i.test(wrDetail));
-        if (policyBlocked) {
-            // Still offer one-click retry (user may have just disabled SAC) + manual download.
-            // Do not hide the fix button — otherwise a failing Whisper item looks "stuck".
+        // Slow first import after install — do not force another pip round.
+        if (!wr.probeTimedOut) {
+            const policyBlocked = !!wr.policyBlocked
+                || /应用程序控制策略|智能应用控制|smart.?app|4551/i.test(wrDetail);
+            const dllBlocked = !!wr.dllBlocked
+                || (!policyBlocked && /dll load failed|找不到指定的模块|winerror 126/i.test(wrDetail));
+            if (policyBlocked) {
+                // Still offer one-click retry (user may have just disabled SAC) + manual download.
+                // Do not hide the fix button — otherwise a failing Whisper item looks "stuck".
+                modelIds.add('whisper-tiny');
+                forceIds.add('whisper-tiny');
+                steps.push({
+                    id: 'whisperRuntime',
+                    label: '重试补齐 Whisper 运行库（若仍被策略拦截需先关闭智能应用控制）',
+                });
+            } else if (dllBlocked && statusOf('vcRedist') !== 'ok') {
+                openVcRedist = true;
+                if (!steps.some((s) => s.id === 'vcRedist')) {
+                    steps.push({ id: 'vcRedist', label: '打开 Visual C++ 运行库安装包下载页（Whisper DLL 依赖）' });
+                }
+                modelIds.add('whisper-tiny');
+                forceIds.add('whisper-tiny');
+                steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
+            } else {
+                modelIds.add('whisper-tiny');
+                forceIds.add('whisper-tiny');
+                steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
+            }
+        }
+    }
+
+    if (statusOf('gpuRuntime') === 'warn') {
+        const gpuItem = byId.gpuRuntime || {};
+        const gpuDetail = detailOf('gpuRuntime');
+        const ct2Missing = String(gpuItem.ctranslate2CudaReason || '') === 'ctranslate2_not_installed'
+            || /未安装 CTranslate2|ctranslate2_not_installed/i.test(gpuDetail);
+        if (ct2Missing) {
+            // faster-whisper is often installed --no-deps; GPU cuBLAS alone cannot fix CT2.
             modelIds.add('whisper-tiny');
             forceIds.add('whisper-tiny');
             steps.push({
                 id: 'whisperRuntime',
-                label: '重试补齐 Whisper 运行库（若仍被策略拦截需先关闭智能应用控制）',
+                label: '补齐 Whisper 运行库（ctranslate2 / faster-whisper / av）',
             });
-        } else if (dllBlocked && statusOf('vcRedist') !== 'ok') {
-            openVcRedist = true;
-            if (!steps.some((s) => s.id === 'vcRedist')) {
-                steps.push({ id: 'vcRedist', label: '打开 Visual C++ 运行库安装包下载页（Whisper DLL 依赖）' });
-            }
-            modelIds.add('whisper-tiny');
-            forceIds.add('whisper-tiny');
-            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
-        } else {
-            modelIds.add('whisper-tiny');
-            forceIds.add('whisper-tiny');
-            steps.push({ id: 'whisperRuntime', label: '补齐 Whisper 运行库（numpy / ctranslate2 / faster-whisper / av）' });
+        } else if (/cublas|GPU 支持|CUDA|WhisperSeg|onnxruntime/i.test(gpuDetail)) {
+            ensureGpu = true;
+            const ortOnly = /WhisperSeg|onnxruntime/i.test(gpuDetail)
+                && !/cublas64_12|缺少 cublas/i.test(gpuDetail);
+            steps.push({
+                id: 'gpuRuntime',
+                label: ortOnly
+                    ? '下载 GPU 支持（WhisperSeg / onnxruntime-gpu）'
+                    : '下载 GPU 支持（cuBLAS）',
+            });
         }
-    }
-
-    if (statusOf('gpuRuntime') === 'warn'
-        && /cublas|GPU 支持|CUDA|WhisperSeg|onnxruntime/i.test(detailOf('gpuRuntime'))) {
-        ensureGpu = true;
-        const ortOnly = /WhisperSeg|onnxruntime/i.test(detailOf('gpuRuntime'))
-            && !/cublas64_12|缺少 cublas/i.test(detailOf('gpuRuntime'));
-        steps.push({
-            id: 'gpuRuntime',
-            label: ortOnly
-                ? '下载 GPU 支持（WhisperSeg / onnxruntime-gpu）'
-                : '下载 GPU 支持（cuBLAS）',
-        });
     }
 
     const llamaItem = byId.llamaServerRuntime || {};
@@ -1185,6 +1323,9 @@ function planEnvFixes(items, opts = {}) {
 module.exports = {
     runEnvCheck,
     planEnvFixes,
+    normalizeEnvCheckScope,
+    ENV_CHECK_BASE_IDS,
+    ENV_CHECK_RUNTIME_IDS,
     checkInstallPath,
     checkVcRedist,
     checkEngine,

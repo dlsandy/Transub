@@ -53,24 +53,23 @@ describe('anime-whisper-preset-tip', () => {
         assert.strictEqual(tip.PRESET_ID, 'ja-av-anime-whisper-translate');
         assert.strictEqual(tip.TIP_VERSION, '3.0.5');
 
-        const raw = fs.readFileSync(
-            path.join(__dirname, '..', 'electron', 'presets-data.js'),
-            'utf8',
-        );
-        assert.ok(raw.includes(`id: '${tip.PRESET_ID}'`));
-        assert.ok(raw.includes('Anime Whisper'));
-        assert.ok(
-            /id:\s*'ja-av-anime-whisper-translate'[\s\S]*?postBatchCompactPureInterjections:\s*true/.test(raw),
+        const { BUILTIN_PRESETS } = require('../electron/presets-data');
+        const preset = BUILTIN_PRESETS.find((p) => p.id === tip.PRESET_ID);
+        assert.ok(preset, 'Anime Whisper builtin preset must exist');
+        assert.ok(String(preset.name || '').includes('Anime Whisper'));
+        assert.strictEqual(
+            preset.options?.postBatchCompactPureInterjections,
+            true,
             'Anime Whisper preset should enable compact pure interjections by default',
         );
     });
 
-    it('exposes quick-access helpers for the New chip button', () => {
+    it('exposes apply + maybeShow helpers (quick AW chip removed)', () => {
         const tip = loadTipApi();
-        assert.strictEqual(typeof tip.bindQuickBtn, 'function');
-        assert.strictEqual(typeof tip.initQuickAccess, 'function');
-        assert.strictEqual(typeof tip.activateFromQuickBtn, 'function');
-        assert.strictEqual(typeof tip.syncQuickBtnState, 'function');
-        assert.strictEqual(typeof tip.isAnimeWhisperPresetActive, 'function');
+        assert.strictEqual(typeof tip.applyAnimeWhisperPreset, 'function');
+        assert.strictEqual(typeof tip.maybeShow, 'function');
+        assert.strictEqual(tip.bindQuickBtn, undefined);
+        assert.strictEqual(tip.initQuickAccess, undefined);
+        assert.strictEqual(tip.syncQuickBtnState, undefined);
     });
 });

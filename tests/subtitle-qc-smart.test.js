@@ -4,6 +4,7 @@ const {
     selectQcRetranscribeTargets,
     selectQcLlmSplitTargets,
     buildQcRetranscribeRanges,
+    planLowConfidenceRetranscribeRanges,
     buildQcLlmSplitPayload,
     textsFromBreakIndices,
     parseLlmSplitResponse,
@@ -20,6 +21,8 @@ const {
     summarizeQcLlmSplitPlan,
     summarizeQcSemanticPlan,
     buildQcSmartReconstructOptions,
+    looksLikeWeirdCueText,
+    mergeWeirdTextIssues,
     QC_SMART_NOTE,
     QC_SEMANTIC_NOTE,
 } = require('../src/js/subtitle-qc-smart-core');
@@ -38,6 +41,20 @@ describe('subtitle-qc-smart', () => {
         assert.strictEqual(targets[0].index, 2);
         assert.ok(targets[0].types.includes('fluency'));
         assert.ok(targets.some((t) => t.index === 1 || t.index === 3));
+    });
+
+    it('prioritizes weird cue text for polish', () => {
+        assert.ok(looksLikeWeirdCueText('请改成：你好 __GLOSS1__'));
+        assert.ok(!looksLikeWeirdCueText('今天天气很好。'));
+        const cues = [
+            { startMs: 0, endMs: 1000, text: '正常对白。' },
+            { startMs: 1000, endMs: 2000, text: '系统提示：请翻译字幕 __GLOSS2__' },
+        ];
+        const merged = mergeWeirdTextIssues(cues, []);
+        assert.ok(merged.some((it) => it.index === 1 && it.types.includes('weird')));
+        const targets = selectQcSmartTargets(merged, { maxSmartCues: 4 });
+        assert.ok(targets[0] && targets[0].index === 1);
+        assert.ok(targets[0].types.includes('weird'));
     });
 
     it('expands neighbors for context window', () => {
@@ -70,9 +87,11 @@ describe('subtitle-qc-smart', () => {
     it('builds light reconstruct options with QC note', () => {
         const opts = buildQcSmartReconstructOptions({});
         assert.strictEqual(opts.intensity, 'light');
-        assert.ok(opts.note.includes('QC') || opts.note.includes('通顺') || opts.note === QC_SMART_NOTE);
+        assert.ok(opts.note.includes('通顺') || opts.note.includes('清怪') || opts.note === QC_SMART_NOTE);
+        assert.ok(QC_SMART_NOTE.includes('清怪') || QC_SMART_NOTE.includes('莫名其妙'));
         assert.ok(summarizeQcSmartPlan([]).includes('无需'));
         assert.ok(summarizeQcSmartPlan([{ types: ['fluency'] }]).includes('智能润色'));
+        assert.ok(summarizeQcSmartPlan([{ types: ['weird', 'fluency'] }]).includes('怪句'));
     });
 
     it('picks remaining fluency after rule-like scan', () => {
@@ -146,6 +165,37 @@ describe('subtitle-qc-smart', () => {
         for (const r of ranges) {
             assert.ok(r.durationMs <= 20000 + 1);
         }
+    });
+
+    it('plans low-confidence ranges by merging adjacent cues', () => {
+        const cues = [
+            { startMs: 0, endMs: 1000, text: 'a' },
+            { startMs: 1100, endMs: 2000, text: 'b' },
+            { startMs: 2100, endMs: 3000, text: 'skip' },
+            { startMs: 9000, endMs: 10000, text: 'c' },
+        ];
+        const empty = planLowConfidenceRetranscribeRanges(cues, [], {});
+        assert.strictEqual(empty.rangeCount, 0);
+        assert.strictEqual(empty.cueCount, 0);
+
+        // Non-consecutive indexes: 0–1 merge by adjacency; 3 is a separate window.
+        const planned = planLowConfidenceRetranscribeRanges(cues, [0, 1, 3], {
+            mergeAdjacentGapMs: 800,
+            maxRanges: 8,
+        });
+        assert.strictEqual(planned.cueCount, 3);
+        assert.strictEqual(planned.rangeCount, 2);
+        assert.deepStrictEqual(planned.ranges[0].indexes, [0, 1]);
+        assert.deepStrictEqual(planned.ranges[1].indexes, [3]);
+
+        const fromMeta = planLowConfidenceRetranscribeRanges(cues, [
+            { low: true },
+            { low: true },
+            { low: false },
+            { low: false },
+        ]);
+        assert.strictEqual(fromMeta.cueCount, 2);
+        assert.strictEqual(fromMeta.rangeCount, 1);
     });
 
     it('parses llm split response and applies break indices', () => {

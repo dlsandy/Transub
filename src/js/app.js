@@ -1,10 +1,33 @@
 /**
- * Transub — TransWithAI 字幕生成
+ * Transub — 批量字幕生成（主窗口）
  */
 (function (global) {
     const electron = global.__ELECTRON__;
     const els = {};
     const mediaExt = global.TransubMediaExtensions || {};
+    const pathUtils = global.TransubAppPathUtils || {};
+    const inferProgress = global.TransubInferStageProgress || {};
+    const engineDlFmt = global.TransubEngineDownloadFormat || {};
+    const senseQueueApi = global.TransubSenseQueue || {};
+    const taskListSortApi = global.TransubTaskListSort || {};
+    const engineModelsUi = global.TransubEngineModelsUi || {};
+    const manualDownloadApi = global.TransubEngineManualDownload || {};
+    const senseFinalizeApi = global.TransubSenseFinalize || {};
+    const missingModelsApi = global.TransubEngineMissingModels || {};
+    const startReadinessApi = global.TransubStartReadiness || {};
+    const selectionToolbarApi = global.TransubSelectionToolbar || {};
+    const liveBatchQueueApi = global.TransubLiveBatchQueue || {};
+    const postBatchAutofixApi = global.TransubPostBatchAutofixPlan || {};
+    const retranslatePlanApi = global.TransubRetranslatePlan || {};
+    const senseRecoveryApi = global.TransubSenseRecovery || {};
+    const taskListRowApi = global.TransubTaskListRow || {};
+    const progressDisplayApi = global.TransubProgressDisplay || {};
+    const settingsNormApi = global.TransubSettingsOptionsNormalize || {};
+    const savedOptionsApi = global.TransubSettingsSavedOptions || settingsNormApi || {};
+    const postTaskQcApi = global.TransubPostTaskQcUi || {};
+    const translateChipApi = global.TransubTranslateModeChip || {};
+    const audioMutexApi = global.TransubAudioOptionMutex || {};
+    const computeBusyUiApi = global.TransubComputeBusyUi || {};
     const MEDIA_EXTENSIONS = new Set(
         mediaExt.MEDIA_EXTENSIONS
         || [
@@ -71,7 +94,7 @@
         return { ...TWAI_LEGACY_OPTION_DEFAULTS, ...twaiLegacyOptions };
     }
 
-    const STAGE_LABELS = {
+    const STAGE_LABELS = inferProgress.STAGE_LABELS || {
         starting: '启动',
         denoise: '轻度降噪',
         separate: '人声分离',
@@ -87,7 +110,7 @@
         failed: '失败',
     };
 
-    const STAGE_RANK = {
+    const STAGE_RANK = inferProgress.STAGE_RANK || {
         starting: 0,
         denoise: 1,
         separate: 1,
@@ -101,108 +124,85 @@
         failed: 6,
     };
 
-    function stageRank(stage) {
-        return STAGE_RANK[stage] ?? 0;
-    }
+    const stageRank = inferProgress.stageRank
+        || function stageRankFallback(stage) { return STAGE_RANK[stage] ?? 0; };
 
-    function scrubProgressDetail(detail) {
-        return String(detail || '')
-            .trim()
-            .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
-            .trim();
-    }
+    const scrubProgressDetail = inferProgress.scrubProgressDetail
+        || function scrubProgressDetailFallback(detail) {
+            return String(detail || '')
+                .trim()
+                .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
+                .trim();
+        };
 
     function stageLabel(stage) {
-        const base = STAGE_LABELS[stage] || '处理中';
-        if (state.itemDualPhase === 'transcribe') {
-            if (stage === 'starting') return '双语 · 准备原文';
-            if (stage === 'transcribe') return '双语 · 生成原文';
-            return `双语 · 原文 · ${base}`;
+        if (progressDisplayApi.stageLabel) {
+            return progressDisplayApi.stageLabel(stage, {
+                stageLabels: STAGE_LABELS,
+                itemDualPhase: state.itemDualPhase,
+                task: readTaskFromForm(),
+            });
         }
-        if (state.itemDualPhase === 'translate') {
-            // 引擎第二阶段仍上报 itemStage=transcribe
-            if (stage === 'starting') return '双语 · 准备译文';
-            if (stage === 'transcribe') return '双语 · 生成译文';
-            return `双语 · 译文 · ${base}`;
-        }
-        const task = readTaskFromForm();
-        if (task === 'translate' && stage === 'transcribe') return '翻译中';
-        if (task === 'transcribe' && stage === 'transcribe') return '转写中';
-        return base;
+        return STAGE_LABELS[stage] || '处理中';
     }
 
     /** 列表行副文案：只保留时间轴 / 语音检测等补充信息，避免与状态徽章叠词 */
     function formatListRunningDetail(rawDetail) {
-        let scrubbed = scrubProgressDetail(rawDetail);
-        if (state.itemDualPhase) {
-            scrubbed = scrubbed
-                .replace(/^(生成原文|生成译文|双语准备中|双语生成中|已合并.*)[….]*\s*/u, '')
-                .trim();
+        if (progressDisplayApi.formatListRunningDetail) {
+            return progressDisplayApi.formatListRunningDetail(rawDetail, {
+                scrubProgressDetail,
+                itemDualPhase: state.itemDualPhase,
+            });
         }
-        return scrubbed;
+        return scrubProgressDetail(rawDetail);
     }
 
     function formatRunningProgressLabel(stage, detail) {
-        const head = stageLabel(stage);
-        let scrubbed = scrubProgressDetail(detail);
-        // 去掉与双语标题重复的「生成原文/译文」「双语准备」等套话
-        if (state.itemDualPhase) {
-            scrubbed = scrubbed
-                .replace(/^(生成原文|生成译文|双语准备中|双语生成中)[….]*\s*/u, '')
-                .trim();
+        if (progressDisplayApi.formatRunningProgressLabel) {
+            return progressDisplayApi.formatRunningProgressLabel(stage, detail, {
+                stageLabels: STAGE_LABELS,
+                scrubProgressDetail,
+                itemDualPhase: state.itemDualPhase,
+                task: readTaskFromForm(),
+            });
         }
-        if (!scrubbed) return `${head}…`;
-        if (scrubbed === head || scrubbed.startsWith(`${head} ·`)) return scrubbed;
-        return `${head} · ${scrubbed}`;
+        return stageLabel(stage);
     }
 
     function effectiveItemProgress(stage, progress) {
-        const raw = Math.max(0, Number(progress) || 0);
-        // 运行中故意封顶 99%，避免未完成时显示 100%；结束后允许到 100%
-        const cap = (!state.running || stage === 'done' || stage === 'skipped') ? 100 : 99;
-        const pct = Math.min(cap, raw);
-        if (isPreTranscribeStage(stage)) {
-            // 双语第二阶段启动/VAD 时保留已映射进度
-            if (state.running && state.itemDualPhase === 'translate') return Math.min(99, pct);
-            // 引擎会给出加载/预处理的真实百分比（>0）——保留，避免进度条长期卡在 0
-            if (state.running && pct > 0) return Math.min(99, pct);
-            if (!state.running) return pct;
-            return 0;
+        if (progressDisplayApi.effectiveItemProgress) {
+            return progressDisplayApi.effectiveItemProgress(stage, progress, {
+                running: state.running,
+                itemDualPhase: state.itemDualPhase,
+                isPreTranscribeStage,
+            });
         }
-        return pct;
+        return Math.max(0, Math.min(100, Number(progress) || 0));
     }
 
     function computeDisplayProgress() {
-        // 任务已正常结束：进度条到 100%（顶部文案由 progressLabel 负责）
-        if (!state.running && state.itemStage === 'done' && state.total > 0) {
-            return { pct: 100, label: '100%' };
+        if (progressDisplayApi.computeDisplayProgress) {
+            return progressDisplayApi.computeDisplayProgress({
+                running: state.running,
+                itemStage: state.itemStage,
+                itemDualPhase: state.itemDualPhase,
+                videoProgress: state.videoProgress,
+                videoCurrentSec: state.videoCurrentSec,
+                videoTotalSec: state.videoTotalSec,
+                index: state.index,
+                total: state.total,
+                formatDuration,
+                isPreTranscribeStage,
+            });
         }
-        const cap = state.running ? 99 : 100;
-        const itemPct = effectiveItemProgress(state.itemStage, state.videoProgress);
-        const displayPct = Math.max(0, Math.min(cap, itemPct));
-        const hasMediaTimeline = state.running
-            && state.videoTotalSec >= 60
-            && state.itemStage === 'transcribe'
-            && state.itemDualPhase !== 'translate';
-        if (hasMediaTimeline && displayPct > 0) {
-            const timeline = `${formatDuration(state.videoCurrentSec)} / ${formatDuration(state.videoTotalSec)}`;
-            // 底部计数区只显示时间轴与百分比，阶段文案留给 progressLabel
-            return {
-                pct: displayPct,
-                label: `${timeline} · ${displayPct}%`,
-            };
-        }
-        if (state.total > 0 && state.index > 0) {
-            const batchPct = Math.round(((state.index - 1) + displayPct / 100) / state.total * 100);
-            const pct = Math.min(cap, batchPct);
-            return { pct, label: `第 ${state.index} / ${state.total} 个 · ${pct}%` };
-        }
-        return { pct: displayPct, label: displayPct > 0 ? `${displayPct}%` : '…' };
+        return { pct: 0, label: '…' };
     }
 
-    const POST_TASK_SELECT_VALUES = new Set(['none', 'quit', 'shutdown', 'sleep', 'open_folder']);
+    const POST_TASK_SELECT_VALUES = new Set(
+        postTaskQcApi.POST_TASK_ACTIONS || ['none', 'quit', 'shutdown', 'sleep', 'open_folder'],
+    );
 
-    const POST_TASK_LABELS = {
+    const POST_TASK_LABELS = postTaskQcApi.POST_TASK_LABELS || {
         none: '无额外操作',
         open_folder: '打开输出目录',
         sleep: '睡眠',
@@ -212,18 +212,18 @@
 
     const PROBE_CONCURRENCY = 6;
 
-    const TRANSLATE_MODE_CHIP_LABELS = {
+    const TRANSLATE_MODE_CHIP_LABELS = translateChipApi.TRANSLATE_MODE_CHIP_LABELS || {
         engine: '机器',
         llm: '推理',
         sakura: '推理', // legacy alias
-        smart: '智能',
+        smart: 'Pro译',
     };
 
     const POST_BATCH_QC_FIX_MODES = new Set(['none', 'fix', 'smart']);
     const POST_BATCH_QC_FIX_CHIP_LABELS = {
-        none: '关',
-        fix: '一键',
-        smart: 'Pro',
+        none: '关闭',
+        fix: '自动',
+        smart: '智能 Pro',
     };
 
     const ux = () => global.TransubMainUiUx;
@@ -263,8 +263,17 @@
     let savedOptionsSnapshot = null;
     let activeParamsTab = 'runtime';
     let settingsFormDirty = false;
-    let translateModeMenuOpen = false;
+    let translateMenuOpen = false;
+    let paramsMoreMenuOpen = false;
+    let expertExtrasMenuOpen = false;
     let postBatchQcFixMenuOpen = false;
+    let paramsModeMenuOpen = false;
+    /** Local mirror of autoSense when the dedicated toggle chip is gone. */
+    let autoSenseEnabledState = true;
+    /** Restore recognition preset after preset <select> options are filled. */
+    let pendingActivePresetId = '';
+    /** When true, MT uses form pick/auto even if 智能感知 is on (ASR still follows sense). */
+    let mtUseFormState = false;
     /** Cached path of vendored `transub-engine/` (empty until probed). */
     let cachedBundledEnginePath = '';
     /** @type {Set<number>} */
@@ -274,6 +283,10 @@
     let freePipelineTranslate = { ok: false };
     let syncingTranslateMode = false;
     let lastEngineModelsRefreshAt = 0;
+    /** @type {Array<object>} */
+    let cachedEngineModels = [];
+    /** @type {{ vramMb?: number, profile?: string, gpuName?: string, at?: number }|null} */
+    let cachedHardwareRecommend = null;
 
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
@@ -291,6 +304,14 @@
         'pro-llm': 'pro-llm',
         llm: 'pro-llm',
         byok: 'pro-llm',
+        'pro-smart-translate': 'pro-smart-translate',
+        'smart-translate': 'pro-smart-translate',
+        'pro-film-audio': 'pro-film-audio',
+        'film-audio': 'pro-film-audio',
+        filmAudio: 'pro-film-audio',
+        'pro-qc-smart': 'pro-qc-smart',
+        'qc-smart': 'pro-qc-smart',
+        qcSmart: 'pro-qc-smart',
         'pro-reconstruct': 'pro-reconstruct',
         reconstruct: 'pro-reconstruct',
         film: 'pro-reconstruct',
@@ -312,6 +333,7 @@
         models: 'models',
         处理模型: 'models',
         模型: 'models',
+        模型库: 'models',
         output: 'output',
         字幕输出: 'output',
         输出: 'output',
@@ -333,6 +355,7 @@
         presets: 'params',
         识别参数: 'params',
         参数: 'params',
+        场景: 'params',
         network: 'network',
         proxy: 'network',
         网络与代理: 'network',
@@ -342,6 +365,10 @@
         Pro许可: 'pro',
         许可: 'pro',
         大模型设置: 'pro-llm',
+        智能翻译模型: 'pro-llm',
+        智能翻译: 'pro-smart-translate',
+        影视音频增强: 'pro-film-audio',
+        QC智能修复: 'pro-qc-smart',
         语境和理解重构: 'pro-reconstruct',
     };
 
@@ -384,6 +411,7 @@
     }
 
     function numOrFinite(value, fallback) {
+        if (settingsNormApi.numOrFinite) return settingsNormApi.numOrFinite(value, fallback);
         const n = Number(value);
         return Number.isFinite(n) ? n : fallback;
     }
@@ -391,7 +419,8 @@
     function readTranslateModeFromForm() {
         if (els.translateModeSmart?.checked) return 'smart';
         if (els.translateModeSakura?.checked) return 'llm';
-        return 'engine';
+        if (els.translateModeEngine?.checked) return 'engine';
+        return 'llm';
     }
 
     function setTranslateModeRadios(mode) {
@@ -450,9 +479,21 @@
         if (!advancedEntitled) {
             if (els.filmAudioEnhanceCheck) els.filmAudioEnhanceCheck.checked = false;
             if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = false;
+            if (readTranslateModeFromForm() === 'smart' || els.smartTranslateCheck?.checked) {
+                const llmId = String(els.engineLlmMtModelSelect?.value || '').trim();
+                const fallback = (isSakuraMtModelId(llmId)
+                    || global.TransubSakuraMtCatalog?.isLlmInferenceMtModel?.(llmId))
+                    ? 'llm'
+                    : 'engine';
+                applyTranslateModeToForm(fallback);
+            }
+            if (getPostBatchQcFixMode() === 'smart') {
+                void setPostBatchQcFixMode('fix', { fromUser: false, persist: false });
+            }
         }
         syncSmartTranslateUi();
         syncAdvancedFeaturesGate();
+        syncMtModelChipUi();
         syncProGatedNav();
         syncTranslateModeChipUi();
         syncPostBatchQcFixChipUi();
@@ -464,9 +505,44 @@
         }
     }
 
+    const AFDIAN_PRO_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
+
     function isProGatedTab(tabId) {
         const id = resolveParamsTab(tabId);
-        return id === 'pro-llm' || id === 'pro-reconstruct';
+        return id.startsWith('pro-');
+    }
+
+    const PRO_GATED_TAB_TITLES = {
+        'pro-llm': '智能翻译模型',
+        'pro-smart-translate': '智能翻译',
+        'pro-film-audio': '影视音频增强',
+        'pro-qc-smart': 'QC 智能修复',
+        'pro-reconstruct': '语境和理解重构',
+    };
+
+    async function promptProUnlockRequired({ featureLabel = '' } = {}) {
+        const label = String(featureLabel || '').trim() || '该功能';
+        setSaveParamsStatus('需先解锁 Pro 功能', 'warn');
+        const action = await appConfirmChoice({
+            title: '需要解锁 Pro',
+            message: `「${label}」需先解锁 Pro 功能。可前往爱发电购买本大版本买断，付款后在「Pro许可」页用订单号领取并激活。`,
+            primaryLabel: '去解锁 Pro',
+            secondaryLabel: '取消',
+            tertiaryLabel: '打开许可页',
+            type: 'question',
+        });
+        if (action === 'primary') {
+            try {
+                await electron?.openExternal?.(AFDIAN_PRO_PURCHASE_URL);
+            } catch (_) { /* ignore */ }
+            switchParamsTab('pro', { fromGate: true });
+            return true;
+        }
+        if (action === 'tertiary') {
+            switchParamsTab('pro', { fromGate: true });
+            return true;
+        }
+        return false;
     }
 
     function syncProGatedNav() {
@@ -476,14 +552,71 @@
             btn.classList.toggle('is-pro-locked', locked);
             btn.setAttribute('aria-disabled', locked ? 'true' : 'false');
             if (gated) {
-                const baseTitle = btn.dataset.tab === 'pro-reconstruct'
-                    ? '语境重构与影片理解'
-                    : '外接 API 与软件内大模型';
+                const baseTitle = PRO_GATED_TAB_TITLES[btn.dataset.tab]
+                    || String(btn.title || '').replace(/（需解锁 Pro）$/, '')
+                    || 'Pro 功能';
                 btn.title = locked ? `${baseTitle}（需解锁 Pro）` : baseTitle;
             }
         });
         if (isProGatedTab(activeParamsTab) && !advancedEntitled) {
             switchParamsTab('pro', { fromGate: true });
+        }
+        syncProGatedSettingsControls();
+    }
+
+    /** Disable Pro-only controls that live outside gated tabs. */
+    function syncProGatedSettingsControls() {
+        const locked = !advancedEntitled;
+        document.querySelectorAll('[data-pro-setting]').forEach((el) => {
+            if (!(el instanceof HTMLElement)) return;
+            const interactive = el.matches('input, select, button, textarea')
+                ? el
+                : el.querySelector('input, select, button, textarea');
+            if (interactive instanceof HTMLInputElement
+                || interactive instanceof HTMLSelectElement
+                || interactive instanceof HTMLButtonElement
+                || interactive instanceof HTMLTextAreaElement) {
+                interactive.disabled = locked || interactive.dataset.forceDisabled === '1';
+            }
+            el.classList.toggle('opacity-50', locked);
+            el.classList.toggle('pointer-events-none', locked);
+            if (locked) {
+                el.title = el.dataset.proLockTitle || '需解锁 Pro 后可用';
+            } else if (el.dataset.proLockTitle) {
+                el.removeAttribute('title');
+            }
+        });
+    }
+
+    function switchParamsTab(tabId, opts = {}) {
+        let next = resolveParamsTab(tabId || activeParamsTab);
+        if (isProGatedTab(next) && !advancedEntitled) {
+            if (!opts.fromGate) {
+                const label = PRO_GATED_TAB_TITLES[next] || 'Pro 功能';
+                void promptProUnlockRequired({ featureLabel: label });
+            }
+            next = 'pro';
+        }
+        activeParamsTab = next;
+        els.paramsTabBtns?.forEach((btn) => {
+            const active = btn.dataset.tab === activeParamsTab;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        els.paramsTabPanels?.forEach((panel) => {
+            panel.classList.toggle('active', panel.dataset.tabPanel === activeParamsTab);
+        });
+        if (activeParamsTab === 'install' || activeParamsTab === 'models') {
+            if (readEngineBackendFromForm() !== 'twai') {
+                const now = Date.now();
+                if (now - lastEngineModelsRefreshAt > 8000) {
+                    lastEngineModelsRefreshAt = now;
+                    void refreshEngineModels({ silent: true });
+                }
+            }
+        }
+        if (activeParamsTab === 'history') {
+            void global.TransubFeatures?.refreshLibrarySettingsStatus?.();
         }
     }
 
@@ -502,6 +635,34 @@
             els.smartTranslateFaithfulWrap.classList.toggle('opacity-50', !faithfulOk);
             els.smartTranslateFaithfulWrap.classList.toggle('pointer-events-none', !faithfulOk);
         }
+        syncExpertExtraChipsUi();
+    }
+
+    function syncHybridMtUi() {
+        // Pipeline prefs live on the Pro「智能翻译」page; allow editing whenever Pro is
+        // unlocked (not only when the current task/mode is already 智能翻译).
+        const ok = canUseSmartTranslateUi();
+        if (els.smartTranslateHybridCheck) {
+            els.smartTranslateHybridCheck.disabled = !ok;
+        }
+        if (els.smartTranslateHybridWrap) {
+            els.smartTranslateHybridWrap.classList.toggle('opacity-50', !ok);
+            els.smartTranslateHybridWrap.classList.toggle('pointer-events-none', !ok);
+        }
+        if (els.smartTranslatePolishCheck) {
+            els.smartTranslatePolishCheck.disabled = !ok;
+        }
+        if (els.smartTranslatePolishWrap) {
+            els.smartTranslatePolishWrap.classList.toggle('opacity-50', !ok);
+            els.smartTranslatePolishWrap.classList.toggle('pointer-events-none', !ok);
+        }
+        if (els.smartTranslatePolishLimitInput) {
+            els.smartTranslatePolishLimitInput.disabled = !ok;
+        }
+        if (els.smartTranslatePolishLimitWrap) {
+            els.smartTranslatePolishLimitWrap.classList.toggle('opacity-50', !ok);
+            els.smartTranslatePolishLimitWrap.classList.toggle('pointer-events-none', !ok);
+        }
     }
 
     function syncAdvancedFeaturesGate() {
@@ -510,14 +671,15 @@
         els.advancedFeaturesLockHint?.classList.toggle('hidden', !locked);
         if (els.filmAudioEnhanceWrap) {
             els.filmAudioEnhanceWrap.classList.toggle('opacity-50', locked);
-            els.filmAudioEnhanceWrap.classList.toggle('pointer-events-none', locked);
+            // Keep clickable so locked users get the unlock prompt.
+            els.filmAudioEnhanceWrap.classList.remove('pointer-events-none');
         }
         if (els.filmAudioEnhanceCheck) {
             els.filmAudioEnhanceCheck.disabled = locked;
         }
         if (els.filmVadPresetWrap) {
             els.filmVadPresetWrap.classList.toggle('opacity-50', locked);
-            els.filmVadPresetWrap.classList.toggle('pointer-events-none', locked);
+            els.filmVadPresetWrap.classList.remove('pointer-events-none');
         }
         if (els.filmVadPresetCheck) {
             els.filmVadPresetCheck.disabled = locked;
@@ -538,12 +700,15 @@
                 ? (mode === 'smart' ? 'smart' : 'llm')
                 : 'engine';
             if (!allowTranslate) next = 'engine';
-            if (fromUser && next === 'smart' && !canUseSmartTranslateUi()) {
-                setSaveParamsStatus(
-                    '智能翻译需解锁 Pro',
-                    'warn',
-                );
-                next = 'engine';
+            if (next === 'smart' && !canUseSmartTranslateUi()) {
+                if (fromUser) {
+                    void promptProUnlockRequired({ featureLabel: '智能翻译' });
+                }
+                const llmId = String(els.engineLlmMtModelSelect?.value || '').trim();
+                next = (isSakuraMtModelId(llmId)
+                    || global.TransubSakuraMtCatalog?.isLlmInferenceMtModel?.(llmId))
+                    ? 'llm'
+                    : 'engine';
             }
 
             setTranslateModeRadios(next);
@@ -552,25 +717,34 @@
             }
 
             if (els.engineLlmMtModelSelect && next === 'llm') {
+                // Keep empty as「智能选择」; only seed a concrete id when user had none and
+                // the select has no auto option yet (legacy). Prefer leaving '' when allowEmpty.
                 const cur = els.engineLlmMtModelSelect.value || '';
                 if (!String(cur).trim()) {
-                    const fallback = [...(els.engineLlmMtModelSelect.options || [])]
-                        .map((o) => o.value)
-                        .find((v) => v);
-                    els.engineLlmMtModelSelect.value = fallback || 'sakura-1.5b';
+                    const hasAuto = [...(els.engineLlmMtModelSelect.options || [])]
+                        .some((o) => o.value === '');
+                    if (!hasAuto) {
+                        const fallback = [...(els.engineLlmMtModelSelect.options || [])]
+                            .map((o) => o.value)
+                            .find((v) => v);
+                        els.engineLlmMtModelSelect.value = fallback || 'sakura-1.5b';
+                    }
                 }
             }
 
-            const pickDisabled = next === 'smart' || !allowTranslate;
-            if (els.engineMtModelSelect) els.engineMtModelSelect.disabled = pickDisabled;
-            if (els.engineLlmMtModelSelect) els.engineLlmMtModelSelect.disabled = pickDisabled;
-            els.engineMtModelWrap?.classList.toggle('opacity-50', pickDisabled);
-            els.engineLlmMtModelWrap?.classList.toggle('opacity-50', pickDisabled);
+            const hybridOn = next === 'smart'
+                && (els.smartTranslateHybridCheck?.checked !== false);
+            const opusPickDisabled = next === 'smart' || !allowTranslate;
+            const llmPickDisabled = !allowTranslate || (next === 'smart' && !hybridOn);
+            if (els.engineMtModelSelect) els.engineMtModelSelect.disabled = opusPickDisabled;
+            if (els.engineLlmMtModelSelect) els.engineLlmMtModelSelect.disabled = llmPickDisabled;
+            els.engineMtModelWrap?.classList.toggle('opacity-50', opusPickDisabled);
+            els.engineLlmMtModelWrap?.classList.toggle('opacity-50', llmPickDisabled);
             if (els.engineMtModelHint) {
                 if (!allowTranslate) {
                     els.engineMtModelHint.textContent = '当前为「原语言」任务，不使用机器翻译模型。';
                 } else if (next === 'smart') {
-                    els.engineMtModelHint.textContent = '智能翻译不使用引擎 MT；翻译由大模型完成。';
+                    els.engineMtModelHint.textContent = '智能翻译不使用引擎 Opus；句级可走推理模型，润色走 Pro 对话模型。';
                 } else if (next === 'llm') {
                     els.engineMtModelHint.textContent = '当前为推理翻译，请改用「LLM 推理翻译模型」。';
                 } else {
@@ -580,10 +754,15 @@
             if (els.engineLlmMtModelHint) {
                 if (!allowTranslate) {
                     els.engineLlmMtModelHint.textContent = '当前为「原语言」任务，不使用推理翻译模型。';
+                } else if (next === 'smart' && hybridOn) {
+                    const polishOn = els.smartTranslatePolishCheck?.checked !== false;
+                    els.engineLlmMtModelHint.textContent = polishOn
+                        ? '智能翻译：句级用此推理模型（Sakura / GalTransl）；可留空自动选用。对话模型做剧情贴合润色。'
+                        : '智能翻译：句级用此推理模型（Sakura / GalTransl）；可留空自动选用。贴合润色已关。';
                 } else if (next === 'smart') {
-                    els.engineLlmMtModelHint.textContent = '智能翻译已启用：引擎只负责转录，翻译由 Pro 大模型完成（影片简要 → 分块译 → 一致性）。';
+                    els.engineLlmMtModelHint.textContent = '智能翻译：句级由 Pro 对话模型按行翻译（混合已关）。人名本地统一。';
                 } else if (next === 'llm') {
-                    els.engineLlmMtModelHint.textContent = '本地 LLM 推理翻译（Sakura / Qwen 等）：请先在「模型 → LLM推理翻译」下载对应模型。';
+                    els.engineLlmMtModelHint.textContent = '本地 LLM 推理翻译（Sakura / Qwen 等）：可留空启用自动匹配（按片源语言、Pro 与硬件），或指定已下载模型。';
                 } else {
                     els.engineLlmMtModelHint.textContent = '当前为机器翻译；推理翻译请在「常规」切换方式后再选用。';
                 }
@@ -593,6 +772,8 @@
                     els.translateModeHint.textContent = '「原语言」任务不翻译，上方选项暂时无效。';
                 } else if (next === 'smart' && !canUseSmartTranslateUi()) {
                     els.translateModeHint.textContent = '智能翻译为 Pro 专属，请先激活 Pro。';
+                } else if (next === 'smart' && hybridOn && els.smartTranslatePolishCheck?.checked !== false) {
+                    els.translateModeHint.textContent = 'Pro：专训句级 + 剧情贴合润色（语意不变）。';
                 } else {
                     els.translateModeHint.textContent = '';
                 }
@@ -604,8 +785,11 @@
         const task = readTaskFromForm();
         const allow = task === 'translate' || task === 'dual';
         syncFaithfulToneUi(allow);
+        syncHybridMtUi();
         syncAdvancedFeaturesGate();
         syncTranslateModeChipUi();
+        syncMtModelChipUi();
+        syncExpertExtraChipsUi();
         updateReadinessStrip();
         // Magic wand tips show effective MT (Sakura vs 智能翻译); refresh when mode changes.
         if (fromUser && !isStandaloneSettings && state.items.some((i) => (
@@ -620,15 +804,75 @@
     }
 
     function readLlmMtModelFromForm() {
-        const v = String(els.engineLlmMtModelSelect?.value || '').trim();
-        return v || 'sakura-1.5b';
+        // Empty =「智能选择」; resolve at readActive / job start.
+        return String(els.engineLlmMtModelSelect?.value || '').trim();
+    }
+
+    function contentProfileApi() {
+        return global.TransubContentProfile || null;
+    }
+
+    function parseVramGbHint() {
+        const cachedMb = Number(cachedHardwareRecommend?.vramMb || 0);
+        if (cachedMb > 0) return cachedMb / 1024;
+        const text = String(els.engineGpuStatus?.textContent || '');
+        const m = text.match(/(\d+(?:\.\d+)?)\s*GB/i);
+        if (!m) return undefined;
+        const n = Number(m[1]);
+        return Number.isFinite(n) ? n : undefined;
+    }
+
+    function recommendMtContext(extra = {}) {
+        return {
+            translateMode: readTranslateModeFromForm(),
+            language: els.languageSelect?.value || els.quickLanguageSelect?.value || 'auto',
+            device: els.deviceSelect?.value || 'cuda',
+            vramGb: parseVramGbHint(),
+            hwProfile: cachedHardwareRecommend?.profile || '',
+            advancedEntitled,
+            installedModels: cachedEngineModels,
+            ...extra,
+        };
+    }
+
+    function recommendFormMtModel(extra = {}) {
+        const api = contentProfileApi();
+        if (typeof api?.recommendFormMtModel === 'function') {
+            return api.recommendFormMtModel(recommendMtContext(extra));
+        }
+        return { id: '', preferId: '', reason: '', mode: readTranslateModeFromForm() };
+    }
+
+    function shortMtModelChipLabel(modelId, { auto = false } = {}) {
+        if (translateChipApi.shortMtModelChipLabel) {
+            return translateChipApi.shortMtModelChipLabel(modelId, { auto });
+        }
+        if (auto || !modelId) return '自动';
+        return String(modelId || '').trim() || '自动';
     }
 
     function readActiveEngineMtModelFromForm() {
         const mode = readTranslateModeFromForm();
-        if (mode === 'llm' || mode === 'sakura') return readLlmMtModelFromForm();
         if (mode === 'smart') return '';
+        if (mode === 'llm' || mode === 'sakura') {
+            const picked = readLlmMtModelFromForm();
+            if (picked) return picked;
+            const rec = recommendFormMtModel({ translateMode: 'llm' });
+            return String(rec.id || rec.preferId || 'sakura-1.5b').trim();
+        }
         return readOpusMtModelFromForm();
+    }
+
+    function isMtModelAutoSelected() {
+        const mode = readTranslateModeFromForm();
+        if (mode === 'smart') {
+            if (els.smartTranslateHybridCheck?.checked !== false) {
+                return !readLlmMtModelFromForm();
+            }
+            return !String(cachedSmartTranslatePick?.smartTranslateModelId || '').trim();
+        }
+        if (mode === 'llm' || mode === 'sakura') return !readLlmMtModelFromForm();
+        return !readOpusMtModelFromForm();
     }
 
     function syncTranslateModeFromOptions(options = {}) {
@@ -781,8 +1025,15 @@
         /** Cross-window engine / LLM single-slot busy (main process lock). */
         computeBusy: false,
         computeBusyLabel: '',
+        computeBusySince: 0,
+        computeBusyOwner: '',
+        computeBusyKind: '',
         etaRate: null,
         historyEntries: [],
+        /** Normalized media path for the task-library asset rail focus. */
+        focusedTaskPath: '',
+        /** @type {object|null} last matched library media summary for the rail */
+        libraryRailMedia: null,
         lastContentProfile: null,
         autoSenseUi: null,
         senseBusy: false,
@@ -804,7 +1055,7 @@
         { key: 'actions', sortable: false, min: 72, max: 220, pad: 8 },
     ];
 
-    const TASK_STATUS_SORT_RANK = {
+    const TASK_STATUS_SORT_RANK = taskListSortApi.TASK_STATUS_SORT_RANK || {
         pending: 0,
         probing: 1,
         ready: 2,
@@ -823,18 +1074,23 @@
     }
 
     function basename(p) {
-        return String(p || '').split(/[/\\]/).pop() || '—';
+        return pathUtils.basename ? pathUtils.basename(p) : (String(p || '').split(/[/\\]/).pop() || '—');
     }
 
     function normPath(p) {
-        return String(p || '').replace(/\//g, '\\').toLowerCase();
+        return pathUtils.normPath
+            ? pathUtils.normPath(p)
+            : String(p || '').replace(/\//g, '\\').toLowerCase();
     }
 
     function esc(s) {
-        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return pathUtils.esc
+            ? pathUtils.esc(s)
+            : String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function formatDuration(sec) {
+        if (pathUtils.formatDuration) return pathUtils.formatDuration(sec);
         const s = Math.max(0, Math.floor(Number(sec) || 0));
         const h = Math.floor(s / 3600);
         const m = Math.floor((s % 3600) / 60);
@@ -845,6 +1101,9 @@
 
     /** 与 transwithai-bridge mapInferStageProgress 保持一致（渲染层兜底） */
     function mapStageProgress(stage, rawPct = 0, videoCurrentSec = 0, videoTotalSec = 0) {
+        if (inferProgress.mapStageProgress) {
+            return inferProgress.mapStageProgress(stage, rawPct, videoCurrentSec, videoTotalSec);
+        }
         const local = Math.max(0, Math.min(100, Number(rawPct) || 0));
         const mediaSec = Number(videoTotalSec) || 0;
         const currentSec = Number(videoCurrentSec) || 0;
@@ -880,35 +1139,33 @@
     }
 
     function formatElapsedCell(item) {
+        if (progressDisplayApi.formatElapsedCell) {
+            return progressDisplayApi.formatElapsedCell(item, {
+                formatDuration,
+                itemElapsedSec,
+            });
+        }
         if (item.status === 'pending' || item.status === 'ready') return '—';
         if (!item.startedAt) return '—';
         return formatDuration(itemElapsedSec(item));
     }
 
     function formatProcessedCell(item) {
-        const total = Number(item.duration) || Number(item.processedTotalSec) || 0;
-        const processed = Number(item.processedSec) || 0;
-
-        if (item.status === 'done') {
-            const sec = total > 0 ? total : processed;
-            return sec > 0 ? formatDuration(sec) : '—';
-        }
-        if (item.status === 'skipped') return '—';
-        if (processed > 0) {
-            return total > 0
-                ? `${formatDuration(processed)} / ${formatDuration(total)}`
-                : formatDuration(processed);
+        if (progressDisplayApi.formatProcessedCell) {
+            return progressDisplayApi.formatProcessedCell(item, { formatDuration });
         }
         return '—';
     }
 
     function bumpProgress(current, next) {
+        if (inferProgress.bumpProgress) return inferProgress.bumpProgress(current, next);
         const cur = Math.max(0, Math.min(99, Number(current) || 0));
         const nxt = Math.max(0, Math.min(99, Number(next) || 0));
         return Math.max(cur, nxt);
     }
 
     function isPreTranscribeStage(stage) {
+        if (inferProgress.isPreTranscribeStage) return inferProgress.isPreTranscribeStage(stage);
         return stageRank(stage) < stageRank('transcribe');
     }
 
@@ -1018,6 +1275,9 @@
             syncResourceUsageMonitor();
             markSettingsDirty(true);
         });
+        els.rememberLastOpenDirCheck?.addEventListener('change', () => {
+            markSettingsDirty(true);
+        });
     }
 
     function isVideoPath(filePath) {
@@ -1077,14 +1337,29 @@
             'loadingOverlay', 'loadingMessage',
             'appBrandName', 'appVersionLabel', 'headerSettingsDirtyBadge', 'paramsSummary', 'paramsChips',
             'quickTaskSelect', 'quickLanguageSelect', 'quickTargetLangSelect', 'quickTargetLangWrap',
-            'quickFormatBtn', 'quickFormatLabel', 'quickTranslateModeBtn', 'quickTranslateModeLabel',
-            'translateModeMenuWrap', 'translateModeMenu',
+            'quickFormatLabel',
+            'translateMenuWrap', 'translateMenu', 'quickTranslateBtn', 'quickTranslateLabel',
+            'translateMtSection', 'translateMtSectionLabel', 'translateMtPickSwitch', 'translateMtAutoBtn', 'translateMtManualBtn',
+            'translateMtAutoDesc', 'translateMtAutoHint', 'translateMtModelListWrap', 'translateMtModelList',
+            'paramsSceneCards',
+            'paramsMoreMenuWrap', 'paramsMoreBtn', 'paramsMoreMenu', 'paramsMoreLabel',
+            'paramsMoreExtrasHost', 'paramsExpertExtraChips',
+            'expertDrawerMenuWrap', 'expertDrawerBody', 'expertDrawerToggle', 'expertDrawerToggleLabel',
+            'expertDrawerSenseHint', 'quickAsrChipGroup',
+            'quickLanguageChip',
+            'quickAsrModelSelect', 'quickVadModelSelect',
+            'quickAsrRecommendBtn',
+            'quickPerfProfileSelect', 'quickPerfProfileChip',
+            'quickVadSensitiveCheck', 'quickVadSensitiveWrap',
+            'quickFaithfulCheck', 'quickFaithfulWrap',
+            'quickGlossaryMtCheck', 'quickGlossaryMtWrap',
             'readinessStrip', 'readinessStripText', 'readinessStripAction',
-            'autoSenseToggle', 'autoSenseToggleLabel',
-            'postBatchQcFixBtn', 'postBatchQcFixLabel', 'postBatchQcFixMenuWrap', 'postBatchQcFixMenu',
+            'paramsModeMenuWrap', 'paramsModeChip', 'paramsModeBtn', 'paramsModeLabel', 'paramsModeMenu', 'paramsModePresetList',
+            'paramsModePresetTabs', 'paramsModeCustomHint',
+            'postBatchQcFixLabel', 'postBatchQcFixMenuWrap', 'postBatchQcFixMenu',
             'senseMemoryStatus', 'clearSenseMemoryBtn',
             'transWithAiStatus', 'openFeedbackBtn', 'openParamsBtn',
-            'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openHistoryMenuBtn', 'toggleDensityBtn', 'toggleDensityLabel',
+            'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openLibraryToolbarBtn', 'toggleDensityBtn', 'toggleDensityLabel',
             'openAboutBtn', 'openMtTrainMenuBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
             'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerSmartFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
@@ -1096,11 +1371,13 @@
             'translateModeEngineWrap', 'translateModeSakuraWrap', 'translateModeSmartWrap',
             'translateModeGotoProBtn', 'translateModeHint', 'translateModeFieldset',
             'advancedFeaturesLockHint', 'advancedFeaturesGotoProBtn',
-            'engineBackendSelect', 'engineSettingsBlock', 'twaiSettingsBlock',
+            'engineBackendSelect', 'engineSettingsBlock', 'twaiSettingsBlock', 'twaiCompatFieldset', 'twaiCompatDetails',
             'engineInstallPathInput', 'engineInstallBrowseBtn', 'engineInstallUseBundledBtn', 'engineUrlInput',
             'engineHfEndpointInput', 'engineHfMirrorPresetBtn', 'engineHfOfficialPresetBtn', 'engineHfTestBtn', 'networkHfStatus',
             'proxyEnabledCheck', 'proxyUrlInput', 'proxyBypassInput', 'proxyTestBtn', 'proxyTestStatus', 'proxySettingsFields',
-            'engineProfileSelect', 'engineAsrModelSelect',
+            'engineProfileSelect', 'perfProfileSelect', 'engineAsrModelSelect',
+            'asrRecommendChip', 'asrRecommendChipLabel', 'asrRecommendChipDetail',
+            'asrRecommendApplyBtn', 'asrRecommendDismissBtn',
             'engineMtModelSelect', 'engineMtModelWrap', 'engineMtModelHint',
             'engineLlmMtModelSelect', 'engineLlmMtModelWrap', 'engineLlmMtModelHint',
             'engineVadModelSelect',
@@ -1120,8 +1397,16 @@
             'mergeBilingualOrderSelect', 'mergeBilingualOrderWrap',
             'smartTranslateCheck', 'smartTranslateWrap',
             'smartTranslateFaithfulCheck', 'smartTranslateFaithfulWrap',
+            'smartTranslateHybridCheck', 'smartTranslateHybridWrap',
+            'smartTranslatePolishCheck', 'smartTranslatePolishWrap',
+            'smartTranslatePolishLimitInput', 'smartTranslatePolishLimitWrap',
             'filmAudioEnhanceCheck', 'filmAudioEnhanceWrap',
             'filmVadPresetCheck', 'filmVadPresetWrap',
+            'filmVadThresholdInput', 'filmVadMinSpeechInput', 'filmVadMinSilenceInput',
+            'filmHallucinationSilenceInput',
+            'qcSmartLlmSplitCheck', 'qcSmartRetranscribeCheck', 'qcSmartSemanticReviewCheck',
+            'qcSmartIntensitySelect', 'qcSmartMaxRetranscribeInput',
+            'libraryOpenAfterBatchCheck',
             'deleteSourcesAfterMergeCheck', 'deleteSourcesAfterMergeWrap',
             'deviceExpertHint', 'maxBatchSizeWrap', 'maxBatchSizeInput', 'logLevelSelect', 'logLevelHint',
             'subFormatSrt', 'subFormatVtt', 'subFormatAss', 'subFormatLrc',
@@ -1133,14 +1418,15 @@
             'vadMinSpeechDurationInput', 'vadMinSilenceDurationInput', 'vadSpeechPadInput',
             'vadEnabledCheck', 'vadSensitiveCheck', 'vadAggressiveCheck', 'vadMaxSingleSegmentInput',
             'hallucinationSilenceInput',
-            'audioLightDenoiseCheck', 'transcribeExpertCustomHint',
+            'audioLightDenoiseCheck',
+            'transcribeExpertCustomHint',
             'retranscribeWarmLightCheck', 'subtitleBakModeSelect',
             'keepTranscriptCheck', 'transcriptKeepDirInput', 'transcriptKeepLimitInput',
             'transcriptKeepDaysInput', 'clearTranscriptCacheBtn', 'historySettingsStatus',
-            'trayProgressCheck', 'showTaskResourceUsageCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
+            'trayProgressCheck', 'showTaskResourceUsageCheck', 'rememberLastOpenDirCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
             'startupWindowSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
-            'postBatchCompactPureInterjectionsCheck',
+            'postBatchViewingPunctModeSelect', 'postBatchInterjectionModeSelect', 'postBatchOnomatopoeiaModeSelect',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
@@ -1157,13 +1443,18 @@
             'jobStatusBadge', 'progressLabel', 'progressCount', 'progressBar', 'resourceUsageLabel',
             'currentFile', 'logHost',
             'removeSelectedBtn', 'clearListBtn', 'startBtn', 'selectAllCheck',
-            'openSubtitleFileBtn', 'retranslateBtn', 'reconstructBtn',
+            'openSubtitleFileBtn', 'retranslateBtn', 'reconstructBtn', 'paramsProActions',
             'retranslateModal', 'retranslateModalSummary', 'retranslateModalMissing',
             'retranslateModeEngine', 'retranslateModeLlm', 'retranslateModeSmart',
-            'retranslateModeSmartWrap', 'retranslateModelWrap', 'retranslateModelLabel',
+            'retranslateModeSmartWrap', 'retranslateSmartOptions',
+            'retranslateSmartHybridCheck', 'retranslateSmartHybridWrap',
+            'retranslateSmartPolishCheck', 'retranslateSmartPolishWrap', 'retranslateSmartSchemeHint',
+            'retranslateHybridMtWrap', 'retranslateHybridMtLabel', 'retranslateHybridMtSelect',
+            'retranslateModelWrap', 'retranslateModelLabel',
             'retranslateModelSelect', 'retranslateModelHint', 'retranslateCancelBtn',
             'retranslateConfirmBtn',
-            'fileListBody', 'emptyListRow', 'stopBtn', 'filePanel', 'dropZone', 'dropOverlay',
+            'fileListBody', 'emptyListRow', 'stopBtn', 'asrWindowTip', 'filePanel', 'dropZone', 'dropOverlay',
+            'taskWorkspace',
             'mainSplitHost', 'mainLogSplitter', 'taskRowContextMenu', 'taskColContextMenu',
             'subtitleTaskTable', 'taskTableHead', 'taskTableColgroup',
         ].forEach((id) => { els[id] = document.getElementById(id); });
@@ -1175,11 +1466,16 @@
 
     function getPostTaskAction() {
         const action = state.postTaskAction || 'none';
+        if (postTaskQcApi.normalizePostTaskAction) {
+            return postTaskQcApi.normalizePostTaskAction(action);
+        }
         return POST_TASK_SELECT_VALUES.has(action) ? action : 'none';
     }
 
     function setPostTaskAction(action) {
-        let next = POST_TASK_SELECT_VALUES.has(action) ? action : 'none';
+        let next = postTaskQcApi.normalizePostTaskAction
+            ? postTaskQcApi.normalizePostTaskAction(action)
+            : (POST_TASK_SELECT_VALUES.has(action) ? action : 'none');
         if (next === 'shutdown') {
             void appConfirm({
                 title: '确认关机',
@@ -1205,7 +1501,9 @@
 
     function syncPostTaskMenuUi() {
         const action = getPostTaskAction();
-        const label = POST_TASK_LABELS[action] || POST_TASK_LABELS.none;
+        const label = postTaskQcApi.postTaskActionLabel
+            ? postTaskQcApi.postTaskActionLabel(action)
+            : (POST_TASK_LABELS[action] || POST_TASK_LABELS.none);
         els.postTaskMenuBtn?.classList.toggle('active', action !== 'none');
         if (els.postTaskMenuLabel) {
             els.postTaskMenuLabel.textContent = action === 'none' ? '完成后' : label;
@@ -1231,7 +1529,10 @@
         if (open) {
             setAddMenuOpen(false);
             setTranslateModeMenuOpen(false);
+            setMtModelMenuOpen(false);
             setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
         }
     }
 
@@ -1244,7 +1545,10 @@
         if (open) {
             setPostTaskMenuOpen(false);
             setTranslateModeMenuOpen(false);
+            setMtModelMenuOpen(false);
             setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
         }
     }
 
@@ -1295,8 +1599,11 @@
             if (state.postTaskMenuOpen) setPostTaskMenuOpen(false);
             if (state.addMenuOpen) setAddMenuOpen(false);
             if (state.moreMenuOpen) setMoreMenuOpen(false);
-            if (translateModeMenuOpen) setTranslateModeMenuOpen(false);
+            if (translateMenuOpen) setTranslateMenuOpen(false);
+            if (paramsMoreMenuOpen) setParamsMoreMenuOpen(false);
+            if (expertExtrasMenuOpen) setExpertExtrasMenuOpen(false);
             if (postBatchQcFixMenuOpen) setPostBatchQcFixMenuOpen(false);
+            if (paramsModeMenuOpen) setParamsModeMenuOpen(false);
         });
     }
 
@@ -1310,7 +1617,11 @@
             setPostTaskMenuOpen(false);
             setAddMenuOpen(false);
             setTranslateModeMenuOpen(false);
+            setMtModelMenuOpen(false);
+            setParamsMoreMenuOpen(false);
             setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
         }
     }
 
@@ -1544,6 +1855,53 @@
         return !!el.isContentEditable;
     }
 
+    function bindSettingsGuideLinks() {
+        els.settingsGotoInstallBtn?.addEventListener('click', () => switchParamsTab('install'));
+        els.openSetupWizardFromGuideBtn?.addEventListener('click', () => {
+            void global.TransubSetupWizard?.open?.({ force: false });
+        });
+        els.translateModeGotoProBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!advancedEntitled) {
+                void promptProUnlockRequired({ featureLabel: '智能翻译' });
+                return;
+            }
+            switchParamsTab('pro-llm');
+        });
+        els.advancedFeaturesGotoProBtn?.addEventListener('click', () => switchParamsTab('pro'));
+        const bindGoto = (id, tab) => {
+            document.getElementById(id)?.addEventListener('click', (e) => {
+                e.preventDefault();
+                switchParamsTab(tab);
+            });
+        };
+        bindGoto('runtimeGotoProSmartTranslateBtn', 'pro-smart-translate');
+        bindGoto('runtimeGotoProLlmBtn', 'pro-llm');
+        bindGoto('runtimeGotoProFilmAudioBtn', 'pro-film-audio');
+        bindGoto('runtimeGotoProQcBtn', 'pro-qc-smart');
+        bindGoto('processGotoProQcBtn', 'pro-qc-smart');
+        bindGoto('proSmartGotoLlmBtn', 'pro-llm');
+        bindGoto('proFilmAudioGotoProcessBtn', 'process');
+        bindGoto('proFilmAudioGotoModelsBtn', 'models');
+        bindGoto('proQcGotoProcessBtn', 'process');
+        bindGoto('proQcGotoLlmBtn', 'pro-llm');
+
+        const bindProLockedClick = (el, featureLabel) => {
+            el?.addEventListener('click', (e) => {
+                if (advancedEntitled) return;
+                if (e.target?.closest?.('.settings-tip, .settings-tip-btn, .settings-tip-bubble')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                void promptProUnlockRequired({ featureLabel });
+            }, true);
+        };
+        bindProLockedClick(els.translateModeSmartWrap, '智能翻译');
+        bindProLockedClick(els.filmAudioEnhanceWrap, '影视音频增强');
+        bindProLockedClick(els.filmVadPresetWrap, '影视音频增强');
+        bindProLockedClick(els.retranslateModeSmartWrap, '智能翻译');
+    }
+
     function bindMainUiExtras() {
         bindMainLogSplitter();
         els.moreMenuBtn?.addEventListener('click', (event) => {
@@ -1595,9 +1953,8 @@
                 hideTrainMenu();
             }
         })();
-        els.openHistoryMenuBtn?.addEventListener('click', () => {
-            setMoreMenuOpen(false);
-            document.getElementById('openHistoryBtn')?.click();
+        els.openLibraryToolbarBtn?.addEventListener('click', () => {
+            void global.TransubFeatures?.openSubtitleLibrary?.();
         });
         els.emptyAddVideosBtn?.addEventListener('click', () => addVideos());
         els.emptyAddFolderBtn?.addEventListener('click', () => addFolder());
@@ -1624,6 +1981,7 @@
             const action = els.readinessStripAction.dataset.action || 'install';
             if (action === 'wizard') openAppSettings('install', { wizard: true });
             else if (action === 'runtime') openAppSettings('runtime');
+            else if (action === 'pro') openAppSettings('pro');
             else openAppSettings('install');
         });
         els.toggleMainThemeBtn?.addEventListener('click', () => {
@@ -1640,40 +1998,127 @@
         els.envBannerWizardBtn?.addEventListener('click', () => {
             openAppSettings('install', { wizard: true });
         });
-        els.settingsGotoInstallBtn?.addEventListener('click', () => switchParamsTab('install'));
-        els.openSetupWizardFromGuideBtn?.addEventListener('click', () => {
-            void global.TransubSetupWizard?.open?.({ force: false });
-        });
-        els.translateModeGotoProBtn?.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            switchParamsTab('pro-llm');
-        });
-        els.advancedFeaturesGotoProBtn?.addEventListener('click', () => switchParamsTab('pro'));
-        els.quickTranslateModeBtn?.addEventListener('click', (event) => {
+        els.quickTranslateBtn?.addEventListener('click', (event) => {
             event.stopPropagation();
-            setTranslateModeMenuOpen(!translateModeMenuOpen);
+            setTranslateMenuOpen(!translateMenuOpen);
         });
-        els.translateModeMenu?.querySelectorAll('[data-translate-mode]').forEach((item) => {
+        els.translateMenu?.querySelectorAll('[data-translate-mode]').forEach((item) => {
             item.addEventListener('click', (event) => {
                 event.stopPropagation();
-                setTranslateModeMenuOpen(false);
+                setTranslateMenuOpen(false);
                 setQuickTranslateMode(item.dataset.translateMode || 'engine');
             });
         });
-        els.translateModeMenu?.addEventListener('click', (event) => event.stopPropagation());
-        els.postBatchQcFixBtn?.addEventListener('click', (event) => {
+        els.translateMtAutoBtn?.addEventListener('click', (event) => {
             event.stopPropagation();
-            setPostBatchQcFixMenuOpen(!postBatchQcFixMenuOpen);
+            void setTranslateMtPickMode('auto');
+        });
+        els.translateMtManualBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            void setTranslateMtPickMode('manual');
+        });
+        els.translateMenu?.addEventListener('click', (event) => event.stopPropagation());
+        els.paramsMoreBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setParamsMoreMenuOpen(!paramsMoreMenuOpen);
+        });
+        els.paramsMoreMenu?.addEventListener('click', (event) => event.stopPropagation());
+        els.expertDrawerToggle?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setExpertExtrasMenuOpen(!expertExtrasMenuOpen);
+        });
+        els.expertDrawerBody?.addEventListener('click', (event) => event.stopPropagation());
+        els.quickAsrModelSelect?.addEventListener('change', () => {
+            if (!els.engineAsrModelSelect) return;
+            els.engineAsrModelSelect.value = els.quickAsrModelSelect.value;
+            els.engineAsrModelSelect.dispatchEvent(new Event('change'));
+            void persistFormOptionsQuiet();
+        });
+        els.quickVadModelSelect?.addEventListener('change', () => {
+            if (!els.engineVadModelSelect) return;
+            els.engineVadModelSelect.value = els.quickVadModelSelect.value;
+            els.engineVadModelSelect.dispatchEvent(new Event('change'));
+            void persistFormOptionsQuiet();
+        });
+        els.quickVadSensitiveCheck?.addEventListener('change', () => {
+            if (!els.vadSensitiveCheck) return;
+            els.vadSensitiveCheck.checked = !!els.quickVadSensitiveCheck.checked;
+            els.vadSensitiveCheck.dispatchEvent(new Event('change'));
+            void persistFormOptionsQuiet();
+        });
+        els.quickFaithfulCheck?.addEventListener('change', () => {
+            if (!els.smartTranslateFaithfulCheck) return;
+            els.smartTranslateFaithfulCheck.checked = !!els.quickFaithfulCheck.checked;
+            markSettingsDirty(true);
+            void persistFormOptionsQuiet();
+            updateParamsSummary();
+        });
+        els.quickGlossaryMtCheck?.addEventListener('change', () => {
+            if (!els.glossaryMtCheck) return;
+            els.glossaryMtCheck.checked = !!els.quickGlossaryMtCheck.checked;
+            markSettingsDirty(true);
+            void persistFormOptionsQuiet();
+            updateParamsSummary();
+        });
+        els.quickPerfProfileSelect?.addEventListener('change', () => {
+            if (!els.perfProfileSelect) return;
+            els.perfProfileSelect.value = els.quickPerfProfileSelect.value === 'speed' ? 'speed' : 'quality';
+            markSettingsDirty(true);
+            void persistFormOptionsQuiet();
+        });
+        els.quickAsrRecommendBtn?.addEventListener('click', () => {
+            const id = String(
+                els.quickAsrRecommendBtn?.dataset?.recommendedAsr
+                || cachedHardwareRecommend?.asrModel
+                || '',
+            ).trim();
+            if (!id) return;
+            if (els.asrRecommendChip) els.asrRecommendChip.dataset.recommendedAsr = id;
+            applyAsrRecommendFromChip();
+            syncExpertExtraChipsUi();
         });
         els.postBatchQcFixMenu?.querySelectorAll('[data-qc-fix-mode]').forEach((item) => {
             item.addEventListener('click', (event) => {
                 event.stopPropagation();
                 setPostBatchQcFixMenuOpen(false);
+                setParamsMoreMenuOpen(false);
                 void setPostBatchQcFixMode(item.dataset.qcFixMode || 'none', { fromUser: true });
             });
         });
         els.postBatchQcFixMenu?.addEventListener('click', (event) => event.stopPropagation());
+        els.paramsModeBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setParamsModeMenuOpen(!paramsModeMenuOpen);
+        });
+        els.paramsModeMenu?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const recover = event.target?.closest?.('[data-sense-recover-global]');
+            if (recover && els.paramsModeMenu.contains(recover)) {
+                setParamsModeMenuOpen(false);
+                applySenseRecoveryAction(recover.getAttribute('data-sense-recover-global'));
+                return;
+            }
+            const item = event.target?.closest?.('[data-params-mode], [data-preset-id]');
+            if (!item || !els.paramsModeMenu.contains(item)) return;
+            const mode = item.getAttribute('data-params-mode');
+            const presetId = item.getAttribute('data-preset-id');
+            setParamsModeMenuOpen(false);
+            if (mode === 'sense') {
+                selectParamsModeSense({ persist: true });
+                return;
+            }
+            if (mode === 'custom') {
+                selectParamsModeCustom({ persist: true });
+                return;
+            }
+            if (mode === 'open-settings') {
+                openAppSettings('params');
+                return;
+            }
+            if (presetId) {
+                void selectParamsModePreset(presetId, { persist: true });
+            }
+        });
         els.postBatchQcFixModeSelect?.addEventListener('change', () => {
             void setPostBatchQcFixMode(els.postBatchQcFixModeSelect.value || 'none', {
                 fromUser: true,
@@ -1695,11 +2140,15 @@
             if (syncingTranslateMode) return;
             markSettingsDirty(true);
             setSaveParamsStatus('有未保存更改', 'warn');
+            syncMtModelChipUi();
+            updateReadinessStrip();
         });
         els.engineLlmMtModelSelect?.addEventListener('change', () => {
             if (syncingTranslateMode) return;
             markSettingsDirty(true);
             setSaveParamsStatus('有未保存更改', 'warn');
+            syncMtModelChipUi();
+            updateReadinessStrip();
         });
         els.logCollapseBtn?.addEventListener('click', toggleLogCollapsed);
         els.clearLogBtn?.addEventListener('click', () => {
@@ -1726,12 +2175,15 @@
                 els.languageSelect.value = els.quickLanguageSelect.value;
             }
             updateParamsSummary();
+            syncMtModelChipUi();
+            syncParamsMoreChipUi();
             void persistFormOptionsQuiet();
         });
         els.quickTargetLangSelect?.addEventListener('change', () => {
             if (els.chineseSubtitleVariantSelect) {
                 els.chineseSubtitleVariantSelect.value = els.quickTargetLangSelect.value || 'simplified';
             }
+            syncParamsMoreChipUi();
             updateParamsSummary();
             void persistFormOptionsQuiet();
         });
@@ -1739,12 +2191,14 @@
             if (els.quickTargetLangSelect) {
                 els.quickTargetLangSelect.value = els.chineseSubtitleVariantSelect.value || 'simplified';
             }
+            syncParamsMoreChipUi();
             updateParamsSummary();
         });
-        els.quickFormatBtn?.addEventListener('click', () => {
-            openAppSettings('output');
+        els.languageSelect?.addEventListener('change', () => {
+            updateParamsSummary();
+            syncMtModelChipUi();
+            syncParamsMoreChipUi();
         });
-        els.languageSelect?.addEventListener('change', updateParamsSummary);
         document.addEventListener('keydown', (event) => {
             if (isStandaloneSettings) return;
             if (!els.paramsModal?.classList.contains('hidden')) return;
@@ -1800,7 +2254,7 @@
                 return;
             }
             if ((key === 'Delete' || key === 'Backspace') && !event.ctrlKey && !event.metaKey) {
-                if (state.running) return;
+                if (state.retranslateBusy) return;
                 if (state.items.some((i) => i.selected)) {
                     event.preventDefault();
                     removeSelected();
@@ -1823,30 +2277,13 @@
     }
 
     function getPostTaskOptionsFromUi() {
-        const action = getPostTaskAction();
-        const shutdownDelaySec = Number(els.shutdownDelayInput?.value) || 60;
-        const base = {
-            shutdownDelaySec,
-            playSoundOnComplete: !!state.playSoundOnComplete,
-            sleepOnComplete: false,
-            openOutputFolderOnComplete: false,
-            closeWindowOnComplete: false,
-            quitAppOnComplete: false,
-            shutdownOnComplete: false,
-        };
-        if (action === 'quit') {
-            return { ...base, postTaskAction: 'quit', quitAppOnComplete: true };
+        if (postTaskQcApi.buildPostTaskOptionsFromAction) {
+            return postTaskQcApi.buildPostTaskOptionsFromAction(getPostTaskAction(), {
+                shutdownDelaySec: Number(els.shutdownDelayInput?.value) || 60,
+                playSoundOnComplete: !!state.playSoundOnComplete,
+            });
         }
-        if (action === 'shutdown') {
-            return { ...base, postTaskAction: 'shutdown', quitAppOnComplete: true, shutdownOnComplete: true };
-        }
-        if (action === 'sleep') {
-            return { ...base, postTaskAction: 'sleep', sleepOnComplete: true };
-        }
-        if (action === 'open_folder') {
-            return { ...base, postTaskAction: 'open_folder', openOutputFolderOnComplete: true };
-        }
-        return { ...base, postTaskAction: 'none' };
+        return { postTaskAction: 'none', shutdownDelaySec: 60, playSoundOnComplete: false };
     }
 
     function resolveOutputDirFromForm() {
@@ -1916,11 +2353,7 @@
 
     const modelApi = global.TransubTransWithAiModels || null;
     let cachedModelItems = [];
-    /** @type {Array<object>} */
-    let cachedEngineModels = [];
     let cachedEnginePickCatalog = [];
-    /** @type {object|null} */
-    let cachedDemucsProbe = null;
     const ENGINE_DEMUCS_MODEL_ID = 'demucs';
     let engineModelsBusy = false;
     let engineModelsFilter = 'all';
@@ -2182,6 +2615,7 @@
                 applyTranslateModeToForm('engine');
             } else {
                 syncFaithfulToneUi(false);
+                syncHybridMtUi();
                 syncAdvancedFeaturesGate();
             }
             return;
@@ -2194,6 +2628,7 @@
             applyTranslateModeToForm(readTranslateModeFromForm());
         } else {
             syncFaithfulToneUi(allow);
+            syncHybridMtUi();
             syncAdvancedFeaturesGate();
         }
     }
@@ -2238,34 +2673,6 @@
         if (els.deleteSourcesAfterMergeWrap) {
             els.deleteSourcesAfterMergeWrap.classList.toggle('hidden', !isDual);
             els.deleteSourcesAfterMergeWrap.classList.toggle('opacity-50', !mergeOn);
-        }
-    }
-
-    function switchParamsTab(tabId, opts = {}) {
-        let next = resolveParamsTab(tabId || activeParamsTab);
-        if (isProGatedTab(next) && !advancedEntitled) {
-            if (!opts.fromGate) {
-                setSaveParamsStatus('请先在「Pro许可」解锁后再使用此功能', 'warn');
-            }
-            next = 'pro';
-        }
-        activeParamsTab = next;
-        els.paramsTabBtns?.forEach((btn) => {
-            const active = btn.dataset.tab === activeParamsTab;
-            btn.classList.toggle('active', active);
-            btn.setAttribute('aria-selected', active ? 'true' : 'false');
-        });
-        els.paramsTabPanels?.forEach((panel) => {
-            panel.classList.toggle('active', panel.dataset.tabPanel === activeParamsTab);
-        });
-        if (activeParamsTab === 'install' || activeParamsTab === 'models') {
-            if (readEngineBackendFromForm() !== 'twai') {
-                const now = Date.now();
-                if (now - lastEngineModelsRefreshAt > 8000) {
-                    lastEngineModelsRefreshAt = now;
-                    void refreshEngineModels({ silent: true });
-                }
-            }
         }
     }
 
@@ -2492,23 +2899,196 @@
     }
 
     function translateModeLabel(mode) {
+        if (translateChipApi.translateModeLabel) return translateChipApi.translateModeLabel(mode);
         return TRANSLATE_MODE_CHIP_LABELS[mode] || TRANSLATE_MODE_CHIP_LABELS.engine;
     }
 
-    function setTranslateModeMenuOpen(open) {
-        translateModeMenuOpen = !!open;
-        els.translateModeMenu?.classList.toggle('hidden', !open);
-        els.quickTranslateModeBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    function setTranslateMenuOpen(open) {
+        translateMenuOpen = !!open;
+        els.translateMenu?.classList.toggle('hidden', !open);
+        els.quickTranslateBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
         if (open) {
+            rebuildTranslateMenuMtSection();
+            const mode = readTranslateModeFromForm();
+            const hybridOff = mode === 'smart'
+                && els.smartTranslateHybridCheck
+                && els.smartTranslateHybridCheck.checked === false;
+            if (hybridOff) {
+                void ensureSmartTranslatePickCache({ force: !cachedSmartTranslatePick }).then(() => {
+                    if (translateMenuOpen) rebuildTranslateMenuMtSection();
+                });
+            }
             setPostTaskMenuOpen(false);
             setAddMenuOpen(false);
+            setParamsMoreMenuOpen(false);
             setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
+        }
+    }
+
+    // Back-compat aliases for older call sites in this file.
+    function setTranslateModeMenuOpen(open) { setTranslateMenuOpen(open); }
+    function setMtModelMenuOpen(open) { setTranslateMenuOpen(open); }
+
+    function setParamsMoreMenuOpen(open) {
+        paramsMoreMenuOpen = !!open;
+        els.paramsMoreMenu?.classList.toggle('hidden', !open);
+        els.paramsMoreBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            syncParamsMoreChipUi();
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+            setTranslateMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
+        }
+    }
+
+    function setExpertExtrasMenuOpen(open) {
+        expertExtrasMenuOpen = !!open;
+        els.expertDrawerBody?.classList.toggle('hidden', !open);
+        els.expertDrawerToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            syncExpertQuickModelSelects();
+            syncExpertExtraChipsUi();
+            syncSenseLockedExtras();
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+            setTranslateMenuOpen(false);
+            setParamsMoreMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
+            setParamsModeMenuOpen(false);
+        }
+    }
+
+    function syncParamsMoreChipUi() {
+        const qc = getPostBatchQcFixMode();
+        const label = postBatchQcFixModeLabel(qc);
+        if (els.paramsMoreLabel) els.paramsMoreLabel.textContent = label;
+        if (els.paramsMoreBtn) {
+            els.paramsMoreBtn.title = `QC修复 · ${label}`;
+        }
+    }
+
+    function syncSenseLockedExtras() {
+        const locked = isAutoSenseEnabled();
+        const group = els.quickAsrChipGroup || document.getElementById('quickAsrChipGroup');
+        group?.classList.toggle('is-sense-locked', locked);
+        group?.querySelectorAll('select, input, button').forEach((el) => {
+            el.disabled = locked;
+        });
+        const hint = els.expertDrawerSenseHint || document.getElementById('expertDrawerSenseHint');
+        if (hint) {
+            hint.hidden = !locked;
+            hint.classList.toggle('hidden', !locked);
+        }
+    }
+
+    function syncQuickExtrasBar() {
+        if (els.paramsMoreMenuWrap) {
+            els.paramsMoreMenuWrap.classList.remove('hidden');
+        }
+        if (els.expertDrawerMenuWrap) {
+            els.expertDrawerMenuWrap.classList.remove('hidden');
+        }
+        if (els.paramsExpertExtraChips) {
+            els.paramsExpertExtraChips.hidden = false;
+            els.paramsExpertExtraChips.classList.remove('hidden');
+            els.paramsExpertExtraChips.classList.add('flex');
+        }
+        els.expertDrawerToggle?.setAttribute('aria-expanded', expertExtrasMenuOpen ? 'true' : 'false');
+        els.expertDrawerBody?.classList.toggle('hidden', !expertExtrasMenuOpen);
+        syncExpertQuickModelSelects();
+        syncExpertExtraChipsUi();
+        syncSenseLockedExtras();
+    }
+
+    function syncExpertQuickModelSelects() {
+        const asr = els.engineAsrModelSelect?.value || '';
+        const vad = els.engineVadModelSelect?.value || '';
+        if (els.quickAsrModelSelect) {
+            fillEngineModelSelect(els.quickAsrModelSelect, cachedEngineModels, 'asr', asr);
+        }
+        if (els.quickVadModelSelect) {
+            fillEngineModelSelect(els.quickVadModelSelect, cachedEngineModels, 'vad', vad);
+        }
+    }
+
+    function syncExpertExtraChipsUi() {
+        const task = readTaskFromForm();
+        const translateOn = task === 'translate' || task === 'dual';
+        const mode = readTranslateModeFromForm();
+        const showGlossary = translateOn && mode === 'engine';
+        const showFaithful = translateOn;
+
+        if (els.quickVadSensitiveCheck && els.vadSensitiveCheck) {
+            els.quickVadSensitiveCheck.checked = !!els.vadSensitiveCheck.checked;
+        }
+        if (els.quickFaithfulCheck && els.smartTranslateFaithfulCheck) {
+            els.quickFaithfulCheck.checked = !!els.smartTranslateFaithfulCheck.checked;
+            els.quickFaithfulCheck.disabled = !showFaithful;
+        }
+        if (els.quickGlossaryMtCheck && els.glossaryMtCheck) {
+            els.quickGlossaryMtCheck.checked = !!els.glossaryMtCheck.checked;
+            els.quickGlossaryMtCheck.disabled = !showGlossary;
+        }
+        if (els.quickPerfProfileSelect && els.perfProfileSelect) {
+            els.quickPerfProfileSelect.value = els.perfProfileSelect.value === 'speed' ? 'speed' : 'quality';
+        }
+        els.quickFaithfulWrap?.classList.toggle('opacity-50', !showFaithful);
+        els.quickFaithfulWrap?.classList.toggle('pointer-events-none', !showFaithful);
+        els.quickGlossaryMtWrap?.classList.toggle('hidden', !showGlossary);
+        els.quickGlossaryMtWrap?.classList.toggle('opacity-50', !showGlossary);
+        els.quickAsrModelSelect && (els.quickAsrModelSelect.value = els.engineAsrModelSelect?.value || els.quickAsrModelSelect.value);
+        els.quickVadModelSelect && (els.quickVadModelSelect.value = els.engineVadModelSelect?.value || els.quickVadModelSelect.value);
+        syncQuickAsrRecommendChip();
+    }
+
+    function syncQuickAsrRecommendChip() {
+        const btn = els.quickAsrRecommendBtn;
+        const api = global.TransubAsrSettings;
+        if (!btn || !api?.describeAsrRecommendChip) return;
+        const ui = api.describeAsrRecommendChip({
+            currentAsr: els.engineAsrModelSelect?.value || els.quickAsrModelSelect?.value || '',
+            recommendedAsr: cachedHardwareRecommend?.asrModel || '',
+            profile: cachedHardwareRecommend?.profile || '',
+        });
+        const show = !!ui.visible && !isAutoSenseEnabled();
+        btn.hidden = !show;
+        btn.classList.toggle('hidden', !show);
+        if (show) {
+            btn.title = ui.detail || ui.label;
+            btn.dataset.recommendedAsr = ui.recommendedAsr || '';
+        }
+    }
+
+    function mirrorSelectValue(fromEl, toEl) {
+        if (!fromEl || !toEl) return;
+        const v = String(fromEl.value || '');
+        if ([...toEl.options].some((o) => o.value === v)) {
+            toEl.value = v;
+        } else if (v) {
+            ensureSelectValue(toEl, v, { label: v, allowEmpty: false });
         }
     }
 
     function normalizePostBatchQcFixMode(value) {
+        if (settingsNormApi.normalizePostBatchQcFixMode) {
+            return settingsNormApi.normalizePostBatchQcFixMode(value);
+        }
         const mode = String(value || '').trim().toLowerCase();
         return POST_BATCH_QC_FIX_MODES.has(mode) ? mode : 'none';
+    }
+
+    function normalizeViewingCleanMode(value, fallback = 'clear') {
+        if (settingsNormApi.normalizeViewingCleanMode) {
+            return settingsNormApi.normalizeViewingCleanMode(value, fallback);
+        }
+        const mode = String(value || '').trim().toLowerCase();
+        if (mode === 'off' || mode === 'light' || mode === 'clear') return mode;
+        return fallback === 'off' || fallback === 'light' || fallback === 'clear' ? fallback : 'clear';
     }
 
     function getPostBatchQcFixMode() {
@@ -2524,12 +3104,15 @@
 
     function setPostBatchQcFixMenuOpen(open) {
         postBatchQcFixMenuOpen = !!open;
-        els.postBatchQcFixMenu?.classList.toggle('hidden', !open);
-        els.postBatchQcFixBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (els.postBatchQcFixMenu) {
+            els.postBatchQcFixMenu.classList.remove('hidden');
+        }
         if (open) {
             setPostTaskMenuOpen(false);
             setAddMenuOpen(false);
-            setTranslateModeMenuOpen(false);
+            setTranslateMenuOpen(false);
+            setParamsModeMenuOpen(false);
+            setParamsMoreMenuOpen(true);
         }
     }
 
@@ -2537,21 +3120,6 @@
         const mode = getPostBatchQcFixMode();
         if (els.postBatchQcFixLabel) {
             els.postBatchQcFixLabel.textContent = postBatchQcFixModeLabel(mode);
-        }
-        if (els.postBatchQcFixBtn) {
-            const titles = {
-                none: '任务完成后不自动修复 QC',
-                fix: '任务完成后自动一键修复 QC',
-                smart: '任务完成后自动智能修复 QC (Pro)',
-            };
-            els.postBatchQcFixBtn.title = titles[mode] || titles.none;
-            els.postBatchQcFixBtn.classList.toggle('ring-1', mode !== 'none');
-            els.postBatchQcFixBtn.classList.toggle('ring-violet-200', mode === 'fix');
-            els.postBatchQcFixBtn.classList.toggle('border-violet-300', mode === 'fix');
-            els.postBatchQcFixBtn.classList.toggle('bg-violet-50/60', mode === 'fix');
-            els.postBatchQcFixBtn.classList.toggle('ring-amber-200', mode === 'smart');
-            els.postBatchQcFixBtn.classList.toggle('border-amber-300', mode === 'smart');
-            els.postBatchQcFixBtn.classList.toggle('bg-amber-50/60', mode === 'smart');
         }
         els.postBatchQcFixMenu?.querySelectorAll('[data-qc-fix-mode]').forEach((item) => {
             const active = item.dataset.qcFixMode === mode;
@@ -2561,15 +3129,16 @@
         if (els.postBatchQcFixModeSelect && els.postBatchQcFixModeSelect.value !== mode) {
             els.postBatchQcFixModeSelect.value = mode;
         }
+        syncParamsMoreChipUi();
     }
 
     async function setPostBatchQcFixMode(nextMode, { fromUser = false, persist = true } = {}) {
         let mode = normalizePostBatchQcFixMode(nextMode);
-        if (mode === 'smart' && fromUser && !advancedEntitled) {
-            appendLog('智能修复 QC 为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
-            openAppSettings('pro');
-            syncPostBatchQcFixChipUi();
-            return;
+        if (mode === 'smart' && !advancedEntitled) {
+            if (fromUser) {
+                void promptProUnlockRequired({ featureLabel: 'QC 智能修复' });
+            }
+            mode = 'fix';
         }
         if (els.postBatchQcFixModeSelect) {
             els.postBatchQcFixModeSelect.value = mode;
@@ -2581,19 +3150,384 @@
         }
     }
 
-    function syncTranslateModeChipUi() {
+    function shouldFollowSenseForMt() {
+        return isAutoSenseEnabled()
+            && !mtUseFormState
+            && readTranslateModeFromForm() !== 'smart'
+            && (readTaskFromForm() === 'translate' || readTaskFromForm() === 'dual');
+    }
+
+    function setMtUseForm(on, { persist = false } = {}) {
+        mtUseFormState = !!on;
+        if (persist) void persistFormOptionsQuiet();
+    }
+
+    /** Sense overrides for a job item; strip MT when user chose 表单自动匹配 / 指定模型. */
+    function senseOverridesForJob(item) {
+        if (!isAutoSenseEnabled() || !item?.sense?.adopted || !item.sense.overrides) return undefined;
+        const ov = { ...item.sense.overrides };
+        if (mtUseFormState) {
+            delete ov.engineMtModel;
+            delete ov.engineLlmMtModel;
+            delete ov.engineOpusMtModel;
+        }
+        return Object.keys(ov).length ? ov : undefined;
+    }
+
+    function listInstalledMtModelsForMode(mode) {
+        const models = Array.isArray(cachedEngineModels) ? cachedEngineModels : [];
+        const wantLlm = mode === 'llm' || mode === 'sakura';
+        return models.filter((m) => {
+            if (!m?.installed || m?.incomplete) return false;
+            const id = String(m.id || '').trim();
+            if (!id) return false;
+            const isLlm = isLlmInferencePickModelId(id);
+            if (wantLlm) {
+                if (!isLlm) return false;
+                if (!advancedEntitled) {
+                    const entry = findManagedLlmCatalogEntry(id);
+                    if (entry && getManagedLlmCatalogApi()?.isProScaleModel?.(entry)) return false;
+                    if (m.proScale) return false;
+                }
+                return true;
+            }
+            if (isLlm) return false;
+            const kind = String(m.kind || '').toLowerCase();
+            return !kind || kind === 'mt';
+        });
+    }
+
+    function listInstalledSmartTranslateModels() {
+        const catalog = retranslatePlanApi.filterSmartTranslateCatalog
+            ? retranslatePlanApi.filterSmartTranslateCatalog(
+                cachedSmartTranslatePick?.catalog,
+                getManagedLlmCatalogApi(),
+            )
+            : (Array.isArray(cachedSmartTranslatePick?.catalog)
+                ? cachedSmartTranslatePick.catalog.filter((item) => item?.installed
+                    && isSmartTranslateCapableModel(item))
+                : []);
+        return catalog.map((item) => ({
+            id: String(item.id || '').trim(),
+            name: item.name || item.id,
+            installed: true,
+            paramBillion: item.paramBillion,
+            proScale: item.proScale,
+        })).filter((m) => m.id);
+    }
+
+    let translateMtManualBrowse = false;
+
+    function rebuildTranslateMenuMtSection() {
+        const host = els.translateMtModelList || document.getElementById('translateMtModelList');
+        const listWrap = els.translateMtModelListWrap || document.getElementById('translateMtModelListWrap');
+        const section = els.translateMtSection || document.getElementById('translateMtSection');
+        const sectionLabel = els.translateMtSectionLabel || document.getElementById('translateMtSectionLabel');
+        const autoBtn = els.translateMtAutoBtn || document.getElementById('translateMtAutoBtn');
+        const manualBtn = els.translateMtManualBtn || document.getElementById('translateMtManualBtn');
+        const autoDesc = els.translateMtAutoDesc || document.getElementById('translateMtAutoDesc');
         const task = readTaskFromForm();
         const allow = task === 'translate' || task === 'dual';
         const mode = allow ? readTranslateModeFromForm() : 'engine';
-        if (els.quickTranslateModeLabel) {
-            els.quickTranslateModeLabel.textContent = allow ? translateModeLabel(mode) : '—';
+        const smartHybrid = mode === 'smart'
+            && (els.smartTranslateHybridCheck?.checked !== false);
+        const smartDialog = mode === 'smart' && !smartHybrid;
+        const auto = isMtModelAutoSelected();
+        const showManual = allow && (!auto || translateMtManualBrowse);
+        const activeId = mode === 'smart'
+            ? (smartHybrid
+                ? readLlmMtModelFromForm()
+                : String(cachedSmartTranslatePick?.smartTranslateModelId || '').trim())
+            : (mode === 'llm' || mode === 'sakura'
+                ? readLlmMtModelFromForm()
+                : readOpusMtModelFromForm());
+
+        if (auto && !translateMtManualBrowse) translateMtManualBrowse = false;
+
+        section?.classList.toggle('hidden', !allow);
+        if (els.translateMtPickSwitch) {
+            els.translateMtPickSwitch.classList.toggle('hidden', !allow);
         }
-        els.translateModeMenuWrap?.classList.toggle('opacity-50', !allow);
-        els.translateModeMenuWrap?.classList.toggle('pointer-events-none', !allow);
-        els.translateModeMenu?.querySelectorAll('[data-translate-mode]').forEach((item) => {
-            const active = item.dataset.translateMode === mode;
-            item.classList.toggle('active', active);
+        if (sectionLabel) {
+            if (smartHybrid) sectionLabel.textContent = '句级推理模型';
+            else if (smartDialog) sectionLabel.textContent = '对话模型';
+            else sectionLabel.textContent = '模型';
+        }
+        if (autoBtn) {
+            autoBtn.classList.toggle('is-active', allow && !showManual);
+            autoBtn.setAttribute('aria-pressed', (!showManual && allow) ? 'true' : 'false');
+        }
+        if (manualBtn) {
+            manualBtn.classList.toggle('is-active', !!showManual);
+            manualBtn.setAttribute('aria-pressed', showManual ? 'true' : 'false');
+        }
+        // Auto pick is per-title at run time — don't show a static language/hardware model hint.
+        if (autoDesc) autoDesc.textContent = '';
+        if (els.translateMtAutoHint) {
+            if (allow && mode === 'smart' && !showManual) {
+                els.translateMtAutoHint.textContent = smartHybrid
+                    ? '句级用专训推理模型；可自动匹配或手动指定。'
+                    : '混合已关：对话模型按行翻译；可自动选用或手动指定已下载项。';
+            } else {
+                els.translateMtAutoHint.textContent = '';
+            }
+        }
+        if (listWrap) {
+            listWrap.classList.toggle('hidden', !showManual);
+        }
+        if (!host) return;
+        host.innerHTML = '';
+        if (!showManual) return;
+        const list = smartDialog
+            ? listInstalledSmartTranslateModels()
+            : listInstalledMtModelsForMode(smartHybrid ? 'llm' : mode);
+        if (!list.length) {
+            const row = document.createElement('p');
+            row.className = 'post-task-menu-hint px-1 py-1 border-0 mb-0';
+            row.textContent = smartDialog
+                ? '暂无已下载的对话模型 · 请到设置 → Pro → 大模型'
+                : '暂无已下载模型 · 请到设置 → 模型下载';
+            host.appendChild(row);
+            return;
+        }
+        for (const model of list) {
+            const id = String(model.id || '').trim();
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'post-task-menu-item';
+            btn.dataset.mtModel = id;
+            btn.setAttribute('role', 'menuitem');
+            if (!auto && id === activeId) btn.classList.add('active');
+            btn.innerHTML = '<i class="fa fa-check post-task-check" aria-hidden="true"></i><span></span>';
+            const label = smartDialog
+                ? (model.name || id)
+                : (formatEngineModelOptionLabel(model) || id);
+            btn.querySelector('span').textContent = label;
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                translateMtManualBrowse = false;
+                setTranslateMenuOpen(false);
+                void setQuickMtModel(id);
+            });
+            host.appendChild(btn);
+        }
+    }
+
+    async function setTranslateMtPickMode(pick) {
+        const next = String(pick || '').trim() === 'manual' ? 'manual' : 'auto';
+        if (next === 'auto') {
+            translateMtManualBrowse = false;
+            await setQuickMtModel('__auto__');
+            rebuildTranslateMenuMtSection();
+            return;
+        }
+        translateMtManualBrowse = true;
+        setMtUseForm(true, { persist: false });
+        // Keep current model if already manual; otherwise stay empty until user picks.
+        rebuildTranslateMenuMtSection();
+        syncTranslateChipUi();
+    }
+
+    function syncTranslateChipUi() {
+        const task = readTaskFromForm();
+        const allow = task === 'translate' || task === 'dual';
+        const mode = allow ? readTranslateModeFromForm() : 'engine';
+        const followSense = shouldFollowSenseForMt();
+        const auto = isMtModelAutoSelected();
+        let label = '—';
+        let title = '翻译方式和模型';
+        if (translateChipApi.buildTranslateChipViewModel) {
+            const smartHybrid = mode === 'smart'
+                && (els.smartTranslateHybridCheck?.checked !== false);
+            const rec = (allow && auto && !followSense && (mode !== 'smart' || smartHybrid))
+                ? recommendFormMtModel({ translateMode: smartHybrid ? 'llm' : mode })
+                : {};
+            const vm = translateChipApi.buildTranslateChipViewModel({
+                task,
+                mode,
+                followSense,
+                auto,
+                autoSenseEnabled: isAutoSenseEnabled(),
+                recommend: rec,
+                opusId: readOpusMtModelFromForm(),
+                llmId: readLlmMtModelFromForm(),
+                smartId: String(cachedSmartTranslatePick?.smartTranslateModelId || '').trim(),
+                hybridMt: els.smartTranslateHybridCheck
+                    ? !!els.smartTranslateHybridCheck.checked
+                    : true,
+                plotPolish: els.smartTranslatePolishCheck
+                    ? !!els.smartTranslatePolishCheck.checked
+                    : true,
+            });
+            label = vm.label;
+            title = vm.title;
+        } else if (allow) {
+            label = translateModeLabel(mode);
+        }
+        if (els.quickTranslateLabel) els.quickTranslateLabel.textContent = label;
+        if (els.quickTranslateBtn) els.quickTranslateBtn.title = title;
+        els.translateMenuWrap?.classList.toggle('opacity-50', !allow);
+        els.translateMenuWrap?.classList.toggle('pointer-events-none', !allow);
+        els.translateMenu?.querySelectorAll('[data-translate-mode]').forEach((item) => {
+            item.classList.toggle('active', item.dataset.translateMode === mode);
         });
+        rebuildTranslateMenuMtSection();
+    }
+
+    function syncTranslateModeChipUi() { syncTranslateChipUi(); }
+    function syncMtModelChipUi() { syncTranslateChipUi(); }
+
+    function ensureMtSelectAllowsEmpty(selectEl, emptyLabel) {
+        if (!selectEl) return;
+        if ([...selectEl.options].some((o) => o.value === '')) return;
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = emptyLabel || '自动匹配';
+        selectEl.insertBefore(opt, selectEl.firstChild);
+    }
+
+    async function setQuickMtModel(modelId) {
+        const task = readTaskFromForm();
+        if (task !== 'translate' && task !== 'dual') return;
+        const mode = readTranslateModeFromForm();
+        const raw = String(modelId || '').trim();
+        const emptyLlmLabel = '自动匹配（按语言 / Pro / 硬件）';
+        const emptyOpusLabel = '自动匹配（按源语言 · Opus）';
+        const smartHybrid = mode === 'smart'
+            && (els.smartTranslateHybridCheck?.checked !== false);
+        const smartDialog = mode === 'smart' && !smartHybrid;
+
+        if (raw === '__sense__' || raw === '__auto__') {
+            translateMtManualBrowse = false;
+            const follow = isAutoSenseEnabled();
+            setMtUseForm(!follow, { persist: false });
+            if (smartDialog) {
+                const res = await electron?.transubAdvancedSaveByok?.({
+                    llmSource: 'managed',
+                    smartTranslateModelId: '',
+                });
+                if (res && res.ok === false) {
+                    showToast(res.error || '无法切换为自动', 'warn');
+                    return;
+                }
+                cachedSmartTranslatePick = null;
+                await ensureSmartTranslatePickCache({ force: true });
+                showToast('智能翻译改回自动选对话模型', 'ok');
+            } else {
+                ensureMtSelectAllowsEmpty(els.engineLlmMtModelSelect, emptyLlmLabel);
+                ensureMtSelectAllowsEmpty(els.engineMtModelSelect, emptyOpusLabel);
+                if (els.engineLlmMtModelSelect) els.engineLlmMtModelSelect.value = '';
+                if (!smartHybrid && els.engineMtModelSelect) els.engineMtModelSelect.value = '';
+                showToast(
+                    mode === 'smart'
+                        ? '智能翻译改回自动选句级模型'
+                        : (follow ? '翻译改回自动（按片子选）' : '翻译改回自动选模型'),
+                    'ok',
+                );
+            }
+        } else {
+            const auto = !raw;
+            translateMtManualBrowse = auto ? false : translateMtManualBrowse;
+            setMtUseForm(true, { persist: false });
+            if (smartDialog) {
+                if (auto) {
+                    const res = await electron?.transubAdvancedSaveByok?.({
+                        llmSource: 'managed',
+                        smartTranslateModelId: '',
+                    });
+                    if (res && res.ok === false) {
+                        showToast(res.error || '无法切换为自动', 'warn');
+                        return;
+                    }
+                    cachedSmartTranslatePick = null;
+                    await ensureSmartTranslatePickCache({ force: true });
+                    showToast('智能翻译改回自动选对话模型', 'ok');
+                } else {
+                    const pick = await ensureSmartTranslatePickCache({ force: !cachedSmartTranslatePick });
+                    const ready = await ensureRequiredModelsReadyOrPrompt({
+                        modelIds: [raw],
+                        contextLabel: `对话模型「${raw}」`,
+                        catalog: Array.isArray(pick?.catalog) ? pick.catalog : [],
+                        settingsTab: 'pro-llm',
+                        settingsHint: '设置 → Pro → 大模型',
+                    });
+                    if (!ready) return;
+                    const res = await electron?.transubAdvancedManagedLlmSelect?.({
+                        modelId: raw,
+                        role: 'smartTranslate',
+                    });
+                    if (!res?.ok) {
+                        showToast(res?.error || '无法选用智能翻译模型', 'warn');
+                        return;
+                    }
+                    cachedSmartTranslatePick = null;
+                    await ensureSmartTranslatePickCache({ force: true });
+                    showToast(`已指定对话模型：${raw}`, 'ok');
+                }
+            } else if (mode === 'llm' || mode === 'sakura' || smartHybrid) {
+                if (!auto) {
+                    const ready = await ensureRequiredModelsReadyOrPrompt({
+                        modelIds: [raw],
+                        contextLabel: mode === 'smart'
+                            ? `句级模型「${raw}」`
+                            : `翻译模型「${raw}」`,
+                    });
+                    if (!ready) return;
+                }
+                ensureMtSelectAllowsEmpty(els.engineLlmMtModelSelect, emptyLlmLabel);
+                if (els.engineLlmMtModelSelect) {
+                    els.engineLlmMtModelSelect.value = auto ? '' : raw;
+                    if (!auto && els.engineLlmMtModelSelect.value !== raw) {
+                        ensureSelectValue(els.engineLlmMtModelSelect, raw, { label: raw, allowEmpty: true });
+                    }
+                }
+                if (auto) {
+                    showToast(mode === 'smart' ? '智能翻译改回自动选句级模型' : '翻译改回自动选模型', 'ok');
+                } else if (mode === 'smart') {
+                    showToast(`已指定句级模型：${raw}`, 'ok');
+                } else if (isAutoSenseEnabled()) {
+                    showToast('已指定翻译模型（识别仍走自动）', 'ok');
+                }
+            } else {
+                if (!auto) {
+                    const ready = await ensureRequiredModelsReadyOrPrompt({
+                        modelIds: [raw],
+                        contextLabel: `翻译模型「${raw}」`,
+                    });
+                    if (!ready) return;
+                }
+                ensureMtSelectAllowsEmpty(els.engineMtModelSelect, emptyOpusLabel);
+                if (els.engineMtModelSelect) {
+                    els.engineMtModelSelect.value = auto ? '' : raw;
+                    if (!auto && els.engineMtModelSelect.value !== raw) {
+                        ensureSelectValue(els.engineMtModelSelect, raw, { label: raw, allowEmpty: true });
+                    }
+                }
+                if (auto) {
+                    showToast('翻译改回自动选模型', 'ok');
+                } else if (isAutoSenseEnabled()) {
+                    showToast('已指定翻译模型（识别仍走自动）', 'ok');
+                }
+            }
+        }
+        markSettingsDirty(true);
+        setSaveParamsStatus('有未保存更改', 'warn');
+        syncTranslateChipUi();
+        syncParamsModeChipUi();
+        updateReadinessStrip();
+        await persistFormOptionsQuiet();
+        // Re-assert after persist in case a normalize/reload path raced.
+        if (!raw || raw === '__auto__' || raw === '__sense__') {
+            if (mode === 'llm' || mode === 'sakura' || smartHybrid) {
+                ensureMtSelectAllowsEmpty(els.engineLlmMtModelSelect, emptyLlmLabel);
+                if (els.engineLlmMtModelSelect) els.engineLlmMtModelSelect.value = '';
+            } else if (!smartDialog) {
+                ensureMtSelectAllowsEmpty(els.engineMtModelSelect, emptyOpusLabel);
+                if (els.engineMtModelSelect) els.engineMtModelSelect.value = '';
+            }
+            syncTranslateChipUi();
+        }
+        updateParamsSummary();
     }
 
     async function setQuickTranslateMode(mode) {
@@ -2602,7 +3536,7 @@
         applyTranslateModeToForm(mode, { fromUser: true });
         markSettingsDirty(true);
         setSaveParamsStatus('有未保存更改', 'warn');
-        syncTranslateModeChipUi();
+        syncTranslateChipUi();
         updateReadinessStrip();
         updateModelSelectHint();
         await persistFormOptionsQuiet();
@@ -2613,78 +3547,147 @@
         if (!els.readinessStrip || isStandaloneSettings) return;
         const backend = readEngineBackendFromForm();
         const task = readTaskFromForm();
-        const taskLabel = taskLabelOf(task);
         const mode = readTranslateModeFromForm();
-        const modeLabel = translateModeLabel(mode);
-        const asr = els.engineAsrModelSelect?.value || '默认 ASR';
         const enginePath = String(els.engineInstallPathInput?.value || '').trim();
         const engineOk = backend === 'twai'
             ? !!String(els.installPathInput?.value || '').trim()
             : !!enginePath || !!els.engineStatus?.className?.includes('emerald');
-        const parts = [
-            backend === 'twai' ? 'TWAI' : 'Engine',
-            engineOk ? '就绪' : '未配置',
-            `${taskLabel} · ${modeLabel}`,
-            `ASR ${asr}`,
-        ];
-        if (task !== 'transcribe') {
-            if (mode === 'engine') {
-                parts.push(`MT ${els.engineMtModelSelect?.value || '自动'}`);
-            } else if (mode === 'llm' || mode === 'sakura') {
-                parts.push(`推理 ${els.engineLlmMtModelSelect?.value || '默认'}`);
-            } else if (mode === 'smart') {
-                parts.push(advancedEntitled ? 'Pro LLM' : '需解锁 Pro');
-            }
+        let llmPreferId = '';
+        if ((mode === 'llm' || mode === 'sakura') && !(els.engineLlmMtModelSelect?.value || '')) {
+            const rec = recommendFormMtModel({ translateMode: 'llm' });
+            llmPreferId = rec.preferId || rec.id || '';
         }
-        els.readinessStripText.textContent = parts.join(' · ');
+        const vm = startReadinessApi.buildReadinessStripViewModel
+            ? startReadinessApi.buildReadinessStripViewModel({
+                backend,
+                task,
+                taskLabel: taskLabelOf(task),
+                mode,
+                modeLabel: translateModeLabel(mode),
+                asrLabel: els.engineAsrModelSelect?.value || '默认 ASR',
+                engineOk,
+                advancedEntitled,
+                opusMtId: els.engineMtModelSelect?.value || '',
+                llmMtId: els.engineLlmMtModelSelect?.value || '',
+                llmPreferId,
+            })
+            : { text: '界面核心未加载，请重启应用', tone: 'warn', action: null };
+        els.readinessStripText.textContent = vm.text;
         els.readinessStrip.classList.remove('hidden', 'is-warn', 'is-ok');
-        if (!engineOk) {
+        if (vm.tone === 'warn') {
             els.readinessStrip.classList.add('is-warn');
-            if (els.readinessStripAction) {
-                els.readinessStripAction.classList.remove('hidden');
-                els.readinessStripAction.textContent = '去配置环境';
-                els.readinessStripAction.dataset.action = 'install';
-            }
-        } else if (mode === 'smart' && !advancedEntitled) {
-            els.readinessStrip.classList.add('is-warn');
-            if (els.readinessStripAction) {
-                els.readinessStripAction.classList.remove('hidden');
-                els.readinessStripAction.textContent = '解锁 Pro';
-                els.readinessStripAction.dataset.action = 'pro';
-            }
         } else {
             els.readinessStrip.classList.add('is-ok');
+        }
+        if (els.readinessStripAction && vm.action) {
+            els.readinessStripAction.classList.remove('hidden');
+            els.readinessStripAction.textContent = vm.action.label;
+            els.readinessStripAction.dataset.action = vm.action.action;
+            delete els.readinessStripAction.dataset.recommendedAsr;
+        } else {
             els.readinessStripAction?.classList.add('hidden');
         }
     }
 
+    function warnMissingRendererCores() {
+        const checks = [
+            ['TransubStartReadiness', !!startReadinessApi.computeStartBlockReason],
+            ['TransubSenseFinalize', !!senseFinalizeApi.planEnforceSenseAdopt],
+            ['TransubSettingsSavedOptions', !!(savedOptionsApi.assembleSavedOptionsFromFields
+                || settingsNormApi.assembleSavedOptionsFromFields)],
+            ['TransubPostBatchAutofixPlan', !!postBatchAutofixApi.planPostBatchAutofixFlags],
+            ['TransubRetranslatePlan', !!retranslatePlanApi.computeRetranslateOverallPct],
+            ['TransubInferStageProgress', !!inferProgress.applyVideoProgressPayload],
+            ['TransubEngineMissingModels', !!missingModelsApi.resolveExpectedOpusMtModelIds],
+        ];
+        const missing = checks.filter(([, ok]) => !ok).map(([name]) => name);
+        if (!missing.length) return;
+        const msg = `关键界面核心未加载：${missing.join('、')}（请重启或重装）`;
+        console.warn('[Transub]', msg);
+        if (!isStandaloneChrome) appendLog(msg, 'err');
+    }
+
     function computeStartBlockReason() {
-        if (state.running || state.postBatchBusy || state.retranslateBusy) {
-            return '任务或后处理进行中';
+        if (startReadinessApi.computeStartBlockReason) {
+            return startReadinessApi.computeStartBlockReason({
+                running: state.running,
+                postBatchBusy: state.postBatchBusy,
+                retranslateBusy: state.retranslateBusy,
+                computeBusy: state.computeBusy,
+                computeBusyLabel: state.computeBusyLabel,
+                items: state.items,
+                autoSenseEnabled: isAutoSenseEnabled(),
+            });
         }
-        if (state.computeBusy) {
-            return state.computeBusyLabel
-                ? `已有${state.computeBusyLabel}正在运行`
-                : '其它窗口有引擎或 LLM 任务正在运行';
+        // Fail closed: never silently allow start if readiness core is missing.
+        return '界面核心未加载，请重启应用';
+    }
+
+    async function syncComputeBusyFromMain() {
+        if (!electron?.transubComputeTaskStatus) return state.computeBusy;
+        try {
+            const st = await electron.transubComputeTaskStatus();
+            const busy = !!st?.busy;
+            state.computeBusy = busy;
+            state.computeBusyLabel = busy
+                ? String(st.label || st.kind || '').trim()
+                : '';
+            state.computeBusySince = busy ? Number(st.since) || state.computeBusySince || Date.now() : 0;
+            state.computeBusyOwner = busy ? String(st.owner || '').trim() : '';
+            state.computeBusyKind = busy ? String(st.kind || '').trim() : '';
+            updateComputeBusyStrip();
+            return busy;
+        } catch {
+            return state.computeBusy;
         }
-        const selectable = state.items.filter((i) => i.selected && i.status !== 'error');
-        if (!selectable.length) {
-            if (!state.items.length) return '请先添加媒体文件';
-            if (!state.items.some((i) => i.selected)) return '请勾选要处理的条目';
-            return '所选条目不可用（含错误项）';
+    }
+
+    async function clearStaleComputeBusyIfNeeded() {
+        const busy = await syncComputeBusyFromMain();
+        const shouldClear = startReadinessApi.shouldForceReleaseStaleComputeLock
+            ? startReadinessApi.shouldForceReleaseStaleComputeLock({
+                computeBusy: busy,
+                running: state.running,
+                postBatchBusy: state.postBatchBusy,
+                retranslateBusy: state.retranslateBusy,
+            })
+            : (busy && !state.running && !state.postBatchBusy && !state.retranslateBusy);
+        if (!shouldClear) {
+            updateStartButton();
+            return { cleared: false, busy: !!busy, label: state.computeBusyLabel };
         }
-        const probing = state.items.some((i) => i.selected && (i.status === 'probing' || i.status === 'pending'));
-        if (probing) return '正在探测视频信息…';
-        const sensing = isAutoSenseEnabled()
-            && state.items.some((i) => i.selected && i.sense?.status === 'sensing');
-        if (sensing) return '智能感知进行中…';
-        return '';
+        if (!electron?.transubComputeTaskForceRelease) {
+            return { cleared: false, busy: true, label: state.computeBusyLabel };
+        }
+        try {
+            const res = await electron.transubComputeTaskForceRelease();
+            state.computeBusy = false;
+            state.computeBusyLabel = '';
+            state.computeBusySince = 0;
+            state.computeBusyOwner = '';
+            state.computeBusyKind = '';
+            updateStartButton();
+            updateStopButton();
+            return {
+                cleared: !!res?.released || !!res?.ok,
+                busy: false,
+                before: res?.before || null,
+            };
+        } catch (err) {
+            return {
+                cleared: false,
+                busy: true,
+                label: state.computeBusyLabel,
+                error: err?.message || String(err),
+            };
+        }
     }
 
     function updateStartHint() {
         const reason = computeStartBlockReason();
         if (!els.startBtn) return;
-        els.startBtn.title = (els.startBtn.disabled && reason) ? reason : '';
+        els.startBtn.title = reason || '开始执行选中条目';
+        els.startBtn.setAttribute('aria-disabled', els.startBtn.disabled ? 'true' : 'false');
     }
 
     function openFirstQcIssueItem() {
@@ -2743,19 +3746,17 @@
         if (els.quickFormatLabel) {
             els.quickFormatLabel.textContent = formatLabel || 'srt';
         }
+        syncParamsMoreChipUi();
         updateEnvBanner();
         updateAutoSenseUi();
         syncTranslateModeChipUi();
+        syncMtModelChipUi();
         syncPostBatchQcFixChipUi();
         updateReadinessStrip();
-        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
     }
 
     function isAutoSenseEnabled() {
-        if (els.autoSenseToggle) {
-            return els.autoSenseToggle.getAttribute('aria-pressed') !== 'false';
-        }
-        return savedOptionsSnapshot?.autoSense !== false;
+        return autoSenseEnabledState !== false;
     }
 
     function isAutoDeepSenseEnabled() {
@@ -2773,16 +3774,356 @@
         return {};
     }
 
+    function shortParamsModeLabel(text, maxLen = 10) {
+        if (startReadinessApi.shortParamsModeLabel) {
+            return startReadinessApi.shortParamsModeLabel(text, maxLen);
+        }
+        const raw = String(text || '').trim();
+        return raw || '自定义';
+    }
+
+    function getActiveParamsPresetId() {
+        if (isAutoSenseEnabled()) return '';
+        return String(els.presetSelect?.value || pendingActivePresetId || '').trim();
+    }
+
+    function getActiveParamsPresetName() {
+        const id = getActiveParamsPresetId();
+        if (!id) return '';
+        if (els.presetSelect) {
+            const opt = [...els.presetSelect.options].find((o) => o.value === id);
+            if (opt) {
+                return String(opt.textContent || '').replace(/（内置）\s*$/, '').trim();
+            }
+        }
+        const cached = paramsModePresetCache.find((p) => String(p?.id || '') === id);
+        return String(cached?.name || '').trim();
+    }
+
+    /**
+     * Apply recognition preset id to the settings select (may defer until options load).
+     * @returns {boolean} true if applied to the select now
+     */
+    function applyActivePresetIdToSelect(presetId) {
+        const want = String(presetId || '').trim();
+        if (!els.presetSelect) {
+            pendingActivePresetId = want;
+            return false;
+        }
+        if (!want) {
+            els.presetSelect.value = '';
+            pendingActivePresetId = '';
+            return true;
+        }
+        const has = [...els.presetSelect.options].some((o) => o.value === want);
+        if (has) {
+            els.presetSelect.value = want;
+            pendingActivePresetId = '';
+            return true;
+        }
+        pendingActivePresetId = want;
+        return false;
+    }
+
+    function flushPendingActivePresetId() {
+        if (!pendingActivePresetId) {
+            syncParamsModeChipUi();
+            return false;
+        }
+        const applied = applyActivePresetIdToSelect(pendingActivePresetId);
+        syncParamsModeChipUi();
+        return applied;
+    }
+
+    function setParamsModeMenuOpen(open) {
+        paramsModeMenuOpen = !!open;
+        els.paramsModeMenu?.classList.toggle('hidden', !open);
+        els.paramsModeBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            setPostTaskMenuOpen(false);
+            setAddMenuOpen(false);
+            setTranslateModeMenuOpen(false);
+            setMtModelMenuOpen(false);
+            setParamsMoreMenuOpen(false);
+            setPostBatchQcFixMenuOpen(false);
+            setExpertExtrasMenuOpen(false);
+            if (paramsModePresetCache.length) {
+                rebuildParamsModePresetItems(paramsModePresetCache, { preferActiveGroup: true });
+            }
+        }
+    }
+
+    let paramsModePresetTabGroup = '';
+    let paramsModePresetCache = [];
+
+    const PARAMS_MODE_PRESET_GROUP_ORDER = Object.freeze([
+        '软声', '影视', '动漫', '对话', '自定义', '其他',
+    ]);
+    const PARAMS_MODE_PRESET_TAB_LABELS = Object.freeze({
+        软声: '软声',
+        影视: '影视',
+        动漫: '动漫',
+        对话: '对话',
+        自定义: '自定义',
+        其他: '其他',
+    });
+
+    function paramsModePresetGroupOf(preset) {
+        return String(preset?.group || (preset?.builtin ? '其他' : '自定义')).trim()
+            || (preset?.builtin ? '其他' : '自定义');
+    }
+
+    function bucketParamsModePresets(presets = []) {
+        const list = Array.isArray(presets) ? presets.filter((p) => p?.id) : [];
+        const buckets = new Map();
+        for (const p of list) {
+            const group = paramsModePresetGroupOf(p);
+            if (!buckets.has(group)) buckets.set(group, []);
+            buckets.get(group).push(p);
+        }
+        const orderedGroups = [
+            ...PARAMS_MODE_PRESET_GROUP_ORDER.filter((g) => buckets.has(g)),
+            ...[...buckets.keys()].filter((g) => !PARAMS_MODE_PRESET_GROUP_ORDER.includes(g)),
+        ];
+        return { buckets, orderedGroups, list };
+    }
+
+    function resolveParamsModePresetTab(orderedGroups, activeId, buckets, { preferActiveGroup = false } = {}) {
+        if (preferActiveGroup && activeId) {
+            for (const group of orderedGroups) {
+                if ((buckets.get(group) || []).some((p) => p.id === activeId)) return group;
+            }
+        }
+        if (paramsModePresetTabGroup && orderedGroups.includes(paramsModePresetTabGroup)) {
+            return paramsModePresetTabGroup;
+        }
+        if (activeId) {
+            for (const group of orderedGroups) {
+                if ((buckets.get(group) || []).some((p) => p.id === activeId)) return group;
+            }
+        }
+        return orderedGroups[0] || '';
+    }
+
+    function rebuildParamsModePresetItems(presets = [], { preferActiveGroup = false } = {}) {
+        const host = els.paramsModePresetList || document.getElementById('paramsModePresetList');
+        const tabsHost = els.paramsModePresetTabs || document.getElementById('paramsModePresetTabs');
+        if (!host) return;
+        if (Array.isArray(presets)) paramsModePresetCache = presets.slice();
+        const { buckets, orderedGroups, list } = bucketParamsModePresets(paramsModePresetCache);
+        const activeId = getActiveParamsPresetId();
+        const activeGroup = resolveParamsModePresetTab(orderedGroups, activeId, buckets, { preferActiveGroup });
+        paramsModePresetTabGroup = activeGroup;
+
+        if (tabsHost) {
+            tabsHost.innerHTML = '';
+            tabsHost.classList.toggle('hidden', orderedGroups.length <= 1);
+            for (const group of orderedGroups) {
+                const tab = document.createElement('button');
+                tab.type = 'button';
+                tab.className = 'params-mode-preset-tab' + (group === activeGroup ? ' is-active' : '');
+                tab.setAttribute('role', 'tab');
+                tab.setAttribute('aria-selected', group === activeGroup ? 'true' : 'false');
+                tab.dataset.presetGroup = group;
+                tab.textContent = PARAMS_MODE_PRESET_TAB_LABELS[group] || group;
+                tab.title = group;
+                tab.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (paramsModePresetTabGroup === group) return;
+                    paramsModePresetTabGroup = group;
+                    rebuildParamsModePresetItems(paramsModePresetCache);
+                });
+                tabsHost.appendChild(tab);
+            }
+        }
+
+        host.innerHTML = '';
+        const rows = activeGroup ? (buckets.get(activeGroup) || []) : list;
+        const renderItem = (p) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            const sceneStyle = !!(p.scenePrimary && p.scene);
+            btn.className = sceneStyle
+                ? 'post-task-menu-item params-mode-preset-item params-mode-scene-item'
+                : 'post-task-menu-item params-mode-preset-item';
+            btn.setAttribute('role', 'menuitem');
+            btn.dataset.presetId = p.id;
+            if (p.id === activeId) btn.classList.add('active');
+            const title = String(p.scene || p.name || p.id).trim();
+            const desc = String(p.sceneBlurb || p.description || '').trim();
+            if (desc) btn.title = desc;
+            const check = document.createElement('i');
+            check.className = 'fa fa-check post-task-check';
+            check.setAttribute('aria-hidden', 'true');
+            const body = document.createElement('span');
+            body.className = 'params-mode-preset-body';
+            const titleEl = document.createElement('span');
+            titleEl.className = 'params-mode-preset-title';
+            titleEl.textContent = title;
+            body.appendChild(titleEl);
+            if (desc) {
+                const descEl = document.createElement('span');
+                descEl.className = 'params-mode-preset-desc';
+                descEl.textContent = desc;
+                body.appendChild(descEl);
+            }
+            btn.appendChild(check);
+            btn.appendChild(body);
+            host.appendChild(btn);
+        };
+        if (!rows.length) {
+            const empty = document.createElement('p');
+            empty.className = 'translate-menu-hint';
+            empty.textContent = '该分类暂无预设';
+            host.appendChild(empty);
+        } else {
+            rows.forEach((p) => renderItem(p));
+        }
+        syncParamsModeChipUi();
+        rebuildParamsSceneCards(list);
+    }
+
+    function rebuildParamsSceneCards(presets = []) {
+        const host = els.paramsSceneCards || document.getElementById('paramsSceneCards');
+        if (!host) return;
+        host.innerHTML = '';
+        const list = Array.isArray(presets) ? presets : [];
+        const primary = list.filter((p) => p?.id && p.scenePrimary && p.scene);
+        const activeId = String(document.getElementById('presetSelect')?.value || '').trim();
+        for (const p of primary) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'params-scene-card';
+            btn.dataset.presetId = p.id;
+            btn.setAttribute('role', 'listitem');
+            if (p.id === activeId) btn.classList.add('is-active');
+            const title = document.createElement('span');
+            title.className = 'params-scene-card-title';
+            title.textContent = p.scene || p.name || p.id;
+            const desc = document.createElement('span');
+            desc.className = 'params-scene-card-desc';
+            desc.textContent = p.sceneBlurb || p.description || '';
+            btn.appendChild(title);
+            btn.appendChild(desc);
+            btn.addEventListener('click', () => {
+                const sel = document.getElementById('presetSelect');
+                if (sel) {
+                    sel.value = p.id;
+                    sel.dispatchEvent(new Event('change'));
+                }
+                host.querySelectorAll('.params-scene-card').forEach((el) => {
+                    el.classList.toggle('is-active', el.dataset.presetId === p.id);
+                });
+            });
+            host.appendChild(btn);
+        }
+    }
+
+    function syncParamsModeChipUi() {
+        const autoEnabled = isAutoSenseEnabled();
+        const presetId = getActiveParamsPresetId();
+        const presetName = getActiveParamsPresetName();
+        const activeItem = [...(els.paramsModeMenu?.querySelectorAll?.('[data-preset-id]') || [])]
+            .find((el) => el.dataset.presetId === presetId);
+        const vm = startReadinessApi.buildParamsModeChipViewModel
+            ? startReadinessApi.buildParamsModeChipViewModel({
+                autoEnabled,
+                presetId,
+                presetName,
+                autoSenseUi: state.autoSenseUi || {},
+                mtUseForm: !!mtUseFormState,
+                translateTask: readTaskFromForm() === 'translate' || readTaskFromForm() === 'dual',
+                presetDesc: String(activeItem?.title || '').trim(),
+            })
+            : { label: '设置', title: '', tone: 'off', autoEnabled, presetId };
+
+        if (els.paramsModeLabel) els.paramsModeLabel.textContent = vm.label;
+        if (els.paramsModeBtn) {
+            els.paramsModeBtn.title = vm.title;
+            els.paramsModeBtn.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
+        }
+        if (els.paramsModeChip) {
+            els.paramsModeChip.className = `content-profile-chip tone-${vm.tone}`;
+        }
+
+        const custom = !autoEnabled && !presetId;
+        const customHint = els.paramsModeCustomHint || document.getElementById('paramsModeCustomHint');
+        if (customHint) {
+            customHint.hidden = !custom;
+            customHint.classList.toggle('hidden', !custom);
+        }
+
+        els.paramsModeMenu?.querySelectorAll('[data-params-mode="sense"]').forEach((item) => {
+            item.classList.toggle('active', autoEnabled);
+            item.setAttribute('aria-checked', autoEnabled ? 'true' : 'false');
+        });
+        els.paramsModeMenu?.querySelectorAll('[data-params-mode="custom"]').forEach((item) => {
+            const active = !autoEnabled && !presetId;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+        els.paramsModeMenu?.querySelectorAll('[data-preset-id]').forEach((item) => {
+            const active = !autoEnabled && item.dataset.presetId === presetId;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+        syncSenseLockedExtras();
+    }
+
+    function selectParamsModeSense({ persist = true } = {}) {
+        if (els.presetSelect) els.presetSelect.value = '';
+        setMtUseForm(false, { persist: false });
+        setAutoSenseEnabled(true, { persist });
+        showToast('已改回智能感知', 'ok');
+        syncTranslateChipUi();
+        syncSenseLockedExtras();
+    }
+
+    function selectParamsModeCustom({ persist = true } = {}) {
+        applyActivePresetIdToSelect('');
+        setAutoSenseEnabled(false, { persist: false });
+        if (persist) void persistFormOptionsQuiet();
+        showToast('已改用设置里的识别参数', 'warn');
+        syncTranslateChipUi();
+        syncParamsModeChipUi();
+        syncSenseLockedExtras();
+    }
+
+    async function selectParamsModePreset(presetId, { persist = true } = {}) {
+        const id = String(presetId || '').trim();
+        if (!id) return;
+        const features = global.TransubFeatures;
+        const name = (() => {
+            const item = [...(els.paramsModeMenu?.querySelectorAll?.('[data-preset-id]') || [])]
+                .find((el) => el.dataset.presetId === id);
+            return String(item?.querySelector?.('.params-mode-preset-title')?.textContent
+                || item?.textContent
+                || id).trim();
+        })();
+        if (typeof features?.applyPreset === 'function') {
+            const applied = await features.applyPreset(id, { persist, autoSense: false });
+            if (applied === false) return;
+            syncParamsModeChipUi();
+            syncTranslateChipUi();
+            showToast(`已按「${name}」识别`, 'ok');
+            return;
+        }
+        setAutoSenseEnabled(false, { persist: false });
+        applyActivePresetIdToSelect(id);
+        if (persist) void persistFormOptionsQuiet();
+        syncParamsModeChipUi();
+        showToast(`已按「${name}」识别`, 'ok');
+    }
+
     function setAutoSenseEnabled(on, { persist = true } = {}) {
         const enabled = !!on;
-        if (els.autoSenseToggle) {
-            els.autoSenseToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-        }
-        if (els.autoSenseToggleLabel) {
-            els.autoSenseToggleLabel.textContent = enabled ? '开' : '关';
+        autoSenseEnabledState = enabled;
+        if (enabled) {
+            applyActivePresetIdToSelect('');
         }
         updateAutoSenseUi();
-        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
+        syncTranslateChipUi();
         renderList();
         if (persist) {
             void persistFormOptionsQuiet();
@@ -2799,16 +4140,21 @@
 
     function updateAutoSenseUi() {
         const profileApi = global.TransubContentProfile;
-        if (!profileApi?.describeAutoSenseUi && !profileApi?.describeContentProfileUi) return;
+        if (!profileApi?.describeAutoSenseUi && !profileApi?.describeContentProfileUi) {
+            syncParamsModeChipUi();
+            return;
+        }
 
         const autoEnabled = isAutoSenseEnabled();
         let sensingCount = 0;
         let adoptedCount = 0;
         let doneCount = 0;
+        let errorCount = 0;
         for (const item of state.items) {
             const s = item.sense;
             if (!s) continue;
             if (s.status === 'sensing') sensingCount += 1;
+            if (s.status === 'error') errorCount += 1;
             if (s.status === 'done') {
                 doneCount += 1;
                 if (s.adopted) adoptedCount += 1;
@@ -2816,34 +4162,115 @@
         }
 
         const describe = profileApi.describeAutoSenseUi || profileApi.describeContentProfileUi;
-        const ui = describe({
+        let ui = describe({
             autoEnabled,
             sensingCount,
             adoptedCount,
             doneCount,
             itemCount: state.items.length,
         });
-        state.autoSenseUi = ui;
-
-        if (els.autoSenseToggleLabel && autoEnabled) {
-            // Keep short "开" when idle; show counts when busy / adopted
-            if (sensingCount > 0 || adoptedCount > 0) {
-                els.autoSenseToggleLabel.textContent = ui.chipLabel.replace(/^感知[·\s]*/, '') || '开';
-            } else {
-                els.autoSenseToggleLabel.textContent = '开';
-            }
-        } else if (els.autoSenseToggleLabel && !autoEnabled) {
-            els.autoSenseToggleLabel.textContent = '关';
+        if (senseRecoveryApi.enrichAutoSenseUiForErrors) {
+            ui = senseRecoveryApi.enrichAutoSenseUiForErrors(ui, {
+                errorCount,
+                autoEnabled,
+            });
         }
-        if (els.autoSenseToggle) {
-            const tone = autoEnabled ? (ui.tone && ui.tone !== 'off' ? ui.tone : 'idle') : 'off';
-            const chip = els.autoSenseToggle.closest('.content-profile-chip') || els.autoSenseToggle;
-            chip.className = `content-profile-chip tone-${tone}`;
-            els.autoSenseToggle.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
-            els.autoSenseToggle.title = ui.title || ui.detail || '智能感知';
+        state.autoSenseUi = ui;
+        syncParamsModeChipUi();
+        const recoveryHost = document.getElementById('paramsModeRecovery');
+        if (recoveryHost) {
+            const show = errorCount > 0;
+            recoveryHost.hidden = !show;
+            recoveryHost.classList.toggle('hidden', !show);
         }
         updateStartButton();
-        global.TransubAnimeWhisperPresetTip?.syncQuickBtnState?.();
+    }
+
+    function applySenseRecoveryAction(actionId, item = null) {
+        const id = String(actionId || '').trim();
+        if (!id) return;
+        if (id === 'deep-resense') {
+            if (item) {
+                resenseItem(item);
+                return;
+            }
+            const errors = state.items.filter((it) => it?.sense?.status === 'error');
+            if (!errors.length) {
+                showToast('当前没有感知失败的条目', 'info');
+                return;
+            }
+            errors.forEach((it) => resenseItem(it));
+            showToast(`已对 ${errors.length} 项启动深度感知`, 'ok');
+            return;
+        }
+        if (id === 'disable-sense') {
+            selectParamsModeCustom({ persist: true });
+            setParamsModeMenuOpen(false);
+            openAppSettings('params');
+            return;
+        }
+        if (id === 'open-params-scene') {
+            setParamsModeMenuOpen(true);
+            showToast('请选一种片子类型', 'info');
+            return;
+        }
+        if (id === 'open-models') {
+            void openParamsModal('models');
+            showToast('请在「模型」页下载或指定 ASR', 'info');
+        }
+    }
+
+    function applyBatchRecoveryAction(actionId, idx) {
+        const id = String(actionId || '').trim();
+        const index = Number(idx);
+        if (!id || !Number.isFinite(index)) return;
+        const item = state.items[index];
+        if (!item) return;
+        if (id === 'retry-item') {
+            retrySingleItem(index);
+            return;
+        }
+        if (id === 'resume-from-asr') {
+            void resumeSingleItem(index);
+            return;
+        }
+        if (id === 'export-diagnostics') {
+            void exportItemDiagnostics(index);
+            return;
+        }
+        if (id === 'open-engine-log') {
+            if (electron?.transubEngineOpenLatestLog) {
+                void electron.transubEngineOpenLatestLog().then((res) => {
+                    if (res?.ok === false) {
+                        showToast(res.error || '无法打开引擎日志', 'warn');
+                        return;
+                    }
+                    showToast('已打开引擎日志', 'ok');
+                }).catch((err) => {
+                    showToast(err?.message || '无法打开引擎日志', 'warn');
+                });
+            } else {
+                openAppSettings('runtime');
+                showToast('请在设置中查看引擎日志路径', 'info');
+            }
+            return;
+        }
+        if (id === 'switch-device-cpu') {
+            if (els.deviceSelect) {
+                els.deviceSelect.value = 'cpu';
+                els.deviceSelect.dispatchEvent(new Event('change'));
+            }
+            markSettingsDirty(true);
+            void persistFormOptionsQuiet();
+            showToast('已切换为 CPU，正在重试本条…', 'ok');
+            appendLog('恢复引导：设备已改为 CPU，自动重试本条', 'ok');
+            retrySingleItem(index);
+            return;
+        }
+        if (id === 'open-models') {
+            openAppSettings('models');
+            showToast('请更换或下载 ASR 模型后重试', 'info');
+        }
     }
 
     /** @deprecated */
@@ -2864,84 +4291,30 @@
 
     async function resolveSenseLanguagePrior(item, base, senseHints = {}) {
         const profileApi = global.TransubContentProfile;
-        const formLang = String(base.language || '').trim().toLowerCase();
-        if (formLang && formLang !== 'auto') {
-            return { language: formLang, source: 'form', confidence: 1 };
-        }
-
-        const metaRaw = String(item.metaLanguage || item.audioLanguages?.[0] || '').trim().toLowerCase();
-        const metaGuess = profileApi?.priorFromMetaLanguage?.(metaRaw)
-            || (metaRaw ? { language: metaRaw, confidence: 0.85, reason: '音轨标记' } : null);
-
-        const nameGuess = profileApi?.guessLanguageFromName?.(item.path) || null;
-
-        // Prefer the stronger non-form prior when deciding whether to skip sniff / fall back
-        const pathPrior = (() => {
-            const candidates = [nameGuess, metaGuess].filter((g) => g?.language);
-            if (!candidates.length) return null;
-            return candidates.reduce((best, cur) => (
-                Number(cur.confidence) > Number(best.confidence) ? cur : best
-            ));
-        })();
-
-        const sniffGate = {
-            metaLanguage: metaGuess?.language || '',
-            metaConfidence: metaGuess?.confidence || 0,
-            nameLanguage: nameGuess?.language || '',
-            nameConfidence: nameGuess?.confidence || 0,
-            profile: senseHints.profile,
-            profileConfidence: senseHints.profileConfidence,
-            profileConfident: senseHints.profileConfident,
-            strongAv: senseHints.strongAv,
-            forceDeep: !!senseHints.forceDeep,
-        };
-
-        if (pathPrior?.language && Number(pathPrior.confidence || 0) >= 0.55) {
-            const source = pathPrior === nameGuess ? 'name' : (pathPrior === metaGuess ? 'meta' : 'name');
-            if (!profileApi.shouldSniffSpokenLanguage?.(sniffGate, base)) {
-                return {
-                    language: pathPrior.language,
-                    source,
-                    confidence: pathPrior.confidence,
-                    reason: pathPrior.reason,
-                };
-            }
-        }
-
         const backend = String(base.engineBackend || els.engineBackendSelect?.value || 'transub');
-        if (backend === 'twai' || !electron?.transubEngineDetectLanguage) {
-            if (pathPrior?.language) {
-                return {
-                    language: pathPrior.language,
-                    source: pathPrior === metaGuess ? 'meta' : 'name',
-                    confidence: pathPrior.confidence,
-                    reason: pathPrior.reason,
-                };
-            }
-            return { language: formLang || 'auto', source: 'form', confidence: 0 };
-        }
-
-        const needSniff = profileApi?.shouldSniffSpokenLanguage?.(sniffGate, base) !== false;
-
-        if (!needSniff) {
-            if (pathPrior?.language) {
-                return {
-                    language: pathPrior.language,
-                    source: pathPrior === metaGuess ? 'meta' : 'name',
-                    confidence: pathPrior.confidence,
-                    reason: pathPrior.reason,
-                };
-            }
-            return { language: 'auto', source: 'form', confidence: 0 };
-        }
+        const planned = senseFinalizeApi.planSenseLanguagePrior
+            ? senseFinalizeApi.planSenseLanguagePrior({
+                formLang: base.language,
+                metaRaw: item.metaLanguage || item.audioLanguages?.[0] || '',
+                itemPath: item.path,
+                senseHints,
+                backend,
+                hasDetectApi: !!electron?.transubEngineDetectLanguage,
+                senseBase: base,
+                profileApi,
+            })
+            : { done: true, prior: { language: String(base.language || 'auto').toLowerCase() || 'auto', source: 'form', confidence: 0 } };
+        if (planned.done) return planned.prior;
 
         appendLog(`短窗语种探测：${basename(item.path)}…`, 'info');
         const sniffWin = profileApi?.resolveSenseSniffWindow?.({
             durationSec: item.duration || 0,
             windowSec: 12,
         }) || { startSec: 0, durationSec: 12, reason: '片头区', skippedIntro: false };
+        let sniffRes = null;
+        let sniffError = '';
         try {
-            const res = await electron.transubEngineDetectLanguage({
+            sniffRes = await electron.transubEngineDetectLanguage({
                 mediaPath: item.path,
                 asrModel: base.engineAsrModel,
                 device: base.device || 'auto',
@@ -2949,50 +4322,25 @@
                 startSec: sniffWin.startSec,
                 options: base,
             });
-            if (res?.ok && res.language && res.language !== 'auto') {
-                const conf = Number(res.confidence) || 0;
-                const usedStart = Number(res.startSec);
-                const skippedIntro = Number.isFinite(usedStart)
-                    ? usedStart >= 30
-                    : !!sniffWin.skippedIntro;
-                const sniff = {
-                    language: String(res.language).toLowerCase(),
-                    confidence: conf,
-                };
-                // Compete against the strongest path/meta prior (weak en must not lock sniff out)
-                const avLikely = !!senseHints.strongAv
-                    || /AV/.test(String(pathPrior?.reason || ''));
-                if (profileApi?.shouldPreferSniffLanguage?.(sniff, pathPrior, {
-                    skippedIntro,
-                    avLikely,
-                })) {
-                    const winNote = sniffWin.reason && sniffWin.startSec > 0
-                        ? `，${sniffWin.reason}`
-                        : '';
-                    return {
-                        language: sniff.language,
-                        source: 'sniff',
-                        confidence: conf,
-                        reason: `短窗探测 ${(conf * 100).toFixed(0)}%${winNote}`,
-                    };
-                }
-            }
-            if (res?.error) {
-                appendLog(`语种探测跳过：${res.error}`, 'warn');
-            }
         } catch (err) {
-            appendLog(`语种探测失败：${err?.message || err}`, 'warn');
+            sniffError = `语种探测失败：${err?.message || err}`;
         }
-
-        if (pathPrior?.language) {
-            return {
-                language: pathPrior.language,
-                source: pathPrior === metaGuess ? 'meta' : 'name',
-                confidence: pathPrior.confidence,
-                reason: pathPrior.reason,
-            };
+        const after = senseFinalizeApi.resolveSenseLanguagePriorAfterSniff
+            ? senseFinalizeApi.resolveSenseLanguagePriorAfterSniff({
+                sniffRes,
+                sniffWin,
+                pathPrior: planned.pathPrior,
+                metaGuess: planned.metaGuess,
+                nameGuess: planned.nameGuess,
+                senseHints,
+                profileApi,
+                sniffError,
+            })
+            : { prior: { language: 'auto', source: 'form', confidence: 0 }, logLines: [] };
+        for (const line of (after.logLines || [])) {
+            appendLog(line.text, line.level || 'info');
         }
-        return { language: 'auto', source: 'form', confidence: 0 };
+        return after.prior;
     }
 
     /**
@@ -3005,106 +4353,49 @@
         quietSkip = false,
     } = {}) {
         const profileApi = global.TransubContentProfile;
-        let overrides = { ...(resolved.overrides || {}) };
-        if (resolved.adopted
-            && langPrior?.language
-            && langPrior.language !== 'auto'
-            && !overrides.language) {
-            overrides.language = langPrior.language;
-        }
-        if (langPrior?.source === 'sniff'
-            && langPrior.confidence >= 0.55
-            && langPrior.language
-            && langPrior.language !== 'auto') {
-            overrides.language = langPrior.language;
-            if (resolved.action === 'skip' || resolved.action === 'suggest') {
-                if (!resolved.adopted && Object.keys(overrides).length) {
-                    resolved.action = 'suggest';
-                    resolved.adopted = false;
-                }
-            }
-        }
-
-        if (refineModels && profileApi?.refineSenseModels) {
-            const refined = profileApi.refineSenseModels(overrides, {
-                profile: resolved.classification?.profile,
-                language: overrides.language || senseBase.language,
-                task: senseBase.task,
+        const asrSettingsApi = global.TransubAsrSettings || {};
+        const enrichedBase = {
+            ...(senseBase || {}),
+            hardwareRecommendAsr: cachedHardwareRecommend?.asrModel || '',
+            hardwareRecommendProfile: cachedHardwareRecommend?.profile || '',
+            hwProfile: cachedHardwareRecommend?.profile || senseBase?.hwProfile || '',
+            vramGb: parseVramGbHint(),
+            applyHardwareAsrRecommend: asrSettingsApi.applyHardwareAsrRecommend,
+        };
+        if (senseFinalizeApi.buildFinalizedSenseState) {
+            const built = senseFinalizeApi.buildFinalizedSenseState({
+                itemName: basename(item.path),
+                resolved,
+                langPrior,
+                senseBase: enrichedBase,
+                depth,
+                refineModels,
+                quietSkip,
                 installedModels: cachedEngineModels,
-            });
-            overrides = refined.overrides || overrides;
-            if (refined.notes?.length) {
-                appendLog(`模型匹配：${basename(item.path)} · ${refined.notes.join('；')}`, 'info');
-            }
-        }
-        if (profileApi?.sanitizeSakuraMtForLanguage) {
-            const safe = profileApi.sanitizeSakuraMtForLanguage(
-                overrides,
-                overrides.language || senseBase.language,
-                { installedModels: cachedEngineModels },
-            );
-            if (safe?.changed) {
-                overrides = safe.options || overrides;
-                if (safe.note) {
-                    appendLog(`模型匹配：${basename(item.path)} · ${safe.note}`, 'warn');
-                }
-            }
-        }
-
-        let supportGaps = [];
-        if (profileApi?.collectSenseSupportGaps) {
-            const gaps = profileApi.collectSenseSupportGaps(overrides, {
-                profile: resolved.classification?.profile,
-                language: overrides.language || senseBase.language,
-                task: senseBase.task,
-                installedModels: cachedEngineModels,
-                demucsReady: true,
                 advancedEntitled,
+                demucsReady: true,
+                profileApi,
             });
-            supportGaps = gaps.missing || [];
+            item.sense = built.sense;
+            for (const line of (built.logLines || [])) {
+                appendLog(line.text, line.level || 'info');
+            }
+            if (built.recordMemory) {
+                recordSenseMemoryForItem(item, true);
+            }
+            return;
         }
-
-        const langNote = langPrior?.source === 'sniff'
-            || langPrior?.source === 'meta'
-            || langPrior?.source === 'name'
-            ? ` · 语种 ${langPrior.language}${langPrior.reason ? `（${langPrior.reason}）` : ''}`
-            : '';
         item.sense = {
             status: 'done',
             adopted: !!resolved.adopted,
             classification: resolved.classification || null,
-            overrides,
-            supportGaps,
-            message: (resolved.message || '') + langNote,
+            overrides: { ...(resolved.overrides || {}) },
+            supportGaps: [],
+            message: resolved.message || '',
             action: resolved.action || 'skip',
             languagePrior: langPrior || null,
             depth,
         };
-        if (!item.sense.adopted
-            && langPrior?.source === 'sniff'
-            && langPrior.confidence >= 0.7
-            && overrides.language) {
-            const keys = Object.keys(overrides);
-            const onlyLangOrModels = keys.every((k) => (
-                k === 'language' || k === 'engineAsrModel' || k === 'engineMtModel'
-            ));
-            if (onlyLangOrModels) {
-                item.sense.adopted = true;
-                item.sense.action = 'apply';
-                item.sense.message = `短窗语种 ${overrides.language}（${Math.round(langPrior.confidence * 100)}%）→ 已采纳`
-                    + (overrides.engineAsrModel ? ` · ASR ${overrides.engineAsrModel}` : '')
-                    + (overrides.engineMtModel ? ` · MT ${overrides.engineMtModel}` : '')
-                    + (resolved.message ? `；${resolved.message}` : '');
-            }
-        }
-        if (item.sense.message) {
-            appendLog(item.sense.message, item.sense.adopted ? 'info' : 'warn');
-        } else if (resolved.action === 'skip' && !quietSkip) {
-            appendLog(`感知完成：${basename(item.path)} · 未识别明确类型`, 'info');
-        }
-        if (item.sense.adopted && item.sense.classification?.profile) {
-            recordSenseMemoryForItem(item, true);
-        }
     }
 
     /**
@@ -3123,40 +4414,24 @@
         const profileApi = global.TransubContentProfile;
         if (!profileApi?.resolveItemSense || !profileApi.isInstantAvSenseCandidate) return false;
 
-        const nameLangGuess = profileApi.guessLanguageFromName?.(item.path) || null;
-        const quickLang = (nameLangGuess?.language
-            && Number(nameLangGuess.confidence || 0) >= 0.55)
-            ? nameLangGuess.language
-            : 'ja';
-        const nameClassification = profileApi.classifyContentProfile?.({
-            path: item.path,
-            durationSec: item.duration || 0,
-            language: quickLang,
-        }) || null;
-        if (!profileApi.isInstantAvSenseCandidate(nameClassification)) return false;
+        const planned = senseFinalizeApi.planInstantAvSense
+            ? senseFinalizeApi.planInstantAvSense({
+                path: item.path,
+                durationSec: item.duration || 0,
+                advancedEntitled,
+                senseBaseOptions: getSenseBaseOptions(),
+                profileApi,
+            })
+            : null;
+        if (!planned) return false;
 
-        const base = getSenseBaseOptions();
-        const senseBase = {
-            ...base,
-            language: quickLang || 'ja',
-        };
-        const langPrior = {
-            language: senseBase.language,
-            source: 'name',
-            confidence: nameLangGuess?.confidence || 0.7,
-            reason: nameLangGuess?.reason || 'AV 番号先验',
-        };
-        const resolved = profileApi.resolveItemSense(
-            { path: item.path, durationSec: item.duration || 0 },
-            senseBase,
-            { autoSense: true, advancedEntitled, memoryHits: [] },
-        );
-        finalizeSenseResult(item, resolved, langPrior, senseBase, {
+        finalizeSenseResult(item, planned.resolved, planned.langPrior, planned.senseBase, {
             depth: 'instant',
             refineModels: true,
         });
+        const nameClassification = planned.classification || {};
         appendLog(
-            `番号即感：${basename(item.path)} · ${nameClassification.label}`
+            `编号即感：${basename(item.path)} · ${nameClassification.label}`
             + ` ${Math.round((nameClassification.confidence || 0) * 100)}%（深入感知请点深度感知）`,
             'info',
         );
@@ -3271,6 +4546,15 @@
                     }
                 }
             }
+            if (profileApi?.coerceLanguageForSoftAv && langPrior) {
+                const coerced = profileApi.coerceLanguageForSoftAv(langPrior.language, {
+                    strongAv: !!nameClassification?.strongAv,
+                    profile: nameClassification?.profile || '',
+                });
+                if (coerced && coerced !== langPrior.language) {
+                    langPrior = { ...langPrior, language: coerced };
+                }
+            }
 
             const senseBase = {
                 ...base,
@@ -3361,8 +4645,8 @@
                         path: item.path,
                         strongAv: !!resolved.classification?.strongAv,
                         avLikely: !!resolved.classification?.strongAv
-                            || /番号|AV/.test(String(resolved.classification?.reasons?.join(' ') || ''))
-                            || /AV/.test(String(langPrior?.reason || '')),
+                            || /编号|软声/.test(String(resolved.classification?.reasons?.join(' ') || ''))
+                            || /软声/.test(String(langPrior?.reason || '')),
                     },
                 );
                 if (promo?.promoted && promo.classification) {
@@ -3410,38 +4694,36 @@
                 enqueueSense(item, { deep: true, escalate: true });
             }
         } catch (err) {
+            const guide = senseRecoveryApi.buildSenseFailureGuidance
+                ? senseRecoveryApi.buildSenseFailureGuidance({
+                    message: err?.message || '感知失败',
+                    autoEnabled: isAutoSenseEnabled(),
+                })
+                : {
+                    tip: err?.message || '感知失败',
+                    shortTip: '可：深度感知 · 关感知用表单 · 参数选场景',
+                    logLine: err?.message || '感知失败',
+                };
             item.sense = {
                 status: 'error',
                 adopted: false,
                 classification: null,
                 overrides: {},
-                message: err?.message || '感知失败',
+                message: guide.tip,
+                recovery: guide,
             };
-            appendLog(`感知失败：${basename(item.path)} · ${item.sense.message}`, 'err');
+            appendLog(`感知失败：${basename(item.path)} · ${guide.logLine}`, 'err');
+            if (!isStandaloneSettings) {
+                showToast(`${basename(item.path)}：${guide.shortTip}`, 'warn');
+            }
         }
         refreshListRow(item);
         updateAutoSenseUi();
     }
 
-    const SENSE_CONCURRENCY_QUICK = 4;
-    const SENSE_CONCURRENCY_DEEP = 1;
-    let senseQueue = [];
-    let senseRunning = 0;
-    let senseDeepRunning = 0;
+    const SENSE_CONCURRENCY_QUICK = senseQueueApi.SENSE_CONCURRENCY_QUICK || 4;
+    const SENSE_CONCURRENCY_DEEP = senseQueueApi.SENSE_CONCURRENCY_DEEP || 1;
     let senseModelsPrefetch = null;
-
-    function enqueueSense(item, opts = {}) {
-        if (!item) return;
-        if (!isAutoSenseEnabled() && !opts.force) return;
-        // Instant 番号: finish now, skip queue
-        if (!opts.force && !opts.deep && tryInstantAvSense(item)) {
-            refreshListRow(item);
-            updateAutoSenseUi();
-            return;
-        }
-        senseQueue.push({ item, opts });
-        drainSenseQueue();
-    }
 
     async function ensureSenseModelsPrefetch() {
         if (senseModelsPrefetch) return senseModelsPrefetch;
@@ -3459,36 +4741,41 @@
         return senseModelsPrefetch;
     }
 
-    function drainSenseQueue() {
-        while (senseQueue.length) {
-            const peek = senseQueue[0];
-            const wantDeep = !!(peek.opts?.deep || peek.opts?.force);
-            const limit = wantDeep ? SENSE_CONCURRENCY_DEEP : SENSE_CONCURRENCY_QUICK;
-            const running = wantDeep ? senseDeepRunning : senseRunning;
-            // Deep jobs must not share slots with quick jobs (avoid starving either)
-            if (wantDeep && senseRunning > 0) break;
-            if (!wantDeep && senseDeepRunning > 0) break;
-            if (running >= limit) break;
+    const senseQueueCtl = typeof senseQueueApi.createSenseQueue === 'function'
+        ? senseQueueApi.createSenseQueue({
+            quickLimit: SENSE_CONCURRENCY_QUICK,
+            deepLimit: SENSE_CONCURRENCY_DEEP,
+            isEnabled: () => isAutoSenseEnabled(),
+            tryInstant: (item) => tryInstantAvSense(item),
+            onAfterInstant: (item) => {
+                refreshListRow(item);
+                updateAutoSenseUi();
+            },
+            ensurePrefetch: () => ensureSenseModelsPrefetch(),
+            runJob: (item, opts) => runSenseForItem(item, opts),
+            onIdle: () => {
+                senseModelsPrefetch = null;
+                updateAutoSenseUi();
+            },
+        })
+        : null;
 
-            const job = senseQueue.shift();
-            if (wantDeep) senseDeepRunning += 1;
-            else senseRunning += 1;
-
-            Promise.resolve()
-                .then(() => (wantDeep ? ensureSenseModelsPrefetch() : Promise.resolve()))
-                .then(() => runSenseForItem(job.item, job.opts))
-                .finally(() => {
-                    if (wantDeep) senseDeepRunning -= 1;
-                    else senseRunning -= 1;
-                    if (!senseRunning && !senseDeepRunning && !senseQueue.length) {
-                        senseModelsPrefetch = null;
-                    }
-                    drainSenseQueue();
-                    if (!senseRunning && !senseDeepRunning && !senseQueue.length) {
-                        updateAutoSenseUi();
-                    }
-                });
+    function enqueueSense(item, opts = {}) {
+        if (senseQueueCtl) {
+            senseQueueCtl.enqueue(item, opts);
+            return;
         }
+        // Fallback if core missing (should not happen in packaged UI)
+        if (!item) return;
+        if (!isAutoSenseEnabled() && !opts.force) return;
+        if (!opts.force && !opts.deep && tryInstantAvSense(item)) {
+            refreshListRow(item);
+            updateAutoSenseUi();
+        }
+    }
+
+    function drainSenseQueue() {
+        senseQueueCtl?.drain?.();
     }
 
     function recordSenseMemoryForItem(item, prefer) {
@@ -3528,7 +4815,7 @@
         }
         const yes = await appConfirm({
             title: '清空感知记忆',
-            message: '确定清空全部自动感知纠错记忆（目录 / 厂牌偏好）？\n当前列表里已有的感知结果不会被清除。',
+            message: '确定清空全部自动感知纠错记忆（目录 / 系列偏好）？\n当前列表里已有的感知结果不会被清除。',
             primaryLabel: '清空',
             secondaryLabel: '取消',
             danger: true,
@@ -3548,24 +4835,17 @@
     }
 
     function isExplicitSenseReject(item) {
-        const s = item?.sense;
-        if (!s) return false;
-        if (s.userRejected) return true;
-        // Memory avoid: visible suggest, not auto-adopted — treat as sticky 不采纳.
-        return s.action === 'suggest' && !s.adopted;
+        if (senseFinalizeApi.isExplicitSenseReject) {
+            return senseFinalizeApi.isExplicitSenseReject(item);
+        }
+        return false;
     }
 
     function rejectItemSense(item) {
         if (!item?.sense) return;
-        item.sense = {
-            ...item.sense,
-            adopted: false,
-            userRejected: true,
-            status: item.sense.status === 'sensing' ? 'done' : item.sense.status,
-            message: item.sense.message
-                ? `${String(item.sense.message).replace(/（已不采纳）$/, '')}（已不采纳）`
-                : '已不采纳感知方案',
-        };
+        item.sense = senseFinalizeApi.buildRejectedSenseState
+            ? senseFinalizeApi.buildRejectedSenseState(item.sense)
+            : { ...item.sense, adopted: false, userRejected: true };
         recordSenseMemoryForItem(item, false);
         refreshListRow(item);
         updateAutoSenseUi();
@@ -3573,49 +4853,47 @@
     }
 
     function adoptItemSense(item, { quiet = false } = {}) {
-        if (!item?.sense || item.sense.status !== 'done') return false;
-        const overrides = item.sense.overrides || {};
-        if (!Object.keys(overrides).length) {
-            if (!quiet) appendLog(`无法采纳：${basename(item.path)} · 无可用感知参数`, 'warn');
+        const built = senseFinalizeApi.buildAdoptedSenseState
+            ? senseFinalizeApi.buildAdoptedSenseState(item?.sense)
+            : { ok: false };
+        if (!built.ok) {
+            if (!quiet && built.reason === 'no_overrides') {
+                appendLog(`无法采纳：${basename(item.path)} · 无可用感知参数`, 'warn');
+            }
             return false;
         }
-        item.sense = {
-            ...item.sense,
-            adopted: true,
-            userRejected: false,
-            action: item.sense.action === 'suggest' ? 'apply' : (item.sense.action || 'apply'),
-            message: item.sense.message
-                ? String(item.sense.message).replace(/（已不采纳）/g, '').replace(/；未自动采纳$/, '')
-                : '已采纳感知方案',
-        };
+        item.sense = built.sense;
         recordSenseMemoryForItem(item, true);
         refreshListRow(item);
         updateAutoSenseUi();
+        if (state.running) {
+            void syncLiveBatchOverrides(item);
+        }
         if (!quiet) appendLog(`采纳感知：${basename(item.path)}`, 'info');
         return true;
     }
 
-    /**
-     * While 智能感知 is on: force-adopt any finished sense scheme unless the user
-     * explicitly rejected it (wand / sticky memory avoid). Returns items still
-     * uncovered (no adopted overrides and not explicitly rejected).
-     */
+    async function syncLiveBatchOverrides(item) {
+        if (!item?.path || !electron?.transubLiveBatchUpdateOverrides) return;
+        try {
+            await electron.transubLiveBatchUpdateOverrides({
+                path: item.path,
+                optionOverrides: senseOverridesForJob(item),
+            });
+        } catch { /* ignore */ }
+    }
+
     function enforceSenseAdoptForStart(selectedItems = []) {
         const list = Array.isArray(selectedItems) ? selectedItems : [];
-        const uncovered = [];
-        for (const item of list) {
-            const s = item?.sense;
-            if (s?.status === 'sensing') {
-                uncovered.push(item);
-                continue;
-            }
-            if (isExplicitSenseReject(item)) continue;
-            if (s?.adopted && s.overrides && Object.keys(s.overrides).length) continue;
-            if (s?.status === 'done' && s.overrides && Object.keys(s.overrides).length) {
-                adoptItemSense(item, { quiet: true });
-                if (item.sense?.adopted) continue;
-            }
-            uncovered.push(item);
+        // Fail closed if core missing: treat every item as uncovered.
+        if (!senseFinalizeApi.planEnforceSenseAdopt) return list.slice();
+        const planned = senseFinalizeApi.planEnforceSenseAdopt(list);
+        const uncovered = Array.isArray(planned.uncovered) ? planned.uncovered.slice() : [];
+        for (const idx of (planned.adoptIndexes || [])) {
+            const item = list[idx];
+            if (!item) continue;
+            const ok = adoptItemSense(item, { quiet: true });
+            if (!ok || !item.sense?.adopted) uncovered.push(item);
         }
         return uncovered;
     }
@@ -3643,6 +4921,7 @@
     }
 
     async function applyOptionsToForm(options = {}, { applyUiMode = true } = {}) {
+        void applyUiMode;
         stashTwaiLegacyFromOptions(options);
         if (els.engineBackendSelect) {
             els.engineBackendSelect.value = options.engineBackend === 'twai' ? 'twai' : 'transub';
@@ -3687,13 +4966,14 @@
                 : (activeIsLlm ? '' : activeMt);
             const llmMt = options.engineLlmMtModel != null
                 ? String(options.engineLlmMtModel || '')
-                : (activeIsLlm ? activeMt : 'sakura-1.5b');
+                : (activeIsLlm ? activeMt : '');
             ensureSelectValue(els.engineMtModelSelect, opusMt, {
                 label: opusMt ? `${opusMt}` : '',
                 allowEmpty: true,
             });
-            ensureSelectValue(els.engineLlmMtModelSelect, llmMt || 'sakura-1.5b', {
-                label: llmMt || 'sakura-1.5b',
+            ensureSelectValue(els.engineLlmMtModelSelect, llmMt, {
+                label: llmMt ? `${llmMt}` : '',
+                allowEmpty: true,
             });
         }
         if (els.engineVadModelSelect && options.engineVadModel) {
@@ -3734,11 +5014,53 @@
             els.smartTranslateFaithfulCheck.checked = (task === 'translate' || task === 'dual')
                 && !!options.smartTranslateFaithfulTone;
         }
+        if (els.smartTranslateHybridCheck) {
+            els.smartTranslateHybridCheck.checked = options.smartTranslateHybridMt !== false;
+        }
+        if (els.smartTranslatePolishCheck) {
+            els.smartTranslatePolishCheck.checked = options.smartTranslatePlotPolish !== false;
+        }
+        if (els.smartTranslatePolishLimitInput) {
+            const lim = Number(options.smartTranslatePolishSampleLimit);
+            els.smartTranslatePolishLimitInput.value = String(
+                Number.isFinite(lim) ? Math.max(4, Math.min(36, Math.round(lim))) : 36,
+            );
+        }
         if (els.filmAudioEnhanceCheck) {
             els.filmAudioEnhanceCheck.checked = !!options.filmAudioEnhance;
         }
         if (els.filmVadPresetCheck) {
             els.filmVadPresetCheck.checked = !!options.filmVadPreset && !options.filmAudioEnhance;
+        }
+        const setOptNum = (el, value) => {
+            if (!el) return;
+            el.value = value == null || value === '' ? '' : String(value);
+        };
+        setOptNum(els.filmVadThresholdInput, options.filmVadThreshold);
+        setOptNum(els.filmVadMinSpeechInput, options.filmVadMinSpeechDurationMs);
+        setOptNum(els.filmVadMinSilenceInput, options.filmVadMinSilenceDurationMs);
+        setOptNum(els.filmHallucinationSilenceInput, options.filmHallucinationSilenceThreshold);
+        if (els.qcSmartLlmSplitCheck) {
+            els.qcSmartLlmSplitCheck.checked = options.qcSmartLlmSplit !== false;
+        }
+        if (els.qcSmartRetranscribeCheck) {
+            els.qcSmartRetranscribeCheck.checked = options.qcSmartRetranscribe !== false;
+        }
+        if (els.qcSmartSemanticReviewCheck) {
+            els.qcSmartSemanticReviewCheck.checked = options.qcSmartSemanticReview !== false;
+        }
+        if (els.qcSmartIntensitySelect) {
+            const v = String(options.qcSmartIntensity || 'light').toLowerCase();
+            els.qcSmartIntensitySelect.value = (v === 'medium' || v === 'strong') ? v : 'light';
+        }
+        if (els.qcSmartMaxRetranscribeInput) {
+            const n = Number(options.qcSmartMaxRetranscribeRanges);
+            els.qcSmartMaxRetranscribeInput.value = String(
+                Number.isFinite(n) ? Math.max(1, Math.min(24, Math.round(n))) : 8,
+            );
+        }
+        if (els.libraryOpenAfterBatchCheck) {
+            els.libraryOpenAfterBatchCheck.checked = !!options.libraryOpenAfterBatch;
         }
         if (els.deleteSourcesAfterMergeCheck) {
             els.deleteSourcesAfterMergeCheck.checked = !!options.mergeBilingualSubtitles
@@ -3778,7 +5100,13 @@
             els.maxBatchSizeInput.value = String(options.maxBatchSize);
         }
         if (els.languageSelect && options.language) {
-            els.languageSelect.value = options.language;
+            const lang = String(options.language).trim().toLowerCase();
+            const supported = ['auto', 'ja', 'zh', 'yue', 'ko', 'en'];
+            // Ignore exotic tags (nn/de/…) so the form never sticks on garbage ISO codes.
+            if (supported.includes(lang)
+                && [...els.languageSelect.options].some((o) => o.value === lang)) {
+                els.languageSelect.value = lang;
+            }
         }
         if (els.beamSizeInput && options.beamSize != null) {
             els.beamSizeInput.value = String(options.beamSize);
@@ -3821,6 +5149,12 @@
         if (els.audioLightDenoiseCheck) {
             els.audioLightDenoiseCheck.checked = !!options.audioLightDenoise;
         }
+        if (els.perfProfileSelect) {
+            els.perfProfileSelect.value = String(options.perfProfile || 'quality') === 'speed'
+                ? 'speed'
+                : 'quality';
+        }
+        syncExpertExtraChipsUi();
         if (els.retranscribeWarmLightCheck) {
             els.retranscribeWarmLightCheck.checked = !!options.retranscribeWarmLight;
         }
@@ -3848,6 +5182,9 @@
         if (els.showTaskResourceUsageCheck) {
             els.showTaskResourceUsageCheck.checked = options.showTaskResourceUsage !== false;
         }
+        if (els.rememberLastOpenDirCheck) {
+            els.rememberLastOpenDirCheck.checked = options.rememberLastOpenDir !== false;
+        }
         if (els.minimizeToTrayCheck) {
             els.minimizeToTrayCheck.checked = options.minimizeToTrayEnabled !== false;
         }
@@ -3872,11 +5209,21 @@
         if (els.postBatchQcCheck) {
             els.postBatchQcCheck.checked = options.postBatchQc !== false;
         }
-        void setPostBatchQcFixMode(options.postBatchQcFixMode || 'none', { persist: false });
+        void setPostBatchQcFixMode(options.postBatchQcFixMode || 'smart', { persist: false });
         if (els.autoDeepSenseCheck) {
             els.autoDeepSenseCheck.checked = !!options.autoDeepSense;
         }
+        mtUseFormState = !!options.mtUseForm;
         setAutoSenseEnabled(options.autoSense !== false, { persist: false });
+        // Only touch the recognition preset when the payload explicitly carries it, or when
+        // turning 智能感知 back on. Otherwise applying a preset options patch (without
+        // activePresetId) would wipe the chip back to「设置」immediately.
+        if (options.autoSense !== false) {
+            applyActivePresetIdToSelect('');
+        } else if (Object.prototype.hasOwnProperty.call(options, 'activePresetId')) {
+            applyActivePresetIdToSelect(options.activePresetId || '');
+        }
+        syncQuickExtrasBar();
         if (els.postBatchCpsSplitCheck) {
             els.postBatchCpsSplitCheck.checked = options.postBatchCpsSplit !== false;
         }
@@ -3886,8 +5233,23 @@
         if (els.postBatchCompressRepCheck) {
             els.postBatchCompressRepCheck.checked = options.postBatchCompressRepetition !== false;
         }
-        if (els.postBatchCompactPureInterjectionsCheck) {
-            els.postBatchCompactPureInterjectionsCheck.checked = !!options.postBatchCompactPureInterjections;
+        if (els.postBatchViewingPunctModeSelect) {
+            els.postBatchViewingPunctModeSelect.value = normalizeViewingCleanMode(
+                options.postBatchViewingPunctMode,
+                options.postBatchSimplifyViewingPunctuation === false ? 'off' : 'clear',
+            );
+        }
+        if (els.postBatchInterjectionModeSelect) {
+            els.postBatchInterjectionModeSelect.value = normalizeViewingCleanMode(
+                options.postBatchInterjectionMode,
+                options.postBatchCompactPureInterjections === false ? 'off' : 'clear',
+            );
+        }
+        if (els.postBatchOnomatopoeiaModeSelect) {
+            els.postBatchOnomatopoeiaModeSelect.value = normalizeViewingCleanMode(
+                options.postBatchOnomatopoeiaMode,
+                options.postBatchCompactPureInterjections === false ? 'off' : 'clear',
+            );
         }
         syncDeviceOptionsForMode();
         syncBatchSizeUi();
@@ -3897,7 +5259,10 @@
         syncTranslateModeFromOptions(options);
         syncChineseSubtitleVariantUi();
         void refreshModelSelects(options);
+        syncExpertExtraChipsUi();
+        syncParamsModeChipUi();
         updateParamsSummary();
+        updateAsrWindowTip();
     }
 
     function readTwaiLegacyOptionsFromSnapshot() {
@@ -3905,127 +5270,138 @@
     }
 
     function buildSavedOptionsFromForm() {
-        const maxSegText = String(els.vadMaxSingleSegmentInput?.value ?? '').trim();
-        const maxSegRaw = maxSegText === '' ? NaN : Number(maxSegText);
-        const vadMaxSingleSegmentMs = Number.isFinite(maxSegRaw)
-            ? Math.max(5000, Math.min(60000, Math.round(maxSegRaw)))
-            : 30000;
-        const translateTask = readTaskFromForm() === 'translate' || readTaskFromForm() === 'dual';
-        const built = {
-            engineBackend: readEngineBackendFromForm(),
-            engineInstallPath: engineInstallPathForSave(),
-            engineUrl: els.engineUrlInput?.value.trim() || 'http://127.0.0.1:8765',
-            engineHfEndpoint: els.engineHfEndpointInput?.value?.trim() ?? 'https://hf-mirror.com',
-            proxyEnabled: !!els.proxyEnabledCheck?.checked,
-            proxyUrl: els.proxyUrlInput?.value?.trim() || '',
-            proxyBypass: els.proxyBypassInput?.value?.trim()
-                || 'localhost,127.0.0.1,::1,<local>',
-            engineProfile: els.engineProfileSelect?.value || 'balanced',
-            engineAsrModel: els.engineAsrModelSelect?.value || 'sensevoice-small',
-            engineOpusMtModel: readOpusMtModelFromForm(),
-            engineLlmMtModel: readLlmMtModelFromForm(),
-            engineMtModel: readActiveEngineMtModelFromForm(),
-            // Explicit mode so load does not depend solely on inferring from engineMtModel.
-            translateMode: readTranslateModeFromForm(),
-            engineVadModel: els.engineVadModelSelect?.value || 'fsmn-vad',
-            engineAutoStart: els.engineAutoStartCheck ? !!els.engineAutoStartCheck.checked : true,
-            installPath: els.installPathInput?.value.trim() || '',
-            device: els.deviceSelect?.value || 'cuda',
-            task: readTaskFromForm(),
-            overwrite: !!els.overwriteCheck?.checked,
-            mergeBilingualSubtitles: readTaskFromForm() === 'dual' && !!els.mergeBilingualCheck?.checked,
-            dualLineOrder: readDualLineOrderFromForm(),
-            smartTranslate: translateTask && !!els.smartTranslateCheck?.checked,
-            smartTranslateFaithfulTone: translateTask && !!els.smartTranslateFaithfulCheck?.checked,
-            // Advanced-only: never persist while not entitled (disabled checkboxes can stay checked).
-            filmAudioEnhance: advancedEntitled && !!els.filmAudioEnhanceCheck?.checked,
-            filmVadPreset: advancedEntitled
-                && !!els.filmVadPresetCheck?.checked
-                && !els.filmAudioEnhanceCheck?.checked,
-            deleteSourcesAfterMergeBilingual: readTaskFromForm() === 'dual'
-                && !!els.mergeBilingualCheck?.checked
-                && !!els.deleteSourcesAfterMergeCheck?.checked,
-            subFormats: readSubFormatsFromForm(),
-            includeWords: false,
-            karaokeVtt: false,
-            releaseGpuAfter: els.releaseGpuAfterCheck?.checked ? true : null,
-            modelPath: readModelPathFromForm('translate') || readModelPathFromForm('transcribe') || '',
-            transcribeModelPath: readModelPathFromForm('transcribe'),
-            translateModelPath: readModelPathFromForm('translate'),
-            chineseSubtitleVariant: (() => {
-                const cv = String(els.chineseSubtitleVariantSelect?.value || 'simplified');
-                const allowed = new Set(['simplified', 'traditional', 'traditional-tw', 'traditional-hk']);
-                return allowed.has(cv) ? cv : 'simplified';
-            })(),
-            glossaryPromptEnabled: false,
-            glossaryMtEnabled: els.glossaryMtCheck ? !!els.glossaryMtCheck.checked : true,
-            logLevel: els.logLevelSelect?.value || 'DEBUG',
-            maxBatchSize: Number(els.maxBatchSizeInput?.value) || 8,
-            language: els.languageSelect?.value || 'auto',
-            beamSize: Number(els.beamSizeInput?.value) || 5,
-            vadEnabled: els.vadEnabledCheck ? !!els.vadEnabledCheck.checked : true,
-            vadSensitive: !!els.vadSensitiveCheck?.checked,
-            vadThreshold: numOrFinite(els.vadThresholdInput?.value, 0.5),
-            vadMinSpeechDurationMs: numOrFinite(els.vadMinSpeechDurationInput?.value, 300),
-            vadMinSilenceDurationMs: numOrFinite(els.vadMinSilenceDurationInput?.value, 100),
-            vadSpeechPadMs: numOrFinite(els.vadSpeechPadInput?.value, 200),
-            vadMaxSingleSegmentMs,
-            vadAggressive: !!els.vadAggressiveCheck?.checked && !els.vadSensitiveCheck?.checked,
-            audioLightDenoise: !!els.audioLightDenoiseCheck?.checked,
-            ...readTwaiLegacyOptionsFromSnapshot(),
-            // Keep targetChunkDurationS in sync for TWAI / legacy readers
-            targetChunkDurationS: Math.round(vadMaxSingleSegmentMs / 1000),
-            hallucinationSilenceThreshold: (() => {
-                const raw = els.hallucinationSilenceInput?.value;
-                if (raw == null || String(raw).trim() === '') return null;
-                const n = Number(raw);
-                if (!Number.isFinite(n) || n <= 0) return null;
-                return Math.max(0.1, Math.min(30, n));
-            })(),
-            retranscribeWarmLight: !!els.retranscribeWarmLightCheck?.checked,
-            subtitleBakMode: ['off', 'beside', 'appBackup'].includes(els.subtitleBakModeSelect?.value)
-                ? els.subtitleBakModeSelect.value
-                : 'off',
-            keepTranscript: els.keepTranscriptCheck ? !!els.keepTranscriptCheck.checked : true,
-            transcriptKeepDir: els.transcriptKeepDirInput?.value.trim() || '',
-            transcriptKeepLimit: (() => {
-                const n = Number(els.transcriptKeepLimitInput?.value);
-                if (!Number.isFinite(n)) return 200;
-                return Math.max(0, Math.min(9999, Math.round(n)));
-            })(),
-            transcriptKeepDays: (() => {
-                const n = Number(els.transcriptKeepDaysInput?.value);
-                if (!Number.isFinite(n)) return 90;
-                return Math.max(0, Math.min(3650, Math.round(n)));
-            })(),
-            trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : true,
-            showTaskResourceUsage: els.showTaskResourceUsageCheck
-                ? !!els.showTaskResourceUsageCheck.checked
-                : true,
-            minimizeToTrayEnabled: els.minimizeToTrayCheck ? !!els.minimizeToTrayCheck.checked : true,
-            minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
-            trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
-            startupWindow: els.startupWindowSelect?.value === 'editor' ? 'editor' : 'generator',
-            autoUpdateCheckInterval: ['off', 'daily', 'weekly', 'monthly'].includes(
-                els.autoUpdateCheckIntervalSelect?.value,
-            )
-                ? els.autoUpdateCheckIntervalSelect.value
-                : 'weekly',
-            autoSense: isAutoSenseEnabled(),
-            autoDeepSense: !!els.autoDeepSenseCheck?.checked,
-            postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
-            postBatchQcFixMode: getPostBatchQcFixMode(),
-            postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
-            postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
-            postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
-            postBatchCompactPureInterjections: !!els.postBatchCompactPureInterjectionsCheck?.checked,
-            outputMode: els.outputModeSelect?.value === 'custom' ? 'custom' : 'same',
-            outputDir: resolveOutputDirFromForm(),
-            audioSuffixes: els.audioSuffixesInput?.value.trim() || DEFAULT_AUDIO_SUFFIXES,
-            ffmpegPath: els.ffmpegPathInput
-                ? (els.ffmpegPathInput.value.trim() || '')
-                : (savedOptionsSnapshot?.ffmpegPath || ''),
-        };
+        const task = readTaskFromForm();
+        const translateMode = readTranslateModeFromForm();
+        const viewingPunct = els.postBatchViewingPunctModeSelect
+            ? normalizeViewingCleanMode(els.postBatchViewingPunctModeSelect.value, 'clear')
+            : 'clear';
+        const viewingInterj = els.postBatchInterjectionModeSelect
+            ? normalizeViewingCleanMode(els.postBatchInterjectionModeSelect.value, 'clear')
+            : 'clear';
+        const viewingOnomato = els.postBatchOnomatopoeiaModeSelect
+            ? normalizeViewingCleanMode(els.postBatchOnomatopoeiaModeSelect.value, 'clear')
+            : 'clear';
+        const assemble = savedOptionsApi.assembleSavedOptionsFromFields
+            || settingsNormApi.assembleSavedOptionsFromFields;
+        if (!assemble) {
+            throw new Error('settings-saved-options-core 未加载，无法保存设置');
+        }
+        const built = assemble({
+                engineBackend: readEngineBackendFromForm(),
+                engineInstallPath: engineInstallPathForSave(),
+                engineUrl: els.engineUrlInput?.value.trim() || 'http://127.0.0.1:8765',
+                engineHfEndpoint: els.engineHfEndpointInput?.value?.trim() ?? 'https://hf-mirror.com',
+                proxyEnabled: !!els.proxyEnabledCheck?.checked,
+                proxyUrl: els.proxyUrlInput?.value?.trim() || '',
+                proxyBypass: els.proxyBypassInput?.value?.trim() || '',
+                engineProfile: els.engineProfileSelect?.value || 'balanced',
+                engineAsrModel: els.engineAsrModelSelect?.value || 'sensevoice-small',
+                engineOpusMtModel: readOpusMtModelFromForm(),
+                engineLlmMtModel: readLlmMtModelFromForm(),
+                translateMode,
+                engineVadModel: els.engineVadModelSelect?.value || 'fsmn-vad',
+                engineAutoStart: els.engineAutoStartCheck ? !!els.engineAutoStartCheck.checked : true,
+                // TWAI path UI removed; keep snapshot so old twai configs are not wiped on save.
+                installPath: els.installPathInput
+                    ? (els.installPathInput.value.trim() || '')
+                    : String(savedOptionsSnapshot?.installPath || '').trim(),
+                device: els.deviceSelect?.value || 'cuda',
+                task,
+                overwrite: !!els.overwriteCheck?.checked,
+                mergeBilingualSubtitles: !!els.mergeBilingualCheck?.checked,
+                dualLineOrder: readDualLineOrderFromForm(),
+                smartTranslate: !!els.smartTranslateCheck?.checked,
+                smartTranslateFaithfulTone: !!els.smartTranslateFaithfulCheck?.checked,
+                smartTranslateHybridMt: els.smartTranslateHybridCheck
+                    ? !!els.smartTranslateHybridCheck.checked
+                    : true,
+                smartTranslatePlotPolish: els.smartTranslatePolishCheck
+                    ? !!els.smartTranslatePolishCheck.checked
+                    : true,
+                smartTranslatePolishSampleLimitRaw: els.smartTranslatePolishLimitInput?.value,
+                advancedEntitled,
+                filmAudioEnhance: !!els.filmAudioEnhanceCheck?.checked,
+                filmVadPreset: !!els.filmVadPresetCheck?.checked,
+                filmVadThresholdRaw: els.filmVadThresholdInput?.value,
+                filmVadMinSpeechDurationMsRaw: els.filmVadMinSpeechInput?.value,
+                filmVadMinSilenceDurationMsRaw: els.filmVadMinSilenceInput?.value,
+                filmHallucinationSilenceThresholdRaw: els.filmHallucinationSilenceInput?.value,
+                qcSmartLlmSplit: els.qcSmartLlmSplitCheck ? !!els.qcSmartLlmSplitCheck.checked : true,
+                qcSmartRetranscribe: els.qcSmartRetranscribeCheck
+                    ? !!els.qcSmartRetranscribeCheck.checked
+                    : true,
+                qcSmartSemanticReview: els.qcSmartSemanticReviewCheck
+                    ? !!els.qcSmartSemanticReviewCheck.checked
+                    : true,
+                qcSmartIntensity: els.qcSmartIntensitySelect?.value || 'light',
+                qcSmartMaxRetranscribeRangesRaw: els.qcSmartMaxRetranscribeInput?.value,
+                libraryOpenAfterBatch: !!els.libraryOpenAfterBatchCheck?.checked,
+                deleteSourcesAfterMergeBilingual: !!els.deleteSourcesAfterMergeCheck?.checked,
+                subFormats: readSubFormatsFromForm(),
+                releaseGpuAfter: els.releaseGpuAfterCheck?.checked ? true : null,
+                modelPath: readModelPathFromForm('translate') || readModelPathFromForm('transcribe') || '',
+                transcribeModelPath: readModelPathFromForm('transcribe'),
+                translateModelPath: readModelPathFromForm('translate'),
+                chineseSubtitleVariant: normalizeChineseSubtitleVariant(
+                    els.chineseSubtitleVariantSelect?.value || 'simplified',
+                ),
+                glossaryMtEnabled: els.glossaryMtCheck ? !!els.glossaryMtCheck.checked : true,
+                logLevel: els.logLevelSelect?.value || 'DEBUG',
+                maxBatchSize: Number(els.maxBatchSizeInput?.value) || 8,
+                language: els.languageSelect?.value || 'auto',
+                beamSize: Number(els.beamSizeInput?.value) || 5,
+                vadEnabled: els.vadEnabledCheck ? !!els.vadEnabledCheck.checked : true,
+                vadSensitive: !!els.vadSensitiveCheck?.checked,
+                vadThreshold: els.vadThresholdInput?.value,
+                vadMinSpeechDurationMs: els.vadMinSpeechDurationInput?.value,
+                vadMinSilenceDurationMs: els.vadMinSilenceDurationInput?.value,
+                vadSpeechPadMs: els.vadSpeechPadInput?.value,
+                vadMaxSingleSegmentMsRaw: els.vadMaxSingleSegmentInput?.value,
+                vadAggressive: !!els.vadAggressiveCheck?.checked,
+                audioLightDenoise: !!els.audioLightDenoiseCheck?.checked,
+                perfProfile: els.perfProfileSelect?.value || 'quality',
+                twaiLegacy: readTwaiLegacyOptionsFromSnapshot(),
+                hallucinationSilenceThresholdRaw: els.hallucinationSilenceInput?.value,
+                retranscribeWarmLight: !!els.retranscribeWarmLightCheck?.checked,
+                subtitleBakMode: els.subtitleBakModeSelect?.value,
+                keepTranscript: els.keepTranscriptCheck ? !!els.keepTranscriptCheck.checked : true,
+                transcriptKeepDir: els.transcriptKeepDirInput?.value.trim() || '',
+                transcriptKeepLimitRaw: els.transcriptKeepLimitInput?.value,
+                transcriptKeepDaysRaw: els.transcriptKeepDaysInput?.value,
+                trayProgressEnabled: els.trayProgressCheck ? !!els.trayProgressCheck.checked : true,
+                showTaskResourceUsage: els.showTaskResourceUsageCheck
+                    ? !!els.showTaskResourceUsageCheck.checked
+                    : true,
+                rememberLastOpenDir: els.rememberLastOpenDirCheck
+                    ? !!els.rememberLastOpenDirCheck.checked
+                    : true,
+                minimizeToTrayEnabled: els.minimizeToTrayCheck ? !!els.minimizeToTrayCheck.checked : true,
+                minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
+                trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
+                startupWindow: els.startupWindowSelect?.value,
+                autoUpdateCheckInterval: els.autoUpdateCheckIntervalSelect?.value,
+                autoSense: isAutoSenseEnabled(),
+                activePresetId: isAutoSenseEnabled()
+                    ? ''
+                    : String(els.presetSelect?.value || pendingActivePresetId || '').trim(),
+                mtUseForm: !!mtUseFormState,
+                settingsUiMode: 'standard',
+                autoDeepSense: !!els.autoDeepSenseCheck?.checked,
+                postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
+                postBatchQcFixMode: getPostBatchQcFixMode(),
+                postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
+                postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
+                postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
+                postBatchViewingPunctMode: viewingPunct,
+                postBatchInterjectionMode: viewingInterj,
+                postBatchOnomatopoeiaMode: viewingOnomato,
+                outputMode: els.outputModeSelect?.value,
+                outputDir: resolveOutputDirFromForm(),
+                audioSuffixes: els.audioSuffixesInput?.value.trim() || DEFAULT_AUDIO_SUFFIXES,
+                ffmpegPath: els.ffmpegPathInput
+                    ? (els.ffmpegPathInput.value.trim() || '')
+                    : (savedOptionsSnapshot?.ffmpegPath || ''),
+            }, settingsNormApi);
         stashTwaiLegacyFromOptions(built);
         return built;
     }
@@ -4035,9 +5411,17 @@
     }
 
     function buildRuntimeOptions() {
+        const saved = buildSavedOptionsFromForm();
+        const activeMt = readActiveEngineMtModelFromForm();
+        const mode = readTranslateModeFromForm();
         return {
-            ...buildSavedOptionsFromForm(),
+            ...saved,
             ...getPostTaskOptionsFromUi(),
+            // Job start needs a concrete MT id; resolve「自动匹配」here (do not persist).
+            engineMtModel: activeMt,
+            ...(mode === 'llm' || mode === 'sakura'
+                ? { engineLlmMtModel: activeMt || saved.engineLlmMtModel }
+                : {}),
         };
     }
 
@@ -4262,12 +5646,13 @@
             if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = false;
         }
         if (wantsSmart && !canUseSmartTranslateUi()) {
-            setSaveParamsStatus(
-                '智能翻译需解锁 Pro',
-                'warn',
-            );
-            switchParamsTab('pro');
-            return;
+            const llmId = String(els.engineLlmMtModelSelect?.value || '').trim();
+            const fallback = (isSakuraMtModelId(llmId)
+                || global.TransubSakuraMtCatalog?.isLlmInferenceMtModel?.(llmId))
+                ? 'llm'
+                : 'engine';
+            applyTranslateModeToForm(fallback);
+            setSaveParamsStatus('智能翻译需解锁 Pro，已改回可用译法', 'warn');
         }
         if (els.saveParamsBtn) els.saveParamsBtn.disabled = true;
         if (els.saveAndCloseParamsBtn) els.saveAndCloseParamsBtn.disabled = true;
@@ -4375,21 +5760,113 @@
         if (els.retranslateBtn) els.retranslateBtn.disabled = !!busy;
         if (els.reconstructBtn) els.reconstructBtn.disabled = !!busy;
         if (els.addMenuBtn) els.addMenuBtn.disabled = false;
-        if (els.removeSelectedBtn) els.removeSelectedBtn.disabled = busy;
-        if (els.clearListBtn) els.clearListBtn.disabled = busy;
-        if (els.selectAllCheck) els.selectAllCheck.disabled = busy;
+        // Mid-run: allow add/remove of non-running rows; retranslate keeps list locked.
+        const listEditLocked = !!state.retranslateBusy;
+        if (els.removeSelectedBtn) els.removeSelectedBtn.disabled = listEditLocked;
+        if (els.clearListBtn) els.clearListBtn.disabled = listEditLocked;
+        if (els.selectAllCheck) els.selectAllCheck.disabled = listEditLocked;
         updateStopButton();
         updateStartHint();
+        syncSelectionToolbarActions();
+    }
+
+    function syncSelectionToolbarActions() {
+        const selected = getSelectedItems();
+        const compute = selectionToolbarApi.computeSelectionToolbarVisibility;
+        const vis = typeof compute === 'function'
+            ? compute({
+                itemCount: state.items.length,
+                selectedCount: selected.length,
+                singleHasSubtitle: selected.length === 1
+                    && !!String(getSubtitlePathForItem(selected[0]) || '').trim(),
+            })
+            : {
+                showEditor: true,
+                showRetranslate: selected.length >= 1,
+                showReconstruct: selected.length === 1
+                    && !!String(getSubtitlePathForItem(selected[0]) || '').trim(),
+                showProActions: selected.length >= 1,
+            };
+        if (els.openSubtitleFileBtn) {
+            els.openSubtitleFileBtn.hidden = false;
+            els.openSubtitleFileBtn.removeAttribute('hidden');
+            els.openSubtitleFileBtn.classList.add('command-bar-editor-btn--visible');
+        }
+        if (els.openLibraryToolbarBtn) {
+            els.openLibraryToolbarBtn.hidden = false;
+            els.openLibraryToolbarBtn.removeAttribute('hidden');
+        }
+        if (els.retranslateBtn) els.retranslateBtn.hidden = !vis.showRetranslate;
+        if (els.reconstructBtn) els.reconstructBtn.hidden = !vis.showReconstruct;
+        if (els.paramsProActions) {
+            els.paramsProActions.hidden = !vis.showProActions;
+        }
     }
 
     function updateStopButton() {
         if (els.stopBtn) {
-            els.stopBtn.disabled = !(state.running || state.retranslateBusy);
+            els.stopBtn.disabled = !(state.running || state.retranslateBusy || state.computeBusy);
+        }
+        updateComputeBusyStrip();
+    }
+
+    let computeBusyStripTimer = null;
+    function updateComputeBusyStrip() {
+        // Strip removed from main UI; cancel remains available via Stop when compute-busy.
+        if (computeBusyStripTimer) {
+            clearInterval(computeBusyStripTimer);
+            computeBusyStripTimer = null;
         }
     }
 
+    function updateAsrWindowTip() {
+        if (!els.asrWindowTip) return;
+        const asrId = String(els.engineAsrModelSelect?.value || '').trim();
+        const tip = (global.TransubAsrSettings?.describeWindowedAsrTip
+            || computeBusyUiApi.describeWindowedAsrTip
+            || (() => ({ visible: false, text: '' })))(asrId);
+        const visible = !!tip?.visible && !!tip?.text;
+        els.asrWindowTip.classList.toggle('hidden', !visible);
+        els.asrWindowTip.textContent = visible ? tip.text : '';
+    }
+
+    async function cancelComputeBusyTask() {
+        if (!state.computeBusy && !state.running && !state.retranslateBusy) return;
+        const ok = await appConfirm({
+            title: '取消算力任务',
+            message: state.computeBusyLabel
+                ? `确定取消正在运行的「${state.computeBusyLabel}」？`
+                : '确定取消当前算力任务？',
+            primaryLabel: '取消任务',
+            secondaryLabel: '继续运行',
+            danger: true,
+        });
+        if (!ok) return;
+        appendLog('正在取消算力任务…', 'warn');
+        setBadge('正在取消…', 'error');
+        try {
+            if (electron?.transubComputeTaskCancel) {
+                await electron.transubComputeTaskCancel();
+            } else {
+                await electron?.transubEngineCancel?.();
+                await electron?.transWithAiCancel?.();
+                await electron?.transubSakuraCancelTranslate?.();
+                await electron?.transubAdvancedCancelContextReconstruct?.();
+            }
+        } catch (err) {
+            appendLog(err?.message || '取消失败', 'err');
+        }
+        await syncComputeBusyFromMain();
+        updateStopButton();
+    }
+
     async function stopTask() {
-        if (!state.running && !state.retranslateBusy) return;
+        if (!state.running && !state.retranslateBusy) {
+            if (state.computeBusy) {
+                await cancelComputeBusyTask();
+            }
+            return;
+        }
         const ok = await appConfirm({
             title: state.retranslateBusy ? '停止重新翻译' : '停止任务',
             message: state.retranslateBusy
@@ -4515,14 +5992,8 @@
             .filter((path) => path && !findItem(path));
         if (!toProbe.length) return;
 
-        if (state.running) {
-            state.pendingQueue.push(...toProbe);
-            updateQueueBadge();
-            appendLog(`已加入队列 ${toProbe.length} 个文件，当前任务结束后询问是否继续`, 'info');
-            return;
-        }
-
-        if (withLoading) {
+        const showLoading = withLoading && !state.running;
+        if (showLoading) {
             setLoading(true, toProbe.length > 1
                 ? `正在探测视频信息 (0/${toProbe.length})…`
                 : '正在探测视频信息…');
@@ -4557,14 +6028,52 @@
             await mapPool(newItems, PROBE_CONCURRENCY, async (item) => {
                 await probeItem(item, { skipFullRender: true });
                 probed += 1;
-                if (toProbe.length > 1 && (withLoading || state.loadingDepth > 0)) {
+                if (toProbe.length > 1 && (showLoading || state.loadingDepth > 0)) {
                     updateLoadingMessage(`正在探测视频信息 (${probed}/${toProbe.length})…`);
                 }
             });
+
+            if (state.running) {
+                await appendItemsToLiveBatch(newItems);
+            }
         } finally {
-            if (withLoading) setLoading(false);
+            if (showLoading) setLoading(false);
         }
         updateStartButton();
+    }
+
+    async function appendItemsToLiveBatch(items) {
+        const build = liveBatchQueueApi.buildAppendPayloadItems;
+        const payloadItems = typeof build === 'function'
+            ? build(items, senseOverridesForJob)
+            : (Array.isArray(items) ? items : []).map((item) => ({
+                fullPath: item.path,
+                durationSec: Math.max(0, Number(item.duration) || 0),
+                optionOverrides: senseOverridesForJob(item),
+            }));
+        if (!payloadItems.length) return;
+        try {
+            const res = await electron?.transubLiveBatchAppend?.({ items: payloadItems });
+            if (res?.ok) {
+                const n = Array.isArray(res.appended) ? res.appended.length : payloadItems.length;
+                if (n > 0) {
+                    if (Number(res.total) > 0) state.total = Number(res.total);
+                    updateProgressUi();
+                    appendLog(`已加入当前批次 ${n} 个文件`, 'info');
+                }
+                return;
+            }
+            if (res?.code === 'no_batch') {
+                appendLog(`已加入列表 ${payloadItems.length} 个文件（当前批次已结束，可再次开始）`, 'info');
+                return;
+            }
+            appendLog(
+                `已加入列表，但未能并入当前批次：${res?.error || '未知错误'}`,
+                'warn',
+            );
+        } catch (err) {
+            appendLog(`已加入列表，并入当前批次失败：${err?.message || err}`, 'warn');
+        }
     }
 
     function getSubtitlePathForItem(item) {
@@ -4608,25 +6117,19 @@
     }
 
     function statusMeta(status) {
-        const map = {
-            pending: { label: '排队', cls: 'row-status-pending' },
-            probing: { label: '探测中', cls: 'row-status-probing' },
-            ready: { label: '就绪', cls: 'row-status-ready' },
-            running: { label: '进行中', cls: 'row-status-running' },
-            done: { label: '完成', cls: 'row-status-done' },
-            skipped: { label: '已跳过', cls: 'row-status-skipped' },
-            cancelled: { label: '已取消', cls: 'row-status-skipped' },
-            failed: { label: '失败', cls: 'row-status-failed' },
-            error: { label: '错误', cls: 'row-status-error' },
-        };
-        return map[status] || { label: status || '—', cls: 'row-status-pending' };
+        if (taskListRowApi.statusMeta) return taskListRowApi.statusMeta(status);
+        return { label: status || '—', cls: 'row-status-pending' };
     }
 
     function countQcIssues() {
+        if (postTaskQcApi.countQcIssues) return postTaskQcApi.countQcIssues(state.items);
         return state.items.filter((i) => Number(i.qcIssueCount) > 0).length;
     }
 
     function markItemQcFixed(item, mode, { written = false, summary = '' } = {}) {
+        if (postTaskQcApi.markItemQcFixed) {
+            return postTaskQcApi.markItemQcFixed(item, mode, { written, summary });
+        }
         if (!item) return;
         item.qcFixedMode = mode === 'smart' ? 'smart' : 'fix';
         item.qcFixedWritten = !!written;
@@ -4635,6 +6138,9 @@
     }
 
     function clearItemQcFixed(item, { clearScan = false } = {}) {
+        if (postTaskQcApi.clearItemQcFixed) {
+            return postTaskQcApi.clearItemQcFixed(item, { clearScan });
+        }
         if (!item) return;
         item.qcFixedMode = '';
         item.qcFixedWritten = false;
@@ -4648,45 +6154,53 @@
     }
 
     function qcFixedTagHtml(item) {
-        const mode = String(item?.qcFixedMode || '');
-        if (mode !== 'fix' && mode !== 'smart') return '';
-        const label = mode === 'smart' ? 'Pro修' : '已修';
-        const tip = esc(
-            item.qcFixedSummary
-            || (mode === 'smart' ? '已智能修复 QC' : '已一键修复 QC')
-            || '',
-        );
-        return `<span class="qc-fixed-tag is-${mode}" title="${tip}">${label}</span>`;
+        if (taskListRowApi.qcFixedTagHtml) return taskListRowApi.qcFixedTagHtml(item, esc);
+        return '';
     }
 
     function updateQcBanner() {
         if (!els.qcBanner) return;
-        const n = countQcIssues();
-        if (n <= 0 || state.qcBannerDismissed) {
+        const vm = postTaskQcApi.buildQcBannerViewModel
+            ? postTaskQcApi.buildQcBannerViewModel({
+                issueCount: countQcIssues(),
+                dismissed: !!state.qcBannerDismissed,
+                fixing: !!state.qcFixing,
+                smartFixing: !!state.qcSmartFixing,
+                running: !!state.running,
+                advancedEntitled: !!advancedEntitled,
+                smartFixAvailable: !!electron?.transubAdvancedQcSmartFix,
+            })
+            : null;
+        if (!vm) {
             els.qcBanner.classList.add('hidden');
             return;
         }
-        if (els.qcBannerText) {
-            els.qcBannerText.textContent = state.qcFixing
-                ? `正在${state.qcSmartFixing ? '智能' : '一键'}修复 QC（${n} 条有问题）…`
-                : `${n} 条字幕有 QC 问题，可一键修复${advancedEntitled ? ' / 智能修复' : ''}或在编辑器中查看`;
+        if (!vm.visible) {
+            els.qcBanner.classList.add('hidden');
+            return;
         }
+        if (els.qcBannerText) els.qcBannerText.textContent = vm.text;
         if (els.qcBannerFixBtn) {
-            els.qcBannerFixBtn.disabled = !!state.running || !!state.qcFixing;
-            els.qcBannerFixBtn.textContent = state.qcFixing && !state.qcSmartFixing ? '修复中…' : '一键修复QC';
+            els.qcBannerFixBtn.disabled = vm.fixDisabled;
+            els.qcBannerFixBtn.textContent = vm.fixLabel;
         }
         if (els.qcBannerSmartFixBtn) {
-            const smartOk = !!advancedEntitled && !!electron?.transubAdvancedQcSmartFix;
-            els.qcBannerSmartFixBtn.classList.toggle('hidden', !smartOk);
-            els.qcBannerSmartFixBtn.disabled = !smartOk || !!state.running || !!state.qcFixing;
-            els.qcBannerSmartFixBtn.textContent = state.qcSmartFixing ? '智能修复中…' : '智能修复 (Pro)';
+            els.qcBannerSmartFixBtn.classList.toggle('hidden', !vm.smartVisible);
+            els.qcBannerSmartFixBtn.disabled = vm.smartDisabled;
+            els.qcBannerSmartFixBtn.textContent = vm.smartLabel;
         }
         els.qcBanner.classList.remove('hidden');
     }
 
     function readEngineBackendFromForm() {
-        const v = String(els.engineBackendSelect?.value || 'transub').trim().toLowerCase();
-        return v === 'twai' ? 'twai' : 'transub';
+        const selectEl = els.engineBackendSelect;
+        const rawSelect = selectEl ? String(selectEl.value || '').trim().toLowerCase() : '';
+        if (rawSelect === 'twai' || rawSelect === 'transwithai') return 'twai';
+        if (rawSelect === 'transub') return 'transub';
+        // Select missing / empty: keep disk snapshot so expert TWAI recovery survives saves.
+        const fromSaved = String(savedOptionsSnapshot?.engineBackend || '').trim().toLowerCase();
+        if (fromSaved === 'twai' || fromSaved === 'transwithai') return 'twai';
+        return 'transub';
     }
 
     function syncEngineBackendUi() {
@@ -4703,9 +6217,71 @@
         if (isTwai && els.subFormatAss) els.subFormatAss.checked = false;
         if (els.envBannerText) {
             els.envBannerText.textContent = isTwai
-                ? '尚未配置 TransWithAI 引擎：请在「设置 → 环境」完成检测。'
-                : '尚未配置 Transub Engine：请在「设置 → 环境」检测内置引擎并下载模型。';
+                ? '配置仍指向已冻结的 TransWithAI；请改用 Transub Engine（设置 → 运行环境）。'
+                : '尚未配置 Transub Engine：请在「设置 → 运行环境」检测内置引擎并下载模型。';
         }
+    }
+
+    let asrRecommendDismissedKey = '';
+
+    function updateAsrRecommendChip(rec = null) {
+        const api = global.TransubAsrSettings;
+        const chip = els.asrRecommendChip;
+        if (!chip || !api?.describeAsrRecommendChip) return;
+        const currentAsr = els.engineAsrModelSelect?.value || '';
+        const recommendedAsr = String(
+            rec?.models?.asrModel
+            || rec?.asrModel
+            || cachedHardwareRecommend?.asrModel
+            || '',
+        ).trim();
+        const profile = String(
+            rec?.profile || cachedHardwareRecommend?.profile || '',
+        ).trim();
+        const key = `${recommendedAsr}|${profile}`;
+        if (asrRecommendDismissedKey && asrRecommendDismissedKey === key) {
+            chip.classList.add('hidden');
+            chip.hidden = true;
+            syncQuickAsrRecommendChip();
+            return;
+        }
+        const ui = api.describeAsrRecommendChip({
+            currentAsr,
+            recommendedAsr,
+            profile,
+        });
+        if (!ui.visible) {
+            chip.classList.add('hidden');
+            chip.hidden = true;
+            syncQuickAsrRecommendChip();
+            return;
+        }
+        if (els.asrRecommendChipLabel) els.asrRecommendChipLabel.textContent = ui.label;
+        if (els.asrRecommendChipDetail) els.asrRecommendChipDetail.textContent = ui.detail;
+        chip.dataset.recommendedAsr = ui.recommendedAsr || '';
+        chip.classList.remove('hidden');
+        chip.hidden = false;
+        syncQuickAsrRecommendChip();
+        updateReadinessStrip();
+    }
+
+    function applyAsrRecommendFromChip() {
+        const id = String(els.asrRecommendChip?.dataset?.recommendedAsr || '').trim();
+        if (!id || !els.engineAsrModelSelect) return;
+        ensureSelectValue(els.engineAsrModelSelect, id, { label: id });
+        els.engineAsrModelSelect.dispatchEvent(new Event('change'));
+        if (els.quickAsrModelSelect) {
+            els.quickAsrModelSelect.value = id;
+        }
+        asrRecommendDismissedKey = '';
+        appendLog(`已应用硬件推荐 ASR：${id}`, 'ok');
+        showToast(`ASR 已切换为 ${id}`, 'ok');
+        markSettingsDirty(true);
+        updateAsrRecommendChip({
+            models: { asrModel: id },
+            profile: cachedHardwareRecommend?.profile,
+        });
+        updateReadinessStrip();
     }
 
     function syncProxySettingsUi() {
@@ -4823,56 +6399,13 @@
     }
 
     function formatEngineDownloadError(raw) {
+        if (engineModelsUi.formatEngineDownloadError) {
+            return engineModelsUi.formatEngineDownloadError(raw, {
+                hfEndpoint: els.engineHfEndpointInput?.value.trim() || '',
+            });
+        }
         const msg = String(raw || '').trim();
-        if (!msg) return '模型下载失败';
-        // Engine already produced a localized, actionable message — keep it.
-        if (
-            msg.includes('无法连接模型仓库')
-            || msg.includes('浏览器能打开镜像站')
-            || msg.includes('文件实际跳转到')
-            || msg.includes('Hub 仓库不存在')
-        ) {
-            return msg;
-        }
-        const lower = msg.toLowerCase();
-        if (
-            lower.includes('numba')
-            && (lower.includes('failed to build') || lower.includes('getting requirements to build'))
-        ) {
-            return (
-                '安装依赖失败：numba 无法源码编译。'
-                + '请改用 numpy 2.4.x（不要装 2.5+），并优先安装预编译的 numba / llvmlite .whl。'
-                + ` 原始错误：${msg.slice(0, 400)}`
-            );
-        }
-        const isConnectivity = (
-            lower.includes('connecttimeout')
-            || lower.includes('connecterror')
-            || msg.includes('10060')
-            || msg.includes('10054')
-            || lower.includes('timed out')
-            || lower.includes('timeout')
-            || lower.includes('connection attempt failed')
-            || lower.includes('connection reset')
-            || lower.includes('econnreset')
-            || msg.includes('远程主机强迫关闭')
-            || (lower.includes('hub') && lower.includes('internet connection'))
-            || (lower.includes('snapshot folder') && lower.includes('internet'))
-        );
-        if (!isConnectivity) return msg;
-
-        const ep = els.engineHfEndpointInput?.value.trim() || '';
-        const onMirror = /hf-mirror\.com/i.test(ep) || /hf-mirror\.com/i.test(msg);
-        if (onMirror || /已使用镜像|当前已使用镜像/.test(msg)) {
-            return (
-                `无法连接模型仓库（连接被重置/超时）。当前已使用镜像 ${ep || 'https://hf-mirror.com'}。`
-                + '请尝试切换或关闭「设置→网络」代理后重试；浏览器能下不等于软件内下载链路可用。'
-            );
-        }
-        return (
-            `无法连接模型仓库（网络中断/超时）。请到「设置 → 网络」将 Hugging Face 镜像设为`
-            + ` https://hf-mirror.com（当前：${ep || '官方 Hub'}），保存设置后重试下载。`
-        );
+        return msg || '模型下载失败';
     }
 
     function setEngineStatusText(text, kind = '') {
@@ -4909,8 +6442,12 @@
     function appendEngineDownloadLog(line) {
         const text = String(line || '').trim();
         if (!text) return;
-        engineDownloadLogLines.push(text);
-        while (engineDownloadLogLines.length > 80) engineDownloadLogLines.shift();
+        if (engineModelsUi.pushDownloadLogLine) {
+            engineModelsUi.pushDownloadLogLine(engineDownloadLogLines, text, 80);
+        } else {
+            engineDownloadLogLines.push(text);
+            while (engineDownloadLogLines.length > 80) engineDownloadLogLines.shift();
+        }
         if (els.engineDownloadLog) {
             els.engineDownloadLog.textContent = engineDownloadLogLines.join('\n');
             els.engineDownloadLog.scrollTop = els.engineDownloadLog.scrollHeight;
@@ -4918,51 +6455,39 @@
     }
 
     function setEngineDownloadProgressPct(pct) {
-        const n = Number(pct);
-        const width = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+        const clamped = engineModelsUi.clampDownloadProgressPct
+            ? engineModelsUi.clampDownloadProgressPct(pct)
+            : (() => {
+                const n = Number(pct);
+                const finite = Number.isFinite(n);
+                const width = finite ? Math.max(0, Math.min(100, n)) : 0;
+                return { width, finite, label: finite ? `${Math.round(width)}%` : '…' };
+            })();
         if (els.engineDownloadProgressBar) {
-            els.engineDownloadProgressBar.style.width = `${width}%`;
-            els.engineDownloadProgressBar.classList.toggle('animate-pulse', !Number.isFinite(n));
+            els.engineDownloadProgressBar.style.width = `${clamped.width}%`;
+            els.engineDownloadProgressBar.classList.toggle('animate-pulse', !clamped.finite);
         }
         if (els.engineDownloadProgressPct) {
-            els.engineDownloadProgressPct.textContent = Number.isFinite(n) ? `${Math.round(width)}%` : '…';
+            els.engineDownloadProgressPct.textContent = clamped.label;
         }
     }
 
     function formatEngineDownloadBytes(n) {
-        const v = Number(n);
-        if (!Number.isFinite(v) || v < 0) return '';
-        if (v < 1024) return `${Math.round(v)} B`;
-        if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
-        if (v < 1024 * 1024 * 1024) return `${(v / (1024 * 1024)).toFixed(1)} MB`;
-        return `${(v / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        return engineDlFmt.formatEngineDownloadBytes
+            ? engineDlFmt.formatEngineDownloadBytes(n)
+            : '';
     }
 
     function formatEngineDownloadSpeed(bps) {
-        const v = Number(bps);
-        if (!Number.isFinite(v) || v <= 0) return '';
-        if (v < 1024) return `${Math.round(v)} B/s`;
-        if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB/s`;
-        return `${(v / (1024 * 1024)).toFixed(1)} MB/s`;
+        return engineDlFmt.formatEngineDownloadSpeed
+            ? engineDlFmt.formatEngineDownloadSpeed(bps)
+            : '';
     }
 
     function formatEngineDownloadSizeLine(info = {}) {
-        const received = Number(info.downloadedBytes ?? info.received ?? info.transferred);
-        const total = Number(info.totalBytes ?? info.totalSize);
-        const speed = Number(info.bytesPerSecond ?? info.speed);
-        const parts = [];
-        const hasRecv = Number.isFinite(received) && received >= 0;
-        const hasTotal = Number.isFinite(total) && total > 0;
-        if (hasRecv && hasTotal) {
-            parts.push(`${formatEngineDownloadBytes(received)} / ${formatEngineDownloadBytes(total)}`);
-        } else if (hasRecv) {
-            parts.push(`已下载 ${formatEngineDownloadBytes(received)}`);
-        } else if (hasTotal) {
-            parts.push(`总大小约 ${formatEngineDownloadBytes(total)}`);
-        }
-        const speedText = formatEngineDownloadSpeed(speed);
-        if (speedText) parts.push(speedText);
-        return parts.join(' · ');
+        return engineDlFmt.formatEngineDownloadSizeLine
+            ? engineDlFmt.formatEngineDownloadSizeLine(info)
+            : '';
     }
 
     /** 主窗口应用日志：下载进度就地刷新，避免字节级刷屏 */
@@ -4977,24 +6502,36 @@
         const now = Date.now();
         const last = els.logHost.lastElementChild;
         const canReuse = last?.dataset?.engineDlProgress === '1';
-        if (!force && line === lastAppEngineDlProgressText && canReuse) return;
-        if (!force && !canReuse && now - lastAppEngineDlProgressAt < 1200) return;
-        if (!force && canReuse && now - lastAppEngineDlProgressAt < 400) {
-            // 高频进度：只改最后一行文案，节流写时间戳
+        const action = engineModelsUi.decideEngineDlProgressLogAction
+            ? engineModelsUi.decideEngineDlProgressLogAction({
+                force,
+                line,
+                lastText: lastAppEngineDlProgressText,
+                canReuse,
+                now,
+                lastAt: lastAppEngineDlProgressAt,
+            })
+            : (() => {
+                if (!force && line === lastAppEngineDlProgressText && canReuse) return 'skip';
+                if (!force && !canReuse && now - lastAppEngineDlProgressAt < 1200) return 'skip';
+                if (!force && canReuse && now - lastAppEngineDlProgressAt < 400) return 'reuse';
+                if (canReuse && !force) return 'reuse';
+                return 'append';
+            })();
+        if (action === 'skip') return;
+        if (action === 'reuse' && last) {
             const ts = new Date().toLocaleTimeString();
             last.textContent = `[${ts}] ${line}`;
             lastAppEngineDlProgressText = line;
+            if (!(canReuse && !force && now - lastAppEngineDlProgressAt < 400)) {
+                lastAppEngineDlProgressAt = now;
+                const panel = els.logHost.closest('.log-panel') || els.logHost;
+                panel.scrollTop = panel.scrollHeight;
+            }
             return;
         }
         lastAppEngineDlProgressText = line;
         lastAppEngineDlProgressAt = now;
-        if (canReuse && !force) {
-            const ts = new Date().toLocaleTimeString();
-            last.textContent = `[${ts}] ${line}`;
-            const panel = els.logHost.closest('.log-panel') || els.logHost;
-            panel.scrollTop = panel.scrollHeight;
-            return;
-        }
         if (els.logHost.textContent === '日志将显示在此处…' || els.logHost.querySelector('.text-gray-400')) {
             els.logHost.innerHTML = '';
         }
@@ -5023,60 +6560,41 @@
     }
 
     function filteredEnginePickItems() {
-        const items = cachedEnginePickCatalog.slice();
-        items.sort((a, b) => {
-            if (!!b.recommended !== !!a.recommended) return b.recommended ? 1 : -1;
-            if (!!b.installed !== !!a.installed) return b.installed ? 1 : -1;
-            const ga = String(a.group || '');
-            const gb = String(b.group || '');
-            if (ga !== gb) {
-                const order = { asr: 0, vad: 1, mt: 2, llm: 3, separate: 4 };
-                return (order[ga] ?? 9) - (order[gb] ?? 9);
-            }
-            const ba = Number(a.paramBillion) || 0;
-            const bb = Number(b.paramBillion) || 0;
-            if (ga === 'llm' && ba !== bb) return ba - bb;
-            return String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh');
-        });
-        const q = engineModelsSearchQuery.trim().toLowerCase();
-        return items.filter((item) => {
-            if (engineModelsFilter !== 'all' && String(item.group || '') !== engineModelsFilter) {
-                return false;
-            }
-            if (!q) return true;
-            const hayParts = [item.name, item.id, item.note, item.group, item.kind, item.sizeHint, item.familyLabel];
-            if (item.group === 'separate') hayParts.push('人声分离', 'demucs');
-            if (item.group === 'llm') hayParts.push('llm', '推理', 'gguf');
-            const hay = hayParts.map((x) => String(x || '').toLowerCase()).join(' ');
-            return hay.includes(q);
-        });
+        if (engineModelsUi.filterAndSortEnginePickItems) {
+            return engineModelsUi.filterAndSortEnginePickItems(cachedEnginePickCatalog, {
+                filter: engineModelsFilter,
+                query: engineModelsSearchQuery,
+            });
+        }
+        return cachedEnginePickCatalog.slice();
     }
 
     function syncEngineModelPickSummary() {
         const total = cachedEnginePickCatalog.length;
         const visible = filteredEnginePickItems().length;
         if (els.engineModelsSummary) {
-            if (!total) els.engineModelsSummary.textContent = '检测引擎后显示';
-            else if (visible === total) els.engineModelsSummary.textContent = `共 ${total} 个模型`;
-            else els.engineModelsSummary.textContent = `显示 ${visible} / ${total}`;
+            els.engineModelsSummary.textContent = engineModelsUi.formatModelsSummary
+                ? engineModelsUi.formatModelsSummary({ total, visible })
+                : (!total ? '检测引擎后显示' : (visible === total ? `共 ${total} 个模型` : `显示 ${visible} / ${total}`));
         }
         if (els.engineModelsSelectedHint) {
             const llmCount = cachedEnginePickCatalog.filter((m) => m.group === 'llm').length;
             const llmHint = llmCount
                 ? (advancedEntitled
                     ? `LLM 推理翻译 ${llmCount} 个（含 Pro）`
-                    : `LLM 推理翻译 ${llmCount} 个（免费档；解锁 Pro 可浏览全部）`)
+                    : `LLM 推理翻译 ${llmCount} 个（轻量档；解锁 Pro 可浏览全部）`)
                 : '';
             els.engineModelsSelectedHint.textContent = llmHint
-                ? `点卡片上的「下载」获取模型 · ${llmHint} · 任务选用请到「运行环境」页设置`
-                : '点卡片上的「下载」获取模型 · 任务选用请到「运行环境」页设置';
+                ? `点卡片「下载」获取模型 · ${llmHint} · 选用已在本页上方设置`
+                : '点卡片「下载」获取模型 · 选用已在本页上方设置';
             els.engineModelsSelectedHint.classList.remove('is-ok');
         }
     }
 
     function setEngineModelsFilter(next) {
-        const allowed = new Set(['all', 'asr', 'vad', 'mt', 'llm', 'separate']);
-        engineModelsFilter = allowed.has(next) ? next : 'all';
+        engineModelsFilter = engineModelsUi.normalizeModelsFilter
+            ? engineModelsUi.normalizeModelsFilter(next)
+            : (['all', 'asr', 'vad', 'mt', 'llm', 'separate'].includes(next) ? next : 'all');
         els.engineModelsFilters?.querySelectorAll('[data-models-filter]').forEach((btn) => {
             const active = btn.getAttribute('data-models-filter') === engineModelsFilter;
             btn.classList.toggle('is-on', active);
@@ -5085,16 +6603,15 @@
     }
 
     function engineModelKindLabel(kind) {
-        if (kind === 'asr') return 'ASR';
-        if (kind === 'mt') return 'MT';
-        if (kind === 'vad') return 'VAD';
-        if (kind === 'demucs' || kind === 'separate') return '人声分离';
-        return String(kind || '').toUpperCase() || '模型';
+        return engineModelsUi.engineModelKindLabel
+            ? engineModelsUi.engineModelKindLabel(kind)
+            : String(kind || '').toUpperCase() || '模型';
     }
 
     function formatEngineModelOptionLabel(model) {
-        // Environment selects: plain name only (no size / install badge)
-        return String(model?.name || model?.id || '').trim() || 'unknown';
+        return engineModelsUi.formatEngineModelOptionLabel
+            ? engineModelsUi.formatEngineModelOptionLabel(model)
+            : (String(model?.name || model?.id || '').trim() || 'unknown');
     }
 
     /** Ensure <select> can hold a saved id even before the catalog is loaded. */
@@ -5120,184 +6637,86 @@
         modelFilter = null,
     } = {}) {
         if (!selectEl) return;
-        // Only list models already downloaded/installed
-        const list = (Array.isArray(models) ? models : []).filter((m) => {
-            if (m?.kind !== kind || !m?.installed || m?.incomplete) return false;
-            if (typeof modelFilter === 'function' && !modelFilter(m)) return false;
-            return true;
-        });
-        const want = String(selectedId || '');
-        const opts = [];
-        if (allowEmpty) {
-            opts.push(`<option value="">${esc(emptyLabel)}</option>`);
-        }
-        for (const model of list) {
-            const id = String(model.id || '');
-            if (!id) continue;
-            const sel = id === want ? ' selected' : '';
-            opts.push(`<option value="${esc(id)}"${sel}>${esc(formatEngineModelOptionLabel(model))}</option>`);
-        }
-        // Keep current setting visible if it is not among installed options yet
-        if (want && !list.some((m) => String(m.id || '') === want)) {
-            opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载）</option>`);
-        }
-        if (!opts.length) {
-            opts.push(`<option value="">（暂无已下载模型）</option>`);
-        }
-        selectEl.innerHTML = opts.join('');
-        if (want && [...selectEl.options].some((o) => o.value === want)) {
-            selectEl.value = want;
-        } else if (allowEmpty) {
-            selectEl.value = '';
-        } else if (selectEl.options.length) {
-            selectEl.selectedIndex = 0;
-        }
-    }
-
-    function normalizeEnginePickCatalog(models) {
-        const items = Array.isArray(models) ? models.slice() : [];
-        return items.map((model) => {
-            const id = String(model.id || '').trim();
-            const rawKind = String(model.kind || '').toLowerCase();
-            const managedEntry = findManagedLlmCatalogEntry(id);
-            const group = (rawKind === 'mt' && (isSakuraMtModelId(id) || managedEntry))
-                || model.group === 'llm'
-                || model.source === 'managed'
-                ? 'llm'
-                : (rawKind === 'demucs' || rawKind === 'separate'
-                    ? 'separate'
-                    : (rawKind === 'asr' || rawKind === 'mt' || rawKind === 'vad' ? rawKind : rawKind || 'other'));
-            const sizeHint = model.sizeHint
-                || (Number(model.size_hint_mb) > 0 ? `约 ${model.size_hint_mb} MB` : '');
-            return {
-                id,
-                name: String(model.name || id),
-                kind: rawKind || (group === 'llm' ? 'mt' : ''),
-                group,
-                source: model.source
-                    || (isSakuraMtModelId(id) ? 'sakura' : (managedEntry ? 'managed' : 'engine')),
-                hubId: String(model.hubId || model.hub_id || managedEntry?.hubId || '').trim(),
-                installed: !!model.installed,
-                incomplete: !!model.incomplete,
-                shipped: !!model.shipped || !!model.bundled,
-                recommended: model.recommended === true,
-                sizeHint: String(sizeHint || ''),
-                note: String(model.note || ''),
-                familyLabel: String(model.familyLabel || managedEntry?.familyLabel || ''),
-                paramBillion: Number(model.paramBillion ?? managedEntry?.paramBillion) || 0,
-                proScale: model.proScale === true
-                    || !!(managedEntry && getManagedLlmCatalogApi()?.isProScaleModel?.(managedEntry)),
-                freePipelineTranslate: model.freePipelineTranslate === true
-                    || !!managedEntry?.freePipelineTranslate,
-                translateOnly: model.translateOnly === true
-                    || !!managedEntry?.translateOnly
-                    || isSakuraMtModelId(id),
-            };
-        }).filter((m) => m.id && m.id !== ENGINE_DEMUCS_MODEL_ID);
-    }
-
-    /**
-     * Merge Pro-gated managed LLM catalog into the models pick list (LLM推理翻译).
-     * Free users see whitelist ≤7B + Sakura; Pro sees full catalog.
-     */
-    function buildManagedLlmPickItems(statusCatalog = null) {
-        const catalogApi = getManagedLlmCatalogApi();
-        let rows = Array.isArray(statusCatalog) ? statusCatalog.slice() : null;
-        if (!rows?.length && catalogApi?.listCatalogVisible) {
-            rows = catalogApi.listCatalogVisible({ entitled: advancedEntitled });
-        }
-        if (!rows?.length) return [];
-        return rows.map((entry) => {
-            const id = String(entry.id || '').trim();
-            if (!id) return null;
-            return {
-                id,
-                name: String(entry.name || id),
-                kind: 'mt',
-                group: 'llm',
-                source: isSakuraMtModelId(id) ? 'sakura' : 'managed',
-                installed: !!entry.installed,
-                incomplete: false,
-                recommended: !!entry.recommended,
-                sizeHint: String(entry.sizeHint || ''),
-                note: String(entry.note || ''),
-                familyLabel: String(entry.familyLabel || entry.family || ''),
-                paramBillion: Number(entry.paramBillion) || 0,
-                proScale: !!entry.proScale
-                    || !!(catalogApi?.isProScaleModel?.(entry)),
-                freePipelineTranslate: !!entry.freePipelineTranslate,
-                translateOnly: !!entry.translateOnly || isSakuraMtModelId(id),
-            };
-        }).filter(Boolean);
-    }
-
-    function mergeManagedLlmIntoPickCatalog(engineItems, managedItems) {
-        const byId = new Map();
-        for (const item of (Array.isArray(engineItems) ? engineItems : [])) {
-            if (!item?.id) continue;
-            byId.set(item.id, { ...item });
-        }
-        for (const item of (Array.isArray(managedItems) ? managedItems : [])) {
-            if (!item?.id) continue;
-            const existing = byId.get(item.id);
-            if (existing) {
-                byId.set(item.id, {
-                    ...existing,
-                    group: 'llm',
-                    source: existing.source === 'engine' ? item.source : (existing.source || item.source),
-                    installed: !!(existing.installed || item.installed),
-                    name: existing.name || item.name,
-                    note: existing.note || item.note,
-                    sizeHint: existing.sizeHint || item.sizeHint,
-                    familyLabel: item.familyLabel || existing.familyLabel || '',
-                    paramBillion: item.paramBillion || existing.paramBillion || 0,
-                    proScale: !!(item.proScale || existing.proScale),
-                    freePipelineTranslate: !!(item.freePipelineTranslate || existing.freePipelineTranslate),
-                    translateOnly: !!(item.translateOnly || existing.translateOnly),
-                    recommended: !!(existing.recommended || item.recommended),
-                });
-            } else {
-                byId.set(item.id, { ...item, group: 'llm' });
+        if (engineModelsUi.buildInstalledModelSelectOptionsHtml) {
+            const built = engineModelsUi.buildInstalledModelSelectOptionsHtml({
+                models,
+                kind,
+                selectedId,
+                allowEmpty,
+                emptyLabel,
+                esc,
+                formatLabel: formatEngineModelOptionLabel,
+                modelFilter,
+            });
+            selectEl.innerHTML = built.html;
+            const want = built.want;
+            if (want && [...selectEl.options].some((o) => o.value === want)) {
+                selectEl.value = want;
+            } else if (allowEmpty) {
+                selectEl.value = '';
+            } else if (selectEl.options.length) {
+                selectEl.selectedIndex = 0;
             }
+            return;
         }
-        return [...byId.values()];
+        selectEl.innerHTML = '';
     }
 
-    function buildDemucsPickItem(probe = cachedDemucsProbe) {
-        const status = String(probe?.status || '').trim();
-        const hint = String(probe?.hint || '').trim();
-        const ver = probe?.version ? `v${probe.version}` : '';
-        const installed = status === 'ready';
-        const incomplete = status === 'need_torch_cuda';
-        let note = '开启「常规 → 影视音频增强」前请先下载。pip 安装 Demucs；有 GPU 时会补齐 CUDA PyTorch。';
-        if (hint || ver) note = [hint || status, ver].filter(Boolean).join(' · ');
-        else if (incomplete) note = '已装 Demucs，建议补齐 CUDA PyTorch';
+    function pickCatalogDeps() {
+        const catalogApi = getManagedLlmCatalogApi();
         return {
-            id: ENGINE_DEMUCS_MODEL_ID,
-            name: 'Demucs（人声分离）',
-            kind: 'demucs',
-            group: 'separate',
-            installed,
-            incomplete,
-            selected: false,
-            recommended: false,
-            sizeHint: 'pip 包',
-            note,
+            demucsModelId: ENGINE_DEMUCS_MODEL_ID,
+            isSakuraMtModelId,
+            findManagedLlmCatalogEntry,
+            isProScaleModel: (entry) => !!catalogApi?.isProScaleModel?.(entry),
+            entitled: advancedEntitled,
+            listCatalogVisible: catalogApi?.listCatalogVisible
+                ? (opts) => catalogApi.listCatalogVisible(opts)
+                : undefined,
         };
     }
 
+    function normalizeEnginePickCatalog(models) {
+        if (engineModelsUi.normalizeEnginePickCatalog) {
+            return engineModelsUi.normalizeEnginePickCatalog(models, pickCatalogDeps());
+        }
+        return [];
+    }
+
+    function buildManagedLlmPickItems(statusCatalog = null) {
+        if (engineModelsUi.buildManagedLlmPickItems) {
+            return engineModelsUi.buildManagedLlmPickItems(statusCatalog, pickCatalogDeps());
+        }
+        return [];
+    }
+
+    function mergeManagedLlmIntoPickCatalog(engineItems, managedItems) {
+        if (engineModelsUi.mergeManagedLlmIntoPickCatalog) {
+            return engineModelsUi.mergeManagedLlmIntoPickCatalog(engineItems, managedItems);
+        }
+        return Array.isArray(engineItems) ? engineItems.slice() : [];
+    }
+
+    function buildDemucsPickItem(probe = cachedDemucsProbe) {
+        if (engineModelsUi.buildDemucsPickItem) {
+            return engineModelsUi.buildDemucsPickItem(probe, ENGINE_DEMUCS_MODEL_ID);
+        }
+        return { id: ENGINE_DEMUCS_MODEL_ID, name: 'Demucs', kind: 'demucs', group: 'separate' };
+    }
+
     function mergeDemucsPickItem(items) {
+        if (engineModelsUi.mergeDemucsPickItem) {
+            return engineModelsUi.mergeDemucsPickItem(items, cachedDemucsProbe, ENGINE_DEMUCS_MODEL_ID);
+        }
         const list = Array.isArray(items) ? items.slice() : [];
         list.push(buildDemucsPickItem());
         return list;
     }
 
     function engineModelGroupLabel(group) {
-        if (group === 'asr') return 'ASR语音识别';
-        if (group === 'mt') return 'MT机器翻译';
-        if (group === 'llm') return 'LLM推理翻译';
-        if (group === 'vad') return 'VAD语音活动检测';
-        if (group === 'separate') return '人声分离';
+        if (engineModelsUi.engineModelGroupLabel) {
+            return engineModelsUi.engineModelGroupLabel(group);
+        }
         return engineModelKindLabel(group);
     }
 
@@ -5315,7 +6734,7 @@
         if (!listEl) return;
         const items = filteredEnginePickItems();
         if (!cachedEnginePickCatalog.length) {
-            listEl.innerHTML = '<div class="engine-model-empty">暂无模型目录。请先在「运行环境」检测引擎后点「刷新状态」。</div>';
+            listEl.innerHTML = '<div class="engine-model-empty">暂无模型目录。请先在「运行环境」检测引擎后，回到本页点「刷新状态」。</div>';
             syncEngineModelPickSummary();
             return;
         }
@@ -5372,110 +6791,98 @@
         syncEngineModelPickSummary();
     }
 
-    function resolveExpectedOpusMtModelIds() {
-        const task = readTaskFromForm();
-        if (task !== 'translate' && task !== 'dual') return [];
-        const mode = readTranslateModeFromForm();
-        if (mode === 'smart' || mode === 'llm' || mode === 'sakura') return [];
-        // Per-item sense may adopt Sakura even when the form MT mode is still Opus.
-        try {
-            const selected = (state.items || []).filter((i) => i?.selected !== false);
-            const anySakura = selected.some((item) => {
-                if (!item?.sense?.adopted) return false;
-                const mt = String(item.sense.overrides?.engineMtModel || '');
-                return /^sakura-/i.test(mt) || isSakuraMtModelId(mt);
-            });
-            if (anySakura) return [];
-        } catch { /* ignore */ }
-        const explicit = readOpusMtModelFromForm();
-        if (explicit) {
-            if (/^sakura-/i.test(explicit) || isSakuraMtModelId(explicit)) return [];
-            return [explicit];
-        }
-        // Auto MT: resolve from language (and per-item sense overrides when available).
+    function missingModelsCtx() {
         const profileApi = global.TransubContentProfile;
-        const map = profileApi?.OPUS_MT_BY_LANG || {
-            ja: 'opus-mt-ja-zh',
-            en: 'opus-mt-en-zh',
-            ko: 'opus-mt-ko-zh',
-            de: 'opus-mt-de-zh',
-            es: 'opus-mt-es-zh',
-            fi: 'opus-mt-fi-zh',
-            sv: 'opus-mt-sv-zh',
+        return {
+            task: readTaskFromForm(),
+            translateMode: readTranslateModeFromForm(),
+            explicitOpusMtId: readOpusMtModelFromForm(),
+            formLang: els.languageSelect?.value || '',
+            selectedItems: (state.items || []).filter((i) => i?.selected !== false),
+            cachedEngineModels,
+            asrModelId: els.engineAsrModelSelect?.value || '',
+            opusMtByLang: profileApi?.OPUS_MT_BY_LANG,
+            normalizeSenseLang: profileApi?.normalizeSenseLang,
+            isSakuraMtModelId,
+            isLlmInferenceMtModel: (id) => !!global.TransubSakuraMtCatalog?.isLlmInferenceMtModel?.(id),
         };
-        const normalize = typeof profileApi?.normalizeSenseLang === 'function'
-            ? profileApi.normalizeSenseLang
-            : (lang) => String(lang || '').trim().toLowerCase().split('-')[0];
-        const ids = new Set();
-        const formLang = normalize(els.languageSelect?.value || '');
-        if (formLang && map[formLang]) ids.add(map[formLang]);
-        try {
-            const selected = (state.items || []).filter((i) => i?.selected !== false);
-            for (const item of selected) {
-                const ov = item?.sense?.adopted ? (item.sense.overrides || {}) : {};
-                const mt = String(ov.engineMtModel || '');
-                if (/^sakura-/i.test(mt) || isSakuraMtModelId(mt)) continue;
-                // Sense preferred 推理翻译 — do not require Opus for that item.
-                if (mt && !mt.startsWith('opus-mt-') && (
-                    isSakuraMtModelId(mt)
-                    || global.TransubSakuraMtCatalog?.isLlmInferenceMtModel?.(mt)
-                    || /^(qwen|llama|mistral|gemma|chatglm|yi-|deepseek|phi)/i.test(mt)
-                )) {
-                    continue;
-                }
-                if (mt.startsWith('opus-mt-')) {
-                    ids.add(mt);
-                    continue;
-                }
-                const lang = normalize(ov.language || item?.sense?.classification?.language || formLang);
-                if (lang && map[lang]) ids.add(map[lang]);
-            }
-        } catch { /* ignore */ }
-        // Language still auto / unknown: require *at least one* common Opus model,
-        // but do not expand to all three IDs (that made「检测引擎」look like three must-haves).
-        return [...ids];
+    }
+
+    function resolveExpectedOpusMtModelIds() {
+        if (missingModelsApi.resolveExpectedOpusMtModelIds) {
+            return missingModelsApi.resolveExpectedOpusMtModelIds(missingModelsCtx());
+        }
+        return [];
     }
 
     function anyCommonOpusMtInstalled() {
-        const common = ['opus-mt-ja-zh', 'opus-mt-en-zh', 'opus-mt-ko-zh'];
-        return common.some((id) => {
-            const row = cachedEngineModels.find((m) => m.id === id);
-            return row && row.installed;
-        });
+        if (missingModelsApi.anyCommonOpusMtInstalled) {
+            return missingModelsApi.anyCommonOpusMtInstalled(cachedEngineModels);
+        }
+        return false;
     }
 
     function warnIfSelectedEngineModelsMissing() {
-        if (!cachedEngineModels.length) return '';
-        const missing = [];
-        const asrId = els.engineAsrModelSelect?.value || '';
-        if (asrId) {
-            const asr = cachedEngineModels.find((m) => m.id === asrId);
-            if (asr && !asr.installed) missing.push(asr.incomplete ? `${asrId}（不完整）` : asrId);
+        if (missingModelsApi.warnIfSelectedEngineModelsMissing) {
+            return missingModelsApi.warnIfSelectedEngineModelsMissing(missingModelsCtx());
         }
-        const expectedMt = resolveExpectedOpusMtModelIds();
-        if (expectedMt.length) {
-            for (const mtId of expectedMt) {
-                const mt = cachedEngineModels.find((m) => m.id === mtId);
-                if (mt && !mt.installed) missing.push(mt.incomplete ? `${mtId}（不完整）` : mtId);
-                else if (!mt) missing.push(mtId);
-            }
-        } else {
-            // Auto language + auto MT: only warn when *none* of the common Opus models are ready.
-            const task = readTaskFromForm();
-            const mode = readTranslateModeFromForm();
-            const needsOpus = (task === 'translate' || task === 'dual')
-                && mode !== 'smart' && mode !== 'llm' && mode !== 'sakura'
-                && !isSakuraMtModelId(readOpusMtModelFromForm());
-            if (needsOpus && !anyCommonOpusMtInstalled()) {
-                missing.push('Opus-MT（日/英/韩→中至少其一）');
-            }
+        return '';
+    }
+
+    /**
+     * If any listed model is missing/incomplete, confirm and optionally open settings.
+     * @returns {Promise<boolean>} true when all ready (or nothing to check); false if blocked
+     */
+    async function ensureRequiredModelsReadyOrPrompt({
+        modelIds = [],
+        contextLabel = '',
+        catalog = null,
+        settingsTab = 'models',
+        settingsHint = '',
+    } = {}) {
+        const ids = [...new Set(
+            (Array.isArray(modelIds) ? modelIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean),
+        )];
+        if (!ids.length) return true;
+
+        let models = Array.isArray(catalog) ? catalog : null;
+        if (!models) {
+            try { await refreshEngineModels({ silent: true }); } catch { /* ignore */ }
+            models = Array.isArray(cachedEngineModels) ? cachedEngineModels : [];
         }
-        const asrNeedsFsmn = !asrId || !String(asrId).includes('whisper');
-        if (asrNeedsFsmn) {
-            const vad = cachedEngineModels.find((m) => m.id === 'fsmn-vad');
-            if (vad && !vad.installed) missing.push(vad.incomplete ? 'fsmn-vad（不完整）' : 'fsmn-vad');
-        }
-        return missing.length ? `未安装：${missing.join('、')}，请先下载模型` : '';
+        // Empty catalog: engine list unavailable — don't block selection.
+        if (!models.length) return true;
+
+        const missing = missingModelsApi.findMissingCatalogModels
+            ? missingModelsApi.findMissingCatalogModels(ids, models)
+            : ids
+                .filter((id) => {
+                    const row = models.find((m) => String(m?.id || '') === id);
+                    return !row || !row.installed || row.incomplete;
+                })
+                .map((id) => ({ id, name: id, reason: 'missing' }));
+        if (!missing.length) return true;
+
+        const tab = String(settingsTab || 'models').trim() || 'models';
+        const hint = String(settingsHint || '').trim()
+            || (tab === 'pro-llm' || tab === 'pro' ? '设置 → Pro → 大模型' : '设置 → 模型');
+        const copy = missingModelsApi.buildMissingModelsConfirmCopy
+            ? missingModelsApi.buildMissingModelsConfirmCopy({
+                contextLabel,
+                missing,
+                settingsHint: hint,
+            })
+            : {
+                title: '需要先下载模型',
+                message: `${contextLabel || '所选配置'}需要的模型尚未下载。请先到「${hint}」下载。`,
+                primaryLabel: '去下载',
+                secondaryLabel: '取消',
+            };
+        const go = await appConfirm(copy);
+        if (go) openAppSettings(tab);
+        return false;
     }
 
     /**
@@ -5496,8 +6903,16 @@
         const wantsDemucs = adopted.some((i) => i.sense?.overrides?.filmAudioEnhance);
         if (wantsDemucs) {
             const demucs = await refreshEngineDemucsStatus({ silent: true });
-            const st = String(demucs?.status || '').trim();
-            demucsReady = demucs?.ok === true && st === 'ready';
+            demucsReady = engineModelsUi.isDemucsRuntimeUsable
+                ? engineModelsUi.isDemucsRuntimeUsable(demucs)
+                : (demucs?.ok === true && String(demucs?.status || '').trim() === 'ready');
+            if (
+                demucsReady
+                && engineModelsUi.isDemucsFullyReady
+                && !engineModelsUi.isDemucsFullyReady(demucs)
+            ) {
+                appendLog('Demucs 可用（CPU）；CUDA 未就绪，影视增强将走 CPU 分离', 'warn');
+            }
         }
 
         const base = getSenseBaseOptions();
@@ -5643,20 +7058,32 @@
             fillEngineModelSelect(els.engineAsrModelSelect, cachedEngineModels, 'asr', prevAsr);
             fillEngineModelSelect(els.engineMtModelSelect, cachedEngineModels, 'mt', prevMt, {
                 allowEmpty: true,
-                emptyLabel: '自动（按源语言 · Opus）',
+                emptyLabel: '自动匹配（按源语言 · Opus）',
                 modelFilter: (m) => !isLlmInferencePickModelId(m.id),
             });
             fillEngineModelSelect(els.engineLlmMtModelSelect, cachedEngineModels, 'mt', prevLlm, {
-                allowEmpty: false,
-                modelFilter: (m) => isLlmInferencePickModelId(m.id),
+                allowEmpty: true,
+                emptyLabel: '自动匹配（按语言 / Pro / 硬件）',
+                modelFilter: (m) => {
+                    if (!isLlmInferencePickModelId(m.id)) return false;
+                    if (advancedEntitled) return true;
+                    if (m.proScale) return false;
+                    const entry = findManagedLlmCatalogEntry(m.id);
+                    if (entry && getManagedLlmCatalogApi()?.isProScaleModel?.(entry)) return false;
+                    return true;
+                },
             });
             fillEngineModelSelect(els.engineVadModelSelect, cachedEngineModels, 'vad', prevVad);
+            syncExpertQuickModelSelects();
+            syncExpertExtraChipsUi();
             // Probe Demucs before painting the pick catalog so the 人声分离 card has status.
             try {
                 const demucsRes = await electron.transubEngineAudioSeparateStatus?.(payload);
                 if (demucsRes?.ok) cachedDemucsProbe = demucsRes;
             } catch { /* keep previous probe */ }
             renderEngineModelsList(catalog.length ? catalog : cachedEngineModels, managedCatalogRows);
+            syncMtModelChipUi();
+            updateReadinessStrip();
             if (!silent && listRes && !listRes.ok && (models.length || catalog.length || managedCatalogRows?.length)) {
                 setEngineStatusText(`${listRes?.error || '引擎未就绪'}（已列出可用模型）`, 'warn');
             }
@@ -5705,12 +7132,49 @@
         }
     }
 
+    async function refreshHardwareRecommend({ silent = true } = {}) {
+        if (!electron?.transubEngineRecommend) return null;
+        try {
+            const res = await electron.transubEngineRecommend(engineFormPayload());
+            if (res?.ok) {
+                const vramMb = Number(res.device?.vramMb || res.reason?.vramMb || 0);
+                cachedHardwareRecommend = {
+                    vramMb: vramMb > 0 ? vramMb : undefined,
+                    profile: String(res.profile || '').trim() || undefined,
+                    asrModel: String(res.models?.asrModel || res.asrModel || '').trim() || undefined,
+                    gpuName: String(res.device?.gpuName || '').trim() || undefined,
+                    at: Date.now(),
+                };
+                syncTranslateChipUi();
+                updateAsrRecommendChip(res);
+                return res;
+            }
+            if (!silent) appendLog(res?.error || '硬件推荐失败', 'warn');
+            return res;
+        } catch (err) {
+            if (!silent) appendLog(err?.message || String(err), 'warn');
+            return { ok: false, error: err?.message || String(err) };
+        }
+    }
+
     async function refreshEngineGpuStatus({ silent = true } = {}) {
         if (!electron?.transubEngineGpuStatus) return null;
         try {
             const res = await electron.transubEngineGpuStatus(engineFormPayload());
             if (res?.ok) {
                 applyGpuRuntimeProbe(res);
+                const vramMb = Number(res.vramMb || res.device?.vramMb || 0);
+                if (vramMb > 0) {
+                    cachedHardwareRecommend = {
+                        ...(cachedHardwareRecommend || {}),
+                        vramMb,
+                        gpuName: String(res.gpuName || res.device?.gpuName || cachedHardwareRecommend?.gpuName || '').trim()
+                            || undefined,
+                        at: Date.now(),
+                    };
+                }
+                // Full profile (speed/balanced/quality) comes from recommend.
+                void refreshHardwareRecommend({ silent: true });
                 return res;
             }
             if (!silent) setEngineGpuStatusText(res?.error || '无法获取 GPU 状态', 'err');
@@ -5770,16 +7234,24 @@
                 force: !!force,
             });
             if (res?.ok) {
-                const msg = res.message || 'Demucs 安装完成';
+                await refreshEngineDemucsStatus({ silent: true });
+                const probe = cachedDemucsProbe || res.probe || res;
+                const partial = !!(res.partial
+                    || (engineModelsUi.isDemucsRuntimeUsable
+                        && engineModelsUi.isDemucsRuntimeUsable(probe)
+                        && engineModelsUi.isDemucsFullyReady
+                        && !engineModelsUi.isDemucsFullyReady(probe)));
+                const msg = partial
+                    ? (res.message || 'Demucs 已可用（CPU），CUDA 未就绪')
+                    : (res.message || 'Demucs 安装完成');
                 setEngineDownloadProgressPct(100);
                 setEngineDownloadProgressVisible(true, msg);
                 appendEngineDownloadLog(msg);
                 if (!silent) {
-                    appendLog(msg, 'ok');
-                    setEngineStatusText(msg, 'ok');
+                    appendLog(msg, partial ? 'warn' : 'ok');
+                    setEngineStatusText(msg, partial ? 'warn' : 'ok');
                 }
-                await refreshEngineDemucsStatus({ silent: true });
-                return res;
+                return { ...res, partial: partial || !!res.partial };
             }
             if (res?.cancelled) {
                 const msg = res.error || '已取消安装';
@@ -5956,47 +7428,16 @@
     }
 
     function formatEngineTestResultMessage(res) {
-        if (!res?.ok) {
-            const lines = [
-                '检测未通过。',
-                '',
-                String(res?.error || '引擎未就绪').trim(),
-            ];
-            if (res?.baseUrl) lines.push(`地址：${res.baseUrl}`);
-            const path = String(els.engineInstallPathInput?.value || '').trim();
-            if (path) lines.push(`目录：${path}`);
-            return lines.filter(Boolean).join('\n');
+        if (engineModelsUi.formatEngineTestResultMessage) {
+            return engineModelsUi.formatEngineTestResultMessage(res, {
+                installPath: els.engineInstallPathInput?.value || '',
+                gpuStatus: els.engineGpuStatus?.textContent || '',
+                models: cachedEngineModels,
+                demucs: cachedDemucsProbe,
+            });
         }
-        const ver = String(res.version || res.health?.engineVersion || '').trim();
-        const stub = res.health?.stub ? '（stub）' : '';
-        const lines = [
-            '引擎已就绪。',
-            '',
-            ver ? `版本：${ver}${stub}` : null,
-            res.baseUrl ? `地址：${res.baseUrl}` : null,
-            res.spawned ? '服务：本次已自动启动' : '服务：已在运行',
-        ];
-        const gpu = String(els.engineGpuStatus?.textContent || '').trim();
-        if (gpu) lines.push(`GPU：${gpu}`);
-        const models = Array.isArray(cachedEngineModels) ? cachedEngineModels : [];
-        if (models.length) {
-            const installed = models.filter((m) => m?.installed).length;
-            lines.push(`模型目录：共 ${models.length} 个` + (installed ? `，已安装 ${installed} 个` : ''));
-        }
-        const demucs = cachedDemucsProbe;
-        if (demucs && (demucs.status || demucs.hint || demucs.ok != null)) {
-            const status = String(demucs.status || '').trim();
-            const demucsHint = String(demucs.hint || demucs.message || '').trim();
-            const ready = status === 'ready';
-            lines.push(
-                demucsHint
-                    ? `人声分离：${demucsHint}`
-                    : (ready ? '人声分离：Demucs 可用' : '人声分离：Demucs 未安装'),
-            );
-        }
-        const path = String(els.engineInstallPathInput?.value || '').trim();
-        if (path) lines.push(`目录：${path}`);
-        return lines.filter((line) => line != null).join('\n');
+        if (!res?.ok) return String(res?.error || '引擎未就绪');
+        return '引擎已就绪。';
     }
 
     async function showEngineTestResultDialog(res) {
@@ -6051,55 +7492,34 @@
             }));
     }
 
+    function manualDownloadDeps() {
+        return {
+            demucsModelId: ENGINE_DEMUCS_MODEL_ID,
+            isSakuraMtModelId,
+            findManagedLlmCatalogEntry,
+        };
+    }
+
     function isManagedLlmDownloadId(modelId, source = '') {
-        const id = String(modelId || '').trim();
-        if (!id || id === ENGINE_DEMUCS_MODEL_ID) return false;
-        if (source === 'managed') return true;
-        if (isSakuraMtModelId(id)) return false; // Sakura still goes through engine download path
-        return !!findManagedLlmCatalogEntry(id);
+        if (manualDownloadApi.isManagedLlmDownloadId) {
+            return manualDownloadApi.isManagedLlmDownloadId(modelId, source, manualDownloadDeps());
+        }
+        return false;
     }
 
     /** Hub ASR/MT/VAD models that can be placed manually under engine models/. */
     function canManualEngineHubDownload(item) {
-        if (!item || typeof item !== 'object') return false;
-        const id = String(item.id || '').trim();
-        if (!id || id === ENGINE_DEMUCS_MODEL_ID || /^demucs$/i.test(id)) return false;
-        if (item.group === 'separate' || item.group === 'llm') return false;
-        if (item.source === 'managed' || item.source === 'sakura') return false;
-        if (isManagedLlmDownloadId(id, item.source)) return false;
-        if (id === 'silero-vad') return false;
-        // Bundled / empty-hub models need no Hub fetch.
-        if (item.shipped && !item.hubId) return false;
-        if (item.hubId) return true;
-        return item.group === 'asr' || item.group === 'mt' || item.group === 'vad';
+        if (manualDownloadApi.canManualEngineHubDownload) {
+            return manualDownloadApi.canManualEngineHubDownload(item, manualDownloadDeps());
+        }
+        return false;
     }
 
     function buildManualHubModelHint(info = {}) {
-        const name = String(info.name || info.modelId || info.id || '模型').trim();
-        const hubId = String(info.hubId || '').trim();
-        const mirrorUrl = String(info.mirrorUrl || info.defaultUrl || '').trim();
-        const officialUrl = String(info.officialUrl || '').trim();
-        const folder = String(info.localDir || info.folder || '').trim();
-        const sizeHint = String(info.sizeHint || '').trim();
-        const weightFile = String(info.weightFile || '').trim();
-        const placeSteps = String(info.placeSteps || '').trim();
-        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
-        const urlLines = [
-            mirrorUrl ? `镜像下载页：\n${mirrorUrl}` : '',
-            officialUrl && officialUrl !== mirrorUrl ? `官方仓库：\n${officialUrl}` : '',
-            !mirrorUrl && !officialUrl && hubId ? `Hub：${hubId}` : '',
-        ].filter(Boolean).join('\n\n');
-        const steps = placeSteps || [
-            '在打开的仓库页下载全部文件',
-            '将文件直接放入下方目录（不要再套一层同名文件夹）',
-            weightFile ? `确认关键权重「${weightFile}」为完整文件` : '确认权重文件完整（非 LFS 指针）',
-        ].join('\n');
-        return (
-            `将在浏览器打开「${name}」的模型仓库。${sizeLine}\n\n`
-            + (urlLines ? `${urlLines}\n\n` : '')
-            + `${steps}\n\n`
-            + `放置目录：\n${folder || '（引擎目录）/models/{asr|mt|vad}/<模型名>'}`
-        );
+        if (manualDownloadApi.buildManualHubModelHint) {
+            return manualDownloadApi.buildManualHubModelHint(info);
+        }
+        return String(info?.name || info?.modelId || '模型');
     }
 
     async function verifyManualEngineHubModel(modelId, info = null) {
@@ -6292,45 +7712,17 @@
     }
 
     function classifyManualKindsForModelIds(modelIds) {
-        const ids = (Array.isArray(modelIds) ? modelIds : [])
-            .map((id) => String(id || '').trim())
-            .filter(Boolean);
-        const kinds = [];
-        const hubIds = [];
-        for (const id of ids) {
-            if (id === ENGINE_DEMUCS_MODEL_ID || /^demucs$/i.test(id)) {
-                kinds.push('demucs');
-                continue;
-            }
-            if (/sensevoice/i.test(id)) {
-                kinds.push('sensevoice');
-                hubIds.push(id);
-                continue;
-            }
-            if (/^whisper/i.test(id)) {
-                kinds.push('whisper');
-                hubIds.push(id);
-                continue;
-            }
-            hubIds.push(id);
+        if (manualDownloadApi.classifyManualKindsForModelIds) {
+            return manualDownloadApi.classifyManualKindsForModelIds(modelIds, ENGINE_DEMUCS_MODEL_ID);
         }
-        return {
-            kinds: [...new Set(kinds)],
-            hubIds: [...new Set(hubIds)],
-        };
+        return { kinds: [], hubIds: [] };
     }
 
     function buildManualGgufHint(info = {}) {
-        const name = String(info.name || info.modelId || '模型').trim();
-        const fileName = String(info.fileName || '').trim();
-        const folder = String(info.folder || '').trim();
-        const sizeHint = String(info.sizeHint || '').trim();
-        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
-        return (
-            `将在浏览器打开「${name}」的 GGUF 下载链接。${sizeLine}\n\n`
-            + `下载完成后，请将文件保存为：\n${fileName || '（见模型卡片）'}\n\n`
-            + `并放到以下目录（文件名需完全一致）：\n${folder || '（软件目录）/advanced-llm/models'}`
-        );
+        if (manualDownloadApi.buildManualGgufHint) {
+            return manualDownloadApi.buildManualGgufHint(info);
+        }
+        return String(info?.name || info?.modelId || '模型');
     }
 
     async function verifyManualManagedLlmModel(modelId, info = null) {
@@ -6875,6 +8267,52 @@
         els.listScroll?.classList.toggle('hidden', !hasItems);
         const envVisible = els.envBanner && !els.envBanner.classList.contains('hidden');
         els.emptyStateEnvHint?.classList.toggle('hidden', hasItems || !envVisible);
+        if (!hasItems) {
+            state.focusedTaskPath = '';
+            state.libraryRailMedia = null;
+            syncFocusedTaskRowHighlight();
+        }
+    }
+
+    function syncFocusedTaskRowHighlight() {
+        const want = normPath(state.focusedTaskPath);
+        els.fileListBody?.querySelectorAll('tr.task-row').forEach((row) => {
+            const path = String(row.dataset.path || '');
+            row.classList.toggle('is-focused', !!want && path === want);
+        });
+    }
+
+    function refreshTaskLibraryRail() {
+        // Side rail removed: keep row focus highlight only.
+        syncFocusedTaskRowHighlight();
+    }
+
+    function setFocusedTaskPath(filePath) {
+        const next = normPath(filePath);
+        if (!next) {
+            state.focusedTaskPath = '';
+            state.libraryRailMedia = null;
+            syncFocusedTaskRowHighlight();
+            return;
+        }
+        state.focusedTaskPath = next;
+        syncFocusedTaskRowHighlight();
+    }
+
+    function focusTaskFromSelection() {
+        const selected = state.items.filter((i) => i.selected);
+        if (selected.length === 1) {
+            setFocusedTaskPath(selected[0].path);
+            return;
+        }
+        if (state.focusedTaskPath) {
+            const still = state.items.some((i) => normPath(i.path) === state.focusedTaskPath);
+            if (still) {
+                syncFocusedTaskRowHighlight();
+                return;
+            }
+        }
+        setFocusedTaskPath('');
     }
 
     async function openItemInFolder(item) {
@@ -6906,6 +8344,7 @@
         item.processedTotalSec = 0;
         item.detail = '';
         item.error = '';
+        item.recovery = null;
         item.selected = true;
         state.items.forEach((it, i) => {
             if (i !== idx) it.selected = false;
@@ -6915,179 +8354,121 @@
         appendLog(`已选中「${basename(item.path)}」，可点击开始重新处理`, 'info');
     }
 
+    async function resumeSingleItem(idx) {
+        if (state.running) return;
+        const item = state.items[idx];
+        if (!item?.resumable || !item.resumeFromJobId) {
+            showToast('没有可恢复的断点', 'warn');
+            return;
+        }
+        if (!electron?.transubEngineResumeJob) {
+            showToast('当前环境不支持断点恢复', 'warn');
+            return;
+        }
+        item.status = 'running';
+        item.detail = '从断点继续…';
+        renderList();
+        appendLog(`断点恢复：${basename(item.path)} ← ${item.resumeFromJobId}`, 'info');
+        try {
+            const res = await electron.transubEngineResumeJob({
+                jobId: item.resumeFromJobId,
+                mediaPath: item.path,
+                options: buildRuntimeOptions(),
+            });
+            if (!res?.ok) {
+                item.status = 'failed';
+                item.detail = res?.error || '断点恢复失败';
+                item.error = item.detail;
+                appendLog(`断点恢复失败：${item.detail}`, 'err');
+                showToast(item.detail, 'err');
+            } else {
+                item.status = 'done';
+                item.progress = 100;
+                item.detail = '断点恢复完成';
+                item.subtitlePath = res.subtitlePath || item.subtitlePath;
+                item.sourceSubtitlePath = res.sourceSubtitlePath || item.sourceSubtitlePath;
+                item.targetSubtitlePath = res.targetSubtitlePath || item.targetSubtitlePath;
+                item.bilingualSubtitlePath = res.bilingualSubtitlePath || item.bilingualSubtitlePath;
+                item.resumable = false;
+                item.resumeFromJobId = '';
+                appendLog(`断点恢复完成：${basename(item.path)}`, 'ok');
+                showToast('断点恢复完成', 'ok');
+            }
+        } catch (err) {
+            item.status = 'failed';
+            item.detail = err?.message || String(err);
+            item.error = item.detail;
+            appendLog(`断点恢复异常：${item.detail}`, 'err');
+        }
+        renderList();
+        updateStartButton();
+        updateProgressUi();
+    }
+
+    async function exportItemDiagnostics(idx) {
+        const item = state.items[idx];
+        if (!item || !electron?.transubEngineExportDiagnostics) return;
+        const res = await electron.transubEngineExportDiagnostics({
+            jobId: item.resumeFromJobId || '',
+            mediaPath: item.path,
+            options: buildRuntimeOptions(),
+            logLines: els.logHost?.innerText
+                ? String(els.logHost.innerText).split(/\r?\n/).slice(-120)
+                : [],
+        });
+        if (res?.ok) {
+            appendLog(`已导出诊断包：${res.dir}`, 'ok');
+            showToast(`诊断包：${res.dir}`, 'ok');
+        } else {
+            showToast(res?.error || '导出失败', 'err');
+        }
+    }
+
     function buildListRowHtml(item, idx) {
-        const revealPath = showPathForItem(item);
-        const subPath = getSubtitlePathForItem(item);
-        const folderTitle = subPath
-            ? `在文件夹中显示字幕：${basename(subPath)}`
-            : `在文件夹中显示：${basename(item.path)}`;
-        const detail = item.detail || item.error || '';
-        const meta = statusMeta(item.status);
-        const subBadge = item.existingSubtitle && item.status === 'ready'
-            ? '<span class="ml-1 text-amber-600" title="已有字幕">●</span>' : '';
-        let profileBadgeHtml = '';
-        const sense = item.sense;
-        const autoOn = isAutoSenseEnabled();
-        if (sense?.status === 'sensing') {
-            profileBadgeHtml = '<span class="file-sense-status" title="正在感知…" aria-label="正在感知"><span class="file-sense-icon is-sensing"><i class="fa fa-magic" aria-hidden="true"></i></span><span class="file-sense-label">感知中...</span></span>';
-        } else if (sense?.status === 'done' || sense?.status === 'error') {
+        if (taskListRowApi.buildListRowHtml) {
+            const revealPath = showPathForItem(item);
+            const subPath = getSubtitlePathForItem(item);
+            const sense = item.sense;
             const profileApi = global.TransubContentProfile;
-            const hit = sense.classification;
+            const hit = sense?.classification;
             const badge = hit ? (profileApi?.profileBadge?.(hit.profile) || hit.label || '') : '';
-            const method = profileApi?.describeAudioMethod?.(sense.overrides || {}) || null;
-            const confPct = hit?.confidence ? Math.round(hit.confidence * 100) : 0;
-            const lang = sense.overrides?.language || sense.languagePrior?.language || '';
-            const acousticHint = item.senseAcoustic?.hint && item.senseAcoustic.hint !== 'neutral'
-                ? item.senseAcoustic.hint
-                : '';
-            const acousticLabel = acousticHint === 'music' ? '配乐'
-                : acousticHint === 'soft' ? '软声'
-                    : acousticHint === 'noisy' ? '底噪' : '';
-            const hasSenseOverrides = !!(sense.overrides && Object.keys(sense.overrides).length);
-            const canToggleAdopt = sense.status === 'done'
-                && !state.running
-                && (sense.adopted || hasSenseOverrides);
+            const method = profileApi?.describeAudioMethod?.(sense?.overrides || {}) || null;
             const translateMode = readTranslateModeFromForm();
-            const senseMtLabel = profileApi?.describeSenseMtForUi?.(sense.overrides || {}, {
+            const senseMtLabel = profileApi?.describeSenseMtForUi?.(sense?.overrides || {}, {
                 task: readTaskFromForm(),
                 translateMode,
                 smartTranslate: translateMode === 'smart',
             }) || (
                 translateMode === 'smart' && readTaskFromForm() !== 'transcribe'
                     ? '智能翻译'
-                    : (sense.overrides?.engineMtModel || '')
+                    : (sense?.overrides?.engineMtModel || '')
             );
-            const tipParts = [
-                sense.adopted ? '将使用感知参数' : (autoOn ? '感知未采纳' : '感知已关'),
-                hit?.label || badge || '未识别',
-                confPct ? `${confPct}%` : '',
-                lang && lang !== 'auto' ? `语种 ${lang}` : '',
-                method?.short && sense.adopted ? method.short : '',
-                sense.overrides?.engineAsrModel || '',
+            const acousticHint = item.senseAcoustic?.hint && item.senseAcoustic.hint !== 'neutral'
+                ? item.senseAcoustic.hint
+                : '';
+            return taskListRowApi.buildListRowHtml(item, idx, {
+                esc,
+                basename,
+                normPath,
+                formatDuration,
+                revealPath,
+                subPath,
+                autoOn: isAutoSenseEnabled(),
+                running: !!state.running,
+                qcFixing: !!state.qcFixing,
+                advancedEntitled: !!advancedEntitled,
+                hasSmartQcFix: !!electron?.transubAdvancedQcSmartFix,
+                errorExpanded: expandedErrorRows.has(idx),
+                elapsed: formatElapsedCell(item),
+                processed: formatProcessedCell(item),
+                profileBadge: badge,
+                methodShort: method?.short || '',
                 senseMtLabel,
-                acousticLabel ? `声学·${acousticLabel}` : '',
-                ...(hit?.reasons || []).slice(0, 2),
-                canToggleAdopt
-                    ? (sense.adopted ? '点击改为不采纳' : '点击采纳')
-                    : '',
-            ].filter(Boolean);
-            const tip = tipParts.join(' · ') || sense.message || '';
-            const rejectedCls = !sense.adopted ? ' is-rejected' : '';
-            const suggestCls = !sense.adopted && sense.action === 'suggest' ? ' is-suggest' : '';
-            const adoptedCls = sense.adopted ? ' is-adopted' : '';
-            const profileCls = hit?.profile && hit.profile !== 'unknown'
-                ? ` profile-${esc(hit.profile)}`
-                : '';
-            const aria = sense.adopted
-                ? `已采纳感知参数：${badge || hit?.label || '已采纳'}（点击不采纳）`
-                : (canToggleAdopt
-                    ? `未采纳：${badge || hit?.label || '感知结果'}（点击采纳）`
-                    : (badge || hit?.label || '感知结果'));
-            const toggleAttrs = canToggleAdopt
-                ? ` type="button" data-sense-toggle="${idx}"`
-                : ' type="button" disabled';
-            profileBadgeHtml = `<button${toggleAttrs} class="file-sense-icon${profileCls}${adoptedCls}${rejectedCls}${suggestCls}" title="${esc(tip)}" aria-label="${esc(aria)}"><i class="fa fa-magic" aria-hidden="true"></i></button>`;
-        } else if (!autoOn && sense?.status === 'off') {
-            profileBadgeHtml = '';
+                acousticHint,
+                canPostBatch: getPostBatchPathsForItem(item).length > 0,
+            });
         }
-
-        let resenseIconHtml = '';
-        if (!state.running && sense && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')) {
-            resenseIconHtml = `<button type="button" data-sense-resense="${idx}" class="file-sense-icon is-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="深度感知"${sense.status === 'sensing' ? ' disabled' : ''}><i class="fa fa-search-plus" aria-hidden="true"></i></button>`;
-        }
-        let qcStatusHtml = '<span class="text-gray-300">—</span>';
-        if (item.qcError) {
-            qcStatusHtml = `<span class="text-amber-600 text-xs" title="${esc(item.qcError)}">?</span>`;
-        } else if (Number.isFinite(Number(item.qcIssueCount))) {
-            const n = Number(item.qcIssueCount);
-            const fixedHint = item.qcFixedMode
-                ? (item.qcFixedMode === 'smart' ? ' · 已智能修复' : ' · 已一键修复')
-                : '';
-            const tip = esc((item.qcSummary || (n ? `${n} 项问题` : '通过')) + fixedHint);
-            qcStatusHtml = n > 0
-                ? `<button type="button" data-qc-open="${idx}" class="inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 hover:bg-amber-200" title="${tip}（点击编辑）">${n}</button>`
-                : `<span class="text-emerald-600 text-xs" title="${tip}">✓</span>`;
-        }
-        const qcFixedHtml = qcFixedTagHtml(item);
-        const qcCell = qcFixedHtml
-            ? `<span class="qc-cell">${qcStatusHtml}${qcFixedHtml}</span>`
-            : qcStatusHtml;
-        const editBtn = subPath
-            ? `<button type="button" data-edit-sub="${esc(subPath)}" data-edit-video="${esc(item.path)}" class="row-action-btn text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="编辑字幕"><i class="fa fa-pencil text-xs"></i></button>` : '';
-        const canQcFix = !state.running && !state.qcFixing
-            && Number(item.qcIssueCount) > 0
-            && getPostBatchPathsForItem(item).length > 0;
-        const qcFixBtn = canQcFix
-            ? `<button type="button" data-qc-fix="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="一键修复QC" aria-label="一键修复QC"><i class="fa fa-wrench text-xs"></i></button>`
-            : '';
-        const qcSmartFixBtn = canQcFix && advancedEntitled && electron?.transubAdvancedQcSmartFix
-            ? `<button type="button" data-qc-smart-fix="${idx}" class="row-action-btn text-violet-600 hover:text-violet-800 hover:bg-violet-50" title="智能修复QC (Pro)" aria-label="智能修复QC"><i class="fa fa-magic text-xs"></i></button>`
-            : '';
-        const retryBtn = (item.status === 'failed' || item.status === 'error') && !state.running
-            ? `<button type="button" data-retry-idx="${idx}" class="row-action-btn text-amber-600 hover:text-amber-800 hover:bg-amber-50" title="重试本条" aria-label="重试本条"><i class="fa fa-repeat text-xs"></i></button>`
-            : '';
-        const isFailed = item.status === 'failed' || item.status === 'error';
-        const errText = item.error || (isFailed ? detail : '');
-        const errExpanded = expandedErrorRows.has(idx);
-        let detailHtml = '';
-        if (isFailed && errText) {
-            const short = errText.length > 72 && !errExpanded ? `${errText.slice(0, 72)}…` : errText;
-            const toggle = errText.length > 72
-                ? `<button type="button" class="row-error-toggle" data-error-toggle="${idx}">${errExpanded ? '收起' : '展开'}</button>`
-                : '';
-            detailHtml = `<div class="row-error-expand">${esc(short)}${toggle}</div>`;
-        } else if (detail) {
-            detailHtml = `<div class="cell-ellipsis text-[10px] text-gray-400 mt-0.5" title="${esc(detail)}">${esc(detail)}</div>`;
-        }
-        const pct = Math.max(0, Math.min(100, Number(item.progress) || 0));
-        const elapsed = formatElapsedCell(item);
-        const processed = formatProcessedCell(item);
-        let progressCell = `<span class="text-gray-400 text-xs">—</span>`;
-        if (item.status === 'running') {
-            progressCell = `
-                <div class="space-y-0.5" title="已用 ${esc(elapsed)} · ${esc(processed)}">
-                    <div class="row-mini-progress"><span style="width:${pct}%"></span></div>
-                    <div class="text-[10px] text-gray-500 tabular-nums">${pct}%</div>
-                </div>`;
-        } else if (item.status === 'done' || item.status === 'skipped') {
-            progressCell = `<span class="text-xs text-gray-500 tabular-nums" title="已用 ${esc(elapsed)}">${esc(processed)}</span>`;
-        } else if (item.status === 'failed') {
-            progressCell = `<span class="text-xs text-gray-400 tabular-nums" title="已用 ${esc(elapsed)}">${pct ? `${pct}%` : '—'}</span>`;
-        }
-        const canOpenByName = !!subPath
-            && (item.status === 'done' || item.status === 'skipped');
-        const nameTitle = canOpenByName
-            ? `打开字幕编辑器：${basename(item.path)}`
-            : item.path;
-        const nameHtml = canOpenByName
-            ? `<button type="button" class="cell-ellipsis file-name-link" data-open-editor="${idx}" title="${esc(nameTitle)}">${esc(basename(item.path))}</button>`
-            : `<span class="cell-ellipsis font-medium text-gray-800">${esc(basename(item.path))}</span>`;
-        return `
-            <tr class="task-row hover:bg-gray-50/80" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
-                <td class="px-2 py-1.5"><input type="checkbox" data-row-check ${item.selected ? 'checked' : ''} ${state.running ? 'disabled' : ''}></td>
-                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${profileBadgeHtml}${resenseIconHtml}</div></td>
-                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
-                <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-elapsed"${elapsed !== '—' ? ` title="已用 ${esc(elapsed)}"` : ''}>${esc(elapsed)}</td>
-                <td class="px-2 py-1.5 col-progress">${progressCell}</td>
-                <td class="px-2 py-1.5 text-xs col-status">
-                    <span class="row-status-badge ${meta.cls}">${esc(meta.label)}</span>
-                    ${detailHtml}
-                </td>
-                <td class="px-1 py-1.5 text-center text-xs col-qc">${qcCell}</td>
-                <td class="px-1 py-1.5 text-center col-actions">
-                    <div class="row-actions">
-                    ${retryBtn}
-                    ${qcFixBtn}
-                    ${qcSmartFixBtn}
-                    ${editBtn}
-                    <button type="button" data-show-folder="${esc(revealPath)}" data-idx="${idx}"
-                        class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100 disabled:opacity-30"
-                        title="${esc(folderTitle)}" ${revealPath ? '' : 'disabled'}>
-                        <i class="fa fa-folder-open text-xs"></i>
-                    </button>
-                    </div>
-                </td>
-            </tr>`;
+        return '';
     }
 
     function bindListRowEvents(scope) {
@@ -7102,6 +8483,11 @@
                 if (state.items[idx]) state.items[idx].selected = cb.checked;
                 updateStartButton();
                 updateAutoSenseUi();
+                if (cb.checked && state.items[idx]) {
+                    setFocusedTaskPath(state.items[idx].path);
+                } else {
+                    focusTaskFromSelection();
+                }
             });
         });
     }
@@ -7120,6 +8506,7 @@
         if (!next) return false;
         row.replaceWith(next);
         bindListRowEvents(next);
+        syncFocusedTaskRowHighlight();
         updateQcBanner();
         return true;
     }
@@ -7145,6 +8532,7 @@
             updateEmptyStateUi();
             updateQcBanner();
             updateContentProfileUi();
+            updateStartButton();
             return;
         }
 
@@ -7157,6 +8545,11 @@
         updateQcBanner();
         updateStartButton();
         updateContentProfileUi();
+        if (state.focusedTaskPath) {
+            const still = state.items.some((i) => normPath(i.path) === state.focusedTaskPath);
+            if (still) syncFocusedTaskRowHighlight();
+            else setFocusedTaskPath('');
+        }
     }
 
     function getSelectedItems() {
@@ -7164,12 +8557,17 @@
     }
 
     function pathDirname(filePath) {
-        const p = String(filePath || '');
-        const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
-        return i >= 0 ? p.slice(0, i) : '';
+        return pathUtils.pathDirname
+            ? pathUtils.pathDirname(filePath)
+            : (() => {
+                const p = String(filePath || '');
+                const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+                return i >= 0 ? p.slice(0, i) : '';
+            })();
     }
 
     function pathJoin(dir, name) {
+        if (pathUtils.pathJoin) return pathUtils.pathJoin(dir, name);
         const d = String(dir || '');
         const n = String(name || '');
         if (!d) return n;
@@ -7178,30 +8576,32 @@
     }
 
     function stemNoExt(filePath) {
-        const base = basename(filePath);
-        const dot = base.lastIndexOf('.');
-        return dot > 0 ? base.slice(0, dot) : base;
+        return pathUtils.stemNoExt ? pathUtils.stemNoExt(filePath) : (() => {
+            const base = basename(filePath);
+            const dot = base.lastIndexOf('.');
+            return dot > 0 ? base.slice(0, dot) : base;
+        })();
     }
 
     function primarySubFormatFromForm() {
-        const parts = String(readSubFormatsFromForm() || 'srt')
-            .split(/[,;\s]+/)
-            .map((s) => s.trim().toLowerCase())
-            .filter((s) => ['srt', 'vtt', 'lrc', 'ass'].includes(s));
-        return parts[0] || 'srt';
+        if (retranslatePlanApi.primarySubFormatFromList) {
+            return retranslatePlanApi.primarySubFormatFromList(readSubFormatsFromForm());
+        }
+        return 'srt';
     }
 
     function resolveRetranslateDestPath(item, sourcePath) {
-        const tgt = String(item?.targetSubtitlePath || '').trim();
-        if (tgt) return tgt;
-        const sub = String(item?.subtitlePath || item?.existingSubtitle || '').trim();
-        const src = String(sourcePath || '').trim();
-        if (sub && normPath(sub) !== normPath(src)) return sub;
-        const video = String(item?.path || '').trim();
-        const outDir = resolveOutputDirFromForm() || pathDirname(video) || pathDirname(src);
-        const stem = stemNoExt(video) || stemNoExt(src) || 'subtitle';
-        const fmt = primarySubFormatFromForm();
-        return pathJoin(outDir, `${stem}.${fmt}`);
+        if (retranslatePlanApi.resolveRetranslateDestPath) {
+            return retranslatePlanApi.resolveRetranslateDestPath(item, sourcePath, {
+                resolveOutputDir: resolveOutputDirFromForm,
+                pathDirname,
+                pathJoin,
+                stemNoExt,
+                normPath,
+                subFormats: readSubFormatsFromForm(),
+            });
+        }
+        return String(item?.targetSubtitlePath || item?.subtitlePath || '').trim();
     }
 
     /**
@@ -7259,16 +8659,10 @@
     let cachedSmartTranslatePick = null;
 
     function isSmartTranslateCapableModel(item) {
-        if (!item?.id) return false;
-        if (item.translateOnly) return false;
-        const catalogApi = getManagedLlmCatalogApi();
-        if (catalogApi?.isTranslateOnlyModel?.(item.id) || catalogApi?.isTranslateOnlyModel?.(item)) {
-            return false;
+        if (retranslatePlanApi.isSmartTranslateCapableModel) {
+            return retranslatePlanApi.isSmartTranslateCapableModel(item, getManagedLlmCatalogApi());
         }
-        if (catalogApi?.supportsAdvancedReconstruct) {
-            return !!catalogApi.supportsAdvancedReconstruct(item.id);
-        }
-        return String(item.family || '').toLowerCase() !== 'sakura';
+        return !!item?.id && !item.translateOnly;
     }
 
     async function ensureSmartTranslatePickCache({ force = false } = {}) {
@@ -7292,15 +8686,40 @@
         return cachedSmartTranslatePick;
     }
 
-    function fillRetranslateSmartModelSelect(pick) {
+    function readRetranslateSmartHybrid() {
+        return els.retranslateSmartHybridCheck?.checked !== false;
+    }
+
+    function readRetranslateSmartPolish() {
+        return els.retranslateSmartPolishCheck?.checked !== false;
+    }
+
+    function seedRetranslateSmartOptionsFromSettings() {
+        if (els.retranslateSmartHybridCheck) {
+            els.retranslateSmartHybridCheck.checked = els.smartTranslateHybridCheck
+                ? els.smartTranslateHybridCheck.checked !== false
+                : true;
+        }
+        if (els.retranslateSmartPolishCheck) {
+            els.retranslateSmartPolishCheck.checked = els.smartTranslatePolishCheck
+                ? els.smartTranslatePolishCheck.checked !== false
+                : true;
+        }
+    }
+
+    function fillRetranslateSmartModelSelect(pick, { allowEmpty = false } = {}) {
         const selectEl = els.retranslateModelSelect;
         if (!selectEl) return;
-        const catalog = (Array.isArray(pick?.catalog) ? pick.catalog : [])
-            .filter((item) => item?.installed && isSmartTranslateCapableModel(item));
-        catalog.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh'));
+        const catalog = retranslatePlanApi.filterSmartTranslateCatalog
+            ? retranslatePlanApi.filterSmartTranslateCatalog(pick?.catalog, getManagedLlmCatalogApi())
+            : (Array.isArray(pick?.catalog) ? pick.catalog : [])
+                .filter((item) => item?.installed && isSmartTranslateCapableModel(item));
         const want = String(pick?.smartTranslateModelId || '').trim();
         const opts = [];
-        if (!catalog.length) {
+        if (allowEmpty) {
+            opts.push('<option value="">自动（设置 / 已下载优先）</option>');
+        }
+        if (!catalog.length && !allowEmpty) {
             opts.push('<option value="">（暂无已下载的智能翻译模型）</option>');
         } else {
             for (const item of catalog) {
@@ -7312,21 +8731,39 @@
                 const label = bits.length
                     ? `${item.name || id}（${bits.join(' · ')}）`
                     : (item.name || id);
-                const sel = id === want ? ' selected' : '';
+                const sel = !allowEmpty && id === want ? ' selected' : '';
                 opts.push(`<option value="${esc(id)}"${sel}>${esc(label)}</option>`);
             }
             if (want && !catalog.some((m) => String(m.id) === want)) {
-                opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载或不可用于智能翻译）</option>`);
+                opts.push(`<option value="${esc(want)}">${esc(want)}（未下载或不可用于智能翻译）</option>`);
             }
         }
         selectEl.innerHTML = opts.join('');
         if (want && [...selectEl.options].some((o) => o.value === want)) {
             selectEl.value = want;
+        } else if (allowEmpty) {
+            selectEl.value = '';
         } else if (catalog[0]?.id) {
             selectEl.value = catalog[0].id;
         } else {
             selectEl.value = '';
         }
+    }
+
+    function fillRetranslateHybridMtSelect() {
+        const selectEl = els.retranslateHybridMtSelect;
+        if (!selectEl) return;
+        const prefer = String(
+            selectEl.value
+            || els.engineLlmMtModelSelect?.value
+            || readLlmMtModelFromForm()
+            || '',
+        ).trim();
+        fillEngineModelSelect(selectEl, cachedEngineModels, 'mt', prefer, {
+            allowEmpty: true,
+            emptyLabel: '自动匹配（按语言 / Pro / 硬件）',
+            modelFilter: (m) => isLlmInferencePickModelId(m.id),
+        });
     }
 
     function syncRetranslateModalModelUi() {
@@ -7336,23 +8773,63 @@
             els.retranslateModeSmartWrap.classList.toggle('is-disabled', smartLocked);
             if (els.retranslateModeSmart) els.retranslateModeSmart.disabled = smartLocked;
         }
+        els.retranslateSmartOptions?.classList.add('hidden');
+        els.retranslateHybridMtWrap?.classList.add('hidden');
         if (mode === 'smart') {
-            if (smartLocked) {
-                els.retranslateModelWrap?.classList.add('hidden');
-                if (els.retranslateModelHint) {
-                    els.retranslateModelHint.textContent = '智能翻译为 Pro 专属，请先激活 Pro。';
+            const hybridOn = readRetranslateSmartHybrid();
+            const polishOn = readRetranslateSmartPolish();
+            const ui = retranslatePlanApi.buildRetranslateSmartUiState
+                ? retranslatePlanApi.buildRetranslateSmartUiState({
+                    hybridOn,
+                    polishOn,
+                    smartLocked,
+                })
+                : {
+                    showSmartOptions: !smartLocked,
+                    showHybridMt: !smartLocked && hybridOn,
+                    showDialogModel: !smartLocked && (!hybridOn || polishOn),
+                    dialogLabel: '智能翻译模型',
+                    schemeHint: '',
+                    modelHint: smartLocked
+                        ? '智能翻译为 Pro 专属，请先激活 Pro。'
+                        : '',
+                    allowEmptyDialog: hybridOn,
+                };
+            if (ui.showSmartOptions) {
+                els.retranslateSmartOptions?.classList.remove('hidden');
+            }
+            if (els.retranslateSmartSchemeHint && ui.schemeHint) {
+                els.retranslateSmartSchemeHint.textContent = ui.schemeHint;
+            }
+            if (ui.showHybridMt) {
+                els.retranslateHybridMtWrap?.classList.remove('hidden');
+                const fillHybrid = () => {
+                    if (readRetranslateModeFromModal() !== 'smart') return;
+                    fillRetranslateHybridMtSelect();
+                };
+                if (!cachedEngineModels.length) {
+                    void refreshEngineModels({ silent: true }).then(fillHybrid);
+                } else {
+                    fillHybrid();
                 }
-                return;
             }
-            els.retranslateModelWrap?.classList.remove('hidden');
-            if (els.retranslateModelLabel) els.retranslateModelLabel.textContent = '智能翻译模型';
+            if (ui.showDialogModel) {
+                els.retranslateModelWrap?.classList.remove('hidden');
+                if (els.retranslateModelLabel) {
+                    els.retranslateModelLabel.textContent = ui.dialogLabel || '智能翻译模型';
+                }
+                void ensureSmartTranslatePickCache().then((pick) => {
+                    if (readRetranslateModeFromModal() !== 'smart') return;
+                    fillRetranslateSmartModelSelect(pick, {
+                        allowEmpty: !!ui.allowEmptyDialog,
+                    });
+                });
+            } else {
+                els.retranslateModelWrap?.classList.add('hidden');
+            }
             if (els.retranslateModelHint) {
-                els.retranslateModelHint.textContent = '仅列出已下载且可用于智能翻译的通用对话模型（不含 Sakura 等仅译中模型）。';
+                els.retranslateModelHint.textContent = ui.modelHint || '';
             }
-            void ensureSmartTranslatePickCache().then((pick) => {
-                if (readRetranslateModeFromModal() !== 'smart') return;
-                fillRetranslateSmartModelSelect(pick);
-            });
             return;
         }
         els.retranslateModelWrap?.classList.remove('hidden');
@@ -7375,7 +8852,10 @@
         const selectEl = els.retranslateModelSelect;
         if (!selectEl) return;
         if (mode === 'smart') {
-            void ensureSmartTranslatePickCache().then((pick) => fillRetranslateSmartModelSelect(pick));
+            const allowEmpty = readRetranslateSmartHybrid();
+            void ensureSmartTranslatePickCache().then((pick) => {
+                fillRetranslateSmartModelSelect(pick, { allowEmpty });
+            });
             return;
         }
         if (mode === 'engine') {
@@ -7468,6 +8948,7 @@
                 els.retranslateModeLlm.checked = true;
             }
         }
+        seedRetranslateSmartOptionsFromSettings();
         cachedSmartTranslatePick = null;
         syncRetranslateModalModelUi();
         els.retranslateModal?.classList.remove('hidden');
@@ -7478,6 +8959,129 @@
         }, 80);
     }
 
+    /**
+     * Open retranslate flow from subtitle library (explicit source path + recipe hints).
+     * @param {{ mediaPath: string, sourcePath: string, destPath?: string, hints?: object, recipeSummary?: string }} payload
+     */
+    async function openLibraryRetranslate(payload = {}) {
+        if (state.running || state.postBatchBusy || state.retranslateBusy) {
+            showToast('当前有任务进行中', 'warn');
+            return { ok: false, error: 'busy' };
+        }
+        const mediaPath = String(payload.mediaPath || '').trim();
+        const sourcePath = String(payload.sourcePath || payload.keptPath || '').trim();
+        if (!mediaPath || !sourcePath) {
+            showToast('缺少视频或原文路径', 'warn');
+            return { ok: false, error: 'missing_paths' };
+        }
+        if (!findItem(mediaPath)) {
+            await addFiles([mediaPath], { withLoading: true });
+        }
+        const item = findItem(mediaPath);
+        if (!item) {
+            showToast('无法将视频加入列表', 'err');
+            return { ok: false, error: 'add_failed' };
+        }
+        // Select only this item for clarity
+        for (const it of state.items) it.selected = it.path === item.path;
+        renderList();
+
+        const preferredSource = String(payload.keptPath || sourcePath).trim() || sourcePath;
+        let doc = await electron?.transubReadSubtitle?.({ path: preferredSource });
+        let usePath = preferredSource;
+        if (!(doc?.ok && Array.isArray(doc.cues) && doc.cues.some((c) => String(c?.text || '').trim()))) {
+            if (preferredSource !== sourcePath) {
+                doc = await electron?.transubReadSubtitle?.({ path: sourcePath });
+                usePath = sourcePath;
+            }
+        }
+        if (!(doc?.ok && Array.isArray(doc.cues) && doc.cues.some((c) => String(c?.text || '').trim()))) {
+            showToast(doc?.error || '无法读取原文字幕', 'err');
+            return { ok: false, error: 'read_failed' };
+        }
+        const destPath = String(payload.destPath || '').trim()
+            || resolveRetranslateDestPath(item, usePath);
+
+        state.retranslatePlan = [{
+            item,
+            sourcePath: usePath,
+            destPath,
+            sourceKind: 'library',
+            cues: doc.cues,
+            format: doc.format || 'srt',
+            libraryVersionId: payload.sourceVersionId || '',
+            librarySeedVersionId: payload.seedVersionId || '',
+            libraryRecipe: payload.recipe || null,
+        }];
+
+        const hints = payload.hints && typeof payload.hints === 'object' ? payload.hints : {};
+        let mode = String(hints.mode || '').trim();
+        if (mode === 'smart' && !advancedEntitled) mode = 'llm';
+        if (!['engine', 'llm', 'smart'].includes(mode)) mode = 'llm';
+        if (els.retranslateModeEngine) els.retranslateModeEngine.checked = mode === 'engine';
+        if (els.retranslateModeLlm) els.retranslateModeLlm.checked = mode === 'llm';
+        if (els.retranslateModeSmart) els.retranslateModeSmart.checked = mode === 'smart';
+
+        seedRetranslateSmartOptionsFromSettings();
+        if (hints.smartTranslateHybridMt != null && els.retranslateSmartHybridCheck) {
+            els.retranslateSmartHybridCheck.checked = !!hints.smartTranslateHybridMt;
+        }
+        if (hints.smartTranslatePlotPolish != null && els.retranslateSmartPolishCheck) {
+            els.retranslateSmartPolishCheck.checked = !!hints.smartTranslatePlotPolish;
+        }
+
+        cachedSmartTranslatePick = null;
+        syncRetranslateModalModelUi();
+        try {
+            if (mode === 'smart') {
+                const pick = await ensureSmartTranslatePickCache({ force: true });
+                fillRetranslateSmartModelSelect(pick, {
+                    allowEmpty: readRetranslateSmartHybrid(),
+                });
+                if (readRetranslateSmartHybrid()) {
+                    if (!cachedEngineModels.length) {
+                        await refreshEngineModels({ silent: true });
+                    }
+                    fillRetranslateHybridMtSelect();
+                    const hybridId = String(hints.hybridMtModelId || hints.engineLlmMtModel || '').trim();
+                    if (hybridId && els.retranslateHybridMtSelect) {
+                        const has = [...els.retranslateHybridMtSelect.options]
+                            .some((o) => o.value === hybridId);
+                        if (has) els.retranslateHybridMtSelect.value = hybridId;
+                    }
+                }
+            } else {
+                if (!cachedEngineModels.length) {
+                    await refreshEngineModels({ silent: true });
+                }
+                fillRetranslateModelSelect(mode);
+            }
+        } catch { /* ignore model fill errors */ }
+
+        const modelId = String(hints.modelId || '').trim();
+        if (modelId && els.retranslateModelSelect) {
+            const has = [...els.retranslateModelSelect.options].some((o) => o.value === modelId);
+            if (has) els.retranslateModelSelect.value = modelId;
+        }
+
+        const summary = payload.recipeSummary || hints.recipeSummary || '';
+        if (els.retranslateModalSummary) {
+            els.retranslateModalSummary.textContent = summary
+                ? `字幕库配方再跑：${basename(mediaPath)}\n${summary}`
+                : `字幕库原文再跑：${basename(mediaPath)}（跳过语音识别）`;
+        }
+        if (els.retranslateModalMissing) {
+            els.retranslateModalMissing.textContent = '';
+            els.retranslateModalMissing.classList.add('hidden');
+        }
+
+        els.retranslateModal?.classList.remove('hidden');
+        els.retranslateModal?.classList.add('flex');
+        try { document.body.appendChild(els.retranslateModal); } catch { /* ignore */ }
+        appendLog(`已从字幕库准备再跑：${basename(mediaPath)}`, 'ok');
+        return { ok: true };
+    }
+
     async function runRetranslateFromModal() {
         const plan = Array.isArray(state.retranslatePlan) ? state.retranslatePlan.slice() : [];
         if (!plan.length) {
@@ -7486,24 +9090,37 @@
         }
         const mode = readRetranslateModeFromModal();
         if (mode === 'smart' && !advancedEntitled) {
-            showToast('智能翻译为 Pro 专属', 'warn');
+            void promptProUnlockRequired({ featureLabel: '智能翻译' });
             return;
         }
-        const modelId = String(els.retranslateModelSelect?.value || '').trim();
+        const hybridOn = mode === 'smart' && readRetranslateSmartHybrid();
+        const polishOn = mode === 'smart' && readRetranslateSmartPolish();
+        const smartUi = mode === 'smart' && retranslatePlanApi.buildRetranslateSmartUiState
+            ? retranslatePlanApi.buildRetranslateSmartUiState({ hybridOn, polishOn })
+            : null;
+        const showDialogModel = mode !== 'smart' || (smartUi ? smartUi.showDialogModel : true);
+        const modelId = showDialogModel
+            ? String(els.retranslateModelSelect?.value || '').trim()
+            : '';
+        const hybridMtModelId = hybridOn
+            ? String(els.retranslateHybridMtSelect?.value || '').trim()
+            : '';
         if (mode === 'llm' && !modelId) {
             showToast('请选择推理翻译模型', 'warn');
             return;
         }
         if (mode === 'smart') {
-            if (!modelId) {
+            if (smartUi?.requireDialogModel && !modelId) {
                 showToast('请选择已下载的智能翻译模型（设置 → Pro → 大模型）', 'warn');
                 return;
             }
-            const catalogApi = getManagedLlmCatalogApi();
-            const block = catalogApi?.getSmartTranslateModelBlock?.(modelId);
-            if (block?.ok === false) {
-                showToast(block.error || '所选模型不可用于智能翻译', 'warn');
-                return;
+            if (modelId) {
+                const catalogApi = getManagedLlmCatalogApi();
+                const block = catalogApi?.getSmartTranslateModelBlock?.(modelId);
+                if (block?.ok === false) {
+                    showToast(block.error || '所选模型不可用于智能翻译', 'warn');
+                    return;
+                }
             }
         }
         closeRetranslateModal();
@@ -7523,8 +9140,16 @@
         ensureLogExpanded();
         activateInferLogTab();
         const modeLabel = mode === 'smart' ? '智能翻译' : (mode === 'engine' ? '机器翻译' : '推理翻译');
+        const smartBits = [];
+        if (mode === 'smart') {
+            if (hybridOn) smartBits.push(hybridMtModelId ? `句级 ${hybridMtModelId}` : '句级自动');
+            if (polishOn) smartBits.push(modelId ? `润色 ${modelId}` : '润色自动');
+            else if (!hybridOn && modelId) smartBits.push(modelId);
+        } else if (modelId) {
+            smartBits.push(modelId);
+        }
         appendRetranslateLog(
-            `开始重新翻译 ${plan.length} 项（${modeLabel}${modelId ? ` · ${modelId}` : ''}）…`,
+            `开始重新翻译 ${plan.length} 项（${modeLabel}${smartBits.length ? ` · ${smartBits.join(' · ')}` : ''}）…`,
             'info',
         );
 
@@ -7548,12 +9173,25 @@
             path = activePath,
             log = false,
         } = {}) => {
-            const total = Math.max(1, plan.length);
-            const idx = Math.max(0, Math.min(total - 1, Number(index) || 0));
-            const within = Math.max(0, Math.min(1, (Number(itemPct) || 0) / 100));
-            // Cap mid-item at 99% so the bar keeps moving until the batch finishes.
-            const overall = clampPct(((idx + within) / total) * 100);
-            const displayOverall = overall >= 100 && idx < total - 1 ? 99 : Math.min(99, overall);
+            const pctInfo = retranslatePlanApi.computeRetranslateOverallPct
+                ? retranslatePlanApi.computeRetranslateOverallPct({
+                    index,
+                    itemPct,
+                    total: plan.length,
+                })
+                : (() => {
+                    const total = Math.max(1, plan.length);
+                    const idx = Math.max(0, Math.min(total - 1, Number(index) || 0));
+                    const within = Math.max(0, Math.min(1, (Number(itemPct) || 0) / 100));
+                    const overall = Math.max(0, Math.min(100, Math.round(((idx + within) / total) * 100)));
+                    const displayOverall = overall >= 100 && idx < total - 1 ? 99 : Math.min(99, overall);
+                    return { displayOverall, index: idx, total };
+                })();
+            const total = pctInfo.total;
+            const idx = pctInfo.index;
+            const displayOverall = pctInfo.displayOverall;
+            const clampPct = (n) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+
             const labelDetail = String(detail || '').trim();
             if (els.progressBar) els.progressBar.style.width = `${displayOverall}%`;
             if (els.progressLabel) {
@@ -7735,8 +9373,13 @@
                         targetLanguage: chineseSubtitleVariant,
                         smartTranslateFaithfulTone: faithfulTone,
                         faithfulTone,
-                        modelId,
-                        smartTranslateModelId: modelId,
+                        smartTranslateHybridMt: hybridOn,
+                        smartTranslatePlotPolish: polishOn,
+                        engineLlmMtModel: hybridMtModelId || undefined,
+                        hybridMtModelId: hybridMtModelId || undefined,
+                        language,
+                        modelId: modelId || undefined,
+                        smartTranslateModelId: modelId || undefined,
                         fileName: name,
                         sourcePath: row.sourcePath,
                         path: row.sourcePath,
@@ -7818,6 +9461,15 @@
                     path: row.destPath,
                     format: row.format || primarySubFormatFromForm(),
                     cues: nextCues,
+                    videoPath: item.path,
+                    ...(row.sourceKind === 'library' ? {
+                        librarySource: 'retranslate',
+                        libraryNote: '对照B',
+                        libraryTags: ['对照B', 'rerun'],
+                        librarySourceVersionId: row.libraryVersionId || '',
+                        libraryParentVersionId: row.librarySeedVersionId || '',
+                        libraryRecipe: row.libraryRecipe || null,
+                    } : {}),
                 });
                 if (!written?.ok) {
                     failCount += 1;
@@ -7898,9 +9550,7 @@
             return;
         }
         if (!advancedEntitled) {
-            appendLog('影片理解重构为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
-            showToast('理解重构为 Pro 专属', 'warn');
-            openAppSettings('pro');
+            void promptProUnlockRequired({ featureLabel: '语境和理解重构' });
             return;
         }
 
@@ -7945,7 +9595,10 @@
     }
 
     async function addFolder() {
-        const res = await electron?.selectFolder?.({ title: '选择包含媒体文件的文件夹' });
+        const res = await electron?.selectFolder?.({
+            title: '选择包含媒体文件的文件夹',
+            useLastOpenDir: true,
+        });
         if (!res?.ok || res.canceled || !res.path) return;
         const scan = await electron?.transWithAiScanFolder?.({ folder: res.path, recursive: true });
         if (!scan?.ok) {
@@ -7957,23 +9610,41 @@
     }
 
     function removeSelected() {
-        if (state.running || state.retranslateBusy) return;
-        const removed = state.items.filter((i) => i.selected);
-        if (!removed.length) return;
-        const snapshot = removed.map((i) => ({ ...i, sense: i.sense ? { ...i.sense } : undefined }));
-        state.items = state.items.filter((i) => !i.selected);
-        renderList();
-        updateStartButton();
-        ux()?.pushUndo?.(`已移除 ${removed.length} 项`, () => {
-            state.items.push(...snapshot);
-            renderList();
-            updateStartButton();
+        if (state.retranslateBusy) return;
+        const partition = liveBatchQueueApi.partitionSelectedForRemove
+            ? liveBatchQueueApi.partitionSelectedForRemove(state.items, {
+                running: !!state.running,
+                retranslateBusy: !!state.retranslateBusy,
+            })
+            : {
+                removable: state.items.filter((i) => i.selected
+                    && !(state.running && i.status === 'running')),
+                blocked: [],
+            };
+        const removed = partition.removable || [];
+        if (!removed.length) {
+            if (state.running && (partition.blocked || []).length) {
+                appendLog('进行中的任务无法移除，可先停止或等待完成', 'warn');
+            }
+            return;
+        }
+        void removeItemsFromList(removed, {
+            blockedRunning: (partition.blocked || []).length > 0,
         });
     }
 
     function clearList() {
-        if (state.running || state.retranslateBusy) return;
+        if (state.retranslateBusy) return;
         if (!state.items.length) return;
+        if (state.running) {
+            const removable = state.items.filter((i) => i.status !== 'running');
+            if (!removable.length) {
+                appendLog('进行中的任务无法清空，可先停止或等待完成', 'warn');
+                return;
+            }
+            void removeItemsFromList(removable, { blockedRunning: true });
+            return;
+        }
         const snapshot = state.items.map((i) => ({ ...i, sense: i.sense ? { ...i.sense } : undefined }));
         state.items = [];
         renderList();
@@ -7983,6 +9654,51 @@
             renderList();
             updateStartButton();
         });
+    }
+
+    async function removeItemsFromList(removed, { blockedRunning = false } = {}) {
+        const list = Array.isArray(removed) ? removed : [];
+        if (!list.length) return;
+        if (state.running) {
+            const needSkip = liveBatchQueueApi.pathsNeedingBatchSkip
+                ? liveBatchQueueApi.pathsNeedingBatchSkip(list, normPath)
+                : list
+                    .filter((i) => !['done', 'skipped', 'cancelled', 'failed', 'error', 'running']
+                        .includes(String(i.status || '')))
+                    .map((i) => i.path);
+            if (needSkip.length) {
+                try {
+                    const res = await electron?.transubLiveBatchSkip?.({ paths: needSkip });
+                    if (res?.ok === false && res?.code !== 'no_batch') {
+                        appendLog(`从批次移除失败：${res?.error || '未知错误'}`, 'warn');
+                    }
+                } catch (err) {
+                    appendLog(`从批次移除失败：${err?.message || err}`, 'warn');
+                }
+            }
+        }
+        const removeKeys = new Set(list.map((i) => normPath(i.path)));
+        const snapshot = list.map((i) => ({ ...i, sense: i.sense ? { ...i.sense } : undefined }));
+        state.items = state.items.filter((i) => !removeKeys.has(normPath(i.path)));
+        renderList();
+        updateStartButton();
+        const note = blockedRunning
+            ? `已移除 ${list.length} 项（进行中的任务已保留）`
+            : `已移除 ${list.length} 项`;
+        ux()?.pushUndo?.(note, () => {
+            state.items.push(...snapshot);
+            renderList();
+            updateStartButton();
+            if (state.running) {
+                const requeue = snapshot.filter((i) => {
+                    const s = String(i.status || '');
+                    return !['done', 'skipped', 'cancelled', 'failed', 'error', 'running']
+                        .includes(s);
+                });
+                if (requeue.length) void appendItemsToLiveBatch(requeue);
+            }
+        });
+        if (blockedRunning) appendLog(note, 'info');
     }
 
     function updateItem(path, patch = {}) {
@@ -8080,41 +9796,27 @@
     }
 
     function syncVideoProgressFromPayload(p) {
+        if (inferProgress.applyVideoProgressPayload) {
+            const next = inferProgress.applyVideoProgressPayload(state, p);
+            if (!next) return;
+            state.itemDualPhase = next.itemDualPhase;
+            state.itemStage = next.itemStage;
+            state.videoProgress = next.videoProgress;
+            if (next.videoTotalSec != null) state.videoTotalSec = next.videoTotalSec;
+            if (next.videoCurrentSec != null) state.videoCurrentSec = next.videoCurrentSec;
+            return;
+        }
+        // Minimal fallback if infer-stage-progress-core failed to load.
         if (p.phase !== 'running') return;
         if (p.itemDualPhase && p.itemDualPhase !== state.itemDualPhase) {
             state.itemDualPhase = p.itemDualPhase;
             state.itemStage = p.itemStage || 'starting';
         }
         const stage = p.itemStage || 'transcribe';
-        if (stageRank(stage) >= stageRank(state.itemStage)) {
-            state.itemStage = stage;
+        if (stageRank(stage) >= stageRank(state.itemStage)) state.itemStage = stage;
+        if (Number.isFinite(Number(p.itemProgress))) {
+            state.videoProgress = bumpProgress(state.videoProgress, Number(p.itemProgress));
         }
-        // VAD / 加载模型等转写前阶段：引擎若已给出整体进度则采用；否则保持 0（TWAI 兼容）
-        if (isPreTranscribeStage(state.itemStage)) {
-            if (p.itemDualPhase && Number.isFinite(Number(p.itemProgress))) {
-                state.videoProgress = bumpProgress(state.videoProgress, Number(p.itemProgress));
-                return;
-            }
-            if (Number.isFinite(Number(p.itemProgress)) && Number(p.itemProgress) > 0) {
-                state.videoProgress = bumpProgress(state.videoProgress, Number(p.itemProgress));
-                if (Number(p.videoTotalSec) > 0) {
-                    state.videoTotalSec = Number(p.videoTotalSec);
-                    state.videoCurrentSec = Number(p.videoCurrentSec) || 0;
-                }
-                return;
-            }
-            state.videoProgress = 0;
-            return;
-        }
-        const mapped = Number.isFinite(Number(p.itemProgress))
-            ? Number(p.itemProgress)
-            : mapStageProgress(
-                stage,
-                Number(p.itemProgress) || 0,
-                Number(p.videoCurrentSec) || 0,
-                Number(p.videoTotalSec) || 0,
-            );
-        state.videoProgress = bumpProgress(state.videoProgress, mapped);
         if (Number(p.videoTotalSec) > 0) {
             state.videoTotalSec = Number(p.videoTotalSec);
             state.videoCurrentSec = Number(p.videoCurrentSec) || 0;
@@ -8282,6 +9984,10 @@
                     targetSubtitlePath: p.targetSubtitlePath || undefined,
                     bilingualSubtitlePath: p.bilingualSubtitlePath || undefined,
                 };
+                if (p.asrModel) donePatch.asrModel = String(p.asrModel);
+                if (p.primaryAsr) donePatch.primaryAsr = String(p.primaryAsr);
+                if (Number(p.asrAttempts) > 0) donePatch.asrAttempts = Number(p.asrAttempts);
+                if (p.asrFailedOver) donePatch.asrFailedOver = true;
                 const doneTotal = Number(p.videoTotalSec) || findItem(path)?.duration || 0;
                 if (doneTotal > 0) {
                     donePatch.processedSec = doneTotal;
@@ -8305,6 +10011,33 @@
                     failedPatch.processedTotalSec = Number(state.videoTotalSec);
                 }
                 if (findItem(path)?.startedAt) failedPatch.completedAt = Date.now();
+                if (p.resumable && p.resumeFromJobId) {
+                    failedPatch.resumable = true;
+                    failedPatch.resumeFromJobId = String(p.resumeFromJobId);
+                }
+                if (p.errorCode) failedPatch.errorCode = String(p.errorCode);
+                try {
+                    const recoveryApi = globalThis.TransubBatchRecovery;
+                    if (recoveryApi?.buildBatchFailureGuidance) {
+                        failedPatch.recovery = p.recovery || recoveryApi.buildBatchFailureGuidance({
+                            message: p.error || p.itemDetail || failedPatch.detail,
+                            code: p.errorCode || '',
+                            resumable: !!failedPatch.resumable,
+                            resumeFromJobId: failedPatch.resumeFromJobId || '',
+                            asrCandidates: p.asrCandidates || p.recovery?.asrCandidates,
+                            asrAttempts: p.asrAttempts || p.recovery?.asrAttempts,
+                            primaryAsr: p.primaryAsr,
+                            asrModel: p.asrModel,
+                        });
+                        if (Array.isArray(p.asrCandidates) && p.asrCandidates.length) {
+                            failedPatch.asrCandidates = p.asrCandidates.slice();
+                        }
+                        if (p.asrAttempts) failedPatch.asrAttempts = p.asrAttempts;
+                        if (failedPatch.recovery?.shortTip && !isCancel) {
+                            failedPatch.detail = `${failedPatch.detail} · ${failedPatch.recovery.shortTip}`;
+                        }
+                    }
+                } catch { /* ignore */ }
                 updateItem(path, failedPatch);
             }
         }
@@ -8325,12 +10058,15 @@
         } else if (p.phase === 'done') {
             state.generated += 1;
             els.progressLabel.textContent = '本条已完成';
+            const asrNote = p.asrFailedOver && p.asrModel
+                ? ` · ASR ${p.asrModel}（回退）`
+                : (p.asrModel ? ` · ASR ${p.asrModel}` : '');
             appendLog(
                 p.bilingualSubtitlePath && !p.sourceSubtitlePath && !p.targetSubtitlePath
-                    ? `完成：${name} → ${basename(p.subtitlePath)}（已合并并清理原轨）`
+                    ? `完成：${name} → ${basename(p.subtitlePath)}（已合并并清理原轨）${asrNote}`
                     : p.sourceSubtitlePath && p.targetSubtitlePath
-                        ? `完成：${name} → ${basename(p.targetSubtitlePath)}（原文 ${basename(p.sourceSubtitlePath)}${p.bilingualSubtitlePath ? ` · 合并 ${basename(p.bilingualSubtitlePath)}` : ''}）`
-                        : `完成：${name}${p.subtitlePath ? ` → ${basename(p.subtitlePath)}` : ''}`,
+                        ? `完成：${name} → ${basename(p.targetSubtitlePath)}（原文 ${basename(p.sourceSubtitlePath)}${p.bilingualSubtitlePath ? ` · 合并 ${basename(p.bilingualSubtitlePath)}` : ''}）${asrNote}`
+                        : `完成：${name}${p.subtitlePath ? ` → ${basename(p.subtitlePath)}` : ''}${asrNote}`,
                 'ok',
             );
         } else if (p.phase === 'failed' || p.phase === 'cancelled') {
@@ -8441,8 +10177,7 @@
     async function runPostBatchQcSmartFix(onlyItem = null, { confirm = true } = {}) {
         if (state.running || state.qcFixing) return;
         if (!advancedEntitled) {
-            appendLog('QC 智能修复为 Pro 功能，请先在设置 → Pro 解锁', 'warn');
-            openAppSettings('pro');
+            void promptProUnlockRequired({ featureLabel: 'QC 智能修复' });
             return;
         }
         if (!electron?.transubAdvancedQcSmartFix) {
@@ -8463,8 +10198,8 @@
         const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
         if (confirm) {
             const confirmMsg = onlyItem
-                ? `确定对「${basename(onlyItem.path)}」做 QC 智能修复吗？\n将按素材类型调整强度，并依次：规则修复 → 智能断句 → 局部重转写（需视频；有必要时执行）→ 大模型润色；有原文对照时再做语义审阅采纳。`
-                : `确定 QC 智能修复吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕（内容画像 + 规则/断句/必要时局部重转写/润色；双语任务含语义审阅）。`;
+                ? `确定对「${basename(onlyItem.path)}」做 QC 智能修复吗？\n将按素材类型调整强度，并依次：规则修复 → 智能断句 → 局部重转写（需视频；有必要时执行）→ 通顺整理与清怪；有原文对照时再做语义审阅采纳。`
+                : `确定 QC 智能修复吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕（内容画像 + 规则/断句/必要时局部重转写/通顺整理与清怪；双语任务含语义审阅）。`;
             const yes = await appConfirm({
                 title: 'QC 智能修复 (Pro)',
                 message: confirmMsg,
@@ -8516,19 +10251,20 @@
                     els.progressLabel.textContent = `QC 智能修复中，请稍候… ${fileTotal}/${pathCount} · ${phaseHint}`;
                     try {
                         const pairPath = resolveQcSemanticPairPathForItem(item, subPath);
+                        const savedQc = savedOptionsSnapshot || {};
                         const res = await electron.transubAdvancedQcSmartFix({
                             path: subPath,
                             mediaPath: item.path,
                             profile,
                             ...preset,
-                            // 用户已点「智能修复」：显式开启 Pro 链路（画像仅调 CPS/强度等）
-                            // 局部重转写：有 connected/高 CPS 等目标时才跑；SenseVoice 空则引擎侧可回退 Whisper
-                            llmSplit: true,
-                            retranscribeConnected: true,
+                            // 用户已点「智能修复」：按设置页步骤开关覆盖画像默认
+                            llmSplit: savedQc.qcSmartLlmSplit !== false,
+                            retranscribeConnected: savedQc.qcSmartRetranscribe !== false,
                             smartFix: true,
                             pairPath: pairPath || undefined,
-                            semanticReview: !!pairPath,
-                            maxRetranscribeRanges: 8,
+                            semanticReview: savedQc.qcSmartSemanticReview !== false && !!pairPath,
+                            intensity: savedQc.qcSmartIntensity || preset.intensity || 'light',
+                            maxRetranscribeRanges: Number(savedQc.qcSmartMaxRetranscribeRanges) || 8,
                             backupMode: 'off',
                         });
                         if (res?.ok && res.written) {
@@ -8720,8 +10456,7 @@
         if (countQcIssues() <= 0) return;
         if (mode === 'smart') {
             if (!advancedEntitled) {
-                appendLog('已设置完成后 Pro 修复 QC，但未解锁 Pro，改为规则一键修复', 'warn');
-                await runPostBatchQcFix(null, { confirm: false });
+                // Pro 默认智能修复：未解锁时不自动跑，也不降级成一键（避免免费版行为突变）
                 return;
             }
             await runPostBatchQcSmartFix(null, { confirm: false });
@@ -8731,12 +10466,18 @@
     }
 
     function normalizeChineseSubtitleVariant(raw) {
+        if (settingsNormApi.normalizeChineseSubtitleVariant) {
+            return settingsNormApi.normalizeChineseSubtitleVariant(raw);
+        }
         const allowed = new Set(['simplified', 'traditional', 'traditional-tw', 'traditional-hk']);
         const cv = String(raw || 'simplified');
         return allowed.has(cv) ? cv : 'simplified';
     }
 
     function chineseSubtitleVariantLabel(variant) {
+        if (settingsNormApi.chineseSubtitleVariantLabel) {
+            return settingsNormApi.chineseSubtitleVariantLabel(variant);
+        }
         if (variant === 'simplified') return '转简体';
         if (variant === 'traditional-hk') return '转繁体（香港）';
         if (variant === 'traditional-tw') return '转繁体（台湾字形）';
@@ -8768,40 +10509,48 @@
             const optsRes = await electron?.transWithAiGetOptions?.();
             if (optsRes?.options) savedOpts = optsRes.options;
         } catch { /* ignore */ }
-        const doCps = savedOpts
-            ? savedOpts.postBatchCpsSplit !== false
-            : (els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true);
-        const doNoise = savedOpts
-            ? savedOpts.postBatchRemoveNoise !== false
-            : (els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true);
-        const doCompressRep = savedOpts
-            ? savedOpts.postBatchCompressRepetition !== false
-            : (els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true);
-        const doCompactInterjections = savedOpts
-            ? !!savedOpts.postBatchCompactPureInterjections
-            : !!els.postBatchCompactPureInterjectionsCheck?.checked;
-        const taskFromSaved = savedOpts?.task === 'transcribe' || savedOpts?.task === 'dual'
-            ? savedOpts.task
-            : (savedOpts?.task ? 'translate' : null);
-        const taskNow = taskFromSaved || readTaskFromForm();
-        const isTranslate = isTranslateLikeTask(taskNow);
-        // 翻译/双语任务默认：。？！后补空格（在 CPS 拆句之前）；双语后处理只作用于译文轨
-        const doSpacePunct = isTranslate;
-        const doPostprocess = doCps || doNoise || doCompressRep || doSpacePunct;
-        if (!doPostprocess && !doCompactInterjections) return;
-
-        const targets = state.items.filter((item) => {
-            if (item.status !== 'done' && item.status !== 'skipped') return false;
-            return getPostBatchPathsForItem(item).length > 0;
+        if (!postBatchAutofixApi.planPostBatchAutofixFlags) {
+            appendLog('后处理核心未加载（post-batch-autofix-plan），已跳过批量后处理', 'err');
+            return;
+        }
+        const flags = postBatchAutofixApi.planPostBatchAutofixFlags({
+            savedOpts,
+            form: {
+                postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
+                postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
+                postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
+                postBatchViewingPunctMode: els.postBatchViewingPunctModeSelect?.value,
+                postBatchInterjectionMode: els.postBatchInterjectionModeSelect?.value,
+                postBatchOnomatopoeiaMode: els.postBatchOnomatopoeiaModeSelect?.value,
+                task: readTaskFromForm(),
+            },
+            taskFallback: readTaskFromForm(),
+            normalizeViewingCleanMode,
+            isTranslateLikeTask,
         });
+        const {
+            doCps, doNoise, doCompressRep,
+            viewingPunctMode, interjectionMode, onomatopoeiaMode,
+            doViewingPunct, doSoftenDiscourse, doSoftenOnomatopoeia, doCompactInterjections,
+            taskNow, doSpacePunct, doPostprocess,
+        } = flags;
+        if (!flags.shouldRun) return;
+
+        const targets = postBatchAutofixApi.filterPostBatchAutofixTargets
+            ? postBatchAutofixApi.filterPostBatchAutofixTargets(state.items, getPostBatchPathsForItem)
+            : state.items.filter((item) => {
+                if (item.status !== 'done' && item.status !== 'skipped') return false;
+                return getPostBatchPathsForItem(item).length > 0;
+            });
 
         els.progressLabel.textContent = '后处理中…';
-        const parts = [];
-        if (doSpacePunct) parts.push('句读后空格');
-        if (doCps) parts.push('CPS 拆句');
-        if (doNoise) parts.push('清理杂音');
-        if (doCompressRep) parts.push('压缩叠词');
-        if (doCompactInterjections) parts.push('精简纯语气词');
+        const parts = postBatchAutofixApi.buildPostBatchAutofixLabelParts
+            ? postBatchAutofixApi.buildPostBatchAutofixLabelParts({
+                doSpacePunct, doCps, doNoise, doCompressRep,
+                viewingPunctMode, interjectionMode, onomatopoeiaMode,
+                doSoftenDiscourse, doSoftenOnomatopoeia,
+            })
+            : [];
         const dualHint = taskNow === 'dual' ? '（译文轨 + 合并双语）' : '';
 
         if (doPostprocess && targets.length && electron?.transubApplySubtitlePostprocess) {
@@ -8861,6 +10610,13 @@
                                 removeNoise: doNoise && !skipNoise,
                                 removeHallucinations: doNoise && !skipNoise,
                                 compressRepetition: doCompressRep,
+                                viewingPunctMode: viewingPunctMode,
+                                simplifyViewingPunctuation: doViewingPunct,
+                                softenDiscourseFillers: doSoftenDiscourse,
+                                softenOnomatopoeiaFillers: doSoftenOnomatopoeia,
+                                dropBilingualPureFillers: doCompactInterjections,
+                                dropBilingualDiscourse: interjectionMode === 'clear',
+                                dropBilingualOnomatopoeia: onomatopoeiaMode === 'clear',
                                 blankInsteadOfRemove: false,
                                 fixOverlap: true,
                                 enforceMaxDur: true,
@@ -8905,34 +10661,73 @@
                 const item = compactTargets[i];
                 const zhPath = getSubtitlePathForItem(item);
                 const jaPath = item.sourceSubtitlePath;
-                els.progressLabel.textContent = `精简纯语气词… ${i + 1}/${compactTargets.length}`;
+                els.progressLabel.textContent = `清除语气/拟声… ${i + 1}/${compactTargets.length}`;
                 try {
                     const res = await electron.transubCompactPureInterjections({
                         path: zhPath,
                         sourcePath: jaPath,
-                        options: { backupMode: 'off' },
+                        options: {
+                            backupMode: 'off',
+                            dropDiscourse: interjectionMode === 'clear',
+                            dropOnomatopoeia: onomatopoeiaMode === 'clear',
+                        },
                     });
                     if (res?.ok && res.dropped) {
                         compactWritten += 1;
-                        appendLog(`${basename(zhPath)}：${res.summary || '已精简纯语气词'}`, 'ok');
+                        appendLog(`${basename(zhPath)}：${res.summary || '已清除语气/拟声'}`, 'ok');
                     } else if (res?.ok && !res.skipped) {
-                        appendLog(`${basename(zhPath)}：${res.summary || '无需精简纯语气词'}`, 'info');
+                        appendLog(`${basename(zhPath)}：${res.summary || '无需清除语气/拟声'}`, 'info');
                     } else if (res?.ok && res.skipped) {
-                        appendLog(`${basename(zhPath)}：跳过精简（${res.reason || '无原文对照'}）`, 'info');
+                        appendLog(`${basename(zhPath)}：跳过清除（${res.reason || '无原文对照'}）`, 'info');
                     } else {
-                        appendLog(`${basename(zhPath)}：${res?.error || '精简纯语气词失败'}`, 'err');
+                        appendLog(`${basename(zhPath)}：${res?.error || '清除语气/拟声失败'}`, 'err');
                     }
                 } catch (err) {
-                    appendLog(`${basename(zhPath)}：${err?.message || '精简纯语气词失败'}`, 'err');
+                    appendLog(`${basename(zhPath)}：${err?.message || '清除语气/拟声失败'}`, 'err');
                 }
             }
             if (compactTargets.length) {
                 appendLog(
                     compactWritten > 0
-                        ? `精简纯语气词完成：已写回 ${compactWritten}/${compactTargets.length} 个字幕对`
-                        : `精简纯语气词完成：${compactTargets.length} 个字幕对均无需写回`,
+                        ? `清除语气/拟声完成：已写回 ${compactWritten}/${compactTargets.length} 个字幕对`
+                        : `清除语气/拟声完成：${compactTargets.length} 个字幕对均无需写回`,
                     compactWritten > 0 ? 'ok' : 'info',
                 );
+            }
+
+            // Remake merged bilingual from cleaned tracks so player `{stem}.srt` stays in sync.
+            if (electron?.transubMergeBilingualSubtitles && taskNow === 'dual') {
+                let remade = 0;
+                for (const item of compactTargets) {
+                    const zhPath = String(getSubtitlePathForItem(item) || '').trim();
+                    const jaPath = String(item.sourceSubtitlePath || '').trim();
+                    const biPath = String(item.bilingualSubtitlePath || '').trim();
+                    if (!zhPath || !jaPath || !biPath) continue;
+                    if (zhPath === biPath) continue;
+                    try {
+                        const merged = await electron.transubMergeBilingualSubtitles({
+                            path: zhPath,
+                            sourcePath: jaPath,
+                            dualLineOrder: els.mergeBilingualOrderSelect
+                                ? readDualLineOrderFromForm()
+                                : 'target-first',
+                            nameAsVideoStem: true,
+                        });
+                        if (merged?.ok && merged.path) {
+                            remade += 1;
+                            item.bilingualSubtitlePath = merged.path;
+                            if (!item.targetSubtitlePath) item.subtitlePath = merged.path;
+                        }
+                    } catch (err) {
+                        appendLog(
+                            `${basename(biPath)}：合并双语刷新失败（${err?.message || err}）`,
+                            'err',
+                        );
+                    }
+                }
+                if (remade) {
+                    appendLog(`已按清理后的原/译轨重写合并双语 ${remade} 个`, 'ok');
+                }
             }
         }
 
@@ -9103,27 +10898,65 @@
                 const totalElapsedText = totalElapsedSec > 0
                     ? formatDuration(totalElapsedSec)
                     : '';
+                const generatedCount = Number(payload?.generated ?? state.generated) || 0;
                 const summaryLines = [
-                    `成功 ${payload?.generated ?? state.generated} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
+                    `成功 ${generatedCount} · 跳过 ${payload?.skipped ?? state.skipped} · 失败 ${payload?.failed ?? state.failed}`,
                 ];
                 if (qcIssues > 0) summaryLines.push(`${qcIssues} 条字幕存在 QC 问题`);
                 if (finishError) summaryLines.push(finishError);
                 const summaryText = summaryLines.join('\n');
+                const libraryMediaPaths = [...new Set(
+                    (state.items || [])
+                        .filter((it) => String(it?.status || '') === 'done')
+                        .map((it) => String(it?.path || '').trim())
+                        .filter(Boolean),
+                )];
+                const libraryText = generatedCount > 0
+                    ? (libraryMediaPaths.length > 1
+                        ? `成功项已自动入库字幕库（${libraryMediaPaths.length} 部作品）。可打开字幕库查看版本与对照。`
+                        : '成功项已自动入库字幕库。可打开字幕库查看当前版、历史版本与对照。')
+                    : '';
+                if (libraryMediaPaths[0]) {
+                    setFocusedTaskPath(libraryMediaPaths[0]);
+                }
+                if (
+                    generatedCount > 0
+                    && (savedOptionsSnapshot?.libraryOpenAfterBatch
+                        || els.libraryOpenAfterBatchCheck?.checked)
+                ) {
+                    try {
+                        void global.TransubFeatures?.openSubtitleLibrary?.({
+                            mediaPath: libraryMediaPaths[0] || '',
+                        });
+                    } catch (_) { /* ignore */ }
+                }
                 els.progressLabel.textContent = failed > 0
                     ? (finishError || '任务结束，部分失败')
                     : (qcIssues > 0 ? '全部处理完成（仍有 QC 问题）' : '全部处理完成');
                 showToast(summaryText.split('\n')[0], failed > 0 || qcIssues > 0 ? 'warn' : 'ok');
                 if (ux()?.showBatchSummary) {
+                    const hasLibraryCta = generatedCount > 0;
                     void ux().showBatchSummary({
                         title: failed > 0 ? '任务完成（有失败）' : '任务完成',
                         summaryText,
                         elapsedText: totalElapsedText,
-                        primaryLabel: failed > 0 ? '重试失败项' : '',
+                        libraryText,
+                        primaryLabel: failed > 0 ? '重试失败项' : (hasLibraryCta ? '在字幕库查看' : ''),
                         secondaryLabel: '关闭',
-                        onPrimary: failed > 0,
+                        tertiaryLabel: failed > 0 && hasLibraryCta ? '在字幕库查看' : '',
+                        onPrimary: failed > 0 || hasLibraryCta,
+                        onTertiary: failed > 0 && hasLibraryCta,
                     }).then((action) => {
                         if (action === 'primary' && failed > 0) {
                             retryAllFailedItems();
+                            return;
+                        }
+                        const openLib = (action === 'primary' && failed === 0 && hasLibraryCta)
+                            || (action === 'tertiary' && hasLibraryCta);
+                        if (openLib) {
+                            void global.TransubFeatures?.openSubtitleLibrary?.({
+                                mediaPath: libraryMediaPaths[0] || '',
+                            });
                         }
                     });
                 }
@@ -9173,51 +11006,84 @@
     }
 
     async function startSubtitleGeneration() {
-        const selected = getSelectedItems();
-        if (!selected.length) {
-            appendLog('请至少选择一个有效视频', 'warn');
-            return;
-        }
-        const blockReason = computeStartBlockReason();
-        if (blockReason) {
-            appendLog(blockReason, 'warn');
-            updateStartButton();
-            return;
-        }
-
-        if (settingsFormDirty) {
-            const choice = await appConfirmChoice({
-                title: '设置未保存',
-                message: '设置有未保存的修改。开始任务前如何处理？',
-                primaryLabel: '保存并开始',
-                secondaryLabel: '取消',
-                tertiaryLabel: '不保存并开始',
-            });
-            if (choice === 'secondary') return;
-            if (choice === 'primary') {
-                await saveParamsSettings({ closeAfter: false });
-                if (settingsFormDirty) {
-                    appendLog('设置保存失败，已中止任务', 'err');
-                    return;
+        dismissLoadingOverlay();
+        try {
+            // Phantom compute locks (e.g. aborted editor range) disable Start with no click feedback.
+            if (state.computeBusy && !state.running && !state.postBatchBusy && !state.retranslateBusy) {
+                const cleared = await clearStaleComputeBusyIfNeeded();
+                if (cleared.cleared) {
+                    appendLog(
+                        cleared.before?.label
+                            ? `已清除卡住的算力锁（${cleared.before.label}）`
+                            : '已清除卡住的算力锁',
+                        'warn',
+                    );
                 }
+            } else if (state.computeBusy) {
+                await syncComputeBusyFromMain();
+                updateStartButton();
             }
-        } else {
-            await reloadSavedOptionsIntoForm();
-        }
-        const optsPreview = buildRuntimeOptions();
-        const useEnginePreview = (optsPreview.engineBackend || 'transub') !== 'twai';
-        const validate = useEnginePreview
-            ? await refreshEngineStatus()
-            : await refreshInstallStatus();
-        if (!validate?.ok) {
-            appendLog(
-                validate?.error || (useEnginePreview ? 'Transub Engine 未就绪' : 'TransWithAI 未就绪'),
-                'err',
-            );
-            setBadge('未就绪', 'error');
-            openAppSettings('install');
-            return;
-        }
+
+            const blockReason = computeStartBlockReason();
+            if (blockReason) {
+                appendLog(blockReason, 'warn');
+                showToast(blockReason, 'warn');
+                updateStartButton();
+                return;
+            }
+
+            const selected = getSelectedItems();
+            if (!selected.length) {
+                appendLog('请至少选择一个有效视频', 'warn');
+                showToast('请至少选择一个有效视频', 'warn');
+                return;
+            }
+
+            // Failed / cancelled rows stay selected — normalize so the batch path treats them as ready.
+            selected.forEach((item) => {
+                if (item.status === 'failed' || item.status === 'cancelled' || item.status === 'error') {
+                    item.status = 'ready';
+                    item.progress = 0;
+                    item.detail = '';
+                    item.error = '';
+                    item.recovery = null;
+                }
+            });
+            renderList();
+
+            if (settingsFormDirty) {
+                const choice = await appConfirmChoice({
+                    title: '设置未保存',
+                    message: '设置有未保存的修改。开始任务前如何处理？',
+                    primaryLabel: '保存并开始',
+                    secondaryLabel: '取消',
+                    tertiaryLabel: '不保存并开始',
+                });
+                if (choice === 'secondary') return;
+                if (choice === 'primary') {
+                    await saveParamsSettings({ closeAfter: false });
+                    if (settingsFormDirty) {
+                        appendLog('设置保存失败，已中止任务', 'err');
+                        return;
+                    }
+                }
+            } else {
+                await reloadSavedOptionsIntoForm();
+            }
+            const optsPreview = buildRuntimeOptions();
+            const useEnginePreview = (optsPreview.engineBackend || 'transub') !== 'twai';
+            const validate = useEnginePreview
+                ? await refreshEngineStatus()
+                : await refreshInstallStatus();
+            if (!validate?.ok) {
+                appendLog(
+                    validate?.error || (useEnginePreview ? 'Transub Engine 未就绪' : 'TransWithAI 未就绪'),
+                    'err',
+                );
+                setBadge('未就绪', 'error');
+                openAppSettings('install');
+                return;
+            }
 
         await refreshEtaRateFromHistory();
         // Re-read after validate in case install/engine probe updated options on disk.
@@ -9257,15 +11123,17 @@
                 const profileApi = global.TransubContentProfile;
                 adopted.slice(0, 12).forEach((i) => {
                     const o = i.sense.overrides || {};
-                    const mtLabel = profileApi?.describeSenseMtForUi?.(o, {
-                        task: opts.task || readTaskFromForm(),
-                        translateMode: startTranslateMode,
-                        smartTranslate: startTranslateMode === 'smart' || !!opts.smartTranslate,
-                    }) || (
-                        (startTranslateMode === 'smart' || opts.smartTranslate)
-                            ? '智能翻译'
-                            : o.engineMtModel
-                    );
+                    const mtLabel = mtUseFormState
+                        ? (isMtModelAutoSelected() ? '自动' : '指定模型')
+                        : (profileApi?.describeSenseMtForUi?.(o, {
+                            task: opts.task || readTaskFromForm(),
+                            translateMode: startTranslateMode,
+                            smartTranslate: startTranslateMode === 'smart' || !!opts.smartTranslate,
+                        }) || (
+                            (startTranslateMode === 'smart' || opts.smartTranslate)
+                                ? '智能翻译 Pro'
+                                : o.engineMtModel
+                        ));
                     const bits = [
                         i.sense.classification?.label || i.sense.classification?.profile,
                         o.language,
@@ -9393,9 +11261,7 @@
                 items: selected.map((i) => ({
                     fullPath: i.path,
                     durationSec: i.duration || 0,
-                    optionOverrides: (autoSenseOn && i.sense?.adopted && i.sense.overrides)
-                        ? i.sense.overrides
-                        : undefined,
+                    optionOverrides: senseOverridesForJob(i),
                 })),
                 options: opts,
                 minimizeToTray: !!opts.minimizeToTrayOnStart,
@@ -9415,6 +11281,13 @@
             if (!state.running) {
                 setBadge('失败', 'error');
             }
+        }
+        } catch (err) {
+            const msg = err?.message || String(err) || '开始执行失败';
+            appendLog(msg, 'err');
+            showToast(msg, 'err');
+            dismissLoadingOverlay();
+            updateStartButton();
         }
     }
 
@@ -9718,7 +11591,18 @@
         for (const i of next) expandedErrorRows.add(i);
     }
 
+    function listSortHelpers() {
+        return {
+            basename,
+            itemElapsedSec,
+            statusRank: TASK_STATUS_SORT_RANK,
+        };
+    }
+
     function listSortValue(item, key) {
+        if (taskListSortApi.listSortValue) {
+            return taskListSortApi.listSortValue(item, key, listSortHelpers());
+        }
         switch (key) {
             case 'file':
                 return basename(item.path).toLocaleLowerCase('zh-CN');
@@ -9747,6 +11631,9 @@
     }
 
     function compareListSortValues(a, b, key) {
+        if (taskListSortApi.compareListSortValues) {
+            return taskListSortApi.compareListSortValues(a, b, key, listSortHelpers());
+        }
         const va = listSortValue(a, key);
         const vb = listSortValue(b, key);
         if (typeof va === 'number' && typeof vb === 'number') {
@@ -9757,9 +11644,14 @@
 
     function sortTaskListBy(key) {
         if (!taskColMeta(key)?.sortable) return;
-        const cur = state.listSort;
-        const dir = (cur && cur.key === key && cur.dir === 'asc') ? 'desc' : 'asc';
-        state.listSort = { key, dir };
+        state.listSort = taskListSortApi.nextListSortState
+            ? taskListSortApi.nextListSortState(state.listSort, key)
+            : {
+                key,
+                dir: (state.listSort && state.listSort.key === key && state.listSort.dir === 'asc')
+                    ? 'desc'
+                    : 'asc',
+            };
         renderList();
     }
 
@@ -9767,6 +11659,12 @@
         const sort = state.listSort;
         if (!sort?.key || !taskColMeta(sort.key)?.sortable) return;
         if (state.items.length < 2) return;
+        if (taskListSortApi.sortTaskItems) {
+            const result = taskListSortApi.sortTaskItems(state.items, sort, listSortHelpers());
+            state.items = result.items;
+            if (result.changed) remapExpandedErrorRows(result.prev);
+            return;
+        }
         const prev = state.items.slice();
         const mult = sort.dir === 'asc' ? 1 : -1;
         const key = sort.key;
@@ -9939,6 +11837,7 @@
             renderList();
             updateStartButton();
         }
+        setFocusedTaskPath(item.path);
         return state.items[idx] || item;
     }
 
@@ -9952,6 +11851,7 @@
         }
         const subPath = getSubtitlePathForItem(item);
         const canEdit = !!subPath;
+        const canLibrary = !!(String(item?.path || '').trim() || subPath);
         const busy = state.running || state.postBatchBusy || state.retranslateBusy;
         const canRetranslate = !busy;
         const canReconstruct = !busy && !!getSubtitlePathForItem(item);
@@ -9970,13 +11870,19 @@
             && !!sense
             && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')
             && sense.status !== 'sensing';
-        const canRemove = !state.running && !state.retranslateBusy;
+        const canRemove = liveBatchQueueApi.canRemoveTaskItem
+            ? liveBatchQueueApi.canRemoveTaskItem(item, {
+                running: !!state.running,
+                retranslateBusy: !!state.retranslateBusy,
+            })
+            : (!state.retranslateBusy && !(state.running && item.status === 'running'));
 
         const setEnabled = (action, enabled) => {
             const btn = menu.querySelector(`[data-task-ctx="${action}"]`);
             if (btn) btn.disabled = !enabled;
         };
         setEnabled('edit', canEdit);
+        setEnabled('library', canLibrary);
         setEnabled('retranslate', canRetranslate);
         setEnabled('reconstruct', canReconstruct);
         setEnabled('qc-fix', canQcFix);
@@ -10031,6 +11937,15 @@
             case 'edit':
                 openItemEditor(item);
                 break;
+            case 'library': {
+                const mediaPath = String(item.path || '').trim() || getSubtitlePathForItem(item) || '';
+                if (mediaPath) {
+                    void global.TransubFeatures?.openSubtitleLibrary?.({ mediaPath });
+                } else {
+                    void global.TransubFeatures?.openSubtitleLibrary?.();
+                }
+                break;
+            }
             case 'retranslate':
                 ensureContextRowSelected(idx);
                 void openRetranslateModal();
@@ -10053,6 +11968,12 @@
                 break;
             case 'retry':
                 retrySingleItem(idx);
+                break;
+            case 'resume':
+                void resumeSingleItem(idx);
+                break;
+            case 'export-diagnostics':
+                void exportItemDiagnostics(idx);
                 break;
             case 'show-folder':
                 void openItemInFolder(item);
@@ -10123,11 +12044,37 @@
         bindTaskTableColumns();
         bindTaskRowContextMenu();
         els.fileListBody.addEventListener('click', (e) => {
+            const focusRow = e.target.closest('tr[data-idx]');
+            if (focusRow && !e.target.closest('input[type="checkbox"]')) {
+                const focusItem = state.items[Number(focusRow.dataset.idx)];
+                if (focusItem) setFocusedTaskPath(focusItem.path);
+            }
             const resenseBtn = e.target.closest('[data-sense-resense]');
             if (resenseBtn) {
                 e.preventDefault();
                 e.stopPropagation();
                 resenseItem(state.items[Number(resenseBtn.dataset.senseResense)]);
+                return;
+            }
+            const recoverBtn = e.target.closest('[data-sense-recover]');
+            if (recoverBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const idx = Number(recoverBtn.getAttribute('data-sense-recover-idx'));
+                applySenseRecoveryAction(
+                    recoverBtn.getAttribute('data-sense-recover'),
+                    Number.isFinite(idx) ? state.items[idx] : null,
+                );
+                return;
+            }
+            const batchRecoverBtn = e.target.closest('[data-batch-recover]');
+            if (batchRecoverBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                applyBatchRecoveryAction(
+                    batchRecoverBtn.getAttribute('data-batch-recover'),
+                    Number(batchRecoverBtn.getAttribute('data-batch-recover-idx')),
+                );
                 return;
             }
             const toggleSenseBtn = e.target.closest('[data-sense-toggle]');
@@ -10142,6 +12089,20 @@
                 e.preventDefault();
                 e.stopPropagation();
                 retrySingleItem(Number(retryBtn.dataset.retryIdx));
+                return;
+            }
+            const resumeBtn = e.target.closest('[data-resume-idx]');
+            if (resumeBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                void resumeSingleItem(Number(resumeBtn.dataset.resumeIdx));
+                return;
+            }
+            const diagBtn = e.target.closest('[data-diag-idx]');
+            if (diagBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                void exportItemDiagnostics(Number(diagBtn.dataset.diagIdx));
                 return;
             }
             const errToggle = e.target.closest('[data-error-toggle]');
@@ -10205,18 +12166,31 @@
         });
     }
 
+    function bindTaskLibraryRail() {
+        // Main-window library side rail removed; open library via header / row context menu.
+    }
+
     function bindJobEventListeners() {
         if (!electron || bindJobEventListeners.done) return;
         bindJobEventListeners.done = true;
         electron.onSubtitleTaskJobStart?.((payload) => onJobStart(payload));
         electron.onTransWithAiProgress?.((payload) => onProgress(payload));
-        electron.onSubtitleTaskJobFinished?.((payload) => onJobFinished(payload));
+        electron.onSubtitleTaskJobFinished?.((payload) => {
+            onJobFinished(payload);
+            if (state.focusedTaskPath) void refreshTaskLibraryRail();
+        });
         electron.onTransubComputeTaskChanged?.((payload) => {
             state.computeBusy = !!payload?.busy;
             state.computeBusyLabel = payload?.busy
                 ? String(payload.label || payload.kind || '').trim()
                 : '';
+            state.computeBusySince = payload?.busy
+                ? (Number(payload.since) || state.computeBusySince || Date.now())
+                : 0;
+            state.computeBusyOwner = payload?.busy ? String(payload.owner || '').trim() : '';
+            state.computeBusyKind = payload?.busy ? String(payload.kind || '').trim() : '';
             updateStartButton();
+            updateStopButton();
         });
         void (async () => {
             try {
@@ -10224,7 +12198,11 @@
                 if (st?.busy) {
                     state.computeBusy = true;
                     state.computeBusyLabel = String(st.label || st.kind || '').trim();
+                    state.computeBusySince = Number(st.since) || Date.now();
+                    state.computeBusyOwner = String(st.owner || '').trim();
+                    state.computeBusyKind = String(st.kind || '').trim();
                     updateStartButton();
+                    updateStopButton();
                 }
             } catch { /* ignore */ }
         })();
@@ -10242,7 +12220,9 @@
             bindMainUiExtras();
             els.removeSelectedBtn?.addEventListener('click', removeSelected);
             els.clearListBtn?.addEventListener('click', clearList);
-            els.startBtn?.addEventListener('click', startSubtitleGeneration);
+            els.startBtn?.addEventListener('click', () => {
+                void startSubtitleGeneration();
+            });
             els.retranslateBtn?.addEventListener('click', () => {
                 void openRetranslateModal();
             });
@@ -10263,13 +12243,21 @@
             ].forEach((radio) => {
                 radio?.addEventListener('change', () => syncRetranslateModalModelUi());
             });
+            els.retranslateSmartHybridCheck?.addEventListener('change', () => {
+                syncRetranslateModalModelUi();
+            });
+            els.retranslateSmartPolishCheck?.addEventListener('change', () => {
+                syncRetranslateModalModelUi();
+            });
             els.selectAllCheck?.addEventListener('change', () => {
                 const checked = els.selectAllCheck.checked;
                 state.items.forEach((i) => { i.selected = checked; });
                 renderList();
                 updateStartButton();
+                focusTaskFromSelection();
             });
         }
+        bindTaskLibraryRail();
         applyUiPrefs();
         void hydrateAppThemeFromMain();
         try {
@@ -10303,9 +12291,6 @@
         els.openParamsBtn?.addEventListener('click', () => {
             openAppSettings('runtime');
         });
-        els.autoSenseToggle?.addEventListener('click', () => {
-            setAutoSenseEnabled(!isAutoSenseEnabled(), { persist: true });
-        });
         els.clearSenseMemoryBtn?.addEventListener('click', () => {
             void clearSenseMemoryFromSettings();
         });
@@ -10317,6 +12302,7 @@
         });
         bindSettingsTips();
         bindSettingsSearch();
+        bindSettingsGuideLinks();
         els.paramsTabBtns?.forEach((btn) => {
             btn.addEventListener('click', () => {
                 closeAllSettingsTips();
@@ -10674,6 +12660,7 @@
             syncDeviceOptionsForMode();
             syncExpertCustomHints();
             updateParamsSummary();
+            syncMtModelChipUi();
         });
         els.logLevelSelect?.addEventListener('change', () => {
             syncLogLevelHint();
@@ -10691,8 +12678,27 @@
             updateParamsSummary();
         });
         els.filmAudioEnhanceCheck?.addEventListener('change', () => {
-            if (els.filmAudioEnhanceCheck?.checked && els.filmVadPresetCheck) {
-                els.filmVadPresetCheck.checked = false;
+            if (els.filmAudioEnhanceCheck?.checked) {
+                const n = audioMutexApi.applyFilmEnhanceOn
+                    ? audioMutexApi.applyFilmEnhanceOn({
+                        filmAudioEnhance: true,
+                        filmVadPreset: !!els.filmVadPresetCheck?.checked,
+                        vadSensitive: !!els.vadSensitiveCheck?.checked,
+                        audioLightDenoise: !!els.audioLightDenoiseCheck?.checked,
+                    })
+                    : {
+                        filmVadPreset: false,
+                        vadSensitive: false,
+                        audioLightDenoise: false,
+                    };
+                if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = !!n.filmVadPreset;
+                if (els.vadSensitiveCheck) els.vadSensitiveCheck.checked = !!n.vadSensitive;
+                if (els.quickVadSensitiveCheck) {
+                    els.quickVadSensitiveCheck.checked = !!n.vadSensitive;
+                }
+                if (els.audioLightDenoiseCheck) {
+                    els.audioLightDenoiseCheck.checked = !!n.audioLightDenoise;
+                }
             }
             updateParamsSummary();
         });
@@ -10702,12 +12708,40 @@
             }
             updateParamsSummary();
         });
+        els.audioLightDenoiseCheck?.addEventListener('change', () => {
+            if (els.audioLightDenoiseCheck?.checked) {
+                const n = audioMutexApi.applyLightDenoiseOn
+                    ? audioMutexApi.applyLightDenoiseOn({
+                        audioLightDenoise: true,
+                        filmAudioEnhance: !!els.filmAudioEnhanceCheck?.checked,
+                    })
+                    : { filmAudioEnhance: false };
+                if (els.filmAudioEnhanceCheck) {
+                    els.filmAudioEnhanceCheck.checked = !!n.filmAudioEnhance;
+                }
+            }
+            updateParamsSummary();
+        });
         els.smartTranslateCheck?.addEventListener('change', () => {
             syncSmartTranslateUi();
             updateModelSelectHint();
             updateParamsSummary();
         });
-        els.smartTranslateFaithfulCheck?.addEventListener('change', updateParamsSummary);
+        els.smartTranslateFaithfulCheck?.addEventListener('change', () => {
+            if (els.quickFaithfulCheck) {
+                els.quickFaithfulCheck.checked = !!els.smartTranslateFaithfulCheck.checked;
+            }
+            updateParamsSummary();
+        });
+        els.smartTranslateHybridCheck?.addEventListener('change', () => {
+            syncTranslateChipUi();
+            updateModelSelectHint();
+            updateParamsSummary();
+        });
+        els.smartTranslatePolishCheck?.addEventListener('change', () => {
+            syncTranslateChipUi();
+            updateParamsSummary();
+        });
         els.deleteSourcesAfterMergeCheck?.addEventListener('change', updateParamsSummary);
         els.transcribeModelSelect?.addEventListener('change', () => {
             setModelPathOnForm('transcribe', els.transcribeModelSelect.value, { syncSelect: false });
@@ -10773,12 +12807,34 @@
                 if (els.audioLightDenoiseCheck) els.audioLightDenoiseCheck.checked = false;
                 if (els.filmAudioEnhanceCheck) els.filmAudioEnhanceCheck.checked = false;
                 if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = false;
+                if (audioMutexApi.applySensitiveOn) {
+                    const n = audioMutexApi.applySensitiveOn({
+                        vadSensitive: true,
+                        filmAudioEnhance: true,
+                        filmVadPreset: true,
+                        audioLightDenoise: true,
+                    });
+                    if (els.filmAudioEnhanceCheck) {
+                        els.filmAudioEnhanceCheck.checked = !!n.filmAudioEnhance;
+                    }
+                    if (els.filmVadPresetCheck) els.filmVadPresetCheck.checked = !!n.filmVadPreset;
+                    if (els.audioLightDenoiseCheck) {
+                        els.audioLightDenoiseCheck.checked = !!n.audioLightDenoise;
+                    }
+                }
                 setSaveParamsStatus('灵敏检出：Whisper ASR + whisperseg-asmr（请确认两者已下载）', 'warn');
                 appendLog('灵敏检出：VAD 已切换为 whisperseg-asmr，请确认模型已下载', 'info');
             }
+            if (els.quickVadSensitiveCheck) {
+                els.quickVadSensitiveCheck.checked = !!els.vadSensitiveCheck?.checked;
+            }
+            mirrorSelectValue(els.engineAsrModelSelect, els.quickAsrModelSelect);
+            mirrorSelectValue(els.engineVadModelSelect, els.quickVadModelSelect);
             syncExpertCustomHints();
+            syncExpertExtraChipsUi();
         });
         els.engineAsrModelSelect?.addEventListener('change', () => {
+            updateAsrWindowTip();
             const asr = String(els.engineAsrModelSelect?.value || '').toLowerCase();
             if (!asr.includes('whisper')) {
                 if (els.vadSensitiveCheck?.checked) {
@@ -10798,13 +12854,33 @@
                     appendLog('ASR 为 SenseVoice：VAD 已改回 fsmn-vad（Silero/WhisperSeg 仅支持 Whisper）', 'info');
                 }
             }
+            mirrorSelectValue(els.engineAsrModelSelect, els.quickAsrModelSelect);
+            mirrorSelectValue(els.engineVadModelSelect, els.quickVadModelSelect);
+            if (els.quickVadSensitiveCheck) {
+                els.quickVadSensitiveCheck.checked = !!els.vadSensitiveCheck?.checked;
+            }
             syncExpertCustomHints();
+            syncExpertExtraChipsUi();
         });
         els.vadAggressiveCheck?.addEventListener('change', () => {
             if (els.vadAggressiveCheck?.checked && els.vadSensitiveCheck) {
                 els.vadSensitiveCheck.checked = false;
             }
+            if (els.quickVadSensitiveCheck) {
+                els.quickVadSensitiveCheck.checked = !!els.vadSensitiveCheck?.checked;
+            }
             syncExpertCustomHints();
+            syncExpertExtraChipsUi();
+        });
+        els.engineVadModelSelect?.addEventListener('change', () => {
+            mirrorSelectValue(els.engineVadModelSelect, els.quickVadModelSelect);
+            syncExpertExtraChipsUi();
+        });
+        els.glossaryMtCheck?.addEventListener('change', () => {
+            if (els.quickGlossaryMtCheck) {
+                els.quickGlossaryMtCheck.checked = !!els.glossaryMtCheck.checked;
+            }
+            syncExpertExtraChipsUi();
         });
         const markDirtyFromParamsEvent = (event) => {
             const t = event.target;
@@ -10820,12 +12896,27 @@
             const t = event.target;
             if (!(t instanceof HTMLElement)) return;
             markDirtyFromParamsEvent(event);
+            if (t.id === 'engineAsrModelSelect' || t.id === 'engineProfileSelect') {
+                updateAsrRecommendChip();
+            }
             if (t.closest('[data-settings-level="expert"]') || t.id === 'audioSuffixesInput'
                 || t.id === 'retranscribeWarmLightCheck' || t.id === 'logLevelSelect'
                 || t.id === 'maxBatchSizeInput') {
                 syncExpertCustomHints();
             }
         });
+        els.asrRecommendApplyBtn?.addEventListener('click', () => applyAsrRecommendFromChip());
+        els.asrRecommendDismissBtn?.addEventListener('click', () => {
+            const id = String(els.asrRecommendChip?.dataset?.recommendedAsr || '').trim();
+            const profile = String(cachedHardwareRecommend?.profile || '').trim();
+            asrRecommendDismissedKey = `${id}|${profile}`;
+            if (els.asrRecommendChip) {
+                els.asrRecommendChip.classList.add('hidden');
+                els.asrRecommendChip.hidden = true;
+            }
+            syncQuickAsrRecommendChip();
+        });
+        updateAsrRecommendChip();
         els.paramsModal?.addEventListener('input', (event) => {
             const t = event.target;
             if (!(t instanceof HTMLElement)) return;
@@ -10906,6 +12997,7 @@
         }
 
         cacheEls();
+        syncQuickExtrasBar();
         void fillAppVersionLabel();
         bindEvents();
         syncDeviceOptionsForMode();
@@ -10930,6 +13022,8 @@
             return;
         }
 
+        warnMissingRendererCores();
+
         setLoading(true, '正在加载配置…');
         try {
             const optsRes = await electron?.transWithAiGetOptions?.();
@@ -10940,6 +13034,11 @@
             } else {
                 await ensureEngineInstallPathFilled();
             }
+            // Ensure recognition presets are loaded so activePresetId can bind to the chip.
+            try {
+                await global.TransubFeatures?.loadPresets?.();
+            } catch { /* ignore */ }
+            flushPendingActivePresetId();
             if (!isStandaloneChrome) {
                 resetPostTaskSelect();
                 await syncPostTaskToMain();
@@ -11009,6 +13108,12 @@
         void runBackgroundStartupChecks();
 
         try {
+            electron?.onTransubLibraryStartRetranslate?.((payload) => {
+                void openLibraryRetranslate(payload || {});
+            });
+        } catch (_) { /* ignore */ }
+
+        try {
             const pending = await electron?.transWithAiGetPendingFiles?.();
             if (pending?.ok && pending.files?.length) {
                 setLoading(true, '正在探测视频信息…');
@@ -11029,8 +13134,7 @@
             }
         } catch (_) { /* ignore */ }
 
-        global.TransubAnimeWhisperPresetTip?.initQuickAccess?.();
-        void global.TransubAnimeWhisperPresetTip?.maybeShow?.({
+        global.TransubAnimeWhisperPresetTip?.maybeShow?.({
             getVersion: async () => {
                 try {
                     return await electron?.getAppVersion?.();
@@ -11062,6 +13166,14 @@
         resolveOutputDirFromForm,
         setAutoSenseEnabled,
         updateParamsSummary,
+        syncParamsModeChipUi,
+        rebuildParamsModePresetItems,
+        flushPendingActivePresetId,
+        applyActivePresetIdToSelect,
+        syncTranslateChipUi,
+        syncParamsMoreChipUi,
+        openLibraryRetranslate,
+        ensureRequiredModelsReadyOrPrompt,
         setSavedOptionsSnapshot: (opts) => {
             savedOptionsSnapshot = opts && typeof opts === 'object' ? opts : null;
         },

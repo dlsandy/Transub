@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.0.7",
+  "version": "3.1.0",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -18,6 +18,7 @@
   },
   "scripts": {
     "postinstall": "node tools/setup-electron.js && node tools/setup-vendor-assets.js && node tools/build-css.js",
+    "sync:jassub": "node tools/sync-jassub-vendor.js",
     "setup:ffmpeg": "node tools/setup-ffmpeg.js",
     "start": "node tools/patch-electron-icon.js && electron .",
     "start:editor": "node tools/patch-electron-icon.js && electron . --subtitle-editor-only",
@@ -26,6 +27,7 @@
     "build:advanced": "node tools/build-advanced-module.js",
     "check:release": "node tools/check-release-ready.js",
     "verify:packaging": "node tools/verify-packaging.js",
+    "smoke:preflight": "node tools/smoke-preflight.js",
     "ensure:bundled-models": "node tools/ensure-bundled-models.js",
     "ensure:bundled-wheels": "node tools/ensure-bundled-wheels.js",
     "ensure:bundled-tdp": "node tools/encode-tdp-pack.js",
@@ -44,6 +46,8 @@
     "fetch:av-makers": "node tools/fetch-av-makers.js",
     "encode:tdp": "node tools/encode-tdp-pack.js",
     "encode:tdp:sign": "node tools/encode-tdp-pack.js --sign",
+    "report:mt-conflicts": "node tools/mt-sanitize-conflict-report.js",
+    "scan:mt-latest": "node tools/mt-train/scan-latest-batch.js",
     "train:mt": "node tools/mt-train/server.js",
     "train:mt:open": "node tools/mt-train/server.js --open",
     "train:mt:restart": "node tools/mt-train/server.js --force --open",
@@ -54,6 +58,7 @@
     "icons": "node tools/generate-icons.js"
   },
   "dependencies": {
+    "jassub": "^2.5.14",
     "json5": "^2.2.3",
     "opencc-js": "^1.4.1",
     "undici": "^8.9.0"
@@ -105,7 +110,9 @@
       "!src/js/advanced-film-reconstruct-core.js",
       "!src/js/advanced-smart-translate-core.js",
       "src/js/mt-opaque-strings.js",
+      "src/js/mt-sanitize-lexicon.js",
       "src/vendor/opencc-js/**/*",
+      "src/vendor/jassub/**/*",
       "src/js/tone-adapt.tz1",
       "src/js/av-makers.am1",
       "src/js/av-makers-embed.js",

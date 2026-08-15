@@ -309,8 +309,9 @@ function createMainWindowTray(deps) {
      * turns. After a long park a single setBounds often does not submit a fresh
      * frame (same class of bug as WebContentsView long-hide blanks).
      */
-    function softUnparkMainWindow(win) {
+    function softUnparkMainWindow(win, options = {}) {
         if (!win || win.isDestroyed()) return;
+        const activate = options.activate !== false;
         clearSoftParkKeepAlive();
         clearSoftUnparkStep2();
         const snap = softParkSnapshot;
@@ -360,7 +361,9 @@ function createMainWindowTray(deps) {
             if (win.isMinimized()) win.restore();
         } catch (_) { /* ignore */ }
         try {
-            win.show();
+            if (activate) win.show();
+            else if (typeof win.showInactive === 'function') win.showInactive();
+            else win.show();
         } catch (_) { /* ignore */ }
 
         // Step 2: final bounds on a later turn — required after long eviction.
@@ -472,6 +475,10 @@ function createMainWindowTray(deps) {
      * Never call setSize/setBounds here: on Windows, getBounds→setBounds (and
      * setSize ±1px) often fails to round-trip frame/DPI, so closing settings
      * grew the main window by a pixel each time.
+     *
+     * Do not steal OS focus from secondary windows (subtitle library / editor /
+     * settings). Focusing main webContents while the user is in the library is
+     * what makes the main window “mysteriously pop up”.
      */
     function forceMainWindowRepaint({ strong = false, _retry = 0 } = {}) {
         const win = mainWindow();
@@ -510,7 +517,11 @@ function createMainWindowTray(deps) {
                     } catch (_) { /* ignore */ }
                 }
                 if (typeof wc.invalidate === 'function') wc.invalidate();
-                try { wc.focus(); } catch (_) { /* ignore */ }
+                let mainFocused = false;
+                try { mainFocused = win.isFocused(); } catch (_) { /* ignore */ }
+                if (mainFocused) {
+                    try { wc.focus(); } catch (_) { /* ignore */ }
+                }
                 void wc.executeJavaScript(
                     `(() => {
                         try {
@@ -704,8 +715,12 @@ function createMainWindowTray(deps) {
      * restore() can make the window visible while leaving skipTaskbar true
      * (on-screen window, taskbar already in tray).
      * Always call show() — after minimize→hide, isVisible() can lie on Windows.
+     *
+     * @param {{ activate?: boolean }} [options]
+     *   activate=false → show without taking OS focus (secondary windows stay on top).
      */
-    function revealMainWindowChrome() {
+    function revealMainWindowChrome(options = {}) {
+        const activate = options.activate !== false;
         const win = mainWindow();
         if (!win || win.isDestroyed()) return;
         try {
@@ -730,13 +745,19 @@ function createMainWindowTray(deps) {
             mainHiddenToTrayAt = 0;
 
             if (USE_SOFT_PARK && (fromTray || softParkSnapshot)) {
-                softUnparkMainWindow(win);
+                softUnparkMainWindow(win, { activate });
             } else {
                 clearSoftUnparkStep2();
                 if (typeof win.setOpacity === 'function') win.setOpacity(1);
                 win.setSkipTaskbar(false);
                 if (win.isMinimized()) win.restore();
-                win.show();
+                if (activate) {
+                    win.show();
+                } else if (typeof win.showInactive === 'function') {
+                    win.showInactive();
+                } else {
+                    win.show();
+                }
                 if (typeof win.setOpacity === 'function') win.setOpacity(1);
             }
 
@@ -751,14 +772,33 @@ function createMainWindowTray(deps) {
         } catch (_) { /* ignore */ }
     }
 
+    function anotherTransubWindowFocused() {
+        try {
+            const win = mainWindow();
+            if (!win || win.isDestroyed()) return false;
+            const focused = BrowserWindow.getFocusedWindow();
+            if (focused && !focused.isDestroyed() && focused.id !== win.id) return true;
+            // Dialog / shell handoff: focus may be null briefly; still treat other
+            // visible secondaries as owning the session.
+            for (const other of BrowserWindow.getAllWindows()) {
+                if (!other || other.isDestroyed() || other.id === win.id) continue;
+                try {
+                    if (other.isVisible() && !other.isMinimized() && other.isFocused()) return true;
+                } catch (_) { /* ignore */ }
+            }
+        } catch (_) { /* ignore */ }
+        return false;
+    }
+
     function restoreMainIfHiddenBySpuriousMinimize() {
         if (!isSuppressMinimizeToTrayActive()) return;
         if (!mainVisibleWhenSuppressArmed) return;
+        const keepSecondaryFocus = anotherTransubWindowFocused();
         if (!mainNeedsSpuriousMinimizeUndo()) {
             forceMainWindowRepaint();
             return;
         }
-        revealMainWindowChrome();
+        revealMainWindowChrome({ activate: !keepSecondaryFocus });
     }
 
     function attachSecondaryWindowMinimizeGuardTo(child) {
@@ -789,7 +829,7 @@ function createMainWindowTray(deps) {
                     return;
                 }
                 if (mainVisibleWhenSuppressArmed && mainNeedsSpuriousMinimizeUndo()) {
-                    revealMainWindowChrome();
+                    revealMainWindowChrome({ activate: !anotherTransubWindowFocused() });
                     return;
                 }
                 forceMainWindowRepaint();
@@ -1030,8 +1070,11 @@ function createMainWindowTray(deps) {
                 if (token !== minimizeHideToken) return;
                 if (isQuitting() || !win || win.isDestroyed()) return;
                 if (shouldUndoAsSpurious()) {
-                    if (!wasHiddenToTray) revealMainWindowChrome();
-                    else mainNeedsRepaintOnShow = true;
+                    if (!wasHiddenToTray) {
+                        revealMainWindowChrome({ activate: !anotherTransubWindowFocused() });
+                    } else {
+                        mainNeedsRepaintOnShow = true;
+                    }
                     return;
                 }
                 maybeShowTrayHint();

@@ -1,5 +1,6 @@
 /**
- * 编辑器标记：书签、A-B 循环、说话人、审校状态（浏览器与 Node 共用）
+ * 编辑器标记：书签、A-B 循环、审校状态（浏览器与 Node 共用）
+ * 兼容旧 sidecar 中的 speakers / speakerId（只读容忍，无产品 UI）
  */
 (function (global, factory) {
     const api = factory();
@@ -38,6 +39,7 @@
             abLoop: null,
             speakers: [],
             cueMarkers: {},
+            speakerStyleMap: {},
         };
     }
 
@@ -126,6 +128,16 @@
             if (marker) cueMarkers[String(key)] = marker;
         }
         doc.cueMarkers = cueMarkers;
+        const styleMap = {};
+        const rawMap = raw.speakerStyleMap && typeof raw.speakerStyleMap === 'object'
+            ? raw.speakerStyleMap
+            : {};
+        for (const [id, styleName] of Object.entries(rawMap)) {
+            const sid = String(id || '').trim().slice(0, 40);
+            const style = String(styleName || '').replace(/[,]/g, ' ').trim().slice(0, 64);
+            if (sid && style) styleMap[sid] = style;
+        }
+        doc.speakerStyleMap = styleMap;
         return doc;
     }
 

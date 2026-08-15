@@ -64,8 +64,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.0.7') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.0.7 for this cut)`);
+if (pkg.version === '3.1.0') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.1.0 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');
@@ -85,9 +85,18 @@ for (const rel of MUST_GITIGNORE) {
 
 console.log('\nPro closed module');
 if (exists('_advanced/index.js')) {
-    const n = fs.statSync(path.join(root, '_advanced/index.js')).size;
+    const advPath = path.join(root, '_advanced/index.js');
+    const n = fs.statSync(advPath).size;
     if (n > 500) ok(`_advanced/index.js present (${n} bytes)`);
     else fail('_advanced/index.js too small — run npm run build:advanced');
+    const advText = fs.readFileSync(advPath, 'utf8');
+    if (/require\(["'](?:[A-Za-z]:\\|\/(?:Users|home|tmp)\/)/.test(advText)) {
+        fail('_advanced/index.js embeds absolute require paths — rebuild with fixed build:advanced');
+    } else {
+        ok('_advanced/index.js has no absolute host require paths');
+    }
+    if (advText.includes('__transubHostReq')) ok('_advanced host require shim present');
+    else fail('_advanced/index.js missing __transubHostReq shim — run npm run build:advanced');
 } else {
     fail('_advanced/index.js missing — run npm run build:advanced before pack');
 }
@@ -156,6 +165,7 @@ try {
     warn('git status unavailable');
 }
 warn('Do not git push / gh release until proprietary sources are stripped or kept private');
+warn('Before shipping: npm run smoke:preflight + docs/smoke-checklist.md hand tests');
 
 console.log('\n---');
 if (issues.length) {

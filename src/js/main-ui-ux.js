@@ -15,8 +15,10 @@
     let batchSummaryTitle = null;
     let batchSummaryBody = null;
     let batchSummaryElapsed = null;
+    let batchSummaryLibrary = null;
     let batchSummaryPrimary = null;
     let batchSummarySecondary = null;
+    let batchSummaryTertiary = null;
     let batchSummaryResolve = null;
     let shortcutsEl = null;
     let undoEntry = null;
@@ -34,8 +36,10 @@
         batchSummaryTitle = document.getElementById('batchSummaryTitle');
         batchSummaryBody = document.getElementById('batchSummaryBody');
         batchSummaryElapsed = document.getElementById('batchSummaryElapsed');
+        batchSummaryLibrary = document.getElementById('batchSummaryLibrary');
         batchSummaryPrimary = document.getElementById('batchSummaryPrimaryBtn');
         batchSummarySecondary = document.getElementById('batchSummarySecondaryBtn');
+        batchSummaryTertiary = document.getElementById('batchSummaryTertiaryBtn');
         shortcutsEl = document.getElementById('shortcutsModal');
     }
 
@@ -204,6 +208,7 @@
         batchSummaryEl.dataset.bound = '1';
         batchSummaryPrimary?.addEventListener('click', () => closeBatchSummary('primary'));
         batchSummarySecondary?.addEventListener('click', () => closeBatchSummary('secondary'));
+        batchSummaryTertiary?.addEventListener('click', () => closeBatchSummary('tertiary'));
         batchSummaryEl.addEventListener('click', (event) => {
             if (event.target === batchSummaryEl) closeBatchSummary('secondary');
         });
@@ -223,9 +228,18 @@
             batchSummaryElapsed.textContent = elapsedText ? `总用时 ${elapsedText}` : '';
             batchSummaryElapsed.classList.toggle('hidden', !elapsedText);
         }
+        const libraryText = String(options.libraryText || '').trim();
+        if (batchSummaryLibrary) {
+            batchSummaryLibrary.textContent = libraryText;
+            batchSummaryLibrary.classList.toggle('hidden', !libraryText);
+        }
         batchSummaryPrimary.textContent = options.primaryLabel || '确定';
         batchSummarySecondary.textContent = options.secondaryLabel || '关闭';
         batchSummaryPrimary.classList.toggle('hidden', !options.onPrimary);
+        if (batchSummaryTertiary) {
+            batchSummaryTertiary.textContent = options.tertiaryLabel || '在字幕库查看';
+            batchSummaryTertiary.classList.toggle('hidden', !options.onTertiary);
+        }
         batchSummaryEl.classList.remove('hidden');
         batchSummaryEl.classList.add('flex');
         return new Promise((resolve) => {

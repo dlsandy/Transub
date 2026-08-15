@@ -180,23 +180,53 @@ function focusMtTrainWindow() {
     return win;
 }
 
+/** @type {{ jaPath?: string, zhPath?: string, title?: string, zhPathA?: string, zhPathB?: string, source?: string }|null} */
+let pendingLibraryPair = null;
+
+function setPendingLibraryPair(pair) {
+    pendingLibraryPair = pair && typeof pair === 'object' ? { ...pair } : null;
+}
+
+function consumePendingLibraryPair() {
+    const pair = pendingLibraryPair;
+    pendingLibraryPair = null;
+    return { ok: true, pair: pair || null };
+}
+
 /**
  * @param {import('electron').App} app
+ * @param {{ jaPath?: string, zhPath?: string, title?: string, zhPathA?: string, zhPathB?: string }} [pending]
  * @returns {Promise<{ ok: boolean, error?: string, url?: string }>}
  */
-async function openMtTrainWindow(app) {
+async function openMtTrainWindow(app, pending = null) {
     if (!isDevBuild(app)) {
         return { ok: false, error: '仅开发模式可用' };
     }
     installQuitHook(app);
+
+    if (pending && (pending.jaPath || pending.zhPath)) {
+        setPendingLibraryPair({
+            jaPath: pending.jaPath || '',
+            zhPath: pending.zhPath || '',
+            zhPathA: pending.zhPathA || '',
+            zhPathB: pending.zhPathB || '',
+            title: pending.title || '',
+            source: pending.source || 'subtitle-library',
+        });
+    }
 
     const server = await ensureTrainServer();
     if (!server.ok) return server;
 
     const existing = focusMtTrainWindow();
     if (existing) {
+        const pair = pendingLibraryPair;
+        pendingLibraryPair = null;
         try {
-            existing.reload();
+            existing.webContents.send('transub-mt-train-pending-pair', pair || {});
+        } catch (_) { /* ignore */ }
+        try {
+            existing.focus();
         } catch (_) { /* ignore */ }
         return { ok: true, url: TRAIN_URL, focused: true, reusedServer: server.reused };
     }
@@ -264,6 +294,8 @@ module.exports = {
     getMtTrainWindow,
     isMtTrainWindowSender,
     stopTrainServerChild,
+    setPendingLibraryPair,
+    consumePendingLibraryPair,
     TRAIN_URL,
     TRAIN_PORT,
 };

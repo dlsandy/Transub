@@ -26,6 +26,30 @@
         if (el) el.textContent = text || '';
     }
 
+    function formatFailureMeta(fail = {}) {
+        const parts = [];
+        if (fail.code) parts.push(`原因码 ${fail.code}`);
+        if (fail.preferredSource) parts.push(`线路 ${fail.preferredSource}`);
+        if (Array.isArray(fail.triedSources) && fail.triedSources.length) {
+            parts.push(`已试 ${fail.triedSources.join('/')}`);
+        }
+        if (fail.expectedSha || fail.gotSha) {
+            parts.push(`校验 expect=${fail.expectedSha || '?'} got=${fail.gotSha || '?'}`);
+        }
+        if (fail.githubError) parts.push(`GitHub: ${String(fail.githubError).slice(0, 80)}`);
+        if (fail.codebergError) parts.push(`Codeberg: ${String(fail.codebergError).slice(0, 80)}`);
+        const tipByCode = {
+            checksum: '校验失败：换线路重试，或从发布页手动下载同版本 zip',
+            extract: '解压失败：确认磁盘空间充足且安装目录可写',
+            probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / 官网',
+            download: '下载失败：可改用其它镜像，或从发布页手动下载',
+            cancelled: '已取消',
+        };
+        parts.push(tipByCode[String(fail.code || '')]
+            || '可改从 GitHub / Codeberg / 官网 Releases 手动下载');
+        return parts.join(' · ');
+    }
+
     function setChangelog(notes, { force = false } = {}) {
         const host = document.getElementById('updateChangelog');
         const body = document.getElementById('updateChangelogBody');
@@ -176,8 +200,11 @@
 
         if (!res?.ok) {
             setStatus(res?.error || '检查更新失败', 'err');
-            setMeta('');
+            setMeta(formatFailureMeta(res || {}));
             setChangelog('');
+            showEl('openReleasesBtn', true);
+            const openBtn = document.getElementById('openReleasesBtn');
+            if (openBtn) openBtn.disabled = false;
             return;
         }
 
@@ -261,7 +288,7 @@
                 const downloadBtn = document.getElementById('downloadBtn');
                 if (openBtn) openBtn.disabled = false;
                 if (downloadBtn) downloadBtn.disabled = false;
-                setMeta('应用内下载失败，可改从 GitHub Releases 手动下载。');
+                setMeta(formatFailureMeta(dl || {}));
                 return;
             }
 

@@ -93,9 +93,10 @@ describe('advanced-entitlement-core', () => {
             entitlement.isFeatureEntitled(lic, 'd1', entitlement.FEATURE_FILM_AUDIO_ENHANCE, { now: t0 }).entitled,
             true,
         );
+        assert.strictEqual(entitlement.FEATURE_NEURAL_DIARIZE, undefined);
     });
 
-    it('evaluates free pipeline translate without license', () => {
+    it('evaluates light managed-model whitelist without implying free smart translate', () => {
         const okDoc = entitlement.normalizeAdvancedDoc({
             llmSource: 'managed',
             managedLlm: { activeModelId: 'qwen25-7b' },

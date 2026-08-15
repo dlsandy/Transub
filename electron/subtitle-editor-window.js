@@ -45,6 +45,8 @@ function anyOtherEditorOpen() {
  * After an editor closes: undo Windows spurious main hide-to-tray, and if the
  * main app window is already running and still on-screen, focus it.
  * Leave an intentional tray hide alone (do not force-show).
+ * Prefer an open subtitle library (or any other focused secondary) over yanking
+ * focus back to the main generator window.
  */
 function restoreMainAfterEditorClosed() {
     try {
@@ -54,7 +56,27 @@ function restoreMainAfterEditorClosed() {
         if (anyOtherEditorOpen()) return;
         // Soft-park keeps isVisible() true — tray flag is authoritative.
         if (linkedWindowManager?.isMainHiddenToTray?.()) return;
+
+        try {
+            const { getSubtitleLibraryWindow } = require('./subtitle-library-window');
+            const lib = getSubtitleLibraryWindow();
+            if (lib && !lib.isDestroyed()) {
+                try {
+                    if (lib.isVisible() && !lib.isMinimized()) {
+                        lib.show();
+                        lib.focus();
+                        return;
+                    }
+                } catch (_) { /* fall through */ }
+            }
+        } catch (_) { /* ignore */ }
+
+        const focused = BrowserWindow.getFocusedWindow();
         const main = linkedWindowManager?.getMainWindow?.();
+        if (focused && main && !main.isDestroyed() && focused.id !== main.id) {
+            // Another secondary (settings / about / update) still owns focus.
+            return;
+        }
         if (!main || main.isDestroyed()) return;
         try {
             // If restore-spurious already ran, main is visible again. If the user
@@ -136,7 +158,63 @@ function maximizeEditorWindow(win) {
     if (!win.isMaximized()) win.maximize();
 }
 
-function createSubtitleEditorWindow(app, { subPath, videoPath, action } = {}) {
+function pickLibrarySession(opts = {}) {
+    const lib = opts.library && typeof opts.library === 'object' ? opts.library : opts;
+    const mediaId = asString(lib.mediaId || opts.mediaId, 128).trim();
+    const trackId = asString(lib.trackId || opts.trackId, 128).trim();
+    const versionId = asString(lib.versionId || opts.versionId, 128).trim();
+    if (!mediaId && !trackId && !versionId) return null;
+    return {
+        mediaId,
+        trackId,
+        versionId,
+        role: asString(lib.role || opts.role, 32).trim(),
+        roleLabel: asString(lib.roleLabel || opts.roleLabel, 64).trim(),
+        recipeSummary: asString(lib.recipeSummary || opts.recipeSummary, 512).trim(),
+        contentRef: asString(lib.contentRef || opts.contentRef, 1024).trim(),
+        exportPath: asString(lib.exportPath || opts.exportPath, 4096).trim(),
+        isActive: !!(lib.isActive ?? opts.isActive),
+        mediaTitle: asString(lib.mediaTitle || opts.mediaTitle, 256).trim(),
+        openedFromBlob: !!(lib.openedFromBlob ?? opts.openedFromBlob),
+        mediaLinked: lib.mediaLinked != null ? !!lib.mediaLinked : (opts.mediaLinked != null ? !!opts.mediaLinked : undefined),
+        mediaExists: lib.mediaExists != null ? !!lib.mediaExists : (opts.mediaExists != null ? !!opts.mediaExists : undefined),
+        abPairAvailable: !!(lib.abPairAvailable ?? opts.abPairAvailable),
+        abVersionIdA: asString(lib.abVersionIdA || opts.abVersionIdA, 128).trim(),
+        abVersionIdB: asString(lib.abVersionIdB || opts.abVersionIdB, 128).trim(),
+    };
+}
+
+/**
+ * Push media association changes to open editor windows (same mediaId).
+ * @param {{ mediaId?: string, videoPath?: string, mediaLinked?: boolean, mediaExists?: boolean, mediaTitle?: string, cleared?: boolean }} payload
+ */
+function notifyEditorsLibraryMediaUpdated(payload = {}) {
+    const mediaId = asString(payload?.mediaId, 128).trim();
+    if (!mediaId) return 0;
+    let n = 0;
+    for (const win of editorWindows.values()) {
+        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        const winMediaId = asString(win.__transubLibraryMediaId, 128).trim();
+        // Prefer media-scoped delivery; unknown sessions still receive (safe no-op in renderer).
+        if (winMediaId && winMediaId !== mediaId) continue;
+        try {
+            win.webContents.send('transub-library-media-updated', payload || {});
+            n += 1;
+        } catch { /* ignore */ }
+    }
+    return n;
+}
+
+function rememberEditorLibraryMedia(win, library) {
+    if (!win || win.isDestroyed()) return;
+    const mid = asString(library?.mediaId, 128).trim();
+    if (mid) win.__transubLibraryMediaId = mid;
+    else if (library === null) win.__transubLibraryMediaId = '';
+}
+
+function createSubtitleEditorWindow(app, opts = {}) {
+    const { subPath, videoPath, action } = opts;
+    const library = pickLibrarySession(opts);
     const rawSub = String(subPath || '').trim();
     const resolvedSub = rawSub ? path.resolve(rawSub) : '';
     const key = editorWindowKey(resolvedSub);
@@ -146,10 +224,12 @@ function createSubtitleEditorWindow(app, { subPath, videoPath, action } = {}) {
         existing.focus();
         if (resolvedSub) {
             maximizeEditorWindow(existing);
+            rememberEditorLibraryMedia(existing, library);
             sendEditorInit(existing, {
                 subPath: resolvedSub,
                 videoPath: videoPath || guessVideoPathForSubtitle(resolvedSub) || '',
                 ...(openAction ? { action: openAction } : {}),
+                ...(library ? { library } : {}),
             });
         }
         return existing;
@@ -212,6 +292,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath, action } = {}) {
             subPath: resolvedSub,
             videoPath: linkedVideo,
             ...(openAction ? { action: openAction } : {}),
+            ...(library ? { library } : {}),
         }
         : { welcome: true };
     let shown = false;
@@ -228,6 +309,7 @@ function createSubtitleEditorWindow(app, { subPath, videoPath, action } = {}) {
     // 大页面首次绘制偏慢时，避免长时间完全无窗口
     setTimeout(reveal, 450);
 
+    rememberEditorLibraryMedia(win, library);
     win.webContents.once('did-finish-load', () => {
         sendEditorInit(win, initPayload);
     });
@@ -319,6 +401,10 @@ async function pickSubtitleFile(parentWindow) {
         parentWindow.show();
         parentWindow.focus();
     }
+    const { resolveDialogDefaultPath, rememberOpenPath } = require('./last-open-dir');
+    const { getWritableRoot } = require('./app-paths');
+    const getAppRoot = () => getWritableRoot();
+    const defaultPath = resolveDialogDefaultPath(getAppRoot);
     const result = await dialog.showOpenDialog(parentWindow || undefined, {
         title: '选择要编辑的字幕文件',
         properties: ['openFile'],
@@ -326,12 +412,14 @@ async function pickSubtitleFile(parentWindow) {
             { name: '字幕 (SRT / VTT / LRC / ASS)', extensions: ['srt', 'vtt', 'lrc', 'ass', 'ssa'] },
             { name: '所有文件', extensions: ['*'] },
         ],
+        defaultPath: defaultPath || undefined,
     });
     refocusWindow(parentWindow);
     if (result.canceled || !result.filePaths?.length) {
         return { ok: true, canceled: true };
     }
     const subPath = path.resolve(result.filePaths[0]);
+    rememberOpenPath(getAppRoot, subPath);
     return {
         ok: true,
         canceled: false,
@@ -371,10 +459,12 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
             }
             const videoPath = asString(payload.videoPath, 4096).trim();
             const action = asString(payload.action, 64).trim();
+            const library = pickLibrarySession(payload);
             createSubtitleEditorWindow(app, {
                 subPath,
                 videoPath,
                 ...(action ? { action } : {}),
+                ...(library ? { library } : {}),
             });
             return { ok: true, path: path.resolve(subPath) };
         } catch (err) {
@@ -474,14 +564,67 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         }
     });
 
-    register('transub-open-mt-train', async () => {
+    register('transub-open-subtitle-library', async (event, payload = {}) => {
+        try {
+            warmBridges?.();
+            const { openSubtitleLibraryWindow } = require('./subtitle-library-window');
+            return openSubtitleLibraryWindow(app, {
+                mediaId: payload?.mediaId || '',
+                mediaPath: payload?.mediaPath || '',
+                versionId: payload?.versionId || '',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-start-retranslate', async (_event, payload = {}) => {
+        try {
+            warmBridges?.();
+            const { startLibraryRetranslateOnMain } = require('./subtitle-library-window');
+            return startLibraryRetranslateOnMain({ windowManager }, payload || {});
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-start-mt-train', async (_event, payload = {}) => {
+        try {
+            warmBridges?.();
+            const { isDevBuild, openMtTrainWindow } = require('./mt-train-window');
+            if (!isDevBuild(app)) {
+                return { ok: false, error: '仅开发模式可用' };
+            }
+            const { prepareLibraryMtTrainPair } = require('./subtitle-library');
+            const mediaId = String(payload?.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            const prepared = prepareLibraryMtTrainPair(mediaId, {
+                preferTag: payload?.preferTag || '',
+            });
+            if (!prepared.ok) return prepared;
+            const opened = await openMtTrainWindow(app, {
+                jaPath: prepared.jaPath,
+                zhPath: prepared.zhPath,
+                zhPathA: prepared.zhPathA,
+                zhPathB: prepared.zhPathB,
+                title: prepared.title,
+                source: 'subtitle-library',
+            });
+            if (!opened.ok) return opened;
+            return { ...opened, prepared };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-open-mt-train', async (_event, payload = {}) => {
         try {
             const { isDevBuild, openMtTrainWindow } = require('./mt-train-window');
             if (!isDevBuild(app)) {
                 return { ok: false, error: '仅开发模式可用' };
             }
             warmBridges?.();
-            return await openMtTrainWindow(app);
+            return await openMtTrainWindow(app, payload || null);
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -606,4 +749,5 @@ module.exports = {
     registerSubtitleEditorWindowRoutes,
     closeAllSubtitleEditorWindows,
     openSubtitleEditorOrPick,
+    notifyEditorsLibraryMediaUpdated,
 };

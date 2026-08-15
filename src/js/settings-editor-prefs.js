@@ -19,7 +19,38 @@
         retranscribeDur: 'transub-editor-retranscribe-dur',
         reconOnlyChanged: 'transub-editor-recon-review-only-changed',
         filmHints: 'transub-editor-film-hints',
+        reconstructPrefs: 'transub-editor-reconstruct-prefs',
+        librarySkipSetActive: 'transub.library.skipSetActiveConfirm',
     };
+
+    function defaultReconstructPrefs() {
+        return {
+            windowCues: 30,
+            overlapCues: 2,
+            intensity: 'balanced',
+            preserveTiming: true,
+            skipConsistency: false,
+        };
+    }
+
+    function clampInt(value, min, max, fallback) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.max(min, Math.min(max, Math.round(n)));
+    }
+
+    function normalizeReconstructPrefs(raw) {
+        const base = defaultReconstructPrefs();
+        const src = raw && typeof raw === 'object' ? raw : {};
+        const intensity = String(src.intensity || '').trim().toLowerCase();
+        return {
+            windowCues: clampInt(src.windowCues, 5, 80, base.windowCues),
+            overlapCues: clampInt(src.overlapCues, 0, 12, base.overlapCues),
+            intensity: ['light', 'balanced', 'strong'].includes(intensity) ? intensity : base.intensity,
+            preserveTiming: src.preserveTiming !== false,
+            skipConsistency: !!src.skipConsistency,
+        };
+    }
 
     function lsGet(key, fallback = '') {
         try {
@@ -67,7 +98,7 @@
         }
 
         const autoFocus = document.getElementById('editorAutoFocusCheck');
-        if (autoFocus) autoFocus.checked = lsGet(KEYS.autoFocus, '0') === '1';
+        if (autoFocus) autoFocus.checked = lsGet(KEYS.autoFocus, '1') === '1';
 
         const waveform = document.getElementById('editorWaveformCheck');
         if (waveform) {
@@ -77,8 +108,8 @@
 
         const zoom = document.getElementById('editorTimelineZoomInput');
         if (zoom) {
-            const n = Number(lsGetJson(KEYS.timelineZoom, 5));
-            zoom.value = String(Number.isFinite(n) ? Math.max(1, Math.min(1000, n)) : 5);
+            const n = Number(lsGetJson(KEYS.timelineZoom, 10));
+            zoom.value = String(Number.isFinite(n) ? Math.max(1, Math.min(1000, n)) : 10);
         }
 
         const width = document.getElementById('editorCuesWidthInput');
@@ -157,6 +188,23 @@
 
         const only = document.getElementById('editorReconOnlyChangedCheck');
         if (only) only.checked = lsGet(KEYS.reconOnlyChanged, 'true') !== 'false';
+
+        const recon = normalizeReconstructPrefs(lsGetJson(KEYS.reconstructPrefs, null));
+        const setReconNum = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) el.value = String(v);
+        };
+        setReconNum('reconstructWindowCuesInput', recon.windowCues);
+        setReconNum('reconstructOverlapCuesInput', recon.overlapCues);
+        const intensity = document.getElementById('reconstructIntensitySelect');
+        if (intensity) intensity.value = recon.intensity;
+        const preserve = document.getElementById('reconstructPreserveTimingCheck');
+        if (preserve) preserve.checked = recon.preserveTiming !== false;
+        const skipCons = document.getElementById('reconstructSkipConsistencyCheck');
+        if (skipCons) skipCons.checked = !!recon.skipConsistency;
+
+        const skipActive = document.getElementById('librarySkipSetActiveConfirmCheck');
+        if (skipActive) skipActive.checked = lsGet(KEYS.librarySkipSetActive, '') === '1';
     }
 
     function saveFromForm() {
@@ -177,7 +225,7 @@
         if (waveform) lsSet(KEYS.waveform, waveform.checked ? '1' : '0');
 
         const zoom = document.getElementById('editorTimelineZoomInput');
-        if (zoom) lsSet(KEYS.timelineZoom, JSON.stringify(Number(zoom.value) || 5));
+        if (zoom) lsSet(KEYS.timelineZoom, JSON.stringify(Number(zoom.value) || 10));
 
         const width = document.getElementById('editorCuesWidthInput');
         if (width) lsSet(KEYS.cuesWidth, String(Math.max(28, Math.min(62, Number(width.value) || 42))));
@@ -233,6 +281,22 @@
 
         const only = document.getElementById('editorReconOnlyChangedCheck');
         if (only) lsSet(KEYS.reconOnlyChanged, only.checked ? 'true' : 'false');
+
+        const recon = normalizeReconstructPrefs({
+            windowCues: document.getElementById('reconstructWindowCuesInput')?.value,
+            overlapCues: document.getElementById('reconstructOverlapCuesInput')?.value,
+            intensity: document.getElementById('reconstructIntensitySelect')?.value,
+            preserveTiming: document.getElementById('reconstructPreserveTimingCheck')?.checked !== false,
+            skipConsistency: !!document.getElementById('reconstructSkipConsistencyCheck')?.checked,
+        });
+        lsSet(KEYS.reconstructPrefs, JSON.stringify(recon));
+
+        const skipActive = document.getElementById('librarySkipSetActiveConfirmCheck');
+        if (skipActive) lsSet(KEYS.librarySkipSetActive, skipActive.checked ? '1' : '0');
+    }
+
+    function getReconstructPrefs() {
+        return normalizeReconstructPrefs(lsGetJson(KEYS.reconstructPrefs, null));
     }
 
     function clearFilmHints() {
@@ -261,5 +325,11 @@
         }
     }
 
-    global.TransubEditorSettingsPrefs = { loadIntoForm, saveFromForm, bind };
+    global.TransubEditorSettingsPrefs = {
+        loadIntoForm,
+        saveFromForm,
+        bind,
+        getReconstructPrefs,
+        normalizeReconstructPrefs,
+    };
 }(window));

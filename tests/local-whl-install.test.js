@@ -64,7 +64,7 @@ describe('local-whl-install', () => {
 
     it('GPU_MANUAL_PACKAGES lists all CUDA12 pip packages', () => {
         const src = fs.readFileSync(
-            path.join(__dirname, '..', 'electron', 'engine-bridge.js'),
+            path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
             'utf8',
         );
         for (const id of [
@@ -88,7 +88,7 @@ describe('local-whl-install', () => {
 
     it('GPU manual catalog includes onnxruntime-gpu for WhisperSeg', () => {
         const src = fs.readFileSync(
-            path.join(__dirname, '..', 'electron', 'engine-bridge.js'),
+            path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
             'utf8',
         );
         assert.ok(src.includes('ORT_GPU_MANUAL_PACKAGES'), 'missing ORT_GPU_MANUAL_PACKAGES');
@@ -112,7 +112,7 @@ describe('local-whl-install', () => {
 
     it('SenseVoice and Whisper manual packages use direct .whl URLs', () => {
         const src = fs.readFileSync(
-            path.join(__dirname, '..', 'electron', 'engine-bridge.js'),
+            path.join(__dirname, '..', 'electron', 'engine-download-info.js'),
             'utf8',
         );
         assert.ok(src.includes("id: 'torch'"), 'missing torch');

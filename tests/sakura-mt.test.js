@@ -4,15 +4,27 @@ const sakuraCore = require('../src/js/sakura-translate-core');
 const { mapTaskToEngineTask } = require('../electron/engine-options');
 
 describe('sakura-mt-catalog-core', () => {
-    it('lists 1.5b default and 7b only (≤7B)', () => {
+    it('lists 1.5b / 7b / galtransl variants (≤7B, no 14B)', () => {
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-1.5b'));
         assert.ok(sakuraCatalog.findCatalogEntry('sakura-7b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-7b'));
+        assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-7b-q6k'));
+        assert.ok(sakuraCatalog.findCatalogEntry('sakura-galtransl-v4-4b'));
         assert.ok(!sakuraCatalog.findCatalogEntry('sakura-14b'));
         assert.ok(!sakuraCatalog.findCatalogEntry('sakura-14b-q4km'));
         assert.strictEqual(sakuraCatalog.DEFAULT_MODEL_ID, 'sakura-1.5b');
         assert.ok(sakuraCatalog.isSakuraMtModel('sakura-1.5b'));
+        assert.ok(sakuraCatalog.isSakuraMtModel('sakura-galtransl-7b'));
+        assert.ok(sakuraCatalog.isSakuraMtModel('sakura-galtransl-7b-q6k'));
+        assert.ok(sakuraCatalog.isSakuraMtModel('sakura-galtransl-v4-4b'));
         assert.ok(!sakuraCatalog.isSakuraMtModel('opus-mt-ja-zh'));
         assert.ok(sakuraCatalog.listCatalog().every((e) => !/14b/i.test(e.id)));
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-7b'), 'sakura');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-7b'), 'galtransl');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-7b-q6k'), 'galtransl');
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-v4-4b'), 'galtransl');
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('sakura-galtransl-7b-q6k').fileName, 'Sakura-Galtransl-7B-v3.7.gguf');
+        assert.strictEqual(sakuraCatalog.findCatalogEntry('sakura-galtransl-v4-4b').fileName, 'Galtransl-v4-4B-2601.gguf');
     });
 
     it('resolves translate mode like settings (empty MT = Opus auto, not LLM)', () => {
@@ -99,6 +111,22 @@ describe('sakura-translate-core', () => {
         assert.ok(msgs[1].content.includes('こんにちは'));
     });
 
+    it('uses GalTransl system prompt family for galtransl model id', () => {
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'こんにちは' }],
+            { modelId: 'sakura-galtransl-7b' },
+        );
+        assert.ok(msgs[0].content.includes('视觉小说') || msgs[0].content.includes('使役态'));
+        assert.ok(msgs[0].content.includes('每行只输出') || msgs[0].content.includes('换行'));
+
+        const nsfw = sakuraCore.buildChatMessages(
+            [{ index: 0, text: 'だめぇっ' }],
+            { modelId: 'sakura-galtransl-7b', sakuraNsfwPrompt: true },
+        );
+        assert.ok(nsfw[0].content.includes('使役态') || nsfw[0].content.includes('被动态'));
+        assert.strictEqual(sakuraCore.resolvePromptFamily({ modelId: 'sakura-galtransl-7b' }), 'galtransl');
+    });
+
     it('omits identity glossary lines that train 译名表 echoes', () => {
         const msgs = sakuraCore.buildChatMessages(
             [{ index: 0, text: 'メンズエステへようこそ' }],
@@ -115,6 +143,21 @@ describe('sakura-translate-core', () => {
         assert.ok(user.includes('メンズエステ->男士按摩店'), user);
         assert.ok(!user.includes('按摩油->按摩油'), user);
         assert.ok(!/按摩->按摩(?:\s|$)/.test(user), user);
+    });
+
+    it('prepends cast names without putting identity pairs in the term table', () => {
+        const msgs = sakuraCore.buildChatMessages(
+            [{ index: 0, text: '真琴、待って' }],
+            {
+                glossaryTerms: [{ term: '真琴', translation: '真琴' }],
+                castNames: ['真琴', '香水纯'],
+            },
+        );
+        const user = msgs[1].content;
+        assert.ok(user.includes('出场人物'));
+        assert.ok(user.includes('真琴'));
+        assert.ok(user.includes('香水纯'));
+        assert.ok(!user.includes('真琴->真琴'), user);
     });
 
     it('uses NSFW system prompt for AV / explicit flag', () => {

@@ -360,11 +360,178 @@ async function cancelJob(baseUrl, jobId, options = {}) {
     });
 }
 
+async function resumeJob(baseUrl, jobId, options = {}) {
+    const overrides = options.overrides && typeof options.overrides === 'object'
+        ? options.overrides
+        : null;
+    const body = overrides && Object.keys(overrides).length
+        ? { overrides }
+        : {};
+    return engineFetch(baseUrl, `/v1/jobs/${encodeURIComponent(jobId)}/resume`, {
+        ...options,
+        method: 'POST',
+        body,
+        timeoutMs: options.timeoutMs || 60000,
+    });
+}
+
+async function getJobCheckpoint(baseUrl, jobId, options = {}) {
+    return engineFetch(baseUrl, `/v1/jobs/${encodeURIComponent(jobId)}/checkpoint`, {
+        ...options,
+        method: 'GET',
+        timeoutMs: options.timeoutMs || 15000,
+    });
+}
+
 /**
- * Poll job until terminal state; optional onEvent for progress snapshots.
- * Fails only on prolonged idle (no successful engine response), not total wall time —
- * long ASR/MT jobs may run well past one hour while still reporting progress.
+ * Prefer SSE job events; on stream failure fall back to poll.
+ * Terminal SSE events do not always include full result — always GET job once done.
+ */
+async function waitJobViaEvents(baseUrl, jobId, {
+    idleTimeoutMs = 3600000,
+    timeoutMs = undefined,
+    onEvent = null,
+    signal = undefined,
+    shouldStop = null,
+} = {}) {
+    const idleMs = Math.max(1000, Number(idleTimeoutMs ?? timeoutMs) || 3600000);
+    let lastActivityAt = Date.now();
+    let lastStatus = '';
+    let lastProgressKey = '';
+    let terminal = null;
+
+    const bump = (ev) => {
+        lastActivityAt = Date.now();
+        const progress = ev?.progress || (ev?.type === 'progress' ? ev : null) || null;
+        const status = ev?.status
+            || (ev?.type === 'done' ? 'done'
+                : ev?.type === 'error' ? 'error'
+                    : ev?.type === 'cancelled' ? 'cancelled'
+                        : '');
+        const progressKey = progress
+            ? `${progress.stage || ''}|${progress.percent ?? ''}|${progress.detail || ''}`
+            : `${ev?.type || ''}|${ev?.detail || ''}`;
+        if (typeof onEvent === 'function') {
+            if (status && status !== lastStatus) {
+                onEvent({ type: 'status', status, data: ev, progress: progress || ev });
+                lastStatus = status;
+            } else if (progressKey && progressKey !== lastProgressKey) {
+                onEvent({
+                    type: 'progress',
+                    status: status || lastStatus || 'running',
+                    data: ev,
+                    progress: progress || {
+                        stage: ev?.stage,
+                        detail: ev?.detail,
+                        percent: ev?.percent,
+                        processedSec: ev?.processedSec,
+                        mediaDurationSec: ev?.mediaDurationSec ?? ev?.audioDurationSec,
+                    },
+                });
+            }
+        }
+        if (progressKey) lastProgressKey = progressKey;
+        if (ev?.type === 'done' || status === 'done') terminal = { kind: 'done' };
+        if (ev?.type === 'error' || status === 'error') {
+            terminal = { kind: 'error', error: ev?.message || ev?.error || 'error' };
+        }
+        if (ev?.type === 'cancelled' || status === 'cancelled') {
+            terminal = { kind: 'cancelled' };
+        }
+    };
+
+    const ctrl = new AbortController();
+    const onOuterAbort = () => ctrl.abort();
+    if (signal) {
+        if (signal.aborted) ctrl.abort();
+        else signal.addEventListener('abort', onOuterAbort, { once: true });
+    }
+
+    const idleWatch = setInterval(() => {
+        if (Date.now() - lastActivityAt > idleMs) {
+            try { ctrl.abort(); } catch { /* ignore */ }
+        }
+    }, 2000);
+
+    const stopPoll = setInterval(() => {
+        if (typeof shouldStop === 'function' && shouldStop()) {
+            try { ctrl.abort(); } catch { /* ignore */ }
+        }
+    }, 250);
+
+    try {
+        const sse = await engineFetchSse(baseUrl, `/v1/jobs/${encodeURIComponent(jobId)}/events`, {
+            method: 'GET',
+            timeoutMs: idleMs,
+            signal: ctrl.signal,
+            onEvent: (payload) => {
+                if (typeof shouldStop === 'function' && shouldStop()) return;
+                bump(payload && typeof payload === 'object' ? payload : { detail: payload });
+            },
+        });
+        if (typeof shouldStop === 'function' && shouldStop()) {
+            return { ok: false, error: '已取消', cancelled: true };
+        }
+        if (sse?.cancelled || sse?.code === 'cancelled') {
+            return { ok: false, error: '已取消', cancelled: true };
+        }
+        if (Date.now() - lastActivityAt > idleMs && !terminal) {
+            return { ok: false, error: '任务长时间无响应', code: 'idle_timeout' };
+        }
+        // SSE connection failed before useful events — let caller fall back to poll.
+        if (!sse?.ok && !terminal) {
+            return {
+                ok: false,
+                error: sse?.error || 'sse_unavailable',
+                code: 'sse_unavailable',
+                sse,
+            };
+        }
+        if (terminal?.kind === 'cancelled') {
+            return { ok: false, error: '已取消', cancelled: true };
+        }
+        // Always refresh final job snapshot (result / error payload).
+        const finalJob = await getJob(baseUrl, jobId, { signal, timeoutMs: 60000 });
+        if (!finalJob.ok) {
+            if (terminal?.kind === 'done') {
+                return { ok: false, error: finalJob.error || 'job snapshot failed', data: finalJob.data };
+            }
+            if (terminal?.kind === 'error') {
+                return { ok: false, error: terminal.error || '任务失败', data: finalJob.data };
+            }
+            return {
+                ok: false,
+                error: sse?.error || finalJob.error || 'sse_unavailable',
+                code: 'sse_unavailable',
+            };
+        }
+        const status = finalJob.data?.status || '';
+        if (status === 'done') return { ok: true, data: finalJob.data, via: 'sse' };
+        if (status === 'error' || status === 'cancelled') {
+            return {
+                ok: false,
+                error: finalJob.data?.error?.message || status,
+                cancelled: status === 'cancelled',
+                data: finalJob.data,
+                via: 'sse',
+            };
+        }
+        // Stream ended early while job still running — fall back.
+        return { ok: false, error: 'sse_incomplete', code: 'sse_unavailable', data: finalJob.data };
+    } finally {
+        clearInterval(idleWatch);
+        clearInterval(stopPoll);
+        if (signal) {
+            try { signal.removeEventListener('abort', onOuterAbort); } catch { /* ignore */ }
+        }
+    }
+}
+
+/**
+ * Wait until job terminal. Prefer SSE events; fall back to HTTP poll.
+ * Fails only on prolonged idle (no successful engine response), not total wall time.
  * @param {object} [options]
+ * @param {boolean} [options.preferSse=true]
  * @param {number} [options.timeoutMs] - alias of idleTimeoutMs (compat)
  * @param {number} [options.idleTimeoutMs] - abort after this long with no successful poll (default 1h)
  * @param {() => boolean} [options.shouldStop] - return true to abort wait early (UI cancel)
@@ -378,11 +545,24 @@ async function waitJob(baseUrl, jobId, {
     onEvent = null,
     signal = undefined,
     shouldStop = null,
+    preferSse = true,
 } = {}) {
     const idleMs = Math.max(
         1000,
         Number(idleTimeoutMs ?? timeoutMs) || 3600000,
     );
+    if (preferSse !== false) {
+        const viaSse = await waitJobViaEvents(baseUrl, jobId, {
+            idleTimeoutMs: idleMs,
+            onEvent,
+            signal,
+            shouldStop,
+        });
+        if (viaSse?.code !== 'sse_unavailable' && viaSse?.error !== 'sse_incomplete') {
+            return viaSse;
+        }
+        // Fall through to poll.
+    }
     let lastActivityAt = Date.now();
     let lastStatus = '';
     let lastProgressKey = '';
@@ -437,7 +617,7 @@ async function waitJob(baseUrl, jobId, {
         }
         if (progressKey) lastProgressKey = progressKey;
         if (status === 'done') {
-            return { ok: true, data: res.data };
+            return { ok: true, data: res.data, via: 'poll' };
         }
         if (status === 'error' || status === 'cancelled') {
             return {
@@ -445,6 +625,7 @@ async function waitJob(baseUrl, jobId, {
                 error: res.data?.error?.message || status,
                 cancelled: status === 'cancelled',
                 data: res.data,
+                via: 'poll',
             };
         }
         await new Promise((r) => setTimeout(r, intervalMs));
@@ -454,6 +635,7 @@ async function waitJob(baseUrl, jobId, {
 module.exports = {
     joinUrl,
     engineFetch,
+    engineFetchSse,
     getHealth,
     getCapabilities,
     listModels,
@@ -473,5 +655,8 @@ module.exports = {
     createJob,
     getJob,
     cancelJob,
+    resumeJob,
+    getJobCheckpoint,
+    waitJobViaEvents,
     waitJob,
 };

@@ -11,8 +11,8 @@ describe('advanced-llama-server version probe', () => {
             'b10077',
         );
         assert.strictEqual(
-            llamaServer.parseLlamaCppTag('version: 10236 (abcdef123)'),
-            'b10236',
+            llamaServer.parseLlamaCppTag('version: 10437 (abcdef123)'),
+            'b10437',
         );
         assert.strictEqual(
             llamaServer.parseLlamaCppTag('llama.cpp b9912 release'),
@@ -20,14 +20,16 @@ describe('advanced-llama-server version probe', () => {
         );
         assert.strictEqual(llamaServer.parseLlamaCppTag(''), '');
         assert.strictEqual(llamaServer.parseLlamaCppTag('no version here'), '');
+        assert.strictEqual(llamaServer.parseLlamaCppTag('version: 0'), '');
+        assert.strictEqual(llamaServer.parseLlamaCppTag('version: 99'), '');
     });
 
     it('resolveInstalledRuntimeTag prefers runtime.json over live --version', () => {
         const tag = llamaServer.resolveInstalledRuntimeTag(
             path.join(__dirname, 'does-not-exist-llama-server.exe'),
-            { tag: 'b10236', probedTag: 'b10236' },
+            { tag: 'b10437', probedTag: 'b10437' },
         );
-        assert.strictEqual(tag, 'b10236');
+        assert.strictEqual(tag, 'b10437');
     });
 
     it('syncRuntimePreferenceToHardware skips when CUDA is not preferred', () => {

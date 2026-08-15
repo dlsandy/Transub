@@ -12,6 +12,8 @@
         let activeKind = '';
 
         function formatElapsed(ms) {
+            const u = global.TransubEditorParts?.utils;
+            if (u?.formatElapsedCompact) return u.formatElapsedCompact(ms);
             const sec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
             if (sec < 60) return `${sec}s`;
             return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`;

@@ -15,4 +15,11 @@ contextBridge.exposeInMainWorld('transubTrain', {
     listHistoryPairs: (payload) => ipcRenderer.invoke('transub-mt-train-list-history-pairs', payload || {}),
     loadHistoryPair: (payload) => ipcRenderer.invoke('transub-mt-train-load-history-pair', payload || {}),
     loadHistoryPairs: (payload) => ipcRenderer.invoke('transub-mt-train-load-history-pairs', payload || {}),
+    consumePendingPair: () => ipcRenderer.invoke('transub-mt-train-consume-pending-pair'),
+    onPendingPair: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const handler = (_event, payload) => callback(payload);
+        ipcRenderer.on('transub-mt-train-pending-pair', handler);
+        return () => ipcRenderer.removeListener('transub-mt-train-pending-pair', handler);
+    },
 });

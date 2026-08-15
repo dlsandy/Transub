@@ -223,9 +223,13 @@ Engine POSTs glossary-protected cues to an adapter URL. The adapter (desktop gat
   "jobId": "...",
   "language": "ja",
   "targetLanguage": "zh",
-  "cues": [{ "id": 0, "start": 1.2, "end": 3.4, "text": "..." }]
+  "cues": [{ "id": 0, "start": 1.2, "end": 3.4, "text": "..." }],
+  "briefCues": [{ "id": 0, "start": 0.0, "end": 1.0, "text": "..." }],
+  "briefCueTotal": 412
 }
 ```
+
+`cues` is the current translate batch. Optional `briefCues` is a head/mid/tail sample of the **full** source list so the adapter can build a film brief once (not from the first 40-cue POST). `briefCueTotal` is the unsampled cue count.
 
 **Response** (same order or by `id`):
 

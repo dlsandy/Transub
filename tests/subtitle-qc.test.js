@@ -235,7 +235,7 @@ function testScanDetectsRepetition() {
     assert.ok(plan.ok, plan.summary);
     const fixed = applyQcFixes(cues, repOpts);
     assert.ok(fixed.stats.compressRepFixed >= 1);
-    assert.strictEqual(fixed.cues[0].text, '好的…好的！');
+    assert.strictEqual(fixed.cues[0].text, '好的好的！');
 }
 
 function testFixInvalidAndDuplicates() {

@@ -792,8 +792,9 @@
 
         async function runContextReconstructOnce({
             scope = 'all',
-            windowCues = 30,
-            preserveTiming = true,
+            windowCues,
+            overlapCues,
+            preserveTiming,
             mode = 'basic',
             sceneMaxCues = 36,
             sceneGapMs = 2500,
@@ -803,10 +804,26 @@
             filmBrief = null,
             userNote = '',
             note = '',
-            intensity = 'balanced',
+            intensity,
+            skipConsistency,
             skipReview = false,
             cueIndexes = null,
         } = {}) {
+            const prefsApi = global.TransubEditorSettingsPrefs;
+            const prefs = typeof prefsApi?.getReconstructPrefs === 'function'
+                ? prefsApi.getReconstructPrefs()
+                : {
+                    windowCues: 30,
+                    overlapCues: 2,
+                    intensity: 'balanced',
+                    preserveTiming: true,
+                    skipConsistency: false,
+                };
+            windowCues = Number.isFinite(Number(windowCues)) ? Number(windowCues) : prefs.windowCues;
+            overlapCues = Number.isFinite(Number(overlapCues)) ? Number(overlapCues) : prefs.overlapCues;
+            preserveTiming = preserveTiming != null ? !!preserveTiming : prefs.preserveTiming !== false;
+            intensity = String(intensity || prefs.intensity || 'balanced').trim() || 'balanced';
+            skipConsistency = skipConsistency != null ? !!skipConsistency : !!prefs.skipConsistency;
             const filmMode = mode === 'film';
             const invoke = filmMode
                 ? electron?.transubAdvancedFilmContextReconstruct
@@ -1070,7 +1087,9 @@
                     cues: buildCuesPayload(idxList),
                     scope,
                     windowCues,
+                    overlapCues,
                     preserveTiming,
+                    skipConsistency,
                     sceneMaxCues: filmMode ? effectiveSceneMaxCues : sceneMaxCues,
                     sceneGapMs,
                     glossary: getEffectiveGlossary(),
@@ -1602,6 +1621,8 @@
             cueIndexes = null,
             modelId = '',
             faithfulTone = null,
+            smartTranslateHybridMt = null,
+            smartTranslatePlotPolish = null,
         } = {}) {
             const useSmart = engine === 'smart' || engine === 'advanced';
             const useOpus = engine === 'opus' || engine === 'engine';
@@ -1688,13 +1709,15 @@
             }
 
             let faithfulPreferred = faithfulTone;
+            let settingsOpts = null;
+            try {
+                const res = await electron?.transWithAiGetOptions?.({});
+                settingsOpts = res?.options && typeof res.options === 'object' ? res.options : null;
+            } catch (_) {
+                settingsOpts = null;
+            }
             if ((useSmart || (!useOpus)) && faithfulPreferred == null) {
-                try {
-                    const res = await electron?.transWithAiGetOptions?.({});
-                    faithfulPreferred = !!res?.options?.smartTranslateFaithfulTone;
-                } catch (_) {
-                    faithfulPreferred = false;
-                }
+                faithfulPreferred = !!settingsOpts?.smartTranslateFaithfulTone;
             }
 
             const dualApi = global.TransubDualSubtitle || null;
@@ -1853,6 +1876,7 @@
                 ? electron.onAdvancedReconstructProgress?.((info) => {
                     if (!info || info.mode === 'batch') return;
                     if (info.feature && info.feature !== 'smartTranslate') return;
+                    // Surface hybrid / polish phases in the editor progress line.
                     showProgress(info);
                 })
                 : null;
@@ -1880,6 +1904,29 @@
                 if (useSmart) {
                     payload.smartTranslateFaithfulTone = !!faithfulPreferred;
                     payload.faithfulTone = !!faithfulPreferred;
+                    // Follow main-window Pro settings (hybrid sentence MT + plot polish).
+                    const hybridFromStep = smartTranslateHybridMt;
+                    const polishFromStep = smartTranslatePlotPolish;
+                    payload.smartTranslateHybridMt = hybridFromStep == null
+                        ? settingsOpts?.smartTranslateHybridMt !== false
+                        : hybridFromStep !== false;
+                    payload.smartTranslatePlotPolish = polishFromStep == null
+                        ? settingsOpts?.smartTranslatePlotPolish !== false
+                        : polishFromStep !== false;
+                    const llmMt = String(
+                        modelId
+                        || settingsOpts?.engineLlmMtModel
+                        || settingsOpts?.hybridMtModelId
+                        || '',
+                    ).trim();
+                    if (llmMt) {
+                        payload.engineLlmMtModel = llmMt;
+                        payload.hybridMtModelId = llmMt;
+                    }
+                    const lang = String(settingsOpts?.language || '').trim();
+                    if (lang) payload.language = lang;
+                    const variant = String(settingsOpts?.chineseSubtitleVariant || '').trim();
+                    if (variant) payload.chineseSubtitleVariant = variant;
                 } else if (!useOpus) {
                     if (modelId) payload.modelId = modelId;
                     // Align Sakura with smart-translate NSFW / faithful postprocess.
@@ -1933,13 +1980,28 @@
                 const via = useSmart
                     ? (res.via === 'mock' ? '模拟' : (res.via === 'module' ? '模块' : '智能翻译'))
                     : (useOpus ? '机器翻译' : '推理翻译');
+                const smartBits = [];
+                if (useSmart) {
+                    if (res.hybridMt || res.stats?.hybridMt) {
+                        smartBits.push(res.hybridMtModelId || res.stats?.hybridMtModelId
+                            ? `句级 ${res.hybridMtModelId || res.stats.hybridMtModelId}`
+                            : '专训句级');
+                    }
+                    const polishN = Number(res.polishFixed ?? res.stats?.polishFixed);
+                    if (Number.isFinite(polishN) && polishN > 0) {
+                        smartBits.push(`贴合润色 ${polishN}`);
+                    } else if (res.plotPolish || res.stats?.plotPolish) {
+                        smartBits.push('贴合润色');
+                    }
+                }
+                const viaLabel = smartBits.length ? `${via}（${smartBits.join(' · ')}）` : via;
 
                 let accepted = null;
                 const reviewLead = usableCount
                     ? (writeMode === 'current'
-                        ? `来源：${via}。左边为原文，右边为译文。确认后写入当前译文轨；标记「回退」的条目默认不覆盖。放弃则不做任何修改。`
-                        : `来源：${via}。左边为原文，右边为译文。确认后将保留原文并写入译文对照轨；放弃则不做任何修改。`)
-                    : `来源：${via}。已找到原文，但模型未产出有效中文（可能原样返回日文）。请在右侧手动改成译文后勾选确认，或放弃后重试/换模型。`;
+                        ? `来源：${viaLabel}。左边为原文，右边为译文。确认后写入当前译文轨；标记「回退」的条目默认不覆盖。放弃则不做任何修改。`
+                        : `来源：${viaLabel}。左边为原文，右边为译文。确认后将保留原文并写入译文对照轨；放弃则不做任何修改。`)
+                    : `来源：${viaLabel}。已找到原文，但模型未产出有效中文（可能原样返回日文）。请在右侧手动改成译文后勾选确认，或放弃后重试/换模型。`;
                 if (skipReview) {
                     accepted = rows
                         .filter((r) => r.changed && !r.fallback && String(r.after || '').trim())
@@ -2639,6 +2701,35 @@
                         changed: true,
                     };
                 },
+                'text.viewingPunct': async (_c, step) => {
+                    if (!state.cues.length) return { status: 'skipped', summary: '无字幕' };
+                    const scope = step.params?.scope || 'all';
+                    let indexes = null;
+                    if (scope === 'selected') {
+                        indexes = getSelectedCueIndexes();
+                        if (!indexes.length) return { status: 'skipped', summary: '未选中条目' };
+                    }
+                    syncDetailToCue();
+                    const preview = fluencyCore.simplifyViewingPunctuationInCues(state.cues, {
+                        indexes,
+                        level: step.params?.level || 'clear',
+                    });
+                    if (!preview.stats?.cueTouched) return { status: 'skipped', summary: '无需精简标点' };
+                    recordUndoBeforeChange();
+                    const result = fluencyCore.simplifyViewingPunctuationInCues(state.cues, {
+                        indexes,
+                        level: step.params?.level || 'clear',
+                    });
+                    state.cues.splice(0, state.cues.length, ...result.cues);
+                    setDirty(true);
+                    renderCueList();
+                    if (state.selectedIndex >= 0) renderDetailPane();
+                    return {
+                        status: 'done',
+                        summary: result.summary || `已精简 ${result.stats.cueTouched} 条`,
+                        changed: true,
+                    };
+                },
                 'text.removeNoise': async (_c, step) => {
                     if (!state.cues.length) return { status: 'skipped', summary: '无字幕' };
                     const opts = {
@@ -2746,16 +2837,27 @@
                         engine: 'smart',
                         faithfulTone,
                         skipReview: step.params?.skipReview === true,
+                        // Hybrid / polish follow settings unless step overrides.
+                        smartTranslateHybridMt: step.params?.smartTranslateHybridMt,
+                        smartTranslatePlotPolish: step.params?.smartTranslatePlotPolish,
+                        modelId: String(step.params?.modelId || step.params?.hybridMtModelId || '').trim(),
                     });
                 },
                 'text.contextReconstruct': async (_c, step) => {
                     const scope = String(step.params?.scope || 'all');
+                    const prefs = global.TransubEditorSettingsPrefs?.getReconstructPrefs?.() || {};
                     return runContextReconstructOnce({
                         scope,
-                        windowCues: Number(step.params?.windowCues) || 30,
-                        preserveTiming: step.params?.preserveTiming !== false,
+                        windowCues: Number(step.params?.windowCues) || prefs.windowCues,
+                        overlapCues: Number(step.params?.overlapCues) || prefs.overlapCues,
+                        preserveTiming: step.params?.preserveTiming != null
+                            ? step.params.preserveTiming !== false
+                            : prefs.preserveTiming !== false,
+                        skipConsistency: step.params?.skipConsistency != null
+                            ? !!step.params.skipConsistency
+                            : !!prefs.skipConsistency,
                         mode: 'basic',
-                        intensity: step.params?.intensity || 'balanced',
+                        intensity: step.params?.intensity || prefs.intensity || 'balanced',
                     });
                 },
                 'text.filmContextReconstruct': async (_c, step) => {
@@ -2865,33 +2967,53 @@
                         maxCues: Number(step.params?.maxCues) || 50,
                     });
                     if (!indexes.length) return { status: 'skipped', summary: '无低置信条目' };
+                    const smartApi = global.TransubSubtitleQcSmart;
                     const prefs = loadRetranscribeDurPrefs?.() || {};
                     const padRaw = step.params?.padMs != null ? Number(step.params.padMs) : Number(prefs.padMs);
-                    const padMs = Number.isFinite(padRaw) ? padRaw : 350;
+                    const padMs = Number.isFinite(padRaw) ? padRaw : (smartApi?.DEFAULT_PAD_MS || 350);
                     const snapAfter = step.params?.snapAfter !== false;
+                    const planned = typeof smartApi?.planLowConfidenceRetranscribeRanges === 'function'
+                        ? smartApi.planLowConfidenceRetranscribeRanges(state.cues, indexes, {
+                            maxCues: Number(step.params?.maxCues) || 50,
+                            maxRanges: Number(step.params?.maxRanges) || smartApi.DEFAULT_MAX_RETRANSCRIBE_RANGES,
+                            maxDurationSec: Number(step.params?.maxDurationSec) || smartApi.DEFAULT_MAX_RANGE_SEC,
+                            mergeAdjacentGapMs: Number(step.params?.mergeAdjacentGapMs) || smartApi.DEFAULT_MERGE_GAP_MS,
+                        })
+                        : { indexes, ranges: indexes.map((idx) => {
+                            const cue = state.cues[idx];
+                            const startMs = Number(cue?.startMs) || 0;
+                            const endMs = typeof cueEndMs === 'function' ? cueEndMs(cue) : (cue?.endMs || startMs);
+                            return {
+                                startMs,
+                                endMs,
+                                indexes: [idx],
+                                durationMs: Math.max(200, endMs - startMs),
+                            };
+                        }), cueCount: indexes.length, rangeCount: indexes.length };
+                    const ranges = Array.isArray(planned.ranges) ? planned.ranges : [];
+                    if (!ranges.length) return { status: 'skipped', summary: '无低置信条目' };
                     let done = 0;
-                    for (let i = 0; i < indexes.length; i += 1) {
+                    for (let i = 0; i < ranges.length; i += 1) {
                         if (helpers?.signal?.aborted || state.jobAbortRequested) {
-                            return { status: 'cancelled', summary: `已取消（完成 ${done}）` };
+                            return { status: 'cancelled', summary: `已取消（完成 ${done} 窗）` };
                         }
-                        const idx = indexes[i];
-                        const cue = state.cues[idx];
-                        if (!cue) continue;
-                        selectCue(idx);
-                        helpers?.onProgress?.({ current: i + 1, total: indexes.length });
+                        const range = ranges[i];
+                        const firstIdx = Array.isArray(range.indexes) ? range.indexes[0] : -1;
+                        if (firstIdx >= 0) selectCue(firstIdx);
+                        helpers?.onProgress?.({ current: i + 1, total: ranges.length });
                         await runRetranscribeRange({
-                            startMs: cue.startMs,
-                            endMs: cueEndMs(cue),
+                            startMs: range.startMs,
+                            endMs: range.endMs,
                             padMs,
-                            mode: 'cue',
+                            mode: 'range',
                             snapAfter,
-                            detail: `低置信重转 ${i + 1}/${indexes.length}…`,
+                            detail: `低置信重转 ${i + 1}/${ranges.length}（${planned.cueCount} 条）…`,
                         });
                         done += 1;
                     }
                     return {
                         status: 'done',
-                        summary: `已重转 ${done} 条`,
+                        summary: `已重转 ${done} 窗（约 ${planned.cueCount} 条）`,
                         changed: done > 0,
                     };
                 },
@@ -3012,6 +3134,29 @@
                     return {
                         status: 'done',
                         summary: result.summary || `已压缩 ${result.stats.cueTouched} 条`,
+                        changed: true,
+                    };
+                },
+                'cue.viewingPunct': async (_c, step) => {
+                    const indexes = resolveScopeIndexes(step.params?.scope || 'all');
+                    if (!indexes.length) return { status: 'skipped', summary: '无目标条目' };
+                    syncDetailToCue();
+                    const preview = fluencyCore.simplifyViewingPunctuationInCues(state.cues, {
+                        indexes,
+                        level: step.params?.level || 'clear',
+                    });
+                    if (!preview.stats?.cueTouched) return { status: 'skipped', summary: '无需精简标点' };
+                    recordUndoBeforeChange();
+                    const result = fluencyCore.simplifyViewingPunctuationInCues(state.cues, {
+                        indexes,
+                        level: step.params?.level || 'clear',
+                    });
+                    state.cues.splice(0, state.cues.length, ...result.cues);
+                    setDirty(true);
+                    renderCueList();
+                    return {
+                        status: 'done',
+                        summary: result.summary || `已精简 ${result.stats.cueTouched} 条`,
                         changed: true,
                     };
                 },

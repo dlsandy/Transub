@@ -13,8 +13,11 @@ function testMapInferStageProgress() {
     assert.strictEqual(mapInferStageProgress('vad', 100), 0);
     assert.strictEqual(mapInferStageProgress('model', 100), 0);
     assert.strictEqual(mapInferStageProgress('transcribe', 0), 0);
-    assert.strictEqual(mapInferStageProgress('transcribe', 50), 49);
-    assert.strictEqual(mapInferStageProgress('transcribe', 100, 600, 600), 98);
+    assert.strictEqual(mapInferStageProgress('transcribe', 50), 34);
+    assert.strictEqual(mapInferStageProgress('transcribe', 100, 600, 600), 68);
+    assert.strictEqual(mapInferStageProgress('translate', 0), 68);
+    assert.strictEqual(mapInferStageProgress('translate', 50), 82);
+    assert.strictEqual(mapInferStageProgress('translate', 100), 96);
     assert.strictEqual(mapInferStageProgress('save'), 99);
     assert.strictEqual(mapInferStageProgress('done'), 100);
 }
@@ -65,7 +68,7 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchCpsSplit, true);
-    assert.strictEqual(defaults.postBatchQcFixMode, 'none');
+        assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
     assert.strictEqual(defaults.sakuraNsfwPrompt, null);
     // Engine fields must be present so settings save/load does not drop them
     assert.strictEqual(defaults.engineBackend, 'transub');

@@ -13,7 +13,7 @@ const HOT = new Set([
     'heixiu', 'under_stub', 'ja_echo',
 ]);
 
-const SKIP_ISSUES = new Set(['align_suspect', 'moan_expand', 'other']);
+const SKIP_ISSUES = new Set(['align_suspect', 'align_gap', 'moan_expand', 'other', 'asr_garbage']);
 
 function primaryHotIssue(hit) {
     const issues = Array.isArray(hit?.issues) ? hit.issues : [];
@@ -29,6 +29,18 @@ function shouldSkipHit(hit) {
     if (issues.some((i) => SKIP_ISSUES.has(i)) && !issues.some((i) => HOT.has(i))) {
         return '次要/对齐问题';
     }
+    try {
+        const lex = require('../../../src/js/mt-sanitize-lexicon');
+        if (lex.isAsrGarbageJa?.(src)) return 'ASR糊片，跳过训练';
+        // Hot issues (iku_shoot / invent_rod / …) still need training even when
+        // the ZH surface "covers" JA anchors — e.g. 要去了 vs 要射了.
+        if (
+            lex.isZhSufficientForJa?.(src, String(hit?.after || dst), hit?.flags || [])
+            && !issues.some((i) => HOT.has(i))
+        ) {
+            return 'ZH已充分覆盖锚点';
+        }
+    } catch (_) { /* ignore */ }
     if (src.length <= 2 || /^[&＋+\-—…·.。,，、\s]+$/u.test(src)) {
         return '日文锚点过短或残片';
     }
@@ -50,7 +62,9 @@ function heuristicExpect(hit) {
         return { expect: '…', mode: 'blank', reason: `${issue} → 清空弱化` };
     }
     if (issue === 'iku_shoot') {
-        // NSFW口径：保留/升格为「射了」；临床「射精」→「射了」；软化「去了」→「射了」
+        // NSFW口径：升格「射了」；勿动「失去了/过去了」等非高潮复合词
+        const ja = String(hit.src || '');
+        const climaxJa = /イッ|イキ|イク|いく|いっちゃ|射精/.test(ja);
         let next = dirty
             .replace(/射精了/g, '射了')
             .replace(/射精/g, '射了')
@@ -58,8 +72,11 @@ function heuristicExpect(hit) {
             .replace(/快去了/g, '快射了')
             .replace(/又去了/g, '又射了')
             .replace(/已经去了/g, '已经射了')
-            .replace(/想去/g, '想射')
-            .replace(/(^|[^进出来])去了/g, '$1射了');
+            .replace(/想去/g, '想射');
+        if (climaxJa) {
+            next = next.replace(/(?<![失过死进出来回带拿离散褪消辞夺忘除抹])去了/g, '射了');
+        }
+        next = next.replace(/失射了/g, '失去了').replace(/过射了/g, '过去了');
         if (next === dirty) return null;
         return { expect: next, mode: 'replace', reason: 'iku_shoot：去了/射精→射了（启发式）' };
     }
@@ -96,6 +113,29 @@ function heuristicExpect(hit) {
         return { expect: '好舒服', mode: 'replace', reason: 'kimochi_stub：补全「舒服」' };
     }
     if (issue === 'clinical_rod' || issue === 'invent_rod') {
+        const ja = String(hit.src || '');
+        // Anatomy gender/part flip before generic clinical→肉棒
+        if (/クリトリス|クリ[もがをはっ]/.test(ja) && /阴茎/.test(dirty)) {
+            return {
+                expect: dirty.replace(/阴茎/g, '阴蒂'),
+                mode: 'replace',
+                reason: `${issue}：クリ误译阴茎→阴蒂`,
+            };
+        }
+        if (/(?:お)?まんこ|マンコ/.test(ja) && /阴茎/.test(dirty) && !/おちん|ちんぽ|チ○|ち○/.test(ja)) {
+            return {
+                expect: dirty.replace(/阴茎/g, '小穴'),
+                mode: 'replace',
+                reason: `${issue}：まんこ误译阴茎→小穴`,
+            };
+        }
+        if (/亀頭/.test(ja) && /阴茎/.test(dirty)) {
+            return {
+                expect: dirty.replace(/阴茎/g, '龟头'),
+                mode: 'replace',
+                reason: `${issue}：亀頭误译阴茎→龟头`,
+            };
+        }
         // NSFW domain: clinical invent → 肉棒 (not euphemism)
         let next = dirty
             .replace(/阴茎/g, '肉棒')
@@ -472,7 +512,7 @@ function proposeFromHits(sanitize, hits, opts = {}) {
         mergeCount: finalized.mergeCount || 0,
         confidence: finalized.confidence || null,
         proposals: next,
-        hint: '只写入可复用片段规则。整句润色已排除；「需收窄」请改短 zhFrom 或锚点后再写。',
+        hint: '只写入跨片名可复用片段。整句润色与单片特化已排除；「需收窄」请改短 zhFrom 或锚点后再写。',
     };
 }
 

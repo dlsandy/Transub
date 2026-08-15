@@ -278,7 +278,7 @@
         const lines = Array.isArray(PROMPTS.smartFaithful) ? PROMPTS.smartFaithful : [];
         if (!lines.length) {
             return [
-                fillExamples('日语拟声与成人用语译成自然中文。纯拟声可短译；有完整语义须译全句，勿压成单字语气词。例：{{EXAMPLES}}。', examples),
+                fillExamples('日语拟声与敏感用语译成自然中文。纯拟声可短译；有完整语义须译全句，勿压成单字语气词。例：{{EXAMPLES}}。', examples),
             ];
         }
         return lines.map((line) => fillExamples(line, examples));

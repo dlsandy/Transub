@@ -16,7 +16,7 @@
     const LIST_FILTER_KEY = 'transub-editor-list-filter';
     const DEFAULT_TARGET_CPS = 3;
     const DEFAULT_RETRANSCRIBE_DUR_SEC = 10;
-    const DEFAULT_TIMELINE_ZOOM = 5;
+    const DEFAULT_TIMELINE_ZOOM = 10;
     const SPLIT_MODES = new Set(['smart', 'lines', 'spaces', 'chars', 'count', 'cursor', 'playhead', 'silence']);
     const FILM_HINTS_MAX = 40;
     const PERSISTABLE_LIST_FILTERS = new Set([
@@ -27,7 +27,6 @@
         'review-edited',
         'review-approved',
         'bookmarks',
-        'speaker',
     ]);
 
     function installPrefs(ctx) {
@@ -256,8 +255,11 @@
 
         function loadAutoFocusPref() {
             const { state } = ctx;
-            let on = false;
-            try { on = localStorage.getItem(AUTO_FOCUS_KEY) === '1'; } catch (_) { /* ignore */ }
+            let on = true;
+            try {
+                const raw = localStorage.getItem(AUTO_FOCUS_KEY);
+                if (raw != null) on = raw === '1';
+            } catch (_) { /* ignore */ }
             state.autoFocus = on === true;
             applyAutoFocusUi();
         }
@@ -504,28 +506,22 @@
         function loadListFilterPrefs() {
             try {
                 const raw = localStorage.getItem(LIST_FILTER_KEY);
-                if (!raw) return { filter: 'all', speakerId: '' };
+                if (!raw) return { filter: 'all' };
                 const parsed = JSON.parse(raw);
                 let filter = String(parsed?.filter || 'all');
-                if (!PERSISTABLE_LIST_FILTERS.has(filter)) filter = 'all';
-                const speakerId = filter === 'speaker'
-                    ? String(parsed?.speakerId || '').trim()
-                    : '';
-                if (filter === 'speaker' && !speakerId) filter = 'all';
-                return { filter, speakerId };
+                // Legacy speaker filter → all
+                if (filter === 'speaker' || !PERSISTABLE_LIST_FILTERS.has(filter)) filter = 'all';
+                return { filter };
             } catch (_) {
-                return { filter: 'all', speakerId: '' };
+                return { filter: 'all' };
             }
         }
 
-        function saveListFilterPrefs(filter, speakerId) {
+        function saveListFilterPrefs(filter) {
             const f = String(filter || 'all');
-            if (f === 'find' || !PERSISTABLE_LIST_FILTERS.has(f)) return;
+            if (f === 'find' || f === 'speaker' || !PERSISTABLE_LIST_FILTERS.has(f)) return;
             try {
-                localStorage.setItem(LIST_FILTER_KEY, JSON.stringify({
-                    filter: f,
-                    speakerId: f === 'speaker' ? String(speakerId || '').trim() : '',
-                }));
+                localStorage.setItem(LIST_FILTER_KEY, JSON.stringify({ filter: f }));
             } catch (_) { /* ignore */ }
         }
 

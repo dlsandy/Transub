@@ -171,6 +171,32 @@ print(json.dumps({
         );
     });
 
+    it('asr-whisper onnxruntime pin accepts installed onnxruntime-gpu', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from importlib.metadata import PackageNotFoundError, version as pkg_version
+from transub_engine.runtime_extras import _requirement_satisfied, _onnxruntime_importable
+has_gpu = False
+try:
+    pkg_version("onnxruntime-gpu")
+    has_gpu = True
+except PackageNotFoundError:
+    pass
+print(json.dumps({
+    "importable": _onnxruntime_importable(),
+    "hasGpu": has_gpu,
+    "cpuPinOk": _requirement_satisfied("onnxruntime>=1.14.0,<1.22"),
+}))
+`);
+        const payload = JSON.parse(out);
+        if (payload.importable && payload.hasGpu) {
+            assert.strictEqual(payload.cpuPinOk, true);
+        }
+    });
+
     it('probe_asr_whisper returns a structured readiness payload', function () {
         if (process.platform !== 'win32') {
             this.skip();
@@ -291,6 +317,33 @@ print(json.dumps({
         assert.strictEqual(payload.tuna, 'https://pypi.tuna.tsinghua.edu.cn/packages');
         assert.strictEqual(payload.pypi, 'https://files.pythonhosted.org/packages');
         assert.strictEqual(payload.stall, true);
+    });
+
+    it('pip_line_marks_activity treats unpack lines as progress (offline install)', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.runtime_extras import pip_line_marks_activity
+print(json.dumps({
+    "processing": pip_line_marks_activity("Processing ctranslate2-4.5.0-cp312-cp312-win_amd64.whl"),
+    "installing": pip_line_marks_activity("Installing collected packages: ctranslate2, av"),
+    "success": pip_line_marks_activity("Successfully installed av-14.0.1 ctranslate2-4.5.0"),
+    "downloading": pip_line_marks_activity("Downloading numpy-2.4.6-cp312-cp312-win_amd64.whl (15.5 MB)"),
+    "progress": pip_line_marks_activity("1.2 / 15.5 MB  2.1 MB/s"),
+    "noise": pip_line_marks_activity("WARNING: You are using pip version 24.0"),
+    "empty": pip_line_marks_activity("   "),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.processing, true);
+        assert.strictEqual(payload.installing, true);
+        assert.strictEqual(payload.success, true);
+        assert.strictEqual(payload.downloading, true);
+        assert.strictEqual(payload.progress, true);
+        assert.strictEqual(payload.noise, false);
+        assert.strictEqual(payload.empty, false);
     });
 
     it('transfer_should_abort catches stall, too-slow, and max wall time', function () {

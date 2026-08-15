@@ -305,22 +305,14 @@ function normalizeMediaLangTag(raw) {
     if (!s || s === 'und' || s === 'unknown') return '';
     const base = s.split('-')[0];
     const map = {
-        jpn: 'ja', jp: 'ja', japanese: 'ja',
-        eng: 'en', english: 'en',
-        chi: 'zh', zho: 'zh', cmn: 'zh', chinese: 'zh',
-        kor: 'ko', korean: 'ko',
-        fra: 'fr', fre: 'fr', french: 'fr',
-        deu: 'de', ger: 'de', german: 'de',
-        spa: 'es', spanish: 'es',
-        por: 'pt', portuguese: 'pt',
-        rus: 'ru', russian: 'ru',
-        ita: 'it', italian: 'it',
-        vie: 'vi', vietnamese: 'vi',
-        tha: 'th', thai: 'th',
-        ara: 'ar', arabic: 'ar',
-        hin: 'hi', hindi: 'hi',
+        jpn: 'ja', jp: 'ja', japanese: 'ja', ja: 'ja',
+        eng: 'en', english: 'en', en: 'en',
+        chi: 'zh', zho: 'zh', cmn: 'zh', chinese: 'zh', zh: 'zh',
+        yue: 'yue', cantonese: 'yue',
+        kor: 'ko', korean: 'ko', ko: 'ko',
     };
-    return map[base] || (base.length === 2 ? base : '');
+    // Product sense/MT only act on ja/zh/yue/ko/en — drop exotic ISO tags (nn/de/fr/…).
+    return map[base] || '';
 }
 
 function parseMediaMetaFromFfprobeOutput(text) {
@@ -1200,4 +1192,6 @@ module.exports = {
     probeAcousticWindow,
     parseAcousticProbeLog,
     cancelActiveFfmpegJobs,
+    normalizeMediaLangTag,
+    parseMediaMetaFromFfprobeOutput,
 };

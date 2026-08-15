@@ -44,8 +44,31 @@ function stemKeyForPairing(filePath, isSourceTrack) {
 function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
     const doNoise = options.postBatchRemoveNoise !== false;
     const doCompressRep = options.postBatchCompressRepetition !== false;
+    const viewingPunctMode = (() => {
+        const raw = options.postBatchViewingPunctMode;
+        const v = String(raw ?? '').trim().toLowerCase();
+        if (v === 'off' || v === 'light' || v === 'clear') return v;
+        if (options.postBatchSimplifyViewingPunctuation === false) return 'off';
+        if (options.postBatchSimplifyViewingPunctuation === true) return 'light';
+        return 'clear';
+    })();
+    const interjectionMode = (() => {
+        const v = String(options.postBatchInterjectionMode ?? '').trim().toLowerCase();
+        if (v === 'off' || v === 'light' || v === 'clear') return v;
+        return options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+    })();
+    const onomatopoeiaMode = (() => {
+        const v = String(options.postBatchOnomatopoeiaMode ?? '').trim().toLowerCase();
+        if (v === 'off' || v === 'light' || v === 'clear') return v;
+        return options.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+    })();
+    const doViewingPunct = viewingPunctMode !== 'off';
+    const doSoftenDiscourse = interjectionMode === 'light';
+    const doSoftenOnomatopoeia = onomatopoeiaMode === 'light';
+    const doBilingualClear = interjectionMode === 'clear' || onomatopoeiaMode === 'clear';
     const doCps = options.postBatchCpsSplit === true;
-    if (!doNoise && !doCompressRep && !doCps) {
+    if (!doNoise && !doCompressRep && !doCps && !doViewingPunct
+        && !doSoftenDiscourse && !doSoftenOnomatopoeia && !doBilingualClear) {
         return { ok: true, skipped: true, processed: [] };
     }
 
@@ -116,7 +139,8 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
 
     // 2) Per-file CPS / compress / leftover noise (delete, never blank to …).
     for (const subPath of unique) {
-        if (done.has(subPath) && !doCps && !doCompressRep) continue;
+        if (done.has(subPath) && !doCps && !doCompressRep && !doViewingPunct
+            && !doSoftenDiscourse && !doSoftenOnomatopoeia && !doBilingualClear) continue;
         const alreadyPairedNoise = done.has(subPath);
         hooks.onProgress?.({
             detail: doNoise && !alreadyPairedNoise ? '后处理：清理杂音/幻觉…' : '后处理字幕…',
@@ -130,6 +154,13 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 removeNoise: doNoise && !alreadyPairedNoise,
                 removeHallucinations: doNoise && !alreadyPairedNoise,
                 compressRepetition: doCompressRep,
+                viewingPunctMode,
+                simplifyViewingPunctuation: doViewingPunct,
+                softenDiscourseFillers: doSoftenDiscourse,
+                softenOnomatopoeiaFillers: doSoftenOnomatopoeia,
+                dropBilingualPureFillers: doBilingualClear,
+                dropBilingualDiscourse: interjectionMode === 'clear',
+                dropBilingualOnomatopoeia: onomatopoeiaMode === 'clear',
                 removeDuplicates: doNoise && !alreadyPairedNoise && sourceTrack,
                 blankInsteadOfRemove: false,
                 stitchJaFragments: sourceTrack && !alreadyPairedNoise,
@@ -145,6 +176,15 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 if (pp.cpsSplit?.summary) bits.push(pp.cpsSplit.summary);
                 if (pp.compressRep?.summary && pp.compressRep.stats?.cueTouched) {
                     bits.push(pp.compressRep.summary.replace(/^将/, '已'));
+                }
+                if (pp.viewingPunct?.summary && pp.viewingPunct.stats?.cueTouched) {
+                    bits.push(pp.viewingPunct.summary);
+                }
+                if (pp.fillerSoften?.summary && pp.fillerSoften.stats?.cueTouched) {
+                    bits.push(pp.fillerSoften.summary);
+                }
+                if (pp.bilingualFillerDrop?.summary && pp.bilingualFillerDrop.dropped) {
+                    bits.push(pp.bilingualFillerDrop.summary);
                 }
                 if (bits.length) {
                     hooks.onLog?.(

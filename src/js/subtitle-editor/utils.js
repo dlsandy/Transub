@@ -202,6 +202,32 @@
         return new RegExp(escapeRegex(query), flags);
     }
 
+    function formatElapsedCompact(ms) {
+        const sec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+        if (sec < 60) return `${sec}s`;
+        return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`;
+    }
+
+    function pathDirname(filePath) {
+        const p = String(filePath || '');
+        const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+        return i >= 0 ? p.slice(0, i) : '';
+    }
+
+    function pathJoin(dir, name) {
+        const d = String(dir || '');
+        const n = String(name || '');
+        if (!d) return n;
+        const sep = d.includes('/') && !d.includes('\\') ? '/' : '\\';
+        return d.endsWith('/') || d.endsWith('\\') ? `${d}${n}` : `${d}${sep}${n}`;
+    }
+
+    function stemNoExt(filePath) {
+        const base = basename(filePath);
+        const dot = base.lastIndexOf('.');
+        return dot > 0 ? base.slice(0, dot) : base;
+    }
+
     global.TransubEditorParts = global.TransubEditorParts || {};
     global.TransubEditorParts.utils = {
         DEFAULT_TARGET_CPS,
@@ -223,5 +249,9 @@
         describeVideoCodec,
         escapeRegex,
         buildFindRegex,
+        formatElapsedCompact,
+        pathDirname,
+        pathJoin,
+        stemNoExt,
     };
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this));
