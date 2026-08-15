@@ -78,39 +78,145 @@
         if (!sel || !res?.ok) return;
         const current = sel.value;
         sel.innerHTML = '<option value="">— 选择预设 —</option>';
-        res.presets.forEach((p) => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.name + (p.builtin ? '（内置）' : '');
-            if (p.builtin) opt.dataset.builtin = '1';
-            sel.appendChild(opt);
+        const presets = Array.isArray(res.presets) ? res.presets : [];
+        const groupOrder = ['软声', '影视', '动漫', '对话', '自定义', '其他'];
+        const buckets = new Map();
+        for (const p of presets) {
+            if (!p?.id) continue;
+            const group = String(p.group || (p.builtin ? '其他' : '自定义')).trim() || (p.builtin ? '其他' : '自定义');
+            if (!buckets.has(group)) buckets.set(group, []);
+            buckets.get(group).push(p);
+        }
+        const orderedGroups = [
+            ...groupOrder.filter((g) => buckets.has(g)),
+            ...[...buckets.keys()].filter((g) => !groupOrder.includes(g)),
+        ];
+        for (const group of orderedGroups) {
+            const rows = buckets.get(group) || [];
+            const og = document.createElement('optgroup');
+            og.label = group;
+            for (const p of rows) {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name + (p.builtin ? '（内置）' : '');
+                if (p.builtin) opt.dataset.builtin = '1';
+                const desc = String(p.description || '').trim();
+                if (desc) {
+                    opt.title = desc;
+                    opt.dataset.description = desc;
+                }
+                og.appendChild(opt);
+            }
+            sel.appendChild(og);
+        }
+        if (current && [...sel.options].some((o) => o.value === current)) {
+            sel.value = current;
+        }
+        // Options may load after applyOptionsToForm stashed activePresetId.
+        core()?.flushPendingActivePresetId?.();
+        syncPresetSelectDescription();
+        core()?.rebuildParamsModePresetItems?.(presets, { preferActiveGroup: true });
+        // Keep scene cards in sync when settings select changes after load.
+        const cards = document.getElementById('paramsSceneCards');
+        const active = String(sel.value || '').trim();
+        cards?.querySelectorAll('.params-scene-card').forEach((el) => {
+            el.classList.toggle('is-active', el.dataset.presetId === active);
         });
-        if (current) sel.value = current;
+        core()?.syncParamsModeChipUi?.();
+    }
+
+    function syncPresetSelectDescription() {
+        const sel = document.getElementById('presetSelect');
+        const status = document.getElementById('paramsPresetStatus');
+        if (!sel || !status) return;
+        // Keep error/success messages from import/export until the next selection change.
+        if (status.dataset.tone === 'err' || status.dataset.tone === 'ok') return;
+        const opt = sel.selectedOptions?.[0];
+        const desc = String(opt?.dataset?.description || opt?.title || '').trim();
+        if (sel.value && desc) {
+            status.textContent = desc;
+            status.className = 'text-xs text-gray-500 min-h-[1rem]';
+            status.dataset.tone = 'info';
+        } else if (!sel.value) {
+            status.textContent = '';
+            status.dataset.tone = '';
+        }
+    }
+
+    /** Keys owned by task / MT chips — presets must not overwrite or persist them. */
+    const PRESET_SKIP_KEYS = Object.freeze([
+        'task',
+        'translateMode',
+        'engineMtModel',
+        'engineLlmMtModel',
+        'glossaryMtEnabled',
+        'sakuraNsfwPrompt',
+    ]);
+
+    function optionsForApply(preset) {
+        const raw = preset?.options && typeof preset.options === 'object' ? preset.options : {};
+        const out = { ...raw };
+        for (const key of PRESET_SKIP_KEYS) delete out[key];
+        return out;
+    }
+
+    function optionsForSavePreset(fullOptions) {
+        const out = fullOptions && typeof fullOptions === 'object' ? { ...fullOptions } : {};
+        for (const key of PRESET_SKIP_KEYS) delete out[key];
+        delete out.autoSense;
+        return out;
     }
 
     async function applyPreset(presetId, { persist = false, autoSense } = {}) {
         const res = await electron?.transWithAiGetPresets?.();
         const preset = res?.presets?.find((p) => p.id === presetId);
-        if (!preset?.options || !core()?.applyOptionsToForm) return;
+        if (!preset?.options || !core()?.applyOptionsToForm) return false;
+        const patch = optionsForApply(preset);
+        const requiredIds = (typeof (global.TransubEngineMissingModels?.collectRequiredModelIdsFromOptions) === 'function')
+            ? global.TransubEngineMissingModels.collectRequiredModelIdsFromOptions(patch)
+            : [patch.engineAsrModel, patch.engineVadModel].map((id) => String(id || '').trim()).filter(Boolean);
+        if (requiredIds.length && typeof core()?.ensureRequiredModelsReadyOrPrompt === 'function') {
+            const ready = await core().ensureRequiredModelsReadyOrPrompt({
+                modelIds: requiredIds,
+                contextLabel: `预设「${preset.name || presetId}」`,
+                settingsTab: 'models',
+                settingsHint: '设置 → 模型',
+            });
+            if (!ready) return false;
+        }
         const current = core().buildSavedOptionsFromForm();
-        const next = { ...current, ...preset.options };
+        const next = { ...current, ...patch };
         if (autoSense !== undefined) next.autoSense = !!autoSense;
+        if (autoSense === false) next.activePresetId = presetId;
+        else if (autoSense === true) next.activePresetId = '';
         await core().applyOptionsToForm(next);
         if (autoSense !== undefined) {
             core().setAutoSenseEnabled?.(!!autoSense, { persist: false });
         }
-        const sel = document.getElementById('presetSelect');
-        if (sel) {
-            const has = [...sel.options].some((o) => o.value === presetId);
-            if (has) sel.value = presetId;
+        if (autoSense === false) {
+            core().applyActivePresetIdToSelect?.(presetId);
+        } else if (autoSense === true) {
+            core().applyActivePresetIdToSelect?.('');
+        } else {
+            const sel = document.getElementById('presetSelect');
+            if (sel) {
+                const has = [...sel.options].some((o) => o.value === presetId);
+                if (has) sel.value = presetId;
+            }
         }
+        document.getElementById('paramsSceneCards')?.querySelectorAll('.params-scene-card').forEach((el) => {
+            el.classList.toggle('is-active', el.dataset.presetId === presetId);
+        });
         core().updateParamsSummary?.();
+        core().syncParamsModeChipUi?.();
+        core().syncTranslateChipUi?.();
         if (persist) {
             const opts = {
                 ...core().buildSavedOptionsFromForm(),
                 ...(autoSense !== undefined ? { autoSense: !!autoSense } : {}),
-                ...(preset.options.contentProfile
-                    ? { contentProfile: preset.options.contentProfile }
+                ...(autoSense === false ? { activePresetId: presetId } : { activePresetId: '' }),
+                ...(patch.contentProfile
+                    ? { contentProfile: patch.contentProfile }
                     : {}),
             };
             const saveRes = await electron?.transWithAiSaveOptions?.(opts);
@@ -124,12 +230,15 @@
                         : `已应用并保存预设：${preset.name}`,
                     'ok',
                 );
-                return;
+                core().syncParamsModeChipUi?.();
+                return true;
             }
         }
         core().markSettingsDirty?.(true);
         core().setSaveParamsStatus?.(`已应用预设「${preset.name}」，请点「保存设置」写入磁盘`, 'warn');
         core().appendLog(`已应用预设：${preset.name}（尚未保存）`, 'info');
+        core().syncParamsModeChipUi?.();
+        return true;
     }
 
     function syncOutputModeUi() {
@@ -167,147 +276,85 @@
         core()?.appendLog(`已应用推荐设备：${sel.options[sel.selectedIndex]?.text || device}`, 'ok');
     }
 
-    function escHtml(s) {
-        return String(s ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
-
-    function basenamePath(p) {
-        return String(p || '').split(/[/\\]/).pop() || '—';
-    }
-
-    function formatHistoryTime(iso) {
-        const raw = String(iso || '');
-        if (!raw) return '—';
+    async function openSubtitleLibrary(opts = {}) {
         try {
-            const d = new Date(raw);
-            if (Number.isNaN(d.getTime())) return raw;
-            return d.toLocaleString();
-        } catch {
-            return raw;
-        }
-    }
-
-    function statusLabel(status) {
-        if (status === 'skipped') return '跳过';
-        if (status === 'failed') return '失败';
-        return '完成';
-    }
-
-    function renderHistoryList(entries) {
-        const list = document.getElementById('historyList');
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        if (!list) return;
-        list.innerHTML = '';
-        const items = Array.isArray(entries) ? entries : [];
-        if (!items.length) {
-            list.innerHTML = '<p class="text-gray-400">暂无历史记录</p>';
-        } else {
-            items.forEach((e, jobIdx) => {
-                const div = document.createElement('div');
-                div.className = 'border rounded-lg p-2.5 bg-gray-50 space-y-1.5';
-                const outputs = Array.isArray(e.outputs) ? e.outputs : [];
-                const openable = outputs.filter((o) => o.openPath || o.subtitlePath);
-                let filesHtml = '';
-                if (openable.length) {
-                    filesHtml = `<div class="mt-1.5 space-y-1 border-t border-gray-200 pt-1.5">
-                        ${openable.map((o, fileIdx) => {
-                            const subPath = o.openPath || o.subtitlePath || '';
-                            const videoPath = o.videoPath || '';
-                            const exists = o.exists !== false;
-                            const name = basenamePath(subPath);
-                            const st = statusLabel(o.status);
-                            return `<div class="flex items-center gap-2 text-[11px]">
-                                <span class="min-w-0 flex-1 truncate text-gray-700" title="${escHtml(subPath)}">${escHtml(name)}</span>
-                                <span class="shrink-0 text-gray-400">${escHtml(st)}</span>
-                                <button type="button"
-                                    class="shrink-0 px-1.5 py-0.5 rounded border text-[11px] ${exists
-                                        ? 'border-violet-200 text-violet-700 hover:bg-violet-50'
-                                        : 'border-gray-200 text-gray-400 cursor-not-allowed opacity-60'}"
-                                    data-history-open-sub="${escHtml(subPath)}"
-                                    data-history-open-video="${escHtml(videoPath)}"
-                                    data-history-job="${jobIdx}"
-                                    data-history-file="${fileIdx}"
-                                    ${exists ? '' : 'disabled'}
-                                    title="${exists ? '在字幕编辑器中打开' : '文件不存在'}">
-                                    ${exists ? '打开字幕' : '文件缺失'}
-                                </button>
-                            </div>`;
-                        }).join('')}
-                    </div>`;
-                } else {
-                    filesHtml = '<p class="text-[11px] text-gray-400 mt-1">此记录无字幕路径（旧版历史或未生成文件）</p>';
-                }
-                div.innerHTML = `
-                    <div class="font-medium text-gray-800">${escHtml(formatHistoryTime(e.finishedAt || e.startedAt))}</div>
-                    <div class="text-gray-600">共 ${e.total || 0} · 成功 ${e.generated || 0} · 跳过 ${e.skipped || 0} · 失败 ${e.failed || 0}${e.cancelled ? ' · 已取消' : ''}${e.task ? ` · ${escHtml(e.task)}` : ''}</div>
-                    ${filesHtml}`;
-                list.appendChild(div);
+            const res = await electron?.transubOpenSubtitleLibrary?.({
+                mediaId: opts.mediaId || '',
+                mediaPath: opts.mediaPath || '',
+                versionId: opts.versionId || '',
             });
+            if (res?.ok === false) {
+                core()?.appendLog(res?.error || '无法打开字幕库', 'err');
+                appAlert(res?.error || '无法打开字幕库');
+            }
+            return res;
+        } catch (err) {
+            core()?.appendLog(err?.message || '无法打开字幕库', 'err');
+            appAlert(err?.message || '无法打开字幕库');
+            return { ok: false, error: err?.message || String(err) };
         }
-        if (clearBtn) clearBtn.disabled = items.length === 0;
     }
 
-    async function openHistorySubtitle(subPath, videoPath) {
-        const path = String(subPath || '').trim();
-        if (!path) {
-            core()?.appendLog('缺少字幕路径', 'err');
+    /** @deprecated use openSubtitleLibrary */
+    async function openLibraryModal(opts = {}) {
+        return openSubtitleLibrary(opts);
+    }
+
+    let cachedLibraryRoot = '';
+
+    async function refreshLibrarySettingsStatus() {
+        const els = [
+            document.getElementById('librarySettingsStatus'),
+        ].filter(Boolean);
+        if (!els.length) return null;
+        const setAll = (text, title) => {
+            for (const el of els) {
+                el.textContent = text;
+                if (title != null) el.title = title;
+            }
+        };
+        try {
+            const res = await electron?.transubLibraryStatus?.();
+            if (!res?.ok) {
+                setAll(res?.error || '无法读取字幕库状态', '');
+                cachedLibraryRoot = '';
+                return res;
+            }
+            cachedLibraryRoot = String(res.root || '').trim();
+            const media = Number(res.mediaCount) || 0;
+            const versions = Number(res.versionCount) || 0;
+            const tracks = Number(res.trackCount) || 0;
+            const limit = res.caps?.maxVersionsPerTrack;
+            const limitText = Number.isFinite(Number(limit)) ? ` · 每轨最多 ${limit} 版` : '';
+            const proText = res.caps?.libraryPro ? ' · Pro' : ' · 免费';
+            const line = `${media} 部作品 · ${tracks} 轨 · ${versions} 版${limitText}${proText}`
+                + (cachedLibraryRoot ? `\n${cachedLibraryRoot}` : '');
+            setAll(line, cachedLibraryRoot || '');
+            return res;
+        } catch (err) {
+            setAll(err?.message || '无法读取字幕库状态', '');
+            cachedLibraryRoot = '';
+            return { ok: false, error: err?.message || String(err) };
+        }
+    }
+
+    async function revealLibraryRoot() {
+        let root = cachedLibraryRoot;
+        if (!root) {
+            const st = await refreshLibrarySettingsStatus();
+            root = String(st?.root || cachedLibraryRoot || '').trim();
+        }
+        if (!root) {
+            core()?.appendLog('未找到字幕库目录', 'err');
             return;
         }
         try {
-            const check = await electron?.transubFileExists?.({ path });
-            if (!check?.ok) {
-                core()?.appendLog(check?.error || '无法检测字幕文件', 'err');
-                return;
-            }
-            if (!check.exists) {
-                core()?.appendLog(`字幕文件不存在：${basenamePath(path)}`, 'err');
-                appAlert(`字幕文件不存在：\n${path}`);
-                // Refresh list so the button state updates
-                const res = await electron?.transWithAiGetTaskHistory?.();
-                if (res?.ok) renderHistoryList(res.entries);
-                return;
-            }
-            const opened = await global.TransubSubtitleEditor?.openEditor?.(path, videoPath || '');
-            if (opened) {
-                document.getElementById('historyModal')?.classList.add('hidden');
+            const res = await electron?.showInFolder?.(root);
+            if (res?.ok === false) {
+                core()?.appendLog(res?.error || '无法打开库目录', 'err');
             }
         } catch (err) {
-            core()?.appendLog(err?.message || '打开字幕失败', 'err');
-        }
-    }
-
-    async function openHistoryModal() {
-        const modal = document.getElementById('historyModal');
-        if (!modal) return;
-        const res = await electron?.transWithAiGetTaskHistory?.();
-        renderHistoryList(res?.ok ? res.entries : []);
-        if (!res?.ok) {
-            core()?.appendLog(res?.error || '加载任务历史失败', 'err');
-        }
-        modal.classList.remove('hidden');
-    }
-
-    async function clearHistoryRecords() {
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        if (clearBtn?.disabled) return;
-        if (!(await appConfirmMsg('确定清除全部任务历史？此操作不可恢复。', { title: '清除历史', danger: true }))) return;
-        if (clearBtn) clearBtn.disabled = true;
-        try {
-            const res = await electron?.transWithAiClearTaskHistory?.();
-            if (!res?.ok) {
-                core()?.appendLog(res?.error || '清除任务历史失败', 'err');
-                renderHistoryList((await electron?.transWithAiGetTaskHistory?.())?.entries || []);
-                return;
-            }
-            renderHistoryList([]);
-            core()?.appendLog('已清除全部任务历史', 'ok');
-        } catch (err) {
-            core()?.appendLog(err?.message || '清除任务历史失败', 'err');
-            if (clearBtn) clearBtn.disabled = false;
+            core()?.appendLog(err?.message || '无法打开库目录', 'err');
         }
     }
 
@@ -328,33 +375,15 @@
         document.getElementById('closePreviewBtn')?.addEventListener('click', () => {
             document.getElementById('previewModal')?.classList.add('hidden');
         });
-        document.getElementById('closeHistoryBtn')?.addEventListener('click', () => {
-            document.getElementById('historyModal')?.classList.add('hidden');
-        });
-        document.getElementById('clearHistoryBtn')?.addEventListener('click', () => {
-            void clearHistoryRecords();
-        });
-        document.getElementById('historyList')?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-history-open-sub]');
-            if (!btn || btn.disabled) return;
-            e.preventDefault();
-            void openHistorySubtitle(
-                btn.getAttribute('data-history-open-sub'),
-                btn.getAttribute('data-history-open-video') || '',
-            );
-        });
         document.getElementById('previewModal')?.addEventListener('click', (e) => {
             if (e.target.id === 'previewModal') e.currentTarget.classList.add('hidden');
-        });
-        document.getElementById('historyModal')?.addEventListener('click', (e) => {
-            if (e.target.id === 'historyModal') e.currentTarget.classList.add('hidden');
         });
     }
 
     const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
     const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
     const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
-    const AFDIAN_PURCHASE_URL = 'https://afdian.com/a/transub';
+    const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     function moreStatusEl() {
         return document.getElementById('moreStatus');
@@ -558,7 +587,9 @@
                 triggerBtn: document.getElementById('checkUpdateToolbarBtn'),
             });
         });
-        document.getElementById('openHistoryBtn')?.addEventListener('click', openHistoryModal);
+        document.getElementById('openLibraryBtn')?.addEventListener('click', () => { void openSubtitleLibrary(); });
+        document.getElementById('revealLibraryRootBtn')?.addEventListener('click', () => { void revealLibraryRoot(); });
+        void refreshLibrarySettingsStatus();
         document.getElementById('clearTranscriptCacheBtn')?.addEventListener('click', async () => {
             const status = document.getElementById('historySettingsStatus');
             if (!(await appConfirmMsg('确定清理历史转录缓存？将删除「保留位置」目录中的字幕文件。', { title: '清理缓存', danger: true }))) return;
@@ -673,7 +704,7 @@
         try {
             const res = await electron?.transWithAiSavePreset?.({
                 name,
-                options: core().buildSavedOptionsFromForm(),
+                options: optionsForSavePreset(core().buildSavedOptionsFromForm()),
             });
             if (res?.ok) {
                 await loadPresets();
@@ -704,6 +735,7 @@
         const el = document.getElementById('paramsPresetStatus');
         if (!el) return;
         el.textContent = text || '';
+        el.dataset.tone = tone || '';
         if (tone === 'ok') el.className = 'text-xs text-emerald-600 min-h-[1rem]';
         else if (tone === 'err') el.className = 'text-xs text-red-600 min-h-[1rem]';
         else if (tone === 'warn') el.className = 'text-xs text-amber-700 min-h-[1rem]';
@@ -772,8 +804,29 @@
     }
 
     function bindPresets() {
+        document.getElementById('presetSelect')?.addEventListener('focus', (e) => {
+            e.target.dataset.prevPresetId = e.target.value || '';
+        });
         document.getElementById('presetSelect')?.addEventListener('change', (e) => {
-            if (e.target.value) applyPreset(e.target.value);
+            // Clear sticky ok/err so the description can show after picking another preset.
+            const status = document.getElementById('paramsPresetStatus');
+            if (status) status.dataset.tone = '';
+            syncPresetSelectDescription();
+            if (e.target.value) {
+                // Settings apply keeps prior sense unless explicitly disabled; main-window
+                // menu always passes autoSense:false. Align settings with closing sense
+                // so the toolbar「参数」chip reflects the chosen preset.
+                const sel = e.target;
+                const prev = String(sel.dataset.prevPresetId || '').trim();
+                void applyPreset(sel.value, { autoSense: false }).then((ok) => {
+                    if (ok === false) {
+                        sel.value = prev;
+                        syncPresetSelectDescription();
+                        return;
+                    }
+                    sel.dataset.prevPresetId = sel.value || '';
+                });
+            }
         });
         document.getElementById('savePresetBtn')?.addEventListener('click', () => {
             openPresetNameModal();
@@ -848,6 +901,9 @@
         applyPreset,
         showInstallWizard,
         showSubtitlePreview,
+        openSubtitleLibrary,
+        openLibraryModal,
+        refreshLibrarySettingsStatus,
         appendInferLog,
         activateLogTab,
     };

@@ -73,7 +73,7 @@ function mergeTransWithAiOptions(input = {}) {
         installPath: DEFAULT_INSTALL_PATH,
         device: 'cuda',
         task: 'translate',
-        overwrite: false,
+        overwrite: true,
         closeWindowOnComplete: false,
         postTaskAction: 'none',
         quitAppOnComplete: false,
@@ -108,25 +108,45 @@ function mergeTransWithAiOptions(input = {}) {
         dualDisplayMode: 'both',
         // Match settings UI default: 译文在上，原文在下
         dualLineOrder: 'target-first',
-        mergeBilingualSubtitles: false,
+        // Pref; runtime jobs still apply merge only when task === dual.
+        mergeBilingualSubtitles: true,
         deleteSourcesAfterMergeBilingual: false,
         includeWords: false,
         karaokeVtt: false,
-        releaseGpuAfter: null,
+        releaseGpuAfter: true,
+        // Pre-wizard / missing-key default: 推理翻译
+        translateMode: 'llm',
         postBatchCpsSplit: true,
         postBatchRemoveNoise: true,
         postBatchCompressRepetition: true,
-        postBatchCompactPureInterjections: false,
+        // 观影文本精简三档：off | light | clear（默认清除）
+        postBatchViewingPunctMode: 'clear',
+        postBatchInterjectionMode: 'clear',
+        postBatchOnomatopoeiaMode: 'clear',
+        // 兼容旧布尔（merge 时会迁移到 *Mode）
+        postBatchSimplifyViewingPunctuation: true,
+        postBatchCompactPureInterjections: true,
         postBatchContextReconstruct: false,
         smartTranslate: false,
         smartTranslateFaithfulTone: true,
+        smartTranslateHybridMt: true,
+        smartTranslatePlotPolish: true,
+        smartTranslatePolishSampleLimit: 36,
         sakuraNsfwPrompt: null,
         filmAudioEnhance: false,
         filmVadPreset: false,
+        filmVadThreshold: null,
+        filmVadMinSpeechDurationMs: null,
+        filmVadMinSilenceDurationMs: null,
+        filmHallucinationSilenceThreshold: null,
+        neuralDiarize: false,
         vadEnabled: true,
         vadSensitive: false,
         vadAggressive: false,
         audioLightDenoise: false,
+        autoSuggestSpeakers: false,
+        speakerCount: 2,
+        perfProfile: 'quality',
         vadMaxSingleSegmentMs: 30000,
         smartSplitWithVad: true,
         targetChunkDurationS: 30,
@@ -141,13 +161,23 @@ function mergeTransWithAiOptions(input = {}) {
         minimizeToTrayEnabled: true,
         minimizeToTrayOnStart: false,
         trayNotifyEnabled: false,
+        rememberLastOpenDir: true,
+        lastOpenDir: '',
         startupWindow: 'generator',
         autoUpdateCheckInterval: 'weekly',
         lastAutoUpdateCheckAt: '',
         autoSense: true,
+        activePresetId: '',
+        mtUseForm: false,
         autoDeepSense: false,
         postBatchQc: true,
-        postBatchQcFixMode: 'none',
+        postBatchQcFixMode: 'smart',
+        qcSmartLlmSplit: true,
+        qcSmartRetranscribe: true,
+        qcSmartSemanticReview: true,
+        qcSmartIntensity: 'light',
+        qcSmartMaxRetranscribeRanges: 8,
+        libraryOpenAfterBatch: false,
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
@@ -182,7 +212,57 @@ function mergeTransWithAiOptions(input = {}) {
     } else if (Object.prototype.hasOwnProperty.call(input, 'autoSense')) {
         merged.autoSense = input.autoSense !== false;
     }
+    {
+        const pid = String(merged.activePresetId || '').trim();
+        merged.activePresetId = merged.autoSense ? '' : pid;
+    }
+    merged.audioLightDenoise = !!merged.audioLightDenoise;
+    merged.autoSuggestSpeakers = !!merged.autoSuggestSpeakers;
+    {
+        const n = Math.floor(Number(merged.speakerCount));
+        merged.speakerCount = Number.isFinite(n) ? Math.max(2, Math.min(8, n)) : 2;
+    }
+    {
+        const v = String(merged.perfProfile || 'quality').trim().toLowerCase();
+        merged.perfProfile = v === 'speed' ? 'speed' : 'quality';
+    }
     delete merged.autoContentProfile;
+
+    // 观影精简三档：优先 *Mode；否则从旧布尔迁移（true→light / clear 由缺省，false→off）
+    const normClean = (raw, fallback) => {
+        const v = String(raw ?? '').trim().toLowerCase();
+        if (v === 'off' || v === 'none') return 'off';
+        if (v === 'light' || v === 'mild' || v === 'soft') return 'light';
+        if (v === 'clear' || v === 'remove' || v === 'drop' || v === 'full') return 'clear';
+        return fallback;
+    };
+    if (Object.prototype.hasOwnProperty.call(input, 'postBatchViewingPunctMode')) {
+        merged.postBatchViewingPunctMode = normClean(input.postBatchViewingPunctMode, 'clear');
+    } else if (Object.prototype.hasOwnProperty.call(input, 'postBatchSimplifyViewingPunctuation')) {
+        merged.postBatchViewingPunctMode = input.postBatchSimplifyViewingPunctuation === false ? 'off' : 'light';
+    } else {
+        merged.postBatchViewingPunctMode = normClean(merged.postBatchViewingPunctMode, 'clear');
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'postBatchInterjectionMode')) {
+        merged.postBatchInterjectionMode = normClean(input.postBatchInterjectionMode, 'clear');
+    } else if (Object.prototype.hasOwnProperty.call(input, 'postBatchCompactPureInterjections')) {
+        merged.postBatchInterjectionMode = input.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+    } else {
+        merged.postBatchInterjectionMode = normClean(merged.postBatchInterjectionMode, 'clear');
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'postBatchOnomatopoeiaMode')) {
+        merged.postBatchOnomatopoeiaMode = normClean(input.postBatchOnomatopoeiaMode, 'clear');
+    } else if (Object.prototype.hasOwnProperty.call(input, 'postBatchCompactPureInterjections')
+        && !Object.prototype.hasOwnProperty.call(input, 'postBatchOnomatopoeiaMode')) {
+        // 旧「精简纯语气词」同时覆盖拟声
+        merged.postBatchOnomatopoeiaMode = input.postBatchCompactPureInterjections === false ? 'off' : 'clear';
+    } else {
+        merged.postBatchOnomatopoeiaMode = normClean(merged.postBatchOnomatopoeiaMode, 'clear');
+    }
+    // 同步派生布尔，供尚未改完的调用方
+    merged.postBatchSimplifyViewingPunctuation = merged.postBatchViewingPunctMode !== 'off';
+    merged.postBatchCompactPureInterjections = merged.postBatchInterjectionMode === 'clear'
+        || merged.postBatchOnomatopoeiaMode === 'clear';
 
     // Normalize startup window preference
     const startupRaw = String(merged.startupWindow || '').trim().toLowerCase();
@@ -201,6 +281,52 @@ function mergeTransWithAiOptions(input = {}) {
             : 'weekly';
     }
     merged.lastAutoUpdateCheckAt = String(merged.lastAutoUpdateCheckAt || '').trim();
+    merged.rememberLastOpenDir = merged.rememberLastOpenDir !== false;
+    merged.lastOpenDir = String(merged.lastOpenDir || '').trim();
+
+    merged.smartTranslateHybridMt = merged.smartTranslateHybridMt !== false;
+    merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;
+    {
+        const n = Number(merged.smartTranslatePolishSampleLimit);
+        merged.smartTranslatePolishSampleLimit = Number.isFinite(n)
+            ? Math.max(4, Math.min(36, Math.round(n)))
+            : 36;
+    }
+    const optFilmNum = (raw, min, max) => {
+        if (raw == null || String(raw).trim() === '') return null;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return null;
+        return Math.max(min, Math.min(max, n));
+    };
+    merged.filmVadThreshold = optFilmNum(merged.filmVadThreshold, 0.05, 0.95);
+    merged.filmVadMinSpeechDurationMs = (() => {
+        const n = optFilmNum(merged.filmVadMinSpeechDurationMs, 50, 2000);
+        return n == null ? null : Math.round(n);
+    })();
+    merged.filmVadMinSilenceDurationMs = (() => {
+        const n = optFilmNum(merged.filmVadMinSilenceDurationMs, 50, 2000);
+        return n == null ? null : Math.round(n);
+    })();
+    if (merged.filmHallucinationSilenceThreshold === 0 || merged.filmHallucinationSilenceThreshold === '0') {
+        merged.filmHallucinationSilenceThreshold = 0;
+    } else {
+        const h = optFilmNum(merged.filmHallucinationSilenceThreshold, 0.1, 30);
+        merged.filmHallucinationSilenceThreshold = h;
+    }
+    merged.qcSmartLlmSplit = merged.qcSmartLlmSplit !== false;
+    merged.qcSmartRetranscribe = merged.qcSmartRetranscribe !== false;
+    merged.qcSmartSemanticReview = merged.qcSmartSemanticReview !== false;
+    {
+        const v = String(merged.qcSmartIntensity || '').trim().toLowerCase();
+        merged.qcSmartIntensity = (v === 'medium' || v === 'strong') ? v : 'light';
+    }
+    {
+        const n = Number(merged.qcSmartMaxRetranscribeRanges);
+        merged.qcSmartMaxRetranscribeRanges = Number.isFinite(n)
+            ? Math.max(1, Math.min(24, Math.round(n)))
+            : 8;
+    }
+    merged.libraryOpenAfterBatch = !!merged.libraryOpenAfterBatch;
 
     return {
         ...merged,

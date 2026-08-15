@@ -181,19 +181,40 @@
     }
 
     /**
-     * Map Whisper segment meta → [0,1] confidence.
-     * avg_logprob is typically in [-1, 0]; no_speech_prob in [0, 1].
+     * Map ASR segment meta → [0,1] confidence.
+     * Prefer Whisper avg_logprob; else backend confidence/score/probability in [0,1]
+     * (SenseVoice / Reazon / Qwen / aligner). Optional heuristic when allowHeuristic.
      */
     function confidenceFromAsrMeta(meta = {}, options = {}) {
         const avg = Number(meta.avgLogprob ?? meta.avg_logprob);
         const noSpeech = Number(meta.noSpeechProb ?? meta.no_speech_prob);
+        const direct = Number(
+            meta.confidence ?? meta.score ?? meta.probability ?? meta.prob,
+        );
         const threshold = Math.max(0.05, Math.min(0.95, Number(options.lowThreshold) || DEFAULT_LOW_THRESHOLD));
         let score = 0.72;
         const flags = [];
+        let source = 'asr';
         if (Number.isFinite(avg)) {
             // -0.2 → ~0.9, -0.6 → ~0.55, -1.0 → ~0.25
             score = Math.max(0.05, Math.min(0.98, 1 + avg));
             if (avg < -0.55) flags.push('low_logprob');
+            source = 'asr_logprob';
+        } else if (Number.isFinite(direct)) {
+            // Backends may emit 0–1 or 0–100.
+            score = direct > 1 ? Math.max(0.05, Math.min(0.98, direct / 100))
+                : Math.max(0.05, Math.min(0.98, direct));
+            if (score < threshold) flags.push('low_score');
+            source = 'asr_score';
+        } else if (options.allowHeuristic) {
+            const text = String(meta.text || '').trim();
+            if (!text) return null;
+            // Short / punctuation-heavy cues score lower for editor triage.
+            const chars = text.replace(/\s+/g, '').length;
+            score = chars <= 1 ? 0.35 : (chars <= 3 ? 0.5 : 0.68);
+            if (/^[.…・ー～~!！?？、，,\s]+$/u.test(text)) score = 0.28;
+            flags.push('heuristic');
+            source = 'asr_heuristic';
         } else {
             return null;
         }
@@ -211,9 +232,10 @@
             confidence,
             flags,
             low: confidence < threshold,
-            source: 'asr',
+            source,
             avgLogprob: Number.isFinite(avg) ? avg : undefined,
             noSpeechProb: Number.isFinite(noSpeech) ? noSpeech : undefined,
+            score: Number.isFinite(direct) ? direct : undefined,
         };
     }
 
@@ -241,7 +263,14 @@
             const scored = confidenceFromAsrMeta({
                 avgLogprob: meta.avgLogprob ?? meta.avg_logprob ?? c.avgLogprob ?? c.avg_logprob,
                 noSpeechProb: meta.noSpeechProb ?? meta.no_speech_prob ?? c.noSpeechProb ?? c.no_speech_prob,
-            }, options);
+                confidence: meta.confidence ?? c.confidence,
+                score: meta.score ?? c.score,
+                probability: meta.probability ?? meta.prob ?? c.probability ?? c.prob,
+                text,
+            }, {
+                ...options,
+                allowHeuristic: options.allowHeuristic !== false,
+            });
             if (!scored) continue;
             const cue = { startMs, endMs, text };
             entries.push({
@@ -252,7 +281,9 @@
                 fingerprint: cueFingerprint(cue),
                 confidence: scored.confidence,
                 flags: scored.flags,
+                // Editor / mergeConfidenceAnnotations treat source==='asr' as ASR-seeded.
                 source: 'asr',
+                asrScoreKind: scored.source,
                 confirmed: false,
                 avgLogprob: scored.avgLogprob,
                 noSpeechProb: scored.noSpeechProb,
@@ -265,6 +296,62 @@
             entries,
             asrSeeded: true,
         };
+    }
+
+    /**
+     * Merge ASR confidence entries for a replaced time range into an existing sidecar.
+     * Drops prior entries overlapping [startMs, endMs], inserts new entries, reindexes.
+     */
+    function mergeRangeAsrSidecarEntries(existingMeta, rangeEntries, options = {}) {
+        const startMs = Math.max(0, Math.round(Number(options.startMs) || 0));
+        const endMs = Math.max(startMs, Math.round(Number(options.endMs) || 0));
+        const prev = Array.isArray(existingMeta?.entries) ? existingMeta.entries : [];
+        const kept = prev.filter((e) => {
+            const a = Number(e?.startMs) || 0;
+            const b = Number.isFinite(Number(e?.endMs)) ? Number(e.endMs) : a;
+            return !(a < endMs && b > startMs);
+        });
+        const incoming = (Array.isArray(rangeEntries) ? rangeEntries : []).map((e) => {
+            const s = Number(e?.startMs) || 0;
+            const en = Number.isFinite(Number(e?.endMs)) ? Number(e.endMs) : s;
+            const text = String(e?.text || '');
+            return {
+                startMs: s,
+                endMs: en,
+                text,
+                fingerprint: e?.fingerprint || cueFingerprint({ startMs: s, endMs: en, text }),
+                confidence: Number.isFinite(Number(e?.confidence)) ? Number(e.confidence) : null,
+                flags: Array.isArray(e?.flags) ? e.flags.slice() : [],
+                source: String(e?.source || 'asr'),
+                asrScoreKind: e?.asrScoreKind,
+                confirmed: e?.confirmed === true,
+                avgLogprob: e?.avgLogprob,
+                noSpeechProb: e?.noSpeechProb,
+            };
+        });
+        const merged = kept.concat(incoming).sort((a, b) => {
+            const ds = (Number(a.startMs) || 0) - (Number(b.startMs) || 0);
+            if (ds !== 0) return ds;
+            return (Number(a.endMs) || 0) - (Number(b.endMs) || 0);
+        }).map((e, index) => ({ ...e, index }));
+        return {
+            version: META_VERSION,
+            updatedAt: new Date().toISOString(),
+            sourceSub: String(options.sourceSub || existingMeta?.sourceSub || ''),
+            entries: merged,
+            asrSeeded: true,
+            markers: existingMeta?.markers,
+        };
+    }
+
+    /** Build range entries from engine cues then merge into an existing sidecar. */
+    function mergeRangeAsrConfidenceFromCues(existingMeta, cues, options = {}) {
+        const built = buildAsrSidecarFromEngineCues(cues, {
+            lowThreshold: options.lowThreshold,
+            allowHeuristic: options.allowHeuristic,
+            sourceSub: options.sourceSub || existingMeta?.sourceSub,
+        });
+        return mergeRangeAsrSidecarEntries(existingMeta, built.entries, options);
     }
 
     /**
@@ -462,6 +549,8 @@
         annotateCuesConfidence,
         confidenceFromAsrMeta,
         buildAsrSidecarFromEngineCues,
+        mergeRangeAsrSidecarEntries,
+        mergeRangeAsrConfidenceFromCues,
         mergeConfidenceAnnotations,
         buildSidecarDocument,
         summarizeLowConfidence,

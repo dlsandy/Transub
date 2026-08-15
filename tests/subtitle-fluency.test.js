@@ -163,28 +163,32 @@ function testCompressRepetition() {
 
     const a = compressRepetitionInText('好的好的好的好的好的好的好的好的');
     assert.ok(a.changed);
-    assert.strictEqual(a.text, '好的…好的！');
+    assert.strictEqual(a.text, '好的好的！');
 
     const b = compressRepetitionInText('太好了太好了太好了太好了太好了太好了太好');
     assert.ok(b.changed);
-    assert.strictEqual(b.text, '太好了…太好了！');
+    assert.strictEqual(b.text, '太好了太好了！');
 
     const c = compressRepetitionInText('来 这边也要 从这边过去 啊 走走走走走走走走走走');
     assert.ok(c.changed);
-    assert.ok(c.text.includes('走…走！'));
+    assert.ok(c.text.includes('走走！'));
     assert.ok(c.text.includes('从这边过去'));
 
     const d = compressRepetitionInText('啊 真好笑 哈哈哈哈哈哈哈哈');
-    assert.strictEqual(d.text, '啊 真好笑 哈…哈！');
+    assert.strictEqual(d.text, '啊 真好笑 哈哈！');
 
     const e = compressRepetitionInText('快点 快点 快点 快点');
-    assert.strictEqual(e.text, '快点…快点！');
+    assert.strictEqual(e.text, '快点快点！');
 
     const f = compressRepetitionInText('哈哈哈哈哈哈');
-    assert.strictEqual(f.text, '哈…哈！');
+    assert.strictEqual(f.text, '哈哈！');
 
     const g = compressRepetitionInText('好的好的');
     assert.ok(!g.changed, '少于 3 次不压缩');
+
+    const legacy = compressRepetitionInText('好的…好的！');
+    assert.ok(legacy.changed);
+    assert.strictEqual(legacy.text, '好的好的！');
 
     const cues = [
         { startMs: 0, endMs: 1000, text: '好的好的好的好的' },
@@ -193,14 +197,51 @@ function testCompressRepetition() {
     ];
     const batch = compressRepetitionInCues(cues);
     assert.strictEqual(batch.stats.cueTouched, 2);
-    assert.strictEqual(batch.cues[0].text, '好的…好的！');
+    assert.strictEqual(batch.cues[0].text, '好的好的！');
     assert.strictEqual(batch.cues[1].text, '正常对白');
-    assert.ok(batch.cues[2].text.includes('加油…加油！'));
-    assert.ok(batch.cues[2].text.includes('快点…快点！'));
+    assert.ok(batch.cues[2].text.includes('加油加油！'));
+    assert.ok(batch.cues[2].text.includes('快点快点！'));
     assert.ok(summarizeRepetitionCompress(batch.stats).includes('压缩'));
 
     const scoped = compressRepetitionInCues(cues, { indexes: [1] });
     assert.strictEqual(scoped.stats.cueTouched, 0);
+}
+
+function testSimplifyViewingPunctuation() {
+    const {
+        simplifyViewingPunctuationInText,
+        simplifyViewingPunctuationInCues,
+    } = require('../src/js/subtitle-fluency-core');
+
+    const a = simplifyViewingPunctuationInText('你好，世界。真的吗？太棒了！！');
+    assert.ok(a.changed);
+    assert.strictEqual(a.text, '你好 世界 真的吗？太棒了！');
+
+    const clear = simplifyViewingPunctuationInText('你好，世界。真的吗？太棒了！！', { level: 'clear' });
+    assert.ok(clear.changed);
+    assert.strictEqual(clear.text, '你好 世界 真的吗？太棒了');
+
+    const b = simplifyViewingPunctuationInText('版本 3.14—测试、完成');
+    assert.ok(b.changed);
+    assert.strictEqual(b.text, '版本 3.14 测试 完成');
+
+    const ell = simplifyViewingPunctuationInText('等等…好的');
+    assert.ok(ell.changed);
+    assert.strictEqual(ell.text, '等等 好的');
+
+    const c = simplifyViewingPunctuationInText('什么？');
+    assert.ok(!c.changed);
+
+    const off = simplifyViewingPunctuationInText('你好。', { level: 'off' });
+    assert.ok(!off.changed);
+
+    const batch = simplifyViewingPunctuationInCues([
+        { startMs: 0, endMs: 1000, text: '走吧。' },
+        { startMs: 1000, endMs: 2000, text: '好的' },
+    ]);
+    assert.strictEqual(batch.stats.cueTouched, 1);
+    assert.strictEqual(batch.cues[0].text, '走吧');
+    assert.strictEqual(batch.cues[1].text, '好的');
 }
 
 function testJaFragmentStitch() {
@@ -312,6 +353,11 @@ function testDropPureInterjectionPairs() {
     assert.ok(isPureInterjectionZh('是啊'));
     assert.ok(isPureInterjectionZh('对'));
     assert.ok(isPureInterjectionZh('嗯，好的'));
+    assert.ok(isPureInterjectionZh('嗯嗯哈啊'));
+    assert.ok(isPureInterjectionZh('嗯唔嗯嗯'));
+    assert.ok(isPureInterjectionZh('唔嗯'));
+    assert.ok(isPureInterjectionZh('Boeh~'));
+    assert.ok(isPureInterjectionJa('んぶっ'));
     assert.ok(!isPureInterjectionZh('好舒服啊'));
     assert.ok(!isPureInterjectionZh('等一下'));
     assert.ok(!isPureInterjectionZh('好厉害'));
@@ -347,11 +393,27 @@ function testDropPureInterjectionPairs() {
     assert.strictEqual(dropped.zhCues[0].text, '嗯，没问题吧？');
     assert.strictEqual(dropped.zhCues[1].text, '等一下');
     assert.strictEqual(dropped.zhCues[2].text, '啊……');
-    assert.ok(summarizePureInterjectionDrop(2).includes('精简'));
+    assert.ok(summarizePureInterjectionDrop(2).includes('清除'));
 
-    const mismatch = dropPureInterjectionPairs(zh, ja.slice(0, 2));
-    assert.strictEqual(mismatch.dropped, 0);
-    assert.strictEqual(mismatch.skipped, true);
+    // Mismatched counts: clear by time overlap (not skip)
+    const mismatch = dropPureInterjectionPairs(
+        [
+            { startMs: 0, endMs: 400, text: '嗯嗯哈啊' },
+            { startMs: 500, endMs: 1200, text: '等一下' },
+            { startMs: 2000, endMs: 2400, text: 'Boeh~' },
+        ],
+        [
+            { startMs: 0, endMs: 350, text: 'はぁ' },
+            { startMs: 360, endMs: 450, text: 'んっ' },
+            { startMs: 500, endMs: 1200, text: 'ちょっと待って' },
+            { startMs: 2000, endMs: 2300, text: 'んぶっ' },
+        ],
+    );
+    assert.ok(!mismatch.skipped, 'mismatch should not skip');
+    assert.ok(mismatch.dropped >= 2, mismatch.dropped);
+    assert.ok(mismatch.zhCues.some((c) => c.text === '等一下'));
+    assert.ok(!mismatch.zhCues.some((c) => c.text === '嗯嗯哈啊'));
+    assert.ok(!mismatch.zhCues.some((c) => /Boeh/i.test(c.text)));
 
     // Blank JA + filler ZH still compact.
     const blanked = dropPureInterjectionPairs(
@@ -360,6 +422,16 @@ function testDropPureInterjectionPairs() {
     );
     assert.strictEqual(blanked.dropped, 1);
     assert.strictEqual(blanked.zhCues[0].text, '等一下');
+
+    const { dropPureFillerBilingualCues } = require('../src/js/subtitle-fluency-core');
+    const bi = dropPureFillerBilingualCues([
+        { startMs: 0, endMs: 400, text: '嗯\nうん' },
+        { startMs: 500, endMs: 1200, text: '等一下\nちょっと待って' },
+        { startMs: 1300, endMs: 1800, text: '哈啊\nはぁ' },
+    ], { dropDiscourse: true, dropOnomatopoeia: true });
+    assert.strictEqual(bi.dropped, 2);
+    assert.strictEqual(bi.cues.length, 1);
+    assert.strictEqual(bi.cues[0].text, '等一下\nちょっと待って');
 }
 
 describe("subtitle-fluency", () => {
@@ -386,6 +458,9 @@ describe("subtitle-fluency", () => {
     });
     it("compress repetition", () => {
         testCompressRepetition();
+    });
+    it("simplify viewing punctuation", () => {
+        testSimplifyViewingPunctuation();
     });
     it("stitch JA ASR fragments", () => {
         testJaFragmentStitch();

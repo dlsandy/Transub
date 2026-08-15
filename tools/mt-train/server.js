@@ -20,6 +20,7 @@ const { writePoisonDraft, listPoisonDrafts } = require('./lib/poison');
 const train = require('./lib/train');
 const autoPropose = require('./lib/auto-propose');
 const regressionGate = require('./lib/regression-gate');
+const shipGate = require('./lib/ship-gate');
 const autoQuality = require('./lib/auto-quality');
 const wizardTest = require('./lib/wizard-test');
 
@@ -542,8 +543,10 @@ async function handleApi(req, res, url) {
                 regressionGate: true,
                 rulesBoard: true,
                 wizardTest: true,
+                shipGate: true,
+                conflictReport: true,
             },
-            version: 9,
+            version: 10,
         });
     }
 
@@ -978,6 +981,36 @@ async function handleApi(req, res, url) {
 
     if (req.method === 'POST' && url.pathname === '/api/mocha') {
         return runSpawnSse(res, 'npx', ['mocha', 'tests/mt-sanitize.test.js', '--timeout', '60000']);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/conflicts') {
+        try {
+            const report = shipGate.runConflictStep();
+            return sendJson(res, report.ok ? 200 : 409, {
+                ok: report.ok,
+                summary: report.summary,
+                report: report.report,
+            });
+        } catch (err) {
+            return sendJson(res, 500, { ok: false, error: String(err && err.message ? err.message : err) });
+        }
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/ship-gate') {
+        const body = await readBody(req).catch(() => ({}));
+        const send = startSse(res);
+        try {
+            const result = await shipGate.runShipGate({
+                skipMocha: Boolean(body?.skipMocha),
+                onLog: (line) => send('log', { line }),
+            });
+            send('done', result);
+        } catch (err) {
+            send('log', { line: `ERROR: ${err && err.message ? err.message : err}` });
+            send('done', { ok: false, blocked: true, summary: String(err && err.message ? err.message : err) });
+        }
+        res.end();
+        return undefined;
     }
 
     if (req.method === 'POST' && url.pathname === '/api/tdp') {

@@ -70,6 +70,7 @@ describe('film audio / free audio options persistence', () => {
     it('preserves engine extras (filmVadPreset, glossaryMt, words/karaoke)', () => {
         const normalized = buildTransWithAiOptionsFromPayload({
             filmVadPreset: true,
+            neuralDiarize: true,
             glossaryMtEnabled: false,
             includeWords: true,
             karaokeVtt: true,
@@ -81,6 +82,7 @@ describe('film audio / free audio options persistence', () => {
         }, {});
         assert.strictEqual(normalized.filmVadPreset, true);
         assert.strictEqual(normalized.filmAudioEnhance, false);
+        assert.strictEqual(normalized.neuralDiarize, true);
         assert.strictEqual(normalized.glossaryMtEnabled, false);
         assert.strictEqual(normalized.includeWords, true);
         assert.strictEqual(normalized.karaokeVtt, true);
@@ -107,6 +109,7 @@ describe('film audio / free audio options persistence', () => {
             smartTranslate: true,
             task: 'translate',
             autoSense: false,
+            activePresetId: 'ja-av-anime-whisper-translate',
             engineProfile: 'quality',
             engineHfEndpoint: '',
         }, {
@@ -114,6 +117,7 @@ describe('film audio / free audio options persistence', () => {
             engineOpusMtModel: '',
             engineLlmMtModel: 'sakura-1.5b',
             autoSense: true,
+            activePresetId: '',
         });
         assert.strictEqual(normalized.engineAsrModel, 'whisper-large-v3-turbo');
         assert.strictEqual(normalized.engineVadModel, 'silero-vad');
@@ -121,8 +125,18 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(normalized.engineLlmMtModel, 'sakura-7b');
         assert.strictEqual(normalized.engineMtModel, '');
         assert.strictEqual(normalized.autoSense, false);
+        assert.strictEqual(normalized.activePresetId, 'ja-av-anime-whisper-translate');
         assert.strictEqual(normalized.engineProfile, 'quality');
         assert.strictEqual(normalized.engineHfEndpoint, '');
+    });
+
+    it('clears activePresetId when autoSense is on', () => {
+        const normalized = buildTransWithAiOptionsFromPayload({
+            autoSense: true,
+            activePresetId: 'ja-av-anime-whisper-translate',
+        }, {});
+        assert.strictEqual(normalized.autoSense, true);
+        assert.strictEqual(normalized.activePresetId, '');
     });
 
     it('migrates legacy silero VAD alias to silero-vad on save', () => {
@@ -150,6 +164,48 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(normalized.engineOpusMtModel, '');
         assert.strictEqual(normalized.engineLlmMtModel, 'sakura-7b');
         assert.strictEqual(normalized.engineMtModel, 'sakura-7b');
+    });
+
+    it('preserves empty LLM MT as 智能选择 (does not coerce to sakura-1.5b)', () => {
+        const normalized = buildTransWithAiOptionsFromPayload({
+            translateMode: 'llm',
+            engineLlmMtModel: '',
+            engineOpusMtModel: '',
+            engineMtModel: '',
+            smartTranslate: false,
+            task: 'translate',
+        }, {
+            engineLlmMtModel: 'sakura-1.5b',
+            engineMtModel: 'sakura-1.5b',
+        });
+        assert.strictEqual(normalized.engineLlmMtModel, '');
+        assert.strictEqual(normalized.engineMtModel, '');
+        assert.strictEqual(normalized.translateMode, 'llm');
+
+        const roundTrip = buildTransWithAiOptionsFromPayload(normalized, {});
+        assert.strictEqual(roundTrip.engineLlmMtModel, '');
+        assert.strictEqual(roundTrip.translateMode, 'llm');
+    });
+
+    it('persists mtUseForm (form MT while sense can stay on)', () => {
+        const on = buildTransWithAiOptionsFromPayload({ mtUseForm: true, autoSense: true }, {});
+        assert.strictEqual(on.mtUseForm, true);
+        assert.strictEqual(on.autoSense, true);
+        const off = buildTransWithAiOptionsFromPayload({ mtUseForm: false }, { mtUseForm: true });
+        assert.strictEqual(off.mtUseForm, false);
+        const def = buildTransWithAiOptionsFromPayload({}, {});
+        assert.strictEqual(def.mtUseForm, false);
+    });
+
+    it('persists settingsUiMode standard/expert for workspace (legacy field; UI no longer switches)', () => {
+        const expert = buildTransWithAiOptionsFromPayload({ settingsUiMode: 'expert' }, {});
+        assert.strictEqual(expert.settingsUiMode, 'expert');
+        const standard = buildTransWithAiOptionsFromPayload({ settingsUiMode: 'standard' }, { settingsUiMode: 'expert' });
+        assert.strictEqual(standard.settingsUiMode, 'standard');
+        const def = buildTransWithAiOptionsFromPayload({}, {});
+        assert.strictEqual(def.settingsUiMode, 'standard');
+        const junk = buildTransWithAiOptionsFromPayload({ settingsUiMode: 'nope' }, {});
+        assert.strictEqual(junk.settingsUiMode, 'standard');
     });
 
     it('persists explicit translateMode through normalize/save round-trip', () => {

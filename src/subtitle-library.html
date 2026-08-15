@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' file: blob: transub-media:; connect-src 'self'; font-src 'self' data:;">
+    <title>字幕库 — Transub</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
+    <link rel="stylesheet" href="vendor/app.css">
+    <script>
+        (function () {
+            try {
+                var dark = localStorage.getItem('transub.mainTheme') === 'dark'
+                    || localStorage.getItem('transub-editor-theme') === 'dark';
+                if (dark) {
+                    document.documentElement.classList.add('main-theme-dark');
+                    document.documentElement.style.colorScheme = 'dark';
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
+    <style>
+        :root {
+            --lib-bg: #eef0f4;
+            --lib-surface: #ffffff;
+            --lib-surface-2: #f7f8fa;
+            --lib-ink: #111827;
+            --lib-ink-soft: #4b5563;
+            --lib-muted: #8b93a1;
+            --lib-line: #e4e7ec;
+            --lib-line-strong: #cfd5de;
+            --lib-accent: #6d28d9;
+            --lib-accent-soft: #f0e9ff;
+            --lib-accent-ink: #5b21b6;
+            --lib-ok: #059669;
+            --lib-ok-soft: #ecfdf5;
+            --lib-warn-soft: #fff8eb;
+            --lib-warn-ink: #b45309;
+            --lib-danger: #dc2626;
+            --lib-danger-soft: #fef2f2;
+            --lib-sky-soft: #e0f2fe;
+            --lib-sky-ink: #0369a1;
+            --lib-indigo-soft: #e0e7ff;
+            --lib-indigo-ink: #3730a3;
+            --lib-radius: 12px;
+            --lib-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            --lib-detail-w: 560px;
+            --lib-detail-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
+        }
+        html.main-theme-dark {
+            --lib-bg: #0b1220;
+            --lib-surface: #151c2c;
+            --lib-surface-2: #0f1624;
+            --lib-ink: #f1f5f9;
+            --lib-ink-soft: #cbd5e1;
+            --lib-muted: #94a3b8;
+            --lib-line: #243044;
+            --lib-line-strong: #334155;
+            --lib-accent: #8b5cf6;
+            --lib-accent-soft: rgba(139, 92, 246, 0.2);
+            --lib-accent-ink: #ddd6fe;
+            --lib-ok: #34d399;
+            --lib-ok-soft: rgba(16, 185, 129, 0.14);
+            --lib-warn-soft: rgba(245, 158, 11, 0.14);
+            --lib-warn-ink: #fbbf24;
+            --lib-danger: #f87171;
+            --lib-danger-soft: rgba(239, 68, 68, 0.14);
+            --lib-sky-soft: rgba(14, 165, 233, 0.16);
+            --lib-sky-ink: #7dd3fc;
+            --lib-indigo-soft: rgba(99, 102, 241, 0.18);
+            --lib-indigo-ink: #a5b4fc;
+            --lib-shadow: none;
+            --lib-detail-shadow: -16px 0 48px rgba(0, 0, 0, 0.45);
+        }
+
+        * { box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; margin: 0; }
+        body {
+            background: var(--lib-bg);
+            color: var(--lib-ink);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-size: 13px;
+        }
+
+        .lib-topbar {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.5rem 0.85rem;
+            background: var(--lib-surface);
+            border-bottom: 1px solid var(--lib-line);
+        }
+        .lib-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 0;
+        }
+        .lib-title {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .lib-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.12rem 0.45rem;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            background: var(--lib-accent-soft);
+            color: var(--lib-accent-ink);
+        }
+        .lib-badge.hidden { display: none !important; }
+        .lib-topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-shrink: 0;
+        }
+        .lib-status { font-size: 11px; color: var(--lib-muted); }
+
+        .lib-toolbar {
+            flex-shrink: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.5rem 0.85rem;
+            background: var(--lib-surface);
+            border-bottom: 1px solid var(--lib-line);
+        }
+        .lib-toolbar .lib-input {
+            width: min(18rem, 42vw);
+            min-width: 10rem;
+        }
+        .lib-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            align-items: center;
+        }
+        .lib-filters.is-hidden { display: none; }
+        .lib-filters-hint {
+            display: none;
+            font-size: 11px;
+            color: var(--lib-muted);
+        }
+        .lib-filters-hint.is-visible { display: inline; }
+        .lib-filters-hint button {
+            border: 0;
+            background: transparent;
+            color: var(--lib-accent-ink);
+            cursor: pointer;
+            padding: 0;
+            font: inherit;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+        .lib-toolbar-spacer { flex: 1; min-width: 0.5rem; }
+        .lib-quick-filters {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            align-items: center;
+        }
+        .lib-more-filters {
+            display: none;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            align-items: center;
+        }
+        .lib-more-filters.is-open { display: inline-flex; }
+        .lib-chip-btn.is-more-toggle.is-on {
+            background: var(--lib-surface);
+            border-color: var(--lib-line-strong);
+            color: var(--lib-ink);
+        }
+        .lib-batch-danger-sep {
+            width: 1px;
+            height: 1.1rem;
+            background: var(--lib-line-strong);
+            margin: 0 0.15rem;
+            flex-shrink: 0;
+        }
+        .lib-player-ab {
+            display: none;
+            align-items: center;
+            gap: 0.2rem;
+            flex-wrap: wrap;
+            margin-top: 0.45rem;
+            padding-top: 0.45rem;
+            border-top: 1px solid var(--lib-line);
+        }
+        .lib-player-ab.is-on { display: flex; }
+        .lib-player-ab .lib-btn {
+            min-width: 1.7rem;
+            padding: 0.18rem 0.4rem;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .lib-player-ab .lib-btn.is-active {
+            background: var(--lib-accent-soft);
+            color: var(--lib-accent-ink);
+            border-color: transparent;
+        }
+        .lib-ver {
+            cursor: pointer;
+        }
+        .lib-ver:hover {
+            background: var(--lib-surface-2);
+        }
+        .lib-chip-btn {
+            border: 1px solid var(--lib-line);
+            background: var(--lib-surface-2);
+            color: var(--lib-ink-soft);
+            border-radius: 999px;
+            padding: 0.22rem 0.55rem;
+            font-size: 11px;
+            font-weight: 650;
+            cursor: pointer;
+        }
+        .lib-chip-btn:hover { border-color: var(--lib-line-strong); color: var(--lib-ink); }
+        .lib-chip-btn.is-on {
+            background: var(--lib-accent-soft);
+            border-color: transparent;
+            color: var(--lib-accent-ink);
+        }
+
+        .lib-workspace {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+            display: flex;
+            overflow: hidden;
+        }
+        .lib-main {
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: margin-right 0.22s ease;
+        }
+        body.has-library-detail .lib-main {
+            margin-right: calc(min(var(--lib-detail-w), 92vw) + 0.7rem);
+        }
+        .lib-list-pane {
+            flex: 1 1 auto;
+            min-height: 8rem;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--lib-surface);
+            margin: 0.55rem 0.7rem;
+            border: 1px solid var(--lib-line);
+            border-radius: var(--lib-radius);
+            box-shadow: var(--lib-shadow);
+        }
+        body.has-library-detail .lib-list-pane {
+            margin-right: 0.35rem;
+        }
+        .lib-list-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+        }
+
+        .lib-detail-drawer {
+            position: absolute;
+            top: 0.55rem;
+            right: 0.7rem;
+            bottom: 0.55rem;
+            z-index: 40;
+            width: min(var(--lib-detail-w), 92vw);
+            max-width: 900px;
+            display: flex;
+            flex-direction: row;
+            transform: translateX(calc(100% + 1.25rem));
+            transition: transform 0.22s ease;
+            pointer-events: none;
+        }
+        body.has-library-detail .lib-detail-drawer {
+            transform: translateX(0);
+            pointer-events: auto;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .lib-main,
+            .lib-detail-drawer { transition: none; }
+        }
+        .lib-drawer-splitter {
+            flex: 0 0 6px;
+            margin-left: -3px;
+            cursor: col-resize;
+            background: transparent;
+            position: relative;
+            z-index: 2;
+            touch-action: none;
+        }
+        .lib-drawer-splitter::after {
+            content: '';
+            position: absolute;
+            top: 0.75rem;
+            bottom: 0.75rem;
+            left: 2px;
+            width: 2px;
+            border-radius: 999px;
+            background: transparent;
+            transition: background 0.15s ease;
+        }
+        .lib-drawer-splitter:hover::after,
+        body.is-resizing-detail .lib-drawer-splitter::after {
+            background: var(--lib-accent);
+        }
+        body.is-resizing-detail { cursor: col-resize; user-select: none; }
+        body.is-resizing-detail .lib-main,
+        body.is-resizing-detail .lib-detail-drawer { transition: none; }
+
+        .lib-media-table {
+            table-layout: fixed;
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .lib-media-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: color-mix(in srgb, var(--lib-surface-2) 92%, transparent);
+            backdrop-filter: blur(6px);
+            color: var(--lib-muted);
+            font-size: 11px;
+            font-weight: 650;
+            text-align: left;
+            padding: 0.5rem 0.65rem;
+            border-bottom: 1px solid var(--lib-line);
+            white-space: nowrap;
+        }
+        .lib-media-table th.lib-col-sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        .lib-media-table th.lib-col-sortable:hover { color: var(--lib-ink-soft); }
+        .lib-media-table th.lib-col-sortable .lib-sort-ind {
+            display: inline-block;
+            margin-left: 0.2rem;
+            font-size: 9px;
+            opacity: 0.35;
+        }
+        .lib-media-table th.lib-col-sortable.is-sort-asc .lib-sort-ind,
+        .lib-media-table th.lib-col-sortable.is-sort-desc .lib-sort-ind {
+            opacity: 0.95;
+            color: var(--lib-accent);
+        }
+        .lib-media-table th.lib-col-sortable .lib-sort-ind::before {
+            content: '\f0dc';
+            font-family: FontAwesome;
+        }
+        .lib-media-table th.lib-col-sortable.is-sort-asc .lib-sort-ind::before { content: '\f0de'; }
+        .lib-media-table th.lib-col-sortable.is-sort-desc .lib-sort-ind::before { content: '\f0dd'; }
+
+        .lib-media-table .col-check { width: 2.25rem; min-width: 2.25rem; }
+        .lib-media-table .col-title { width: 36%; min-width: 9rem; }
+        .lib-media-table .col-src,
+        .lib-media-table .col-tgt,
+        .lib-media-table .col-bi { width: 5.25rem; text-align: right; }
+        .lib-media-table .col-time { width: 7.5rem; }
+        .lib-media-table th.col-src,
+        .lib-media-table th.col-tgt,
+        .lib-media-table th.col-bi,
+        .lib-media-table td.col-src,
+        .lib-media-table td.col-tgt,
+        .lib-media-table td.col-bi { text-align: right; }
+        .lib-col-resizer {
+            position: absolute;
+            top: 0;
+            right: -3px;
+            width: 7px;
+            height: 100%;
+            cursor: col-resize;
+            z-index: 3;
+        }
+        .lib-col-resizer:hover,
+        body.is-resizing-col .lib-col-resizer:hover {
+            background: color-mix(in srgb, var(--lib-accent) 35%, transparent);
+        }
+        body.is-resizing-col { cursor: col-resize; user-select: none; }
+        .lib-media-table td.col-check,
+        .lib-media-table th.col-check {
+            text-align: center;
+            padding-left: 0.4rem;
+            padding-right: 0.4rem;
+        }
+        .lib-media-table input[type="checkbox"] {
+            width: 0.9rem;
+            height: 0.9rem;
+            accent-color: var(--lib-accent);
+            cursor: pointer;
+        }
+        .lib-media-table tbody tr.is-checked {
+            background: color-mix(in srgb, var(--lib-accent-soft) 55%, transparent);
+        }
+        .lib-media-table tbody tr.is-active.is-checked {
+            background: var(--lib-accent-soft);
+        }
+        .lib-batch-bar {
+            display: none;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+        .lib-batch-bar.is-on { display: inline-flex; }
+        .lib-batch-count {
+            font-size: 11px;
+            font-weight: 650;
+            color: var(--lib-accent-ink);
+            background: var(--lib-accent-soft);
+            border-radius: 999px;
+            padding: 0.18rem 0.55rem;
+        }
+        .lib-count-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 0.05rem; line-height: 1.2; }
+        .lib-count-sub { font-size: 10px; color: var(--lib-muted); font-weight: 500; }
+
+        .lib-media-table tbody tr {
+            border-bottom: 1px solid var(--lib-line);
+            cursor: pointer;
+            transition: background 0.1s ease;
+        }
+        .lib-media-table tbody tr:hover { background: var(--lib-surface-2); }
+        .lib-media-table tbody tr.is-active {
+            background: var(--lib-accent-soft);
+            box-shadow: inset 3px 0 0 var(--lib-accent);
+        }
+        .lib-media-table td {
+            padding: 0.55rem 0.65rem;
+            vertical-align: middle;
+            color: var(--lib-ink-soft);
+        }
+        .lib-media-table td.col-title {
+            color: var(--lib-ink);
+            font-weight: 600;
+        }
+        .lib-media-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            min-width: 0;
+        }
+        .lib-media-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .lib-media-path {
+            margin-top: 0.12rem;
+            font-size: 10.5px;
+            font-weight: 400;
+            color: var(--lib-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .lib-status-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.22rem;
+            margin-top: 0.22rem;
+        }
+        .lib-status-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.06rem 0.38rem;
+            border-radius: 999px;
+            font-size: 9.5px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .lib-status-chip-danger {
+            background: var(--lib-danger-soft);
+            color: var(--lib-danger);
+        }
+        .lib-status-chip-warn {
+            background: var(--lib-warn-soft);
+            color: var(--lib-warn-ink);
+        }
+        .lib-status-chip-muted {
+            background: var(--lib-surface-2);
+            color: var(--lib-muted);
+        }
+        .lib-empty-note {
+            margin: 0.35rem 0 0;
+            font-size: 12px;
+            color: var(--lib-muted);
+        }
+        .lib-role-pills {
+            display: inline-flex;
+            flex-shrink: 0;
+            gap: 0.2rem;
+        }
+        .lib-role-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.15rem;
+            height: 1.15rem;
+            padding: 0 0.28rem;
+            border-radius: 999px;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            line-height: 1;
+        }
+        .lib-role-pill.is-src { background: var(--lib-sky-soft); color: var(--lib-sky-ink); }
+        .lib-role-pill.is-tgt { background: var(--lib-accent-soft); color: var(--lib-accent-ink); }
+        .lib-role-pill.is-bi { background: var(--lib-ok-soft); color: var(--lib-ok); }
+        .lib-role-pill.is-off {
+            background: var(--lib-surface-2);
+            color: var(--lib-muted);
+            opacity: 0.45;
+        }
+        .lib-role-pill.is-media { background: var(--lib-ok-soft); color: var(--lib-ok); }
+        .lib-role-pill.is-media-missing { background: var(--lib-danger-soft); color: var(--lib-danger); }
+        .lib-role-pill.is-playable {
+            background: var(--lib-ok-soft);
+            color: var(--lib-ok);
+            font-weight: 800;
+        }
+        .lib-media-link-row {
+            margin-top: 0.45rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .lib-media-link-label {
+            font-size: 11px;
+            font-weight: 650;
+            color: var(--lib-muted);
+        }
+        .lib-media-link-status {
+            font-size: 11px;
+            color: var(--lib-ink-soft);
+        }
+        .lib-media-link-status.is-ok { color: var(--lib-ok); }
+        .lib-media-link-status.is-warn { color: var(--lib-warn-ink); }
+        .lib-media-link-status.is-miss { color: var(--lib-danger); }
+
+        .lib-ctx-menu {
+            position: fixed;
+            z-index: 220;
+            min-width: 11.5rem;
+            padding: 0.3rem;
+            background: var(--lib-surface);
+            border: 1px solid var(--lib-line);
+            border-radius: 11px;
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+            display: flex;
+            flex-direction: column;
+            gap: 0.08rem;
+        }
+        .lib-ctx-menu.hidden { display: none !important; }
+        html.main-theme-dark .lib-ctx-menu {
+            box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
+        }
+        .lib-ctx-menu .lib-btn {
+            justify-content: flex-start;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            border-radius: 8px;
+            text-align: left;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .lib-ctx-menu .lib-btn:hover:not(:disabled) { background: var(--lib-surface-2); }
+        .lib-ctx-menu .lib-btn i {
+            width: 0.95rem;
+            text-align: center;
+            color: var(--lib-muted);
+        }
+        .lib-ctx-sep {
+            height: 1px;
+            background: var(--lib-line);
+            margin: 0.2rem 0.25rem;
+        }
+        .lib-num {
+            font-variant-numeric: tabular-nums;
+            font-weight: 650;
+            color: var(--lib-ink);
+        }
+        .lib-num.is-zero { color: var(--lib-muted); font-weight: 500; }
+        .lib-detail-pane {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid var(--lib-line);
+            border-radius: var(--lib-radius);
+            background: var(--lib-surface);
+            box-shadow: var(--lib-detail-shadow);
+        }
+        .lib-detail-bar {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.55rem 0.85rem;
+            border-bottom: 1px solid var(--lib-line);
+            border-radius: var(--lib-radius) var(--lib-radius) 0 0;
+            background: var(--lib-surface-2);
+            font-size: 12px;
+            font-weight: 650;
+            color: var(--lib-ink-soft);
+        }
+        #libraryDetailBarTitle {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .lib-detail-body {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 0.85rem 0.95rem 1.1rem;
+        }
+
+        .lib-player-modal-card {
+            width: min(1120px, 96vw);
+            max-height: min(90vh, 820px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--lib-surface);
+            color: var(--lib-ink);
+            border: 1px solid var(--lib-line);
+            border-radius: 14px;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+        }
+        .lib-player-modal-head {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.7rem 0.9rem;
+            border-bottom: 1px solid var(--lib-line);
+            background: var(--lib-surface-2);
+        }
+        .lib-player-modal-title {
+            margin: 0;
+            font-size: 0.92rem;
+            font-weight: 700;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .lib-player-modal-body {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+            background: var(--lib-surface);
+        }
+        @media (max-width: 820px) {
+            .lib-player-modal-body {
+                grid-template-columns: 1fr;
+                grid-template-rows: minmax(200px, 42vh) minmax(160px, 1fr);
+            }
+        }
+        .lib-player-host {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            min-height: 0;
+            background: #0b0f16;
+        }
+        .lib-player-host.is-on { display: flex; }
+        .lib-player-frame {
+            position: relative;
+            flex: 1;
+            min-height: 180px;
+            overflow: hidden;
+            background: #000;
+            outline: none;
+        }
+        .lib-player-frame:focus-visible {
+            box-shadow: inset 0 0 0 2px var(--lib-accent);
+        }
+        #libraryPlayerVideo {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+        #libraryPlayerVideo::-webkit-media-controls { display: none !important; }
+        .lib-player-empty {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 0.4rem;
+            padding: 1rem;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+            z-index: 1;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.55);
+        }
+        .lib-player-empty.visible { display: flex; }
+        .lib-player-empty .fa { font-size: 1.5rem; opacity: 0.6; }
+        .lib-player-subtitle {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 10%;
+            z-index: 2;
+            display: flex;
+            justify-content: center;
+            padding: 0 0.85rem;
+            pointer-events: none;
+        }
+        .lib-player-subtitle.hidden { display: none; }
+        .lib-player-subtitle-inner {
+            max-width: 94%;
+            padding: 0.35rem 0.75rem;
+            background: rgba(0, 0, 0, 0.78);
+            color: #fff;
+            font-size: clamp(13px, 1.8vw, 18px);
+            line-height: 1.45;
+            text-align: center;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .lib-player-bar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.45rem 0.6rem 0.55rem;
+            background: var(--lib-surface-2);
+            border-top: 1px solid var(--lib-line);
+            flex-shrink: 0;
+        }
+        .lib-player-bar .lib-btn-icon {
+            width: 1.85rem;
+            height: 1.85rem;
+        }
+        .lib-player-seek {
+            flex: 1 1 8rem;
+            min-width: 5rem;
+            accent-color: var(--lib-accent);
+            height: 1.1rem;
+        }
+        .lib-player-time {
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            color: var(--lib-muted);
+            min-width: 5.5rem;
+            text-align: right;
+        }
+        .lib-player-meta {
+            flex: 1 1 100%;
+            font-size: 10px;
+            color: var(--lib-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin: 0;
+        }
+        .lib-player-side {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            border-left: 1px solid var(--lib-line);
+            background: var(--lib-surface);
+        }
+        @media (max-width: 820px) {
+            .lib-player-side { border-left: 0; border-top: 1px solid var(--lib-line); }
+        }
+        .lib-player-side-head {
+            flex-shrink: 0;
+            padding: 0.55rem 0.65rem 0.35rem;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--lib-ink-soft);
+        }
+        .lib-player-track-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            padding: 0 0.55rem 0.45rem;
+            flex-shrink: 0;
+        }
+        .lib-player-track-tab {
+            border: 1px solid var(--lib-line);
+            background: var(--lib-surface-2);
+            color: var(--lib-muted);
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 650;
+            padding: 0.22rem 0.55rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .lib-player-track-tab.is-on {
+            background: var(--lib-accent-soft);
+            color: var(--lib-accent-ink);
+            border-color: transparent;
+        }
+        .lib-player-track-count {
+            font-variant-numeric: tabular-nums;
+            opacity: 0.75;
+            font-size: 10px;
+        }
+        .lib-player-version-list {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 0.25rem 0.5rem 0.55rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }
+        .lib-player-version-empty {
+            padding: 0.85rem 0.4rem;
+            font-size: 12px;
+            color: var(--lib-muted);
+            text-align: center;
+        }
+        .lib-player-version-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--lib-line);
+            background: var(--lib-surface-2);
+            color: var(--lib-ink-soft);
+            border-radius: 8px;
+            padding: 0.45rem 0.5rem;
+            cursor: pointer;
+        }
+        .lib-player-version-item:hover:not(:disabled) {
+            border-color: var(--lib-line-strong);
+            background: var(--lib-surface);
+        }
+        .lib-player-version-item.is-playing {
+            border-color: transparent;
+            outline: 1px solid var(--lib-accent);
+            background: var(--lib-accent-soft);
+        }
+        .lib-player-version-item:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .lib-player-version-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.2rem;
+            margin-bottom: 0.2rem;
+        }
+        .lib-player-version-recipe {
+            font-size: 11px;
+            color: var(--lib-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .lib-player-side-foot {
+            flex-shrink: 0;
+            padding: 0 0.65rem 0.55rem;
+        }
+        .lib-ver.is-playing {
+            outline: 1px solid var(--lib-accent);
+            outline-offset: -1px;
+            background: var(--lib-accent-soft);
+        }
+
+        .lib-footer {
+            flex-shrink: 0;
+            padding: 0.35rem 0.85rem;
+            border-top: 1px solid var(--lib-line);
+            background: var(--lib-surface);
+            font-size: 11px;
+            color: var(--lib-muted);
+        }
+
+        .lib-input, .lib-select {
+            border: 1px solid var(--lib-line);
+            border-radius: 9px;
+            padding: 0.4rem 0.65rem;
+            font-size: 12px;
+            background: var(--lib-surface-2);
+            color: inherit;
+            outline: none;
+        }
+        .lib-input:focus, .lib-select:focus {
+            border-color: var(--lib-accent);
+            box-shadow: 0 0 0 3px var(--lib-accent-soft);
+            background: var(--lib-surface);
+        }
+        .lib-select { max-width: 9.5rem; }
+        .lib-select:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .lib-btn {
+            border: 1px solid var(--lib-line);
+            border-radius: 9px;
+            padding: 0.38rem 0.7rem;
+            font-size: 12px;
+            background: var(--lib-surface);
+            cursor: pointer;
+            color: inherit;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        .lib-btn:hover:not(:disabled) {
+            background: var(--lib-surface-2);
+            border-color: var(--lib-line-strong);
+        }
+        .lib-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+        .lib-btn.opacity-50 { opacity: 0.5; }
+        .lib-btn:focus-visible,
+        .lib-more > summary:focus-visible {
+            outline: none;
+            border-color: var(--lib-accent);
+            box-shadow: 0 0 0 3px var(--lib-accent-soft);
+        }
+        .lib-btn-primary {
+            background: var(--lib-accent);
+            border-color: var(--lib-accent);
+            color: #fff;
+            font-weight: 600;
+        }
+        .lib-btn-primary:hover:not(:disabled) {
+            filter: brightness(0.96);
+            background: var(--lib-accent);
+        }
+        .lib-btn-soft {
+            background: var(--lib-accent-soft);
+            border-color: transparent;
+            color: var(--lib-accent-ink);
+            font-weight: 600;
+        }
+        .lib-btn-soft:hover:not(:disabled) {
+            filter: brightness(0.98);
+            background: var(--lib-accent-soft);
+        }
+        .lib-btn-ghost {
+            background: transparent;
+            border-color: transparent;
+            color: var(--lib-ink-soft);
+            padding-left: 0.45rem;
+            padding-right: 0.45rem;
+        }
+        .lib-btn-ghost:hover:not(:disabled) {
+            background: var(--lib-surface-2);
+            color: var(--lib-ink);
+        }
+        .lib-btn-danger { color: var(--lib-danger); }
+        .lib-btn-icon {
+            width: 2rem;
+            padding-left: 0;
+            padding-right: 0;
+            text-align: center;
+        }
+        .lib-btn.is-active {
+            background: var(--lib-accent-soft);
+            border-color: transparent;
+            color: var(--lib-accent-ink);
+        }
+
+        .lib-empty {
+            padding: 2.5rem 1rem;
+            color: var(--lib-muted);
+            font-size: 13px;
+            line-height: 1.55;
+            text-align: center;
+        }
+        .lib-empty-title {
+            margin: 0 0 0.35rem;
+            font-size: 0.95rem;
+            font-weight: 650;
+            color: var(--lib-ink-soft);
+        }
+        .lib-empty-actions {
+            margin-top: 0.85rem;
+            display: flex;
+            justify-content: center;
+            gap: 0.4rem;
+        }
+        .lib-detail-body > .lib-empty { padding: 1.25rem 0.5rem; }
+
+        .lib-hero {
+            margin-bottom: 0.85rem;
+            padding-bottom: 0.7rem;
+            border-bottom: 1px solid var(--lib-line);
+        }
+        .lib-hero-top {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+        .lib-hero-title {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            line-height: 1.25;
+        }
+        .lib-hero-title-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.45rem;
+            min-width: 0;
+        }
+        .lib-hero-title-row .lib-hero-title {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .lib-hero-primary {
+            margin-top: 0.65rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .lib-ab-story {
+            margin-top: 0.65rem;
+            padding: 0.55rem 0.7rem;
+            border-radius: 11px;
+            background: var(--lib-indigo-soft);
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+        .lib-ab-story-text {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--lib-indigo-ink);
+            line-height: 1.4;
+        }
+        .lib-ab-story-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+        .lib-pending-banner {
+            display: none;
+            margin-top: 0.55rem;
+            padding: 0.45rem 0.65rem;
+            border-radius: 9px;
+            background: var(--lib-sky-soft);
+            color: var(--lib-sky-ink);
+            font-size: 12px;
+            font-weight: 600;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .lib-pending-banner.is-on { display: flex; }
+        .lib-pending-banner .fa-spinner { animation: lib-spin 0.9s linear infinite; }
+        @keyframes lib-spin { to { transform: rotate(360deg); } }
+        .lib-confirm-msg {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--lib-ink-soft);
+            white-space: pre-wrap;
+        }
+        .lib-confirm-skip {
+            margin-top: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 12px;
+            color: var(--lib-muted);
+            cursor: pointer;
+            user-select: none;
+        }
+        .lib-hero-path {
+            margin: 0.3rem 0 0;
+            font-size: 11px;
+            color: var(--lib-muted);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.15rem 0.35rem;
+            max-width: 100%;
+        }
+        .lib-hero-path-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        .lib-hero-path .lib-btn-icon {
+            flex-shrink: 0;
+            width: 1.65rem;
+            height: 1.65rem;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.72;
+        }
+        .lib-hero-path .lib-btn-icon:hover { opacity: 1; }
+        .lib-hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            align-items: center;
+        }
+        .lib-hero-meta {
+            margin-top: 0.55rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.65rem 1rem;
+            font-size: 11px;
+            color: var(--lib-muted);
+        }
+        .lib-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .lib-check-inline {
+            font-size: 11px;
+            color: var(--lib-muted);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .lib-compare-banner {
+            display: none;
+            margin-top: 0.55rem;
+            padding: 0.4rem 0.6rem;
+            border-radius: 9px;
+            background: var(--lib-accent-soft);
+            color: var(--lib-accent-ink);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .lib-compare-banner.is-on { display: block; }
+
+        .lib-track {
+            border: 1px solid var(--lib-line);
+            border-radius: var(--lib-radius);
+            background: var(--lib-surface);
+            margin-bottom: 0.7rem;
+        }
+        .lib-track-tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin: 0 0 0.55rem;
+            padding: 0.2rem;
+            border: 1px solid var(--lib-line);
+            border-radius: 10px;
+            background: var(--lib-surface-2);
+        }
+        .lib-track-tab {
+            flex: 1;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--lib-muted);
+            font-size: 12.5px;
+            font-weight: 650;
+            padding: 0.42rem 0.55rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+        }
+        .lib-track-tab:hover { color: var(--lib-ink); }
+        .lib-track-tab.is-on {
+            background: var(--lib-surface);
+            color: var(--lib-accent-ink);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+        .lib-track-tab-count {
+            font-size: 10.5px;
+            font-weight: 700;
+            min-width: 1.15rem;
+            padding: 0.05rem 0.35rem;
+            border-radius: 999px;
+            background: var(--lib-accent-soft);
+            color: var(--lib-accent-ink);
+            opacity: 0.85;
+        }
+        .lib-track-tab:not(.is-on) .lib-track-tab-count {
+            background: rgba(148, 163, 184, 0.22);
+            color: var(--lib-muted);
+        }
+        .lib-track-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--lib-surface-2);
+            border-bottom: 1px solid var(--lib-line);
+            border-radius: var(--lib-radius) var(--lib-radius) 0 0;
+        }
+        .lib-track-name {
+            font-weight: 700;
+            font-size: 12.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .lib-track-dot {
+            width: 0.45rem;
+            height: 0.45rem;
+            border-radius: 999px;
+            background: var(--lib-muted);
+        }
+        .lib-track[data-role="source"] .lib-track-dot { background: #0ea5e9; }
+        .lib-track[data-role="target"] .lib-track-dot { background: var(--lib-accent); }
+        .lib-track[data-role="bilingual"] .lib-track-dot { background: var(--lib-ok); }
+        .lib-track-meta { font-size: 11px; color: var(--lib-muted); }
+        .lib-track.is-limit .lib-track-meta {
+            color: var(--lib-warn-ink);
+            font-weight: 650;
+        }
+        .lib-track-head-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+
+        .lib-ver {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.65rem 1rem;
+            padding: 0.7rem 0.75rem;
+            border-top: 1px solid var(--lib-line);
+            align-items: center;
+        }
+        .lib-ver:first-child { border-top: 0; }
+        .lib-ver.is-active {
+            background: linear-gradient(90deg, var(--lib-ok-soft), transparent 58%);
+            box-shadow: inset 3px 0 0 var(--lib-ok);
+        }
+        .lib-ver.is-active .lib-ver-recipe::before {
+            content: '当前 · ';
+            color: var(--lib-ok);
+            font-weight: 700;
+        }
+        .lib-ver.is-compare {
+            box-shadow: inset 3px 0 0 var(--lib-accent);
+            background: linear-gradient(90deg, var(--lib-accent-soft), transparent 50%);
+        }
+        .lib-ver.is-active.is-compare { box-shadow: inset 3px 0 0 var(--lib-ok); }
+        .lib-ver.is-archived { opacity: 0.68; }
+        .lib-ver.is-focus {
+            box-shadow: inset 3px 0 0 var(--lib-accent), 0 0 0 1px color-mix(in srgb, var(--lib-accent) 55%, transparent);
+            background: linear-gradient(90deg, var(--lib-accent-soft), transparent 62%);
+        }
+        .lib-ver.is-focus-pulse {
+            animation: lib-ver-focus-pulse 1.4s ease-out 1;
+        }
+        @keyframes lib-ver-focus-pulse {
+            0% { background-color: color-mix(in srgb, var(--lib-accent) 28%, transparent); }
+            100% { background-color: transparent; }
+        }
+        .lib-ver-meta {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.3rem;
+            margin-bottom: 0.25rem;
+        }
+        .lib-ver-recipe {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--lib-ink);
+            line-height: 1.35;
+        }
+        .lib-ver-file {
+            margin-top: 0.2rem;
+            font-size: 11px;
+            color: var(--lib-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .lib-ver-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.35rem;
+        }
+
+        .lib-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.1rem 0.42rem;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            background: var(--lib-surface-2);
+            color: var(--lib-ink-soft);
+            border: 1px solid var(--lib-line);
+        }
+        .lib-chip-ok { background: var(--lib-ok-soft); color: var(--lib-ok); border-color: transparent; }
+        .lib-chip-accent { background: var(--lib-accent-soft); color: var(--lib-accent-ink); border-color: transparent; }
+        .lib-chip-a { background: var(--lib-indigo-soft); color: var(--lib-indigo-ink); border-color: transparent; }
+        .lib-chip-b { background: var(--lib-sky-soft); color: var(--lib-sky-ink); border-color: transparent; }
+        .lib-chip-danger { background: var(--lib-danger-soft); color: var(--lib-danger); border-color: transparent; }
+        .lib-chip-time {
+            border: 0;
+            background: transparent;
+            font-weight: 500;
+            color: var(--lib-muted);
+            padding-left: 0.1rem;
+        }
+
+        .lib-more { position: relative; display: inline-block; }
+        .lib-more > summary { list-style: none; cursor: pointer; }
+        .lib-more > summary::-webkit-details-marker { display: none; }
+        .lib-more-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 4px);
+            z-index: 40;
+            min-width: 10.5rem;
+            padding: 0.3rem;
+            background: var(--lib-surface);
+            border: 1px solid var(--lib-line);
+            border-radius: 11px;
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+            display: flex;
+            flex-direction: column;
+            gap: 0.12rem;
+        }
+        .lib-more.is-up .lib-more-panel {
+            top: auto;
+            bottom: calc(100% + 4px);
+        }
+        html.main-theme-dark .lib-more-panel {
+            box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
+        }
+        .lib-more-panel .lib-btn {
+            justify-content: flex-start;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            border-radius: 8px;
+            text-align: left;
+        }
+        .lib-more-panel .lib-btn:hover:not(:disabled) { background: var(--lib-surface-2); }
+        .lib-more-panel .lib-btn.is-active { background: var(--lib-accent-soft); }
+        .lib-more-sep {
+            height: 1px;
+            background: var(--lib-line);
+            margin: 0.2rem 0.25rem;
+        }
+        .lib-more-label {
+            padding: 0.25rem 0.55rem 0.1rem;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--lib-muted);
+            letter-spacing: 0.03em;
+        }
+
+        .lib-callout {
+            margin-top: 0.25rem;
+            padding: 0.65rem 0.8rem;
+            border-radius: 11px;
+            background: var(--lib-warn-soft);
+            color: var(--lib-warn-ink);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .lib-toast {
+            position: fixed;
+            bottom: 1.25rem;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 200;
+            max-width: 90%;
+            padding: 0.55rem 0.95rem;
+            border-radius: 999px;
+            font-size: 12px;
+            background: #111827;
+            color: #fff;
+            box-shadow: 0 10px 28px rgba(0,0,0,.22);
+            display: none;
+        }
+        .lib-toast.show { display: block; }
+        .lib-toast.err { background: #b91c1c; }
+        .lib-toast.warn { background: #b45309; }
+
+        #libraryDiffModal:not(.hidden),
+        #libraryRerunModal:not(.hidden),
+        #libraryNoteModal:not(.hidden),
+        #libraryRenameModal:not(.hidden),
+        #libraryConfirmModal:not(.hidden),
+        #libraryPreviewModal:not(.hidden),
+        #libraryExportModal:not(.hidden),
+        #libraryPlayerModal:not(.hidden) { display: flex; }
+        .hidden { display: none !important; }
+
+        .lib-modal-card {
+            background: var(--lib-surface);
+            color: var(--lib-ink);
+            border: 1px solid var(--lib-line);
+            border-radius: 14px;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22);
+            width: 100%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .lib-modal-head, .lib-modal-foot {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--lib-line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-shrink: 0;
+        }
+        .lib-modal-foot {
+            border-bottom: 0;
+            border-top: 1px solid var(--lib-line);
+            justify-content: flex-end;
+            gap: 0.4rem;
+        }
+        .lib-modal-body { padding: 1rem; overflow: auto; flex: 1; }
+        .lib-modal-title { margin: 0; font-size: 0.9rem; font-weight: 700; }
+        .lib-modal-sub { margin: 0.2rem 0 0; font-size: 11px; color: var(--lib-muted); }
+
+        .lib-diff-add { color: var(--lib-ok); background: var(--lib-ok-soft); padding: 0.1rem 0.35rem; }
+        .lib-diff-del { color: var(--lib-danger); background: var(--lib-danger-soft); padding: 0.1rem 0.35rem; }
+        .lib-preview-pre {
+            margin: 0;
+            padding: 0.85rem 1rem;
+            overflow: auto;
+            flex: 1;
+            min-height: 0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: var(--lib-ink-soft);
+            background: var(--lib-surface-2);
+            border-top: 1px solid var(--lib-line);
+        }
+        .lib-diff-eq { color: var(--lib-ink-soft); padding: 0.1rem 0.35rem; }
+        .lib-diff-skip { color: var(--lib-muted); padding: 0.1rem 0.35rem; font-style: italic; }
+
+        .lib-detail-drawer .lib-ver {
+            grid-template-columns: 1fr;
+        }
+        .lib-detail-drawer .lib-ver-actions {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+        }
+        .lib-detail-drawer .lib-hero-title {
+            font-size: 1rem;
+        }
+        .lib-detail-drawer .lib-track-head {
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 900px) {
+            .lib-media-table .col-bi { display: none; }
+            .lib-ver { grid-template-columns: 1fr; }
+            .lib-ver-actions { justify-content: flex-start; }
+        }
+
+        .lib-filter-panel {
+            display: none;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            width: 100%;
+            padding: 0.35rem 0 0.15rem;
+        }
+        .lib-filter-panel.is-open { display: flex; }
+        .lib-track.is-collapsed .lib-track-body { display: none; }
+        .lib-hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            align-items: center;
+            margin-top: 0.55rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="lib-topbar">
+        <div class="lib-brand min-w-0">
+            <h1 class="lib-title">字幕库</h1>
+            <span id="libraryProBadge" class="lib-badge hidden">Pro</span>
+        </div>
+        <div class="lib-topbar-right">
+            <span id="libraryStatusLine" class="lib-status"></span>
+            <button type="button" id="libraryRefreshBtn" class="lib-btn lib-btn-icon" title="刷新" aria-label="刷新"><i class="fa fa-refresh"></i></button>
+        </div>
+    </header>
+
+    <div class="lib-toolbar">
+        <input type="search" id="librarySearchInput" class="lib-input" placeholder="搜索作品…" aria-label="搜索">
+        <button type="button" id="libraryFilterToggleBtn" class="lib-btn" aria-expanded="false" aria-controls="libraryFilterPanel">筛选</button>
+        <button type="button" id="libraryClearFiltersBtn" class="lib-btn lib-btn-ghost">清除</button>
+        <button type="button" id="libraryRepairMediaBtn" class="lib-btn lib-btn-ghost lib-pro-only" title="为未关联或文件缺失的作品自动匹配音视频">修复关联</button>
+        <div id="libraryBatchBar" class="lib-batch-bar" aria-live="polite">
+            <span id="libraryBatchCount" class="lib-batch-count">已选 0</span>
+            <button type="button" id="libraryBatchAutoLinkBtn" class="lib-btn">匹配音视频</button>
+            <button type="button" id="libraryBatchExportPackBtn" class="lib-btn lib-btn-soft lib-pro-only">导出发布包</button>
+            <button type="button" id="libraryBatchCopyPathsBtn" class="lib-btn lib-pro-only">复制路径</button>
+            <button type="button" id="libraryBatchRevealBtn" class="lib-btn lib-pro-only">打开文件夹</button>
+            <button type="button" id="libraryBatchClearBtn" class="lib-btn lib-btn-ghost">取消选择</button>
+            <span class="lib-batch-danger-sep" aria-hidden="true"></span>
+            <button type="button" id="libraryBatchDeleteBtn" class="lib-btn lib-btn-danger">删除</button>
+        </div>
+        <div class="lib-toolbar-spacer"></div>
+        <span id="libraryListCount" class="lib-status"></span>
+        <div id="libraryFilterPanel" class="lib-filter-panel" hidden>
+            <span id="libraryFiltersHint" class="lib-filters-hint">高级筛选需 Pro · <button type="button" id="libraryFiltersProBtn">了解</button></span>
+            <div id="libraryFilters" class="lib-filters">
+                <select id="libraryFilterPreset" class="lib-select" title="按预设筛选（Pro）">
+                    <option value="">预设 · 全部</option>
+                </select>
+                <select id="libraryFilterMt" class="lib-select" title="按翻译模型筛选（Pro）">
+                    <option value="">译模 · 全部</option>
+                </select>
+                <select id="libraryFilterTag" class="lib-select" title="按标签筛选（Pro）">
+                    <option value="">标签 · 全部</option>
+                </select>
+            </div>
+            <div class="lib-quick-filters" role="group" aria-label="快捷筛选">
+                <button type="button" class="lib-chip-btn" data-library-quick="recent">近7天</button>
+                <button type="button" class="lib-chip-btn" data-library-quick="media-unlinked">未关联</button>
+                <button type="button" class="lib-chip-btn" data-library-quick="no-open">无法打开</button>
+                <button type="button" class="lib-chip-btn lib-pro-only" data-library-quick="source-empty">无转录</button>
+                <button type="button" id="libraryMoreFiltersBtn" class="lib-chip-btn is-more-toggle lib-pro-only" aria-expanded="false" aria-controls="libraryMoreFilters">更多</button>
+                <div id="libraryMoreFilters" class="lib-more-filters lib-pro-only" hidden>
+                    <button type="button" class="lib-chip-btn" data-library-quick="source">有转录</button>
+                    <button type="button" class="lib-chip-btn" data-library-quick="target">有译文</button>
+                    <button type="button" class="lib-chip-btn" data-library-quick="bilingual">有双语</button>
+                    <button type="button" class="lib-chip-btn" data-library-quick="media-missing">影缺失</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="lib-workspace">
+        <div class="lib-main">
+            <section class="lib-list-pane" aria-label="作品列表">
+                <div class="lib-list-scroll">
+                    <table class="lib-media-table" id="libraryMediaTable">
+                        <colgroup id="libraryTableColgroup">
+                            <col data-col="check" class="col-check">
+                            <col data-col="title" class="col-title">
+                            <col data-col="src" class="col-src">
+                            <col data-col="tgt" class="col-tgt">
+                            <col data-col="bi" class="col-bi">
+                            <col data-col="time" class="col-time">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th class="col-check" data-col="check" title="全选">
+                                    <input type="checkbox" id="librarySelectAllCheck" aria-label="全选当前列表">
+                                </th>
+                                <th class="col-title lib-col-sortable" data-col="title" data-sort-key="title" title="点击排序">作品<span class="lib-sort-ind" aria-hidden="true"></span><span class="lib-col-resizer" data-resize-col="title"></span></th>
+                                <th class="col-src lib-col-sortable" data-col="src" data-sort-key="sourceCues" title="当前转录（原文）条数 / 版本数">转录<span class="lib-sort-ind" aria-hidden="true"></span><span class="lib-col-resizer" data-resize-col="src"></span></th>
+                                <th class="col-tgt lib-col-sortable" data-col="tgt" data-sort-key="targetCues" title="当前译文条数 / 版本数">译文<span class="lib-sort-ind" aria-hidden="true"></span><span class="lib-col-resizer" data-resize-col="tgt"></span></th>
+                                <th class="col-bi lib-col-sortable" data-col="bi" data-sort-key="bilingualCues" title="当前双语条数 / 版本数">双语<span class="lib-sort-ind" aria-hidden="true"></span><span class="lib-col-resizer" data-resize-col="bi"></span></th>
+                                <th class="col-time lib-col-sortable is-sort-desc" data-col="time" data-sort-key="lastVersionAt" title="点击排序">最后版本<span class="lib-sort-ind" aria-hidden="true"></span><span class="lib-col-resizer" data-resize-col="time"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="libraryMediaList"></tbody>
+                    </table>
+                    <div id="libraryListEmpty" class="lib-empty hidden">
+                        <p class="lib-empty-title">暂无入库字幕</p>
+                        <div>跑完任务会自动入库。<br>点作品可试看 / 打开字幕。</div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <aside id="libraryDetailDrawer" class="lib-detail-drawer" aria-hidden="true" aria-label="作品详情">
+            <div id="libraryDetailSplitter" class="lib-drawer-splitter" title="拖动调整详情宽度" role="separator" aria-orientation="vertical"></div>
+            <section class="lib-detail-pane">
+                <div class="lib-detail-bar">
+                    <span id="libraryDetailBarTitle">版本详情</span>
+                    <button type="button" id="libraryCloseDetailBtn" class="lib-btn lib-btn-ghost lib-btn-icon" title="关闭详情" aria-label="关闭详情"><i class="fa fa-times"></i></button>
+                </div>
+                <div id="libraryDetail" class="lib-detail-body">
+                    <div class="lib-empty">
+                        <p class="lib-empty-title">选择列表中的作品</p>
+                        <div>查看转录 / 译文版本与操作</div>
+                    </div>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    <footer class="lib-footer">
+        <span>单击详情 · 试看弹窗切版本</span>
+    </footer>
+
+    <div id="libraryRowContextMenu" class="lib-ctx-menu hidden" role="menu" aria-label="作品操作">
+        <button type="button" class="lib-btn" data-lib-ctx="open" role="menuitem"><i class="fa fa-external-link"></i><span>打开当前字幕</span></button>
+        <button type="button" class="lib-btn" data-lib-ctx="export" role="menuitem"><i class="fa fa-download"></i><span>导出当前字幕…</span></button>
+        <button type="button" class="lib-btn" data-lib-ctx="link-media" role="menuitem"><i class="fa fa-link"></i><span>关联音视频…</span></button>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="detail" role="menuitem"><i class="fa fa-list-alt"></i><span>查看详情</span></button>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="auto-link-media" role="menuitem"><i class="fa fa-magic"></i><span>自动匹配音视频</span></button>
+        <div class="lib-ctx-sep lib-pro-only" role="separator"></div>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="open-media" role="menuitem"><i class="fa fa-play-circle"></i><span>打开音视频</span></button>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="clear-media" role="menuitem"><i class="fa fa-unlink"></i><span>清除关联</span></button>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="reveal" role="menuitem"><i class="fa fa-folder-open-o"></i><span>打开所在文件夹</span></button>
+        <button type="button" class="lib-btn lib-pro-only" data-lib-ctx="copy-path" role="menuitem"><i class="fa fa-clone"></i><span>复制音视频路径</span></button>
+        <div class="lib-ctx-sep" role="separator"></div>
+        <button type="button" class="lib-btn lib-btn-danger" data-lib-ctx="delete" role="menuitem"><i class="fa fa-trash-o"></i><span>删除作品</span></button>
+    </div>
+
+    <div id="libraryRerunModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true">
+        <div class="lib-modal-card" style="max-width: 28rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 class="lib-modal-title">配方再跑</h3>
+                    <p id="libraryRerunHint" class="lib-modal-sub">用库中原文跳过听写，按配方或预设重新翻译</p>
+                </div>
+                <button type="button" id="closeLibraryRerunBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-modal-body space-y-3">
+                <p id="libraryRerunSummary" class="text-xs leading-relaxed m-0" style="color: var(--lib-ink-soft);"></p>
+                <fieldset class="space-y-2 border-0 p-0 m-0">
+                    <legend class="text-xs font-semibold" style="color: var(--lib-muted);">再跑方式</legend>
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="libraryRerunMode" id="libraryRerunSame" value="same" class="mt-1 accent-violet-600" checked>
+                        <span><span class="font-medium">同配方再跑</span><span class="block text-xs mt-0.5" style="color: var(--lib-muted);">沿用该版本记录的模型组合与预设</span></span>
+                    </label>
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="libraryRerunMode" id="libraryRerunPreset" value="preset" class="mt-1 accent-violet-600">
+                        <span><span class="font-medium">换预设再跑</span><span class="block text-xs mt-0.5" style="color: var(--lib-muted);">保留原文，套用另一套预设方案</span></span>
+                    </label>
+                </fieldset>
+                <label class="block text-sm">
+                    <span class="text-xs" style="color: var(--lib-muted);">预设方案</span>
+                    <select id="libraryRerunPresetSelect" class="lib-select w-full mt-1" style="max-width: none;" disabled></select>
+                    <p id="libraryRerunPresetDesc" class="text-xs leading-relaxed m-0 mt-1.5 min-h-[1rem]" style="color: var(--lib-muted);" aria-live="polite"></p>
+                </label>
+            </div>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryRerunCancelBtn" class="lib-btn">取消</button>
+                <button type="button" id="libraryRerunConfirmBtn" class="lib-btn lib-btn-primary">准备翻译</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryPlayerModal" class="hidden fixed inset-0 z-[115] items-center justify-center p-3 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="libraryPlayerTitle" aria-hidden="true">
+        <div class="lib-player-modal-card">
+            <div class="lib-player-modal-head">
+                <h3 id="libraryPlayerTitle" class="lib-player-modal-title">试看</h3>
+                <button type="button" id="libraryPlayerCloseBtn" class="lib-btn lib-btn-icon" title="关闭试看" aria-label="关闭试看"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-player-modal-body">
+                <div id="libraryPlayerHost" class="lib-player-host is-on" aria-hidden="false">
+                    <div id="libraryPlayerFrame" class="lib-player-frame" tabindex="0" title="空格播放/暂停 · ←/→ 快退快进 · Esc 关闭 · [/] 或 j/k 切换版本">
+                        <video id="libraryPlayerVideo" playsinline preload="metadata"></video>
+                        <div id="libraryPlayerEmpty" class="lib-player-empty visible">
+                            <i class="fa fa-film" aria-hidden="true"></i>
+                            <span id="libraryPlayerEmptyText">选择版本试看</span>
+                        </div>
+                        <div id="libraryPlayerSubtitle" class="lib-player-subtitle hidden" aria-live="off">
+                            <div id="libraryPlayerSubtitleText" class="lib-player-subtitle-inner"></div>
+                        </div>
+                    </div>
+                    <div class="lib-player-bar">
+                        <button type="button" id="libraryPlayerBackBtn" class="lib-btn lib-btn-icon" title="快退 5 秒" aria-label="快退 5 秒"><i class="fa fa-backward"></i></button>
+                        <button type="button" id="libraryPlayerPlayBtn" class="lib-btn lib-btn-icon" title="播放" aria-label="播放"><i class="fa fa-play"></i></button>
+                        <button type="button" id="libraryPlayerFwdBtn" class="lib-btn lib-btn-icon" title="快进 5 秒" aria-label="快进 5 秒"><i class="fa fa-forward"></i></button>
+                        <input type="range" id="libraryPlayerSeek" class="lib-player-seek" min="0" max="0" step="0.05" value="0" aria-label="进度">
+                        <span id="libraryPlayerTime" class="lib-player-time">0:00 / 0:00</span>
+                        <button type="button" id="libraryPlayerMuteBtn" class="lib-btn lib-btn-icon" title="静音" aria-label="静音"><i class="fa fa-volume-up"></i></button>
+                        <p id="libraryPlayerMeta" class="lib-player-meta">未载入字幕</p>
+                    </div>
+                </div>
+                <aside class="lib-player-side" aria-label="版本切换">
+                    <div class="lib-player-side-head">切换版本对比</div>
+                    <div id="libraryPlayerTrackTabs" class="lib-player-track-tabs" role="tablist" aria-label="字幕轨道"></div>
+                    <div id="libraryPlayerVersionList" class="lib-player-version-list"></div>
+                    <div class="lib-player-side-foot">
+                        <div id="libraryPlayerAb" class="lib-player-ab" aria-label="对照试看">
+                            <button type="button" class="lib-btn" data-library-player-ab="A" title="试看对照 A">对照 A</button>
+                            <button type="button" class="lib-btn" data-library-player-ab="B" title="试看对照 B">对照 B</button>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryDiffModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true">
+        <div class="lib-modal-card" style="max-width: 48rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 class="lib-modal-title">版本对比</h3>
+                    <p id="libraryDiffMeta" class="lib-modal-sub truncate"></p>
+                </div>
+                <button type="button" id="closeLibraryDiffBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div id="libraryDiffStats" class="px-4 py-2 border-b text-[11px] shrink-0" style="border-color: var(--lib-line); color: var(--lib-muted);"></div>
+            <div id="libraryDiffBody" class="flex-1 min-h-0 overflow-auto p-3 text-[11px] font-mono leading-relaxed"></div>
+        </div>
+    </div>
+
+    <div id="libraryPreviewModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-labelledby="libraryPreviewTitle">
+        <div class="lib-modal-card" style="max-width: 40rem; max-height: 78vh;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 id="libraryPreviewTitle" class="lib-modal-title">字幕预览</h3>
+                    <p id="libraryPreviewMeta" class="lib-modal-sub truncate"></p>
+                </div>
+                <button type="button" id="closeLibraryPreviewBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div id="libraryPreviewStats" class="px-4 py-2 border-b text-[11px] shrink-0" style="border-color: var(--lib-line); color: var(--lib-muted);"></div>
+            <pre id="libraryPreviewContent" class="lib-preview-pre"></pre>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryPreviewOpenBtn" class="lib-btn lib-btn-primary">在编辑器打开</button>
+                <button type="button" id="libraryPreviewCloseFootBtn" class="lib-btn">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryNoteModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true">
+        <div class="lib-modal-card" style="max-width: 26rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 class="lib-modal-title">版本备注</h3>
+                    <p class="lib-modal-sub">最多 200 字</p>
+                </div>
+                <button type="button" id="closeLibraryNoteBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-modal-body">
+                <textarea id="libraryNoteInput" class="lib-input" rows="4" maxlength="200" style="width:100%; min-width:0; resize: vertical; font-family: inherit;" placeholder="例如：对照 B 更口语"></textarea>
+                <div id="libraryNoteCount" class="text-[11px] mt-1.5" style="color: var(--lib-muted); text-align: right;">0 / 200</div>
+            </div>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryNoteCancelBtn" class="lib-btn">取消</button>
+                <button type="button" id="libraryNoteConfirmBtn" class="lib-btn lib-btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryRenameModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true">
+        <div class="lib-modal-card" style="max-width: 26rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 class="lib-modal-title">重命名作品</h3>
+                    <p class="lib-modal-sub">只改库内显示名，不改磁盘文件名</p>
+                </div>
+                <button type="button" id="closeLibraryRenameBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-modal-body">
+                <label class="block text-sm">
+                    <span class="text-xs" style="color: var(--lib-muted);">显示名称</span>
+                    <input type="text" id="libraryRenameInput" class="lib-input w-full mt-1" style="width:100%; max-width:none;" maxlength="120" placeholder="作品标题">
+                </label>
+            </div>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryRenameCancelBtn" class="lib-btn">取消</button>
+                <button type="button" id="libraryRenameConfirmBtn" class="lib-btn lib-btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryExportModal" class="hidden fixed inset-0 z-[110] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-labelledby="libraryExportTitle">
+        <div class="lib-modal-card" style="max-width: 26rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 id="libraryExportTitle" class="lib-modal-title">导出字幕</h3>
+                    <p id="libraryExportHint" class="lib-modal-sub">选择导出格式后保存到本地</p>
+                </div>
+                <button type="button" id="closeLibraryExportBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-modal-body space-y-3">
+                <p id="libraryExportSummary" class="text-xs leading-relaxed m-0" style="color: var(--lib-ink-soft);"></p>
+                <label class="block text-sm">
+                    <span class="text-xs" style="color: var(--lib-muted);">导出格式</span>
+                    <select id="libraryExportFormatSelect" class="lib-select w-full mt-1" style="max-width: none;">
+                        <option value="srt">SRT（通用）</option>
+                        <option value="vtt">VTT（WebVTT）</option>
+                        <option value="ass">ASS（样式字幕）</option>
+                        <option value="lrc">LRC（歌词）</option>
+                    </select>
+                </label>
+            </div>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryExportCancelBtn" class="lib-btn">取消</button>
+                <button type="button" id="libraryExportConfirmBtn" class="lib-btn lib-btn-primary">导出…</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libraryConfirmModal" class="hidden fixed inset-0 z-[120] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true">
+        <div class="lib-modal-card" style="max-width: 26rem;">
+            <div class="lib-modal-head">
+                <div class="min-w-0">
+                    <h3 id="libraryConfirmTitle" class="lib-modal-title">确认</h3>
+                </div>
+                <button type="button" id="closeLibraryConfirmBtn" class="lib-btn lib-btn-icon" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="lib-modal-body">
+                <p id="libraryConfirmMessage" class="lib-confirm-msg"></p>
+                <label id="libraryConfirmSkipWrap" class="lib-confirm-skip hidden">
+                    <input type="checkbox" id="libraryConfirmSkipCheck">
+                    <span>不再询问「设为当前」</span>
+                </label>
+            </div>
+            <div class="lib-modal-foot">
+                <button type="button" id="libraryConfirmCancelBtn" class="lib-btn">取消</button>
+                <button type="button" id="libraryConfirmOkBtn" class="lib-btn lib-btn-primary">继续</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libToast" class="lib-toast" role="status"></div>
+
+    <script src="js/subtitle-library-core.js"></script>
+    <script src="js/library-player-core.js"></script>
+    <script src="js/library-player-ui.js"></script>
+    <script src="js/subtitle-library-ui.js"></script>
+</body>
+</html>

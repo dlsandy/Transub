@@ -183,6 +183,30 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.strictEqual(blockSmart.code, 'model_translate_only');
         assert.ok(String(blockSmart.error).includes('智能翻译'));
         assert.strictEqual(catalog.getSmartTranslateModelBlock('qwen25-7b'), null);
+        assert.strictEqual(catalog.pickHybridBriefModelId({
+            requestedId: 'qwen25-7b',
+            installedIds: ['qwen25-7b', 'qwen25-1.5b', 'sakura-7b'],
+        }), 'qwen25-1.5b');
+        assert.strictEqual(catalog.pickHybridBriefModelId({
+            requestedId: 'qwen25-3b',
+            installedIds: ['qwen25-3b', 'qwen25-1.5b'],
+        }), 'qwen25-3b');
+        assert.strictEqual(catalog.pickHybridBriefModelId({
+            requestedId: 'qwen25-7b',
+            installedIds: ['qwen25-7b', 'sakura-1.5b'],
+        }), 'qwen25-7b');
+        assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
+            requestedId: 'qwen25-7b',
+            installedIds: ['qwen25-7b', 'qwen25-1.5b'],
+        }), 'qwen25-7b');
+        assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
+            requestedId: 'qwen25-14b',
+            installedIds: ['qwen25-1.5b', 'qwen25-7b', 'sakura-7b'],
+        }), 'qwen25-7b');
+        assert.strictEqual(catalog.pickInstalledSmartTranslateModelId({
+            requestedId: 'qwen25-7b',
+            installedIds: ['sakura-7b'],
+        }), 'qwen25-7b');
         assert.deepStrictEqual(m.pulledIds, ['qwen25-7b']);
         assert.strictEqual(m.serverPort, 39281);
         assert.strictEqual(m.nGpuLayers, 99);
@@ -195,6 +219,10 @@ describe('advanced-managed-llm-catalog-core', () => {
         assert.ok(catalog.isFreePipelineTranslateModel('qwen25-1.5b'));
         assert.ok(catalog.isFreePipelineTranslateModel('qwen3-4b'));
         assert.ok(catalog.isFreePipelineTranslateModel('sakura-1.5b'));
+        assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-7b'));
+        assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-7b-q6k'));
+        assert.ok(catalog.isFreePipelineTranslateModel('sakura-galtransl-v4-4b'));
+        assert.strictEqual(catalog.findCatalogEntry('sakura-galtransl-v4-4b').paramBillion, 4);
         assert.ok(catalog.isFreePipelineTranslateModel('phi35-mini'));
         assert.ok(catalog.isFreePipelineTranslateModel('phi4-mini'));
         assert.ok(!catalog.isFreePipelineTranslateModel('qwen25-14b'));

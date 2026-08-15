@@ -13,6 +13,8 @@ const {
     isPortableBuild,
     canUseElectronUpdater,
     canAutoInstallZip,
+    buildUpdateFailure,
+    formatUpdateFailureMeta,
 } = require('../electron/app-updater');
 
 describe('app-updater', () => {
@@ -98,5 +100,19 @@ describe('app-updater', () => {
             assert.strictEqual(canUseElectronUpdater(), false);
             assert.strictEqual(canAutoInstallZip(), false);
         }
+    });
+
+    it('buildUpdateFailure attaches structured diagnostic fields', () => {
+        const err = Object.assign(new Error('增量包校验失败: a.zip'), {
+            code: 'checksum',
+            expectedSha: 'deadbeef',
+            gotSha: 'cafebabe',
+        });
+        const fail = buildUpdateFailure(err, { preferredSource: 'Codeberg', triedSources: ['GitHub', 'Codeberg'] });
+        assert.strictEqual(fail.ok, false);
+        assert.strictEqual(fail.code, 'checksum');
+        assert.strictEqual(fail.expectedSha, 'deadbeef');
+        assert.ok(formatUpdateFailureMeta(fail).includes('Codeberg'));
+        assert.ok(formatUpdateFailureMeta(fail).includes('校验失败'));
     });
 });

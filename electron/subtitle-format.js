@@ -427,25 +427,26 @@ function serializeLrc(cues, header) {
 
 function serializeAss(cues, options = {}) {
     const title = String(options.title || 'Transub').replace(/[\r\n]/g, ' ');
-    const speakers = Array.isArray(options.speakers) ? options.speakers : [];
-    const cueMarkers = options.cueMarkers && typeof options.cueMarkers === 'object'
-        ? options.cueMarkers
-        : {};
     const dualApi = options.pairCues && Array.isArray(options.pairCues) ? options.pairCues : null;
 
-    const styleLines = [
-        'Style: Default,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1',
-    ];
-    const speakerStyleName = new Map();
-    speakers.forEach((sp, i) => {
-        if (!sp?.id || !sp?.name) return;
-        const safe = `Sp${i + 1}`;
-        speakerStyleName.set(sp.id, safe);
-        const color = assColourFromHex(sp.color || '#FFFFFF');
-        styleLines.push(
-            `Style: ${safe},Microsoft YaHei,48,${color},&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1`,
-        );
-    });
+    let styleLines = [];
+    const documentStyles = Array.isArray(options.styles) ? options.styles : null;
+
+    if (documentStyles && documentStyles.length) {
+        try {
+            const core = require('../src/js/ass-styles-core');
+            styleLines = documentStyles.map((s) => core.styleToLine(core.normalizeStyle(s)));
+        } catch {
+            styleLines = null;
+        }
+    }
+
+    if (!styleLines || !styleLines.length) {
+        styleLines = [
+            'Style: Default,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,48,1',
+        ];
+    }
+
     if (dualApi) {
         // Alignment 2 = bottom-center; larger MarginV sits higher.
         // Default matches settings merge UI: 译文在上 (target-first) → Source lower.
@@ -454,9 +455,11 @@ function serializeAss(cues, options = {}) {
             .toLowerCase();
         const sourceFirst = order === 'source-first' || order === 'source';
         const srcMarginV = sourceFirst ? 112 : 56;
-        styleLines.push(
-            `Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${srcMarginV},1`,
-        );
+        if (!styleLines.some((l) => /^Style:\s*Source,/i.test(l))) {
+            styleLines.push(
+                `Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${srcMarginV},1`,
+            );
+        }
     }
 
     const header = [
@@ -477,18 +480,145 @@ function serializeAss(cues, options = {}) {
 
     const events = [];
     const list = Array.isArray(cues) ? cues : [];
-    list.forEach((cue, index) => {
+    list.forEach((cue) => {
         const start = formatAssTimeMs(cue.startMs);
         const end = formatAssTimeMs(cue.endMs != null ? cue.endMs : cue.startMs + 2000);
-        const key = `${index}:${Math.round(Number(cue.startMs) || 0)}`;
-        const marker = cueMarkers[key] || null;
-        const style = (marker?.speakerId && speakerStyleName.get(marker.speakerId)) || 'Default';
-        const name = speakers.find((s) => s.id === marker?.speakerId)?.name || '';
+        const style = (cue?.ass?.style ? String(cue.ass.style).replace(/,/g, ' ') : '') || 'Default';
+        const name = cue?.ass?.name ? String(cue.ass.name) : '';
         let text = String(cue.text || '').replace(/\r?\n/g, '\\N').replace(/,/g, '，') || ' ';
         events.push(`Dialogue: 0,${start},${end},${style},${escapeAssName(name)},0,0,0,,${text}`);
     });
 
     return `${header}\n${events.join('\n')}${events.length ? '\n' : ''}`;
+}
+
+/**
+ * Bilingual ASS: Source + ZH styles stacked by MarginV (engine-compatible).
+ */
+function serializeDualAss(primaryCues, pairCues, options = {}) {
+    let core;
+    try {
+        core = require('../src/js/ass-styles-core');
+    } catch {
+        core = null;
+    }
+    const title = String(options.title || 'Transub Dual').replace(/[\r\n]/g, ' ');
+    const lineOrder = String(options.lineOrder || options.dualLineOrder || 'target-first').trim().toLowerCase();
+    const primaryRole = options.primaryRole === 'source' ? 'source' : 'target';
+    const template = core
+        ? core.normalizeDualTemplate({
+            ...options.dualTemplate,
+            lineOrder,
+            sourceStyle: options.sourceStyle,
+            targetStyle: options.targetStyle,
+            marginGap: options.marginGap,
+        })
+        : {
+            lineOrder: lineOrder === 'source-first' ? 'source-first' : 'target-first',
+            sourceStyle: 'Source',
+            targetStyle: 'ZH',
+            marginGap: 56,
+        };
+
+    const pairs = [];
+    const list = Array.isArray(primaryCues) ? primaryCues : [];
+    const pairList = Array.isArray(pairCues) ? pairCues : [];
+    const findOverlap = typeof options.findBestOverlapCue === 'function'
+        ? options.findBestOverlapCue
+        : null;
+    const overlapIndex = options.overlapIndex || null;
+
+    list.forEach((cue) => {
+        const startMs = Number(cue?.startMs) || 0;
+        const endMs = Math.max(startMs, Number(cue?.endMs) || startMs + 2000);
+        const primary = String(cue?.text || '').trim();
+        let secondary = '';
+        if (findOverlap) {
+            const hit = findOverlap(pairList, startMs, endMs, overlapIndex ? { index: overlapIndex } : undefined);
+            secondary = String(hit?.cue?.text || hit?.text || '').trim();
+        } else {
+            // Fallback: nearest by start time
+            let best = null;
+            let bestDist = Infinity;
+            for (const p of pairList) {
+                const ps = Number(p?.startMs) || 0;
+                const pe = Math.max(ps, Number(p?.endMs) || ps);
+                const overlap = Math.min(endMs, pe) - Math.max(startMs, ps);
+                const dist = overlap > 0 ? -overlap : Math.abs(ps - startMs);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = p;
+                }
+            }
+            secondary = String(best?.text || '').trim();
+        }
+        let sourceText = '';
+        let targetText = '';
+        if (primaryRole === 'source') {
+            sourceText = primary;
+            targetText = secondary;
+        } else {
+            targetText = primary;
+            sourceText = secondary;
+        }
+        if (sourceText || targetText) {
+            pairs.push({ startMs, endMs, sourceText, targetText });
+        }
+    });
+
+    if (core) {
+        const ensured = core.ensureDualTemplateStyles([], {
+            lineOrder: template.lineOrder,
+            sourceStyle: template.sourceStyle,
+            targetStyle: template.targetStyle,
+            marginGap: template.marginGap,
+        });
+        const header = core.writeStylesToHeader(
+            core.defaultAssHeaderLines(title),
+            ensured.styles,
+            { title },
+        );
+        // Patch title line
+        const titled = header.map((l) => (/^Title:/i.test(String(l).trim()) ? `Title: ${title}` : l));
+        const dualCues = core.buildDualAssCues(pairs, {
+            sourceStyle: ensured.sourceStyle,
+            targetStyle: ensured.targetStyle,
+        });
+        return serializeAssDocument(dualCues, titled);
+    }
+
+    // Minimal fallback without core
+    const srcMarginV = template.lineOrder === 'source-first' ? 112 : 56;
+    const zhMarginV = template.lineOrder === 'source-first' ? 56 : 112;
+    const events = [];
+    pairs.forEach((p) => {
+        const start = formatAssTimeMs(p.startMs);
+        const end = formatAssTimeMs(p.endMs);
+        if (p.sourceText) {
+            events.push(`Dialogue: 0,${start},${end},Source,,0,0,0,,${p.sourceText.replace(/\r?\n/g, '\\N').replace(/,/g, '，')}`);
+        }
+        if (p.targetText) {
+            events.push(`Dialogue: 0,${start},${end},ZH,,0,0,0,,${p.targetText.replace(/\r?\n/g, '\\N').replace(/,/g, '，')}`);
+        }
+    });
+    return [
+        '[Script Info]',
+        `Title: ${title}`,
+        'ScriptType: v4.00+',
+        'PlayResX: 1920',
+        'PlayResY: 1080',
+        'WrapStyle: 0',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        `Style: Source,Arial,40,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${srcMarginV},1`,
+        `Style: ZH,Microsoft YaHei,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${zhMarginV},1`,
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        ...events,
+        '',
+    ].join('\n');
 }
 
 function formatAssTimeMs(ms) {
@@ -498,16 +628,6 @@ function formatAssTimeMs(ms) {
     const s = Math.floor((n % 60000) / 1000);
     const cs = Math.floor((n % 1000) / 10);
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
-}
-
-function assColourFromHex(hex) {
-    const raw = String(hex || '').replace('#', '').trim();
-    if (!/^[0-9a-fA-F]{6}$/.test(raw)) return '&H00FFFFFF';
-    const r = raw.slice(0, 2);
-    const g = raw.slice(2, 4);
-    const b = raw.slice(4, 6);
-    // ASS is &HAABBGGRR
-    return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 function escapeAssName(name) {
@@ -542,7 +662,10 @@ module.exports = {
     parseSubtitle,
     serializeSubtitle,
     serializeAss,
+    serializeAssDocument,
+    serializeDualAss,
     parseAss,
+    defaultAssHeaderLines,
     parseTimeToMs,
     formatTimeMs,
     isEditableFormat,

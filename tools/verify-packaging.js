@@ -19,6 +19,7 @@ const REQUIRED_RENDERER_FILES = [
     'index.html',
     'splash.html',
     'subtitle-editor.html',
+    'subtitle-library.html',
     'about.html',
     'update.html',
     'update-progress.html',
@@ -41,6 +42,12 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/prefs.js',
     'js/subtitle-editor/undo.js',
     'js/subtitle-editor/utils.js',
+    'js/subtitle-editor/qc-summary-ui.js',
+    'js/subtitle-editor/cue-split-plan.js',
+    'js/subtitle-editor/silence-split-plan.js',
+    'js/subtitle-editor/audio-snap-duration-plan.js',
+    'js/subtitle-editor/retranscribe-range-plan.js',
+    'js/subtitle-editor/batch-cue-filter-plan.js',
     'js/subtitle-editor/workflows.js',
     'js/subtitle-editor/inference-progress.js',
     'js/subtitle-editor/layout.js',
@@ -48,30 +55,70 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/qc-worker-client.js',
     'js/subtitle-editor/find-worker-client.js',
     'js/subtitle-editor/workspace-ui.js',
+    'js/subtitle-editor/ass-override-ui.js',
+    'js/subtitle-editor/ass-styles-ui.js',
+    'js/subtitle-editor/jassub-preview.js',
+    'js/subtitle-editor/low-conf-retranscribe.js',
+    'js/subtitle-library-ui.js',
+    'js/library-player-ui.js',
     'js/about-window.js',
     'js/update-window.js',
     'js/update-progress.js',
     'js/advanced-llm-pick-window.js',
     'js/eta-core.js',
     'js/media-extensions-core.js',
+    'js/app-path-utils-core.js',
+    'js/infer-stage-progress-core.js',
+    'js/progress-display-core.js',
+    'js/settings-options-normalize-core.js',
+    'js/post-task-qc-ui-core.js',
+    'js/translate-mode-chip-core.js',
+    'js/engine-download-format-core.js',
+    'js/engine-models-ui-core.js',
+    'js/engine-manual-download-core.js',
+    'js/sense-queue-core.js',
+    'js/sense-recovery-core.js',
+    'js/sense-finalize-core.js',
+    'js/engine-missing-models-core.js',
+    'js/start-readiness-core.js',
+    'js/selection-toolbar-core.js',
+    'js/live-batch-queue-core.js',
+    'js/settings-saved-options-core.js',
+    'js/post-batch-autofix-plan-core.js',
+    'js/retranslate-plan-core.js',
+    'js/task-list-sort-core.js',
+    'js/task-list-row-core.js',
     'js/content-profile-core.js',
     'js/advanced-entitlement-core.js',
     'js/advanced-license-crypto-core.js',
     'js/advanced-managed-llm-catalog-core.js',
     'js/sakura-mt-catalog-core.js',
     'js/sakura-translate-core.js',
+    'js/smart-translate-hybrid-core.js',
+    'js/smart-translate-polish-core.js',
     'js/dual-subtitle-core.js',
     'js/transwithai-model-core.js',
     'js/subtitle-text-presets-core.js',
     'js/subtitle-workflows-core.js',
     'js/subtitle-chinese-core.js',
+    'js/subtitle-library-core.js',
+    'js/library-player-core.js',
+    'js/ass-override-core.js',
+    'js/ass-styles-core.js',
     'vendor/opencc-js/full.js',
+    'vendor/jassub/jassub.js',
+    'vendor/jassub/worker.js',
+    'vendor/jassub/default.woff2',
+    'vendor/jassub/wasm/jassub-worker.wasm',
+    'vendor/jassub/wasm/jassub-worker-modern.wasm',
     'js/subtitle-qc-core.js',
     'js/subtitle-qc-smart-core.js',
     'js/subtitle-glossary-core.js',
     'js/subtitle-fluency-core.js',
     'js/mt-sanitize-core.js',
+    'js/mt-sanitize-intent-core.js',
     'js/mt-opaque-strings.js',
+    'js/mt-sanitize-lexicon.js',
     'js/subtitle-meta-core.js',
     'js/subtitle-split-core.js',
     'js/transcript-compare-core.js',
@@ -83,7 +130,6 @@ const REQUIRED_RENDERER_FILES = [
     'js/editor-workspace-core.js',
     'js/bilingual-review-core.js',
     'js/find-replace-core.js',
-    'js/speaker-suggest-core.js',
     'js/env-check.js',
     'js/manual-whl-install.js',
     // Loaded via new Worker(), not <script src> — easy to miss in packaging audits
@@ -114,12 +160,18 @@ const ELECTRON_MUST_EXIST = [
     'electron/sakura-translate.js',
     'electron/transwithai-bridge.js',
     'electron/extensions-bridge.js',
+    'electron/subtitle-library.js',
+    'electron/subtitle-library-window.js',
+    'electron/smart-translate-hybrid.js',
+    'electron/live-batch-bridge.js',
+    'electron/live-batch-queue.js',
 ];
 
 const HTML_PAGES = [
     'index.html',
     'splash.html',
     'subtitle-editor.html',
+    'subtitle-library.html',
     'about.html',
     'update.html',
     'update-progress.html',
@@ -388,6 +440,14 @@ function main() {
         errors.push(`package.json build.files 可能未打包: ${tdpBundledRel}`);
     }
 
+    // Shared MT sanitize lexicon (required by mt-sanitize-core / mt-opaque-strings; not *-core.js)
+    const mtLexiconRel = 'src/js/mt-sanitize-lexicon.js';
+    if (!fs.existsSync(path.join(root, mtLexiconRel))) {
+        errors.push(`缺少 MT sanitize 词表: ${mtLexiconRel}`);
+    } else if (!packageFilesCover(mtLexiconRel)) {
+        errors.push(`package.json build.files 可能未打包: ${mtLexiconRel}`);
+    }
+
     // Opaque tone-adapt payload (read via fs from tone-adapt-lexicon-core, not require())
     const toneAdaptRel = 'src/js/tone-adapt.tz1';
     if (!fs.existsSync(path.join(root, toneAdaptRel))) {
@@ -465,6 +525,19 @@ function main() {
         errors.push('缺少 _advanced/index.js（请先 npm run build:advanced）');
     } else if (fs.statSync(advancedIndex).size < 500) {
         errors.push('_advanced/index.js 过小，疑似未正确打包 Pro 算法');
+    } else {
+        const advText = fs.readFileSync(advancedIndex, 'utf8');
+        const absRequires = advText.match(
+            /require\(["'](?:[A-Za-z]:\\|\/(?:Users|home|tmp)\/)[^"']+["']\)/g,
+        );
+        if (absRequires?.length) {
+            errors.push(
+                `_advanced/index.js 含本机绝对路径 require（用户机无法加载）: ${absRequires[0]}`,
+            );
+        }
+        if (!advText.includes('__transubHostReq')) {
+            errors.push('_advanced/index.js 缺少宿主模块运行时解析（__transubHostReq）');
+        }
     }
     for (const rel of PROPRIETARY_ASAR_FORBIDDEN) {
         if (packageFilesCover(rel.replace(/\\/g, '/'))) {

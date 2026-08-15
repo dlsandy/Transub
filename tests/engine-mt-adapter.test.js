@@ -63,6 +63,46 @@ describe('engine-mt-adapter', () => {
         assert.strictEqual(parsed.cues[0].index, 2);
         assert.strictEqual(parsed.cues[0].startMs, 1500);
         assert.strictEqual(parsed.cues[1].text, 'ありがとう');
+        assert.strictEqual(parsed.phase, 'translate');
+    });
+
+    it('parses whole-film polish phase with translatedCues', () => {
+        const parsed = parseEngineMtRequest({
+            apiVersion: 1,
+            phase: 'polish',
+            language: 'ja',
+            cues: [
+                { id: 0, start: 0, end: 1, text: '香水さん' },
+                { id: 1, start: 1, end: 2, text: '待って' },
+            ],
+            translatedCues: [
+                { id: 0, text: '香水小姐' },
+                { id: 1, text: '等等' },
+            ],
+            briefCueTotal: 2,
+        });
+        assert.ok(parsed.ok);
+        assert.strictEqual(parsed.phase, 'polish');
+        assert.strictEqual(parsed.translatedCues.length, 2);
+        assert.strictEqual(parsed.translatedCues[0].text, '香水小姐');
+    });
+
+    it('parses optional briefCues for full-film film brief', () => {
+        const parsed = parseEngineMtRequest({
+            apiVersion: 1,
+            language: 'ja',
+            cues: [{ id: 40, start: 1, end: 2, text: '後半' }],
+            briefCues: [
+                { id: 0, start: 0, end: 1, text: 'こんにちは' },
+                { id: 99, start: 10, end: 11, text: 'さようなら' },
+            ],
+            briefCueTotal: 200,
+        });
+        assert.ok(parsed.ok);
+        assert.strictEqual(parsed.cues.length, 1);
+        assert.strictEqual(parsed.briefCues.length, 2);
+        assert.strictEqual(parsed.briefCues[0].text, 'こんにちは');
+        assert.strictEqual(parsed.briefCueTotal, 200);
     });
 
     it('builds response by cue id', () => {

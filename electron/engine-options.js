@@ -1,5 +1,8 @@
 /**
  * Transub Engine options (default backend).
+ *
+ * `engineBackend=twai` / TransWithAI is FEATURE FROZEN (compat only; target remove in 4.x).
+ * Do not add new TWAI-only options here.
  */
 
 const path = require('path');
@@ -76,7 +79,12 @@ function mergeEngineOptions(input = {}) {
     merged.engineOpusMtModel = String(
         merged.engineOpusMtModel != null ? merged.engineOpusMtModel : '',
     ).trim();
-    merged.engineLlmMtModel = String(merged.engineLlmMtModel || 'sakura-1.5b').trim() || 'sakura-1.5b';
+    // Empty LLM id =「智能选择」; only default when the field was omitted.
+    if (Object.prototype.hasOwnProperty.call(input, 'engineLlmMtModel')) {
+        merged.engineLlmMtModel = String(input.engineLlmMtModel || '').trim();
+    } else {
+        merged.engineLlmMtModel = String(merged.engineLlmMtModel || 'sakura-1.5b').trim() || 'sakura-1.5b';
+    }
     // Migrate legacy single MT field into the matching slot when split fields are absent
     if (merged.engineMtModel) {
         const id = merged.engineMtModel;

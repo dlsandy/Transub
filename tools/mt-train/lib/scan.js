@@ -45,7 +45,7 @@ function scanPair(jaPath, zhPath, options = {}) {
 
     const ja = parseSrt(jaPath);
     const zh = parseSrt(zhPath);
-    const pairs = alignCues(ja, zh, tolMs);
+    const pairs = alignCues(ja, zh, tolMs, { mode: 'dp', includeGaps: true });
 
     let changed = 0;
     let asrChanged = 0;
@@ -53,6 +53,17 @@ function scanPair(jaPath, zhPath, options = {}) {
     const sampleFixes = [];
 
     for (const p of pairs) {
+        if (p.alignGap) {
+            hits.push({
+                ji: p.ji,
+                src: p.src,
+                dst: '',
+                after: '',
+                issues: ['align_gap'],
+                d: p.d,
+            });
+            continue;
+        }
         const asr = sanitize.correctJaAsrDomainMishears(p.src);
         const senseSrc = asr.changed ? asr.text : p.src;
         if (asr.changed) asrChanged += 1;
@@ -120,6 +131,8 @@ function scanPair(jaPath, zhPath, options = {}) {
     );
     const softClusters = clusters.filter(
         (c) => c.cluster === 'align_suspect'
+            || c.cluster === 'align_gap'
+            || c.cluster === 'asr_garbage'
             || c.cluster === 'moan_expand'
             || String(c.cluster).startsWith('fixed:'),
     );

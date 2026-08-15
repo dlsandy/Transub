@@ -152,6 +152,12 @@
             group: '文本',
             defaultParams: { scope: 'all', compressSingleChar: true, addExclaim: true, minRepeats: 2 },
         },
+        'text.viewingPunct': {
+            id: 'text.viewingPunct',
+            label: '观影精简标点',
+            group: '文本',
+            defaultParams: { scope: 'all', level: 'clear' },
+        },
         'text.removeNoise': {
             id: 'text.removeNoise',
             label: '删除杂音',
@@ -264,6 +270,7 @@
             group: 'AI',
             preferConfirm: true,
             defaultParams: { scope: 'lowConfidence', padMs: 350, snapAfter: true, maxCues: 50 },
+            confirmHint: '合并邻近低置信后按时间窗重转',
         },
         'ai.retranslateScope': {
             id: 'ai.retranslateScope',
@@ -316,6 +323,12 @@
             label: '条目叠词压缩',
             group: '条目',
             defaultParams: { scope: 'all', compressSingleChar: true, addExclaim: true, minRepeats: 2 },
+        },
+        'cue.viewingPunct': {
+            id: 'cue.viewingPunct',
+            label: '条目观影精简标点',
+            group: '条目',
+            defaultParams: { scope: 'all', level: 'clear' },
         },
         'cue.charDuration': {
             id: 'cue.charDuration',

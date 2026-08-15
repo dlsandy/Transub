@@ -6,12 +6,18 @@ const {
 } = require('../electron/transwithai-options');
 
 describe('transwithai-options', () => {
-    it('merges defaults for empty input', () => {
+        it('merges defaults for empty input', () => {
         const opts = mergeTransWithAiOptions({});
         assert.strictEqual(opts.task, 'translate');
         assert.strictEqual(opts.device, 'cuda');
+        assert.strictEqual(opts.translateMode, 'llm');
+        assert.strictEqual(opts.overwrite, true);
+        assert.strictEqual(opts.mergeBilingualSubtitles, true);
+        assert.strictEqual(opts.releaseGpuAfter, true);
         assert.strictEqual(opts.postTaskAction, 'none');
         assert.strictEqual(opts.startupWindow, 'generator');
+        assert.strictEqual(opts.rememberLastOpenDir, true);
+        assert.strictEqual(opts.lastOpenDir, '');
         assert.ok(opts.installPath);
     });
 

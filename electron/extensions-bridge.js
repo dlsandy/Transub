@@ -42,6 +42,72 @@ function textPresetsData() {
 function editorWorkflowsData() {
     return require('./editor-workflows-data');
 }
+
+let _systemFontCache = null;
+let _systemFontCacheAt = 0;
+
+/**
+ * Best-effort system font family list (cached ~10 min).
+ * Windows: System.Drawing InstalledFontCollection via PowerShell.
+ */
+function listSystemFontFamilies() {
+    const now = Date.now();
+    if (_systemFontCache && (now - _systemFontCacheAt) < 10 * 60 * 1000) {
+        return Promise.resolve(_systemFontCache);
+    }
+    const { execFile } = require('child_process');
+    return new Promise((resolve) => {
+        const finish = (fonts) => {
+            const list = Array.from(new Set(
+                (Array.isArray(fonts) ? fonts : [])
+                    .map((f) => String(f || '').trim())
+                    .filter(Boolean),
+            )).sort((a, b) => a.localeCompare(b, 'en'));
+            _systemFontCache = list;
+            _systemFontCacheAt = Date.now();
+            resolve(list);
+        };
+        if (process.platform === 'win32') {
+            const ps = [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                "Add-Type -AssemblyName System.Drawing; "
+                + "[System.Drawing.Text.InstalledFontCollection]::new().Families "
+                + "| ForEach-Object { $_.Name }",
+            ];
+            execFile('powershell.exe', ps, {
+                windowsHide: true,
+                timeout: 15000,
+                maxBuffer: 2 * 1024 * 1024,
+                encoding: 'utf8',
+            }, (err, stdout) => {
+                if (err) {
+                    finish([]);
+                    return;
+                }
+                finish(String(stdout || '').split(/\r?\n/));
+            });
+            return;
+        }
+        execFile('fc-list', [':family'], {
+            timeout: 10000,
+            maxBuffer: 2 * 1024 * 1024,
+            encoding: 'utf8',
+        }, (err, stdout) => {
+            if (err) {
+                finish([]);
+                return;
+            }
+            const names = [];
+            for (const line of String(stdout || '').split(/\r?\n/)) {
+                const family = line.split(',')[0].trim();
+                if (family) names.push(family);
+            }
+            finish(names);
+        });
+    });
+}
 const {
     checkForAppUpdate,
     downloadAppUpdate,
@@ -161,7 +227,7 @@ function isSourceSubtitleTrack(filePath) {
 
 /**
  * 批量后处理：可选句读后空格、CPS 智能拆分、清理杂音/幻觉短句、压缩叠词、翻译任务简繁体，写回字幕文件。
- * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 压缩叠词 → 简繁转换（仅繁体变体；简体目标跳过 OpenCC）。
+ * 顺序：句读后空格 → CPS 拆句 → 清理杂音 → 压缩叠词 → 观影精简标点 → 简繁转换（仅繁体变体；简体目标跳过 OpenCC）。
  */
 function applySubtitlePostprocess(filePath, options = {}) {
     const doc = readSubtitleDocument(filePath);
@@ -178,6 +244,9 @@ function applySubtitlePostprocess(filePath, options = {}) {
         noise: null,
         jaStitch: null,
         compressRep: null,
+        viewingPunct: null,
+        fillerSoften: null,
+        bilingualFillerDrop: null,
         chinese: null,
         written: false,
     };
@@ -322,6 +391,108 @@ function applySubtitlePostprocess(filePath, options = {}) {
         };
     }
 
+    const doViewingPunctLevel = (() => {
+        const fluency = (() => {
+            try { return require('../src/js/subtitle-fluency-core'); } catch { return null; }
+        })();
+        const norm = fluency?.normalizeViewingCleanLevel
+            || ((v, fb) => {
+                const s = String(v ?? '').toLowerCase();
+                if (s === 'off' || s === 'light' || s === 'clear') return s;
+                return fb;
+            });
+        if (options.viewingPunctMode != null || options.simplifyViewingPunctuationLevel != null) {
+            return norm(options.viewingPunctMode || options.simplifyViewingPunctuationLevel, 'off');
+        }
+        if (options.simplifyViewingPunctuation === true) return 'light';
+        if (options.simplifyViewingPunctuation === false) return 'off';
+        return 'off';
+    })();
+    if (doViewingPunctLevel !== 'off') {
+        let fluency;
+        try {
+            fluency = require('../src/js/subtitle-fluency-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载通顺度模块' };
+        }
+        const simplified = fluency.simplifyViewingPunctuationInCues(cues, {
+            level: doViewingPunctLevel,
+        });
+        cues = simplified.cues;
+        result.viewingPunct = {
+            summary: simplified.summary,
+            stats: simplified.stats,
+        };
+    }
+
+    // 语气/拟声轻度：仅压缩纯条目叠写，不删条（清除档在成对路径里做）
+    const softenDiscourse = options.softenDiscourseFillers === true;
+    const softenOnomatopoeia = options.softenOnomatopoeiaFillers === true;
+    if (softenDiscourse || softenOnomatopoeia) {
+        let fluency;
+        try {
+            fluency = require('../src/js/subtitle-fluency-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载通顺度模块' };
+        }
+        const lang = sourceTrack ? 'ja' : 'zh';
+        const softStats = { cueTouched: 0, parts: [] };
+        if (softenDiscourse && typeof fluency.softenPureFillerInCues === 'function') {
+            const soft = fluency.softenPureFillerInCues(cues, { kind: 'discourse', lang });
+            cues = soft.cues;
+            if (soft.stats?.cueTouched) {
+                softStats.cueTouched += soft.stats.cueTouched;
+                softStats.parts.push(soft.summary);
+            }
+        }
+        if (softenOnomatopoeia && typeof fluency.softenPureFillerInCues === 'function') {
+            const soft = fluency.softenPureFillerInCues(cues, { kind: 'onomatopoeia', lang });
+            cues = soft.cues;
+            if (soft.stats?.cueTouched) {
+                softStats.cueTouched += soft.stats.cueTouched;
+                softStats.parts.push(soft.summary);
+            }
+        }
+        if (softStats.cueTouched) {
+            result.fillerSoften = {
+                summary: softStats.parts.join(' · '),
+                stats: softStats,
+            };
+        }
+    }
+
+    // 合并双语轨：清除档时按行内 JA+ZH 成对删除纯语气/拟声（无需旁路原文文件）
+    const dropBiDiscourse = options.dropBilingualDiscourse === true
+        || (options.dropBilingualPureFillers === true
+            && options.dropBilingualDiscourse == null
+            && options.dropBilingualOnomatopoeia == null);
+    const dropBiOnomatopoeia = options.dropBilingualOnomatopoeia === true
+        || (options.dropBilingualPureFillers === true
+            && options.dropBilingualDiscourse == null
+            && options.dropBilingualOnomatopoeia == null);
+    if (dropBiDiscourse || dropBiOnomatopoeia) {
+        let fluency;
+        try {
+            fluency = require('../src/js/subtitle-fluency-core');
+        } catch (err) {
+            return { ok: false, error: err.message || '无法加载通顺度模块' };
+        }
+        if (typeof fluency.dropPureFillerBilingualCues === 'function') {
+            const dropped = fluency.dropPureFillerBilingualCues(cues, {
+                dropDiscourse: dropBiDiscourse,
+                dropOnomatopoeia: dropBiOnomatopoeia,
+            });
+            if (!dropped.skipped && dropped.dropped) {
+                cues = dropped.cues;
+                result.bilingualFillerDrop = {
+                    summary: dropped.summary,
+                    dropped: dropped.dropped,
+                    droppedIndexes: dropped.droppedIndexes,
+                };
+            }
+        }
+    }
+
     if (doChinese) {
         let chinese;
         try {
@@ -371,6 +542,9 @@ function applySubtitlePostprocess(filePath, options = {}) {
         || (result.jaStitch && Number(result.jaStitch.stats?.mergedPairs) > 0)
         || (result.jaAsrDomain && Number(result.jaAsrDomain.changed) > 0)
         || (result.compressRep && Number(result.compressRep.stats?.cueTouched) > 0)
+        || (result.viewingPunct && Number(result.viewingPunct.stats?.cueTouched) > 0)
+        || (result.fillerSoften && Number(result.fillerSoften.stats?.cueTouched) > 0)
+        || (result.bilingualFillerDrop && Number(result.bilingualFillerDrop.dropped) > 0)
         || (result.chinese && Number(result.chinese.stats?.cueTouched) > 0);
 
     if (!changed) {
@@ -398,6 +572,15 @@ function applySubtitlePostprocess(filePath, options = {}) {
     }
     if (result.compressRep?.summary && result.compressRep.stats?.cueTouched) {
         parts.push(result.compressRep.summary.replace(/^将/, '已'));
+    }
+    if (result.viewingPunct?.summary && result.viewingPunct.stats?.cueTouched) {
+        parts.push(result.viewingPunct.summary);
+    }
+    if (result.fillerSoften?.summary && result.fillerSoften.stats?.cueTouched) {
+        parts.push(result.fillerSoften.summary);
+    }
+    if (result.bilingualFillerDrop?.summary && result.bilingualFillerDrop.dropped) {
+        parts.push(result.bilingualFillerDrop.summary);
     }
     if (result.chinese?.summary && result.chinese.stats?.cueTouched) parts.push(result.chinese.summary);
     return {
@@ -574,7 +757,12 @@ function compactPureInterjectionSubtitlePair(targetPath, sourcePath = '', option
     }
 
     const before = target.cues.length;
-    const droppedRes = fluency.dropPureInterjectionPairs(target.cues, sourceCues);
+    const dropDiscourse = options.dropDiscourse !== false;
+    const dropOnomatopoeia = options.dropOnomatopoeia !== false;
+    const droppedRes = fluency.dropPureInterjectionPairs(target.cues, sourceCues, {
+        dropDiscourse,
+        dropOnomatopoeia,
+    });
     if (droppedRes.skipped) {
         return {
             ok: true,
@@ -591,8 +779,11 @@ function compactPureInterjectionSubtitlePair(targetPath, sourcePath = '', option
             dropped: 0,
             path: target.path,
             sourcePath: srcPath || undefined,
-            summary: fluency.summarizePureInterjectionDrop?.(0)
-                || '未发现可精简的纯语气词条目',
+            summary: fluency.summarizePureInterjectionDrop?.(0, {
+                dropDiscourse,
+                dropOnomatopoeia,
+            })
+                || '未发现可清除的纯语气/拟声条目',
         };
     }
 
@@ -620,8 +811,11 @@ function compactPureInterjectionSubtitlePair(targetPath, sourcePath = '', option
         writtenSrc = !!srcWrite.ok;
     }
 
-    const summary = fluency.summarizePureInterjectionDrop?.(droppedRes.dropped)
-        || `精简纯语气词 ${droppedRes.dropped} 条`;
+    const summary = fluency.summarizePureInterjectionDrop?.(droppedRes.dropped, {
+        dropDiscourse,
+        dropOnomatopoeia,
+    })
+        || `清除纯语气/拟声 ${droppedRes.dropped} 条`;
     return {
         ok: true,
         dropped: droppedRes.dropped,
@@ -1163,6 +1357,9 @@ function setupExtensionsBridge(api, deps) {
                 engineAsrModel,
                 // Wizard passes syncLlamaBackend:true to force CUDA 12/13 preference.
                 syncLlamaBackend: !!payload.syncLlamaBackend,
+                scope: payload.scope != null
+                    ? asString(payload.scope, 32).trim()
+                    : 'full',
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err), items: [] };
@@ -1368,6 +1565,361 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-library-status', async () => {
+        try {
+            const { getLibraryStatus } = require('./subtitle-library');
+            return getLibraryStatus();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-list', async (_event, payload = {}) => {
+        try {
+            const { listMediaSummaries } = require('./subtitle-library');
+            return listMediaSummaries({
+                query: payload.query || '',
+                presetId: payload.presetId || '',
+                mtModel: payload.mtModel || '',
+                asrModel: payload.asrModel || '',
+                mtProvider: payload.mtProvider || '',
+                tag: payload.tag || '',
+                recipeQuery: payload.recipeQuery || '',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-get-media', async (_event, payload = {}) => {
+        try {
+            const { getMediaDetail } = require('./subtitle-library');
+            const id = String(payload.mediaId || payload.id || '').trim();
+            if (!id) return { ok: false, error: '缺少作品 ID' };
+            return getMediaDetail(id, {
+                presetId: payload.presetId || '',
+                mtModel: payload.mtModel || '',
+                asrModel: payload.asrModel || '',
+                mtProvider: payload.mtProvider || '',
+                tag: payload.tag || '',
+                recipeQuery: payload.recipeQuery || '',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-set-active', async (_event, payload = {}) => {
+        try {
+            const { setActiveVersion } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return setActiveVersion(versionId, {
+                writeExport: payload.writeExport !== false,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-open-version', async (_event, payload = {}) => {
+        try {
+            const { openVersionPaths } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return openVersionPaths(versionId);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-preview-version', async (_event, payload = {}) => {
+        try {
+            const { previewVersion } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return previewVersion(versionId, {
+                maxLines: payload.maxLines,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-load-version-cues', async (_event, payload = {}) => {
+        try {
+            const { loadVersionPlayback } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return loadVersionPlayback(versionId);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-diff', async (_event, payload = {}) => {
+        try {
+            const { diffVersions, diffAbPair } = require('./subtitle-library');
+            if (payload.abPair || payload.trackId) {
+                const trackId = String(payload.trackId || '').trim();
+                if (!trackId) return { ok: false, error: '缺少轨道 ID' };
+                return diffAbPair(trackId);
+            }
+            const a = String(payload.versionIdA || payload.a || '').trim();
+            const b = String(payload.versionIdB || payload.b || '').trim();
+            if (!a || !b) return { ok: false, error: '请选择两个版本' };
+            return diffVersions(a, b);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-set-status', async (_event, payload = {}) => {
+        try {
+            const { setVersionStatus } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            const status = String(payload.status || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return setVersionStatus(versionId, status);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-delete-version', async (_event, payload = {}) => {
+        try {
+            const { deleteVersion } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return deleteVersion(versionId);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-delete-media', async (_event, payload = {}) => {
+        try {
+            const { deleteMedia, deleteMediaBatch } = require('./subtitle-library');
+            const mediaIds = Array.isArray(payload.mediaIds)
+                ? payload.mediaIds
+                : (payload.mediaId != null ? [payload.mediaId] : []);
+            const ids = mediaIds.map((id) => String(id || '').trim()).filter(Boolean);
+            if (!ids.length) return { ok: false, error: '缺少作品 ID' };
+            if (ids.length === 1) return deleteMedia(ids[0]);
+            return deleteMediaBatch(ids);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-set-note', async (_event, payload = {}) => {
+        try {
+            const { setVersionNote } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return setVersionNote(versionId, payload.note);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-set-ab-tag', async (_event, payload = {}) => {
+        try {
+            const { setVersionAbTag } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return setVersionAbTag(versionId, payload.abTag ?? payload.tag ?? '');
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-prepare-mt-train', async (_event, payload = {}) => {
+        try {
+            const { prepareLibraryMtTrainPair } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            return prepareLibraryMtTrainPair(mediaId, {
+                preferTag: payload.preferTag || '',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-export-pack', async (event, payload = {}) => {
+        try {
+            const { exportPublishPack, exportPublishPackBatch } = require('./subtitle-library');
+            const mediaIds = Array.isArray(payload.mediaIds)
+                ? payload.mediaIds.map((id) => String(id || '').trim()).filter(Boolean)
+                : [];
+            const mediaId = String(payload.mediaId || '').trim();
+            const ids = mediaIds.length ? [...new Set(mediaIds)] : (mediaId ? [mediaId] : []);
+            if (!ids.length) return { ok: false, error: '缺少作品 ID' };
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win || undefined, {
+                title: ids.length > 1 ? '选择批量发布包导出目录' : '选择发布包导出目录',
+                properties: ['openDirectory', 'createDirectory'],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePaths?.[0]) {
+                return { ok: true, canceled: true };
+            }
+            const preferPublished = payload.preferPublished !== false;
+            if (ids.length === 1) {
+                return exportPublishPack(ids[0], result.filePaths[0], { preferPublished });
+            }
+            return exportPublishPackBatch(ids, result.filePaths[0], { preferPublished });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-export-tags', async (event, payload = {}) => {
+        try {
+            const { exportTaggedVersions } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            const tags = Array.isArray(payload.tags) && payload.tags.length
+                ? payload.tags
+                : ['对照A', '对照B'];
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showOpenDialog(win || undefined, {
+                title: '选择对照组导出目录',
+                properties: ['openDirectory', 'createDirectory'],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePaths?.[0]) {
+                return { ok: true, canceled: true };
+            }
+            return exportTaggedVersions(mediaId, result.filePaths[0], { tags });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-export-corpus', async (event, payload = {}) => {
+        try {
+            const { exportCorpusJsonl } = require('./subtitle-library');
+            const win = browserWindowFromEvent(event);
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title: '导出语料 JSONL',
+                defaultPath: 'transub-library-corpus.jsonl',
+                filters: [
+                    { name: 'JSONL', extensions: ['jsonl'] },
+                    { name: 'JSON', extensions: ['json'] },
+                ],
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) {
+                return { ok: true, canceled: true };
+            }
+            return exportCorpusJsonl(result.filePath, {
+                statuses: Array.isArray(payload.statuses) ? payload.statuses : undefined,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-set-media-path', async (event, payload = {}) => {
+        try {
+            const {
+                setMediaAssociation,
+            } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            if (payload.clear) {
+                return setMediaAssociation(mediaId, '', { clear: true });
+            }
+            let mediaPath = String(payload.mediaPath || '').trim();
+            if (payload.pick || !mediaPath) {
+                const { MEDIA_EXTENSIONS } = require('../src/js/media-extensions-core');
+                const win = browserWindowFromEvent(event);
+                const result = await dialog.showOpenDialog(win || undefined, {
+                    title: '选择关联的音视频',
+                    properties: ['openFile'],
+                    filters: [
+                        { name: '音视频', extensions: [...MEDIA_EXTENSIONS] },
+                        { name: '所有文件', extensions: ['*'] },
+                    ],
+                });
+                refocusWindow(win);
+                if (result.canceled || !result.filePaths?.[0]) {
+                    return { ok: true, canceled: true };
+                }
+                mediaPath = result.filePaths[0];
+            }
+            return setMediaAssociation(mediaId, mediaPath, {
+                updateTitle: payload.updateTitle === true,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-rename-media', async (_event, payload = {}) => {
+        try {
+            const { renameMediaTitle } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            const title = String(payload.title || '');
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            return renameMediaTitle(mediaId, title);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-suggest-media', async (_event, payload = {}) => {
+        try {
+            const { suggestMediaAssociation } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            return suggestMediaAssociation(mediaId);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-auto-link-media', async (_event, payload = {}) => {
+        try {
+            const { autoLinkMediaAssociation } = require('./subtitle-library');
+            const mediaId = String(payload.mediaId || '').trim();
+            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
+            return autoLinkMediaAssociation(mediaId, {
+                updateTitle: payload.updateTitle === true,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-auto-link-media-batch', async (_event, payload = {}) => {
+        try {
+            const { autoLinkMediaBatch } = require('./subtitle-library');
+            const mediaIds = Array.isArray(payload.mediaIds) ? payload.mediaIds : null;
+            return autoLinkMediaBatch(mediaIds, {
+                onlyUnlinkedOrMissing: payload.onlyUnlinkedOrMissing !== false,
+                updateTitle: payload.updateTitle === true,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-library-prepare-rerun', async (_event, payload = {}) => {
+        try {
+            const { prepareLibraryRerun } = require('./subtitle-library');
+            const versionId = String(payload.versionId || '').trim();
+            if (!versionId) return { ok: false, error: '缺少版本 ID' };
+            return prepareLibraryRerun(versionId, {
+                presetId: payload.presetId || '',
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-clear-transcript-cache', async (_event, payload = {}) => {
         try {
             const { clearTranscriptKeepDir, resolveTranscriptKeepDir } = require('./transcript-keep');
@@ -1534,6 +2086,22 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-merge-bilingual-subtitles', async (_event, payload = {}) => {
+        try {
+            const sourcePath = assertEditableSubtitlePath(payload.sourcePath);
+            const targetPath = assertEditableSubtitlePath(payload.path || payload.targetPath);
+            const { writeMergedBilingualSubtitleFiles } = require('./subtitle-fs-helpers');
+            const mergedPath = writeMergedBilingualSubtitleFiles(sourcePath, targetPath, {
+                primaryTrack: payload.primaryTrack || payload.dualPrimaryTrack || 'target',
+                lineOrder: payload.lineOrder || payload.dualLineOrder || 'target-first',
+                nameAsVideoStem: payload.nameAsVideoStem !== false,
+            });
+            return { ok: true, path: mergedPath };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-remove-noise-pair', async (_event, payload = {}) => {
         try {
             const targetPath = assertEditableSubtitlePath(payload.path || payload.targetPath);
@@ -1633,7 +2201,38 @@ function setupExtensionsBridge(api, deps) {
             const backupMode = payload.backupMode != null
                 ? payload.backupMode
                 : normalizeSubtitleBakMode(settings.subtitleBakMode);
-            return writeSubtitleDocument(filePath, { ...payload, backupMode });
+            const written = writeSubtitleDocument(filePath, { ...payload, backupMode });
+            if (written?.ok) {
+                try {
+                    const { ingestEditedSubtitle } = require('./subtitle-library');
+                    const ingested = ingestEditedSubtitle({
+                        subtitlePath: written.path || filePath,
+                        videoPath: payload.videoPath || '',
+                        source: payload.librarySource || undefined,
+                        status: payload.libraryStatus || undefined,
+                        note: payload.libraryNote || '',
+                        tags: payload.libraryTags || null,
+                        bindingSourceVersionId: payload.librarySourceVersionId || null,
+                        parentVersionId: payload.libraryParentVersionId || null,
+                        recipe: payload.libraryRecipe || null,
+                        setActive: payload.librarySetActive !== false,
+                    });
+                    if (ingested && typeof ingested === 'object') {
+                        const verId = ingested.version?.id || '';
+                        const activeId = ingested.track?.activeVersionId || '';
+                        written.libraryIngest = {
+                            ok: !!ingested.ok,
+                            skipped: !!ingested.skipped,
+                            versionId: verId,
+                            mediaId: ingested.media?.id || '',
+                            trackId: ingested.track?.id || '',
+                            // Catalog truth: whether this version is the track's current active.
+                            setActive: !!(verId && activeId && verId === activeId),
+                        };
+                    }
+                } catch { /* ignore library ingest */ }
+            }
+            return written;
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1667,14 +2266,42 @@ function setupExtensionsBridge(api, deps) {
             const ext = path.extname(dest).toLowerCase().replace(/^\./, '');
             const saveFormat = ['srt', 'vtt', 'lrc', 'ass'].includes(ext) ? ext : format;
             if (saveFormat === 'ass') {
-                const { serializeAss } = require('./subtitle-format');
-                const content = serializeAss(cues, {
-                    title: path.basename(dest, path.extname(dest)),
-                    speakers: payload.speakers || [],
-                    cueMarkers: payload.cueMarkers || {},
-                });
+                const { serializeAss, serializeSubtitle, serializeDualAss } = require('./subtitle-format');
+                const assMode = String(payload.assMode || '').trim().toLowerCase();
+                const header = Array.isArray(payload.header) ? payload.header : null;
+                let content;
+                if (assMode === 'dual' && Array.isArray(payload.pairCues)) {
+                    content = serializeDualAss(cues, payload.pairCues, {
+                        title: path.basename(dest, path.extname(dest)),
+                        primaryRole: payload.primaryRole || payload.dualRole || 'target',
+                        lineOrder: payload.lineOrder || payload.dualLineOrder,
+                        dualTemplate: payload.dualTemplate,
+                        sourceStyle: payload.sourceStyle,
+                        targetStyle: payload.targetStyle,
+                        marginGap: payload.marginGap,
+                    });
+                } else {
+                    // Non-dual ASS always uses document styles (legacy "speakers" coerced).
+                    content = serializeSubtitle({
+                        format: 'ass',
+                        cues,
+                        header: header && header.length ? header : undefined,
+                        assOptions: {
+                            title: path.basename(dest, path.extname(dest)),
+                            styles: payload.styles,
+                            pairCues: payload.pairCues,
+                            lineOrder: payload.lineOrder || payload.dualLineOrder,
+                        },
+                    });
+                }
                 fs.writeFileSync(dest, content, 'utf8');
-                return { ok: true, path: dest, cueCount: cues.length, format: 'ass' };
+                return {
+                    ok: true,
+                    path: dest,
+                    cueCount: cues.length,
+                    format: 'ass',
+                    assMode: assMode === 'dual' ? 'dual' : 'document',
+                };
             }
             return writeSubtitleDocument(dest, {
                 format: saveFormat,
@@ -1684,6 +2311,15 @@ function setupExtensionsBridge(api, deps) {
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-list-system-fonts', async () => {
+        try {
+            const fonts = await listSystemFontFamilies();
+            return { ok: true, fonts, count: fonts.length };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err), fonts: [] };
         }
     });
 
@@ -1977,7 +2613,9 @@ function setupExtensionsBridge(api, deps) {
                 win.show();
                 win.focus();
             }
-            const defaultPath = asString(options.defaultPath, 4096).trim();
+            const defaultPathHint = asString(options.defaultPath, 4096).trim();
+            const { resolveDialogDefaultPath, rememberOpenPath } = require('./last-open-dir');
+            const defaultPath = resolveDialogDefaultPath(getAppRoot, defaultPathHint);
             const multiple = !!options.multiple;
             const result = await dialog.showOpenDialog(win || undefined, {
                 title: options.title || (multiple ? '选择字幕文件（可多选）' : '选择字幕文件'),
@@ -1994,6 +2632,7 @@ function setupExtensionsBridge(api, deps) {
             if (result.canceled || !result.filePaths?.length) {
                 return { ok: true, canceled: true };
             }
+            rememberOpenPath(getAppRoot, result.filePaths[0]);
             if (multiple) {
                 const paths = result.filePaths.map((p) => path.resolve(p));
                 return {
@@ -2023,7 +2662,8 @@ function setupExtensionsBridge(api, deps) {
                 win.focus();
             }
             const hintPath = asString(payload.defaultPath, 4096).trim();
-            const defaultPath = hintPath ? path.dirname(path.resolve(hintPath)) : undefined;
+            const { resolveDialogDefaultPath, rememberOpenPath } = require('./last-open-dir');
+            const defaultPath = resolveDialogDefaultPath(getAppRoot, hintPath);
             const result = await dialog.showOpenDialog(win, {
                 title: payload.title || '选择关联媒体',
                 properties: ['openFile'],
@@ -2032,13 +2672,15 @@ function setupExtensionsBridge(api, deps) {
                     { name: '音频', extensions: [...AUDIO_EXTENSIONS] },
                     { name: '视频', extensions: [...VIDEO_EXTENSIONS] },
                 ],
-                defaultPath,
+                defaultPath: defaultPath || undefined,
             });
             refocusWindow(win);
             if (result.canceled || !result.filePaths?.length) {
                 return { ok: true, canceled: true };
             }
-            return { ok: true, canceled: false, path: path.resolve(result.filePaths[0]) };
+            const picked = path.resolve(result.filePaths[0]);
+            rememberOpenPath(getAppRoot, picked);
+            return { ok: true, canceled: false, path: picked };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

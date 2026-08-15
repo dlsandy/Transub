@@ -217,6 +217,7 @@ function migrateLegacyUserDataFiles(fileNames = [
     copyDirIfMissing(path.join(legacyRoot, 'advanced-modules'), path.join(writable, 'advanced-modules'));
     copyDirIfMissing(path.join(legacyRoot, 'backup'), path.join(writable, 'backup'));
     copyDirIfMissing(path.join(legacyRoot, 'tdp'), path.join(writable, 'tdp'));
+    copyDirIfMissing(path.join(legacyRoot, 'subtitle-library'), path.join(writable, 'subtitle-library'));
 }
 
 module.exports = {

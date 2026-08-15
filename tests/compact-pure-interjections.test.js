@@ -112,3 +112,35 @@ describe('compactPureInterjectionSubtitlePair', () => {
         assert.ok(fs.readFileSync(zhPath, 'utf8').includes('嗯'));
     });
 });
+
+describe('bilingual merged postprocess (viewing punct + filler clear)', () => {
+    const { applySubtitlePostprocess } = require('../electron/extensions-bridge');
+
+    it('clears punctuation and drops pure filler bilingual cues', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-bi-post-'));
+        const biPath = path.join(dir, 'clip.srt');
+        writeSrt(biPath, [
+            { index: 1, text: '嗯\nうん' },
+            { index: 2, text: '你好，世界。\nこんにちは。' },
+            { index: 3, text: '哈啊\nはぁ' },
+            { index: 4, text: '没问题吧？\n大丈夫？' },
+        ]);
+        const res = applySubtitlePostprocess(biPath, {
+            viewingPunctMode: 'clear',
+            dropBilingualDiscourse: true,
+            dropBilingualOnomatopoeia: true,
+            backupMode: 'off',
+        });
+        assert.strictEqual(res.ok, true);
+        assert.ok(res.written);
+        assert.ok(res.bilingualFillerDrop?.dropped >= 2, res.bilingualFillerDrop);
+        const out = fs.readFileSync(biPath, 'utf8');
+        assert.ok(!out.includes('嗯'));
+        assert.ok(!out.includes('哈啊'));
+        assert.ok(out.includes('你好 世界'));
+        assert.ok(out.includes('没问题吧？'));
+        assert.ok(out.includes('大丈夫？'));
+        assert.ok(!out.includes('你好，世界'));
+        assert.ok(!out.includes('こんにちは。'));
+    });
+});

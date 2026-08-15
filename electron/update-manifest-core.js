@@ -450,7 +450,11 @@ function verifyArchiveSha256(absPath, expectedSha256) {
     if (!want) return { ok: true, skipped: true };
     const got = sha256File(absPath);
     if (got !== want) {
-        throw new Error(`增量包校验失败: ${path.basename(absPath)}`);
+        const err = new Error(`增量包校验失败: ${path.basename(absPath)}`);
+        err.code = 'checksum';
+        err.expectedSha = want.slice(0, 12);
+        err.gotSha = String(got || '').slice(0, 12);
+        throw err;
     }
     return { ok: true, sha256: got };
 }

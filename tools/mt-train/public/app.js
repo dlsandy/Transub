@@ -625,7 +625,7 @@
             lines.push(`局部：${trial.suggestion.zhFrom} → ${trial.suggestion.zhTo || ''}`);
         }
         if (trial.undoneBy) lines.push(`被冲掉于：${trial.undoneBy}`);
-        if (trial.matchesExpect) lines.push('下一步：跑 mocha / TDP 防回归');
+        if (trial.matchesExpect) lines.push('下一步：发库前检查 → 签发 TDP');
         return lines.filter(Boolean).join('\n');
     }
 
@@ -776,7 +776,7 @@
             log(`规则已生效 ${out.rule?.id || ''}`
                 + (beforeLive != null && afterLive != null ? `，待修 ${beforeLive}→${afterLive}` : ''));
             if (trial.matchesExpect) {
-                log('写入验证通过。建议点击 mocha / TDP 做回归。');
+                log('写入验证通过。建议点「发库前检查」再签发 TDP。');
             } else {
                 log('写入后仍未命中期望：检查锚点、局部片段，或确认已勾选防润色。');
             }
@@ -2456,19 +2456,48 @@
         }
     }
 
+    let lastShipGateOk = false;
+
     async function runMocha() {
         clearLog();
         log('开始跑全部测试…');
         try {
             const done = await streamPost('/api/mocha', {}, { log });
             log(done?.ok ? '测试全部通过' : `测试结束，退出码 ${done?.code}`);
+            if (done?.ok) lastShipGateOk = false; // mocha alone ≠ full ship gate
         } catch (err) {
             log(`测试失败：${err.message}`);
         }
     }
 
+    async function runShipGate() {
+        clearLog();
+        log('发库前检查：冲突报告 → 全量 mt-sanitize…');
+        lastShipGateOk = false;
+        try {
+            const done = await streamPost('/api/ship-gate', {}, { log });
+            lastShipGateOk = !!done?.ok;
+            if (done?.ok) {
+                log(done.summary || '发库前检查通过');
+                if (done.hint) log(done.hint);
+            } else {
+                log(done?.summary || '发库前检查未通过');
+                if (done?.hint) log(done.hint);
+            }
+        } catch (err) {
+            log(`发库前检查失败：${err.message}`);
+        }
+    }
+
     async function runTdp() {
         clearLog();
+        if (!lastShipGateOk) {
+            const go = confirm('尚未通过「发库前检查」。仍要签发 TDP？\n建议先点「发库前检查」。');
+            if (!go) {
+                log('已取消签发（请先跑发库前检查）');
+                return;
+            }
+        }
         const version = tdpVersionEl.value.trim();
         const notes = tdpNotesEl.value.trim();
         log(`签发术语包 ${version}…`);
@@ -2477,6 +2506,7 @@
             log(done?.ok ? `术语包 ${version} 已签发` : `术语包签发结束，退出码 ${done?.code}`);
             const suggest = await api('/api/tdp-suggest');
             if (suggest.next) tdpVersionEl.value = suggest.next;
+            if (done?.ok) lastShipGateOk = false;
         } catch (err) {
             log(`术语包签发失败：${err.message}`);
         }
@@ -2553,6 +2583,7 @@
     btnAutoInferMissing?.addEventListener('click', () => runAutoInferMissing());
     btnAutoApply?.addEventListener('click', () => runAutoApply());
     void checkTrainHealth();
+    $('btnShipGate').addEventListener('click', () => runShipGate());
     $('btnMocha').addEventListener('click', () => runMocha());
     $('btnTdp').addEventListener('click', () => runTdp());
     btnTrainTry.addEventListener('click', () => runTrainTry());
@@ -2708,4 +2739,39 @@
     });
 
     loadTitles().catch((e) => log(e.message));
+
+    async function applyPendingLibraryPair(pair) {
+        if (!pair || typeof pair !== 'object') return;
+        const ja = String(pair.jaPath || '').trim();
+        const zh = String(pair.zhPath || '').trim();
+        if (!ja && !zh) return;
+        if (ja) jaPathEl.value = ja;
+        if (zh) zhPathEl.value = zh;
+        const title = String(pair.title || '').trim();
+        log(title
+            ? `已从字幕库带入：${title}${pair.hasAbPair || pair.zhPathA ? '（含对照路径）' : ''}`
+            : `已从字幕库带入日/中路径`);
+        try {
+            await runScan({ force: true });
+        } catch (err) {
+            log(`自动扫描失败：${err?.message || err}`);
+        }
+    }
+
+    async function hydratePendingLibraryPair() {
+        try {
+            if (!window.transubTrain?.consumePendingPair) return;
+            const res = await window.transubTrain.consumePendingPair();
+            if (res?.ok && res.pair) await applyPendingLibraryPair(res.pair);
+        } catch (err) {
+            log(`读取字幕库路径失败：${err?.message || err}`);
+        }
+        try {
+            window.transubTrain?.onPendingPair?.((payload) => {
+                void applyPendingLibraryPair(payload);
+            });
+        } catch (_) { /* ignore */ }
+    }
+
+    void hydratePendingLibraryPair();
 })();

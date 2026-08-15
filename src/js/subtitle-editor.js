@@ -25,6 +25,11 @@
     if (!j?.installLayout) throw new Error("subtitle-editor/layout.js must load before subtitle-editor.js");
     if (!j?.installWorkflows) throw new Error("subtitle-editor/workflows.js must load before subtitle-editor.js");
     if (!j?.installKeptAndMarkers) throw new Error("subtitle-editor/kept-and-markers.js must load before subtitle-editor.js");
+    if (!j?.installAssStylesUi) throw new Error("subtitle-editor/ass-styles-ui.js must load before subtitle-editor.js");
+    if (!j?.installAssOverrideUi) throw new Error("subtitle-editor/ass-override-ui.js must load before subtitle-editor.js");
+    if (!j?.installJassubPreview) throw new Error("subtitle-editor/jassub-preview.js must load before subtitle-editor.js");
+    if (!T.TransubAssStyles) throw new Error("ass-styles-core.js must load before subtitle-editor.js");
+    if (!T.TransubAssOverride) throw new Error("ass-override-core.js must load before subtitle-editor.js");
     const {
         esc: b,
         basename: G,
@@ -51,6 +56,8 @@
         videoCodec: "",
         videoWidth: 0,
         videoHeight: 0,
+        library: null,
+        librarySaveIntent: "current",
         format: "srt",
         header: [],
         cues: [],
@@ -66,6 +73,9 @@
         pairFormat: "srt",
         pairHeader: [],
         pairDirty: !1,
+        pairReadOnly: !1,
+        libraryCompareVersionId: "",
+        libraryCompareLabel: "",
         dualRole: null,
         dualDisplayMode: "both",
         dualLineOrder: "source-first",
@@ -126,7 +136,6 @@
         textPresetsQuery: "",
         breakWords: null,
         listFilter: "all",
-        listFilterSpeakerId: "",
         qcIssueIndexSet: new Set,
         qcTypeFilter: null,
         autoFocus: !1,
@@ -151,7 +160,11 @@
     };
     let e = {},
         H = null,
+        Bl = null,
         Bt = null,
+        As = null,
+        Ov = null,
+        Jp = null,
         Xt = null,
         Yt = null,
         st = null,
@@ -208,7 +221,7 @@
     function kt() {
         if (!e.dualDisplaySelect) return;
         const n = U();
-        e.dualDisplaySelect.classList.toggle("hidden", !n), e.dualLineOrderSelect?.classList.toggle("hidden", !n), e.exportDualBtn?.classList.toggle("hidden", !n), e.exportDualMenuBtn?.classList.toggle("hidden", !n), e.cueTable?.classList.toggle("has-dual-pair", n), document.querySelectorAll(".ctx-dual-only").forEach(r => {
+        e.dualDisplaySelect.classList.toggle("hidden", !n), e.dualLineOrderSelect?.classList.toggle("hidden", !n), e.exportDualBtn?.classList.toggle("hidden", !n), e.exportDualMenuBtn?.classList.toggle("hidden", !n), e.exportDualAssBtn?.classList.toggle("hidden", !n), e.cueTable?.classList.toggle("has-dual-pair", n), document.querySelectorAll(".ctx-dual-only").forEach(r => {
             r.classList.toggle("hidden", !n)
         })
     }
@@ -218,11 +231,49 @@
     }
 
     function va() {
-        return U() ? 7 : 6
+        const styleCol = !!(t.showAssStyleColumn || t.format === "ass" || t.format === "ssa");
+        return (U() ? 7 : 6) + (styleCol ? 1 : 0)
+    }
+
+    function syncAssStyleColumn() {
+        const on = !!(t.showAssStyleColumn || t.format === "ass" || t.format === "ssa");
+        e.cueTable?.classList.toggle("has-ass-style-col", on)
+    }
+
+    async function loadSystemFontsForAss() {
+        if (t._systemFontsLoading) return;
+        t._systemFontsLoading = !0;
+        try {
+            let fonts = [];
+            if (p?.transubListSystemFonts) {
+                const res = await p.transubListSystemFonts();
+                if (res?.ok && Array.isArray(res.fonts)) fonts = res.fonts;
+            }
+            if (!fonts.length && typeof document !== "undefined" && typeof document.fonts?.values === "function") {
+                try {
+                    for (const face of document.fonts.values()) {
+                        const family = String(face.family || "").replace(/["']/g, "").trim();
+                        if (family) fonts.push(family);
+                    }
+                } catch {}
+            }
+            const uniq = Array.from(new Set(fonts.map(n => String(n || "").trim()).filter(Boolean)));
+            t.systemFonts = uniq.map(n => n.toLowerCase());
+            const datalist = document.getElementById("editorAssFontSuggestions");
+            if (datalist && uniq.length) {
+                const preferred = ["Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", "Arial", "SimHei"];
+                const merged = [...preferred, ...uniq.filter(n => !preferred.some(p => p.toLowerCase() === n.toLowerCase()))].slice(0, 80);
+                datalist.innerHTML = merged.map(n => `<option value="${b(n)}"></option>`).join("")
+            }
+        } catch {
+            t.systemFonts = []
+        } finally {
+            t._systemFontsLoading = !1
+        }
     }
 
     function rn() {
-        t.pairPath = "", t.pairCues = [], t.pairFormat = "srt", t.pairHeader = [], t.pairDirty = !1, t.dualRole = null, as(), kt()
+        t.pairPath = "", t.pairCues = [], t.pairFormat = "srt", t.pairHeader = [], t.pairDirty = !1, t.pairReadOnly = !1, t.libraryCompareVersionId = "", t.libraryCompareLabel = "", t.dualRole = null, as(), kt(), syncLibraryBar()
     }
 
     function sn(n) {
@@ -279,11 +330,30 @@
                 swapToTarget: !0,
                 targetPath: g,
                 sourcePath: n
-            } : (t.pairPath = g, t.pairCues = Array.isArray(v.cues) ? v.cues : [], as(), t.pairFormat = v.format || t.format || "srt", t.pairHeader = Array.isArray(v.header) ? v.header : [], t.pairDirty = !1, t.dualRole = a.role, t.dualDisplayMode = zn(), t.dualLineOrder = nn(), e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode), e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder), kt(), {
-                swapToTarget: !1,
-                pairPath: g,
-                role: a.role
-            }) : null
+            } : (
+                // Drop any prior library compare markers — filesystem pair is writable.
+                t.pairReadOnly = !1,
+                t.libraryCompareVersionId = "",
+                t.libraryCompareLabel = "",
+                t.pairPath = g,
+                t.pairCues = Array.isArray(v.cues) ? v.cues : [],
+                as(),
+                t.pairFormat = v.format || t.format || "srt",
+                t.pairHeader = Array.isArray(v.header) ? v.header : [],
+                t.pairDirty = !1,
+                t.dualRole = a.role,
+                t.dualDisplayMode = zn(),
+                t.dualLineOrder = nn(),
+                e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode),
+                e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder),
+                kt(),
+                syncLibraryBar(),
+                {
+                    swapToTarget: !1,
+                    pairPath: g,
+                    role: a.role
+                }
+            ) : null
         } catch {
             return rn(), null
         }
@@ -308,6 +378,10 @@
         return String(a.cue?.text || "").trim()
     }
     async function os() {
+        if (t.pairReadOnly) return {
+            ok: !1,
+            error: "对照副轨为只读"
+        };
         if (!t.pairPath || !p?.transubWriteSubtitle) return {
             ok: !1
         };
@@ -450,6 +524,150 @@
         return Ue && (r.ffmpegPath = Ue), r
     }
 
+    function applyLibrarySession(n) {
+        const lib = n?.library && typeof n.library === "object" ? n.library : n;
+        const versionId = String(lib?.versionId || n?.versionId || "").trim();
+        const mediaId = String(lib?.mediaId || n?.mediaId || "").trim();
+        if (!versionId && !mediaId) {
+            t.library = null;
+            syncLibraryBar();
+            return
+        }
+        const mediaLinked = lib?.mediaLinked != null
+            ? !!lib.mediaLinked
+            : (n?.mediaLinked != null ? !!n.mediaLinked : !!(t.videoPath || lib?.mediaId));
+        const mediaExists = lib?.mediaExists != null
+            ? !!lib.mediaExists
+            : (n?.mediaExists != null ? !!n.mediaExists : !!t.videoPath);
+        t.library = {
+            mediaId,
+            trackId: String(lib?.trackId || n?.trackId || "").trim(),
+            versionId,
+            role: String(lib?.role || n?.role || "").trim(),
+            roleLabel: String(lib?.roleLabel || n?.roleLabel || "").trim(),
+            recipeSummary: String(lib?.recipeSummary || n?.recipeSummary || "").trim(),
+            contentRef: String(lib?.contentRef || n?.contentRef || "").trim(),
+            exportPath: String(lib?.exportPath || n?.exportPath || "").trim(),
+            isActive: !!(lib?.isActive ?? n?.isActive),
+            mediaTitle: String(lib?.mediaTitle || n?.mediaTitle || "").trim(),
+            openedFromBlob: !!(lib?.openedFromBlob ?? n?.openedFromBlob),
+            mediaLinked,
+            mediaExists,
+            abPairAvailable: !!(lib?.abPairAvailable ?? n?.abPairAvailable),
+            abVersionIdA: String(lib?.abVersionIdA || n?.abVersionIdA || "").trim(),
+            abVersionIdB: String(lib?.abVersionIdB || n?.abVersionIdB || "").trim()
+        };
+        syncLibraryBar()
+    }
+
+    function syncLibraryBar() {
+        const bar = e.libraryBar;
+        if (!bar) return;
+        const lib = t.library;
+        if (!lib?.versionId && !lib?.mediaId) {
+            bar.classList.add("hidden");
+            return
+        }
+        bar.classList.remove("hidden");
+        const title = lib.mediaTitle || (t.videoPath ? G(t.videoPath) : "未命名作品");
+        if (e.libraryTitle) {
+            e.libraryTitle.textContent = title;
+            e.libraryTitle.title = title
+        }
+        if (e.libraryRole) e.libraryRole.textContent = lib.roleLabel || lib.role || "字幕";
+        if (e.libraryActive) e.libraryActive.classList.toggle("hidden", !lib.isActive);
+        if (e.libraryRecipe) {
+            const recipe = lib.recipeSummary || "—";
+            e.libraryRecipe.textContent = recipe;
+            e.libraryRecipe.title = recipe
+        }
+        const linkedInLib = lib.mediaLinked != null ? !!lib.mediaLinked : !1;
+        const mediaBad = !t.videoPath;
+        if (e.libraryMediaStatus) {
+            e.libraryMediaStatus.classList.toggle("hidden", !mediaBad);
+            if (mediaBad) {
+                e.libraryMediaStatus.textContent = linkedInLib ? "影缺失" : "未关联媒体";
+                e.libraryMediaStatus.className = "editor-chip editor-chip-warn shrink-0"
+            }
+        }
+        if (e.libraryFixMediaBtn) {
+            e.libraryFixMediaBtn.classList.toggle("hidden", !mediaBad);
+            e.libraryFixMediaBtn.title = linkedInLib ? "重新选择媒体文件" : "选择并关联媒体"
+        }
+        if (e.librarySaveIntent) {
+            const intent = t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab"
+                ? t.librarySaveIntent
+                : "current";
+            e.librarySaveIntent.value = intent
+        }
+        const hasTrack = !!(lib?.trackId || lib?.versionId);
+        if (e.libraryAbDiffBtn) e.libraryAbDiffBtn.disabled = !hasTrack;
+        if (e.libraryRerunBtn) e.libraryRerunBtn.disabled = !lib?.versionId;
+        if (e.libraryLoadCompareBtn) {
+            const compareOn = !!(t.libraryCompareVersionId && U());
+            e.libraryLoadCompareBtn.disabled = !hasTrack;
+            e.libraryLoadCompareBtn.classList.toggle("is-active", compareOn);
+            e.libraryLoadCompareBtn.title = compareOn
+                ? `卸下${t.libraryCompareLabel || "对照"}副轨`
+                : (lib.abPairAvailable ? "挂载对照 A/B 为只读副轨" : "挂载对照副轨（需先在库中标 A/B）");
+            const icon = e.libraryLoadCompareBtn.querySelector("i");
+            if (icon) icon.className = compareOn ? "fa fa-unlink" : "fa fa-columns"
+        }
+    }
+
+    async function refreshEditorVideoFromPath(nextPath, { force = false } = {}) {
+        const want = String(nextPath || "").trim();
+        const cur = String(t.videoPath || "").trim();
+        const norm = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
+        if (!want) {
+            if (cur || force) await Is("");
+            return
+        }
+        if (!force && cur && norm(cur) === norm(want)) return;
+        await Is(want)
+    }
+
+    async function applyLibraryMediaUpdate(payload) {
+        const mid = String(payload?.mediaId || "").trim();
+        if (!mid || !t.library?.mediaId || mid !== t.library.mediaId) return;
+        t.library = {
+            ...t.library,
+            mediaLinked: payload.cleared ? !1 : (payload.mediaLinked != null ? !!payload.mediaLinked : !!payload.videoPath),
+            mediaExists: payload.cleared ? !1 : (payload.mediaExists != null ? !!payload.mediaExists : !!payload.videoPath),
+            mediaTitle: String(payload.mediaTitle || t.library.mediaTitle || "").trim() || t.library.mediaTitle
+        };
+        syncLibraryBar();
+        if (payload.cleared) {
+            await refreshEditorVideoFromPath("", { force: !0 });
+            d("库中已清除媒体关联", "warn");
+            return
+        }
+        const next = String(payload.videoPath || "").trim();
+        if (next) {
+            const before = String(t.videoPath || "").trim();
+            await refreshEditorVideoFromPath(next, { force: !t.videoPath });
+            syncLibraryBar();
+            if (before !== String(t.videoPath || "").trim()) d("已同步库中媒体关联", "ok")
+        }
+    }
+
+    function loadLibrarySaveIntent() {
+        try {
+            const v = localStorage.getItem("transub.editor.librarySaveIntent");
+            if (v === "draft" || v === "current" || v === "ab") t.librarySaveIntent = v
+        } catch {}
+    }
+
+    function persistLibrarySaveIntent() {
+        try {
+            const v = t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab"
+                ? t.librarySaveIntent
+                : "current";
+            localStorage.setItem("transub.editor.librarySaveIntent", v)
+        } catch {}
+    }
+
+    let _editorInitGen = 0;
     function ds(n) {
         if (n) {
             if (n.welcome && !n.subPath) {
@@ -457,7 +675,7 @@
                     st = n;
                     return
                 }
-                cn();
+                t.library = null, syncLibraryBar(), cn();
                 return
             }
             if (n.subPath) {
@@ -467,8 +685,25 @@
                 }
                 const r = String(n.action || "").trim();
                 const i = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
+                const nextVid = String(n.library?.versionId || n.versionId || "").trim();
+                const curVid = String(t.library?.versionId || "").trim();
+                const versionChanged = !!(nextVid && curVid && nextVid !== curVid);
+                const hasLibraryPayload = !!(n.library && (n.library.versionId || n.library.mediaId || n.versionId || n.mediaId));
                 const s = t.ready && t.path && i(t.path) === i(n.subPath) && t.cues.length > 0;
-                if (s) {
+                if (s && !versionChanged) {
+                    if (hasLibraryPayload) applyLibrarySession(n);
+                    else {
+                        t.library = null;
+                        syncLibraryBar()
+                    }
+                    void (async () => {
+                        const nextVideo = String(n.videoPath || "").trim();
+                        if (nextVideo) await refreshEditorVideoFromPath(nextVideo, { force: !t.videoPath });
+                        else if (n.library && (n.library.mediaLinked === !1 || n.library.mediaExists === !1)) {
+                            await refreshEditorVideoFromPath("", { force: !0 })
+                        }
+                        syncLibraryBar()
+                    })();
                     if (r === "film-context-reconstruct") {
                         Ve({
                             mode: "film",
@@ -477,8 +712,24 @@
                     }
                     return
                 }
-                Un(), void(async () => {
-                    await fn(n.subPath, n.videoPath || "");
+                Un();
+                const gen = ++_editorInitGen;
+                void (async () => {
+                    if (versionChanged && t.dirty) {
+                        const ok = await ie("当前字幕未保存，切换到库中另一版本将丢失修改，继续？");
+                        if (!ok || gen !== _editorInitGen) return
+                    }
+                    const opened = await fn(n.subPath, n.videoPath || "", {
+                        skipDirtyConfirm: versionChanged,
+                        dirtyMessage: versionChanged
+                            ? "当前字幕未保存，切换库版本将丢失修改，继续？"
+                            : "",
+                        clearLibrary: !hasLibraryPayload
+                    });
+                    if (gen !== _editorInitGen) return;
+                    if (opened === !1) return;
+                    if (hasLibraryPayload) applyLibrarySession(n);
+                    else if (!t.library) syncLibraryBar();
                     if (r === "film-context-reconstruct" && t.cues.length && i(t.path) === i(n.subPath)) {
                         Ve({
                             mode: "film",
@@ -490,6 +741,9 @@
         }
     }
     p?.onSubtitleEditorInit?.(ds);
+    p?.onTransubLibraryMediaUpdated?.((payload) => {
+        void applyLibraryMediaUpdate(payload)
+    });
 
     function d(n, r) {
         e.statusLine && (e.statusLine.textContent = n || "", e.statusLine.className = `status-msg${r==="err"?" err":r==="ok"?" ok":r==="warn"?" warn":""}`)
@@ -532,11 +786,15 @@
             const i = r.exists === !1,
                 s = wa(r.openedAt),
                 a = i ? s ? `${s} \xB7 \u6587\u4EF6\u4E0D\u5B58\u5728` : "\u6587\u4EF6\u4E0D\u5B58\u5728" : s;
-            return `<button type="button" class="editor-welcome-history-item${i?" is-missing":""}" role="listitem" data-path="${b(r.path)}" data-video="${b(r.videoPath||"")}" title="${b(r.path)}">
-                <span class="editor-welcome-history-name">${b(r.basename||G(r.path))}</span>
-                <span class="editor-welcome-history-path">${b(r.path)}</span>
-                ${a?`<span class="editor-welcome-history-meta">${b(a)}</span>`:""}
-            </button>`
+            const mediaPath = r.videoPath || r.path || "";
+            return `<div class="editor-welcome-history-item${i?" is-missing":""}" role="listitem">
+                <button type="button" class="editor-welcome-history-open" data-path="${b(r.path)}" data-video="${b(r.videoPath||"")}" title="${b(r.path)}">
+                    <span class="editor-welcome-history-name">${b(r.basename||G(r.path))}</span>
+                    <span class="editor-welcome-history-path">${b(r.path)}</span>
+                    ${a?`<span class="editor-welcome-history-meta">${b(a)}</span>`:""}
+                </button>
+                <button type="button" class="editor-welcome-history-lib" data-open-library data-media-path="${b(mediaPath)}" title="在字幕库中查看">库</button>
+            </div>`
         }).join("")
     }
     async function Ca(n, r) {
@@ -593,7 +851,7 @@
             d("\u8BF7\u62D6\u653E SRT / VTT / LRC / ASS \u5B57\u5E55\u6587\u4EF6", "err");
             return
         }
-        await fn(i, "")
+        await fn(i, "", { clearLibrary: !0 })
     }
 
     function La() {
@@ -601,14 +859,30 @@
             rr()
         }), e.welcomeOpenGeneratorBtn?.addEventListener("click", () => {
             Ai()
+        }), e.welcomeOpenLibraryBtn?.addEventListener("click", () => {
+            openSubtitleLibraryFromEditor()
         }), e.welcomeClearBtn?.addEventListener("click", () => {
             Ea()
         }), e.welcomeHistoryList?.addEventListener("click", s => {
+            const libBtn = s.target.closest?.("[data-open-library]");
+            if (libBtn) {
+                s.preventDefault();
+                const mediaPath = libBtn.getAttribute("data-media-path") || "";
+                void (async () => {
+                    try {
+                        const res = await p?.transubOpenSubtitleLibrary?.({ mediaPath });
+                        res?.ok === !1 && d(res?.error || "无法打开字幕库", "err")
+                    } catch (err) {
+                        d(err?.message || "无法打开字幕库", "err")
+                    }
+                })();
+                return
+            }
             const a = s.target.closest?.("[data-path]");
             if (!a) return;
             const o = a.getAttribute("data-path") || "",
                 l = a.getAttribute("data-video") || "";
-            o && fn(o, l)
+            o && fn(o, l, { clearLibrary: !0 })
         });
         const n = e.welcomeIconWrap || e.welcomeIcon || e.welcome;
         if (!n) return;
@@ -735,7 +1009,10 @@
         if (e.detailStart && (e.detailStart.value = Z(a.startMs, t.format)), e.detailDuration && (e.detailDuration.value = xt(V(a))), e.detailEnd && (e.detailEnd.value = Z(I(a), t.format)), e.detailText && (e.detailText.value = a.text || ""), e.detailPairWrap && e.detailPairText)
             if (U()) {
                 const o = an(a);
-                e.detailPairText.textContent = o || "\uFF08\u65E0\u65F6\u95F4\u91CD\u53E0\u7684\u5BF9\u7167\uFF09", e.detailPairWrap.classList.remove("hidden")
+                e.detailPairText.textContent = o || "\uFF08\u65E0\u65F6\u95F4\u91CD\u53E0\u7684\u5BF9\u7167\uFF09", e.detailPairWrap.classList.remove("hidden");
+                e.detailPairLabel && (e.detailPairLabel.textContent = t.libraryCompareLabel
+                    ? `${t.libraryCompareLabel}（只读）`
+                    : (t.pairReadOnly ? "对照轨（只读）" : "对照轨"))
             } else e.detailPairText.textContent = "", e.detailPairWrap.classList.add("hidden");
         s || at(), wt(), t.detailRenderedDurSec = V(a) / 1e3, t.detailSyncing = !1
     }
@@ -853,12 +1130,12 @@
             e.cueBody.innerHTML = `<tr><td colspan="${s}" class="px-3 py-6 text-center text-xs" style="color:var(--ed-faint)">\u65E0\u5B57\u5E55\u6761\u76EE</td></tr>`, e.filterCount && (e.filterCount.textContent = ""), r || me(), t.selectedIndex = -1, t.cueMeta = [], r || (R(), ye(), je(null), _t()), i || He();
             return
         }
-        i || (He(), Ii()), Pi();
+        i || (He(), Ii());
         const a = Vt();
         if (e.filterCount && (e.filterCount.textContent = t.listFilter === "all" ? "" : `\u663E\u793A ${a.length} / ${t.cues.length}`), a.length) {
             const o = U(),
                 l = e.cueTable?.querySelector(".col-pair-head");
-            l && (l.textContent = t.dualRole === "source" ? "\u8BD1\u6587\u5BF9\u7167" : "\u539F\u6587\u5BF9\u7167");
+            l && (l.textContent = t.dualRole === "source" ? "\u8BD1\u6587\u5BF9\u7167" : "\u539F\u6587\u5BF9\u7167"), syncAssStyleColumn();
             const c = T.TransubCueListWindow,
                 u = e.listWrap || e.cueBody?.closest?.(".editor-list-wrap"),
                 m = c?.shouldVirtualize?.(a.length);
@@ -898,10 +1175,9 @@
 
     function hs(n) {
         const r = H?.getCueMarkerForIndex?.(n),
-            i = r?.speakerId ? (t.markers?.speakers || []).find(l => l.id === r.speakerId) : null,
             s = r?.reviewStatus,
             a = [];
-        return i && a.push(`<span class="cue-marker-dot" style="background:${b(i.color||"#e11d48")}" title="${b(i.name)}"></span>`), s === "approved" ? a.push('<span title="\u5DF2\u901A\u8FC7">\u2713</span>') : s === "edited" && a.push('<span title="\u5DF2\u6539">\u270E</span>'), !!H?.cueCoversBookmark?.(n) && (t.listFilter === "bookmarks" ? a.push(`<button type="button" class="cue-bm-remove" data-remove-bm="${n}" title="\u79FB\u9664\u8BE5\u4E66\u7B7E" aria-label="\u79FB\u9664\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i><span class="cue-bm-remove-x">\xD7</span></button>`) : a.push('<span class="cue-bm-mark" title="\u8986\u76D6\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i></span>')), a.join("")
+        return s === "approved" ? a.push('<span title="\u5DF2\u901A\u8FC7">\u2713</span>') : s === "edited" && a.push('<span title="\u5DF2\u6539">\u270E</span>'), !!H?.cueCoversBookmark?.(n) && (t.listFilter === "bookmarks" ? a.push(`<button type="button" class="cue-bm-remove" data-remove-bm="${n}" title="\u79FB\u9664\u8BE5\u4E66\u7B7E" aria-label="\u79FB\u9664\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i><span class="cue-bm-remove-x">\xD7</span></button>`) : a.push('<span class="cue-bm-mark" title="\u8986\u76D6\u4E66\u7B7E"><i class="fa fa-bookmark" aria-hidden="true"></i></span>')), a.join("")
     }
 
     function ys(n, r) {
@@ -924,7 +1200,9 @@
             f = m != null ? Number(m) : null,
             g = f != null && f > 18,
             h = hs(n),
-            v = b(ys(n, l));
+            v = b(ys(n, l)),
+            styleCol = !!(t.showAssStyleColumn || t.format === "ass" || t.format === "ssa"),
+            styleName = String(i?.ass?.style || "").trim() || "Default";
         return `
             <tr class="${u?"cue-row-low-conf":""}" data-cue-idx="${n}" title="${v}">
                 <td class="text-xs tabular-nums align-middle col-idx" style="color:var(--ed-muted)">${h}${n+1}${u?'<span class="low-conf-dot" aria-label="\u4F4E\u7F6E\u4FE1">!</span>':""}</td>
@@ -932,6 +1210,7 @@
                 <td class="font-mono text-[11px] tabular-nums align-middle ${o.end?"cell-warn":""}">${b(Z(I(i),t.format))}</td>
                 <td class="text-[11px] tabular-nums align-middle ${o.dur?"cell-warn":""}">${b(xt(V(i)))}</td>
                 <td class="cue-cps-cell align-middle ${g?"hot":""}">${m!=null?b(m):"\u2014"}</td>
+                ${styleCol?`<td class="cell-style align-middle col-style" title="${b(styleName)}">${b(styleName)}</td>`:""}
                 <td class="cell-text align-middle">${b(l||"\u2014")}</td>
                 ${r?`<td class="cell-pair align-middle" title="${b(c||"")}">${b(c||"\u2014")}</td>`:""}
             </tr>`
@@ -964,7 +1243,14 @@
                 g = f != null ? Number(f) : null;
             l[4].textContent = f ?? "\u2014", l[4].className = `cue-cps-cell align-middle${g!=null&&g>18?" hot":""}`
         }
-        l[5] && (l[5].textContent = c || "\u2014"), U() && l[6] && (l[6].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[6].title = l[6].textContent === "\u2014" ? "" : l[6].textContent), n > 0 && vs(n - 1), n < t.cues.length - 1 && vs(n + 1)
+        {
+            const styleCol = !!(t.showAssStyleColumn || t.format === "ass" || t.format === "ssa"),
+                textIdx = styleCol ? 6 : 5,
+                pairIdx = styleCol ? 7 : 6,
+                styleName = String(i?.ass?.style || "").trim() || "Default";
+            styleCol && l[5] && (l[5].textContent = styleName, l[5].title = styleName), l[textIdx] && (l[textIdx].textContent = c || "\u2014"), U() && l[pairIdx] && (l[pairIdx].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[pairIdx].title = l[pairIdx].textContent === "\u2014" ? "" : l[pairIdx].textContent)
+        }
+        n > 0 && vs(n - 1), n < t.cues.length - 1 && vs(n + 1)
     }
 
     function Aa(n) {
@@ -1120,7 +1406,7 @@
         const r = t.cues[t.selectedIndex],
             i = r ? r.startMs : null,
             s = r ? I(r) : null;
-        x(), P(!0), Aa(t.selectedIndex), Se(t.selectedIndex), wt(), n.immediateButtons ? at() : Ra(), Fa(), t.detailRenderedDurSec = V(t.cues[t.selectedIndex]) / 1e3, t.selectedIndex === t.playbackIndex && (t.overlayText = "", It());
+        x(), P(!0), Aa(t.selectedIndex), Se(t.selectedIndex), wt(), n.immediateButtons ? at() : Ra(), Fa(), t.detailRenderedDurSec = V(t.cues[t.selectedIndex]) / 1e3, Ov?.isAssContext?.() && Jp?.scheduleSync?.(), t.selectedIndex === t.playbackIndex && (t.overlayText = "", It());
         const a = t.cues[t.selectedIndex];
         (!a || a.startMs !== i || I(a) !== s || n.forceResync) && ye(), t.selectedIndex >= 0 && Ut(t.selectedIndex)
     }
@@ -1231,7 +1517,7 @@
     }
 
     function $l() {
-        if (t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, e.videoSubtitle && e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText && (e.videoSubtitleText.textContent = ""), e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), t.previewTextTrack) try {
+        if (t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, e.videoSubtitle && e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText && (e.videoSubtitleText.textContent = ""), e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), Ov?.resetOverlayStyles?.(), t.previewTextTrack) try {
             t.previewTextTrack.mode = "hidden"
         } catch {}
     }
@@ -1258,16 +1544,30 @@
             });
             a = u.sourceText, o = u.targetText, l = u.visible
         } else o = i, l = !!i;
+        if (Ov?.isAssContext?.() && Jp?.onOverlayRefresh?.()) {
+            t.overlayText = `${a}
+${o}
+${t.dualLineOrder||""}`, t.overlaySourceText = a, t.overlayVisible = !1;
+            return
+        }
         const c = `${a}
 ${o}
 ${t.dualLineOrder||""}`;
         if (!(!n && c === t.overlayText && a === t.overlaySourceText && l === t.overlayVisible)) {
             if (t.overlayText = c, t.overlaySourceText = a, t.overlayVisible = l, !l) {
-                e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText.textContent = "", e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), e.videoSubtitle.classList.remove("line-order-target-first");
+                e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText.textContent = "", e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), e.videoSubtitle.classList.remove("line-order-target-first"), Ov?.resetOverlayStyles?.();
                 return
             }
             e.videoSubtitleSource && (e.videoSubtitleSource.textContent = a), e.videoSubtitleText.textContent = o, e.videoSubtitle.classList.toggle("line-order-target-first", (t.dualLineOrder || "source-first") === "target-first" && !!(a && o)), e.videoSubtitle.classList.remove("hidden")
         }
+        if (l && Ov?.isAssContext?.()) {
+            const u = r >= 0 ? t.cues[r] : null;
+            Ov.applyPreviewToOverlay({
+                primaryText: o,
+                sourceText: a,
+                primaryCue: u
+            })
+        } else if (!Ov?.isAssContext?.()) Ov?.resetOverlayStyles?.()
     }
 
     function Na(n) {
@@ -1448,7 +1748,7 @@ ${t.dualLineOrder||""}`;
             });
             if (!o?.ok) return d(o?.error || "\u52A0\u8F7D\u5B57\u5E55\u5931\u8D25", "err"), !1;
             const l = await Ba(o.path);
-            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), qr(), Ml(), jr({
+            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), qr(), Ml(), jr({
                 detail: `\u5DF2\u8BFB\u53D6 ${t.cues.length} \u6761\uFF0C\u6B63\u5728\u51C6\u5907\u7F16\u8F91\u533A\u2026`,
                 statusMessage: `\u6B63\u5728\u6E32\u67D3 ${t.cues.length} \u6761\u5B57\u5E55\u2026`
             }), await Ta(o.path), H?.loadMarkersFromSidecar?.(), Jo(), await Br(o.path), await _r(), C(), jr({
@@ -1479,8 +1779,12 @@ ${t.dualLineOrder||""}`;
             Jt = !1, Gr()
         }
     }
-    async function fn(n, r) {
-        if (t.ready && t.dirty && !await ie("\u5F53\u524D\u5B57\u5E55\u672A\u4FDD\u5B58\uFF0C\u6253\u5F00\u65B0\u6587\u4EF6\u5C06\u4E22\u5931\u4FEE\u6539\uFF0C\u7EE7\u7EED\uFF1F")) return;
+    async function fn(n, r, opts = {}) {
+        if (!opts.skipDirtyConfirm && t.ready && t.dirty && !await ie(opts.dirtyMessage || "\u5F53\u524D\u5B57\u5E55\u672A\u4FDD\u5B58\uFF0C\u6253\u5F00\u65B0\u6587\u4EF6\u5C06\u4E22\u5931\u4FEE\u6539\uFF0C\u7EE7\u7EED\uFF1F")) return !1;
+        if (opts.clearLibrary) {
+            t.library = null;
+            syncLibraryBar()
+        }
         Un();
         let i = String(r || "").trim();
         try {
@@ -1498,11 +1802,13 @@ ${t.dualLineOrder||""}`;
             }
             if (!await mn(n, i)) {
                 t.path || cn();
-                return
+                return !1
             }
-            t.ready = !0
+            t.ready = !0;
+            return !0
         } catch (s) {
-            Gr(), t.path || cn(), d(s?.message || "\u6253\u5F00\u5B57\u5E55\u5931\u8D25", "err")
+            Gr(), t.path || cn(), d(s?.message || "\u6253\u5F00\u5B57\u5E55\u5931\u8D25", "err");
+            return !1
         }
     }
     async function rr() {
@@ -1513,7 +1819,8 @@ ${t.dualLineOrder||""}`;
             d(n?.error || "\u6253\u5F00\u5B57\u5E55\u5931\u8D25", "err");
             return
         }
-        n.canceled || !n.path || await fn(n.path, n.videoPath || "")
+        if (n.canceled || !n.path) return;
+        t.library = null, syncLibraryBar(), await fn(n.path, n.videoPath || "")
     }
     async function Ls() {
         const n = await p?.transubSelectEditorVideo?.({
@@ -1524,24 +1831,83 @@ ${t.dualLineOrder||""}`;
             d(n?.error || "\u9009\u62E9\u5A92\u4F53\u5931\u8D25", "err");
             return
         }
-        n.canceled || !n.path || (await Is(n.path), await Ps(n.path, t.path), e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden") && Je(), d(`\u5DF2\u5173\u8054\u5A92\u4F53\uFF1A${G(n.path)}`, "ok"))
+        if (n.canceled || !n.path) return;
+        await Is(n.path), await Ps(n.path, t.path);
+        if (t.library?.mediaId) {
+            try {
+                const linked = await p?.transubLibrarySetMediaPath?.({
+                    mediaId: t.library.mediaId,
+                    mediaPath: n.path
+                });
+                if (linked?.ok) {
+                    t.library = {
+                        ...t.library,
+                        mediaLinked: !0,
+                        mediaExists: !0,
+                        mediaTitle: linked.media?.title || t.library.mediaTitle
+                    };
+                    syncLibraryBar()
+                } else if (linked?.error) {
+                    d(linked.error, "warn")
+                }
+            } catch { /* ignore */ }
+        }
+        e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden") && Je(), d(`\u5DF2\u5173\u8054\u5A92\u4F53\uFF1A${G(n.path)}`, "ok")
     }
     async function Pt() {
         if (x(), !t.cues.length) {
             d("\u65E0\u6CD5\u4FDD\u5B58\uFF1A\u5B57\u5E55\u4E3A\u7A7A", "err");
             return
         }
-        const n = await p?.transubWriteSubtitle?.({
+        const lib = t.library;
+        const intent = lib
+            ? (t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab" ? t.librarySaveIntent : "current")
+            : "current";
+        const asCurrent = !lib || intent === "current";
+        const writePayload = {
             path: t.path,
             format: t.format,
             cues: t.cues,
-            header: t.header
-        });
+            header: t.header,
+            videoPath: t.videoPath || ""
+        };
+        if (lib?.versionId || lib?.mediaId) {
+            writePayload.libraryParentVersionId = lib.versionId || "";
+            writePayload.librarySetActive = asCurrent;
+            writePayload.librarySource = "edit";
+            if (intent === "ab") {
+                writePayload.libraryTags = ["对照B"];
+                writePayload.libraryNote = "对照B";
+                writePayload.librarySetActive = !1
+            } else if (intent === "draft") {
+                writePayload.libraryNote = writePayload.libraryNote || "草稿"
+            }
+        }
+        const n = await p?.transubWriteSubtitle?.(writePayload);
         if (!n?.ok) {
             d(n?.error || "\u4FDD\u5B58\u5931\u8D25", "err");
             return
         }
-        P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma(), d(n.backupPath ? "\u5DF2\u4FDD\u5B58\uFF08\u5E76\u5199\u5165 .bak\uFF09" : "\u5DF2\u4FDD\u5B58", "ok"), e.saveStatus && (e.saveStatus.textContent = "\u5DF2\u4FDD\u5B58", setTimeout(() => {
+        if (n.libraryIngest?.versionId) {
+            t.library = {
+                ...(t.library || {}),
+                versionId: n.libraryIngest.versionId,
+                mediaId: n.libraryIngest.mediaId || lib?.mediaId || "",
+                trackId: n.libraryIngest.trackId || lib?.trackId || "",
+                isActive: n.libraryIngest.setActive != null
+                    ? !!n.libraryIngest.setActive
+                    : !!lib?.isActive
+            };
+            syncLibraryBar()
+        }
+        P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma();
+        let okMsg = n.backupPath ? "\u5DF2\u4FDD\u5B58\uFF08\u5E76\u5199\u5165 .bak\uFF09" : "\u5DF2\u4FDD\u5B58";
+        if (lib && n.libraryIngest) {
+            okMsg = intent === "ab"
+                ? "已保存为对照 B（未抢当前）"
+                : (asCurrent ? "已保存并设为库当前版" : "已保存为库草稿（未抢当前）")
+        }
+        d(okMsg, "ok"), e.saveStatus && (e.saveStatus.textContent = "\u5DF2\u4FDD\u5B58", setTimeout(() => {
             e.saveStatus && (e.saveStatus.textContent = "")
         }, 2e3))
     }
@@ -1627,149 +1993,59 @@ ${t.dualLineOrder||""}`;
         d(`\u5DF2\u6309\u5B57\u6570\u8C03\u8282\u7B2C ${n+1} \u6761\u65F6\u957F\u4E3A ${xt(V(r))} \u79D2` + (g ? `\uFF08CPS ${g}\uFF09` : ""), "ok")
     }
 
+    const batchCueFilterPlan = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.batchCueFilterPlan)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.batchCueFilterPlan)
+        || null;
+    const retranscribeRangePlan = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.retranscribeRangePlan)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.retranscribeRangePlan)
+        || null;
+    const audioSnapDurationPlan = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.audioSnapDurationPlan)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.audioSnapDurationPlan)
+        || null;
+
     function Dt(n) {
-        return !(!n || V(n) < 600)
+        return audioSnapDurationPlan
+            ? audioSnapDurationPlan.isEligibleForSmartDuration(n, V)
+            : !(!n || V(n) < 600)
     }
 
     function Tt(n) {
-        return !(!n || V(n) < 300)
+        return audioSnapDurationPlan
+            ? audioSnapDurationPlan.isEligibleForAudioSnap(n, V)
+            : !(!n || V(n) < 300)
     }
+
     async function Ts(n, r = {}) {
-        if (!t.videoPath) return {
-            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u667A\u80FD\u8C03\u8282\u65F6\u957F"
+        if (!audioSnapDurationPlan) return {
+            error: "智能调时核心未加载"
         };
-        const i = Math.round(Number(n.startMs) || 0),
-            s = I(n),
-            a = 500,
-            o = Math.max(0, Math.round(Number(r.tailPadMs ?? 80))),
-            l = Math.max(40, Math.round(Number(r.minShiftMs ?? 80))),
-            c = Math.max(400, Math.min(4e3, Math.round(Number(r.padMs ?? 1500)))),
-            u = 1;
-        let m = Number(r.cueIndex);
-        (!Number.isInteger(m) || m < 0) && (m = t.cues.indexOf(n));
-        const f = m >= 0 && m < t.cues.length - 1 ? t.cues[m + 1] : null,
-            g = f ? f.startMs - u : Number.POSITIVE_INFINITY,
-            h = Math.max(s, Math.min(Number.isFinite(g) ? g : Number.POSITIVE_INFINITY, s + c));
-        if (h - i < 250) return {
-            error: "\u53EF\u5206\u6790\u65F6\u95F4\u7A97\u8FC7\u77ED\uFF08\u53EF\u80FD\u4E0E\u4E0B\u4E00\u6761\u5B57\u5E55\u8FC7\u7D27\uFF09"
-        };
-        const v = await p?.ffmpegDetectSilence?.(ln({
-            path: t.videoPath,
-            startMs: i,
-            endMs: h,
-            noiseDb: r.silenceDb ?? -35,
-            minSilenceSec: r.silenceDur ?? .25,
-            minSegmentMs: 400
-        }));
-        if (v?.cancelled || ne()) return {
-            cancelled: !0,
-            error: "\u5DF2\u53D6\u6D88"
-        };
-        if (!v?.ok) return {
-            error: v?.error || "\u9759\u97F3\u5206\u6790\u5931\u8D25"
-        };
-        let y = null;
-        if (typeof D.snapCueTimingFromSilenceIntervals == "function") {
-            const q = D.snapCueTimingFromSilenceIntervals(i, s, v.intervals, {
-                windowStartMs: i,
-                windowEndMs: h,
-                prevLimitMs: i,
-                nextLimitMs: Number.isFinite(g) ? g : h,
-                allowExtend: !0,
-                minDurMs: a,
-                headPadMs: 0,
-                tailPadMs: o,
-                minSpeechMs: 200,
-                minShiftMs: l
-            });
-            q?.region ? y = Math.round(q.region.endMs + o) : q?.changed && (y = Math.round(q.endMs))
-        }
-        if (y == null && (y = D.inferSpeechEndFromSilence(i, s, v.intervals, {
-                minDurMs: a,
-                minTrailingSilenceMs: Math.max(250, Math.round((r.silenceDur ?? .25) * 1e3)),
-                tailPadMs: o
-            })), y == null) return {
-            error: "\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u8BED\u97F3\u8FB9\u754C\uFF0C\u5F53\u524D\u65F6\u957F\u53EF\u80FD\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3\u957F\u5EA6",
-            unchanged: !0
-        };
-        y = Math.max(i + a, Math.round(y)), Number.isFinite(g) && (y = Math.min(y, g)), y = Math.max(i + a, y);
-        const k = y - s;
-        return Math.abs(k) < l ? {
-            error: "\u5F53\u524D\u65F6\u957F\u5DF2\u63A5\u8FD1\u5B9E\u9645\u8BED\u97F3\uFF0C\u65E0\u9700\u8C03\u6574",
-            unchanged: !0
-        } : {
-            newEndMs: y,
-            meta: {
-                oldEndMs: s,
-                deltaMs: k,
-                silenceCount: v.intervals?.length || 0
-            }
-        }
+        return audioSnapDurationPlan.planSmartDurationFromSilence(n, r, {
+            videoPath: t.videoPath,
+            ffmpegPath: Ue || '',
+            splitApi: D,
+            getEndMs: I,
+            cues: t.cues,
+            isCancelled: ne,
+            detectSilence: (opts) => p?.ffmpegDetectSilence?.(ln(opts))
+        })
     }
+
     async function $s(n, r, i = {}) {
-        if (!t.videoPath) return {
-            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u6309\u97F3\u9891\u8D34\u8FB9"
+        if (!audioSnapDurationPlan) return {
+            error: "音频贴边核心未加载"
         };
-        const s = I(n),
-            a = Math.max(0, Math.min(2e3, Math.round(Number(i.padMs ?? 400)))),
-            o = 1,
-            l = r > 0 ? t.cues[r - 1] : null,
-            c = r < t.cues.length - 1 ? t.cues[r + 1] : null,
-            u = l ? I(l) + o : 0,
-            m = c ? c.startMs - o : Number.POSITIVE_INFINITY,
-            f = Math.max(0, Math.max(u, n.startMs - a)),
-            g = Math.min(Number.isFinite(m) ? m : Number.POSITIVE_INFINITY, s + a),
-            h = Number.isFinite(g) ? g : s + a;
-        if (h - f < 250) return {
-            error: "\u53EF\u5206\u6790\u65F6\u95F4\u7A97\u8FC7\u77ED\uFF08\u53EF\u80FD\u4E0E\u76F8\u90BB\u5B57\u5E55\u8FC7\u7D27\uFF09"
-        };
-        const v = await p?.ffmpegDetectSilence?.(ln({
-            path: t.videoPath,
-            startMs: f,
-            endMs: h,
-            noiseDb: i.silenceDb ?? -35,
-            minSilenceSec: i.silenceDur ?? .25,
-            minSegmentMs: 400
-        }));
-        if (v?.cancelled || ne()) return {
-            cancelled: !0,
-            error: "\u5DF2\u53D6\u6D88"
-        };
-        if (!v?.ok) return {
-            error: v?.error || "\u9759\u97F3\u5206\u6790\u5931\u8D25"
-        };
-        const y = D.snapCueTimingFromSilenceIntervals(n.startMs, s, v.intervals, {
-            windowStartMs: f,
-            windowEndMs: h,
-            prevLimitMs: u,
-            nextLimitMs: Number.isFinite(m) ? m : h,
-            minDurMs: 500,
-            headPadMs: Math.max(0, Math.round(Number(i.headPadMs ?? 80))),
-            tailPadMs: Math.max(0, Math.round(Number(i.tailPadMs ?? 80))),
-            minSpeechMs: 200,
-            minShiftMs: 80,
-            allowExtend: i.allowExtend !== !1
-        });
-        return y.changed ? {
-            startMs: y.startMs,
-            endMs: y.endMs,
-            startDelta: y.startDelta,
-            endDelta: y.endDelta,
-            silenceCount: v.intervals?.length || 0,
-            windowStartMs: f,
-            windowEndMs: h
-        } : {
-            error: {
-                no_speech: "\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u8BED\u97F3\u6BB5",
-                no_region: "\u672A\u5339\u914D\u5230\u8BED\u97F3\u6BB5",
-                too_short: "\u8D34\u8FB9\u540E\u65F6\u957F\u8FC7\u77ED\uFF0C\u5DF2\u4FDD\u6301\u539F\u65F6\u95F4",
-                unchanged: "\u65F6\u95F4\u8F74\u5DF2\u8D34\u8FD1\u8BED\u97F3\uFF0C\u65E0\u9700\u8C03\u6574"
-            } [y.reason] || "\u65E0\u9700\u8C03\u6574",
-            unchanged: !0,
-            snapped: y
-        }
+        return audioSnapDurationPlan.planAudioSnapFromSilence(n, r, i, {
+            videoPath: t.videoPath,
+            ffmpegPath: Ue || '',
+            splitApi: D,
+            getEndMs: I,
+            cues: t.cues,
+            isCancelled: ne,
+            detectSilence: (opts) => p?.ffmpegDetectSilence?.(ln(opts))
+        })
     }
-    async function As(n = {}) {
+
+    async function snapSelectedCueToAudio(n = {}) {
         if (t.silenceSplitBusy || t.retranscribeBusy) {
             d("\u5DF2\u6709\u5206\u6790\u4EFB\u52A1\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019", "err");
             return
@@ -2055,7 +2331,7 @@ ${t.dualLineOrder||""}`;
                 Fs();
                 break;
             case "audio-snap":
-                As();
+                snapSelectedCueToAudio();
                 break;
             case "audio-snap-batch":
                 yo();
@@ -2111,12 +2387,16 @@ ${t.dualLineOrder||""}`;
         }
     }
 
+    const cueSplitPlan = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.cueSplitPlan)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.cueSplitPlan)
+        || null;
+
     function Ka(n) {
-        return n ? "cps" : "proportional"
+        return cueSplitPlan ? cueSplitPlan.timingModeFromUseCps(n) : (n ? "cps" : "proportional")
     }
 
-    function Va(n) {
-        return {
+    function Va() {
+        return cueSplitPlan ? cueSplitPlan.cpsTimingOpts(yt) : {
             targetCps: yt(),
             minDurMs: 500
         }
@@ -2147,20 +2427,11 @@ ${t.dualLineOrder||""}`;
     }
 
     function Xa(n, r, i, s) {
-        const a = I(n);
-        return r <= n.startMs || r >= a ? null : [{
-            startMs: n.startMs,
-            endMs: r,
-            text: i
-        }, {
-            startMs: r,
-            endMs: a,
-            text: s
-        }]
+        return cueSplitPlan ? cueSplitPlan.splitAtPlayheadMidpoint(n, r, i, s, I) : null
     }
 
     function Ya(n) {
-        return n === "chars" || n === "count" || n === "silence"
+        return cueSplitPlan ? cueSplitPlan.needsBreakWords(n) : (n === "chars" || n === "count" || n === "silence")
     }
 
     function Ja(n) {
@@ -2172,250 +2443,47 @@ ${t.dualLineOrder||""}`;
     }
 
     function yn(n, r) {
-        return !Ya(n) || !D.isConnectedText(r) ? null : n === "silence" && typeof D.getSilenceTextBreakIndices == "function" ? D.getSilenceTextBreakIndices(r, {
-            breakWords: hn(),
-            includePunctuation: !0
-        }).length ? null : "\u6587\u672C\u4E3A\u8FDE\u7EED\u4E66\u5199\u4E14\u672A\u5339\u914D\u65AD\u53E5\u8BCD/\u6807\u70B9\uFF0C\u65E0\u6CD5\u9759\u97F3\u5206\u5272\u3002\u8BF7\u5728\u300C\u65AD\u53E5\u8BCD\u300D\u4E2D\u6DFB\u52A0\uFF0C\u6216\u4F7F\u7528\u5149\u6807/\u64AD\u653E\u5934\u624B\u52A8\u5206\u5272\u3002" : fa
+        return cueSplitPlan ? cueSplitPlan.connectedSplitGuard(n, r, D, hn) : null
     }
 
     function Ye(n, r, i = {}) {
-        const s = String(r.text || "").trim(),
-            a = I(r);
-        if (!s) return {
-            error: "\u5F53\u524D\u5B57\u5E55\u6587\u672C\u4E3A\u7A7A\uFF0C\u65E0\u6CD5\u5206\u5272"
+        if (!cueSplitPlan) return {
+            error: "分割核心未加载"
         };
-        const o = yn(n, s);
-        if (o) return {
-            error: o
-        };
-        const l = i.useCps !== !1,
-            c = Ka(l),
-            u = Va(l);
-        if (n === "smart") {
-            const m = D.splitTextSmart(s, {
-                maxChars: i.smartMaxChars ?? i.charCount ?? 20,
-                maxLineChars: i.smartLineChars ?? 18,
-                breakWords: i.breakWords || hn()
-            });
-            return m.length < 2 ? {
-                error: "\u5F53\u524D\u6587\u672C\u65E0\u9700\u667A\u80FD\u5206\u5272\uFF08\u5DF2\u8DB3\u591F\u77ED\u6216\u7F3A\u5C11\u6807\u70B9/\u65AD\u53E5\u8BCD\uFF09"
-            } : {
-                cues: dt(r.startMs, a, m, c, u)
-            }
-        }
-        if (n === "lines") {
-            const m = za(s);
-            return m.length < 2 ? {
-                error: "\u6587\u672C\u4E2D\u6CA1\u6709\u591A\u4E2A\u6362\u884C\uFF0C\u65E0\u6CD5\u6309\u884C\u5206\u5272"
-            } : {
-                cues: dt(r.startMs, a, m, c, u)
-            }
-        }
-        if (n === "spaces") {
-            const m = Ua(s);
-            return m.length < 2 ? {
-                error: "\u6587\u672C\u4E2D\u6CA1\u6709\u7A7A\u683C\uFF0C\u65E0\u6CD5\u6309\u7A7A\u683C\u5206\u5272"
-            } : {
-                cues: dt(r.startMs, a, m, c, u)
-            }
-        }
-        if (n === "chars") {
-            const m = Qa(s, i.charCount);
-            return m.length < 2 ? {
-                error: "\u6309\u8BE5\u5B57\u7B26\u6570\u65E0\u6CD5\u62C6\u6210\u591A\u6761"
-            } : {
-                cues: dt(r.startMs, a, m, c, u)
-            }
-        }
-        if (n === "count") {
-            const m = Za(s, i.count);
-            return m === null ? {
-                error: `\u6587\u672C\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u5747\u5206\u4E3A ${i.count} \u6BB5`
-            } : m.length < 2 ? {
-                error: "\u5747\u5206\u540E\u4E0D\u8DB3\u4E24\u6761\uFF0C\u8BF7\u51CF\u5C11\u6BB5\u6570"
-            } : {
-                cues: dt(r.startMs, a, m, "equal", u)
-            }
-        }
-        if (n === "cursor") {
-            const m = e.detailText,
-                f = m ? m.selectionStart : s.length,
-                g = cr(s, f);
-            return g ? {
-                cues: dt(r.startMs, a, g, c, u)
-            } : {
-                error: "\u8BF7\u5C06\u5149\u6807\u7F6E\u4E8E\u6587\u672C\u4E2D\u95F4\u518D\u5206\u5272"
-            }
-        }
-        if (n === "playhead") {
-            if (!e.video) return {
-                error: "\u672A\u52A0\u8F7D\u89C6\u9891\uFF0C\u65E0\u6CD5\u5728\u64AD\u653E\u5934\u5904\u5206\u5272"
-            };
-            const m = De();
-            if (m <= r.startMs || m >= a) return {
-                error: "\u64AD\u653E\u5934\u4E0D\u5728\u5F53\u524D\u5B57\u5E55\u65F6\u95F4\u8303\u56F4\u5185"
-            };
-            const f = (m - r.startMs) / (a - r.startMs),
-                g = Math.min(s.length - 1, Math.max(1, Math.round(s.length * f))),
-                h = D.snapSplitIndexNearPunctuation(s, g, 12);
-            let v = cr(s, h);
-            if (v || (v = cr(s, Math.floor(s.length / 2))), !v) return {
-                error: "\u6587\u672C\u8FC7\u77ED\uFF0C\u65E0\u6CD5\u5728\u64AD\u653E\u5934\u5904\u5206\u5272"
-            };
-            const y = Xa(r, m, v[0], v[1]);
-            return y ? {
-                cues: y
-            } : {
-                error: "\u64AD\u653E\u5934\u4F4D\u7F6E\u65E0\u6548"
-            }
-        }
-        return {
-            error: "\u672A\u77E5\u7684\u5206\u5272\u65B9\u5F0F"
-        }
-    }
-    async function Rs(n, r = {}) {
-        if (!t.videoPath) return {
-            error: "\u8BF7\u5148\u5173\u8054\u89C6\u9891\u540E\u518D\u4F7F\u7528\u9759\u97F3\u5207\u5206"
-        };
-        const i = Math.round(Number(n.startMs) || 0);
-        let s = Math.round(Number(I(n)) || 0);
-        if (!(s > i)) {
-            const w = Number(e.detailDuration?.value);
-            Number.isFinite(w) && w > 0 && (s = i + Math.round(w * 1e3))
-        }
-        const a = String(n.text || "").trim();
-        if (!a) return {
-            error: "\u5F53\u524D\u5B57\u5E55\u6587\u672C\u4E3A\u7A7A\uFF0C\u65E0\u6CD5\u5206\u5272"
-        };
-        const o = yn("silence", a);
-        if (o) return {
-            error: o
-        };
-        const l = s - i;
-        if (!Number.isFinite(l) || l < 250) return {
-            error: `\u5F53\u524D\u5B57\u5E55\u65F6\u957F\u8FC7\u77ED\uFF08${Number.isFinite(l)?(l/1e3).toFixed(3):"?"}s\uFF09\uFF0C\u65E0\u6CD5\u5206\u6790\u9759\u97F3`
-        };
-        const c = Math.max(0, Math.min(1200, Math.round(Number(r.padMs ?? 600)))),
-            u = Math.max(0, i - c),
-            m = s + c;
-        if (!(m > u + 200) || !Number.isFinite(u) || !Number.isFinite(m)) return {
-            error: `\u9759\u97F3\u5206\u6790\u65F6\u95F4\u7A97\u65E0\u6548\uFF08${i}\u2013${s} ms\uFF09\uFF0C\u8BF7\u68C0\u67E5\u5B57\u5E55\u8D77\u6B62\u65F6\u95F4`
-        };
-        const f = r.silenceDb != null ? r.silenceDb : -30,
-            g = r.silenceDur != null ? r.silenceDur : .12,
-            h = Math.max(120, Math.min(280, Math.round(l * .1))),
-            v = r.breakWords || hn(),
-            k = (typeof D.getSilenceTextBreakIndices == "function" ? D.getSilenceTextBreakIndices(a, {
-                breakWords: v,
-                includePunctuation: !0
-            }) : typeof D.getWhitespaceBreakIndices == "function" ? D.getWhitespaceBreakIndices(a) : []).map(w => {
-                const A = Math.max(0, Math.min(1, w / Math.max(1, a.length)));
-                return Math.round(i + A * l)
-            }),
-            q = (w, A, F) => p?.ffmpegDetectSilence?.({
-                path: t.videoPath,
-                startMs: u,
-                endMs: m,
-                durationMs: m - u,
-                noiseDb: w,
-                minSilenceSec: A,
-                minSegmentMs: F,
-                ...Ue ? {
-                    ffmpegPath: Ue
-                } : {}
-            }),
-            te = (w, A, F) => {
-                if (!w?.ok) return [];
-                const re = Math.max(100, Math.min(A, Math.floor(l * .12)));
-                if (typeof D.pickScoredSilenceSplitPoints == "function") return D.pickScoredSilenceSplitPoints(w.intervals, i, s, {
-                    edgeMs: re,
-                    minSilenceMs: F,
-                    minSpeechMs: 120,
-                    idealBreakMs: k,
-                    minGapMs: re
-                });
-                const pe = i + re,
-                    le = s - re;
-                if (le <= pe) return [];
-                const ge = [],
-                    bt = fe => {
-                        const S = Math.round(Number(fe) || 0);
-                        S > pe && S < le && ge.push(S)
-                    };
-                for (const fe of w.splitPointsMs || []) bt(fe);
-                for (const fe of w.intervals || []) {
-                    const S = Math.max(i, Math.round(Number(fe.startMs) || 0)),
-                        E = Math.min(s, Math.round(Number(fe.endMs) || 0));
-                    E - S >= F && bt(Math.round((S + E) / 2))
-                }
-                const Qt = [...ge].sort((fe, S) => fe - S),
-                    ze = [];
-                for (const fe of Qt)(!ze.length || fe - ze[ze.length - 1] >= re) && ze.push(fe);
-                return ze
+        return cueSplitPlan.planCueSplit(n, r, i, {
+            splitApi: D,
+            getEndMs: I,
+            getTargetCps: yt,
+            getBreakWords: hn,
+            getCursorIndex: (text) => {
+                const m = e.detailText;
+                return m ? m.selectionStart : text.length
             },
-            N = [{
-                noise: f,
-                minSilence: g,
-                minSeg: h
-            }, {
-                noise: Math.min(-26, f + 5),
-                minSilence: Math.min(.1, g),
-                minSeg: Math.max(100, h - 40)
-            }, {
-                noise: -24,
-                minSilence: .08,
-                minSeg: Math.max(100, h - 60)
-            }, {
-                noise: -22,
-                minSilence: .06,
-                minSeg: 100
-            }];
-        let W = null,
-            B = [],
-            M = "";
-        for (const w of N) {
-            if (ne()) return {
-                cancelled: !0,
-                error: "\u5DF2\u53D6\u6D88"
-            };
-            const A = await q(w.noise, w.minSilence, w.minSeg);
-            if (A?.cancelled || ne()) return {
-                cancelled: !0,
-                error: "\u5DF2\u53D6\u6D88"
-            };
-            if (!A?.ok) {
-                M = A?.error || M;
-                continue
-            }
-            W = A;
-            const F = Math.max(50, Math.round(w.minSilence * 850));
-            if (B = te(A, w.minSeg, F), B.length) break
-        }
-        if (!W?.ok && M) return {
-            error: M
+            getPlayheadMs: () => De(),
+            hasVideo: !!e.video
+        })
+    }
+    const silenceSplitPlan = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.silenceSplitPlan)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.silenceSplitPlan)
+        || null;
+
+    async function Rs(n, r = {}) {
+        if (!silenceSplitPlan) return {
+            error: "静音切分核心未加载"
         };
-        if (!B.length) return {
-            error: "\u8BE5\u65F6\u95F4\u6BB5\u5185\u672A\u68C0\u6D4B\u5230\u8DB3\u591F\u957F\u7684\u9759\u97F3\uFF0C\u8BF7\u8C03\u4F4E\u9608\u503C\u6216\u6539\u7528\u667A\u80FD\u65AD\u53E5"
-        };
-        const L = D.buildCuesFromSilenceSplits(a, i, s, B, 20, W.intervals, {
-            minDurMs: 400,
-            minTrailingSilenceMs: Math.max(100, Math.round((r.silenceDur ?? g) * 700)),
-            minLeadingSilenceMs: Math.max(100, Math.round((r.silenceDur ?? g) * 700)),
-            headPadMs: 60,
-            tailPadMs: 60,
-            gapMs: 1,
-            breakWords: v,
-            includePunctuation: !0
-        });
-        return !L || L.length < 2 ? {
-            error: "\u9759\u97F3\u5207\u5206\u540E\u6587\u672C\u4E0D\u8DB3\u4E24\u6761\uFF0C\u8BF7\u8C03\u6574\u9608\u503C\u6216\u624B\u52A8\u5206\u5272"
-        } : {
-            cues: L,
-            meta: {
-                silenceCount: W.intervals?.length || 0,
-                splitCount: B.length
-            }
-        }
+        return silenceSplitPlan.planSilenceCueSplit(n, {
+            ...r,
+            detailDurationSec: Number(e.detailDuration?.value)
+        }, {
+            videoPath: t.videoPath,
+            ffmpegPath: Ue || '',
+            splitApi: D,
+            getEndMs: I,
+            getBreakWords: hn,
+            connectedGuard: yn,
+            isCancelled: ne,
+            detectSilence: (opts) => p?.ffmpegDetectSilence?.(opts)
+        })
     }
 
     function At() {
@@ -2467,16 +2535,15 @@ ${t.dualLineOrder||""}`;
         }
     }
     function friendlyJobAbortMessage(n) {
-        const r = String(n || "").trim();
-        if (!r) return "\u5904\u7406\u5931\u8D25";
-        const i = r.toLowerCase();
-        return i === "aborted" || i === "cancelled" || i.includes("operation was aborted") || i.includes("user aborted") || i.includes("aborterror") || i.includes("the operation was aborted") ? "\u64CD\u4F5C\u5DF2\u4E2D\u6B62\u6216\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5" : r
+        return retranscribeRangePlan
+            ? retranscribeRangePlan.friendlyJobAbortMessage(n)
+            : (String(n || "").trim() || "处理失败")
     }
 
     function isJobAbortResult(n) {
-        if (!n) return !1;
-        if (n.cancelled || n.code === "cancelled" || n.code === "aborted") return !0;
-        return /已取消|已中止|aborted|user aborted/i.test(String(n.error || ""))
+        return retranscribeRangePlan
+            ? retranscribeRangePlan.isJobAbortResult(n)
+            : !!(n && (n.cancelled || n.code === "cancelled" || n.code === "aborted"))
     }
     async function ut(n) {
         const r = Math.max(0, Math.round(Number(n.startMs) || 0)),
@@ -2510,18 +2577,22 @@ ${t.dualLineOrder||""}`;
             statusMessage: `${g}\u8FDB\u884C\u4E2D\u2026`
         }), e.silenceProgressHint && (e.silenceProgressHint.textContent = l ? "\u5C06\u4F9D\u6B21\uFF1A\u8BED\u97F3\u8BC6\u522B\u539F\u6587 \u2192 \u6309\u8BBE\u7F6E\u7FFB\u8BD1\u8BD1\u6587\uFF1B\u52A0\u8F7D\u6A21\u578B\u65F6\u8BF7\u7A0D\u5019\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : c === "target" ? U() ? "\u5C06\u6309\u8BBE\u7F6E\u4E2D\u7684\u7FFB\u8BD1\u65B9\u5F0F\u751F\u6210\u8BD1\u6587\u5E76\u5199\u5165\u8BD1\u6587\u8F68\uFF1B\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : "\u5C06\u6309\u8BBE\u7F6E\u4E2D\u7684\u7FFB\u8BD1\u65B9\u5F0F\u8986\u76D6\u5F53\u524D\u5B57\u5E55\u8BD1\u6587\uFF1B\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : U() && t.dualRole === "target" ? "\u5C06\u8BED\u97F3\u8BC6\u522B\u7ED3\u679C\u5199\u5165\u539F\u6587\u5BF9\u7167\u8F68\uFF0C\u4E0D\u4F1A\u8986\u76D6\u8BD1\u6587\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002" : "\u5C06\u5BF9\u9009\u5B9A\u65F6\u95F4\u6BB5\u505A\u8BED\u97F3\u8BC6\u522B\uFF1B\u52A0\u8F7D\u6A21\u578B\u65F6\u8BF7\u7A0D\u5019\u3002\u53EF\u70B9\u53D6\u6D88\u6216\u6309 Esc \u4E2D\u6B62\u3002"), await ce();
         const y = (N, W, B) => {
-                let M = 0,
-                    L = 0;
-                if (a === "cue" && B >= 0 && B < N.length) N.splice(B, 1, ...W), M = B, L = 1;
-                else {
-                    const w = z.replaceCuesInTimeRange(N, r, i, W);
-                    N.splice(0, N.length, ...w.cues), M = w.insertAt, L = w.replaced
-                }
-                return {
-                    selectAt: M,
-                    replacedCount: L
-                }
-            },
+            if (retranscribeRangePlan?.spliceCuesForRetranscribe) {
+                return retranscribeRangePlan.spliceCuesForRetranscribe(N, r, i, W, {
+                    mode: a,
+                    selectedIndex: B,
+                    replaceCuesInTimeRange: z.replaceCuesInTimeRange,
+                });
+            }
+            // Fail closed: still splice cues if plan module failed to load.
+            if (a === "cue" && B >= 0 && B < N.length) {
+                N.splice(B, 1, ...W);
+                return { selectAt: B, replacedCount: 1 };
+            }
+            const w = z.replaceCuesInTimeRange(N, r, i, W);
+            N.splice(0, N.length, ...w.cues);
+            return { selectAt: w.insertAt, replacedCount: w.replaced };
+        },
             k = async (N, W) => {
                 h = N, v = W || g, e.silenceProgressTitle && (e.silenceProgressTitle.textContent = v);
                 const B = await p.transubTranscribeRange({
@@ -2530,6 +2601,7 @@ ${t.dualLineOrder||""}`;
                     endMs: i,
                     padMs: s,
                     ffmpegPath: Ue,
+                    subtitlePath: t.path || void 0,
                     options: {
                         task: N,
                         mergeSegments: !1,
@@ -2545,11 +2617,25 @@ ${t.dualLineOrder||""}`;
                     error: friendlyJobAbortMessage(B?.error || `${W||"\u5904\u7406"}\u5931\u8D25`),
                     cancelled: isJobAbortResult(B)
                 };
-                const M = B.cues.map(L => ({
-                    startMs: L.startMs,
-                    endMs: L.endMs,
-                    text: String(L.text || "").trim()
-                })).filter(L => L.text);
+                const M = B.cues.map(L => {
+                    const row = {
+                        startMs: L.startMs,
+                        endMs: L.endMs,
+                        text: String(L.text || "").trim()
+                    };
+                    const meta = L.meta && typeof L.meta === "object" ? L.meta : null;
+                    const avg = L.avgLogprob ?? L.avg_logprob ?? meta?.avgLogprob ?? meta?.avg_logprob;
+                    const noSp = L.noSpeechProb ?? L.no_speech_prob ?? meta?.noSpeechProb ?? meta?.no_speech_prob;
+                    const conf = L.confidence ?? meta?.confidence;
+                    const score = L.score ?? meta?.score;
+                    const prob = L.probability ?? L.prob ?? meta?.probability ?? meta?.prob;
+                    if (avg != null) row.avgLogprob = avg;
+                    if (noSp != null) row.noSpeechProb = noSp;
+                    if (conf != null) row.confidence = conf;
+                    if (score != null) row.score = score;
+                    if (prob != null) row.probability = prob;
+                    return row
+                }).filter(L => L.text);
                 return M.length ? {
                     ok: !0,
                     cues: M
@@ -2603,14 +2689,20 @@ ${t.dualLineOrder||""}`;
         try {
             te = p.onTransubRetranscribeProgress?.(S => {
                 if (ne()) return;
-                const E = String(S?.message || S?.detail || "").trim();
-                if (!E) return;
-                const Y = String(S?.stage || ""),
-                    rt = Y === "model" || /模型/.test(E);
+                const ui = retranscribeRangePlan
+                    ? retranscribeRangePlan.mapRetranscribeProgressUi(S, {
+                        dualPass: l,
+                        task: h,
+                        fallbackTitle: v,
+                    })
+                    : null;
+                if (!ui?.detail) return;
                 de({
-                    detail: E,
-                    statusMessage: E
-                }), e.silenceProgressTitle && (rt ? e.silenceProgressTitle.textContent = "\u52A0\u8F7D\u6A21\u578B" : Y === "vad" ? e.silenceProgressTitle.textContent = "\u8BED\u97F3\u68C0\u6D4B" : Y === "extract" || Y === "warmup" ? e.silenceProgressTitle.textContent = "\u51C6\u5907\u97F3\u9891" : Y === "transcribe" ? e.silenceProgressTitle.textContent = l ? h === "translate" ? "\u53CC\u8BED \xB7 \u751F\u6210\u8BD1\u6587" : "\u53CC\u8BED \xB7 \u751F\u6210\u539F\u6587" : h === "translate" ? "\u7FFB\u8BD1\u4E2D" : "\u8BC6\u522B\u4E2D" : Y === "save" || Y === "done" ? e.silenceProgressTitle.textContent = "\u6574\u7406\u7ED3\u679C" : e.silenceProgressTitle.textContent = S?.warmLight ? `${v}\uFF08\u8F7B\u91CF\uFF09` : v), e.silenceProgressHint && (rt ? e.silenceProgressHint.textContent = S?.warmLight ? "\u8F7B\u91CF\u6A21\u5F0F\uFF1A\u6B63\u5728\u52A0\u8F7D\u6A21\u578B\uFF0C\u9996\u6B21\u6216\u5207\u6362\u6A21\u578B\u65F6\u8F83\u6162" : "\u6B63\u5728\u52A0\u8F7D\u6A21\u578B\u5230\u663E\u5B58/\u5185\u5B58\uFF0C\u9996\u6B21\u6216\u5207\u6362\u6A21\u578B\u65F6\u53EF\u80FD\u9700\u8981\u6570\u5341\u79D2" : Y === "vad" ? e.silenceProgressHint.textContent = "\u6B63\u5728\u521D\u59CB\u5316\u8BED\u97F3\u68C0\u6D4B\u2026" : Y === "starting" ? e.silenceProgressHint.textContent = "\u6B63\u5728\u542F\u52A8\u5F15\u64CE\u2026" : S?.warmLight && (e.silenceProgressHint.textContent = "\u8F7B\u91CF\u52A0\u901F\u5DF2\u5F00\u542F\uFF08Beam=1\uFF09\uFF1B\u5982\u9700\u66F4\u9AD8\u7CBE\u5EA6\u8BF7\u5728\u8BBE\u7F6E\u4E2D\u5173\u95ED\u300C\u91CD\u8F6C\u5199\u52A0\u901F\u300D"))
+                    detail: ui.detail,
+                    statusMessage: ui.statusMessage || ui.detail
+                });
+                if (e.silenceProgressTitle && ui.title) e.silenceProgressTitle.textContent = ui.title;
+                if (e.silenceProgressHint && ui.hint) e.silenceProgressHint.textContent = ui.hint;
             }) || null;
             const N = p.onSakuraTranslateProgress?.(S => {
                     if (ne() || h !== "translate") return;
@@ -2674,9 +2766,10 @@ ${t.dualLineOrder||""}`;
             let w = t.selectedIndex >= 0 ? t.selectedIndex : 0,
                 A = 0,
                 F = !1;
+            const pairWritable = U() && !t.pairReadOnly;
             const re = S => {
                     if (S?.length)
-                        if (U() && t.dualRole === "target") A = y(t.pairCues, S, -1).replacedCount, t.pairDirty = !0, F = !0;
+                        if (pairWritable && t.dualRole === "target") A = y(t.pairCues, S, -1).replacedCount, t.pairDirty = !0, F = !0;
                         else {
                             const E = y(t.cues, S, a === "cue" ? t.selectedIndex : -1);
                             w = E.selectAt, A = E.replacedCount
@@ -2684,7 +2777,7 @@ ${t.dualLineOrder||""}`;
                 },
                 pe = S => {
                     if (S?.length)
-                        if (U() && t.dualRole === "source") {
+                        if (pairWritable && t.dualRole === "source") {
                             const E = y(t.pairCues, S, -1);
                             A = Math.max(A, E.replacedCount), t.pairDirty = !0, F = !0
                         } else if (U() && t.dualRole === "target") {
@@ -2703,6 +2796,17 @@ ${t.dualLineOrder||""}`;
                     ok: !1
                 }
             } else c === "target" ? pe(L) : re(M);
+            // Merge ASR confidence sidecar for source-track range retranscribe.
+            if (M?.length && t.path && typeof z.mergeRangeAsrConfidenceFromCues === "function" && c !== "target") {
+                try {
+                    t.sidecarMeta = z.mergeRangeAsrConfidenceFromCues(t.sidecarMeta, M, {
+                        startMs: r,
+                        endMs: i,
+                        sourceSub: G(t.path)
+                    });
+                    He()
+                } catch {}
+            }
             At();
             const le = (L || M || []).length;
             let ge = 0;
@@ -2859,19 +2963,24 @@ ${t.dualLineOrder||""}`;
     }
 
     function Hs() {
-        const n = ml(e.retranscribeDurSec?.value),
-            r = Math.max(0, Math.min(2e3, Math.round(Number(e.retranscribeDurPadMs?.value) || 350))),
-            i = Ws();
-        let s = 0;
-        i === "playhead" ? s = De() : t.selectedIndex >= 0 && t.selectedIndex < t.cues.length ? s = t.cues[t.selectedIndex].startMs : s = De();
-        const a = s + Math.round(n * 1e3);
-        return {
-            startMs: s,
-            endMs: a,
-            durationSec: n,
-            padMs: r,
-            startMode: i
-        }
+        const selectedStartMs = (t.selectedIndex >= 0 && t.selectedIndex < t.cues.length)
+            ? t.cues[t.selectedIndex].startMs
+            : null;
+        return retranscribeRangePlan
+            ? retranscribeRangePlan.planDurationWindow({
+                durationSec: ml(e.retranscribeDurSec?.value),
+                padMs: e.retranscribeDurPadMs?.value,
+                startMode: Ws(),
+                selectedStartMs,
+                playheadMs: De(),
+            })
+            : {
+                startMs: De(),
+                endMs: De() + 30000,
+                durationSec: 30,
+                padMs: 350,
+                startMode: Ws(),
+            }
     }
 
     function Oe() {
@@ -2885,8 +2994,22 @@ ${t.dualLineOrder||""}`;
             i = z.collectOverlappingCueIndices(t.cues, r.startMs, r.endMs),
             s = Z(r.startMs, t.format),
             a = Z(r.endMs, t.format),
-            l = dr() === "target" ? U() ? "\uFF1B\u5199\u5165\u8BD1\u6587\u8F68" : "\uFF1B\u5F15\u64CE\u7FFB\u8BD1\u8986\u76D6\u5F53\u524D\u5B57\u5E55" : U() && t.dualRole === "target" ? "\uFF1B\u5199\u5165\u539F\u6587\u5BF9\u7167\u8F68\uFF08\u4E0D\u8986\u76D6\u8BD1\u6587\uFF09" : "\uFF1B\u8BED\u97F3\u8BC6\u522B";
-        e.retranscribeDurPreview.textContent = i.length ? `${s} \u2192 ${a}\uFF08${r.durationSec}s\uFF09\uFF0C\u5C06\u66FF\u6362\u91CD\u53E0\u7684 ${i.length} \u6761${l}` : `${s} \u2192 ${a}\uFF08${r.durationSec}s\uFF09\uFF0C\u8BE5\u533A\u95F4\u6682\u65E0\u5B57\u5E55\uFF0C\u5C06\u63D2\u5165\u65B0\u7ED3\u679C${l}`, e.retranscribeDurPreview.classList.remove("err"), document.querySelectorAll("[data-retranscribe-dur-preset]").forEach(c => {
+            l = retranscribeRangePlan
+                ? retranscribeRangePlan.resolveRetranscribeWriteSuffix({
+                    writeAs: dr(),
+                    hasDual: U(),
+                    dualRole: t.dualRole,
+                })
+                : "";
+        e.retranscribeDurPreview.textContent = retranscribeRangePlan
+            ? retranscribeRangePlan.buildRetranscribeDurPreviewText({
+                startLabel: s,
+                endLabel: a,
+                durationSec: r.durationSec,
+                overlapCount: i.length,
+                writeSuffix: l,
+            })
+            : `${s} → ${a}`, e.retranscribeDurPreview.classList.remove("err"), document.querySelectorAll("[data-retranscribe-dur-preset]").forEach(c => {
             const u = Number(c.getAttribute("data-retranscribe-dur-preset"));
             c.classList.toggle("active", Math.abs(u - r.durationSec) < .01)
         })
@@ -2941,18 +3064,19 @@ ${t.dualLineOrder||""}`;
 
     function oo() {
         Nn();
-        const n = Math.max(0, Math.min(2e3, Math.round(Number(e.retranscribeDurPadMs?.value) || 350))),
-            r = 0;
-        let i = t.timeline.durationMs;
-        e.video && Number.isFinite(e.video.duration) && e.video.duration > 0 ? i = Math.round(e.video.duration * 1e3) : t.cues.length && (i = Math.max(...t.cues.map(a => I(a)), r + 1e3)), i = Math.max(i, r + 200);
-        const s = Math.round((i - r) / 1e3 * 10) / 10;
-        return {
-            startMs: r,
-            endMs: i,
-            durationSec: s,
-            padMs: n
+        let videoDurationMs = t.timeline.durationMs;
+        if (e.video && Number.isFinite(e.video.duration) && e.video.duration > 0) {
+            videoDurationMs = Math.round(e.video.duration * 1e3);
         }
+        return retranscribeRangePlan
+            ? retranscribeRangePlan.planFullMediaWindow({
+                padMs: e.retranscribeDurPadMs?.value,
+                videoDurationMs,
+                cueEndMsList: t.cues.map((a) => I(a)),
+            })
+            : { startMs: 0, endMs: Math.max(videoDurationMs || 0, 200), durationSec: 0, padMs: 350 }
     }
+
     async function lo() {
         if (x(), !t.videoPath) {
             Oe();
@@ -3306,39 +3430,27 @@ ${t.dualLineOrder||""}`;
     }
 
     function po(n, r, i) {
-        const s = V(n) / 1e3;
-        switch (i.condition) {
-            case "all":
-                return !0;
-            case "shorter":
-                return s < i.shorterSec;
-            case "longer":
-                return s > i.longerSec;
-            case "between":
-                return s >= Math.min(i.minSec, i.maxSec) && s <= Math.max(i.minSec, i.maxSec);
-            case "cps_above": {
-                const a = bn(n);
-                return a != null && a > i.cpsAbove
-            }
-            case "cps_below": {
-                const a = bn(n);
-                return a != null && a < i.cpsBelow
-            }
-            case "text_contains":
-                return i.textKeyword ? String(n.text ?? "").includes(i.textKeyword) : !1;
-            case "overlap":
-                return fo(r);
-            case "selected":
-                return J().includes(r) || r === t.selectedIndex;
-            default:
-                return !1
-        }
+        return audioSnapDurationPlan
+            ? audioSnapDurationPlan.cueMatchesBatchDurCondition(n, r, i, {
+                getCueDurMs: V,
+                getCps: bn,
+                hasOverlap: fo,
+                selectedIndexes: J(),
+                selectedIndex: t.selectedIndex
+            })
+            : !1
     }
 
     function Qs(n, r, i, s = !0) {
-        let l = Math.round(Number(i) || 0);
-        return s && r < t.cues.length - 1 && (l = Math.min(l, t.cues[r + 1].startMs - 1)), Math.max(n.startMs + 500, l)
+        return audioSnapDurationPlan
+            ? audioSnapDurationPlan.clampEndMsAvoidOverlap(n, r, i, t.cues, {
+                gapMs: 1,
+                minDurMs: 500,
+                allowNextClamp: s !== !1
+            })
+            : Math.max(n.startMs + 500, Math.round(Number(i) || 0))
     }
+
     async function go(n, r = {}) {
         const i = t.cues[n];
         if (!i || !Dt(i)) return {
@@ -3685,66 +3797,35 @@ ${t.dualLineOrder||""}`;
     }
 
     function So(n, r, i) {
-        const s = String(n.text || "").trim();
-        if (!s) return !1;
-        switch (i.condition) {
-            case "selected":
-                return r === t.selectedIndex;
-            case "cps_above": {
-                const a = bn(n);
-                return a != null && a > i.cpsAbove
-            }
-            case "line_long":
-                return es(s) > i.lineLen;
-            case "dur_long":
-                return V(n) > Math.round(i.durLongSec * 1e3);
-            case "chars_long":
-                return qe(s) > i.charsLong;
-            default:
-                return !1
-        }
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.cueMatchesSmartSplitCondition(n, r, i, {
+                getCps: bn,
+                getCueDurMs: V,
+                charLen: qe,
+                lineLen: es,
+                selectedIndex: t.selectedIndex,
+            })
+            : !1
     }
 
     function gr(n) {
         x();
-        const r = [];
-        return t.cues.forEach((i, s) => {
-            So(i, s, n) && r.push(s)
-        }), r
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.collectSmartSplitMatches(t.cues, n, {
+                getCps: bn,
+                getCueDurMs: V,
+                charLen: qe,
+                lineLen: es,
+                selectedIndex: t.selectedIndex,
+            })
+            : []
     }
 
     function bo(n) {
         const r = gr(n);
-        if (!r.length) return {
-            matched: 0,
-            splitCount: 0,
-            added: 0,
-            summary: "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5B57\u5E55"
-        };
-        let i = 0,
-            s = 0;
-        const a = {
-            smartMaxChars: n.smartMaxChars,
-            smartLineChars: n.smartLineChars,
-            useCps: n.useCps
-        };
-        for (const l of r) {
-            const c = Ye("smart", t.cues[l], a);
-            c.cues && c.cues.length >= 2 && (i += 1, s += c.cues.length - 1)
-        }
-        if (!i) return {
-            matched: r.length,
-            splitCount: 0,
-            added: 0,
-            summary: `${r.length} \u6761\u7B26\u5408\u7B5B\u9009\uFF0C\u4F46\u5747\u65E0\u9700\u518D\u5206\u5272`
-        };
-        const o = t.cues.length + s;
-        return {
-            matched: r.length,
-            splitCount: i,
-            added: s,
-            summary: `\u5C06\u5206\u5272 ${i} \u6761\uFF08\u5171\u5339\u914D ${r.length} \u6761\uFF09\u2192 ${t.cues.length} \u6761\u53D8\u4E3A ${o} \u6761`
-        }
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.previewSmartSplitPlan(r, t.cues, n, Ye)
+            : { matched: 0, splitCount: 0, added: 0, summary: "没有符合条件的字幕" }
     }
 
     function Ae() {
@@ -3819,59 +3900,41 @@ ${t.dualLineOrder||""}`;
     }
 
     function Mo(n, r, i) {
-        if (!$t(n)) return !1;
-        const s = String(n.text || "").trim();
-        switch (i.condition) {
-            case "all":
-                return !0;
-            case "selected":
-                return r === t.selectedIndex;
-            case "dur_long":
-                return V(n) > Math.round(i.durLongSec * 1e3);
-            case "cps_above": {
-                const a = bn(n);
-                return a != null && a > i.cpsAbove
-            }
-            case "chars_long":
-                return qe(s) > i.charsLong;
-            default:
-                return !1
-        }
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.cueMatchesSilenceSplitCondition(n, r, i, {
+                canSilenceSplitCue: $t,
+                getCps: bn,
+                getCueDurMs: V,
+                charLen: qe,
+                selectedIndex: t.selectedIndex,
+            })
+            : !1
     }
 
     function yr(n) {
         x();
-        const r = [];
-        return t.cues.forEach((i, s) => {
-            Mo(i, s, n) && r.push(s)
-        }), r
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.collectSilenceSplitMatches(t.cues, n, {
+                canSilenceSplitCue: $t,
+                getCps: bn,
+                getCueDurMs: V,
+                charLen: qe,
+                selectedIndex: t.selectedIndex,
+            })
+            : []
     }
 
     function ri(n) {
-        if (!t.videoPath) return {
-            matched: 0,
-            summary: "\u8BF7\u5148\u5173\u8054\u89C6\u9891",
-            isErr: !0
-        };
-        if (!p?.ffmpegDetectSilence) return {
-            matched: 0,
-            summary: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u9759\u97F3\u5206\u6790",
-            isErr: !0
-        };
         const r = yr(n);
-        return r.length ? n.condition === "selected" && t.selectedIndex < 0 ? {
-            matched: 0,
-            summary: "\u5F53\u524D\u6CA1\u6709\u9009\u4E2D\u7684\u5B57\u5E55\u6761\u76EE",
-            isErr: !0
-        } : {
-            matched: r.length,
-            summary: `\u5C06\u5BF9 ${r.length} \u6761\u5B57\u5E55\u9010\u6761\u5206\u6790\u9759\u97F3\uFF08\u9700 FFmpeg\uFF0C\u6267\u884C\u65F6\u5C06\u663E\u793A\u8FDB\u5EA6\uFF09`,
-            isErr: !1
-        } : {
-            matched: 0,
-            summary: "\u6CA1\u6709\u53EF\u5206\u6790\u7684\u5B57\u5E55\uFF08\u9700\u6709\u6587\u672C\u3001\u542B\u7A7A\u683C/\u6362\u884C\u4E14\u65F6\u957F\u8DB3\u591F\uFF09",
-            isErr: !0
-        }
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.previewSilenceSplitPlan({
+                matchedIndexes: r,
+                hasVideo: !!t.videoPath,
+                hasFfmpegDetectSilence: !!p?.ffmpegDetectSilence,
+                condition: n,
+                selectedIndex: t.selectedIndex,
+            })
+            : { matched: 0, summary: "请先关联视频", isErr: !0 }
     }
 
     function Bo() {
@@ -4016,15 +4079,9 @@ ${t.dualLineOrder||""}`;
     function ai(n) {
         const r = Jr(t.cues),
             i = Sr(r, n);
-        if (!i.affected) return {
-            affected: 0,
-            summary: "\u5F53\u524D\u5B57\u5E55\u65E0\u9700\u8C03\u6574"
-        };
-        const s = [];
-        return i.overlapFixed && s.push(`\u91CD\u53E0 ${i.overlapFixed} \u5904`), i.cpsFixed && s.push(`CPS ${i.cpsFixed} \u6761`), i.minDurFixed && s.push(`\u8FC7\u77ED ${i.minDurFixed} \u6761`), i.maxDurFixed && s.push(`\u8FC7\u957F ${i.maxDurFixed} \u6761`), {
-            affected: i.affected,
-            summary: `\u9884\u8BA1\u5F71\u54CD ${i.affected} \u6761\uFF1A${s.join(" \xB7 ")||"\u5C06\u66F4\u65B0\u65F6\u957F"}`
-        }
+        return batchCueFilterPlan
+            ? batchCueFilterPlan.previewSmartAdjustSummary(i)
+            : { affected: 0, summary: "当前字幕无需调整" }
     }
 
     function Sr(n, r) {
@@ -4670,96 +4727,49 @@ ${t.dualLineOrder||""}`;
             useCpsTime: n.useCps !== !1
         }
     }
-    const Cn = [{
-        type: "overlap",
-        countKey: "overlap",
-        label: "\u91CD\u53E0"
-    }, {
-        type: "high_cps",
-        countKey: "highCps",
-        label: "\u8BFB\u901F"
-    }, {
-        type: "splittable",
-        countKey: "splittable",
-        label: "\u53EF\u5206\u5272"
-    }, {
-        type: "connected",
-        countKey: "connected",
-        label: "\u8FDE\u7EED\u6587\u672C"
-    }, {
-        type: "repetition",
-        countKey: "repetition",
-        label: "\u53E0\u8BCD"
-    }, {
-        type: "duplicate",
-        countKey: "duplicate",
-        label: "\u8FDE\u7EED\u91CD\u590D"
-    }, {
-        type: "fluency",
-        countKey: "fluency",
-        label: "\u901A\u987A\u5EA6",
-        warn: !0
-    }, {
-        type: "short",
-        countKey: "short",
-        label: "\u8FC7\u77ED"
-    }, {
-        type: "long",
-        countKey: "long",
-        label: "\u8FC7\u957F"
-    }, {
-        type: "invalid",
-        countKey: "invalid",
-        label: "\u65E0\u6548"
-    }];
+    const qcSummaryUi = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts && globalThis.TransubEditorParts.qcSummaryUi)
+        || (typeof window !== 'undefined' && window.TransubEditorParts && window.TransubEditorParts.qcSummaryUi)
+        || null;
+    const Cn = qcSummaryUi && qcSummaryUi.QC_ISSUE_TYPE_DEFS ? qcSummaryUi.QC_ISSUE_TYPE_DEFS : [];
 
     function jo(n, r) {
-        return r ? (n || []).filter(i => (i.types || []).includes(r)) : n || []
+        return qcSummaryUi ? qcSummaryUi.filterIssuesByType(n, r) : (r ? (n || []).filter(i => (i.types || []).includes(r)) : n || [])
     }
 
     function Go(n) {
         const r = n || null;
-        r == null ? t.qcTypeFilter = null : t.qcTypeFilter = t.qcTypeFilter === r ? null : r, gt()
+        t.qcTypeFilter = qcSummaryUi
+            ? qcSummaryUi.nextQcTypeFilter(t.qcTypeFilter, r)
+            : (r == null ? null : (t.qcTypeFilter === r ? null : r));
+        gt()
     }
 
     function gi(n, {
         emptyHint: r
     } = {}) {
         if (!e.qcIssueList) return;
-        if (!n?.length) {
-            e.qcIssueList.innerHTML = r ? `<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">${b(r)}</div>` : "";
+        if (qcSummaryUi) {
+            e.qcIssueList.innerHTML = qcSummaryUi.buildQcIssueListHtml(n, {
+                emptyHint: r
+            });
             return
         }
-        const i = 40,
-            s = n.slice(0, i).map(a => {
-                const o = b(a.messages.join(" \xB7 ")),
-                    l = b(a.textPreview || "\u2014");
-                return `<button type="button" class="qc-issue-item" data-qc-idx="${a.index}" role="listitem"><span class="qc-issue-idx">#${a.index+1}</span><span class="qc-issue-msg">${o}</span><span class="qc-issue-text">${l}</span></button>`
-            });
-        n.length > i && s.push(`<div class="qc-issue-item" style="cursor:default;color:rgb(156 163 175);">\u8FD8\u6709 ${n.length-i} \u6761\u672A\u5217\u51FA</div>`), e.qcIssueList.innerHTML = s.join("")
+        e.qcIssueList.innerHTML = ''
     }
 
     function hi(n, r) {
-        return `qc-chip${n?` ${n}`:""}${r?" active":""}`
+        return qcSummaryUi ? qcSummaryUi.qcChipClass(n, r) : ('qc-chip' + (n ? (' ' + n) : '') + (r ? ' active' : ''))
     }
 
     function yi(n) {
         if (!e.qcSummaryBar) return;
-        if (!n?.total) {
-            t.qcTypeFilter = null, e.qcSummaryBar.innerHTML = '<span class="qc-chip ok">\u672A\u53D1\u73B0\u95EE\u9898</span>';
+        if (qcSummaryUi) {
+            const built = qcSummaryUi.buildQcSummaryBarHtml(n, t.qcTypeFilter);
+            t.qcTypeFilter = built.nextFilter;
+            e.qcSummaryBar.innerHTML = built.html;
             return
         }
-        const r = t.qcTypeFilter;
-        r && !Cn.some(a => a.type === r && n[a.countKey] > 0) && (t.qcTypeFilter = null);
-        const i = t.qcTypeFilter,
-            s = [`<button type="button" class="${hi("warn",i==null)}" data-qc-type="" title="\u663E\u793A\u5168\u90E8\u95EE\u9898">\u95EE\u9898 ${n.total}</button>`];
-        for (const a of Cn) {
-            const o = n[a.countKey] || 0;
-            if (!o) continue;
-            const l = i === a.type;
-            s.push(`<button type="button" class="${hi(a.warn?"warn":"",l)}" data-qc-type="${a.type}" title="\u53EA\u770B${a.label}">${a.label} ${o}</button>`)
-        }
-        e.qcSummaryBar.innerHTML = s.join("")
+        e.qcSummaryBar.innerHTML = ''
     }
 
     function vi({
@@ -5563,6 +5573,66 @@ ${t.dualLineOrder||""}`;
         $(), t.cues.splice(0, t.cues.length, ...n.cues), P(!0), C(), t.selectedIndex >= 0 && R(), $n(), d(n.summary.replace(/^将/, "\u5DF2"), "ok")
     }
 
+    function viewingPunctOpts() {
+        const selected = !!e.viewingPunctScopeSelected?.checked;
+        let indexes = null;
+        if (selected) {
+            indexes = J();
+            if (!indexes.length && t.selectedIndex >= 0) indexes = [t.selectedIndex];
+            if (!indexes.length) indexes = [];
+        }
+        return {
+            scope: selected ? "selected" : "all",
+            indexes: selected ? indexes : null
+        };
+    }
+
+    function previewViewingPunct() {
+        const n = viewingPunctOpts();
+        return n.scope === "selected" && (!n.indexes || !n.indexes.length) ? {
+            cues: t.cues.slice(),
+            stats: {
+                cueTotal: t.cues.length,
+                cueTouched: 0,
+                charSaved: 0
+            },
+            summary: "请先选中一条或多条字幕"
+        } : Ne.simplifyViewingPunctuationInCues(t.cues, {
+            indexes: n.indexes,
+            level: 'clear',
+        });
+    }
+
+    function refreshViewingPunctPreview() {
+        if (!e.viewingPunctPreview) return;
+        if (!t.cues.length) {
+            e.viewingPunctPreview.textContent = "没有字幕条目", e.viewingPunctPreview.classList.add("err"), e.viewingPunctConfirm && (e.viewingPunctConfirm.disabled = !0);
+            return
+        }
+        const n = previewViewingPunct(),
+            r = e.viewingPunctScopeSelected?.checked && !J().length && t.selectedIndex < 0,
+            i = !n.stats.cueTouched;
+        e.viewingPunctPreview.textContent = n.summary, e.viewingPunctPreview.classList.toggle("err", r || i), e.viewingPunctConfirm && (e.viewingPunctConfirm.disabled = r || i)
+    }
+
+    function openViewingPunctModal() {
+        e.viewingPunctModal && (x(), Q(e.viewingPunctModal, e.viewingPunctConfirm), refreshViewingPunctPreview())
+    }
+
+    function closeViewingPunctModal() {
+        K(e.viewingPunctModal)
+    }
+
+    function confirmViewingPunct() {
+        x();
+        const n = previewViewingPunct();
+        if (!n.stats.cueTouched) {
+            refreshViewingPunctPreview(), d(n.summary || "无需精简", "ok");
+            return
+        }
+        $(), t.cues.splice(0, t.cues.length, ...n.cues), P(!0), C(), t.selectedIndex >= 0 && R(), closeViewingPunctModal(), d(n.summary, "ok")
+    }
+
     function Zo() {
         x();
         let n = J();
@@ -5682,10 +5752,8 @@ ${t.dualLineOrder||""}`;
             return s?.filterIndexesByReview ? s.filterIndexesByReview(t.cues, t.markers, i) : r
         }
         if (t.listFilter === "speaker") {
-            const i = String(t.listFilterSpeakerId || "").trim();
-            if (!i) return r;
-            const s = H?.markersCore || T.TransubEditorMarkers;
-            return s?.filterIndexesBySpeaker ? s.filterIndexesBySpeaker(t.cues, t.markers, i) : r
+            // Legacy filter removed — treat as all
+            return r
         }
         if (t.listFilter === "bookmarks") {
             const i = H?.markersCore || T.TransubEditorMarkers;
@@ -5696,22 +5764,15 @@ ${t.dualLineOrder||""}`;
         return r
     }
 
-    function Pi() {
-        const n = e.speakerFilter;
-        if (!n) return;
-        const r = t.markers?.speakers || [],
-            i = String(t.listFilterSpeakerId || n.value || ""),
-            s = ['<option value="">\u8BF4\u8BDD\u4EBA</option>'].concat(r.map(a => `<option value="${b(a.id)}">${b(a.name)}</option>`));
-        n.innerHTML = s.join(""), i && r.some(a => a.id === i) ? (n.value = i, t.listFilterSpeakerId = i) : (n.value = "", t.listFilter === "speaker" && (t.listFilterSpeakerId = ""))
-    }
-
     function Re(n, {
         persist: r = !0
     } = {}) {
-        t.listFilter = n || "all", t.listFilter !== "speaker" && (t.listFilterSpeakerId = "", e.speakerFilter && (e.speakerFilter.value = "")), document.querySelectorAll("[data-list-filter]").forEach(i => {
+        let next = n || "all";
+        if (next === "speaker") next = "all";
+        t.listFilter = next, document.querySelectorAll("[data-list-filter]").forEach(i => {
             const s = i.getAttribute("data-list-filter") === t.listFilter;
             i.classList.toggle("active", s), i.getAttribute("role") === "menuitemradio" && i.setAttribute("aria-checked", s ? "true" : "false")
-        }), e.speakerFilter && e.speakerFilter.classList.toggle("active", t.listFilter === "speaker"), Li(), r && ia?.(t.listFilter, t.listFilterSpeakerId), C({
+        }), Li(), r && ia?.(t.listFilter), C({
             listOnly: !0,
             reuseMeta: !0
         }), H?.refreshContextActionBar?.()
@@ -5731,49 +5792,19 @@ ${t.dualLineOrder||""}`;
         n.innerHTML = `${s} <i class="fa fa-caret-down" aria-hidden="true"></i>`
     }
 
-    function Di(n, {
-        persist: r = !0
-    } = {}) {
-        const i = String(n || "").trim();
-        if (!i) {
-            Re("all", {
-                persist: r
-            });
-            return
-        }
-        t.listFilterSpeakerId = i, t.listFilter = "speaker", document.querySelectorAll("[data-list-filter]").forEach(s => {
-            s.classList.toggle("active", !1), s.getAttribute("role") === "menuitemradio" && s.setAttribute("aria-checked", "false")
-        }), e.speakerFilter && (e.speakerFilter.value = i, e.speakerFilter.classList.add("active")), Li(), r && ia?.(t.listFilter, t.listFilterSpeakerId), C({
-            listOnly: !0,
-            reuseMeta: !0
-        })
-    }
-
     function Jo() {
         const n = typeof sa == "function" ? sa() : {
-            filter: "all",
-            speakerId: ""
+            filter: "all"
         };
-        if (Pi(), n.filter === "speaker" && n.speakerId) {
-            if ((t.markers?.speakers || []).some(i => i?.id === n.speakerId)) {
-                Di(n.speakerId, {
-                    persist: !1
-                });
-                return
-            }
-            Re("all", {
-                persist: !0
-            });
-            return
-        }
-        if (n.filter && n.filter !== "all") {
-            Re(n.filter, {
-                persist: !1
+        const filter = n.filter === "speaker" ? "all" : (n.filter || "all");
+        if (filter && filter !== "all") {
+            Re(filter, {
+                persist: filter === n.filter ? !1 : !0
             });
             return
         }
         Re("all", {
-            persist: !1
+            persist: n.filter === "speaker"
         })
     }
 
@@ -5818,6 +5849,184 @@ ${t.dualLineOrder||""}`;
         } catch (n) {
             d(n?.message || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u751F\u6210\u5668", "err")
         }
+    }
+
+    async function openSubtitleLibraryFromEditor() {
+        try {
+            const mediaPath = String(t.videoPath || "").trim();
+            const mediaId = String(t.library?.mediaId || "").trim();
+            const versionId = String(t.library?.versionId || "").trim();
+            const n = await p?.transubOpenSubtitleLibrary?.({
+                mediaPath,
+                ...(mediaId ? { mediaId } : {}),
+                ...(versionId ? { versionId } : {})
+            });
+            n?.ok === !1 && d(n?.error || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u5E93", "err")
+        } catch (n) {
+            d(n?.message || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u5E93", "err")
+        }
+    }
+
+    async function ensureLibraryAbPairIds() {
+        const lib = t.library;
+        if (!lib) return null;
+        if (lib.abVersionIdA && lib.abVersionIdB) return lib;
+        const mediaId = String(lib.mediaId || "").trim();
+        if (!mediaId) return lib;
+        const detail = await p?.transubLibraryGetMedia?.({ mediaId });
+        const tracks = Array.isArray(detail?.tracks) ? detail.tracks : [];
+        const hit = tracks.find((tr) => tr.id === lib.trackId && tr.abPairAvailable)
+            || tracks.find((tr) => tr.abPairAvailable)
+            || tracks.find((tr) => tr.id === lib.trackId);
+        if (!hit) return lib;
+        t.library = {
+            ...lib,
+            trackId: hit.id || lib.trackId,
+            abPairAvailable: !!hit.abPairAvailable,
+            abVersionIdA: String(hit.abVersionIdA || "").trim(),
+            abVersionIdB: String(hit.abVersionIdB || "").trim()
+        };
+        syncLibraryBar();
+        return t.library
+    }
+
+    async function editorLibraryLoadCompareRef() {
+        if (!t.library?.versionId && !t.library?.mediaId) {
+            d("当前不是从字幕库打开的版本", "warn");
+            return
+        }
+        if (t.libraryCompareVersionId && U()) {
+            if (t.pairDirty && !await ie("副轨有未保存修改，卸下后将丢弃，继续？")) return;
+            rn(), C(), R(), d("已卸下对照副轨", "ok");
+            return
+        }
+        const lib = await ensureLibraryAbPairIds();
+        const idA = String(lib?.abVersionIdA || "").trim();
+        const idB = String(lib?.abVersionIdB || "").trim();
+        if (!idA || !idB) {
+            d("尚未标记对照 A/B，可在字幕库中标注后再挂载", "warn");
+            return
+        }
+        const cur = String(lib.versionId || "").trim();
+        let loadId = idA;
+        let label = "对照A";
+        if (cur && cur === idA) {
+            loadId = idB;
+            label = "对照B"
+        } else if (cur && cur === idB) {
+            loadId = idA;
+            label = "对照A"
+        }
+        if (loadId === cur) {
+            d("当前已是该对照版本", "warn");
+            return
+        }
+        if (t.pairDirty && !await ie("挂载对照将替换当前副轨，未保存的副轨修改将丢失，继续？")) return;
+        const opened = await p?.transubLibraryOpenVersion?.({ versionId: loadId });
+        if (!opened?.ok || !opened.path) {
+            d(opened?.error || "无法打开对照版本文件", "err");
+            return
+        }
+        try {
+            const doc = await p?.transubReadSubtitle?.({ path: opened.path });
+            if (!doc?.ok || !Array.isArray(doc.cues) || !doc.cues.length) {
+                d("对照版本内容为空或读取失败", "err");
+                return
+            }
+            t.pairPath = opened.path;
+            t.pairCues = doc.cues;
+            t.pairFormat = doc.format || t.format || "srt";
+            t.pairHeader = Array.isArray(doc.header) ? doc.header : [];
+            t.pairDirty = !1;
+            t.pairReadOnly = !0;
+            t.libraryCompareVersionId = loadId;
+            t.libraryCompareLabel = label;
+            t.dualRole = t.dualRole === "source" ? "source" : "target";
+            t.dualDisplayMode = zn();
+            t.dualLineOrder = nn();
+            if (e.dualDisplaySelect) e.dualDisplaySelect.value = t.dualDisplayMode;
+            if (e.dualLineOrderSelect) e.dualLineOrderSelect.value = t.dualLineOrder;
+            as(), kt(), C(), R(), syncLibraryBar();
+            d(`已挂载${label}为只读副轨`, "ok")
+        } catch (err) {
+            d(err?.message || "挂载对照失败", "err")
+        }
+    }
+
+    async function editorLibraryAbDiff() {
+        const trackId = String(t.library?.trackId || "").trim();
+        const mediaId = String(t.library?.mediaId || "").trim();
+        if (!trackId && !mediaId) {
+            d("当前不是从字幕库打开的版本", "warn");
+            return
+        }
+        let res = null;
+        if (trackId) {
+            res = await p?.transubLibraryDiff?.({ abPair: true, trackId })
+        }
+        if (!res?.ok && mediaId) {
+            const detail = await p?.transubLibraryGetMedia?.({ mediaId });
+            const tracks = Array.isArray(detail?.tracks) ? detail.tracks : [];
+            const hit = tracks.find((tr) => tr.abPairAvailable)
+                || tracks.find((tr) => tr.id === trackId);
+            if (hit?.id) res = await p?.transubLibraryDiff?.({ abPair: true, trackId: hit.id })
+        }
+        if (!res?.ok) {
+            d(res?.error || "尚未标记对照 A/B，可在字幕库中标注后再对比", "warn");
+            return
+        }
+        const body = e.libraryDiffBody;
+        const meta = e.libraryDiffMeta;
+        if (meta) {
+            const ab = res.abPair ? "对照A → 对照B · " : "";
+            const aSum = res.versionA?.recipeSummary || "—";
+            const bSum = res.versionB?.recipeSummary || "—";
+            const s = res.stats || {};
+            meta.textContent = `${ab}${aSum} → ${bSum} · 相同 ${s.equal || 0} · +${s.added || 0} · -${s.deleted || 0}`
+        }
+        if (body) {
+            const ops = Array.isArray(res.ops) ? res.ops : [];
+            body.innerHTML = ops.length
+                ? ops.slice(0, 500).map((op) => {
+                    const text = b(String(op.text ?? ""));
+                    if (op.op === "add") return `<div class="lib-diff-add">+ ${text}</div>`;
+                    if (op.op === "del") return `<div class="lib-diff-del">- ${text}</div>`;
+                    if (op.op === "skip") return `<div class="lib-diff-skip">${text}</div>`;
+                    return `<div class="lib-diff-eq">  ${text}</div>`
+                }).join("")
+                : '<div class="lib-diff-skip">（无差异）</div>'
+        }
+        e.libraryDiffModal?.classList.remove("hidden")
+    }
+
+    async function editorLibraryRerun() {
+        const versionId = String(t.library?.versionId || "").trim();
+        if (!versionId) {
+            d("当前不是从字幕库打开的版本", "warn");
+            return
+        }
+        if (t.dirty && !await ie("再跑将转到主窗口；未保存的修改仍留在本编辑器。继续？")) return;
+        const prepared = await p?.transubLibraryPrepareRerun?.({ versionId });
+        if (!prepared?.ok) {
+            d(prepared?.error || "准备再跑失败（可能需要 Pro）", "err");
+            return
+        }
+        const started = await p?.transubLibraryStartRetranslate?.({
+            mediaPath: prepared.mediaPath,
+            sourcePath: prepared.sourcePath,
+            keptPath: prepared.keptPath,
+            destPath: prepared.destPath,
+            hints: prepared.hints,
+            recipe: prepared.recipe || null,
+            recipeSummary: prepared.hints?.recipeSummary || t.library?.recipeSummary || "",
+            sourceVersionId: prepared.sourceVersionId,
+            seedVersionId: prepared.seedVersionId
+        });
+        if (!started?.ok) {
+            d(started?.error || "无法转到主窗口重新翻译", "err");
+            return
+        }
+        d("已转到主窗口，请确认重新翻译", "ok")
     }
 
     function Al() {}
@@ -6687,6 +6896,20 @@ ${t.dualLineOrder||""}`;
         savePairDocument: os,
         basename: G
     });
+    if (typeof j.installLowConfRetranscribe === "function") {
+        Bl = j.installLowConfRetranscribe({
+            state: t,
+            els: e,
+            setStatus: d,
+            editorConfirm: ie,
+            runRetranscribeRange: ut,
+            selectCue: X,
+            loadRetranscribeDurPrefs: nt,
+            refreshCueMeta: He,
+            renderCueList: C,
+            metaCore: z,
+        });
+    }
     H = j.installKeptAndMarkers({
         state: t,
         els: e,
@@ -6719,8 +6942,11 @@ ${t.dualLineOrder||""}`;
         startTextTranslate: we,
         openSmartSplitModal: hr,
         runSemanticBilingualReview: oa,
+        exportAssDocument: la,
         exportAssWithSpeakerStyles: la,
-        selectCue: X
+        selectCue: X,
+        getAssStylesUi: () => As,
+        editorChoice: ll
     }), typeof j.createQcWorkerClient == "function" && (Xt = j.createQcWorkerClient({
         workerUrl: "js/subtitle-qc-worker.js"
     })), typeof j.createFindWorkerClient == "function" && (Yt = j.createFindWorkerClient({
@@ -6733,6 +6959,9 @@ ${t.dualLineOrder||""}`;
         try {
             Yt?.dispose?.()
         } catch {}
+        try {
+            Jp?.destroy?.()
+        } catch {}
         ls(), t._findDebounceTimer && clearTimeout(t._findDebounceTimer), t._qcBadgeTimer && clearTimeout(t._qcBadgeTimer), t._timelineResizeTimer && clearTimeout(t._timelineResizeTimer)
     }), typeof j.installWorkspaceUi == "function" && (Bt = j.installWorkspaceUi({
         state: t,
@@ -6740,8 +6969,56 @@ ${t.dualLineOrder||""}`;
         setStatus: d,
         showEditorModal: Q,
         hideEditorModal: K
-    }));
-    async function Bl() {
+    })), As = j.installAssStylesUi({
+        state: t,
+        els: e,
+        electron: p,
+        assStylesCore: T.TransubAssStyles,
+        markersCore: T.TransubEditorMarkers,
+        setStatus: d,
+        showEditorModal: Q,
+        hideEditorModal: K,
+        recordUndoBeforeChange: $,
+        setDirty: P,
+        renderCueList: C,
+        renderDetailPane: R,
+        getSelectedCueIndexes: J,
+        editorConfirm: ie,
+        esc: b,
+        basename: G,
+        hasDualPair: U,
+        loadDualLineOrder: nn,
+        persistMarkers: () => H?.persistMarkers?.(),
+        onAssStylesChanged: () => {
+            syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), C({
+                listOnly: !0,
+                reuseMeta: !0
+            }), Jp?.scheduleSync?.(!0), It(!0)
+        }
+    }), Ov = j.installAssOverrideUi({
+        state: t,
+        els: e,
+        assOverrideCore: T.TransubAssOverride,
+        assStylesCore: T.TransubAssStyles,
+        setStatus: d,
+        recordUndoBeforeChange: $,
+        setDirty: P,
+        syncDetailToCue: x,
+        renderCueList: C,
+        renderDetailPane: R,
+        refreshOverlay: It
+    }), Jp = j.installJassubPreview({
+        state: t,
+        els: e,
+        assStylesCore: T.TransubAssStyles,
+        syncDetailToCue: x,
+        isAssContext: () => !!Ov?.isAssContext?.(),
+        refreshOverlay: It,
+        onModeChange: n => {
+            n === "jassub" ? It(!0) : n === "off" && Ov?.syncToolbarVisibility?.()
+        }
+    });
+    async function runEditorBilingualReview() {
         const n = T.TransubBilingualReview;
         if (!n?.reviewBilingualPair) {
             d("\u53CC\u8BED\u5BA1\u9605\u6A21\u5757\u672A\u52A0\u8F7D", "err");
@@ -6928,13 +7205,15 @@ ${t.dualLineOrder||""}`;
             d("\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u5B57\u5E55", "err");
             return
         }
-        const n = H?.markersCore || T.TransubEditorMarkers,
-            r = {};
-        n?.cueMarkerKey && t.cues.forEach((o, l) => {
-            const c = n.cueMarkerKey(o, l),
-                u = t.markers?.cueMarkers?.[c];
-            u && (r[c] = u)
-        });
+        const stylePayload = As?.getExportDocumentPayload?.() || As?.getExportSpeakerPayload?.() || {},
+            styles = stylePayload.styles || [],
+            header = stylePayload.header || As?.ensureHeader?.() || t.header,
+            summary = As?.summarizeExport?.({
+                assMode: "document",
+                styles,
+                cueCount: t.cues.length
+            }) || `${styles.length || 1} \u4E2A Style \xB7 ${t.cues.length} \u6761`;
+        if (As?.confirmAssExport && !await As.confirmAssExport(summary, "\u5BFC\u51FA ASS\uFF08\u5F53\u524D\u6837\u5F0F\uFF09")) return;
         const i = G(t.path || "subtitle.srt").replace(/\.[^.]+$/, "");
         let s = `${i}.ass`;
         if (t.path) {
@@ -6943,12 +7222,13 @@ ${t.dualLineOrder||""}`;
             s = `${o}${l}${i}.ass`
         }
         const a = await p.transubExportSubtitle({
-            title: "\u5BFC\u51FA ASS\uFF08\u8BF4\u8BDD\u4EBA\u6837\u5F0F\uFF09",
+            title: "\u5BFC\u51FA ASS\uFF08\u5F53\u524D\u6837\u5F0F\uFF09",
             defaultName: s,
             format: "ass",
+            assMode: "document",
             cues: t.cues,
-            speakers: t.markers?.speakers || [],
-            cueMarkers: r
+            styles,
+            header
         });
         if (!a?.canceled) {
             if (!a?.ok) {
@@ -6957,35 +7237,6 @@ ${t.dualLineOrder||""}`;
             }
             d(`\u5DF2\u5BFC\u51FA ASS\uFF1A${G(a.path)}`, "ok")
         }
-    }
-    async function wl() {
-        const n = T.TransubSpeakerSuggest,
-            r = H?.markersCore || T.TransubEditorMarkers;
-        if (!n?.suggestAlternatingSpeakers || !r) {
-            d("\u8BF4\u8BDD\u4EBA\u5EFA\u8BAE\u6A21\u5757\u672A\u52A0\u8F7D", "err");
-            return
-        }
-        if (!t.cues.length) {
-            d("\u6CA1\u6709\u53EF\u6807\u6CE8\u7684\u5B57\u5E55", "err");
-            return
-        }
-        if (!await ie("\u6309\u53E5\u95F4\u9759\u97F3\u542F\u53D1\u5F0F\u5EFA\u8BAE\u8BF4\u8BDD\u4EBA\uFF1F", {
-                title: "\u5EFA\u8BAE\u8BF4\u8BDD\u4EBA",
-                detail: "\u5C06\u6309\u95F4\u9699\u4EA4\u66FF\u6807\u6CE8\u300C\u8BF4\u8BDD\u4EBA 1/2\u300D\uFF08\u975E\u58F0\u7EB9\u5206\u79BB\uFF09\u3002\u5DF2\u6709\u624B\u52A8\u8BF4\u8BDD\u4EBA\u4F1A\u88AB\u8986\u76D6\u5EFA\u8BAE\u7ED3\u679C\u3002",
-                okLabel: "\u5E94\u7528\u5EFA\u8BAE",
-                cancelLabel: "\u53D6\u6D88"
-            })) return;
-        const s = n.suggestAlternatingSpeakers(t.cues, {
-                cueMarkerKey: r.cueMarkerKey,
-                speakerColor: r.speakerColor,
-                switchGapMs: 1400,
-                speakerCount: 2
-            }),
-            a = r.normalizeMarkersDoc(t.markers || {});
-        a.speakers = s.speakers, a.cueMarkers = {
-            ...a.cueMarkers || {},
-            ...s.cueMarkers
-        }, t.markers = a, H?.refreshMarkersUi?.(), C(), await H?.persistMarkers?.(), d(s.summary, "ok")
     }
 
     function ca() {
@@ -7277,9 +7528,30 @@ ${t.dualLineOrder||""}`;
         const c = {
             cues: i,
             glossary: xe(),
-            fileName: t.path || t.videoPath || ""
+            fileName: t.path || t.videoPath || "",
+            sourcePath: t.path || ""
         };
-        o && (c.smartTranslateFaithfulTone = !!a);
+        if (o) {
+            c.smartTranslateFaithfulTone = !!a;
+            c.faithfulTone = !!a;
+            try {
+                const opts = (await p?.transWithAiGetOptions?.({}))?.options || {};
+                c.smartTranslateHybridMt = opts.smartTranslateHybridMt !== false;
+                c.smartTranslatePlotPolish = opts.smartTranslatePlotPolish !== false;
+                const llmMt = String(opts.engineLlmMtModel || opts.hybridMtModelId || "").trim();
+                if (llmMt) {
+                    c.engineLlmMtModel = llmMt;
+                    c.hybridMtModelId = llmMt;
+                }
+                const lang = String(opts.language || "").trim();
+                if (lang) c.language = lang;
+                const variant = String(opts.chineseSubtitleVariant || "").trim();
+                if (variant) c.chineseSubtitleVariant = variant;
+            } catch (_) {
+                c.smartTranslateHybridMt = true;
+                c.smartTranslatePlotPolish = true;
+            }
+        }
         const u = await l(c);
         return u?.ok ? {
             ok: !0,
@@ -7297,35 +7569,20 @@ ${t.dualLineOrder||""}`;
 
     function Il(n, r, i) {
         const s = T.TransubDualSubtitle || null;
-        if (i === "cue" && t.selectedIndex >= 0 && t.selectedIndex < t.cues.length) {
-            const l = t.cues[t.selectedIndex];
-            let c = String(l?.text || "").trim();
-            if (U() && t.dualRole === "target" && s && t.pairCues?.length) {
-                const u = s.findBestOverlapCue(t.pairCues, l.startMs, I(l)),
-                    m = String(u?.cue?.text || "").trim();
-                m && (c = m)
-            }
-            return c ? [{
-                startMs: l.startMs,
-                endMs: I(l),
-                text: c
-            }] : []
-        }
-        let a = t.cues;
-        U() && t.dualRole === "target" && t.pairCues?.length && (a = t.pairCues);
-        const o = [];
-        for (const l of a || []) {
-            const c = Math.round(Number(l?.startMs) || 0),
-                u = Math.max(c + 1, Math.round(Number(I(l))));
-            if (u <= n || c >= r) continue;
-            const m = String(l?.text || "").trim();
-            m && o.push({
-                startMs: c,
-                endMs: u,
-                text: m
+        return retranscribeRangePlan
+            ? retranscribeRangePlan.collectSourceCuesForRange({
+                mode: i,
+                startMs: n,
+                endMs: r,
+                cues: t.cues,
+                pairCues: t.pairCues,
+                selectedIndex: t.selectedIndex,
+                dualActive: U(),
+                dualRole: t.dualRole,
+                getEndMs: I,
+                findBestOverlapCue: s?.findBestOverlapCue || null,
             })
-        }
-        return o
+            : []
     }
     async function we({
         engine: n = "auto",
@@ -7434,6 +7691,9 @@ ${t.dualLineOrder||""}`;
             case "open-generator":
                 Ai();
                 break;
+            case "open-library":
+                openSubtitleLibraryFromEditor();
+                break;
             case "open-settings":
                 $i();
                 break;
@@ -7472,6 +7732,9 @@ ${t.dualLineOrder||""}`;
                 break;
             case "compress-rep":
                 Ci();
+                break;
+            case "viewing-punct":
+                openViewingPunctModal();
                 break;
             case "text-presets":
                 wn();
@@ -7555,6 +7818,9 @@ ${t.dualLineOrder||""}`;
                 break;
             case "retranscribe-duration":
                 ur();
+                break;
+            case "retranscribe-low-conf":
+                Bl?.openLowConfRetranscribe?.();
                 break;
             case "workflows":
                 St.openWorkflowModal?.();
@@ -7647,6 +7913,28 @@ ${t.dualLineOrder||""}`;
             $i()
         }), e.openGeneratorBtn?.addEventListener("click", () => {
             Ai()
+        }), e.librarySaveIntent?.addEventListener("change", () => {
+            const v = e.librarySaveIntent.value;
+            t.librarySaveIntent = v === "draft" || v === "ab" ? v : "current";
+            persistLibrarySaveIntent()
+        }), e.libraryLoadCompareBtn?.addEventListener("click", () => {
+            void editorLibraryLoadCompareRef()
+        }), e.libraryAbDiffBtn?.addEventListener("click", () => {
+            void editorLibraryAbDiff()
+        }), e.libraryRerunBtn?.addEventListener("click", () => {
+            void editorLibraryRerun()
+        }), e.libraryFixMediaBtn?.addEventListener("click", () => {
+            void Ls()
+        }), e.libraryFocusBtn?.addEventListener("click", () => {
+            openSubtitleLibraryFromEditor()
+        }), e.libraryDiffCloseBtn?.addEventListener("click", () => {
+            e.libraryDiffModal?.classList.add("hidden")
+        }), e.libraryDiffModal?.addEventListener("click", (ev) => {
+            if (ev.target === e.libraryDiffModal || ev.target?.id === "editorLibraryDiffBackdrop") {
+                e.libraryDiffModal?.classList.add("hidden")
+            }
+        }), e.openLibraryBtn?.addEventListener("click", () => {
+            openSubtitleLibraryFromEditor()
         }), e.autoFocusBtn?.addEventListener("click", () => {
             Ji(), ee()
         }), e.waveformToggle?.addEventListener("click", () => {
@@ -7695,8 +7983,6 @@ ${t.dualLineOrder||""}`;
             s.addEventListener("click", () => {
                 Re(s.getAttribute("data-list-filter")), s.closest("#editorReviewFilterMenu") && n()
             })
-        }), e.speakerFilter?.addEventListener("change", () => {
-            Di(e.speakerFilter.value)
         }), e.nextIssueBtn?.addEventListener("click", Ti), e.playPauseBtn?.addEventListener("click", Bs), e.seekBackBtn?.addEventListener("click", () => Fi(-1)), e.seekFwdBtn?.addEventListener("click", () => Fi(1)), e.rateSelect?.addEventListener("change", () => {
             e.video && (e.video.playbackRate = Number(e.rateSelect.value) || 1)
         }), e.volumeSlider?.addEventListener("input", () => {
@@ -7716,15 +8002,15 @@ ${t.dualLineOrder||""}`;
                 mode: "film"
             })
         }), e.bilingualReviewBtn?.addEventListener("click", () => {
-            Bl()
+            runEditorBilingualReview()
         }), e.exportAssBtn?.addEventListener("click", () => {
             la()
         }), e.proAssBtn?.addEventListener("click", () => {
             la()
+        }), e.exportDualAssBtn?.addEventListener("click", () => {
+            void As?.exportDualAss?.()
         }), e.semanticReviewBtn?.addEventListener("click", () => {
             oa()
-        }), e.suggestSpeakersBtn?.addEventListener("click", () => {
-            wl()
         }), e.sakuraTranslateBtn?.addEventListener("click", () => {
             we({
                 engine: "auto"
@@ -7876,7 +8162,11 @@ ${t.dualLineOrder||""}`;
             s.addEventListener("click", $n)
         }), e.compressRepModal?.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach(s => {
             s.addEventListener("change", Rr)
-        }), e.qcBtn?.addEventListener("click", Fr), e.retranscribeDurBtn?.addEventListener("click", ur), e.smartSplitBtn?.addEventListener("click", hr), e.silenceSplitBtn?.addEventListener("click", () => vr()), e.smartSplitCueBtn?.addEventListener("click", () => {
+        }), e.viewingPunctBtn?.addEventListener("click", openViewingPunctModal), e.viewingPunctConfirm?.addEventListener("click", confirmViewingPunct), e.viewingPunctCancel?.addEventListener("click", closeViewingPunctModal), e.viewingPunctModal?.querySelectorAll("[data-viewing-punct-dismiss]").forEach(s => {
+            s.addEventListener("click", closeViewingPunctModal)
+        }), e.viewingPunctModal?.querySelectorAll('input[type="radio"]').forEach(s => {
+            s.addEventListener("change", refreshViewingPunctPreview)
+        }), e.qcBtn?.addEventListener("click", Fr), e.retranscribeDurBtn?.addEventListener("click", ur), Bl?.wireUi?.(), e.smartSplitBtn?.addEventListener("click", hr), e.silenceSplitBtn?.addEventListener("click", () => vr()), e.smartSplitCueBtn?.addEventListener("click", () => {
             const s = Ke();
             lt("smart", {
                 smartMaxChars: s.smartMaxChars,
@@ -7885,7 +8175,7 @@ ${t.dualLineOrder||""}`;
                 fixOverlap: s.fixOverlap
             })
         }), e.silenceSplitCueBtn?.addEventListener("click", () => ir()), e.compressRepCueBtn?.addEventListener("click", () => Zo()), e.splitLinesBtn?.addEventListener("click", () => lt("lines")), e.splitSpacesBtn?.addEventListener("click", () => lt("spaces")), e.charDurBtn?.addEventListener("click", () => Ds()), e.smartDurBtn?.addEventListener("click", () => Fs()), e.audioSnapBtn?.addEventListener("click", () => {
-            As()
+            snapSelectedCueToAudio()
         }), e.silenceSplitConfirm?.addEventListener("click", si), e.silenceProgressCancel?.addEventListener("click", () => {
             if (t.workflowBusy) {
                 St.cancelWorkflowRun(), sr();
@@ -8092,6 +8382,10 @@ ${t.dualLineOrder||""}`;
                     s.preventDefault(), $n();
                     return
                 }
+                if (e.viewingPunctModal && !e.viewingPunctModal.classList.contains("hidden")) {
+                    s.preventDefault(), closeViewingPunctModal();
+                    return
+                }
                 if (e.qcModal && !e.qcModal.classList.contains("hidden")) {
                     s.preventDefault(), En();
                     return
@@ -8110,6 +8404,10 @@ ${t.dualLineOrder||""}`;
                 }
                 if (e.glossaryModal && !e.glossaryModal.classList.contains("hidden")) {
                     s.preventDefault(), Ir();
+                    return
+                }
+                if (e.assStylesModal && !e.assStylesModal.classList.contains("hidden")) {
+                    s.preventDefault(), As?.closeModal?.();
                     return
                 }
                 if (e.breakWordsModal && !e.breakWordsModal.classList.contains("hidden")) {
@@ -8163,7 +8461,7 @@ ${t.dualLineOrder||""}`;
                 }
             }
             if (s.key === "Delete" && !s.ctrlKey && !s.metaKey && !s.altKey) {
-                if (s.target.matches("input, textarea") || [e.splitModal, e.findReplaceModal, e.glossaryModal, e.breakWordsModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.qcModal, e.retranscribeDurModal, e.shortcutsModal].some(o => o && !o.classList.contains("hidden")) || t.selectedIndex < 0 && !J().length) return;
+                if (s.target.matches("input, textarea") || [e.splitModal, e.findReplaceModal, e.glossaryModal, e.assStylesModal, e.breakWordsModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.retranscribeDurModal, e.shortcutsModal].some(o => o && !o.classList.contains("hidden")) || t.selectedIndex < 0 && !J().length) return;
                 s.preventDefault(), pn();
                 return
             }
@@ -8257,9 +8555,6 @@ ${t.dualLineOrder||""}`;
             abSetBBtn: document.getElementById("editorAbSetBBtn"),
             abClearBtn: document.getElementById("editorAbClearBtn"),
             exportChecklistBtn: document.getElementById("editorExportChecklistBtn"),
-            bilingualReviewBtn: document.getElementById("editorBilingualReviewBtn"),
-            exportAssBtn: document.getElementById("editorExportAssBtn"),
-            suggestSpeakersBtn: document.getElementById("editorSuggestSpeakersBtn"),
             tourOverlay: document.getElementById("editorTourOverlay"),
             tourTitle: document.getElementById("editorTourTitle"),
             tourBody: document.getElementById("editorTourBody"),
@@ -8271,13 +8566,28 @@ ${t.dualLineOrder||""}`;
             dirtyBadge: document.getElementById("editorDirtyBadge"),
             saveStatus: document.getElementById("editorSaveStatus"),
             saveBtn: document.getElementById("editorSaveBtn"),
+            libraryBar: document.getElementById("editorLibraryBar"),
+            libraryTitle: document.getElementById("editorLibraryTitle"),
+            libraryRole: document.getElementById("editorLibraryRole"),
+            libraryActive: document.getElementById("editorLibraryActive"),
+            libraryRecipe: document.getElementById("editorLibraryRecipe"),
+            librarySaveIntent: document.getElementById("editorLibrarySaveIntent"),
+            libraryLoadCompareBtn: document.getElementById("editorLibraryLoadCompareBtn"),
+            libraryAbDiffBtn: document.getElementById("editorLibraryAbDiffBtn"),
+            libraryRerunBtn: document.getElementById("editorLibraryRerunBtn"),
+            libraryFixMediaBtn: document.getElementById("editorLibraryFixMediaBtn"),
+            libraryFocusBtn: document.getElementById("editorLibraryFocusBtn"),
+            libraryMediaStatus: document.getElementById("editorLibraryMediaStatus"),
+            libraryDiffModal: document.getElementById("editorLibraryDiffModal"),
+            libraryDiffMeta: document.getElementById("editorLibraryDiffMeta"),
+            libraryDiffBody: document.getElementById("editorLibraryDiffBody"),
+            libraryDiffCloseBtn: document.getElementById("editorLibraryDiffClose"),
             exportDualBtn: document.getElementById("editorExportDualBtn"),
             exportDualMenuBtn: document.getElementById("editorExportDualMenuBtn"),
             addCueBtn: document.getElementById("editorAddCueBtn"),
             insertCueBtn: document.getElementById("editorInsertCueBtn"),
             detailInsertCueBtn: document.getElementById("editorDetailInsertCueBtn"),
             retranscribeCueBtn: document.getElementById("editorRetranscribeCueBtn"),
-            retranscribeDurBtn: document.getElementById("editorRetranscribeDurBtn"),
             playheadTime: document.getElementById("editorPlayheadTime"),
             openFileBtn: document.getElementById("editorOpenFileBtn"),
             undoBtn: document.getElementById("editorUndoBtn"),
@@ -8287,6 +8597,7 @@ ${t.dualLineOrder||""}`;
             modeTools: document.getElementById("editorModeTools"),
             themeToggle: document.getElementById("editorThemeToggle"),
             openGeneratorBtn: document.getElementById("editorOpenGeneratorBtn"),
+            openLibraryBtn: document.getElementById("editorOpenLibraryBtn"),
             settingsBtn: document.getElementById("editorSettingsBtn"),
             splitter: document.getElementById("editorSplitter"),
             cuesPanel: document.getElementById("editorCuesPanel"),
@@ -8303,7 +8614,6 @@ ${t.dualLineOrder||""}`;
             main: document.getElementById("editorMain") || document.querySelector(".editor-main"),
             filterCount: document.getElementById("editorFilterCount"),
             nextIssueBtn: document.getElementById("editorNextIssueBtn"),
-            speakerFilter: document.getElementById("editorSpeakerFilter"),
             detailTools: document.getElementById("editorDetailTools"),
             playPauseBtn: document.getElementById("editorPlayPauseBtn"),
             seekBackBtn: document.getElementById("editorSeekBackBtn"),
@@ -8345,8 +8655,41 @@ ${t.dualLineOrder||""}`;
             bilingualReviewBtn: document.getElementById("editorBilingualReviewBtn"),
             exportAssBtn: document.getElementById("editorExportAssBtn"),
             proAssBtn: document.getElementById("editorProAssBtn"),
+            assStylesBtn: document.getElementById("editorAssStylesBtn"),
+            assStylesModal: document.getElementById("editorAssStylesModal"),
+            assStyleList: document.getElementById("editorAssStyleList"),
+            assStyleName: document.getElementById("editorAssStyleName"),
+            assStyleFont: document.getElementById("editorAssStyleFont"),
+            assStyleSize: document.getElementById("editorAssStyleSize"),
+            assStylePrimary: document.getElementById("editorAssStylePrimary"),
+            assStyleOutline: document.getElementById("editorAssStyleOutline"),
+            assStyleBack: document.getElementById("editorAssStyleBack"),
+            assStyleOutlineWidth: document.getElementById("editorAssStyleOutlineWidth"),
+            assStyleShadow: document.getElementById("editorAssStyleShadow"),
+            assStyleAlign: document.getElementById("editorAssStyleAlign"),
+            assStyleMarginL: document.getElementById("editorAssStyleMarginL"),
+            assStyleMarginR: document.getElementById("editorAssStyleMarginR"),
+            assStyleMarginV: document.getElementById("editorAssStyleMarginV"),
+            assStyleBold: document.getElementById("editorAssStyleBold"),
+            assStyleItalic: document.getElementById("editorAssStyleItalic"),
+            assStyleAddBtn: document.getElementById("editorAssStyleAddBtn"),
+            assStyleSaveBtn: document.getElementById("editorAssStyleSaveBtn"),
+            assStyleDeleteBtn: document.getElementById("editorAssStyleDeleteBtn"),
+            assStyleApplyBtn: document.getElementById("editorAssStyleApplyBtn"),
+            assStylePresetSelect: document.getElementById("editorAssStylePresetSelect"),
+            assStyleExportBtn: document.getElementById("editorAssStyleExportBtn"),
+            assStyleHint: document.getElementById("editorAssStyleHint"),
+            assDualPreset: document.getElementById("editorAssDualPreset"),
+            assDualLineOrder: document.getElementById("editorAssDualLineOrder"),
+            assDualSourceStyle: document.getElementById("editorAssDualSourceStyle"),
+            assDualTargetStyle: document.getElementById("editorAssDualTargetStyle"),
+            assDualMarginGap: document.getElementById("editorAssDualMarginGap"),
+            assDualApplyBtn: document.getElementById("editorAssDualApplyBtn"),
+            assDualExportBtn: document.getElementById("editorAssDualExportBtn"),
+            exportDualAssBtn: document.getElementById("editorExportDualAssBtn"),
+            assOverrideBar: document.getElementById("editorAssOverrideBar"),
+            assPreviewBadge: document.getElementById("editorAssPreviewBadge"),
             semanticReviewBtn: document.getElementById("editorSemanticReviewBtn"),
-            suggestSpeakersBtn: document.getElementById("editorSuggestSpeakersBtn"),
             sakuraTranslateBtn: document.getElementById("editorSakuraTranslateBtn"),
             smartTranslateBtn: document.getElementById("editorSmartTranslateBtn"),
             filmHintModal: document.getElementById("editorFilmHintModal"),
@@ -8495,6 +8838,7 @@ ${t.dualLineOrder||""}`;
             qcBtn: document.getElementById("editorQcBtn"),
             qcBadge: document.getElementById("editorQcBadge"),
             retranscribeDurBtn: document.getElementById("editorRetranscribeDurBtn"),
+            retranscribeLowConfBtn: document.getElementById("editorRetranscribeLowConfBtn"),
             retranscribeDurModal: document.getElementById("editorRetranscribeDurModal"),
             retranscribeDurSec: document.getElementById("editorRetranscribeDurSec"),
             retranscribeDurPadMs: document.getElementById("editorRetranscribeDurPadMs"),
@@ -8607,6 +8951,13 @@ ${t.dualLineOrder||""}`;
             compressRepScopeSelected: document.getElementById("editorCompressRepScopeSelected"),
             compressRepSingleChar: document.getElementById("editorCompressRepSingleChar"),
             compressRepExclaim: document.getElementById("editorCompressRepExclaim"),
+            viewingPunctBtn: document.getElementById("editorViewingPunctBtn"),
+            viewingPunctModal: document.getElementById("editorViewingPunctModal"),
+            viewingPunctPreview: document.getElementById("editorViewingPunctPreview"),
+            viewingPunctConfirm: document.getElementById("editorViewingPunctConfirm"),
+            viewingPunctCancel: document.getElementById("editorViewingPunctCancel"),
+            viewingPunctScopeAll: document.getElementById("editorViewingPunctScopeAll"),
+            viewingPunctScopeSelected: document.getElementById("editorViewingPunctScopeSelected"),
             restoreBtn: document.getElementById("editorRestoreBtn"),
             sidecarSelect: document.getElementById("editorSidecarSelect"),
             cueBody: document.getElementById("editorCueBody"),
@@ -8619,6 +8970,7 @@ ${t.dualLineOrder||""}`;
             detailEnd: document.getElementById("editorDetailEnd"),
             detailText: document.getElementById("editorDetailText"),
             detailPairWrap: document.getElementById("editorDetailPairWrap"),
+            detailPairLabel: document.getElementById("editorDetailPairLabel"),
             detailPairText: document.getElementById("editorDetailPairText"),
             detailCps: document.getElementById("editorDetailCps"),
             targetCps: document.getElementById("editorTargetCps"),
@@ -8663,6 +9015,7 @@ ${t.dualLineOrder||""}`;
             welcomeIcon: document.getElementById("editorWelcomeIcon"),
             welcomeOpenBtn: document.getElementById("editorWelcomeOpenBtn"),
             welcomeOpenGeneratorBtn: document.getElementById("editorWelcomeOpenGeneratorBtn"),
+            welcomeOpenLibraryBtn: document.getElementById("editorWelcomeOpenLibraryBtn"),
             welcomeHistoryList: document.getElementById("editorWelcomeHistoryList"),
             welcomeClearBtn: document.getElementById("editorWelcomeClearBtn"),
             bootProgressTitle: document.getElementById("editorBootProgressTitle"),
@@ -8678,16 +9031,34 @@ ${t.dualLineOrder||""}`;
         })
     }
 
+    (function warnMissingEditorParts() {
+        const parts = (typeof globalThis !== 'undefined' && globalThis.TransubEditorParts)
+            || (typeof window !== 'undefined' && window.TransubEditorParts)
+            || {};
+        const need = [
+            'retranscribeRangePlan',
+            'batchCueFilterPlan',
+            'audioSnapDurationPlan',
+            'cueSplitPlan',
+            'silenceSplitPlan',
+            'qcSummaryUi',
+        ];
+        const missing = need.filter((k) => !parts[k]);
+        if (missing.length) {
+            console.warn('[Transub editor] missing TransubEditorParts:', missing.join(', '));
+        }
+    })();
+
     function da() {
         if (!(!p?.isDesktop || !document.getElementById("editorCueBody")))
-            if (Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.qcModal, e.glossaryModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
+            if (loadLibrarySaveIntent(), syncLibraryBar(), Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
                     n?.classList.contains("hidden") && n.setAttribute("inert", "")
-                }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), p?.onTransubComputeTaskChanged?.(n => {
-                    t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", ar(), Qe()
+                }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), void loadSystemFontsForAss(), p?.onTransubComputeTaskChanged?.(n => {
+                    t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", t.computeBusySince = n?.busy ? Number(n.since) || Date.now() : 0, ar(), Qe()
                 }), (async () => {
                     try {
                         const n = await p?.transubComputeTaskStatus?.();
-                        n?.busy && (t.computeBusy = !0, t.computeBusyLabel = String(n.label || n.kind || "").trim(), ar(), Qe())
+                        n?.busy && (t.computeBusy = !0, t.computeBusyLabel = String(n.label || n.kind || "").trim(), t.computeBusySince = Number(n.since) || Date.now(), ar(), Qe())
                     } catch {}
                 })(), p?.onSubtitleEditorRefocus?.(() => ht()), window.addEventListener("focus", () => {
                     const n = document.activeElement;

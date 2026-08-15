@@ -63,6 +63,11 @@ function buildVadJobOptions(merged = {}) {
     // and should not block JA Whisper translate from using WhisperSeg.
     const explicitNonSeg = vadModelRaw === 'silero-vad' && !merged.vadSensitive;
 
+    // filmAudioEnhance (Demucs) or filmVadPreset (VAD numbers only) both apply film defaults.
+    // Demucs must not stack with WhisperSeg (sensitive).
+    const filmEnhance = !!merged.filmAudioEnhance;
+    const film = filmEnhance || !!merged.filmVadPreset;
+
     // JA Whisper translate/dual: default WhisperSeg (sensitive) unless user picked Silero/FSMN.
     let sensitive = !!merged.vadSensitive;
     if (
@@ -70,6 +75,7 @@ function buildVadJobOptions(merged = {}) {
         && isWhisper
         && (task === 'translate' || task === 'dual' || vadModelRaw === 'whisperseg-asmr')
         && !explicitNonSeg
+        && !filmEnhance
     ) {
         sensitive = true;
     }
@@ -77,10 +83,11 @@ function buildVadJobOptions(merged = {}) {
     if (!isWhisper) {
         sensitive = false;
     }
+    if (filmEnhance) {
+        sensitive = false;
+    }
 
     const aggressive = !!merged.vadAggressive && !sensitive;
-    // filmAudioEnhance (Demucs) or filmVadPreset (VAD numbers only) both apply film defaults
-    const film = !!merged.filmAudioEnhance || !!merged.filmVadPreset;
     let threshold = numOr(merged.vadThreshold, 0.5);
     let minSpeechMs = numOr(merged.vadMinSpeechDurationMs, 300);
     let minSilenceMs = numOr(merged.vadMinSilenceDurationMs, 100);
@@ -89,10 +96,25 @@ function buildVadJobOptions(merged = {}) {
     // Apply preset defaults only when UI still holds free medium defaults.
     // Never hard-floor explicit lower values (soft dialogue / moans).
     if (film) {
-        // Match content-profile FILM_PATCH: reject BGM islands, fewer micro-cuts.
-        if (isFreeDefault(merged.vadThreshold, 0.5)) threshold = 0.55;
-        if (isFreeDefault(merged.vadMinSpeechDurationMs, 300)) minSpeechMs = 350;
-        if (isFreeDefault(merged.vadMinSilenceDurationMs, 100)) minSilenceMs = 280;
+        // Explicit film overrides from settings → Pro → 影视音频增强
+        if (merged.filmVadThreshold != null && merged.filmVadThreshold !== '') {
+            const t = Number(merged.filmVadThreshold);
+            if (Number.isFinite(t)) threshold = Math.max(0.05, Math.min(0.95, t));
+        } else if (isFreeDefault(merged.vadThreshold, 0.5)) {
+            threshold = 0.55;
+        }
+        if (merged.filmVadMinSpeechDurationMs != null && merged.filmVadMinSpeechDurationMs !== '') {
+            const ms = Number(merged.filmVadMinSpeechDurationMs);
+            if (Number.isFinite(ms)) minSpeechMs = Math.max(50, Math.min(2000, Math.round(ms)));
+        } else if (isFreeDefault(merged.vadMinSpeechDurationMs, 300)) {
+            minSpeechMs = 350;
+        }
+        if (merged.filmVadMinSilenceDurationMs != null && merged.filmVadMinSilenceDurationMs !== '') {
+            const ms = Number(merged.filmVadMinSilenceDurationMs);
+            if (Number.isFinite(ms)) minSilenceMs = Math.max(50, Math.min(2000, Math.round(ms)));
+        } else if (isFreeDefault(merged.vadMinSilenceDurationMs, 100)) {
+            minSilenceMs = 280;
+        }
         if (isFreeDefault(merged.vadSpeechPadMs, 200)) speechPadMs = 200;
     } else if (sensitive) {
         // Match Engine WhisperSeg PRESETS["sensitive"] (JA AV soft-scene recall).
@@ -150,8 +172,20 @@ function buildVadJobOptions(merged = {}) {
             out.hallucinationSilenceThreshold = Math.max(0.1, Math.min(30, hallu));
         }
     } else if (film) {
-        // Default film silence skip — music beds invent "." / filler cues.
-        out.hallucinationSilenceThreshold = 2;
+        const filmHallu = merged.filmHallucinationSilenceThreshold;
+        if (filmHallu === 0 || filmHallu === '0') {
+            // explicit off
+        } else if (filmHallu != null && filmHallu !== '') {
+            const n = Number(filmHallu);
+            if (Number.isFinite(n) && n > 0) {
+                out.hallucinationSilenceThreshold = Math.max(0.1, Math.min(30, n));
+            } else {
+                out.hallucinationSilenceThreshold = 2;
+            }
+        } else {
+            // Default film silence skip — music beds invent "." / filler cues.
+            out.hallucinationSilenceThreshold = 2;
+        }
     }
 
     return out;
@@ -163,9 +197,10 @@ function buildVadJobOptions(merged = {}) {
  * @returns {{ denoise: string, separate: boolean, filmAudioEnhance: boolean, filmPreset: boolean }}
  */
 function buildAudioJobOptions(merged = {}, gate = {}) {
-    const denoise = merged.audioLightDenoise ? 'light' : 'off';
     const entitled = gate.entitled !== false;
     const filmEnhance = !!merged.filmAudioEnhance && entitled;
+    // Demucs path: never stack light denoise (desktop mutex + job fallback).
+    const denoise = filmEnhance ? 'off' : (merged.audioLightDenoise ? 'light' : 'off');
     // Advanced: film VAD numbers without Demucs (honored when enhance is off)
     const filmVadOnly = !!merged.filmVadPreset && entitled && !filmEnhance;
     return {

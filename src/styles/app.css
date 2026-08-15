@@ -97,8 +97,27 @@
     .post-task-menu-item.hidden {
         display: none !important;
     }
-    .post-task-menu-item.active {
-        @apply text-violet-700 font-medium bg-violet-50/60;
+    .post-task-menu-item.has-desc {
+        align-items: flex-start;
+    }
+    .post-task-menu-item.has-desc .post-task-check {
+        margin-top: 0.2rem;
+    }
+    .post-task-menu-copy {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.12rem;
+    }
+    .post-task-menu-title {
+        line-height: 1.25;
+    }
+    .post-task-menu-desc {
+        @apply text-[11px] leading-snug font-normal text-gray-400;
+    }
+    .post-task-menu-item.active .post-task-menu-desc {
+        @apply text-violet-400;
     }
     .post-task-check {
         @apply w-3 text-center text-violet-600 opacity-0 text-xs;
@@ -109,11 +128,154 @@
     .post-task-menu-shutdown {
         @apply px-3 py-2 border-t border-gray-100 mt-1;
     }
+    /* Wider than default post-task-menu (w-44); single scroll container only. */
+    .post-task-menu.translate-menu {
+        width: min(22rem, calc(100vw - 1.25rem));
+        max-width: min(22rem, calc(100vw - 1.25rem));
+        max-height: min(32rem, 75vh);
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+    .translate-menu .post-task-menu-item span {
+        @apply whitespace-normal break-words leading-snug;
+    }
+    .translate-menu-hint {
+        @apply px-3 py-1.5 text-[11px] leading-snug text-gray-500 whitespace-normal break-words;
+    }
+    .translate-mt-pick-switch {
+        @apply flex items-center gap-1.5 px-3 pb-1;
+    }
+    .translate-mt-pick-btn {
+        @apply inline-flex items-center justify-center appearance-none border border-gray-200 bg-gray-50 text-gray-600 rounded-md text-xs font-medium py-1 px-2.5 min-w-0 cursor-pointer transition-colors;
+        flex: 0 0 auto;
+    }
+    .translate-mt-pick-btn:hover {
+        @apply border-violet-200 text-violet-700 bg-violet-50/60;
+    }
+    .translate-mt-pick-btn.is-active {
+        @apply border-violet-400 bg-violet-50 text-violet-700;
+        box-shadow: inset 0 0 0 1px #8b5cf6;
+    }
+    .translate-mt-model-list-wrap {
+        @apply px-1 pb-1;
+    }
+    .translate-mt-model-list-wrap.hidden {
+        display: none !important;
+    }
+    html.main-theme-dark .translate-mt-pick-btn {
+        @apply border-gray-600 bg-gray-800 text-gray-300;
+    }
+    html.main-theme-dark .translate-mt-pick-btn:hover {
+        @apply border-violet-600 text-violet-200 bg-violet-950/40;
+    }
+    html.main-theme-dark .translate-mt-pick-btn.is-active {
+        @apply border-violet-500 bg-violet-950/50 text-violet-200;
+        box-shadow: inset 0 0 0 1px #8b5cf6;
+    }
     .toolbar-icon-btn {
         @apply inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors disabled:opacity-40 disabled:pointer-events-none;
     }
     .toolbar-text-btn {
         @apply inline-flex items-center justify-center gap-1 h-9 px-2.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:pointer-events-none;
+    }
+    /* ── Command bar design tokens ─────────────────────────────── */
+    .command-bar {
+        --tb-h: 2.25rem;          /* queue / run controls */
+        --tb-chip-h: 2rem;        /* recipe chips (slightly tighter) */
+        --tb-gap: 0.5rem;
+        --tb-gap-tight: 0.375rem;
+        --tb-radius: 0.5rem;
+        gap: var(--tb-gap);
+    }
+    .command-bar-row {
+        flex-wrap: nowrap;
+        gap: var(--tb-gap);
+        align-items: center;
+    }
+    .command-bar-row > .flex.items-center {
+        gap: var(--tb-gap-tight);
+    }
+    .command-bar-run {
+        gap: var(--tb-gap-tight);
+        padding-left: 0.625rem;
+        margin-left: auto;
+        border-left: 1px solid #e5e7eb;
+    }
+    .command-bar-add {
+        @apply inline-flex items-center justify-center gap-1.5 shrink-0 text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 transition-colors;
+        height: var(--tb-h);
+        padding: 0 0.875rem;
+        border-radius: var(--tb-radius);
+    }
+    .command-bar-stop {
+        @apply inline-flex items-center justify-center gap-1 shrink-0 text-sm text-gray-600 border border-gray-200 bg-transparent hover:border-red-300 hover:text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40 disabled:pointer-events-none disabled:hover:border-gray-200 disabled:hover:text-gray-600 disabled:hover:bg-transparent;
+        height: var(--tb-h);
+        padding: 0 0.875rem;
+        border-radius: var(--tb-radius);
+    }
+    .asr-window-tip.hidden { display: none; }
+    .command-bar-start {
+        @apply inline-flex items-center justify-center gap-1.5 shrink-0 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 shadow-sm transition-colors disabled:opacity-50 disabled:shadow-none;
+        height: var(--tb-h);
+        min-width: 7.25rem;
+        padding: 0 1.25rem;
+        border-radius: var(--tb-radius);
+    }
+    /* Disabled start must still receive clicks so we can toast the block reason. */
+    .command-bar-start:disabled {
+        cursor: not-allowed;
+    }
+    .command-bar-start:not(:disabled):hover {
+        @apply shadow;
+    }
+    .command-bar .toolbar-text-btn,
+    .command-bar .toolbar-icon-btn,
+    .command-bar .post-task-power-btn {
+        height: var(--tb-h);
+        border-radius: var(--tb-radius);
+    }
+    .command-bar .post-task-power-btn.post-task-label-btn {
+        height: var(--tb-h);
+        padding-left: 0.625rem;
+        padding-right: 0.625rem;
+    }
+    .command-bar .param-chip,
+    .command-bar .content-profile-chip {
+        height: var(--tb-chip-h);
+        border-radius: calc(var(--tb-radius) - 1px);
+    }
+    .command-bar .params-pro-actions .command-bar-pro-btn {
+        @apply inline-flex items-center justify-center gap-1.5 shrink-0 text-sm border border-violet-200 text-violet-700 hover:bg-violet-50 hover:border-violet-300 transition-colors disabled:opacity-40 disabled:pointer-events-none;
+        height: var(--tb-chip-h);
+        padding: 0 0.75rem;
+        border-radius: calc(var(--tb-radius) - 1px);
+    }
+    .params-chips-row {
+        @apply flex items-center gap-2 min-w-0;
+        gap: var(--tb-gap);
+    }
+    .params-chips {
+        @apply flex items-center min-w-0;
+        gap: var(--tb-gap-tight);
+        flex-wrap: nowrap;
+        /* Must stay visible: overflow-x:auto creates a scrollport that clips dropdowns. */
+        overflow: visible;
+    }
+    .params-pro-actions {
+        @apply pl-2 border-l border-gray-200;
+        gap: var(--tb-gap-tight);
+        align-self: center;
+    }
+    .params-pro-actions[hidden] {
+        display: none !important;
+    }
+    /* Subtitle editor / library stay in the command bar at all times. */
+    .command-bar-editor-btn {
+        @apply inline-flex;
+    }
+    /* Quick params: chip + dropdown panel (not a second toolbar row). */
+    .expert-extras-menu {
+        @apply w-auto min-w-[18rem] max-w-[min(40rem,calc(100vw-2rem))] p-2;
     }
     .param-chip {
         @apply inline-flex items-center gap-1 max-w-full h-8 px-2 rounded-lg border border-gray-200 bg-gray-50 hover:border-violet-200 hover:bg-violet-50/40 transition-colors cursor-pointer;
@@ -130,6 +292,52 @@
     }
     .param-chip-select {
         @apply pr-0;
+    }
+    .params-more-menu {
+        @apply w-64;
+    }
+    .params-more-row {
+        @apply flex items-center gap-2 px-3 py-1.5;
+    }
+    .params-more-row-label {
+        @apply text-xs text-gray-500 w-8 shrink-0;
+    }
+    .params-more-select {
+        @apply flex-1 min-w-0 text-xs font-medium text-gray-800 bg-white border border-gray-200 rounded-md px-2 py-1.5 outline-none;
+    }
+    .param-chip-group.is-sense-locked {
+        opacity: 0.55;
+        pointer-events: none;
+    }
+    .param-chip-group {
+        @apply inline-flex flex-wrap items-center gap-1.5;
+    }
+    .param-chip-sep {
+        @apply inline-block w-px h-5 bg-gray-200 mx-0.5 shrink-0;
+    }
+    .param-chip-check {
+        @apply gap-1.5;
+    }
+    .param-chip-check input[type="checkbox"] {
+        @apply w-3.5 h-3.5 shrink-0;
+    }
+    .params-scene-grid {
+        @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2;
+    }
+    .params-scene-card {
+        @apply text-left w-full rounded-xl border border-gray-200 bg-white/70 px-3 py-2.5 hover:border-violet-300 hover:bg-violet-50/50 transition-colors;
+    }
+    .params-scene-card.is-active {
+        @apply border-violet-400 bg-violet-50 ring-1 ring-violet-200;
+    }
+    .params-scene-card-title {
+        @apply block text-sm font-medium text-gray-800;
+    }
+    .params-scene-card-desc {
+        @apply block text-[11px] text-gray-500 mt-0.5 leading-snug;
+    }
+    .params-mode-scene-item .params-mode-preset-title {
+        @apply font-medium;
     }
     .content-profile-chip {
         @apply inline-flex items-center gap-1 max-w-full h-8 px-2 rounded-lg border transition-colors cursor-pointer;
@@ -156,10 +364,10 @@
     .content-profile-chip.tone-suggest {
         @apply border-emerald-300 bg-emerald-50/90 text-emerald-900;
     }
-    /* 感知关：红色 */
+    /* 感知关 / 手动预设：天蓝（区别于智能感知绿，避免红色误判为错误） */
     .content-profile-chip.tone-off,
     .content-profile-chip[aria-pressed="false"] {
-        @apply border-red-300 bg-red-50 text-red-800 hover:border-red-400 hover:bg-red-100/80;
+        @apply border-sky-300 bg-sky-50 text-sky-800 hover:border-sky-400 hover:bg-sky-100/80;
     }
     .content-profile-chip .param-chip-value {
         @apply max-w-[9rem];
@@ -168,7 +376,7 @@
         @apply text-emerald-700 font-semibold;
     }
     .content-profile-chip[aria-pressed="false"] .param-chip-value {
-        @apply text-red-700 font-semibold;
+        @apply text-sky-700 font-semibold;
     }
     .file-profile-badge {
         @apply inline-flex items-center rounded px-1 py-px text-[9px] font-semibold leading-none align-middle ml-1;
@@ -250,12 +458,30 @@
         @apply text-gray-400 bg-gray-100;
         opacity: 0.7;
     }
+    .file-sense-recover {
+        @apply inline-flex flex-wrap items-center gap-0.5 ml-0.5 max-w-[14rem];
+    }
+    .file-sense-recover-btn {
+        @apply text-[10px] leading-tight px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:border-amber-300 transition-colors;
+    }
+    .file-batch-recover {
+        @apply inline-flex flex-wrap items-center gap-0.5 mt-1 max-w-[18rem];
+    }
+    .file-batch-recover-btn {
+        @apply text-[10px] leading-tight px-1.5 py-0.5 rounded border border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100 hover:border-rose-300 transition-colors;
+    }
     @keyframes file-sense-pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.45; }
     }
     .row-status-badge {
         @apply inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none whitespace-nowrap;
+    }
+    .row-asr-badge {
+        @apply inline-flex items-center ml-1 rounded px-1 py-0.5 text-[10px] leading-none font-medium bg-sky-50 text-sky-800 border border-sky-100 max-w-[9rem] truncate align-middle;
+    }
+    .row-asr-badge.is-failover {
+        @apply bg-amber-50 text-amber-900 border-amber-200;
     }
     .row-status-pending, .row-status-ready { @apply bg-gray-100 text-gray-600; }
     .row-status-probing, .row-status-running { @apply bg-violet-100 text-violet-800; }
@@ -271,6 +497,9 @@
     .task-row[data-status="error"] { @apply border-l-red-400 bg-red-50/20; }
     .task-row.task-row-flash {
         animation: task-row-flash 0.8s ease-out;
+    }
+    .task-row.is-focused {
+        @apply bg-violet-50/70 border-l-violet-500;
     }
     @keyframes task-row-flash {
         0% { background-color: rgb(237 233 254); }
@@ -611,17 +840,53 @@
         color: #9ca3af;
         @apply border-gray-700;
     }
+    html.main-theme-dark .translate-menu-hint {
+        color: #9ca3af;
+    }
     html.main-theme-dark .post-task-menu-item {
         @apply text-gray-200 hover:bg-violet-950/50;
     }
-    html.main-theme-dark .post-task-menu-item.active {
-        @apply text-violet-300 bg-violet-950/40;
+    html.main-theme-dark .post-task-menu-desc {
+        @apply text-gray-500;
+    }
+    html.main-theme-dark .post-task-menu-item.active .post-task-menu-desc {
+        @apply text-violet-400/80;
     }
     html.main-theme-dark .post-task-menu-shutdown {
         @apply border-gray-700;
     }
     html.main-theme-dark .param-chip {
         @apply border-gray-600 bg-gray-700/50 text-gray-100 hover:border-violet-500;
+    }
+    html.main-theme-dark .params-pro-actions {
+        @apply border-gray-600;
+    }
+    html.main-theme-dark .command-bar-run {
+        border-left-color: #4b5563;
+    }
+    html.main-theme-dark .command-bar-add {
+        @apply bg-gray-100 text-gray-900 hover:bg-white;
+    }
+    html.main-theme-dark .command-bar-stop {
+        @apply border-gray-600 text-gray-300 hover:border-red-400 hover:text-red-300 hover:bg-red-950/40;
+    }
+    html.main-theme-dark .command-bar-start {
+        @apply bg-violet-600 hover:bg-violet-500;
+    }
+    html.main-theme-dark .command-bar .params-pro-actions .command-bar-pro-btn {
+        @apply border-violet-500/50 text-violet-300 hover:bg-violet-950/50 hover:border-violet-400;
+    }
+    html.main-theme-dark .params-scene-card {
+        @apply border-gray-600 bg-gray-800/60 hover:border-violet-500;
+    }
+    html.main-theme-dark .params-scene-card.is-active {
+        @apply border-violet-500 bg-violet-950/40 ring-violet-700;
+    }
+    html.main-theme-dark .params-scene-card-title {
+        @apply text-gray-100;
+    }
+    html.main-theme-dark .params-scene-card-desc {
+        @apply text-gray-400;
     }
     html.main-theme-dark .content-profile-chip.tone-idle,
     html.main-theme-dark .content-profile-chip.tone-apply,
@@ -634,13 +899,13 @@
     }
     html.main-theme-dark .content-profile-chip.tone-off,
     html.main-theme-dark .content-profile-chip[aria-pressed="false"] {
-        @apply border-red-600/70 bg-red-950/45 text-red-200 hover:border-red-500 hover:bg-red-900/55;
+        @apply border-sky-600/70 bg-sky-950/45 text-sky-200 hover:border-sky-500 hover:bg-sky-900/55;
     }
     html.main-theme-dark .content-profile-chip[aria-pressed="true"] .param-chip-value {
         @apply text-emerald-300;
     }
     html.main-theme-dark .content-profile-chip[aria-pressed="false"] .param-chip-value {
-        @apply text-red-300;
+        @apply text-sky-300;
     }
     html.main-theme-dark .file-sense-label { @apply text-violet-300; }
     html.main-theme-dark .param-chip-label { color: #9ca3af; }
@@ -655,6 +920,9 @@
         color: #f3f4f6;
     }
     html.main-theme-dark #dropZone { @apply border-gray-600 bg-gray-900/40; }
+    html.main-theme-dark .task-row.is-focused {
+        @apply bg-violet-950/40 border-l-violet-400;
+    }
     html.main-theme-dark .subtitle-task-table thead {
         background-color: rgb(31 41 55 / 0.95);
         color: #9ca3af;

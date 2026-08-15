@@ -197,6 +197,7 @@ function localStatus() {
         installedAt: hasPack ? (meta.installedAt || null) : null,
         source: hasPack ? (meta.source || 'cdn') : (hasBundled ? 'bundled' : 'none'),
         applied: !!(hasPack && meta.applied && isProEntitled()),
+        notes: hasPack ? String(meta.notes || '') : '',
         bundledAvailable: hasBundled,
         manifestUrl: getManifestUrl(),
         activeD01: fs.existsSync(tdpFs.getActiveD01Path()),

@@ -3,7 +3,7 @@
 **智能化字幕生成工具 & 字幕优化编辑**
 
 批量生成 · 精修成片 · Windows 桌面  
-当前版本 **3.0.7** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
+当前版本 **3.1.0** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
 
 包含：Transub字幕生成器、Transub Editor字幕编辑器、Transub Engine引擎
 
@@ -39,7 +39,7 @@
 
 字幕编辑器
 
-列表、详情、预览联动；按置信度、质检、审校、说话人、书签筛选。可独立启动 **Transub Editor**。
+列表、详情、预览联动；按置信度、质检、审校、书签筛选。可独立启动 **Transub Editor**。
 
 ### 质量检查 + 一键修复
 
@@ -69,11 +69,11 @@ Pro版本支持质疑问题进行深入修复
 |        | 机器翻译（Opus） | 推理翻译    | 智能翻译（Pro） |
 | ------ | ---------- | ------- | --------- |
 | **许可** | 免费         | 免费      | 需本大版本 Pro |
-| **质量** | 赶工够用       | 口语更自然   | 专名与上下文最稳  |
-| **适合** | 大批量、要速度    | 质量与速度折中 | 成片级一致性    |
+| **质量** | 赶工够用       | 句级专训更准  | 专训句级 + 剧情贴合 |
+| **适合** | 大批量、要速度    | 日语口语句级  | 要人名/语气更贴片 |
 
 
-> 翻译质量跟选择合适的模型有很大的关系，例如日译中 推荐使用推理翻译的sakura 1.5B或7B模型，智能翻译推荐使用Qwen2.5 1.5B或7B模型。 
+> 日译中句级推荐 GalTransl 7B / Sakura 7B。智能翻译默认：专训模型译句，对话模型（如 Qwen Instruct）只做语意不变的剧情贴合润色。 
 
 ---
 
@@ -85,10 +85,10 @@ Pro版本支持质疑问题进行深入修复
 | 能力          | 你能做什么                             |
 | ----------- | --------------------------------- |
 | 语境 / 影片理解重构 | 用大模型按块或按场改写字幕                     |
-| 智能翻译        | 影片简要 → 分块译 → 一致性校对（云端 BYOK 或本机模型） |
+| 智能翻译        | 专训句级 + 剧情贴合润色（默认可关；云端 BYOK 或本机模型） |
 | 影视音频增强      | 人声分离 + 更稳的切分                      |
 | 双语语义审阅      | 查漏译 / 错译并采纳建议                     |
-| ASS 说话人样式   | 按说话人着色导出                          |
+| ASS 样式导出    | 按当前样式 / 双语模板导出 ASS                |
 
 
 购买：[爱发电](https://afdian.com/a/transub) → 设置 → Pro → 订单号领取。  
@@ -134,12 +134,14 @@ npm start
 
 打包：`npm run dist` 或 `build-win.bat`。更多脚本与结构见仓库 `tools/`、`docs/`。
 
+架构与改动纪律：[docs/architecture.md](docs/architecture.md)。发行包当前未做 Authenticode 代码签名（后续运维项）。
+
 ---
 
 ## 许可与致谢
 
 - Core：[MIT](LICENSE) · Pro 模块：[LICENSE-PRO](LICENSE-PRO) / [NOTICE](NOTICE)
 - **Transub Engine** — 默认本地 ASR / 免费译中 · [边界说明](docs/engine-boundary.md)
-- **TransWithAI** — 可选旧后端
+- **TransWithAI** — 兼容冻结旧后端（专家入口可恢复；目标 4.x 移除）
 - UI 图标：[Font Awesome 4.7](https://fontawesome.com/)（SIL OFL 1.1）
 

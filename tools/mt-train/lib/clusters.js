@@ -48,7 +48,7 @@ function classifyIssues(src, dst, after) {
     }
     if (
         /気持ちいい|きもちいい|きもちぃ/.test(s)
-        && /^(?:好热|感觉好|好厉害|(?:哈啊)+|嗯)[…。．.!！?\s]*$/u.test(a.trim())
+        && /^(?:好热|感觉好|好厉害|(?:哈啊?|哈…)+|嗯)[…。．.!！?\s]*$/u.test(a.trim())
     ) {
         issues.push('kimochi_stub');
     }
@@ -101,6 +101,8 @@ const CLUSTER_ORDER = [
     'ja_echo',
     'moan_expand',
     'align_suspect',
+    'align_gap',
+    'asr_garbage',
 ];
 
 /** fixed:* clusters sort after live residuals */

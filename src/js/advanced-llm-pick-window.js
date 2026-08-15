@@ -148,7 +148,7 @@
             const visible = Number(managed?.catalogVisibleCount) || (managed?.catalog?.length || 0);
             if (!entitled && full > visible) {
                 hint.hidden = false;
-                hint.innerHTML = `当前显示免费档 <strong>${visible}</strong> 个模型。解锁 <strong>Pro</strong> 后可浏览全部 <strong>${full}</strong> 个规格（含 8B–72B 与推理专用）。`;
+                hint.innerHTML = `当前显示轻量档 <strong>${visible}</strong> 个模型。解锁 <strong>Pro</strong> 后可浏览全部 <strong>${full}</strong> 个规格（含 8B–72B 与推理专用）。`;
             } else if (entitled) {
                 hint.hidden = false;
                 hint.innerHTML = `Pro 已解锁 · 目录 <strong>${visible}</strong> 个模型，可按规格筛选轻量 / 中等 / 大型。`;

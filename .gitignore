@@ -8,6 +8,9 @@ coverage/
 tools/tmp-opencc/
 tools/tmp-release/
 
+# Generated JASSUB/libass preview assets (npm run sync:jassub / postinstall)
+src/vendor/jassub/
+
 # Bundled FFmpeg binaries (use npm run setup:ffmpeg)
 # Matches app `_internal/bin` and optional engine `_internal/bin`
 _internal/bin/*.exe
@@ -124,3 +127,7 @@ tools/av-makers.src.json
 
 # Local sense-memory / runtime prefs
 transub-sense-memory.json
+
+# Subtitle library local store / window state
+subtitle-library/
+window-state-subtitle-library.json

@@ -206,6 +206,7 @@
 
                 if (fluencyFlags.length) {
                     types.push('fluency');
+                    if (fluencyFlags.includes('weird')) types.push('weird');
                     const keep = new Set(fluencyFlags);
                     const srcFlags = fluency.flags || [];
                     const srcMsgs = fluency.messages || [];

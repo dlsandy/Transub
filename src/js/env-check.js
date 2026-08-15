@@ -19,6 +19,19 @@
         { id: 'sensevoiceRuntime', label: 'SenseVoice 运行库' },
         { id: 'whisperRuntime', label: 'Whisper 运行库' },
     ];
+    const BASE_ITEM_IDS = [
+        'installPath', 'ffmpeg', 'vcRedist', 'gpu', 'gpuDriver', 'gpuRuntime', 'engine', 'llamaServerRuntime',
+    ];
+    const RUNTIME_ITEM_IDS = [
+        'asrModel', 'vadModel', 'lidModel', 'sensevoiceRuntime', 'whisperRuntime',
+    ];
+
+    function itemsForScope(scope) {
+        const s = String(scope || 'full').trim().toLowerCase();
+        if (s === 'base') return DEFAULT_ITEMS.filter((it) => BASE_ITEM_IDS.includes(it.id));
+        if (s === 'runtime') return DEFAULT_ITEMS.filter((it) => RUNTIME_ITEM_IDS.includes(it.id));
+        return DEFAULT_ITEMS.slice();
+    }
 
     const pageQuery = new URLSearchParams(global.location?.search || '');
     const isStandaloneSettings = pageQuery.get('standaloneSettings') === '1';
@@ -137,7 +150,9 @@
 
     function whisperRuntimeBad(result) {
         return (result?.items || []).some((it) => (
-            it?.id === 'whisperRuntime' && (it.status === 'fail' || it.status === 'warn')
+            it?.id === 'whisperRuntime'
+            && (it.status === 'fail' || it.status === 'warn')
+            && !it.probeTimedOut
         ));
     }
 
@@ -204,20 +219,41 @@
         }
     }
 
+    function resolveLiveCheckPayload(extra = {}) {
+        const asr = String(
+            $('engineAsrModelSelect')?.value
+            || $('quickAsrModelSelect')?.value
+            || '',
+        ).trim();
+        const ffmpegPath = String($('ffmpegPathInput')?.value || '').trim();
+        const engineInstallPath = String($('engineInstallPathInput')?.value || '').trim();
+        return {
+            quick: true,
+            syncLlamaBackend: true,
+            ...(ffmpegPath ? { ffmpegPath } : {}),
+            ...(engineInstallPath ? { engineInstallPath } : {}),
+            // Prefer live form ASR so soft-AV Anime Whisper / SenseVoice scopes match UI.
+            ...(asr ? { engineAsrModel: asr } : {}),
+            ...(extra && typeof extra === 'object' ? extra : {}),
+        };
+    }
+
     async function performEnvCheck(payload = {}) {
         let result = null;
         const request = {
+            ...resolveLiveCheckPayload(),
             ...(payload && typeof payload === 'object' ? payload : {}),
             // System check + wizard: align llama-server backend to detected CUDA 12/13.
             syncLlamaBackend: payload?.syncLlamaBackend !== false,
         };
+        const scopeItems = itemsForScope(request.scope);
         try {
             result = await electron?.transubEnvCheck?.(request);
         } catch (err) {
             result = {
                 ok: false,
                 error: err?.message || String(err),
-                items: DEFAULT_ITEMS.map((it) => ({
+                items: scopeItems.map((it) => ({
                     ...it,
                     status: 'fail',
                     detail: err?.message || '检测失败',
@@ -229,7 +265,7 @@
         if (!result?.items?.length) {
             result = {
                 ok: false,
-                items: DEFAULT_ITEMS.map((it) => ({
+                items: scopeItems.map((it) => ({
                     ...it,
                     status: 'fail',
                     detail: result?.error || '检测无结果',
@@ -303,7 +339,9 @@
         if (fixBtn) {
             const fixable = !!state.result?.fix?.fixable;
             const whisperBad = (state.result?.items || []).some((it) => (
-                it?.id === 'whisperRuntime' && (it.status === 'fail' || it.status === 'warn')
+                it?.id === 'whisperRuntime'
+                && (it.status === 'fail' || it.status === 'warn')
+                && !it.probeTimedOut
             ));
             const showFix = fixable || whisperBad || state.fixing;
             fixBtn.classList.toggle('hidden', !showFix);
@@ -998,7 +1036,7 @@
         }
         renderItems(DEFAULT_ITEMS.map((it) => ({ ...it, status: 'checking' })));
 
-        const result = await performEnvCheck(opts.payload || { quick: true, syncLlamaBackend: true });
+        const result = await performEnvCheck(opts.payload || resolveLiveCheckPayload());
         state.result = result;
         renderItems(result.items);
         if (!duringFix) {
@@ -1150,6 +1188,10 @@
         markDone,
         DONE_KEY,
         DEFAULT_ITEMS,
+        itemsForScope,
+        BASE_ITEM_IDS,
+        RUNTIME_ITEM_IDS,
+        resolveLiveCheckPayload,
         renderItemsInto,
         performEnvCheck,
         summarizeCheckResult,

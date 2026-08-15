@@ -31,14 +31,46 @@
         '原文仅为纯语气/拟声时可译为对应短语气词；有完整语义时须译全句，句末语气词可保留。',
     ].join('');
 
+    /** GalTransl-tuned: keep subtitle line rules + VN-style voice/voice-subject caution. */
+    const GALTRANSL_SYSTEM_PROMPT = [
+        '你是一个视觉小说风格的日译中字幕翻译模型，译文需通顺自然口语化。',
+        '联系上下文正确使用人称代词；注意不要混淆使役态和被动态的主语和宾语。',
+        '不擅自添加原文中没有的代词、人名、称呼、旁白或特殊符号；禁止臆造角色名。',
+        '严禁添加原文未出现的常见臆造人名（如佳奈、舞、玲奈、真理、斗碧等），尤其不要在句末乱贴人名。',
+        '每行只输出对应那一行的译文，禁止把多行挤进一行，禁止无意义叠词循环，不要擅自增加或减少换行。',
+        '原文仅为纯语气/拟声时可译为对应短语气词；有完整语义时须译全句，句末语气词可保留。',
+    ].join('');
+
+    const GALTRANSL_NSFW_EXTRA = '注意不要混淆使役态和被动态的主语和宾语；不要擅自添加原文没有的特殊符号。';
+
+    function resolvePromptFamily(options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const explicit = String(opts.promptFamily || '').trim().toLowerCase();
+        if (explicit === 'galtransl') return 'galtransl';
+        if (explicit === 'sakura') return 'sakura';
+        const modelId = String(opts.modelId || opts.engineMtModel || '').trim();
+        if (/galtransl/i.test(modelId)) return 'galtransl';
+        try {
+            const catalog = (typeof module !== 'undefined' && module.exports)
+                ? require('./sakura-mt-catalog-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSakuraMtCatalog : null);
+            if (catalog?.resolvePromptFamily) return catalog.resolvePromptFamily(modelId || opts);
+        } catch (_) { /* ignore */ }
+        return 'sakura';
+    }
+
     /**
      * Adult-tone Sakura system prompt — body loaded from opaque tone-adapt payload.
      */
-    function resolveNsfwSystemPrompt() {
+    function resolveNsfwSystemPrompt(options = {}) {
+        let base = SYSTEM_PROMPT;
         if (nsfwLex?.getSakuraNsfwSystemPrompt) {
-            return nsfwLex.getSakuraNsfwSystemPrompt({ exampleLimit: 14 });
+            base = nsfwLex.getSakuraNsfwSystemPrompt({ exampleLimit: 14 });
         }
-        return SYSTEM_PROMPT;
+        if (resolvePromptFamily(options) === 'galtransl') {
+            return `${base}${GALTRANSL_NSFW_EXTRA}`;
+        }
+        return base;
     }
 
     /**
@@ -60,7 +92,8 @@
     }
 
     function resolveSystemPrompt(options = {}) {
-        return shouldUseNsfwPrompt(options) ? resolveNsfwSystemPrompt() : SYSTEM_PROMPT;
+        if (shouldUseNsfwPrompt(options)) return resolveNsfwSystemPrompt(options);
+        return resolvePromptFamily(options) === 'galtransl' ? GALTRANSL_SYSTEM_PROMPT : SYSTEM_PROMPT;
     }
 
     function normalizeCueList(cues) {
@@ -122,6 +155,21 @@
         return lines.join('\n');
     }
 
+    function formatCastNamesBlock(names, options = {}) {
+        const max = Math.max(4, Math.min(24, Number(options.maxNames) || 16));
+        const list = [];
+        const seen = new Set();
+        for (const n of Array.isArray(names) ? names : []) {
+            const s = String(n || '').trim();
+            if (!s || seen.has(s)) continue;
+            seen.add(s);
+            list.push(s);
+            if (list.length >= max) break;
+        }
+        if (!list.length) return '';
+        return `出场人物（沿用这些写法，禁止发明人名）：${list.join('、')}`;
+    }
+
     function resolveGlossaryTermsForPrompt(options = {}, sourceText = '') {
         const user = Array.isArray(options.glossaryTerms) ? options.glossaryTerms : [];
         if (!shouldUseNsfwPrompt(options) || !nsfwLex?.mergeNsfwGlossaryTerms) {
@@ -141,15 +189,16 @@
         const glossary = formatGlossaryBlock(glossaryTerms, {
             maxTerms: nsfw ? 48 : 40,
         });
+        const cast = formatCastNamesBlock(options.castNames);
         const lineRule = nsfw
             ? `共 ${list.length} 行。只输出译文，每行对应原文一行；不要编号、不要解释、不要空行；碎句与拟声勿删并勿并行走（条目删减由后处理完成）。原文仅为纯语气/拟声（如单独うん/はぁ）时可译为对应短语气词；对白有完整语义时禁止只输出语气词（嗯/啊/请/好的等），须译出完整意思，句末语气词可保留。`
             : `共 ${list.length} 行。只输出译文，每行对应原文一行，不要编号、不要解释、不要空行、不要额外内容。原文仅为纯语气/拟声时可短译；对白有完整语义时禁止只输出语气词（嗯/啊/请等），须译出完整意思。`;
-        let user;
-        if (glossary) {
-            user = `根据以下术语表（可以为空）：\n${glossary}\n将下面的日文文本根据对应关系和备注翻译成中文。${lineRule}\n${joined}`;
-        } else {
-            user = `将下面的日文文本翻译成中文。${lineRule}\n${joined}`;
-        }
+        const prefix = [cast, glossary ? `根据以下术语表（可以为空）：\n${glossary}` : '']
+            .filter(Boolean)
+            .join('\n');
+        const user = prefix
+            ? `${prefix}\n将下面的日文文本${glossary ? '根据对应关系和备注' : ''}翻译成中文。${lineRule}\n${joined}`
+            : `将下面的日文文本翻译成中文。${lineRule}\n${joined}`;
         return [
             { role: 'system', content: resolveSystemPrompt(options) },
             { role: 'user', content: user },
@@ -271,15 +320,18 @@
     return {
         DEFAULT_WINDOW_LINES,
         SYSTEM_PROMPT,
+        GALTRANSL_SYSTEM_PROMPT,
         get SYSTEM_PROMPT_NSFW() {
             return resolveNsfwSystemPrompt();
         },
+        resolvePromptFamily,
         shouldUseNsfwPrompt,
         resolveSystemPrompt,
         normalizeCueList,
         chunkCues,
         formatCueOrdinalRange,
         formatGlossaryBlock,
+        formatCastNamesBlock,
         resolveGlossaryTermsForPrompt,
         buildChatMessages,
         estimateMaxTokens,

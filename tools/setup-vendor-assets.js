@@ -80,6 +80,11 @@ async function main() {
     }
 
     syncOpenccVendor();
+    try {
+        await require('./sync-jassub-vendor').syncJassubVendor();
+    } catch (err) {
+        console.warn('[setup-vendor-assets] sync-jassub-vendor failed:', err.message);
+    }
     console.log('vendor assets ready');
 }
 

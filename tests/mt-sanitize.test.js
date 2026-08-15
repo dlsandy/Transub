@@ -378,7 +378,7 @@ describe('mt-sanitize-core', () => {
             ],
         );
         assert.ok(['', '…'].includes(batch.cues[0].text));
-        assert.strictEqual(batch.cues[1].text, '哈啊');
+        assert.strictEqual(batch.cues[1].text, '哈…');
         assert.ok(batch.flags.prompt_leak >= 1);
 
         // Real short moan translation must not be flagged
@@ -596,6 +596,38 @@ describe('mt-sanitize-core', () => {
         const ear = sanitize.correctZhDomainMistranslations(FIX.earBadZh, FIX.chikubiLineJa);
         assert.ok(ear.changed);
         assert.strictEqual(ear.text, FIX.nippleOkZh);
+
+        const kuri = sanitize.correctZhDomainMistranslations(FIX.kuriPenisBadZh, FIX.kuriLineJa);
+        assert.ok(kuri.changed);
+        assert.strictEqual(kuri.text, FIX.kuriClitOkZh);
+
+        const kame = sanitize.correctZhDomainMistranslations(FIX.kamePenisBadZh, FIX.kameLineJa);
+        assert.ok(kame.changed);
+        assert.strictEqual(kame.text, FIX.kameGlansOkZh);
+
+        const clitLatin = sanitize.correctZhDomainMistranslations(FIX.clitLatinBadZh, FIX.clitLatinJa);
+        assert.ok(clitLatin.changed);
+        assert.strictEqual(clitLatin.text, FIX.clitLatinOkZh);
+
+        const manko = sanitize.correctZhDomainMistranslations(FIX.mankoHiraPenisBadZh, FIX.mankoHiraPenisJa);
+        assert.ok(manko.changed);
+        assert.strictEqual(manko.text, FIX.mankoHiraPenisOkZh);
+
+        const chinMaru = sanitize.correctZhDomainMistranslations(FIX.chinMaruPenisBadZh, FIX.chinMaruPenisJa);
+        assert.ok(chinMaru.changed);
+        assert.strictEqual(chinMaru.text, FIX.chinMaruPenisOkZh);
+
+        const erectStub = sanitize.correctZhDomainMistranslations(FIX.erectStubBadZh, FIX.erectStubJa);
+        assert.ok(erectStub.changed);
+        assert.strictEqual(erectStub.text, FIX.erectStubOkZh);
+
+        const hardAlso = sanitize.correctZhDomainMistranslations(FIX.hardAlsoStubBadZh, FIX.hardAlsoStubJa);
+        assert.ok(hardAlso.changed);
+        assert.strictEqual(hardAlso.text, FIX.hardAlsoStubOkZh);
+
+        const maybeLeak = sanitize.correctZhDomainMistranslations(FIX.maybeLeakZh, 'なんかこれでしょうね');
+        assert.ok(maybeLeak.changed);
+        assert.strictEqual(maybeLeak.text, FIX.maybeLeakOkZh);
 
         const asrKin = sanitize.correctJaAsrDomainMishears(FIX.kinpanJa);
         assert.ok(asrKin.changed);
@@ -1036,14 +1068,14 @@ describe('mt-sanitize-core', () => {
             ['ガルルルル…', '呜呜'],
             ['ああ、そうだ', '啊，是啊'],
             ['いいです、ほら。', '可以，你看'],
-            ['はぁ…はぁ…かわいい', '哈啊，好可爱'],
+            ['はぁ…はぁ…かわいい', '哈…，好可爱'],
             ['んむぅ…あむぅ…', '嗯嗯'],
-            ['オオォォッ!', '哦——！'],
+            ['オオォォッ!', '哦~~！'],
             ['ジー…', '盯……'],
             ['あひっ、ひっ…!', '啊啊'],
             ['ああ、隊長。', '啊，队长'],
             ['ねえ、てんつー', '喂，てんつー'],
-            ['はぁ…だんなら…もっと入れて…', '哈啊，那就再插进来'],
+            ['はぁ…だんなら…もっと入れて…', '哈…，那就再插进来'],
         ];
         for (const [ja, ok] of cases) {
             const blank = sanitize.sanitizeMtCueText(ja.includes('入れて') ? '哈…' : '…', ja, av);
@@ -1059,7 +1091,7 @@ describe('mt-sanitize-core', () => {
         const av = { contentProfile: 'av_soft', smartTranslateFaithfulTone: true, cueIndex: 100 };
         const cases = [
             ['かしこまりました…', '遵命'],
-            ['はあっ…くそっ', '哈啊，该死'],
+            ['はあっ…くそっ', '哈…，该死'],
             ['大丈夫だってそんなこと気にしなくって', '没关系的，别在意那种事'],
             ['おはようございます、ご主人様', '早上好，主人'],
             ['フフフフフ…', '呵呵'],
@@ -1229,10 +1261,10 @@ describe('mt-sanitize-core', () => {
         const moan = sanitize.sanitizeMtCueText('啊', 'はぁ、はぁ、はぁ…', {
             contentProfile: 'av_soft',
         });
-        assert.ok(/哈啊/.test(moan.text));
+        assert.ok(/哈…/.test(moan.text));
 
         const wetMix = sanitize.sanitizeMtCueText(
-            '哈啊，哈啊',
+            '哈…，哈…',
             'はあっ、はあっ…すごいよ、ちゅるるっ',
             { contentProfile: 'av_soft' },
         );
@@ -1362,6 +1394,132 @@ describe('mt-sanitize-core', () => {
         );
         assert.ok(truncated.changed);
         assert.strictEqual(truncated.text, FIX.kachinGenitalOkZh);
+    });
+
+    it('batch-0811pm: clinical vagina/penis soft remap + latin SFX / pinyin blank', () => {
+        const av = { contentProfile: 'av_soft' };
+        const vagina = sanitize.sanitizeMtCueText('你阴道里真的好热', '熱い身体は', av);
+        assert.ok(vagina.text.includes('小穴') && !vagina.text.includes('阴道'), vagina.text);
+
+        const yinbu = sanitize.sanitizeMtCueText('我要看看你的阴部啊', '見せて', av);
+        assert.ok(yinbu.text.includes('小穴') && !yinbu.text.includes('阴部'), yinbu.text);
+
+        const penis = sanitize.sanitizeMtCueText('已经像我的阴茎形状了？', 'もう俺の形になってる？', av);
+        assert.ok(penis.text.includes('肉棒') && !penis.text.includes('阴茎'), penis.text);
+
+        const glans = sanitize.sanitizeMtCueText('阴茎头好敏感', '亀頭が', av);
+        assert.strictEqual(glans.text, '龟头好敏感');
+
+        const lick = sanitize.sanitizeMtCueText('再舔舔', 'こっちも…こっちも舐めて…', av);
+        assert.ok(/这边也/.test(lick.text), lick.text);
+
+        const boeh = sanitize.sanitizeMtCueText('Boeh~', 'ん、ぁ…', av);
+        assert.ok(boeh.flags.includes('latin_garbage') || !/Boeh/i.test(boeh.text), boeh.text);
+
+        const yuk = sanitize.sanitizeMtCueText('哈 Yuk~', 'はぁ…', av);
+        assert.ok(!/Yuk/i.test(yuk.text), yuk.text);
+
+        assert.ok(sanitize.isLatinGarbageZh('Ima zhào liu le shéyo?', 'ち、ちっ、ちっ…'));
+        const pinyin = sanitize.sanitizeMtCueText('Ima zhào liu le shéyo?', 'ち、ちっ、ちっ…', av);
+        assert.ok(!/zhào|Ima/i.test(pinyin.text), pinyin.text);
+    });
+
+    it('batch-0811eve: mixed bump/_killchan strip + 出され/ちんちん stubs', () => {
+        const av = { contentProfile: 'av_soft' };
+        const bump = sanitize.sanitizeMtCueText('嗯 bump… bump', 'ぉ…あふぃ', av);
+        assert.ok(!/bump/i.test(bump.text), bump.text);
+        assert.ok(/嗯/.test(bump.text), bump.text);
+
+        const kill = sanitize.sanitizeMtCueText('_killchan…', 'ワザル?', av);
+        assert.ok(!/killchan/i.test(kill.text), kill.text);
+
+        const dashite = sanitize.sanitizeMtCueText(
+            '啊啊快停下啊我要射了出不来了',
+            'ああっやめろぉっイッちゃい…出されませっイク',
+            av,
+        );
+        assert.ok(/射出来/.test(dashite.text) && !/出不来/.test(dashite.text), dashite.text);
+        assert.ok(!/射了射出来/.test(dashite.text), dashite.text);
+
+        const touch = sanitize.sanitizeMtCueText('没摸呢', 'ちんちん触ってないよ', av);
+        assert.ok(/肉棒/.test(touch.text) && /没摸/.test(touch.text), touch.text);
+    });
+
+    it('batch-0811night: latin scrap widen + manko climax + hard-rod stub', () => {
+        const av = { contentProfile: 'av_soft' };
+        const umm = sanitize.sanitizeMtCueText('啊 umm 嗯嗯…', 'ん', av);
+        assert.ok(!/umm/i.test(umm.text), umm.text);
+
+        const hya = sanitize.sanitizeMtCueText('啊哟哟…hya ma hya ma…', 'もう我慢できてないじゃんずっと', av);
+        assert.ok(!/hya|ma ma/i.test(hya.text), hya.text);
+
+        const already = sanitize.sanitizeMtCueText('你 already 要回家了吗？', 'もう帰るの', av);
+        assert.ok(/已经/.test(already.text) && !/already/i.test(already.text), already.text);
+
+        const manko = sanitize.sanitizeMtCueText(
+            '哈啊、哈啊',
+            '久司朗さんのおちんぽでわたしもおまんこいっちゃ…',
+            av,
+        );
+        assert.ok(/去了|小穴/.test(manko.text) && !/射了/.test(manko.text), manko.text);
+
+        const hard = sanitize.sanitizeMtCueText('哥哥…', 'おちんちん硬い…あ、あい…', av);
+        assert.ok(/肉棒/.test(hard.text) && /硬/.test(hard.text), hard.text);
+
+        const sfx = sanitize.sanitizeMtCueText('啊ひゅっ…啊、啊…', 'どうせよか何かの?', av);
+        assert.ok(!/ひゅ/.test(sfx.text), sfx.text);
+    });
+
+    it('batch-engine-0811: English lemmas + under stubs + ロブA strip', () => {
+        const av = { contentProfile: 'av_soft' };
+        const impressive = sanitize.sanitizeMtCueText('好吧 真 impressive 啊', 'さあ、感心だ… ぉー', av);
+        assert.ok(/令人佩服/.test(impressive.text) && !/impressive/i.test(impressive.text), impressive.text);
+
+        const everyone = sanitize.sanitizeMtCueText('我给 everyone 都舔一遍', 'ほらみんなのも舐めてやるよ', av);
+        assert.ok(/大家/.test(everyone.text) && !/everyone/i.test(everyone.text), everyone.text);
+
+        const intro = sanitize.sanitizeMtCueText('我是渚', '渚です、よろしくお願いします', av);
+        assert.ok(/请多指教/.test(intro.text), intro.text);
+
+        const lick = sanitize.sanitizeMtCueText('亲一下', '一回すれ…一回舐めて', av);
+        assert.strictEqual(lick.text, '舔一下');
+
+        const oral = sanitize.sanitizeMtCueText('用嘴', '口で、口で舐めて欲しい', av);
+        assert.ok(/舔/.test(oral.text), oral.text);
+
+        const insert = sanitize.sanitizeMtCueText('不插', 'ぶちこんでやらない…入れてくださいんっ!', av);
+        assert.ok(/插进来/.test(insert.text), insert.text);
+
+        const hard = sanitize.sanitizeMtCueText('又伸', 'おちんちんまたすゆいな', av);
+        assert.ok(/肉棒/.test(hard.text) && /硬/.test(hard.text), hard.text);
+
+        const rob = sanitize.sanitizeMtCueText('啊，ロブA，你回来了。', 'あ、スヴェさんごめんあがってあがって!', av);
+        assert.ok(!/ロブ/.test(rob.text) && /回来/.test(rob.text), rob.text);
+    });
+
+    it('batch-engine-0811n2: bedroom/better/鸡鸡/りね/姐姐 stubs', () => {
+        const av = { contentProfile: 'av_soft' };
+        const room = sanitize.sanitizeMtCueText(
+            '能不能让我进 bedroom 里？',
+            'アキラ部屋から出ててもらえないか?',
+            av,
+        );
+        assert.ok(/房间|出去/.test(room.text) && !/bedroom|进房间里/i.test(room.text), room.text);
+
+        const better = sanitize.sanitizeMtCueText('哈 不射是不是感觉 better？', 'はあっ…なきゃ気持ちいい?', av);
+        assert.ok(/更好/.test(better.text) && !/better/i.test(better.text), better.text);
+
+        const chick = sanitize.sanitizeMtCueText('的鸡鸡', 'キリカのおちんちん…', av);
+        assert.ok(/肉棒/.test(chick.text) && !/鸡鸡/.test(chick.text), chick.text);
+
+        const rine = sanitize.sanitizeMtCueText('りね 你咋了?', 'アきら、お前がか?', av);
+        assert.ok(!/りね/.test(rine.text) && /咋了/.test(rine.text), rine.text);
+
+        const jun = sanitize.sanitizeMtCueText('みゃーくん 感觉有点不一样', '淳くん、なんか雰囲気変わったね。', av);
+        assert.ok(/淳/.test(jun.text) && !/みゃー/.test(jun.text), jun.text);
+
+        const onee = sanitize.sanitizeMtCueText('姐姐', 'お姉ちゃん…お姉ちゃんを舐めたい', av);
+        assert.ok(/舔/.test(onee.text) && /姐姐/.test(onee.text), onee.text);
     });
 
     it('fixes ZH domain mistranslations conditioned on JA source', () => {
@@ -1903,7 +2061,7 @@ describe('mt-sanitize-core', () => {
         });
         assert.ok(!cockHalluc.text.includes(opaque.T.rodZh), cockHalluc.text);
 
-        const pinpin = sanitize.sanitizeMtCueText('嗯——！', FIX.pinpinLineJa, {
+        const pinpin = sanitize.sanitizeMtCueText('嗯~~！', FIX.pinpinLineJa, {
             contentProfile: 'av_soft',
         });
         assert.ok(/硬|翘/.test(pinpin.text), pinpin.text);
@@ -2178,6 +2336,24 @@ describe('mt-sanitize-core', () => {
         );
         assert.ok(chan.changed);
         assert.ok(!/初音/.test(chan.text), chan.text);
+
+        // Anti-regression: 失去了/过去了 must never become 失射了/过射了
+        const lost = sanitize.sanitizeMtCueText('结婚纪念日那天我们失去了所有', '結婚記念日にすべてを失った', {
+            contentProfile: 'av_soft',
+        });
+        assert.ok(/失去了/.test(lost.text), lost.text);
+        assert.ok(!/失射了/.test(lost.text), lost.text);
+        const lostIku = sanitize.correctZhDomainMistranslations('我失去了你', 'イッちゃう…あなたを失った');
+        assert.strictEqual(lostIku.text.includes('失射了'), false, lostIku.text);
+        assert.ok(/失去了/.test(lostIku.text), lostIku.text);
+        const passed = sanitize.correctZhDomainMistranslations('这件事已经过去了', 'それはもう過ぎた');
+        assert.ok(/过去了/.test(passed.text), passed.text);
+        assert.ok(!/过射了/.test(passed.text), passed.text);
+        const softIku = sanitize.correctZhDomainMistranslations('啊，去了', 'イッた');
+        assert.ok(/射了/.test(softIku.text), softIku.text);
+        const softNoIku = sanitize.correctZhDomainMistranslations('啊，去了', '行った');
+        assert.ok(/去了/.test(softNoIku.text), softNoIku.text);
+        assert.ok(!/射了/.test(softNoIku.text), softNoIku.text);
     });
 
     it('batch IPZZ-859/JUR-768/IPZZ-900/SNOS-289: iku-shotOut / yame-shot / lick stub / wet latin', () => {
@@ -2365,6 +2541,719 @@ describe('mt-sanitize-core', () => {
             contentProfile: 'av_soft',
         });
         assert.ok(/请射|射出来/.test(keep.text), keep.text);
+    });
+
+    it('batch-engine-0812: latin lemmas/SFX, 小鸡鸡, らめイク, kana scraps', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const pretty = sanitize.sanitizeMtCueText('还 pretty 有劲儿呢', 'まだ結構…', av);
+        assert.ok(/挺/.test(pretty.text) && !/pretty/i.test(pretty.text), pretty.text);
+
+        const senpai = sanitize.sanitizeMtCueText('嗯哼 senpai 嗯嗯', 'んふっふっふっせんぱい、んんー', av);
+        assert.ok(/前辈/.test(senpai.text) && !/senpai/i.test(senpai.text), senpai.text);
+
+        const addle = sanitize.sanitizeMtCueText('addle 里面不行 这么深处还在高潮', 'あだめ…中はダメです', av);
+        assert.ok(!/addle/i.test(addle.text) && /里面不行/.test(addle.text), addle.text);
+
+        const slur = sanitize.sanitizeMtCueText('啊 啊 嗯 slur slur', 'あ…あ…んんっジュルルルルルル', av);
+        assert.ok(!/slur/i.test(slur.text), slur.text);
+
+        const more = sanitize.sanitizeMtCueText('啊 more more 嗯啊 more more', 'あもっとしこしこし…', av);
+        assert.ok(!/more/i.test(more.text) && /再/.test(more.text), more.text);
+
+        const fuck = sanitize.sanitizeMtCueText('不行 fuck 好厉害', 'ダメ…んっ、ふぁっ、しゅごい…はぁ', av);
+        assert.ok(!/fuck/i.test(fuck.text) && /不行/.test(fuck.text), fuck.text);
+
+        const say = sanitize.sanitizeMtCueText('did you say it?', '言ったのか?', av);
+        assert.ok(/你说了吗/.test(say.text) && !/did you/i.test(say.text), say.text);
+
+        const bang = sanitize.sanitizeMtCueText('bang', 'ぶっ!', av);
+        assert.ok(!/bang/i.test(bang.text), bang.text);
+
+        const chick = sanitize.sanitizeMtCueText('啊好厉害 小鸡鸡 好舒服', 'あすごい…ちぃよ…おちんこ…気持ちいい', av);
+        assert.ok(/肉棒/.test(chick.text) && !/鸡鸡/.test(chick.text), chick.text);
+
+        const rame = sanitize.sanitizeMtCueText('该死该死的要射要射了', 'らめらめっイクイクッ!', av);
+        assert.ok(/不行不行/.test(rame.text) && /要去了/.test(rame.text) && !/该死/.test(rame.text) && !/要射了/.test(rame.text), rame.text);
+
+        const rameMoan = sanitize.sanitizeMtCueText(
+            '嗯 来来来 一嗯 呜呜 好 呜',
+            'んんっらめらめぇ…いっんんっひっくうっうれめぇ…',
+            av,
+        );
+        assert.ok(!/要射了/.test(rameMoan.text), rameMoan.text);
+
+        const chama = sanitize.sanitizeMtCueText('ちゃま 做我一个人的老师', '私だけの先生になってくだ', av);
+        assert.ok(!/ちゃま/.test(chama.text) && /老师/.test(chama.text), chama.text);
+
+        const chan = sanitize.sanitizeMtCueText('ちゃん 做我一个人的老师吧', '私だけの先生になってくだ', av);
+        assert.ok(!/ちゃん/.test(chan.text) && /老师/.test(chan.text), chan.text);
+
+        const teacher = sanitize.sanitizeMtCueText('…', '先生のちんこ舐めてくれないか?', av);
+        assert.ok(/老师/.test(teacher.text) && /舔/.test(teacher.text) && /肉棒/.test(teacher.text), teacher.text);
+    });
+
+    it('batch-engine-0812am: ちくび≠鸡鸡, おこちょ, kun/Guam, stubs', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const nip = sanitize.sanitizeMtCueText('是鸡鸡吗？', 'ちくび?', av);
+        assert.ok(/乳头/.test(nip.text) && !/鸡鸡/.test(nip.text), nip.text);
+
+        const nip2 = sanitize.sanitizeMtCueText('鸡鸡 舒服吗?', 'ちくび、気持ちいい?', av);
+        assert.ok(/乳头/.test(nip2.text) && !/鸡鸡/.test(nip2.text), nip2.text);
+
+        const oko = sanitize.sanitizeMtCueText('想学长的鸡鸡 哈哈', '先輩のおこちょほしい…はぁはぁ…', av);
+        assert.ok(/肉棒/.test(oko.text) && !/鸡鸡/.test(oko.text), oko.text);
+
+        const kun = sanitize.sanitizeMtCueText('一君 加个 kun？', 'いちくん…くん付け?', av);
+        assert.ok(/「君」/.test(kun.text) && !/kun/i.test(kun.text), kun.text);
+
+        const guam = sanitize.sanitizeMtCueText('你喜欢夏威夷还是 Guam？', 'ハワイとグアもどっちが好き?', av);
+        assert.ok(/关岛/.test(guam.text) && !/Guam/i.test(guam.text), guam.text);
+
+        const scrap = sanitize.sanitizeMtCueText('在那里做乌冬面吗？ iorene？', 'そこでうどんくるのよいろね?', av);
+        assert.ok(!/iorene/i.test(scrap.text) && /乌冬/.test(scrap.text), scrap.text);
+
+        const leak = sanitize.sanitizeMtCueText('咦 皋小姐？改為「咦 ちゃん？」', 'えっ、皐さん?', av);
+        assert.ok(/皋小姐/.test(leak.text) && !/改為|ちゃん/.test(leak.text), leak.text);
+
+        const yame = sanitize.sanitizeMtCueText('哈哈 停住 要射了 热乎乎的', 'はぁはぁ…やめね…イッちゃう…熱くて…', av);
+        assert.ok(/不要/.test(yame.text) && /要去了/.test(yame.text) && !/停住|要射了/.test(yame.text), yame.text);
+
+        const hard = sanitize.sanitizeMtCueText('哈 硬了', 'はぁ…おちんちん、硬い…', av);
+        assert.ok(/肉棒/.test(hard.text) && /硬/.test(hard.text), hard.text);
+
+        const twitch = sanitize.sanitizeMtCueText('在颤抖', 'おちんちんピクピクして…', av);
+        assert.ok(/肉棒/.test(twitch.text), twitch.text);
+
+        const please = sanitize.sanitizeMtCueText('插进去', 'おちんちんぱいちょうだい…気持ちいい…', av);
+        assert.ok(/肉棒/.test(please.text) && /给我/.test(please.text), please.text);
+    });
+
+    it('batch-engine-0812b: SNOS-298 おじんぽ / エッチ触って / 密着イッ', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const ojin = sanitize.sanitizeMtCueText('鸡鸡 嗯', 'おじんぽ、ん', av);
+        assert.ok(/肉棒/.test(ojin.text) && !/鸡鸡/.test(ojin.text), ojin.text);
+
+        const touch = sanitize.sanitizeMtCueText('请', 'エッチに触ってくださぃ…', av);
+        assert.ok(/色气|摸/.test(touch.text) && !/^请$/.test(touch.text.trim()), touch.text);
+
+        const missaku = sanitize.sanitizeMtCueText('要射了', '経は密着…密着したままイッたりされるのです', av);
+        assert.ok(/贴着|高潮/.test(missaku.text) && !/^要射了$/.test(missaku.text.trim()), missaku.text);
+
+        const iq = sanitize.sanitizeMtCueText('不好吧？ 啊', 'よくない? あイッちゃいますか?', av);
+        assert.ok(/要去了吗/.test(iq.text) && !/要射了/.test(iq.text), iq.text);
+
+        const yuri = sanitize.sanitizeMtCueText('Yuri 的笑容最迷人', 'ゆりのさんが一番キリ顔してます。', av);
+        assert.ok(/Yuri/.test(yuri.text) && /笑容/.test(yuri.text), yuri.text);
+    });
+
+    it('batch-engine-0812noon: #/12 latin SFX, lick/fella stubs, 嘿咻, エロイン', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const die = sanitize.sanitizeMtCueText('死 die hu hu 犯规?', '死んじゃうじゃう、うふふふふっ…反則?', av);
+        assert.ok(!/die|hu\b/i.test(die.text) && /犯规|死/.test(die.text), die.text);
+
+        const han = sanitize.sanitizeMtCueText('嗯 啊 han 又要高潮了', 'んっ…はぁんっまたイキそう…', av);
+        assert.ok(!/\bhan\b/i.test(han.text) && /高潮/.test(han.text), han.text);
+
+        const darling = sanitize.sanitizeMtCueText('darling ん', 'ダーリンえりーン', av);
+        assert.ok(/亲爱的/.test(darling.text) && !/darling/i.test(darling.text), darling.text);
+
+        const lick = sanitize.sanitizeMtCueText('舔舔', 'ち、ちんちん舐めて…', av);
+        assert.ok(/肉棒/.test(lick.text) && /舔/.test(lick.text), lick.text);
+
+        const touch = sanitize.sanitizeMtCueText('亲 亲', 'エッチに触ってくださぃ…', av);
+        assert.ok(/色气|摸/.test(touch.text), touch.text);
+
+        const once = sanitize.sanitizeMtCueText('一次', '一回すれ…一回舐めて', av);
+        assert.ok(/舔一次/.test(once.text), once.text);
+
+        const yoro = sanitize.sanitizeMtCueText('你好', 'よろしくお願いします。', av);
+        assert.ok(/请多指教/.test(yoro.text), yoro.text);
+
+        const hard = sanitize.sanitizeMtCueText('啊 硬了', 'あ、おちんちん…かったら…', av);
+        assert.ok(/肉棒/.test(hard.text) && /硬/.test(hard.text), hard.text);
+
+        const fell = sanitize.sanitizeMtCueText(
+            '用口舔',
+            '口でな舐めてください…ふぇフェラ…フェラしてください…',
+            av,
+        );
+        assert.ok(/嘴|口交|舔/.test(fell.text) && /请/.test(fell.text), fell.text);
+
+        const like = sanitize.sanitizeMtCueText('小是啊', 'ねえちゃんはさ…んっフェラ好きだ…', av);
+        assert.ok(/口交/.test(like.text), like.text);
+
+        const sexed = sanitize.sanitizeMtCueText('射了', 'キステックスしたな…どうなった?', av);
+        assert.ok(/做了/.test(sexed.text) && !/^射了$/.test(sexed.text.trim()), sexed.text);
+
+        const heixiu = sanitize.sanitizeMtCueText(
+            '好喜欢 我也好喜欢 啊嘿咻 哈哈',
+            '大好き…私も大好き…あっそうくっ…はぁはぁっ…んくっ…',
+            av,
+        );
+        assert.ok(!/嘿咻/.test(heixiu.text) && /喜欢/.test(heixiu.text), heixiu.text);
+
+        const heroin = sanitize.sanitizeMtCueText('可以有Eロイン', 'エロインできる。', av);
+        assert.ok(/女主角/.test(heroin.text) && !/ロイン/.test(heroin.text), heroin.text);
+
+        const san = sanitize.sanitizeMtCueText(
+            'さん 那个 在这里 平时这种事',
+            '陽子さんが…だってその…こんなとこつはぁ…はぁ…普段こういうこと',
+            av,
+        );
+        assert.ok(/陽子|阳子/.test(san.text) && !/^さん/.test(san.text.trim()), san.text);
+    });
+
+    it('batch-engine-0812eve: IPZZ-907/START-593 stubs + wet/latin', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const snot = sanitize.sanitizeMtCueText('snot ん', 'ぐすっ…もっへく… ん', av);
+        assert.ok(!/snot/i.test(snot.text), snot.text);
+
+        const buzz = sanitize.sanitizeMtCueText('buzz 哇', 'ちゅぶっ…! んっ', av);
+        assert.ok(!/buzz/i.test(buzz.text), buzz.text);
+
+        const big = sanitize.sanitizeMtCueText('硬得很', 'おちんちんしょんらいのおっきしてる…', av);
+        assert.ok(/肉棒/.test(big.text) && /大|硬/.test(big.text), big.text);
+
+        const nip = sanitize.sanitizeMtCueText('美砂', '乳首、舐めて欲しい…', av);
+        assert.ok(/乳头/.test(nip.text) && /舔/.test(nip.text) && !/美砂/.test(nip.text), nip.text);
+
+        const take = sanitize.sanitizeMtCueText('拿过来', '取って、直接触って…', av);
+        assert.ok(/摸/.test(take.text) && /拿/.test(take.text), take.text);
+
+        const lick = sanitize.sanitizeMtCueText('我稍微', '私はちょっと舐めてあげるから…', av);
+        assert.ok(/舔/.test(lick.text), lick.text);
+
+        const raw = sanitize.sanitizeMtCueText('硬挺的', '生のおちんちん…届いてる…おくちも…', av);
+        assert.ok(/肉棒/.test(raw.text) && /顶/.test(raw.text), raw.text);
+
+        const want = sanitize.sanitizeMtCueText('想要？', 'おちんちん欲しいの?', av);
+        assert.ok(/肉棒/.test(want.text), want.text);
+
+        const tag = sanitize.sanitizeMtCueText('啊 插进去 - あゆうこ', 'あ、入って…', av);
+        assert.ok(!/あゆうこ/.test(tag.text) && /插/.test(tag.text), tag.text);
+
+        const wet = sanitize.sanitizeMtCueText('哦汁 啊', 'ジュルルルルルルッ!', av);
+        assert.ok(!/哦汁/.test(wet.text) || wet.text === '…' || !wet.text.trim() || /^[…·.\s]*$/.test(wet.text), wet.text);
+    });
+
+    it('batch-engine-0812late: FNS/DVAJ teacher stubs, ディル, sov/feira', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const sov = sanitize.sanitizeMtCueText('sov sov 加油', 'そ、そん…がんば…は…', av);
+        assert.ok(!/sov/i.test(sov.text) && /加油/.test(sov.text), sov.text);
+
+        const ima = sanitize.sanitizeMtCueText('大-ima', 'だいまー', av);
+        assert.ok(!/ima/i.test(ima.text), ima.text);
+
+        const feira = sanitize.sanitizeMtCueText('吧-feira', 'ぱいふぁい…', av);
+        assert.ok(!/feira/i.test(feira.text), feira.text);
+
+        const kiss = sanitize.sanitizeMtCueText('先生', '先生、いっぱいキスして…', av);
+        assert.ok(/亲/.test(kiss.text) && /老师/.test(kiss.text), kiss.text);
+
+        const lick = sanitize.sanitizeMtCueText('老师', 'せんせい、いっぱい舐めて…', av);
+        assert.ok(/舔/.test(lick.text) && /老师/.test(lick.text), lick.text);
+
+        const more = sanitize.sanitizeMtCueText('太棒了', 'トオベテタ…いっぱい舐めて…', av);
+        assert.ok(/舔/.test(more.text), more.text);
+
+        const rod = sanitize.sanitizeMtCueText('老公', 'お…おちんちん…しゅごい…', av);
+        assert.ok(/肉棒/.test(rod.text) && !/老公/.test(rod.text), rod.text);
+
+        const tip = sanitize.sanitizeMtCueText('软软的', 'おちんちんぽぽん…先っぽ弱いね…', av);
+        assert.ok(/肉棒/.test(tip.text) && /敏感|前端/.test(tip.text), tip.text);
+
+        const pan = sanitize.sanitizeMtCueText('竟然变成了老公的鸡鸡棒棒了 哈', 'っちゃった…はぁ…パンパン…', av);
+        assert.ok(!/鸡鸡|肉棒/.test(pan.text) && /胀鼓鼓|哈/.test(pan.text), pan.text);
+
+        const dil = sanitize.sanitizeMtCueText('难道你喜欢ディル？', 'もしかして奥とか好き?', av);
+        assert.ok(!/ディル/.test(dil.text) && /喜欢/.test(dil.text), dil.text);
+    });
+
+    it('batch-engine-0812night: show/フェラ/キス/らめぇ stubs', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const show = sanitize.sanitizeMtCueText(
+            'show 只前端的话就没什么意义',
+            '見せて…先っぽだけだったらわけになんないよ',
+            av,
+        );
+        assert.ok(/给我看/.test(show.text) && !/show/i.test(show.text), show.text);
+
+        const fella = sanitize.sanitizeMtCueText('想', '口に…やられてみたいです…フェラ…', av);
+        assert.ok(/口交/.test(fella.text), fella.text);
+
+        const first = sanitize.sanitizeMtCueText('第一次', '初めてなんだ…どう?', av);
+        assert.ok(/第一次/.test(first.text) && /怎么样/.test(first.text), first.text);
+
+        const kiss = sanitize.sanitizeMtCueText('这边啊', 'こっちあん…キスキスしてね…', av);
+        assert.ok(/亲/.test(kiss.text), kiss.text);
+
+        const nro = sanitize.sanitizeMtCueText('好好看着哦 んろ', 'ちゃんと見てておろ…んろ…', av);
+        assert.ok(!/んろ/.test(nro.text) && /看着/.test(nro.text), nro.text);
+
+        const rame = sanitize.sanitizeMtCueText('啊 来啦', 'あ、らめぇ…イクイクイクイク…', av);
+        assert.ok(/不行/.test(rame.text) && /要去了/.test(rame.text) && !/来啦/.test(rame.text) && !/要射了/.test(rame.text), rame.text);
+
+        const nip = sanitize.sanitizeMtCueText('老师', 'せんせい、乳首でイキます…', av);
+        assert.ok(/乳头/.test(nip.text) && /老师/.test(nip.text) && /要去了/.test(nip.text) && !/要射了/.test(nip.text), nip.text);
+
+        const mankoShoot = sanitize.sanitizeMtCueText('要射了', 'おまんこいっちゃう…', av);
+        assert.ok(/去了/.test(mankoShoot.text) && !/要射了/.test(mankoShoot.text), mankoShoot.text);
+
+        const bad = sanitize.sanitizeMtCueText('不好意思', '悪い乳首ですよ、この…', av);
+        assert.ok(/乳头/.test(bad.text) && !/不好意思/.test(bad.text), bad.text);
+
+        const tip = sanitize.sanitizeMtCueText('不行', 'だめ、先っぽだけ…んふふ', av);
+        assert.ok(/前端/.test(tip.text) && /不行/.test(tip.text), tip.text);
+    });
+
+    it('batch-engine-0812train: under stubs tip/dashite/iku/sensei', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const sorry = sanitize.sanitizeMtCueText('对不起', 'すみませんはい、先生', av);
+        assert.ok(/老师/.test(sorry.text), sorry.text);
+
+        const how = sanitize.sanitizeMtCueText('安达', '先生はどうするんですか?', av);
+        assert.ok(/老师/.test(how.text) && /怎么办/.test(how.text) && !/安达/.test(how.text), how.text);
+
+        const touch = sanitize.sanitizeMtCueText('给你开发', '触ってあげるから', av);
+        assert.ok(/摸/.test(touch.text) && !/开发/.test(touch.text), touch.text);
+
+        const tipOnly = sanitize.sanitizeMtCueText('那 嗯 嗯', 'じゃあ…ん、んっ…先っぽだけ…', av);
+        assert.ok(/前端/.test(tipOnly.text), tipOnly.text);
+
+        const dashiteTip = sanitize.sanitizeMtCueText('给我说', 'にぃに出して…先っぽ', av);
+        assert.ok(/射|前端/.test(dashiteTip.text) && !/给我说/.test(dashiteTip.text), dashiteTip.text);
+
+        const oppai = sanitize.sanitizeMtCueText('胸部前端', 'おっぱい先っぽ…すごい固くてきめ…', av);
+        assert.ok(/硬/.test(oppai.text), oppai.text);
+
+        const choudai = sanitize.sanitizeMtCueText('嗯嗯罗', 'んんろ…んふふ…んもっとちょうだい', av);
+        assert.ok(/再|给/.test(choudai.text) && !/罗/.test(choudai.text), choudai.text);
+
+        const chin = sanitize.sanitizeMtCueText('摸摸那里', 'いちんちん触って…', av);
+        assert.ok(/肉棒/.test(chin.text), chin.text);
+
+        const kimochi = sanitize.sanitizeMtCueText('请别在意', '気にもちょうだい…', av);
+        assert.ok(/舒服/.test(kimochi.text) && !/别在意/.test(kimochi.text), kimochi.text);
+
+        const rameDecha = sanitize.sanitizeMtCueText('真该死', 'らめぇおにいでちゃ…', av);
+        assert.ok(/不行/.test(rameDecha.text) && /射/.test(rameDecha.text) && !/该死/.test(rameDecha.text), rameDecha.text);
+
+        const ikuiku = sanitize.sanitizeMtCueText('快 快 啊 啊', 'イクイク…あ゛あ゛あ゛あ゛!', av);
+        assert.ok(/要射了/.test(ikuiku.text), ikuiku.text);
+
+        const shootShoot = sanitize.sanitizeMtCueText('射射！', 'イクイク…ッッ!', av);
+        assert.ok(/要射了/.test(shootShoot.text), shootShoot.text);
+
+        const rameIku = sanitize.sanitizeMtCueText('要射了', 'らめにいっちゃう…んんーっ!', av);
+        assert.ok(/去了/.test(rameIku.text) && !/要射了/.test(rameIku.text), rameIku.text);
+
+        const dashOk = sanitize.sanitizeMtCueText('那好吧?', 'じゃあ出してもいいよ?', av);
+        assert.ok(/射/.test(dashOk.text), dashOk.text);
+
+        const ippai = sanitize.sanitizeMtCueText('好了', 'はい、いっぱい出して…', av);
+        assert.ok(/射/.test(ippai.text), ippai.text);
+
+        const tatte = sanitize.sanitizeMtCueText('站着做', '立ったまま入れて…', av);
+        assert.ok(/插/.test(tatte.text), tatte.text);
+
+        const mada = sanitize.sanitizeMtCueText('好舒服', 'んんむ…んむ…んふっまだ入れちゃダメですか?', av);
+        assert.ok(/插/.test(mada.text) && /不/.test(mada.text), mada.text);
+
+        const lick = sanitize.sanitizeMtCueText('舔', 'ちくび舐めなめ…', av);
+        assert.ok(/乳头/.test(lick.text), lick.text);
+
+        const rub = sanitize.sanitizeMtCueText('吱 吱痒了', 'ち、ちくびこすれて…ちょっと…', av);
+        assert.ok(/乳头/.test(rub.text) && /蹭/.test(rub.text), rub.text);
+
+        const ikisou = sanitize.sanitizeMtCueText('啊 要射了', 'あ、イッちゃいそうよ。', av);
+        assert.ok(/要去了/.test(ikisou.text) && !/要射了/.test(ikisou.text), ikisou.text);
+
+        const look = sanitize.sanitizeMtCueText('看', 'ほら、先生のほら、見てみろ', av);
+        assert.ok(/老师/.test(look.text), look.text);
+    });
+
+    it('batch-engine-0812algo: top-score nipple/sensei/rod/dashite/iku', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const neck = sanitize.sanitizeMtCueText('不行 恶心 脖子也恶心', 'だめ…きもひ…ちくびがきもひ…', av);
+        assert.ok(/乳头/.test(neck.text) && !/脖子/.test(neck.text), neck.text);
+
+        const drop = sanitize.sanitizeMtCueText('认真听也听不进去', '一生懸命に聞いてもダメ…乳首が…', av);
+        assert.ok(/乳头/.test(drop.text), drop.text);
+
+        const chest = sanitize.sanitizeMtCueText('怎么办，胸部好痒，好痒，忍不住了', 'どうしよう乳首が感じて感じて仕方ない', av);
+        assert.ok(/乳头/.test(chest.text) && !/胸部/.test(chest.text), chest.text);
+
+        const ano = sanitize.sanitizeMtCueText('那个', 'あの、先生', av);
+        assert.ok(/老师/.test(ano.text), ano.text);
+
+        const nitta = sanitize.sanitizeMtCueText('新田你看一下这个淫荡的乳头', '先生ほら見てください…このいやらしい乳首を…', av);
+        assert.ok(/老师/.test(nitta.text) && !/新田/.test(nitta.text), nitta.text);
+
+        const namero = sanitize.sanitizeMtCueText('给我舔', '舐めろ、先生の', av);
+        assert.ok(/老师/.test(namero.text) && /舔/.test(namero.text), namero.text);
+
+        const nani = sanitize.sanitizeMtCueText('还摸着那玩意儿，弄得湿漉漉的，嗯', 'オチンポもイジってジョブロベロベロベロつけてる…ん', av);
+        assert.ok(/肉棒/.test(nani.text) && !/玩意/.test(nani.text), nani.text);
+
+        const hard = sanitize.sanitizeMtCueText('要硬货', 'ちんちんを…', av);
+        assert.ok(/肉棒/.test(hard.text) && !/硬货/.test(hard.text), hard.text);
+
+        const sweat = sanitize.sanitizeMtCueText('这 可以流汗吗？', 'この…出してもいいですか?', av);
+        assert.ok(/射/.test(sweat.text) && !/流汗/.test(sweat.text), sweat.text);
+
+        const take = sanitize.sanitizeMtCueText('拿出来', '出してくれ', av);
+        assert.strictEqual(take.text, '射出来');
+
+        const rame = sanitize.sanitizeMtCueText('靠', 'らめぇ', av);
+        assert.strictEqual(rame.text, '不行');
+
+        const tip = sanitize.sanitizeMtCueText('你看 快从这儿射了 糟了', 'ほら、ここから先っぽ出ちゃいそうはぁ…やば', av);
+        assert.ok(/前端/.test(tip.text), tip.text);
+
+        const seme = sanitize.sanitizeMtCueText('我会好好责罚你', '先っぽいっぱい責めてあげるね…', av);
+        assert.ok(/前端/.test(seme.text) && !/责罚/.test(seme.text), seme.text);
+
+        const manko = sanitize.sanitizeMtCueText('刚才我的那个地方还被你碰了一下', 'さっき私のおまんこにビクビクしたが当たるんだけど…', av);
+        assert.ok(/小穴/.test(manko.text) && !/那个地方/.test(manko.text), manko.text);
+
+        const itteru = sanitize.sanitizeMtCueText('你 好厉害啊', 'な…すご…イッてるね…', av);
+        assert.ok(/射了|去了|高潮/.test(itteru.text), itteru.text);
+
+        const yao = sanitize.sanitizeMtCueText('要了 要了 不行 要了', 'イク…イク…ダメ…イッちゃう…', av);
+        assert.ok(/要去了/.test(yao.text) && !/要了/.test(yao.text.replace(/要去了/g, '')) && !/要射了/.test(yao.text), yao.text);
+
+        const spaced = sanitize.sanitizeMtCueText('嗯嗯啊啊 射 射 哈', 'ぅんんっあんっ…イクイクイクイク…はぁっ…', av);
+        assert.ok(/要射了/.test(spaced.text), spaced.text);
+    });
+
+    it('batch-engine-0812algo2: nipple ASR / rod euphem / iku soft / rame', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const ichi = sanitize.sanitizeMtCueText('一搓两搓，嗯嗯', 'いちくびちたびに…んんっ!', av);
+        assert.ok(/乳头/.test(ichi.text), ichi.text);
+
+        const doki = sanitize.sanitizeMtCueText('心跳加速说话', 'ドキドキしゃべる…乳首いっぱい…', av);
+        assert.ok(/乳头/.test(doki.text), doki.text);
+
+        const tasty = sanitize.sanitizeMtCueText('啊恩 鸡头好吃？', 'あんっ、ちくびおいしい?', av);
+        assert.ok(/乳头/.test(tasty.text) && !/鸡头/.test(tasty.text), tasty.text);
+
+        const ochi = sanitize.sanitizeMtCueText('后仰？', 'おちくび?', av);
+        assert.strictEqual(ochi.text, '乳头？');
+
+        const nani = sanitize.sanitizeMtCueText('那个玩意儿一晚上走着走着就变态了', 'そのおちんちんが一晩歩いて変態れすね', av);
+        assert.ok(/肉棒/.test(nani.text) && !/玩意/.test(nani.text), nani.text);
+
+        const asa = sanitize.sanitizeMtCueText('哈 早上的玩意儿用乳头弄射了呢', 'はぁ…朝のちんぽ使って乳首でイっちゃったね…', av);
+        assert.ok(/肉棒/.test(asa.text) && !/玩意/.test(asa.text), asa.text);
+
+        const kudasai = sanitize.sanitizeMtCueText('把小穴给我顶一下 再顶点？', 'おまんこにおちんぽください…もっとおちんぽ?', av);
+        assert.ok(/肉棒/.test(kudasai.text), kudasai.text);
+
+        const yabai = sanitize.sanitizeMtCueText('说要出问题了', 'ちんちんやばいって…', av);
+        assert.ok(/肉棒/.test(yabai.text), yabai.text);
+
+        const kosu = sanitize.sanitizeMtCueText('摩擦着', 'ちんぽ擦って…', av);
+        assert.ok(/肉棒/.test(kosu.text), kosu.text);
+
+        const yamete = sanitize.sanitizeMtCueText('我给你吸好多乳头', '乳首いっぱい吸ってあげるからやめてくださ…', av);
+        assert.ok(/不要/.test(yamete.text), yamete.text);
+
+        const rame = sanitize.sanitizeMtCueText('真他妈的 好浓烈啊 不过啊啊', 'らめらめそれ…すごい濃いってんじゃんでもああっ', av);
+        assert.ok(/不行/.test(rame.text) && /浓/.test(rame.text) && !/他妈/.test(rame.text), rame.text);
+
+        const arame = sanitize.sanitizeMtCueText('啊嘞嘞', 'あらめぇぇ…', av);
+        assert.ok(/不行/.test(arame.text), arame.text);
+
+        const itchau = sanitize.sanitizeMtCueText('胸部 一点点 这么湿漉漉的 快湿透了呢', 'おっぱち、ちょっとずみっと…こんな濡れちゃうイッちゃってよね', av);
+        assert.ok(/射了|去了/.test(itchau.text), itchau.text);
+
+        const mou = sanitize.sanitizeMtCueText('再来一次再来一次 再 再来 啊', 'もう一回イッてもう一回っもっかい、もっかえぇ…っあんっ…', av);
+        assert.ok(/高潮/.test(mou.text), mou.text);
+
+        const name = sanitize.sanitizeMtCueText('尝尝？', '舐めてみる?', av);
+        assert.ok(/舔/.test(name.text), name.text);
+
+        const oppai = sanitize.sanitizeMtCueText('胸部也 拿出来 你看 呼 嗯 嗯嗯', 'おっぱいも、出して…ほらふぅっ、んっ、んんっ…', av);
+        assert.ok(/露出来/.test(oppai.text) && !/射出来/.test(oppai.text), oppai.text);
+
+        const manko = sanitize.sanitizeMtCueText('我为什么变成这样？', 'わたしもまんこもどうしてなった?', av);
+        assert.ok(/小穴/.test(manko.text), manko.text);
+
+        const voice = sanitize.sanitizeMtCueText('稍微大声点', 'ちょっと声出して', av);
+        assert.ok(/大声/.test(voice.text) && !/射/.test(voice.text), voice.text);
+    });
+
+    it('batch-engine-0812algo3: iku/nipple/tip/sensei-face/lick', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const ikuNip = sanitize.sanitizeMtCueText('啊 要被乳头弄中了 嗯嗯', 'あもう舐め乳首でイキます…んんっあづい…', av);
+        assert.ok(/要去了|乳头/.test(ikuNip.text) && !/弄中了/.test(ikuNip.text), ikuNip.text);
+
+        const tipLove = sanitize.sanitizeMtCueText('最喜欢的部分', '大好きな先っぽ', av);
+        assert.ok(/前端/.test(tipLove.text), tipLove.text);
+
+        const chinFirst = sanitize.sanitizeMtCueText('这种 是从两边开始做的秘诀吗？', 'こんなちんぽ、両方から作るコツの初めてでしょ?', av);
+        assert.ok(/肉棒/.test(chinFirst.text), chinFirst.text);
+
+        const face = sanitize.sanitizeMtCueText('出去吧 教练的脸色啊', '出します…先生の顔にはぁ…', av);
+        assert.ok(/射/.test(face.text) && /老师/.test(face.text) && !/教练/.test(face.text), face.text);
+
+        const pain = sanitize.sanitizeMtCueText('不行不行能不啊痛痛！ 啊啊！', 'ダメダメできまあぅっ痛いぃっイクイクッ痛いっ!', av);
+        assert.ok(/要射了/.test(pain.text) && /痛/.test(pain.text), pain.text);
+
+        const lick = sanitize.sanitizeMtCueText('好 吸吮着 嗯', 'すごいしょけべ舐めてる…んー…', av);
+        assert.ok(/舔/.test(lick.text), lick.text);
+
+        const suki = sanitize.sanitizeMtCueText('拉得满满的 哈', 'すきにっぱい出してる…はぁぁっ…', av);
+        assert.ok(/射/.test(suki.text), suki.text);
+
+        const kami = sanitize.sanitizeMtCueText('啊嘞梅 啊恩 咬出来了', 'あらめっ、あんっ、噛み出して…', av);
+        assert.ok(/不行/.test(kami.text) && /咬/.test(kami.text), kami.text);
+
+        const naka = sanitize.sanitizeMtCueText('全部射进去 射到小腹那里去', 'ぜんちんせーしちょうだい…そこそこおくんくんにちょうだいで…っ!', av);
+        assert.ok(/中出|里面/.test(naka.text), naka.text);
+
+        const saliva = sanitize.sanitizeMtCueText('呵呵！ 流了好多口水', 'ふふあはは…あべろいっぱい出してる…', av);
+        assert.ok(/口水/.test(saliva.text) && !/射/.test(saliva.text), saliva.text);
+    });
+
+    it('batch-engine-0813: 23-title fella/rod/manko/sensei/latin', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const fella = sanitize.sanitizeMtCueText('口炮', 'フェラちゃん…', av);
+        assert.ok(/口交/.test(fella.text), fella.text);
+
+        const senseiLick = sanitize.sanitizeMtCueText('老师', 'センセ…それ舐めて…', av);
+        assert.ok(/老师/.test(senseiLick.text) && /舔/.test(senseiLick.text), senseiLick.text);
+
+        const nipLick = sanitize.sanitizeMtCueText('乳头', '乳首、舐めて欲しい…', av);
+        assert.ok(/舔乳头|乳头/.test(nipLick.text) && nipLick.text.length > 2, nipLick.text);
+
+        const oji = sanitize.sanitizeMtCueText('大叔的', 'おじさんのちんちん…', av);
+        assert.ok(/肉棒/.test(oji.text), oji.text);
+
+        const hard = sanitize.sanitizeMtCueText('让你对吧？', 'ちんちん硬くさせてたよね?', av);
+        assert.ok(/肉棒/.test(hard.text) && /硬|变硬/.test(hard.text) && !/鸡巴对吧/.test(hard.text), hard.text);
+
+        const deka = sanitize.sanitizeMtCueText('大', 'デカチン…ってかちん…', av);
+        assert.ok(/肉棒/.test(deka.text), deka.text);
+
+        const yang = sanitize.sanitizeMtCueText('两根阳具', 'おちんぽ両様。', av);
+        assert.ok(/肉棒/.test(yang.text) && !/阳具/.test(yang.text), yang.text);
+
+        const touch = sanitize.sanitizeMtCueText('请摸下面', 'おちんちん触ってください', av);
+        assert.ok(/肉棒/.test(touch.text) && !/下面/.test(touch.text), touch.text);
+
+        const manko = sanitize.sanitizeMtCueText('阴唇都擦破了 呢', 'おまんこ擦れてます…ね', av);
+        assert.ok(/小穴/.test(manko.text) && !/阴唇/.test(manko.text), manko.text);
+
+        const uke = sanitize.sanitizeMtCueText('被你笑我也无所谓呢…', 'ウケイッちゃっても大丈夫ですからね…', av);
+        assert.ok(/高潮/.test(uke.text) && !/笑/.test(uke.text), uke.text);
+
+        const iq = sanitize.sanitizeMtCueText('不好？ 要去了吗？吗？ 吗？', 'よくない? あイッちゃいますか?', av);
+        assert.ok(/要去了吗？/.test(iq.text) && !/吗？吗/.test(iq.text), iq.text);
+
+        const sensei = sanitize.sanitizeMtCueText('有啥烦恼尽管说', '悩みがあったら何でも聞くから先生に遠慮なく言ってな', av);
+        assert.ok(/老师/.test(sensei.text), sensei.text);
+
+        const tama = sanitize.sanitizeMtCueText('tamā是？', 'タマは?', av);
+        assert.ok(/蛋蛋/.test(tama.text) && !/tam/i.test(tama.text), tama.text);
+
+        const neu = sanitize.sanitizeMtCueText('你不是 new 了个人吧？', '彼氏とかできたんじゃなかったっけ?', av);
+        assert.ok(/交到/.test(neu.text) && !/new/i.test(neu.text), neu.text);
+
+        const fellaSkill = sanitize.sanitizeMtCueText('挺在行的', '上手だねフェラ…', av);
+        assert.ok(/口交/.test(fellaSkill.text), fellaSkill.text);
+
+        const ojiHard = sanitize.sanitizeMtCueText('大叔的硬了', 'おじさまちんちん硬い…ふぅぅ…', av);
+        assert.ok(/肉棒/.test(ojiHard.text) && /硬/.test(ojiHard.text), ojiHard.text);
+
+        const ojiIn = sanitize.sanitizeMtCueText('你想把大叔的插进去吧?', 'おじさんのちんちんを中に入れたいでしょう?', av);
+        assert.ok(/肉棒/.test(ojiIn.text) && /插/.test(ojiIn.text), ojiIn.text);
+
+        const mankoDeep = sanitize.sanitizeMtCueText('一直深入到最深处', 'おまんこに上奥まで入っちゃうね', av);
+        assert.ok(/小穴/.test(mankoDeep.text), mankoDeep.text);
+
+        const likeSensei = sanitize.sanitizeMtCueText('我喜欢您', '私、先生のことが好きです', av);
+        assert.ok(/老师/.test(likeSensei.text), likeSensei.text);
+
+        const bero = sanitize.sanitizeMtCueText('呵呵哈哈 身体部位舔得很多', 'ふふあはは…あべろいっぱい出してる…', av);
+        assert.ok(/口水|舌头/.test(bero.text) && !/身体部位/.test(bero.text), bero.text);
+
+        const dashOk = sanitize.sanitizeMtCueText('这个 可以流出吗？', 'この…出してもいいですか?', av);
+        assert.ok(/射/.test(dashOk.text), dashOk.text);
+
+        const kitchen = sanitize.sanitizeMtCueText('餐饮店的厨房柱子？', '飲食でキッチンポール?', av);
+        assert.ok(!/肉棒|鸡巴/.test(kitchen.text), kitchen.text);
+
+        const takeTouch = sanitize.sanitizeMtCueText('拿下来', '取って、直接触って…', av);
+        assert.ok(/摸/.test(takeTouch.text), takeTouch.text);
+
+        const dameIku = sanitize.sanitizeMtCueText('嗯嗯！不行，伊甸你搞错了', 'んんんぅっダメイッちゃうよぉ…アリさま…', av);
+        assert.ok(/要去了/.test(dameIku.text) && !/伊甸/.test(dameIku.text), dameIku.text);
+
+        const tipRod = sanitize.sanitizeMtCueText('是不是前端在里面摩擦着？', 'おちんちんの先っぽ、中でこすれてる?', av);
+        assert.ok(/肉棒/.test(tipRod.text) && /前端|摩擦/.test(tipRod.text), tipRod.text);
+
+        const finger = sanitize.sanitizeMtCueText('试试手指', '指入れてみて…', av);
+        assert.ok(/插/.test(finger.text), finger.text);
+
+        const lickSheet = sanitize.sanitizeMtCueText('就有一张而已完全不一样', '一枚あるだけで全然違う…直接舐めてよぉ…', av);
+        assert.ok(/舔/.test(lickSheet.text), lickSheet.text);
+
+        const nipIku = sanitize.sanitizeMtCueText('又来乳头了', 'また乳首でいっちゃった', av);
+        assert.ok(/乳头/.test(nipIku.text) && /去了|高潮/.test(nipIku.text), nipIku.text);
+
+        const rameMis = sanitize.sanitizeMtCueText('啊 来啦', 'あ、らめぇ…', av);
+        assert.ok(/不行|不要/.test(rameMis.text) && !/来啦/.test(rameMis.text), rameMis.text);
+
+        const chinpoShow = sanitize.sanitizeMtCueText('看', '見して、ちんちん', av);
+        assert.ok(/肉棒/.test(chinpoShow.text), chinpoShow.text);
+
+        const wetSensei = sanitize.sanitizeMtCueText('已经湿透了 哈哈', 'もう濡れちゃった…はぁはぁ…先生…', av);
+        assert.ok(/老师/.test(wetSensei.text), wetSensei.text);
+
+        const bike = sanitize.sanitizeMtCueText('骑马式', 'バイクラ…', av);
+        assert.ok(!/要射|要去|高潮/.test(bike.text), bike.text);
+
+        const penisBlank = sanitize.sanitizeMtCueText('…', 'ペニス、ペニス…コクコク…', av);
+        assert.ok(/肉棒/.test(penisBlank.text), penisBlank.text);
+
+        const censoredRod = sanitize.sanitizeMtCueText('哈', 'はぁ…おち○ちんボクも一杯出したいです…はぁはぁ…', av);
+        assert.ok(/肉棒/.test(censoredRod.text) && /射/.test(censoredRod.text), censoredRod.text);
+
+        const toji = sanitize.sanitizeMtCueText('你是不是想看とーじさん？', 'とーじさん見たいんでしょ?', av);
+        assert.ok(!/[\u3040-\u30ff]/.test(toji.text) && /想看/.test(toji.text), toji.text);
+
+        const chan = sanitize.sanitizeMtCueText('啊啊 哈 ちゃん也 快要了', 'ああ…ははぁ…りんねちゃんも…いけそう…', av);
+        assert.ok(!/ちゃん/.test(chan.text) && /快要|要/.test(chan.text), chan.text);
+
+        const nee = sanitize.sanitizeMtCueText('好痒哩ねえ 忍不住想抚出了', 'きもひよいねいえまえ、撫出ちゃいそうだね…', av);
+        assert.ok(!/ねえ|[\u3040-\u30ff]{2,}/.test(nee.text), nee.text);
+
+        const phonetic = sanitize.sanitizeMtCueText('屁嗨哈 叩 Phonetic: pī hē há kòu pī。', 'ぴぃはいは、くぴーん…', av);
+        assert.ok(!/Phonetic|pī|[A-Za-z]{3,}/i.test(phonetic.text), phonetic.text);
+
+        const latinMix = sanitize.sanitizeMtCueText('嗯boutelburlbububibipuuhhiizz', 'んぶえぶるぶるぶぶびっぶぅひぃっ!', av);
+        assert.ok(!/[A-Za-z]{3,}/.test(latinMix.text), latinMix.text);
+    });
+
+    it('batch-engine-0813: soft_go / yame_shoot polarity (らめイク / ダメイッちゃった / やめろ)', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        // らめらめ + イクイク → female resist 要去了 (not male 要射了)
+        const rameIku = sanitize.sanitizeMtCueText('不行不行…要射了', 'らめらめっ…イクイクイクイクイク…', av);
+        assert.ok(/要去了/.test(rameIku.text) && !/要射了/.test(rameIku.text), rameIku.text);
+
+        // ダメイッちゃった past — keep 要去了 (do not soft-upgrade to 射)
+        const damePast = sanitize.sanitizeMtCueText('要去了…不行不行…', 'はぁっんんっダメイッちゃったわぁ…', av);
+        assert.ok(/要去了/.test(damePast.text) && !/要射了/.test(damePast.text), damePast.text);
+
+        const damePastBad = sanitize.sanitizeMtCueText('哈嗯 不行 我搞砸了', 'はぁっんんっダメイッちゃったわぁ…', av);
+        assert.ok(/要去了/.test(damePastBad.text) && !/搞砸/.test(damePastBad.text), damePastBad.text);
+
+        // ASR ダメディッチャ…イッちゃ — soft_go
+        const dameAsr = sanitize.sanitizeMtCueText('不行了不行了', 'ダメディッチャ…イッちゃイッちゃ…ダメダメ…', av);
+        assert.ok(/要去了/.test(dameAsr.text) && !/要射了/.test(dameAsr.text), dameAsr.text);
+
+        // やめろ ≠ 别停; climax → 要去了
+        const yamero = sanitize.sanitizeMtCueText('别停 要射了', 'やめろ、もっとイッちゃう…', av);
+        assert.ok(/停下|不要/.test(yamero.text) && /要去了/.test(yamero.text) && !/别停/.test(yamero.text), yamero.text);
+
+        // Male 明日出してくれ…いっく → 要射了 (oppose soft_go)
+        const ashita = sanitize.sanitizeMtCueText('明天给我出来 要来了', '明日出してくれ…いっく…', av);
+        assert.ok(/射给我|射/.test(ashita.text) && /要射了/.test(ashita.text) && !/要去了/.test(ashita.text), ashita.text);
+
+        // もうイッてもいい? soft miss
+        const ii = sanitize.sanitizeMtCueText('现在可以了吗?', 'もうイッてもいい?', av);
+        assert.ok(/可以射了吗/.test(ii.text), ii.text);
+
+        // Bare male イクイク still 要射了 (paired opposite of らめ)
+        const ikuiku = sanitize.sanitizeMtCueText('来了来了', 'イクイク', av);
+        assert.ok(/要射了/.test(ikuiku.text) && !/要去了/.test(ikuiku.text), ikuiku.text);
+    });
+
+    it('batch-engine-0813b: under soft-cover tip/rod/dashite/iku/choudai', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const tip = sanitize.sanitizeMtCueText('先头对着了', '先っちょ向けた…ふふふっ', av);
+        assert.ok(/前端/.test(tip.text) && !/先头/.test(tip.text), tip.text);
+
+        const tipSeme = sanitize.sanitizeMtCueText('先头好好地刺激一下', '先っぽいっぱい責めてあげるね…', av);
+        assert.ok(/前端/.test(tipSeme.text) && !/先头/.test(tipSeme.text), tipSeme.text);
+
+        const tipLove = sanitize.sanitizeMtCueText('最喜欢的那个先头', '大好きな先っぽ', av);
+        assert.ok(/前端/.test(tipLove.text) && !/先头/.test(tipLove.text), tipLove.text);
+
+        const rod = sanitize.sanitizeMtCueText('大大的阳物开始 大大的阳物', 'おっきいおちんちんが始まって…おっきいおちんちんを…', av);
+        assert.ok(/肉棒/.test(rod.text) && !/阳物/.test(rod.text), rod.text);
+
+        const dash = sanitize.sanitizeMtCueText('全都流出来', 'いっぱいっぱい出して…', av);
+        assert.ok(/射出来/.test(dash.text) && !/流出来/.test(dash.text), dash.text);
+
+        const dashTake = sanitize.sanitizeMtCueText('拿出来 嗯', '出してきて…んー…', av);
+        assert.ok(/射出来/.test(dashTake.text), dashTake.text);
+
+        const oshiri = sanitize.sanitizeMtCueText('拿出来', '出しておしり…', av);
+        assert.ok(/屁股/.test(oshiri.text) && /射/.test(oshiri.text), oshiri.text);
+
+        const arm = sanitize.sanitizeMtCueText('把手也拿出来', '腕も出して', av);
+        assert.ok(!/射/.test(arm.text), arm.text);
+
+        const senseiIku = sanitize.sanitizeMtCueText('嗯嗯 老师也泄了 哈呼哈呼 做着', 'あんんっ…先生もイッて…はぁはぁ…して…', av);
+        assert.ok(/要去了/.test(senseiIku.text) && !/泄了/.test(senseiIku.text), senseiIku.text);
+
+        const again = sanitize.sanitizeMtCueText('快憋不住了', 'あんまたいっちゃいそう', av);
+        assert.ok(/又要去了/.test(again.text), again.text);
+
+        const ore = sanitize.sanitizeMtCueText('那 来吧 剑丞 好啊 我快来了 嗯', 'じゃあ…ほら剣丞だしようないいんだよ俺イクよ…ん', av);
+        assert.ok(/要射了/.test(ore.text), ore.text);
+
+        const doctor = sanitize.sanitizeMtCueText('医生刚才', 'ちょっと先生から…しようって言われたの', av);
+        assert.ok(/老师/.test(doctor.text) && !/医生/.test(doctor.text), doctor.text);
+
+        const hand = sanitize.sanitizeMtCueText('还差一点 还差一点 射了', 'もちぃ…もちぃ…射精だしゅよ…手ぇちょうだい…', av);
+        assert.ok(/把手给我/.test(hand.text), hand.text);
+
+        const lick = sanitize.sanitizeMtCueText('大爷不出来的话 我就亲得满嘴都是', 'おじさんべろ出てこないから口ぐるいっぱい舐めちゃお…', av);
+        assert.ok(/舔/.test(lick.text) && !/亲得满嘴/.test(lick.text), lick.text);
+    });
+
+    it('batch-engine-0813c: under_stub お願い / 反則 / wet ちゅぶっ / 出してんだ', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const onegai = sanitize.sanitizeMtCueText('听好了', 'いいですか、お願いする', av);
+        assert.ok(/拜托/.test(onegai.text) && !/听好了/.test(onegai.text), onegai.text);
+
+        const nagisa = sanitize.sanitizeMtCueText('渚', '渚です、よろしくお願いします', av);
+        assert.ok(/我是渚/.test(nagisa.text) && /请多指教/.test(nagisa.text), nagisa.text);
+        assert.ok(!/请多指教，请多指教/.test(nagisa.text), nagisa.text);
+
+        const tanaka = sanitize.sanitizeMtCueText('你好', '田中です、よろしくお願いします', av);
+        assert.ok(/我是田中/.test(tanaka.text) && /请多指教/.test(tanaka.text), tanaka.text);
+
+        const chanto = sanitize.sanitizeMtCueText('那', 'じゃあ、ちゃんとお願いして', av);
+        assert.ok(/求/.test(chanto.text) && chanto.text.length > 1, chanto.text);
+
+        const hansoku = sanitize.sanitizeMtCueText('好好舔', 'いっぱい、舐めて…反則…', av);
+        assert.ok(/舔/.test(hansoku.text) && /犯规/.test(hansoku.text), hansoku.text);
+
+        const wet = sanitize.sanitizeMtCueText('吸吧吧', 'ちゅぶっぢゅぱっ', av);
+        assert.ok(!/吸吧/.test(wet.text), wet.text);
+        assert.ok(sanitize.isWetOralSfxOnlyJa('ちゅぶっぢゅぱっ'));
+
+        const dashiteNda = sanitize.sanitizeMtCueText('哈哈 哈 你快点拿出来啊喂', 'はぁはぁ…はぁ…なに出してんだよめぇ…', av);
+        assert.ok(/射/.test(dashiteNda.text), dashiteNda.text);
     });
 });
 

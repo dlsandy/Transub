@@ -72,6 +72,18 @@ class H(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length') or 0)
         body = json.loads(self.rfile.read(length) if length else b'{}')
         hits["n"] += 1
+        if body.get("phase") == "polish":
+            cues = body.get("translatedCues") or body.get("cues") or []
+            payload = json.dumps({
+                "cues": [{"id": c["id"], "text": str(c.get("text") or "")} for c in cues]
+            }).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if hits["n"] < 2:
             payload = json.dumps({
                 "error": "请求超时或已取消",
@@ -107,7 +119,7 @@ try:
         language="ja",
     )
     assert out[0]["text"] == "译hi", out
-    assert hits["n"] == 2, hits
+    assert hits["n"] == 3, hits
 finally:
     srv.shutdown()
 `;
@@ -133,6 +145,18 @@ class H(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length') or 0)
         body = json.loads(self.rfile.read(length) if length else b'{}')
         hits["n"] += 1
+        if body.get("phase") == "polish":
+            cues = body.get("translatedCues") or body.get("cues") or []
+            payload = json.dumps({
+                "cues": [{"id": c["id"], "text": str(c.get("text") or "")} for c in cues]
+            }).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if hits["n"] < 3:
             payload = json.dumps({"error": "adapter busy", "code": "busy"}).encode()
             self.send_response(429)
@@ -166,7 +190,7 @@ try:
         language="ja",
     )
     assert out[0]["text"] == "译hi", out
-    assert hits["n"] == 3, hits
+    assert hits["n"] == 4, hits
     assert time.time() - t0 >= 2.0, "expected busy backoff wait"
 finally:
     srv.shutdown()
@@ -192,6 +216,18 @@ class H(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length') or 0)
         body = json.loads(self.rfile.read(length) if length else b'{}')
         hits["n"] += 1
+        if body.get("phase") == "polish":
+            cues = body.get("translatedCues") or body.get("cues") or []
+            payload = json.dumps({
+                "cues": [{"id": c["id"], "text": str(c.get("text") or "")} for c in cues]
+            }).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if hits["n"] < 2:
             payload = json.dumps({"error": "请求超时", "code": "timeout"}).encode()
             self.send_response(504)
@@ -224,13 +260,85 @@ try:
         language="ja",
     )
     assert out[0]["text"] == "译hi", out
-    assert hits["n"] == 2, hits
+    assert hits["n"] == 3, hits
 finally:
     srv.shutdown()
 `;
         const r = spawnSync(enginePython, ['-c', py], {
             encoding: 'utf8',
             timeout: 30000,
+        });
+        assert.strictEqual(r.status, 0, r.stderr || r.stdout);
+    });
+
+    it('sends full-film briefCues on every batch POST', () => {
+        const py = `
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+from transub_engine.mt.external_http import external_translate_cues, sample_brief_cues
+
+cues = [{"start": i, "end": i + 1, "text": f"line{i}"} for i in range(50)]
+sampled = sample_brief_cues(cues)
+assert len(sampled) == 50, len(sampled)
+long_cues = [{"start": i, "end": i + 1, "text": f"x{i}"} for i in range(200)]
+long_sample = sample_brief_cues(long_cues)
+assert 60 <= len(long_sample) <= 120, len(long_sample)
+assert long_sample[0]["id"] == 0
+assert long_sample[-1]["id"] == 199
+
+bodies = []
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        body = json.loads(self.rfile.read(length) if length else b'{}')
+        bodies.append(body)
+        if body.get("phase") == "polish":
+            texts = [
+                {"id": int(c["id"]), "text": str(c.get("text") or "润")}
+                for c in (body.get("translatedCues") or [])
+            ]
+            if not texts:
+                texts = [{"id": c["id"], "text": "润"} for c in body.get("cues") or []]
+        else:
+            texts = [{"id": c["id"], "text": "译"} for c in body.get("cues") or []]
+        payload = json.dumps({"cues": texts}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(payload)))
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(payload)
+    def log_message(self, *a):
+        pass
+
+srv = HTTPServer(('127.0.0.1', 0), H)
+port = srv.server_address[1]
+Thread(target=srv.serve_forever, daemon=True).start()
+try:
+    out = external_translate_cues(
+        cues,
+        mt_external={"url": f"http://127.0.0.1:{port}/translate", "timeoutSec": 5, "batchSize": 10},
+        language="ja",
+    )
+    assert len(out) == 50
+    assert len(bodies) == 6, len(bodies)
+    batch_bodies = [b for b in bodies if b.get("phase") != "polish"]
+    polish_bodies = [b for b in bodies if b.get("phase") == "polish"]
+    assert len(batch_bodies) == 5, len(batch_bodies)
+    assert len(polish_bodies) == 1
+    assert len(polish_bodies[0].get("translatedCues") or []) == 50
+    for b in batch_bodies:
+        assert len(b.get("briefCues") or []) == 50, b.get("briefCueTotal")
+        assert b.get("briefCueTotal") == 50
+        assert len(b.get("cues") or []) == 10
+finally:
+    srv.shutdown()
+`;
+        const r = spawnSync(enginePython, ['-c', py], {
+            encoding: 'utf8',
+            timeout: 20000,
         });
         assert.strictEqual(r.status, 0, r.stderr || r.stdout);
     });

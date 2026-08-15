@@ -5,7 +5,7 @@
     const electron = window.__ELECTRON__;
     if (!electron?.transubAdvancedGetStatus) return;
 
-    const AFDIAN_PURCHASE_URL = 'https://afdian.com/a/transub';
+    const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     const els = {
         status: () => document.getElementById('advancedLicenseStatus'),
@@ -654,7 +654,7 @@
         if (role === 'smartTranslate') {
             await askConfirm({
                 title: '不能用作智能翻译',
-                message: `「${item.name || item.id}」是日→中翻译专用模型，无法完成智能翻译（需影片简要与 JSON）。\n请改选 Qwen2.5 Instruct 等通用对话模型；Sakura 请用于「推理翻译」。`,
+                message: `「${item.name || item.id}」是日→中翻译专用模型，无法完成智能翻译（需影片简要）。\n请改选 Qwen2.5 Instruct 等通用对话模型；Sakura 请用于「推理翻译」或智能翻译的句级混合。`,
                 primaryLabel: '知道了',
             });
             return false;
@@ -937,12 +937,17 @@
             purchaseBlock.classList.toggle('hidden', entitled);
             purchaseBlock.setAttribute('aria-hidden', entitled ? 'true' : 'false');
         }
+        const unlockPitch = document.getElementById('advancedProUnlockPitch');
+        if (unlockPitch) {
+            unlockPitch.classList.toggle('hidden', entitled);
+            unlockPitch.setAttribute('aria-hidden', entitled ? 'true' : 'false');
+        }
         const buyHint = document.getElementById('advancedBuyProHint');
         if (buyHint && !entitled) {
             if (status.reason === 'expired' || status.expired) {
                 buyHint.textContent = '体验已到期。可购买大版本内买断继续使用 Pro；体验包不可抵扣买断，每爱发电账号限购体验包 1 次。';
             } else {
-                buyHint.textContent = '可先购买 9.9 元 Pro 体验包（7 天，每爱发电账号限 1 次），或直接购买本大版本买断。付款后填写订单号领取并激活；也可粘贴许可密钥（TSUB1.…）。体验不可抵扣买断。';
+                buyHint.textContent = '付款后填写订单号领取并激活密钥；也可粘贴许可密钥（TSUB1.…）';
             }
         }
         const moreAfdianBtn = document.getElementById('openAfdianFromSettingsBtn');
@@ -955,8 +960,6 @@
         if (els.provider() && byok.provider) els.provider().value = byok.provider;
         if (els.baseUrl()) els.baseUrl().value = byok.baseUrl || '';
         if (els.model()) els.model().value = byok.model || '';
-        const mockCheck = document.getElementById('advancedReconstructMockCheck');
-        if (mockCheck) mockCheck.checked = !!status.reconstructMock;
         if (els.byokHint()) {
             setText(
                 els.byokHint(),
@@ -973,34 +976,73 @@
             els.moduleStatus(),
             mod.loaded
                 ? `已加载闭源模块：${mod.name || 'Pro Module'}${mod.version ? ` v${mod.version}` : ''}`
-                : '使用内置语境重构。安装 `_advanced/index.js` 后可覆盖为闭源实现。',
+                : (mod.message
+                    ? `未加载闭源模块：${mod.message}`
+                    : '使用内置语境重构。安装 `_advanced/index.js` 后可覆盖为闭源实现。'),
         );
 
         void refreshTdp();
     }
 
-    function applyTdpStatus(tdp) {
+    /** @type {{ updateAvailable?: boolean, remote?: object, upToDate?: boolean } | null} */
+    let lastTdpCheck = null;
+
+    function applyTdpStatus(tdp, check = null) {
         if (!tdp) return;
         const ver = tdp.installedVersion || (tdp.bundledAvailable ? '内置' : '无');
         const useLine = tdp.entitled
             ? (tdp.applied ? '已热加载使用中' : '已开通 Pro，可更新并应用')
             : '开通 Pro 后可使用语言优化包';
-        setText(els.tdpStatus(), `当前版本：${ver} · ${useLine}`);
+        const remoteVer = check?.remote?.version || lastTdpCheck?.remote?.version || '';
+        const updateAvailable = !!(check?.updateAvailable ?? lastTdpCheck?.updateAvailable);
+        if (updateAvailable && remoteVer) {
+            setText(els.tdpStatus(), `当前版本：${ver} · 可更新至 ${remoteVer} · ${useLine}`);
+        } else {
+            setText(els.tdpStatus(), `当前版本：${ver} · ${useLine}`);
+        }
         const meta = [];
         if (tdp.source) meta.push(`来源：${tdp.source === 'cdn' ? '官方更新' : tdp.source === 'bundled' ? '安装包内置' : tdp.source}`);
         if (tdp.installedAt) meta.push(`安装于 ${String(tdp.installedAt).slice(0, 10)}`);
+        const notes = String(check?.remote?.notes || lastTdpCheck?.remote?.notes || tdp.notes || '').trim();
+        if (updateAvailable && notes) meta.push(`更新说明：${notes}`);
+        else if (!updateAvailable && check?.upToDate) meta.push('已是最新');
         setText(els.tdpMeta(), meta.join(' · '));
-        // Download is open; apply/hot-reload is Pro-gated in the main process.
-        if (els.tdpUpdateBtn()) els.tdpUpdateBtn().disabled = false;
+        const updateBtn = els.tdpUpdateBtn();
+        if (updateBtn) {
+            updateBtn.disabled = false;
+            updateBtn.textContent = updateAvailable && remoteVer
+                ? `立即更新 · ${remoteVer}`
+                : '立即更新';
+            updateBtn.classList.toggle('ring-2', updateAvailable);
+            updateBtn.classList.toggle('ring-violet-300', updateAvailable);
+        }
         if (els.tdpCheckBtn()) els.tdpCheckBtn().disabled = false;
     }
 
-    async function refreshTdp() {
+    async function refreshTdp({ checkRemote = true } = {}) {
         if (!electron.transubTdpGetStatus) return;
         try {
             const res = await electron.transubTdpGetStatus();
-            if (res?.ok) applyTdpStatus(res.tdp);
-            else setText(els.tdpStatus(), res?.error || '无法读取优化包状态');
+            if (!res?.ok) {
+                setText(els.tdpStatus(), res?.error || '无法读取优化包状态');
+                return;
+            }
+            applyTdpStatus(res.tdp);
+            if (checkRemote && electron.transubTdpCheck) {
+                try {
+                    const checked = await electron.transubTdpCheck();
+                    if (checked?.ok) {
+                        lastTdpCheck = checked;
+                        applyTdpStatus(checked.local || res.tdp, checked);
+                        if (checked.updateAvailable) {
+                            setText(
+                                els.tdpAction(),
+                                `发现新版本 ${checked.remote?.version || ''}${checked.remote?.notes ? `：${checked.remote.notes}` : ''}`.trim(),
+                            );
+                        }
+                    }
+                } catch (_) { /* soft check — status already shown */ }
+            }
         } catch (err) {
             setText(els.tdpStatus(), err.message || '读取失败');
         }
@@ -1175,7 +1217,7 @@
             void withAction(els.byokStatus(), async () => {
                 const res = await electron.transubAdvancedSaveByok({
                     llmSource: source,
-                    reconstructMock: !!document.getElementById('advancedReconstructMockCheck')?.checked,
+                    reconstructMock: false,
                 });
                 if (res?.ok && source === 'managed') await refreshManaged();
                 return res?.ok
@@ -1192,7 +1234,7 @@
                 provider: els.provider()?.value || 'openai',
                 baseUrl: els.baseUrl()?.value || '',
                 model: els.model()?.value || '',
-                reconstructMock: !!document.getElementById('advancedReconstructMockCheck')?.checked,
+                reconstructMock: false,
             };
             const apiKey = String(els.apiKey()?.value || '').trim();
             if (apiKey) payload.apiKey = apiKey;
@@ -1483,14 +1525,6 @@
             void electron.transubAdvancedManagedLlmCancelPull?.();
         });
 
-        document.getElementById('advancedReconstructMockCheck')?.addEventListener('change', (ev) => {
-            const checked = !!ev.target?.checked;
-            void withAction(els.byokStatus(), () => electron.transubAdvancedSaveByok({
-                llmSource: currentLlmSource(),
-                reconstructMock: checked,
-            }));
-        });
-
         document.getElementById('advancedReloadModuleBtn')?.addEventListener('click', () => {
             void withAction(els.moduleStatus(), async () => {
                 const res = await electron.transubAdvancedReloadModule();
@@ -1505,6 +1539,8 @@
             void withAction(els.tdpAction(), async () => {
                 const res = await electron.transubTdpCheck?.();
                 if (!res?.ok) return res || { ok: false, error: '检查失败' };
+                lastTdpCheck = res;
+                applyTdpStatus(res.local || {}, res);
                 if (res.upToDate) return { ok: true, message: '已是最新' };
                 if (res.updateAvailable) {
                     return {
@@ -1521,7 +1557,8 @@
                 setTdpProgress({ phase: 'start', percent: 0 });
                 const res = await electron.transubTdpPull?.();
                 setTdpProgress(res?.ok ? { phase: 'done' } : { phase: 'error' });
-                await refreshTdp();
+                lastTdpCheck = null;
+                await refreshTdp({ checkRemote: true });
                 return res?.ok
                     ? { ok: true, message: res.message || '更新完成' }
                     : res || { ok: false, error: '更新失败' };
@@ -1551,6 +1588,9 @@
                     tab === 'install'
                     || tab === 'pro'
                     || tab === 'pro-llm'
+                    || tab === 'pro-smart-translate'
+                    || tab === 'pro-film-audio'
+                    || tab === 'pro-qc-smart'
                     || tab === 'pro-reconstruct'
                 ) {
                     void refresh();

@@ -6,7 +6,7 @@
     const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
     const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
     const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
-    const AFDIAN_PURCHASE_URL = 'https://afdian.com/a/transub';
+    const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     async function fillVersion() {
         const el = document.getElementById('aboutVersion');

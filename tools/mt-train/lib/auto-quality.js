@@ -383,7 +383,7 @@ function assessRuleReuse(p) {
         if (mostlyWhole && !payload.expandStub) {
             return {
                 bucket: 'exclude',
-                reason: '整句替换复用性差',
+                reason: '整句替换复用性差（禁止单片整句特化）',
                 lowReuse: true,
             };
         }
@@ -395,7 +395,7 @@ function assessRuleReuse(p) {
     if (payload.longAnchor || train.isLowReuseAnchor(anchor, fullJa)) {
         return {
             bucket: 'exclude',
-            reason: '日文锚点接近整句，复用性差',
+            reason: '日文锚点接近整句，复用性差（禁止单片特化）',
             lowReuse: true,
         };
     }

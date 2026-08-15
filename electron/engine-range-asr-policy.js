@@ -1,0 +1,180 @@
+/**
+ * Engine range retranscribe / Opus text MT pure policy helpers.
+ */
+function clampRangePadMs(padMs, fallback = 350) {
+    return Math.max(0, Math.min(2000, Math.round(Number(padMs) || fallback)));
+}
+
+function clampRangeWindow({ startMs, endMs, padMs } = {}) {
+    const start = Math.max(0, Math.round(Number(startMs) || 0));
+    const end = Math.max(start + 200, Math.round(Number(endMs) || 0));
+    const pad = clampRangePadMs(padMs);
+    return {
+        startMs: start,
+        endMs: end,
+        padMs: pad,
+        clipStartMs: Math.max(0, start - pad),
+        clipEndMs: end + pad,
+    };
+}
+
+function normalizeOpusTextCues(cuesIn) {
+    return (Array.isArray(cuesIn) ? cuesIn : [])
+        .map((c, i) => {
+            const index = Number.isInteger(Number(c?.index)) ? Number(c.index)
+                : (Number.isInteger(Number(c?.id)) ? Number(c.id) : i);
+            const text = String(c?.text ?? '').trim();
+            const startMs = Number(c?.startMs);
+            const endMs = Number(c?.endMs);
+            const start = Number.isFinite(startMs) ? startMs / 1000
+                : (Number.isFinite(Number(c?.start)) ? Number(c.start) : index);
+            const end = Number.isFinite(endMs) ? endMs / 1000
+                : (Number.isFinite(Number(c?.end)) ? Number(c.end) : start + 1);
+            return { index, id: index, text, start, end };
+        })
+        .filter((c) => c.text);
+}
+
+/**
+ * Resolve native Opus MT model id (never Sakura / LLM inference ids).
+ */
+function resolveNativeOpusMtModel(options = {}, payload = {}, deps = {}) {
+    const isSakura = deps.isSakuraMtModel || (() => false);
+    const isLlm = deps.isLlmInferenceMtModel || (() => false);
+    let mtModel = String(
+        payload.mtModel
+        || options.engineOpusMtModel
+        || options.engineMtModel
+        || '',
+    ).trim();
+    if (isSakura(mtModel) || isLlm(mtModel)) {
+        mtModel = String(options.engineOpusMtModel || '').trim();
+    }
+    return mtModel;
+}
+
+/**
+ * For range ASR jobs: strip Sakura/LLM from engineMtModel → Opus fallback.
+ */
+function resolveRangeAsrMtModel(options = {}, deps = {}) {
+    const isSakura = deps.isSakuraMtModel || (() => false);
+    const isLlm = deps.isLlmInferenceMtModel || (() => false);
+    let mtModel = options.engineMtModel || null;
+    if (
+        options.smartTranslate
+        || isSakura(mtModel)
+        || isLlm(mtModel)
+        || isSakura(options.engineLlmMtModel)
+        || isLlm(options.engineLlmMtModel)
+    ) {
+        mtModel = String(options.engineOpusMtModel || '').trim() || null;
+    }
+    return mtModel;
+}
+
+function _dedupeAsrIds(ids) {
+    const out = [];
+    const seen = new Set();
+    for (const raw of ids) {
+        const id = String(raw || '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+    }
+    return out;
+}
+
+/**
+ * Full-file batch + range ASR failover chain (content-aware).
+ * JA/anime specialists try sibling specialists before generic SenseVoice/tiny.
+ */
+function buildBatchAsrCandidates(primaryAsr) {
+    const primary = String(primaryAsr || 'sensevoice-small').trim() || 'sensevoice-small';
+    const low = primary.toLowerCase();
+    const chain = [primary];
+
+    const jaSpecialists = [
+        'whisper-ja-1.5b',
+        'anime-whisper',
+        'kotoba-whisper-v2.0-faster',
+        'reazonspeech-k2',
+        'qwen3-asr-0.6b',
+    ];
+    const isJaSpecialist = jaSpecialists.some((id) => low === id || low.startsWith(id));
+    const isAnime = low.includes('anime-whisper');
+    const isKotoba = low.includes('kotoba-whisper');
+    const isWhisperJa = low.includes('whisper-ja');
+    const isReazon = low.includes('reazon');
+    const isQwenAsr = low.includes('qwen3-asr');
+
+    if (/sensevoice/i.test(primary)) {
+        chain.push('whisper-tiny', 'whisper-large-v3-turbo');
+    } else if (isJaSpecialist || isAnime || isKotoba || isWhisperJa || isReazon || isQwenAsr) {
+        // Prefer other JA-domain models before generic Whisper tiny/turbo.
+        if (isAnime) {
+            chain.push('kotoba-whisper-v2.0-faster', 'whisper-ja-1.5b', 'reazonspeech-k2');
+        } else if (isKotoba) {
+            chain.push('anime-whisper', 'whisper-ja-1.5b', 'reazonspeech-k2');
+        } else if (isWhisperJa) {
+            chain.push('kotoba-whisper-v2.0-faster', 'anime-whisper', 'reazonspeech-k2');
+        } else if (isReazon) {
+            chain.push('whisper-ja-1.5b', 'kotoba-whisper-v2.0-faster', 'qwen3-asr-0.6b');
+        } else if (isQwenAsr) {
+            chain.push('whisper-ja-1.5b', 'reazonspeech-k2', 'kotoba-whisper-v2.0-faster');
+        } else {
+            for (const id of jaSpecialists) chain.push(id);
+        }
+        chain.push('sensevoice-small', 'whisper-tiny', 'whisper-large-v3-turbo');
+    } else {
+        chain.push('sensevoice-small', 'whisper-tiny');
+        if (!/large-v3-turbo|turbo/i.test(primary)) {
+            chain.push('whisper-large-v3-turbo');
+        }
+    }
+    return _dedupeAsrIds(chain);
+}
+
+/** @deprecated Prefer buildBatchAsrCandidates — kept for range callers. */
+function buildRangeAsrCandidates(primaryAsr) {
+    return buildBatchAsrCandidates(primaryAsr);
+}
+
+function isEmptyAsrFail(res) {
+    const code = String(res?.code || '');
+    const msg = String(res?.error || '');
+    return code === 'ASR_EMPTY'
+        || /未识别到有效字幕|重转写结果为空|结果为空/i.test(msg);
+}
+
+function isRetryableAsrFail(res) {
+    if (isEmptyAsrFail(res)) return true;
+    const msg = String(res?.error || '');
+    return /not installed|未安装|model not found|找不到.*模型/i.test(msg);
+}
+
+function remapClipCuesToTimeline(parsedCues, clipStartMs) {
+    const offset = Math.max(0, Math.round(Number(clipStartMs) || 0));
+    return (Array.isArray(parsedCues) ? parsedCues : []).map((cue) => ({
+        startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + offset),
+        endMs: Math.max(
+            0,
+            Math.round(
+                (cue.endMs != null ? cue.endMs : (Number(cue.startMs) || 0) + 1000) + offset,
+            ),
+        ),
+        text: String(cue.text || '').trim(),
+    })).filter((cue) => cue.text);
+}
+
+module.exports = {
+    clampRangePadMs,
+    clampRangeWindow,
+    normalizeOpusTextCues,
+    resolveNativeOpusMtModel,
+    resolveRangeAsrMtModel,
+    buildBatchAsrCandidates,
+    buildRangeAsrCandidates,
+    isEmptyAsrFail,
+    isRetryableAsrFail,
+    remapClipCuesToTimeline,
+};

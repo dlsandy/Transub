@@ -6,6 +6,7 @@
  * - Download probes GitHub / Codeberg / 官网 and picks the fastest reachable URL
  * - Legacy NSIS installs are guided to switch to zip (Setup is no longer published)
  * Code signing is not used (no free Authenticode cert); archives are sha256-verified.
+ * Failure objects may include: code, preferredSource, triedSources, expectedSha, gotSha.
  */
 const fs = require('fs');
 const os = require('os');
@@ -37,6 +38,67 @@ const {
     isAutoUpdateFullZipName,
     standardZipName,
 } = require('./release-artifact-names');
+
+/**
+ * @param {unknown} err
+ * @param {{ preferredSource?: string, triedSources?: string[] }} [extra]
+ */
+function buildUpdateFailure(err, extra = {}) {
+    const message = err && typeof err === 'object' && err.message
+        ? String(err.message)
+        : String(err || '更新失败');
+    const codeFromErr = err && typeof err === 'object' && err.code ? String(err.code) : '';
+    let code = codeFromErr;
+    if (!code) {
+        const lower = message.toLowerCase();
+        if (/校验|checksum|sha256/.test(lower)) code = 'checksum';
+        else if (/解压|extract|unzip/.test(lower)) code = 'extract';
+        else if (/清单|manifest|probe/.test(lower)) code = 'probe';
+        else if (/下载|download|econn|timeout|网络/.test(lower)) code = 'download';
+        else code = 'download';
+    }
+    const out = {
+        ok: false,
+        error: message,
+        code,
+    };
+    if (extra.preferredSource) out.preferredSource = String(extra.preferredSource);
+    if (Array.isArray(extra.triedSources) && extra.triedSources.length) {
+        out.triedSources = extra.triedSources.map((s) => String(s || '').trim()).filter(Boolean);
+    }
+    if (err && typeof err === 'object') {
+        if (err.expectedSha) out.expectedSha = String(err.expectedSha);
+        if (err.gotSha) out.gotSha = String(err.gotSha);
+    }
+    return out;
+}
+
+/**
+ * One-line diagnostic for update UI meta.
+ * @param {{ error?: string, code?: string, preferredSource?: string, triedSources?: string[], expectedSha?: string, gotSha?: string }} fail
+ */
+function formatUpdateFailureMeta(fail = {}) {
+    const parts = [];
+    if (fail.code) parts.push(`原因码 ${fail.code}`);
+    if (fail.preferredSource) parts.push(`线路 ${fail.preferredSource}`);
+    if (Array.isArray(fail.triedSources) && fail.triedSources.length) {
+        parts.push(`已试 ${fail.triedSources.join('/')}`);
+    }
+    if (fail.expectedSha || fail.gotSha) {
+        parts.push(`校验 expect=${fail.expectedSha || '?'} got=${fail.gotSha || '?'}`);
+    }
+    const tipByCode = {
+        checksum: '校验失败：换线路重试，或从发布页手动下载同版本 zip',
+        extract: '解压失败：确认磁盘空间充足且安装目录可写',
+        probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / 官网',
+        download: '下载失败：可改用其它镜像，或从发布页手动下载',
+        cancelled: '已取消',
+    };
+    const tip = tipByCode[String(fail.code || '')]
+        || '可改从 GitHub / Codeberg / 官网 Releases 手动下载';
+    parts.push(tip);
+    return parts.join(' · ');
+}
 
 const GITHUB_OWNER = 'dlsandy';
 const GITHUB_REPO = 'Transub';
@@ -991,7 +1053,7 @@ async function downloadIncrementalUpdate({
 
 async function downloadZipUpdate() {
     if (!canAutoInstallZip()) {
-        return { ok: false, error: '当前不是 zip 解压版，无法应用内更新' };
+        return { ok: false, error: '当前不是 zip 解压版，无法应用内更新', code: 'install_kind' };
     }
     let downloadUrl = String(pendingUpdate?.downloadUrl || '').trim();
     let downloadUrls = Array.isArray(pendingUpdate?.downloadUrls)
@@ -1104,7 +1166,7 @@ async function downloadZipUpdate() {
     } catch (err) {
         clearPendingZipArtifacts();
         updateReady = false;
-        return { ok: false, error: err.message || String(err) };
+        return buildUpdateFailure(err);
     }
 }
 
@@ -1117,11 +1179,13 @@ async function downloadAppUpdate() {
         return {
             ok: false,
             error: 'Setup/NSIS 安装版已停更，请打开 Releases 下载 zip 解压版',
+            code: 'install_kind',
         };
     }
     return {
         ok: false,
         error: '当前安装方式不支持应用内下载（请使用 zip 解压版，或打开 Releases 手动下载）',
+        code: 'install_kind',
     };
 }
 
@@ -1298,4 +1362,6 @@ module.exports = {
     getPendingUpdate,
     isUpdateReady,
     fetchDualHostLatestReleases,
+    buildUpdateFailure,
+    formatUpdateFailureMeta,
 };

@@ -61,6 +61,15 @@ describe('engine-options', () => {
         assert.strictEqual(opts.engineHfEndpoint, '');
     });
 
+    it('preserves empty engineLlmMtModel (智能选择) and defaults when omitted', () => {
+        assert.strictEqual(mergeEngineOptions({}).engineLlmMtModel, 'sakura-1.5b');
+        assert.strictEqual(mergeEngineOptions({ engineLlmMtModel: '' }).engineLlmMtModel, '');
+        assert.strictEqual(
+            mergeEngineOptions({ engineLlmMtModel: 'sakura-7b' }).engineLlmMtModel,
+            'sakura-7b',
+        );
+    });
+
     it('normalizes twai aliases', () => {
         assert.strictEqual(normalizeEngineBackend('transwithai'), 'twai');
         assert.strictEqual(normalizeEngineBackend('TWAI'), 'twai');

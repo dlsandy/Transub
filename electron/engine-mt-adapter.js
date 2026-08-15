@@ -10,11 +10,11 @@ const { asPlainObject, asString, asNumber } = require('./ipc-validate');
 
 const DEFAULT_BATCH_SIZE = 8;
 const DEFAULT_SMART_BATCH_SIZE = 40;
-/** Keep windows modest: Qwen3-1.7B struggles with 30-cue JSON in one shot. */
-const DEFAULT_SMART_WINDOW_CUES = 10;
+/** Keep windows modest: Qwen3-1.7B struggles with long line-aligned batches. */
+const DEFAULT_SMART_WINDOW_CUES = 8;
 const DEFAULT_SMART_OVERLAP_CUES = 2;
 const DEFAULT_TIMEOUT_SEC = 600;
-/** Smart translate (Brief + JSON windows + shrink retries) needs a longer HTTP budget. */
+/** Smart translate (Brief + line windows + shrink retries) needs a longer HTTP budget. */
 const DEFAULT_SMART_TIMEOUT_SEC = 1800;
 const PATH_TRANSLATE = '/translate';
 /** Safety cap: extreme retry storms still get 429 instead of unbounded queue growth. */
@@ -46,8 +46,29 @@ function resolvePromptGlossary(options = {}) {
 }
 
 /**
+ * @param {object} item
+ * @param {number} i
+ */
+function mapEngineCue(item, i) {
+    const c = asPlainObject(item);
+    const idRaw = c.id != null ? Number(c.id) : i;
+    const id = Number.isInteger(idRaw) ? idRaw : i;
+    const startSec = Number(c.start);
+    const endSec = Number(c.end);
+    const startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : undefined;
+    const endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : undefined;
+    return {
+        id,
+        index: id,
+        startMs,
+        endMs,
+        text: String(c.text ?? ''),
+    };
+}
+
+/**
  * @param {object} body
- * @returns {{ ok: boolean, error?: string, cues?: object[], language?: string, targetLanguage?: string, jobId?: string }}
+ * @returns {{ ok: boolean, error?: string, phase?: string, cues?: object[], translatedCues?: object[], briefCues?: object[], language?: string, targetLanguage?: string, jobId?: string }}
  */
 function parseEngineMtRequest(body) {
     const raw = asPlainObject(body);
@@ -55,25 +76,29 @@ function parseEngineMtRequest(body) {
     if (!cuesIn) {
         return { ok: false, error: 'cues must be an array' };
     }
-    const cues = cuesIn.map((item, i) => {
+    const cues = cuesIn.map((item, i) => mapEngineCue(item, i));
+    const briefIn = Array.isArray(raw.briefCues) ? raw.briefCues : [];
+    const briefCues = briefIn.map((item, i) => mapEngineCue(item, i));
+    const phaseRaw = asString(raw.phase || raw.action || '', 32).trim().toLowerCase();
+    const phase = phaseRaw === 'polish' || phaseRaw === 'finalize' || phaseRaw === 'plot_polish'
+        ? 'polish'
+        : 'translate';
+    const translatedIn = Array.isArray(raw.translatedCues)
+        ? raw.translatedCues
+        : (Array.isArray(raw.translated) ? raw.translated : []);
+    const translatedCues = translatedIn.map((item, i) => {
         const c = asPlainObject(item);
-        const idRaw = c.id != null ? Number(c.id) : i;
+        const idRaw = c.id != null ? Number(c.id) : (c.index != null ? Number(c.index) : i);
         const id = Number.isInteger(idRaw) ? idRaw : i;
-        const startSec = Number(c.start);
-        const endSec = Number(c.end);
-        const startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : undefined;
-        const endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : undefined;
-        return {
-            id,
-            index: id,
-            startMs,
-            endMs,
-            text: String(c.text ?? ''),
-        };
+        return { id, index: id, text: String(c.text ?? '') };
     });
     return {
         ok: true,
+        phase,
         cues,
+        translatedCues,
+        briefCues,
+        briefCueTotal: asNumber(raw.briefCueTotal, { min: 0, max: 100000, fallback: briefCues.length }),
         language: asString(raw.language, 32).trim(),
         targetLanguage: asString(raw.targetLanguage || raw.target_language || 'zh', 32).trim() || 'zh',
         jobId: asString(raw.jobId || raw.job_id, 128).trim(),
@@ -216,6 +241,83 @@ function mergePrefillWithTranslated(allSourceCues, prefilled, translatedCues) {
     });
 }
 
+/**
+ * Whole-film plot polish after engine finishes all sentence batches.
+ * Sakura mode / polish-off: echo translated texts (no model swap).
+ */
+async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) {
+    const mode = String(session.mode || '').trim();
+    const options = asPlainObject(session.options);
+    const sourceCues = preprocessSourceCuesForMt(parsed.cues);
+    const zhIn = Array.isArray(parsed.translatedCues) ? parsed.translatedCues : [];
+    const translatedCues = sourceCues.map((c, i) => {
+        const idx = Number.isInteger(Number(c.index)) ? Number(c.index) : i;
+        const hit = zhIn.find((u) => Number(u.index) === idx || Number(u.id) === idx);
+        return {
+            index: idx,
+            text: hit ? String(hit.text ?? '') : '',
+        };
+    });
+
+    const polishEnabled = mode === 'smart' && options.smartTranslatePlotPolish !== false;
+    if (!polishEnabled || !sourceCues.length) {
+        onProgress?.({
+            phase: 'polish-skip',
+            message: mode === 'smart' ? '已跳过剧情贴合润色' : '推理翻译无需整片润色',
+            plotPolish: false,
+        });
+        return { ok: true, cues: translatedCues, plotPolish: false, polishSkipped: true };
+    }
+
+    const { runSmartTranslate } = require('./advanced-bridge');
+    const result = await runSmartTranslate({
+        cues: sourceCues,
+        translatedCues,
+        polishOnly: true,
+        filmBrief: session.filmBrief || options.filmBrief || null,
+        skipFilmBrief: true,
+        chineseSubtitleVariant: options.chineseSubtitleVariant,
+        targetLanguage: options.targetLanguage || parsed.targetLanguage || 'zh',
+        note: options.note,
+        smartTranslateFaithfulTone: !!(
+            options.smartTranslateFaithfulTone || options.faithfulTone
+        ),
+        smartTranslatePlotPolish: true,
+        smartTranslateHybridMt: false,
+        smartTranslatePolishSampleLimit: options.smartTranslatePolishSampleLimit,
+        language: parsed.language || options.language,
+        glossary: resolvePromptGlossary(options),
+        dryRun: options.dryRun,
+        signal,
+        onProgress,
+        _batchMode: true,
+        _engineExternalMt: true,
+    });
+    if (!result?.ok) {
+        // Keep sentence MT; polish is best-effort.
+        onProgress?.({
+            phase: 'polish-skip',
+            message: `剧情贴合润色未应用：${result?.error || '失败'}`,
+            plotPolish: false,
+        });
+        return {
+            ok: true,
+            cues: translatedCues,
+            plotPolish: false,
+            polishSkipped: true,
+            polishError: result?.error || 'polish_failed',
+        };
+    }
+    session.polishFixed = (session.polishFixed || 0) + (Number(result.polishFixed) || 0);
+    return {
+        ok: true,
+        cues: mergePrefillWithTranslated(sourceCues, [], result.cues || translatedCues),
+        filmBrief: result.filmBrief || session.filmBrief,
+        plotPolish: true,
+        polishFixed: result.polishFixed || 0,
+    };
+}
+
 async function translateExternalBatch(parsed, session) {
     const mode = String(session.mode || '').trim();
     const options = asPlainObject(session.options);
@@ -241,6 +343,10 @@ async function translateExternalBatch(parsed, session) {
         }
         : null;
 
+    if (parsed.phase === 'polish') {
+        return polishExternalFilm(parsed, session, { onProgress, signal });
+    }
+
     if (mode === 'smart') {
         const { runSmartTranslate } = require('./advanced-bridge');
         const windowCues = asNumber(options.windowCues, {
@@ -255,6 +361,10 @@ async function translateExternalBatch(parsed, session) {
         });
         // Skip LLM for deterministic moans / discourse / wet-SFX — biggest batch speedup.
         const { llmCues, prefilled, skipped } = partitionMtCuesForLlm(sourceCues);
+        if (parsed.briefCues?.length && !session.briefSourceCues) {
+            session.briefSourceCues = preprocessSourceCuesForMt(parsed.briefCues);
+        }
+        const briefSourceCues = session.briefSourceCues || [];
         if (skipped > 0) {
             onProgress?.({
                 phase: 'prefill',
@@ -262,7 +372,48 @@ async function translateExternalBatch(parsed, session) {
             });
             session.deterministicPrefill = (session.deterministicPrefill || 0) + skipped;
         }
+
+        const smartCommon = {
+            chineseSubtitleVariant: options.chineseSubtitleVariant,
+            targetLanguage: options.targetLanguage || parsed.targetLanguage || 'zh',
+            note: options.note,
+            windowCues,
+            overlapCues,
+            filmBrief: session.filmBrief || options.filmBrief || null,
+            skipFilmBrief: !!(options.skipFilmBrief || session.filmBrief || session.skipFilmBrief),
+            skipConsistency: options.consistencyLlm ? false : options.skipConsistency !== false,
+            briefSourceCues: briefSourceCues.length ? briefSourceCues : undefined,
+            smartTranslateFaithfulTone: !!(
+                options.smartTranslateFaithfulTone || options.faithfulTone
+            ),
+            smartTranslateHybridMt: options.smartTranslateHybridMt !== false,
+            // Per-batch polish causes Sakura↔chat VRAM thrash; engine POSTs phase=polish once after all batches.
+            smartTranslatePlotPolish: false,
+            engineLlmMtModel: options.engineLlmMtModel,
+            hybridMtModelId: options.hybridMtModelId || options.engineLlmMtModel,
+            language: parsed.language || options.language,
+            glossary: resolvePromptGlossary(options),
+            dryRun: options.dryRun,
+            signal,
+            onProgress,
+            _batchMode: true,
+            _engineExternalMt: true,
+            _deferPlotPolish: true,
+        };
+
         if (!llmCues.length) {
+            if (!session.filmBrief && !options.skipFilmBrief && briefSourceCues.length) {
+                const briefResult = await runSmartTranslate({
+                    ...smartCommon,
+                    cues: sourceCues.length ? sourceCues : briefSourceCues.slice(0, 1),
+                    briefOnly: true,
+                    skipFilmBrief: false,
+                });
+                if (briefResult?.filmBrief) session.filmBrief = briefResult.filmBrief;
+                if (briefResult?.briefMode === 'skipped' || briefResult?.hybridSkipLlmBrief) {
+                    session.skipFilmBrief = true;
+                }
+            }
             return {
                 ok: true,
                 cues: mergePrefillWithTranslated(sourceCues, prefilled, []),
@@ -271,25 +422,8 @@ async function translateExternalBatch(parsed, session) {
             };
         }
         const result = await runSmartTranslate({
+            ...smartCommon,
             cues: llmCues,
-            chineseSubtitleVariant: options.chineseSubtitleVariant,
-            targetLanguage: options.targetLanguage || parsed.targetLanguage || 'zh',
-            note: options.note,
-            windowCues,
-            overlapCues,
-            filmBrief: session.filmBrief || options.filmBrief || null,
-            skipFilmBrief: !!options.skipFilmBrief,
-            skipConsistency: !!options.skipConsistency,
-            smartTranslateFaithfulTone: !!(
-                options.smartTranslateFaithfulTone || options.faithfulTone
-            ),
-            // Align with subtitle editor: prompt glossary on clean Japanese.
-            glossary: resolvePromptGlossary(options),
-            dryRun: options.dryRun,
-            signal,
-            onProgress,
-            _batchMode: true,
-            _engineExternalMt: true,
         });
         if (!result?.ok) {
             return {
@@ -301,6 +435,9 @@ async function translateExternalBatch(parsed, session) {
         // Cache Brief across engine POSTs so later batches share the same film understanding.
         if (result.filmBrief && !session.filmBrief) {
             session.filmBrief = result.filmBrief;
+        }
+        if (result.briefMode === 'skipped' || result.hybridSkipLlmBrief || options.skipFilmBrief) {
+            session.skipFilmBrief = true;
         }
         return {
             ok: true,
@@ -630,5 +767,6 @@ module.exports = {
     buildEngineMtResponse,
     resolvePromptGlossary,
     translateExternalBatch,
+    polishExternalFilm,
     startEngineMtAdapter,
 };

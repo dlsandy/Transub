@@ -14,9 +14,13 @@
         global.TransubSubtitleQcSmart = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleQcSmartCoreFactory(splitCore) {
+    const fluencyCore = (typeof module !== 'undefined' && module.exports)
+        ? (() => { try { return require('./subtitle-fluency-core'); } catch { return null; } })()
+        : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleFluency : null);
+
     const DEFAULT_MAX_SMART_CUES = 40;
     const DEFAULT_NEIGHBOR_RADIUS = 1;
-    const DEFAULT_SMART_TYPES = Object.freeze(['fluency', 'connected']);
+    const DEFAULT_SMART_TYPES = Object.freeze(['fluency', 'connected', 'weird']);
     const DEFAULT_RETRANSCRIBE_TYPES = Object.freeze(['connected']);
     const DEFAULT_LLM_SPLIT_TYPES = Object.freeze(['connected', 'high_cps', 'long', 'splittable']);
     const DEFAULT_MAX_LLM_SPLIT = 24;
@@ -26,11 +30,78 @@
     const DEFAULT_PAD_MS = 350;
 
     const QC_SMART_NOTE = [
-        '本批为 QC 智能修复：只修正不通顺、句末残缺、口吃残留、明显误译或难读长句。',
+        '本批为 QC 智能修复：整理不通顺语句，并清除莫名其妙/乱码碎片、模型泄漏残留、占位符与明显误译。',
+        '只做通顺与清怪，勿整句创作式改写，勿改剧情语气与专名语义。',
         '保持每条 index 不变，不要合并或拆分，不要改时间轴，不要编造剧情。',
         '保留句末语气词；勿把有语义对白压成单字语气词；勿擅自删除纯拟声条目。',
-        '改动宜小；若原文语义已清楚且通顺，可原样返回。',
+        '改动宜小；若原文语义已清楚且通顺无怪字，可原样返回。',
     ].join('');
+
+    /**
+     * Heuristic: cue text looks pathologically weird (MT junk / placeholders / symbol soup).
+     * Used to feed LLM polish beyond rule fluency flags — not a film-specific remap.
+     */
+    function looksLikeWeirdCueText(text) {
+        if (typeof fluencyCore?.looksLikeWeirdCueText === 'function') {
+            return fluencyCore.looksLikeWeirdCueText(text);
+        }
+        const t = String(text || '').trim();
+        if (!t) return false;
+        if (/__GLOSS\d*__|__GLOS\d*__|Gloss#{0,4}\d+_*/i.test(t)) return true;
+        if (/GLOS?S?\d{2,8}/i.test(t)) return true;
+        if (/__[^_\n]{1,64}__/.test(t)) return true;
+        if (/改成[：:]/.test(t)) return true;
+        if (/(?:系统|提示|指令)\s*[:：]/.test(t) && /翻译|字幕|角色/.test(t)) return true;
+        const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+        const latin = (t.match(/[A-Za-z]/g) || []).length;
+        if (cjk >= 2 && latin >= 8 && latin > cjk) return true;
+        const symbols = (t.match(/[^\w\u4e00-\u9fff\u3040-\u30ff\s]/g) || []).length;
+        if (t.length >= 6 && symbols / t.length >= 0.45) return true;
+        if (/([。！？!?…])\1{3,}/.test(t)) return true;
+        if (/^[，、,]{2,}/.test(t) || /[，、,]{3,}/.test(t)) return true;
+        if (cjk >= 1 && /[A-Za-z]{4,}\d{2,}/.test(t) && t.length <= 40) return true;
+        return false;
+    }
+
+    /**
+     * Append synthetic weird issues for cues that look broken but were not QC-flagged.
+     * @returns {object[]}
+     */
+    function mergeWeirdTextIssues(cues, issues) {
+        const list = Array.isArray(cues) ? cues : [];
+        const out = Array.isArray(issues) ? issues.map((it) => ({
+            ...it,
+            types: Array.isArray(it?.types) ? it.types.slice() : [],
+            messages: Array.isArray(it?.messages) ? it.messages.slice() : [],
+        })) : [];
+        const byIndex = new Map();
+        for (const issue of out) {
+            const idx = Number(issue?.index);
+            if (Number.isInteger(idx) && idx >= 0) byIndex.set(idx, issue);
+        }
+        for (let i = 0; i < list.length; i += 1) {
+            const text = String(list[i]?.text ?? '');
+            if (!looksLikeWeirdCueText(text)) continue;
+            const existing = byIndex.get(i);
+            if (existing) {
+                if (!existing.types.includes('weird')) existing.types.push('weird');
+                if (!existing.types.includes('fluency')) existing.types.push('fluency');
+                if (!existing.messages.some((m) => /怪|乱码|泄漏|占位/.test(String(m || '')))) {
+                    existing.messages.push('疑似怪句/乱码/泄漏残留');
+                }
+            } else {
+                const issue = {
+                    index: i,
+                    types: ['weird', 'fluency'],
+                    messages: ['疑似怪句/乱码/泄漏残留'],
+                    textPreview: text.slice(0, 80),
+                };
+                out.push(issue);
+                byIndex.set(i, issue);
+            }
+        }
+        return out;
+    }
 
     function clampInt(value, min, max, fallback) {
         const n = Number(value);
@@ -63,6 +134,7 @@
             const hit = types.filter((t) => typeSet.has(t));
             if (!hit.length) continue;
             let score = 0;
+            if (types.includes('weird')) score += 4;
             if (types.includes('fluency')) score += 3;
             if (types.includes('connected')) score += 2;
             if (types.includes('high_cps')) score += 1;
@@ -188,6 +260,45 @@
         return limited;
     }
 
+    /**
+     * Plan merged time windows for low-confidence cue retranscription.
+     * @param {object[]} cues
+     * @param {number[]|object[]} indexesOrMeta cue indexes, or cueMeta/annotation rows with `.low`
+     * @returns {{ indexes: number[], ranges: object[], cueCount: number, rangeCount: number }}
+     */
+    function planLowConfidenceRetranscribeRanges(cues, indexesOrMeta, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const maxCues = clampInt(options.maxCues, 1, 200, 50);
+        const raw = Array.isArray(indexesOrMeta) ? indexesOrMeta : [];
+        let indexes = [];
+        if (raw.length && (typeof raw[0] === 'number' || Number.isInteger(Number(raw[0])))) {
+            indexes = raw
+                .map((n) => Number(n))
+                .filter((n) => Number.isInteger(n) && n >= 0 && n < list.length);
+        } else {
+            for (let i = 0; i < raw.length; i += 1) {
+                const row = raw[i];
+                if (!row?.low) continue;
+                const idx = Number.isInteger(Number(row.index)) ? Number(row.index) : i;
+                if (idx >= 0 && idx < list.length) indexes.push(idx);
+            }
+            if (!indexes.length && list.length) {
+                // cueMeta sparse array aligned by cue index
+                for (let i = 0; i < list.length; i += 1) {
+                    if (raw[i]?.low) indexes.push(i);
+                }
+            }
+        }
+        indexes = [...new Set(indexes)].sort((a, b) => a - b).slice(0, maxCues);
+        const ranges = buildQcRetranscribeRanges(list, indexes, options);
+        return {
+            indexes,
+            ranges,
+            cueCount: indexes.length,
+            rangeCount: ranges.length,
+        };
+    }
+
     function summarizeQcRetranscribePlan(ranges, options = {}) {
         const n = Array.isArray(ranges) ? ranges.length : 0;
         if (!n) return '无需局部重转写';
@@ -287,9 +398,11 @@
         const n = Array.isArray(targets) ? targets.length : 0;
         if (!n) return '规则修复后无需智能润色';
         const max = clampInt(options.maxSmartCues, 1, 200, DEFAULT_MAX_SMART_CUES);
+        const weird = targets.filter((t) => t.types?.includes('weird')).length;
         const fluency = targets.filter((t) => t.types?.includes('fluency')).length;
         const connected = targets.filter((t) => t.types?.includes('connected')).length;
         const parts = [`将对 ${n} 条做智能润色`];
+        if (weird) parts.push(`怪句 ${weird}`);
         if (fluency) parts.push(`通顺度 ${fluency}`);
         if (connected) parts.push(`连续文本 ${connected}`);
         if (n >= max) parts.push(`已截断至 ${max} 条`);
@@ -670,6 +783,8 @@
         DEFAULT_PAD_MS,
         QC_SMART_NOTE,
         QC_SEMANTIC_NOTE,
+        looksLikeWeirdCueText,
+        mergeWeirdTextIssues,
         selectQcSmartTargets,
         selectQcRetranscribeTargets,
         selectQcLlmSplitTargets,
@@ -679,6 +794,7 @@
         summarizeQcSemanticPlan,
         resolveQcSemanticPairPath,
         buildQcRetranscribeRanges,
+        planLowConfidenceRetranscribeRanges,
         summarizeQcRetranscribePlan,
         expandIndexesWithNeighbors,
         buildQcSmartCuePayload,

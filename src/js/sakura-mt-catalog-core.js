@@ -30,8 +30,10 @@
             size_hint_mb: 1200,
             ramHint: '建议 ≥4 GB 内存',
             languages: ['ja', 'zh'],
-            note: '日→简中 · 免费轻量；社区 Q5 量化；CC-BY-NC-SA',
+            note: '日→简中 · 免费推理翻译；社区 Q5 量化；CC-BY-NC-SA',
             recommended: true,
+            promptFamily: 'sakura',
+            paramBillion: 1.5,
         },
         {
             id: 'sakura-7b',
@@ -49,9 +51,81 @@
             languages: ['ja', 'zh'],
             note: '日→简中 · 质量更好；CC-BY-NC-SA',
             recommended: false,
+            promptFamily: 'sakura',
+            paramBillion: 7,
+        },
+        {
+            id: 'sakura-galtransl-7b',
+            name: 'GalTransl 7B v3.7 IQ4',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'sakura',
+            familyLabel: 'Sakura',
+            fileName: 'Sakura-Galtransl-7B-v3.7-IQ4_XS.gguf',
+            ggufUrl: 'https://huggingface.co/SakuraLLM/Sakura-GalTransl-7B-v3.7/resolve/main/Sakura-Galtransl-7B-v3.7-IQ4_XS.gguf',
+            sizeHint: '约 4.3 GB',
+            sizeBytes: 4250296192,
+            size_hint_mb: 4250,
+            ramHint: '建议 ≥6–8 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            note: '日→简中 · Gal/软声对白 · IQ4 轻量；CC-BY-NC-SA',
+            recommended: false,
+            promptFamily: 'galtransl',
+            paramBillion: 7,
+        },
+        {
+            id: 'sakura-galtransl-7b-q6k',
+            name: 'GalTransl 7B v3.7 Q6_K',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'sakura',
+            familyLabel: 'Sakura',
+            fileName: 'Sakura-Galtransl-7B-v3.7.gguf',
+            ggufUrl: 'https://huggingface.co/SakuraLLM/Sakura-GalTransl-7B-v3.7/resolve/main/Sakura-Galtransl-7B-v3.7.gguf',
+            sizeHint: '约 6.3 GB',
+            sizeBytes: 6254196608,
+            size_hint_mb: 5965,
+            ramHint: '建议 ≥8 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            note: '日→简中 · Gal/软声对白 · Q6_K 更高保真；CC-BY-NC-SA',
+            recommended: false,
+            promptFamily: 'galtransl',
+            paramBillion: 7,
+        },
+        {
+            id: 'sakura-galtransl-v4-4b',
+            name: 'GalTransl v4 4B (2601)',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'sakura',
+            familyLabel: 'Sakura',
+            // Hub path uses “Galtransl” (lowercase t); keep exact filename.
+            fileName: 'Galtransl-v4-4B-2601.gguf',
+            ggufUrl: 'https://huggingface.co/SakuraLLM/GalTransl-v4-4B-2601/resolve/main/Galtransl-v4-4B-2601.gguf',
+            sizeHint: '约 3.1 GB',
+            sizeBytes: 3306256992,
+            size_hint_mb: 3153,
+            ramHint: '建议 ≥6 GB 显存 / 内存',
+            languages: ['ja', 'zh'],
+            note: '日→简中 · GalTransl v4（Qwen3）轻量 Q6_K；prompt 同 v3.7；CC-BY-NC-SA',
+            recommended: false,
+            promptFamily: 'galtransl',
+            paramBillion: 4,
         },
     ]);
 
+    function resolvePromptFamily(modelIdOrEntry) {
+        if (modelIdOrEntry && typeof modelIdOrEntry === 'object') {
+            const fam = String(modelIdOrEntry.promptFamily || '').trim().toLowerCase();
+            if (fam === 'galtransl') return 'galtransl';
+            return 'sakura';
+        }
+        const entry = findCatalogEntry(modelIdOrEntry);
+        if (entry?.promptFamily === 'galtransl') return 'galtransl';
+        const id = String(modelIdOrEntry || '').trim().toLowerCase();
+        if (/galtransl/i.test(id)) return 'galtransl';
+        return 'sakura';
+    }
     function listCatalog() {
         return CATALOG.map((m) => ({ ...m }));
     }
@@ -116,7 +190,7 @@
      */
     function translateModeLabel(mode, { short = false } = {}) {
         const m = normalizeTranslateMode(mode);
-        if (m === 'smart') return short ? '智能' : '智能翻译';
+        if (m === 'smart') return short ? 'Pro译' : '智能翻译 Pro';
         if (m === 'llm') return short ? '推理' : '推理翻译';
         return short ? '机器' : '机器翻译';
     }
@@ -167,6 +241,7 @@
         CATALOG,
         listCatalog,
         findCatalogEntry,
+        resolvePromptFamily,
         isSakuraMtModel,
         isEngineOpusMtModel,
         isLlmInferenceMtModel,

@@ -44,12 +44,27 @@ function minifyJsDir(dir) {
 console.log('[build-renderer] 1/3 Tailwind CSS');
 require('./build-css');
 
+console.log('[build-renderer] 1b/3 sync jassub vendor');
+try {
+    const { spawnSync } = require('child_process');
+    const sync = spawnSync(process.execPath, [path.join(__dirname, 'sync-jassub-vendor.js')], {
+        cwd: root,
+        stdio: 'inherit',
+    });
+    if (sync.status) {
+        console.warn('[build-renderer] sync-jassub-vendor exit', sync.status);
+    }
+} catch (err) {
+    console.warn('[build-renderer] sync-jassub-vendor skipped:', err.message);
+}
+
 console.log('[build-renderer] 2/3 复制渲染层');
 if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 copyRecursive(path.join(src, 'index.html'), path.join(outDir, 'index.html'));
 copyRecursive(path.join(src, 'splash.html'), path.join(outDir, 'splash.html'));
 copyRecursive(path.join(src, 'subtitle-editor.html'), path.join(outDir, 'subtitle-editor.html'));
+copyRecursive(path.join(src, 'subtitle-library.html'), path.join(outDir, 'subtitle-library.html'));
 copyRecursive(path.join(src, 'update.html'), path.join(outDir, 'update.html'));
 copyRecursive(path.join(src, 'update-progress.html'), path.join(outDir, 'update-progress.html'));
 copyRecursive(path.join(src, 'about.html'), path.join(outDir, 'about.html'));

@@ -88,6 +88,9 @@ async function translateCueBatch(cues, ctx) {
         faithfulTone: ctx.faithfulTone,
         smartTranslateFaithfulTone: ctx.smartTranslateFaithfulTone,
         presetId: ctx.presetId,
+        modelId: ctx.modelId,
+        promptFamily: ctx.promptFamily,
+        castNames: ctx.castNames,
     });
     if (isMockMode() || ctx.dryRun) {
         return {
@@ -256,6 +259,9 @@ async function runSakuraTranslateBody(payload = {}) {
             apiKey: endpoint.apiKey,
             baseUrl: endpoint.baseUrl,
             model: endpoint.model,
+            modelId,
+            promptFamily: sakuraMt.resolvePromptFamily?.(modelId)
+                || ( /galtransl/i.test(modelId) ? 'galtransl' : 'sakura'),
             glossaryTerms,
             glossary: p.glossary,
             nameMap: p.nameMap,
@@ -267,6 +273,7 @@ async function runSakuraTranslateBody(payload = {}) {
             smartTranslateFaithfulTone: p.smartTranslateFaithfulTone || p.faithfulTone,
             applyNsfwLexicon: p.applyNsfwLexicon,
             presetId: p.presetId || p.activePresetId,
+            castNames: Array.isArray(p.castNames) ? p.castNames : [],
             timeoutMs: chunkTimeoutMs,
             signal: p.signal,
             dryRun,

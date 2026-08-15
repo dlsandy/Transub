@@ -1,49 +1,13 @@
 /**
- * Unit-ish checks for engine log noise filtering (no Electron runtime needed).
- * Patterns mirrored from electron/engine-bridge.js — keep in sync.
+ * Unit checks for electron/engine-log-filter.js
  */
 const assert = require('assert');
-const fs = require('fs');
 const path = require('path');
-
-const ENGINE_LOG_DROP_PATTERNS = [
-    /^\s*\d+%\|/,
-    /rtf_avg:/i,
-    /\{'load_data':/,
-    /Both `max_new_tokens`/,
-    /Token indices sequence length is longer/,
-    /Recommended: pip install sacremoses/,
-    /Loading weights:\s+\d+%/,
-    /Notice: ffmpeg is not installed/i,
-    /download models from model hub/i,
-    /trust_remote_code:/i,
-    /scope_map:/i,
-    /excludes:/i,
-    /Loading ckpt:/i,
-    /Loading pretrained params from/i,
-    /Building VAD model/i,
-    /funasr version:/i,
-    /INFO:\s+\S+\s+-\s+"GET \/v1\/(?:jobs|health|capabilities)/i,
-    /WARNING:.*max_new_tokens/i,
-];
-
-function stripAnsi(text) {
-    // eslint-disable-next-line no-control-regex -- strip ANSI CSI sequences from engine logs
-    return String(text || '').replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '');
-}
-
-function normalizeEngineLogLine(line) {
-    return stripAnsi(line).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function shouldDropEngineLogLine(line) {
-    const text = normalizeEngineLogLine(line);
-    if (!text) return true;
-    if (!/[A-Za-z\u4e00-\u9fff]/.test(text) && /[|.\d%-]+/.test(text) && text.length < 80) {
-        return true;
-    }
-    return ENGINE_LOG_DROP_PATTERNS.some((re) => re.test(text));
-}
+const {
+    shouldDropEngineLogLine,
+    friendlyEngineError,
+    ENGINE_LOG_DROP_PATTERNS,
+} = require('../electron/engine-log-filter');
 
 describe('engine-log-filter', () => {
     it('drops tqdm / rtf / transformers noise', () => {
@@ -82,11 +46,23 @@ describe('engine-log-filter', () => {
         assert.strictEqual(shouldDropEngineLogLine('Traceback (most recent call last):'), false);
     });
 
-    it('keeps filter symbols present in engine-bridge source', () => {
+    it('exposes drop patterns and friendly errors', () => {
+        assert.ok(Array.isArray(ENGINE_LOG_DROP_PATTERNS) && ENGINE_LOG_DROP_PATTERNS.length > 5);
+        assert.ok(friendlyEngineError('').includes('失败'));
+        assert.ok(friendlyEngineError('aborted').includes('中止'));
         const bridgePath = path.join(__dirname, '..', 'electron', 'engine-bridge.js');
-        const source = fs.readFileSync(bridgePath, 'utf8');
-        assert.ok(source.includes('ENGINE_LOG_DROP_PATTERNS'));
+        const source = require('fs').readFileSync(bridgePath, 'utf8');
+        assert.ok(source.includes("require('./engine-log-filter')"));
         assert.ok(source.includes('shouldDropEngineLogLine'));
         assert.ok(source.includes('flushEngineLogRepeats'));
+    });
+
+    it('friendly MT-missing message keeps clean model id', () => {
+        const raw = '未安装翻译模型 opus-mt-ja-zh（语种 ja）。请在「设置 → 环境 / 模型」下载后再开始生成。';
+        const out = friendlyEngineError(raw);
+        assert.ok(out.includes('opus-mt-ja-zh'));
+        assert.ok(!out.includes('opus-mt-ja-zh（语种'));
+        assert.ok(!out.includes('原始错误'));
+        assert.ok(out.includes('*.src.partial'));
     });
 });

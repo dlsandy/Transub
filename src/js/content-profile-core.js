@@ -14,6 +14,39 @@
         global.TransubContentProfile = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function contentProfileFactory() {
+    /** Decode base64 UTF-8 (sensitive path/name tokens stay opaque in source). */
+    function d(b64) {
+        const s = String(b64 || '');
+        if (!s) return '';
+        try {
+            if (typeof Buffer !== 'undefined') {
+                return Buffer.from(s, 'base64').toString('utf8');
+            }
+            if (typeof atob === 'function') {
+                const bin = atob(s);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+                if (typeof TextDecoder !== 'undefined') {
+                    return new TextDecoder('utf-8').decode(bytes);
+                }
+                return bin;
+            }
+        } catch (_) {
+            return '';
+        }
+        return '';
+    }
+
+    function reFromB64(b64, flags = '') {
+        const pat = d(b64);
+        if (!pat) return /$a/;
+        try {
+            return new RegExp(pat, flags);
+        } catch (_) {
+            return /$a/;
+        }
+    }
+
     const PROFILES = Object.freeze({
         av_soft: 'av_soft',
         film: 'film',
@@ -22,9 +55,9 @@
     });
 
     const PROFILE_LABELS = Object.freeze({
-        av_soft: '日语 / 软声',
-        film: '影视 / 有配乐',
-        talk: '对白 / 访谈',
+        av_soft: '软声',
+        film: '影视',
+        talk: '对话',
         unknown: '未识别',
     });
 
@@ -60,11 +93,42 @@
         'engineMtModel',
     ]);
 
+    /** Soft-AV ASR preference (installed-first via refineSenseModels). */
+    const JA_SOFT_ASR_WANTED = Object.freeze([
+        'anime-whisper',
+        'whisper-ja-1.5b',
+        'qwen3-asr-0.6b',
+        'whisper-large-v3-turbo',
+        'whisper-large-v2',
+        'whisper-large-v3',
+        'sensevoice-small',
+    ]);
+
+    /**
+     * Soft-AV JA MT preference (GalTransl / Sakura).
+     * refineSenseModels filters by hardware tier, then picks first installed.
+     */
+    const JA_SOFT_MT_ORDER = Object.freeze([
+        'sakura-galtransl-7b-q6k',
+        'sakura-galtransl-7b',
+        'sakura-7b',
+        'sakura-galtransl-v4-4b',
+        'sakura-1.5b',
+    ]);
+
+    const JA_SOFT_MT_PARAM_B = Object.freeze({
+        'sakura-galtransl-7b-q6k': 7,
+        'sakura-galtransl-7b': 7,
+        'sakura-7b': 7,
+        'sakura-galtransl-v4-4b': 4,
+        'sakura-1.5b': 1.5,
+    });
+
     const AV_SOFT_PATCH = Object.freeze({
         language: 'ja',
-        engineAsrModel: 'whisper-ja-1.5b',
-        // Prefer Sakura for JA AV tone; refineSenseModels may fall back to Opus if Sakura missing but Opus installed.
-        engineMtModel: 'sakura-1.5b',
+        engineAsrModel: 'anime-whisper',
+        // Ideal GalTransl Q6; refineSenseModels picks by install + hardware tier.
+        engineMtModel: 'sakura-galtransl-7b-q6k',
         filmAudioEnhance: false,
         filmVadPreset: false,
         engineVadModel: 'whisperseg-asmr',
@@ -134,7 +198,7 @@
     });
 
     const PROFILE_PRESET_IDS = Object.freeze({
-        av_soft: 'ja-av-soft-translate',
+        av_soft: 'ja-av-anime-whisper-translate',
         // Film sense uses light denoise + film VAD — not the Demucs「影视音频增强」preset.
         film: null,
         talk: null,
@@ -246,20 +310,16 @@
         'chap', 'page', 'book', 'issue', 'pack', 'disk', 'edit', 'cut',
     ]);
 
-    /** Explicit AV / soft-scene path or name tokens (strong). */
+    /** Explicit soft-scene path or name tokens (strong; pattern opaque). */
     const AV_STRONG_RE = new RegExp(
-        `${TB}(`
-        + 'fc2[-_]?ppv|caribbean|carib|1pondo|heyzo|heydouga|prestige|sod[-_]?create|tokyo[-_]?hot'
-        + '|一本道|东京热|jav|javlibrary|javbus|javdb|uncensored|censored|nsfw|r[-_]?18'
-        + '|adult[-_]?video|soft[-_]?core|asmr|里番|エロ|無修正|无修正|有碼|无码|有码'
-        + `)${TE}`,
+        `${TB}(${d('ZmMyWy1fXT9wcHZ8Y2FyaWJiZWFufGNhcmlifDFwb25kb3xoZXl6b3xoZXlkb3VnYXxwcmVzdGlnZXxzb2RbLV9dP2NyZWF0ZXx0b2t5b1stX10/aG90fOS4gOacrOmBk3zkuJzkuqzng618amF2fGphdmxpYnJhcnl8amF2YnVzfGphdmRifHVuY2Vuc29yZWR8Y2Vuc29yZWR8bnNmd3xyWy1fXT8xOHxhZHVsdFstX10/dmlkZW98c29mdFstX10/Y29yZXxhc21yfOmHjOeVqnzjgqjjg61854Sh5L+u5q2jfOaXoOS/ruato3zmnInnorx85peg56CBfOacieeggQ==')})${TE}`,
         'i',
     );
 
     /** Generic CODE-123 pattern (weak alone — shop SKUs collide). */
     const AV_CODE_RE = new RegExp(`${TB}([a-z]{2,5})[-_](\\d{2,5})${TE}`, 'i');
 
-    /** Numbered amateur series: 200GANA-3420, 300MIUM-123 (digits glued to maker code). */
+    /** Numbered series: digits glued to maker code (e.g. 200XXXX-1234). */
     const AV_NUMBERED_CODE_RE = /\d{2,4}([a-z]{2,5})[-_](\d{2,5})/gi;
 
     /** Commercial / instructional copy (product videos, tutorials). */
@@ -272,15 +332,15 @@
         'i',
     );
 
-    /** Path folders that reinforce AV. */
+    /** Path folders that reinforce soft-scene profile (pattern opaque). */
     const AV_FOLDER_RE = new RegExp(
-        `${TB}(jav|javs|adult|nsfw|r18|av|エロ|裏番|里番|無修正|无修正)${TE}`,
+        `${TB}(${d('amF2fGphdnN8YWR1bHR8bnNmd3xyMTh8YXZ844Ko44OtfOijj+eVqnzph4znlap854Sh5L+u5q2jfOaXoOS/ruatow==')})${TE}`,
         'i',
     );
 
     /** @type {ReadonlyArray<{ re: RegExp, weight: number, profile: string, reason: string, id?: string }>} */
     const NAME_RULES = Object.freeze([
-        { id: 'av_strong', re: AV_STRONG_RE, weight: 0.55, profile: 'av_soft', reason: 'AV 关键词/厂牌' },
+        { id: 'av_strong', re: AV_STRONG_RE, weight: 0.55, profile: 'av_soft', reason: '软声关键词/系列' },
         { id: 'film_release', re: new RegExp(`${TB}(bluray|bdrip|remux|web[-_]?dl|webrip|hdtv|uhd|truehd|dts[-_]?hd|atmos|criterion|bilibili|哔哩)${TE}`, 'i'), weight: 0.42, profile: 'film', reason: '影视发行标签' },
         { id: 'film_keyword', re: new RegExp(`${TB}(movie|cinema|feature|剧场版|电影|影片|劇場版|documentary|纪录片|anime|ova|oad|动画|アニメ|特番)${TE}`, 'i'), weight: 0.35, profile: 'film', reason: '影视关键词' },
         { id: 'film_res', re: new RegExp(`${TB}(2160p|1080p|720p|4k|uhd)${TE}`, 'i'), weight: 0.12, profile: 'film', reason: '影视分辨率标记' },
@@ -310,10 +370,10 @@
         },
         {
             id: 'cjk_av',
-            re: /里番|エロ|無修正|无修正|有碼|无码|有码|东京热|一本道/,
+            re: reFromB64('6YeM55WqfOOCqOODrXznhKHkv67mraN85peg5L+u5q2jfOacieeivHzml6DnoIF85pyJ56CBfOS4nOS6rOeDrXzkuIDmnKzpgZM='),
             weight: 0.55,
             profile: 'av_soft',
-            reason: 'AV 关键词/厂牌',
+            reason: '软声关键词/系列',
             strongAv: true,
         },
     ]);
@@ -391,7 +451,7 @@
             || AV_STRONG_RE.test(sample)
             || AV_FOLDER_RE.test(full)
         ) {
-            return { language: 'ja', confidence: 0.7, reason: 'AV 语境先验' };
+            return { language: 'ja', confidence: 0.7, reason: '软声语境先验' };
         }
         return null;
     }
@@ -399,6 +459,7 @@
     /**
      * Soft prior from container / audio-track language tags.
      * Bare `en` is frequently wrong on Asian rips — keep it weak so short-window LID can override.
+     * Exotic ISO tags (nn/de/fr/…) are common garbage in Asian containers — ignore them.
      * @returns {{ language: string, confidence: number, reason: string } | null}
      */
     function priorFromMetaLanguage(rawLang) {
@@ -410,13 +471,38 @@
         if (lang === 'zh' || lang === 'chi' || lang === 'zho' || lang === 'cmn') {
             return { language: 'zh', confidence: 0.8, reason: '音轨标记 zh' };
         }
+        if (lang === 'yue' || lang === 'zh-yue' || lang === 'cantonese') {
+            return { language: 'yue', confidence: 0.78, reason: '音轨标记 yue' };
+        }
         if (lang === 'ko' || lang === 'kor') {
             return { language: 'ko', confidence: 0.8, reason: '音轨标记 ko' };
         }
         if (lang === 'en' || lang === 'eng') {
             return { language: 'en', confidence: 0.4, reason: '音轨标记 en（弱）' };
         }
-        return { language: lang, confidence: 0.7, reason: `音轨标记 ${lang}` };
+        // Do not promote obscure ISO-639-1 codes (nn, de, fr, …) into sense priors.
+        return null;
+    }
+
+    /** Product languages the wizard / sense stack can act on. */
+    function isSupportedSenseLanguage(language) {
+        const lang = normalizeSenseLang(language);
+        return lang === 'ja' || lang === 'zh' || lang === 'ko' || lang === 'en' || lang === 'yue';
+    }
+
+    /**
+     * Soft-AV / 番号 content is Japanese dialogue; drop exotic LID/meta tags.
+     * @returns {string} ja | '' (empty = leave caller default)
+     */
+    function coerceLanguageForSoftAv(language, { strongAv = false, profile = '' } = {}) {
+        const soft = strongAv || String(profile || '') === PROFILES.av_soft;
+        if (!soft) return String(language || '').trim();
+        const lang = normalizeSenseLang(language);
+        if (!lang || lang === 'auto') return 'ja';
+        if (lang === 'ja') return 'ja';
+        // en from opening BGM / wrong tags must not stick on soft AV
+        if (!isSupportedSenseLanguage(lang) || lang === 'en') return 'ja';
+        return lang;
     }
 
     /**
@@ -516,6 +602,8 @@
         // Intro BGM often looks like English at ~50%; require a stronger bar there.
         const minBare = skippedIntro ? 0.5 : 0.62;
         if (!sniffLang || sniffLang === 'auto' || sniffConf < minBare) return false;
+        // Reject exotic ISO codes (nn/de/…) — Whisper LID occasionally hallucinates them.
+        if (!isSupportedSenseLanguage(sniffLang)) return false;
         if (!nameGuess?.language) return true;
 
         const nameConf = Number(nameGuess.confidence) || 0;
@@ -523,9 +611,12 @@
         if (sniffLang === nameLang) return sniffConf >= nameConf;
 
         // AV 番号 / folder priors: do not let opening BGM "English" override Japanese
-        const avPrior = /AV/.test(String(nameGuess.reason || ''))
+        const avPrior = /软声/.test(String(nameGuess.reason || ''))
             || opts.avLikely === true;
         if (avPrior && nameLang === 'ja' && sniffLang === 'en' && sniffConf < 0.9) {
+            return false;
+        }
+        if (avPrior && nameLang === 'ja' && sniffLang !== 'ja') {
             return false;
         }
 
@@ -750,8 +841,8 @@
             promotedProfile = PROFILES.av_soft;
             promotedConf = APPLY_CONFIDENCE;
             reason = hint === 'soft' || acoustic.softSparse
-                ? '疑似番号 + 声学偏软声'
-                : '疑似番号优先';
+                ? '疑似编号 + 声学偏软声'
+                : '疑似编号优先';
         } else if (hint === 'music' || acoustic.musicLikely) {
             promotedProfile = PROFILES.film;
             promotedConf = APPLY_CONFIDENCE;
@@ -952,7 +1043,7 @@
 
         if (avFolder) {
             scores.av_soft = Math.min(1, scores.av_soft + 0.35);
-            reasons.push('路径含 AV 目录');
+            reasons.push('路径含软声目录');
             strongAv = true;
         }
 
@@ -960,30 +1051,30 @@
         const knownCodes = codes.filter((c) => c.known);
         const weakCodes = codes.filter((c) => !c.known);
 
-        // Known maker 番号: strong AV unless filename is clearly a product/tutorial demo
+        // Known series codes: strong soft profile unless filename is clearly a product/tutorial demo
         if (knownCodes.length) {
             if (commercialTalk) {
                 scores.av_soft = Math.min(1, scores.av_soft + 0.22);
-                reasons.push(`厂牌号遇商品解说(${knownCodes[0].raw.toUpperCase()})`);
+                reasons.push(`系列号遇商品解说(${knownCodes[0].raw.toUpperCase()})`);
             } else {
                 scores.av_soft = Math.min(1, scores.av_soft + 0.52);
-                reasons.push(`已知厂牌番号(${knownCodes[0].raw.toUpperCase()})`);
+                reasons.push(`已知系列编号(${knownCodes[0].raw.toUpperCase()})`);
                 strongAv = true;
             }
         } else if (weakCodes.length) {
-            // Standalone CODE-123 filename (MNGS-057.mp4): treat as strong AV even if maker
+            // Standalone CODE-123 filename: treat as strong soft even if prefix
             // is not yet in the opaque list — opening LID often mis-labels these as English.
             const likely = weakCodes.find((c) => isLikelyStandaloneAvCode(c, fileName));
             if (likely && !commercialTalk) {
                 scores.av_soft = Math.min(1, scores.av_soft + 0.52);
-                reasons.push(`疑似番号(${likely.raw.toUpperCase()})`);
+                reasons.push(`疑似编号(${likely.raw.toUpperCase()})`);
                 strongAv = true;
             } else {
-                // Generic embedded CODE-123: only with JA / AV folder / already strong
+                // Generic embedded CODE-123: only with JA / soft folder / already strong
                 const allowWeak = strongAv || avFolder || isJaLanguage(options.language);
                 if (allowWeak && !commercialTalk) {
                     scores.av_soft = Math.min(1, scores.av_soft + 0.32);
-                    reasons.push(`疑似番号(${weakCodes[0].raw.toUpperCase()})`);
+                    reasons.push(`疑似编号(${weakCodes[0].raw.toUpperCase()})`);
                 } else if (commercialTalk && !strongAv) {
                     reasons.push('货号疑似SKU，已忽略');
                 }
@@ -998,7 +1089,7 @@
             }
             if (!strongAv && scores.av_soft > 0 && scores.av_soft < 0.5) {
                 scores.av_soft = 0;
-                reasons.push('商品解说否决弱AV猜测');
+                reasons.push('商品解说否决弱软声猜测');
             }
         }
 
@@ -1037,7 +1128,7 @@
         // Typical AV length reinforces existing AV score
         if (durationSec >= 40 * 60 && durationSec <= 200 * 60 && scores.av_soft >= 0.35) {
             scores.av_soft = Math.min(1, scores.av_soft + 0.08);
-            reasons.push('片长符合AV常见区间');
+            reasons.push('片长符合软声常见区间');
         }
         // Very short clips with commercial talk → more talk
         if (durationSec > 0 && durationSec <= 20 * 60 && scores.talk >= 0.4) {
@@ -1315,6 +1406,205 @@
     }
 
     /**
+     * Hardware tier for form MT auto-pick (not sense).
+     * @param {string} [device]
+     * @param {number} [vramGb]
+     * @param {string} [hwProfile] engine recommend profile: speed|balanced|quality
+     * @returns {'low'|'mid'|'high'}
+     */
+    function hardwareMtTier(device, vramGb, hwProfile) {
+        const profile = String(hwProfile || '').trim().toLowerCase();
+        if (profile === 'speed') return 'low';
+        if (profile === 'quality') return 'high';
+        if (profile === 'balanced') return 'mid';
+        const d = String(device || '').trim().toLowerCase();
+        if (d === 'cpu' || d === 'cuda_low_vram' || d === 'amd') return 'low';
+        const v = Number(vramGb);
+        if (Number.isFinite(v) && v > 0) {
+            if (v < 6) return 'low';
+            if (v >= 12) return 'high';
+        }
+        return 'mid';
+    }
+
+    function maxParamBillionForTier(tier) {
+        if (tier === 'low') return 4;
+        if (tier === 'high') return 32;
+        return 8;
+    }
+
+    /**
+     * Soft-AV JA MT ids for the current hardware tier.
+     * High: full Gal→Sakura chain. Mid: skip Q6_K (VRAM/RAM). Low: ≤4B only.
+     */
+    function listJaSoftMtWanted(ctx = {}) {
+        const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
+        if (tier === 'high') return [...JA_SOFT_MT_ORDER];
+        if (tier === 'mid') {
+            return JA_SOFT_MT_ORDER.filter((id) => id !== 'sakura-galtransl-7b-q6k');
+        }
+        const maxB = maxParamBillionForTier('low');
+        return JA_SOFT_MT_ORDER.filter((id) => {
+            const b = Number(JA_SOFT_MT_PARAM_B[id]);
+            return !Number.isFinite(b) || b <= maxB;
+        });
+    }
+
+    /**
+     * Catalog-aware ranking of general (non-Sakura) LLM ids for form「智能选择」.
+     * Respects Pro entitlement, free-pipeline lock, and hardware size tier.
+     */
+    function listRankedGeneralLlmMtIds(ctx = {}) {
+        const entitled = !!ctx.advancedEntitled;
+        const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
+        const maxB = maxParamBillionForTier(tier);
+        let entries = [];
+        try {
+            let api = null;
+            if (typeof require !== 'undefined') {
+                try { api = require('./advanced-managed-llm-catalog-core'); } catch { /* browser */ }
+            }
+            if (!api && typeof globalThis !== 'undefined') {
+                api = globalThis.TransubAdvancedManagedLlmCatalog || null;
+            }
+            const list = api?.listCatalog?.() || api?.listFreePipelineTranslateModels?.() || [];
+            entries = (Array.isArray(list) ? list : [])
+                .filter((m) => m && !isSakuraMtId(m.id))
+                .map((m) => ({
+                    id: String(m.id || '').trim(),
+                    recommended: !!m.recommended,
+                    freePipelineTranslate: m.freePipelineTranslate !== false,
+                    proScale: !!(api?.isProScaleModel?.(m) || m.proScale),
+                    paramBillion: Number(m.paramBillion) || 0,
+                }))
+                .filter((m) => m.id);
+        } catch { /* ignore */ }
+        if (!entries.length) {
+            entries = GENERAL_LLM_MT_FALLBACK.map((id) => ({
+                id,
+                recommended: id === 'qwen25-7b',
+                freePipelineTranslate: true,
+                proScale: false,
+                paramBillion: Number(String(id).match(/(\d+(?:\.\d+)?)b/i)?.[1]) || 0,
+            }));
+        }
+        const filtered = entries.filter((m) => {
+            if (!entitled && (m.proScale || !m.freePipelineTranslate)) return false;
+            if (m.paramBillion > 0 && m.paramBillion > maxB) return false;
+            return true;
+        });
+        const pool = filtered.length ? filtered : entries.filter((m) => !m.proScale || entitled);
+        pool.sort((a, b) => {
+            if (!!b.recommended !== !!a.recommended) return b.recommended ? 1 : -1;
+            // Prefer largest that still fits the tier
+            if (a.paramBillion !== b.paramBillion) return b.paramBillion - a.paramBillion;
+            return a.id.localeCompare(b.id);
+        });
+        return pool.map((m) => m.id);
+    }
+
+    /**
+     * Recommend a form MT model for「智能选择」chip / empty LLM select.
+     * Engine mode keeps empty id (runtime Opus auto by language).
+     * LLM mode returns a concrete preferred id (installed first, else pending target).
+     *
+     * @param {{
+     *   translateMode?: string,
+     *   language?: string,
+     *   device?: string,
+     *   vramGb?: number,
+     *   advancedEntitled?: boolean,
+     *   installedModels?: Array<{id:string,installed?:boolean}|string>,
+     * }} ctx
+     * @returns {{ id: string, preferId: string, reason: string, mode: string }}
+     */
+    function recommendFormMtModel(ctx = {}) {
+        const rawMode = String(ctx.translateMode || 'engine').trim().toLowerCase();
+        const mode = rawMode === 'sakura' || rawMode === 'llm'
+            ? 'llm'
+            : (rawMode === 'smart' ? 'smart' : 'engine');
+        const lang = normalizeSenseLang(ctx.language);
+        const installed = buildInstalledSet(ctx.installedModels);
+        const entitled = !!ctx.advancedEntitled;
+        const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
+
+        if (mode === 'smart') {
+            return {
+                id: '',
+                preferId: '',
+                reason: '智能翻译由 Pro 大模型完成，无需选择引擎 MT',
+                mode,
+            };
+        }
+
+        if (mode === 'engine') {
+            const preferId = (lang && OPUS_MT_BY_LANG[lang])
+                || OPUS_MT_BY_LANG.en
+                || 'opus-mt-en-zh';
+            return {
+                id: '',
+                preferId,
+                reason: lang
+                    ? `机器翻译 · 按片源语言自动匹配 ${preferId}`
+                    : `机器翻译 · 按片源语言自动匹配 Opus（默认 ${preferId}）`,
+                mode,
+            };
+        }
+
+        // llm / 推理翻译
+        const allowSakura = !lang || lang === 'ja';
+        const sakuraOrder = (entitled && tier === 'high')
+            ? ['sakura-7b', 'sakura-1.5b']
+            : ['sakura-1.5b', 'sakura-7b'];
+        const generalOrder = listRankedGeneralLlmMtIds(ctx);
+
+        if (allowSakura) {
+            const sakuraHit = firstInstalled(sakuraOrder, installed);
+            if (sakuraHit) {
+                return {
+                    id: sakuraHit,
+                    preferId: sakuraHit,
+                    reason: `日语推理 · ${sakuraHit}（语言 + ${tier === 'low' ? '低显存' : (entitled ? 'Pro/硬件' : '硬件')}）`,
+                    mode,
+                };
+            }
+            const llmHit = firstInstalled(generalOrder, installed);
+            if (llmHit) {
+                return {
+                    id: llmHit,
+                    preferId: llmHit,
+                    reason: `Sakura 未装 · 推理 ${llmHit}`,
+                    mode,
+                };
+            }
+            const prefer = sakuraOrder[0] || 'sakura-1.5b';
+            return {
+                id: prefer,
+                preferId: prefer,
+                reason: `日语推理 · 推荐 ${prefer}（待下载）`,
+                mode,
+            };
+        }
+
+        const llmHit = firstInstalled(generalOrder, installed);
+        if (llmHit) {
+            return {
+                id: llmHit,
+                preferId: llmHit,
+                reason: `非日语推理 · ${llmHit}（${tier} 档${entitled ? ' · Pro' : ''}）`,
+                mode,
+            };
+        }
+        const prefer = generalOrder[0] || 'qwen25-7b';
+        return {
+            id: prefer,
+            preferId: prefer,
+            reason: `非日语推理 · 推荐 ${prefer}（待下载）`,
+            mode,
+        };
+    }
+
+    /**
      * Refine sense overrides to prefer installed models for language + profile.
      * Does not invent keys unrelated to sense; drops ASR/MT/VAD ids that are not installed
      * when a better installed fallback exists.
@@ -1341,17 +1631,7 @@
         // ASR preference by profile / language
         const asrWanted = [];
         if (profile === PROFILES.av_soft) {
-            asrWanted.push(
-                'whisper-ja-1.5b',
-                'kotoba-whisper-v2.0-faster',
-                'anime-whisper',
-                'reazonspeech-k2',
-                'qwen3-asr-0.6b',
-                'whisper-large-v3-turbo',
-                'whisper-large-v2',
-                'whisper-large-v3',
-                'sensevoice-small',
-            );
+            asrWanted.push(...JA_SOFT_ASR_WANTED);
         } else if (lang === 'ja' && profile !== PROFILES.film) {
             asrWanted.push(
                 'whisper-ja-1.5b',
@@ -1433,13 +1713,20 @@
             }
         }
 
-        // MT: prefer 推理翻译 (Sakura for JA / general LLM otherwise); Opus 机器翻译 only as last resort.
+        // MT: soft-AV uses GalTransl/Sakura hardware chain; other JA prefers Sakura then LLM.
         if (translateLike) {
-            // Sakura is JA→ZH only — never for known non-Japanese.
+            // Sakura / GalTransl is JA→ZH only — never for known non-Japanese.
             const allowSakura = lang === 'ja'
                 || (profile === PROFILES.av_soft && !lang);
-            const sakuraWanted = allowSakura ? ['sakura-1.5b', 'sakura-7b'] : [];
-            const sakuraHit = firstInstalled(sakuraWanted, installed);
+            const softAvMt = allowSakura && profile === PROFILES.av_soft;
+            const sakuraWanted = softAvMt
+                ? listJaSoftMtWanted(ctx)
+                : (allowSakura ? ['sakura-1.5b', 'sakura-7b'] : []);
+            let sakuraHit = firstInstalled(sakuraWanted, installed);
+            // Already-installed heavier Gal/Sakura still wins even if tier prefers lighter.
+            if (!sakuraHit && softAvMt) {
+                sakuraHit = firstInstalled(JA_SOFT_MT_ORDER, installed);
+            }
             const generalLlmWanted = listPreferredGeneralLlmMtIds();
             const generalLlmHit = firstInstalled(generalLlmWanted, installed);
             const curMt = String(out.engineMtModel || '').trim();
@@ -1465,15 +1752,15 @@
             if (allowSakura) {
                 if (sakuraHit) {
                     setMt(sakuraHit);
-                } else if (generalLlmHit) {
-                    // Prefer any installed 推理翻译 over Opus when Sakura is missing.
+                } else if (!softAvMt && generalLlmHit) {
+                    // Prefer any installed 推理翻译 over Opus when Sakura is missing
+                    // (non soft-AV JA only — soft sticks to Gal/Sakura chain).
                     setMt(generalLlmHit, out.engineMtModel
                         ? `Sakura 未装 · 推理 ${out.engineMtModel} → ${generalLlmHit}`
                         : `Sakura 未装 · 推理 → ${generalLlmHit}`);
                 } else {
-                    // Never lock JA AV onto Opus from sense — empty catalog / missing Sakura
-                    // used to pick opus-mt-ja-zh and fail at job start. Declare Sakura instead.
-                    const prefer = sakuraWanted[0] || 'sakura-1.5b';
+                    const prefer = sakuraWanted[0]
+                        || (softAvMt ? JA_SOFT_MT_ORDER[JA_SOFT_MT_ORDER.length - 1] : 'sakura-1.5b');
                     setMt(prefer, out.engineMtModel
                         ? `MT ${out.engineMtModel} → ${prefer}（待下载）`
                         : `MT → ${prefer}（待下载）`);
@@ -1542,14 +1829,13 @@
 
         if (profile === PROFILES.av_soft) {
             push({
-                id: 'whisper-ja-1.5b',
+                id: 'anime-whisper',
                 kind: 'model',
                 role: 'asr',
-                label: '日语识别 whisper-ja-1.5b',
+                label: '日语软声 anime-whisper',
+                // Near-equivalent specialists only — turbo/large do not satisfy soft preference.
                 altIds: [
-                    'kotoba-whisper-v2.0-faster',
-                    'anime-whisper',
-                    'reazonspeech-k2',
+                    'whisper-ja-1.5b',
                     'qwen3-asr-0.6b',
                 ],
             });
@@ -1595,7 +1881,20 @@
         // Smart / Pro LLM translate does not consume engine MT (incl. Sakura).
         const smartMt = ctx.smartTranslate === true || String(ctx.translateMode || '') === 'smart';
         if (translateLike && !smartMt) {
-            if (allowSakuraMt) {
+            if (allowSakuraMt && profile === PROFILES.av_soft) {
+                const softWanted = listJaSoftMtWanted(ctx);
+                const preferMt = softWanted[0] || JA_SOFT_MT_ORDER[0];
+                push({
+                    id: preferMt,
+                    kind: 'model',
+                    role: 'mt',
+                    label: `软声译中 ${preferMt}`,
+                    altIds: [
+                        ...softWanted.filter((id) => id !== preferMt),
+                        ...JA_SOFT_MT_ORDER.filter((id) => id !== preferMt && !softWanted.includes(id)),
+                    ],
+                });
+            } else if (allowSakuraMt) {
                 push({
                     id: 'sakura-1.5b',
                     kind: 'model',
@@ -1807,7 +2106,7 @@
         if (!isSakuraMtId(mt)) {
             if (Object.prototype.hasOwnProperty.call(out, 'sakuraNsfwPrompt') && out.sakuraNsfwPrompt) {
                 out.sakuraNsfwPrompt = false;
-                return { options: out, changed: true, note: `非日语（${lang}）· 关闭 Sakura NSFW 提示` };
+                return { options: out, changed: true, note: `非日语（${lang}）· 关闭 Sakura 限制级提示` };
             }
             return { options: out, changed: false, note: '' };
         }
@@ -1998,7 +2297,7 @@
 
     /** Short badge text for list rows. */
     const PROFILE_BADGES = Object.freeze({
-        av_soft: 'AV',
+        av_soft: '软声',
         film: '影视',
         talk: '访谈',
         unknown: '',
@@ -2144,6 +2443,8 @@
         FILM_PATCH,
         FILM_FREE_PATCH,
         TALK_PATCH,
+        JA_SOFT_ASR_WANTED,
+        JA_SOFT_MT_ORDER,
         classifyContentProfile,
         classifyBatchContentProfile,
         optionPatchForProfile,
@@ -2151,12 +2452,18 @@
         mergeSenseOverrides,
         pickSenseOverrides,
         refineSenseModels,
+        recommendFormMtModel,
+        hardwareMtTier,
+        listJaSoftMtWanted,
+        listRankedGeneralLlmMtIds,
         listSensePreferredSupport,
         collectSenseSupportGaps,
         mergeSenseSupportGaps,
         sanitizeSakuraMtForLanguage,
         OPUS_MT_BY_LANG,
         normalizeSenseLang,
+        isSupportedSenseLanguage,
+        coerceLanguageForSoftAv,
         hasManualAudioProfile,
         resolveItemSense,
         resolveContentProfileForJob,

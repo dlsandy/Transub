@@ -251,6 +251,9 @@ deferredBridges.installLazyRoutes({
     'transwithai-check-engine-update': 'transwithai',
     'transwithai-generate-subtitles': 'transwithai',
     'transwithai-cancel': 'transwithai',
+    'transub-live-batch-append': 'liveBatch',
+    'transub-live-batch-skip': 'liveBatch',
+    'transub-live-batch-update-overrides': 'liveBatch',
     'transub-engine-validate': 'engine',
     'transub-engine-bundled-path': 'engine',
     'transub-engine-list-models': 'engine',
@@ -272,11 +275,16 @@ deferredBridges.installLazyRoutes({
     'transub-engine-generate-subtitles': 'engine',
     'transub-engine-translate-cues': 'engine',
     'transub-engine-cancel': 'engine',
+    'transub-engine-resume-job': 'engine',
+    'transub-engine-job-checkpoint': 'engine',
+    'transub-engine-export-diagnostics': 'engine',
     'transub-engine-open-latest-log': 'engine',
     'transub-engine-get-log-path': 'engine',
     'transub-engine-save-options': 'engine',
     'transub-generate-subtitles': 'engine',
     'transub-compute-task-status': 'engine',
+    'transub-compute-task-force-release': 'engine',
+    'transub-compute-task-cancel': 'engine',
     'transub-transcribe-range': 'engine',
     'transub-read-subtitle-meta': 'extensions',
     'transub-write-subtitle-meta': 'extensions',
@@ -322,6 +330,29 @@ deferredBridges.installLazyRoutes({
     'transwithai-import-preset': 'extensions',
     'transwithai-get-task-history': 'extensions',
     'transwithai-clear-task-history': 'extensions',
+    'transub-library-status': 'extensions',
+    'transub-library-list': 'extensions',
+    'transub-library-get-media': 'extensions',
+    'transub-library-set-active': 'extensions',
+    'transub-library-open-version': 'extensions',
+    'transub-library-preview-version': 'extensions',
+    'transub-library-load-version-cues': 'extensions',
+    'transub-library-diff': 'extensions',
+    'transub-library-set-status': 'extensions',
+    'transub-library-delete-version': 'extensions',
+    'transub-library-delete-media': 'extensions',
+    'transub-library-set-note': 'extensions',
+    'transub-library-set-ab-tag': 'extensions',
+    'transub-library-prepare-mt-train': 'extensions',
+    'transub-library-export-pack': 'extensions',
+    'transub-library-export-tags': 'extensions',
+    'transub-library-export-corpus': 'extensions',
+    'transub-library-prepare-rerun': 'extensions',
+    'transub-library-set-media-path': 'extensions',
+    'transub-library-rename-media': 'extensions',
+    'transub-library-suggest-media': 'extensions',
+    'transub-library-auto-link-media': 'extensions',
+    'transub-library-auto-link-media-batch': 'extensions',
     'transub-clear-transcript-cache': 'extensions',
     'transub-find-kept-transcript': 'extensions',
     'transub-pin-kept-transcript': 'extensions',
@@ -337,6 +368,10 @@ deferredBridges.installLazyRoutes({
     'transub-delete-subtitle-files': 'extensions',
     'transub-scan-subtitle-qc': 'extensions',
     'transub-apply-subtitle-postprocess': 'extensions',
+    'transub-compact-pure-interjections': 'extensions',
+    'transub-merge-bilingual-subtitles': 'extensions',
+    'transub-remove-noise-pair': 'extensions',
+    'transub-list-system-fonts': 'extensions',
     'transwithai-list-models': 'extensions',
     'transwithai-validate-model': 'extensions',
     'transub-copy-subtitle-as': 'extensions',
@@ -356,12 +391,16 @@ deferredBridges.installLazyRoutes({
     'transub-open-setup-wizard': 'editorWindow',
     'transub-open-update-window': 'editorWindow',
     'transub-open-about-window': 'editorWindow',
+    'transub-open-subtitle-library': 'editorWindow',
+    'transub-library-start-retranslate': 'editorWindow',
+    'transub-library-start-mt-train': 'editorWindow',
     'transub-open-mt-train': 'editorWindow',
     'transub-is-dev-build': 'editorWindow',
     'transub-mt-train-infer-suggest': 'editorWindow',
     'transub-mt-train-list-history-pairs': 'editorWindow',
     'transub-mt-train-load-history-pair': 'editorWindow',
     'transub-mt-train-load-history-pairs': 'editorWindow',
+    'transub-mt-train-consume-pending-pair': 'editorWindow',
     'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
     'transub-consume-pending-setup-wizard': 'editorWindow',
@@ -449,6 +488,11 @@ deferredBridges.defer('editorWindow', (api) => {
     } catch (err) {
         console.warn('[main] mt-train bridge init failed:', err.message || err);
     }
+});
+
+deferredBridges.defer('liveBatch', (api) => {
+    const { setupLiveBatchBridge } = require('./live-batch-bridge');
+    setupLiveBatchBridge(api);
 });
 
 deferredBridges.defer('engine', (api) => {
@@ -598,6 +642,10 @@ app.on('before-quit', () => {
     try {
         const { closeAllSubtitleEditorWindows } = require('./subtitle-editor-window');
         closeAllSubtitleEditorWindows();
+        try {
+            const { closeSubtitleLibraryWindow } = require('./subtitle-library-window');
+            closeSubtitleLibraryWindow();
+        } catch { /* ignore */ }
     } catch { /* ignore */ }
     try {
         const { stopSubtitleJobs } = require('./transwithai-bridge');

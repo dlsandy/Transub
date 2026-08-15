@@ -1,5 +1,5 @@
 /**
- * Advanced 软件内模型广播（独立选模窗口已并入设置页「大模型设置」）
+ * Advanced 软件内模型广播（独立选模窗口已并入设置页「智能翻译模型」）
  */
 
 /**
@@ -19,7 +19,7 @@ function broadcastManagedModelChanged(payload = {}) {
 
 /** @deprecated 独立窗口已移除；保留空实现以免旧调用方崩溃 */
 function openAdvancedLlmPickWindow() {
-    return { ok: true, removed: true, message: '请在设置 → Pro → 大模型设置内选用模型' };
+    return { ok: true, removed: true, message: '请在设置 → Pro → 智能翻译模型内选用模型' };
 }
 
 function getPickWindow() {

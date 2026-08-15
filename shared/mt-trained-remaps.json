@@ -300,6 +300,1431 @@
       "zhFromB64": "5bCE57K+",
       "zhToB64": "5bCE5LqG",
       "createdAt": "2026-08-06T14:13:38.508Z"
+    },
+    {
+      "id": "tr_msi35isq_e143ab",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "invent_rod/nipple/batch-0807",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44GP44Gz"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "5Lmz5aS0",
+      "createdAt": "2026-08-06T22:26:43.178Z"
+    },
+    {
+      "id": "tr_msi35iss_28cf0d",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "invent_rod/nipple/batch-0807",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5Lmz6aaW"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "5Lmz5aS0",
+      "createdAt": "2026-08-06T22:26:43.180Z"
+    },
+    {
+      "id": "tr_msi35ist_88d607",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "invent_rod/batch-0807",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GX44KT44G9"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-06T22:26:43.181Z"
+    },
+    {
+      "id": "tr_msi35ist_98f386",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "clinical_rod/batch-0807",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KT44G9"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-06T22:26:43.181Z"
+    },
+    {
+      "id": "tr_msi35isy_c77466",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "latin/batch-0807",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KT44Gy44KT"
+      ],
+      "zhFromB64": "aGluIGhpbg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T22:26:43.186Z"
+    },
+    {
+      "id": "tr_msi35it6_9ea257",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "latin/batch-0807",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GR44O8"
+      ],
+      "zhFromB64": "a2F5",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T22:26:43.194Z"
+    },
+    {
+      "id": "tr_msi35ita_d81388",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "latin/batch-0807",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44G244Gv44Gj"
+      ],
+      "zhFromB64": "YnJlYXRoZQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T22:26:43.198Z"
+    },
+    {
+      "id": "tr_msi35itg_c158ac",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "latin/batch-0807",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244Gv44Gj"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T22:26:43.204Z"
+    },
+    {
+      "id": "tr_msi35itl_a0b414",
+      "enabled": true,
+      "title": "batch-0807",
+      "note": "latin/batch-0807",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GV44O844KT44Gj"
+      ],
+      "zhFromB64": "LXNhbg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-06T22:26:43.209Z"
+    },
+    {
+      "id": "tr_msiu5qcn_60392e",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "invent_rod/batch-0807pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GK44Gh"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-07T11:02:42.599Z"
+    },
+    {
+      "id": "tr_msiu5qcs_6fad4e",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "invent_rod/batch-0807pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GK44Gh4peL44G9"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-07T11:02:42.604Z"
+    },
+    {
+      "id": "tr_msiu5qcv_702fca",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "invent_rod/batch-0807pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5oCn5Zmo"
+      ],
+      "zhFromB64": "55Sf5q6W5Zmo",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-07T11:02:42.607Z"
+    },
+    {
+      "id": "tr_msiu5qcx_6f8487",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G944Gj"
+      ],
+      "zhFromB64": "UE9U",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.609Z"
+    },
+    {
+      "id": "tr_msiu5qcz_749969",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G144GB44KA"
+      ],
+      "zhFromB64": "dW1t",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.611Z"
+    },
+    {
+      "id": "tr_msiu5qd2_7ed840",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G144GB44G/"
+      ],
+      "zhFromB64": "dW1t",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.614Z"
+    },
+    {
+      "id": "tr_msiu5qd5_d69ff6",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kt44Or"
+      ],
+      "zhFromB64": "a2lsbGNoYW4=",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.617Z"
+    },
+    {
+      "id": "tr_msiu5qd8_323542",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kt44Or44Gh44KD44KT"
+      ],
+      "zhFromB64": "X2tpbGxjaGFu",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.620Z"
+    },
+    {
+      "id": "tr_msiu5qdb_778fe6",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G244GP44G244GP"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.623Z"
+    },
+    {
+      "id": "tr_msiu5qdd_f9c577",
+      "enabled": true,
+      "title": "batch-0807pm",
+      "note": "latin/batch-0807pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KD44G+"
+      ],
+      "zhFromB64": "aHlhIG1h",
+      "zhToB64": "",
+      "createdAt": "2026-08-07T11:02:42.625Z"
+    },
+    {
+      "id": "tr_msjpr55f_c5a18f",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "invent_rod/glans/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5LqA6aCt"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6b6f5aS0",
+      "createdAt": "2026-08-08T01:47:09.651Z"
+    },
+    {
+      "id": "tr_msjpr55g_fa1797",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "invent_rod/clit/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kv44Oq"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6Zi06JKC",
+      "createdAt": "2026-08-08T01:47:09.652Z"
+    },
+    {
+      "id": "tr_msjpr55l_af5ad9",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/clit/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kv44Oq44OI44Oq44K5"
+      ],
+      "zhFromB64": "Y2xpdA==",
+      "zhToB64": "6Zi06JKC",
+      "createdAt": "2026-08-08T01:47:09.657Z"
+    },
+    {
+      "id": "tr_msjpr55o_43da8c",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GL44KC"
+      ],
+      "zhFromB64": "bWF5YmU=",
+      "zhToB64": "5Y+v6IO9",
+      "createdAt": "2026-08-08T01:47:09.660Z"
+    },
+    {
+      "id": "tr_msjpr55r_6ba594",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kt44K5"
+      ],
+      "zhFromB64": "S2lzcw==",
+      "zhToB64": "5ZC7",
+      "createdAt": "2026-08-08T01:47:09.663Z"
+    },
+    {
+      "id": "tr_msjpr55v_7b33f9",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "6aGU"
+      ],
+      "zhFromB64": "ZmFjZQ==",
+      "zhToB64": "6IS4",
+      "createdAt": "2026-08-08T01:47:09.667Z"
+    },
+    {
+      "id": "tr_msjpr55y_98bbb9",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KC44GG"
+      ],
+      "zhFromB64": "YWxyZWFkeQ==",
+      "zhToB64": "5bey57uP",
+      "createdAt": "2026-08-08T01:47:09.670Z"
+    },
+    {
+      "id": "tr_msjpr566_9f6798",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OZ44Ot"
+      ],
+      "zhFromB64": "QmVybw==",
+      "zhToB64": "6IiM5aS0",
+      "createdAt": "2026-08-08T01:47:09.678Z"
+    },
+    {
+      "id": "tr_msjpr56d_6eef88",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244GF"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.685Z"
+    },
+    {
+      "id": "tr_msjpr56g_c46aae",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244KL"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.688Z"
+    },
+    {
+      "id": "tr_msjpr56h_1c500a",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244G2"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.689Z"
+    },
+    {
+      "id": "tr_msjpr56i_cdc01f",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G844Gj"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.690Z"
+    },
+    {
+      "id": "tr_msjpr56l_7982ef",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GV44O844KT"
+      ],
+      "zhFromB64": "LXNhbg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.693Z"
+    },
+    {
+      "id": "tr_msjpr56o_0b0d5a",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44GY44KF"
+      ],
+      "zhFromB64": "X2Fkag==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.696Z"
+    },
+    {
+      "id": "tr_msjpr56r_c85e4e",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GN44KD"
+      ],
+      "zhFromB64": "a2F5",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.699Z"
+    },
+    {
+      "id": "tr_msjpr56t_b208f4",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KF44GG"
+      ],
+      "zhFromB64": "Q2hldw==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.702Z"
+    },
+    {
+      "id": "tr_msjpr56w_f65d6e",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KF44O8"
+      ],
+      "zhFromB64": "Y2h1IGNodQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.704Z"
+    },
+    {
+      "id": "tr_msjpr56z_c13cc8",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "latin/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GP44Gy44GD"
+      ],
+      "zhFromB64": "aGlj",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.708Z"
+    },
+    {
+      "id": "tr_msjpr574_ff1e7b",
+      "enabled": true,
+      "title": "batch-0808",
+      "note": "heixiu/batch-0808",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44Gj"
+      ],
+      "zhFromB64": "5Zi/5ZK75Zi/",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T01:47:09.712Z"
+    },
+    {
+      "id": "tr_msk030ik_848cb3",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "invent_rod/batch-0808pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OB4peL44Kz"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-08T06:36:19.676Z"
+    },
+    {
+      "id": "tr_msk030il_0eef61",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "invent_rod/batch-0808pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh4peL44GT"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-08T06:36:19.677Z"
+    },
+    {
+      "id": "tr_msk030ip_c58283",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OV44Kn44Ki"
+      ],
+      "zhFromB64": "ZmFpcg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.681Z"
+    },
+    {
+      "id": "tr_msk030it_abf633",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44KG44GF"
+      ],
+      "zhFromB64": "WXVr",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.685Z"
+    },
+    {
+      "id": "tr_msk030iw_b01d6b",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GG44KK44KF"
+      ],
+      "zhFromB64": "dXJn",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.688Z"
+    },
+    {
+      "id": "tr_msk030iz_eb4589",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G244Gj"
+      ],
+      "zhFromB64": "LWJ1bQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.691Z"
+    },
+    {
+      "id": "tr_msk030j3_7953cc",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gr44KD"
+      ],
+      "zhFromB64": "bnlh",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.695Z"
+    },
+    {
+      "id": "tr_msk030j7_609379",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KF44Gq"
+      ],
+      "zhFromB64": "aGludQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.699Z"
+    },
+    {
+      "id": "tr_msk030j8_e9156f",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OU44OD44OB"
+      ],
+      "zhFromB64": "cGl0Y2g=",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.700Z"
+    },
+    {
+      "id": "tr_msk030j9_4210bc",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KF44Gw"
+      ],
+      "zhFromB64": "Y2h1",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.701Z"
+    },
+    {
+      "id": "tr_msk030ja_5e4281",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KF44GP"
+      ],
+      "zhFromB64": "aHVo",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.702Z"
+    },
+    {
+      "id": "tr_msk030jb_906b6c",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GX44O8"
+      ],
+      "zhFromB64": "c2hp",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.703Z"
+    },
+    {
+      "id": "tr_msk030jb_54e121",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OV44Or44OV44Or"
+      ],
+      "zhFromB64": "RlVMTCBGVUxM",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.703Z"
+    },
+    {
+      "id": "tr_msk030jc_3b3cf9",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB44Gj"
+      ],
+      "zhFromB64": "YnJlYXRo",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.704Z"
+    },
+    {
+      "id": "tr_msk030jd_eba935",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Kw44Ot44OD"
+      ],
+      "zhFromB64": "Z3V5",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.705Z"
+    },
+    {
+      "id": "tr_msk030jd_4634f6",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB44KT"
+      ],
+      "zhFromB64": "aGVu",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.705Z"
+    },
+    {
+      "id": "tr_msk030je_f4b4c7",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gy44KF"
+      ],
+      "zhFromB64": "WXVreXVr",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.706Z"
+    },
+    {
+      "id": "tr_msk030jg_d15731",
+      "enabled": true,
+      "title": "batch-0808pm",
+      "note": "latin/batch-0808pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gr44KD44Gj44Gy44KD"
+      ],
+      "zhFromB64": "bnlhIGh5YQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-08T06:36:19.708Z"
+    },
+    {
+      "id": "tr_mslokrky_34baab",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "iku_shoot/anti-false/batch-0809",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5aSx"
+      ],
+      "zhFromB64": "5aSx5bCE5LqG",
+      "zhToB64": "5aSx5Y675LqG",
+      "createdAt": "2026-08-09T10:49:44.866Z"
+    },
+    {
+      "id": "tr_mslokrkz_4973aa",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "iku_shoot/anti-false/batch-0809",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "6YGO44GO"
+      ],
+      "zhFromB64": "6L+H5bCE5LqG",
+      "zhToB64": "6L+H5Y675LqG",
+      "createdAt": "2026-08-09T10:49:44.867Z"
+    },
+    {
+      "id": "tr_mslokrl2_a50f47",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44Gj44GP"
+      ],
+      "zhFromB64": "aGlj",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.870Z"
+    },
+    {
+      "id": "tr_mslokrl4_30d9c0",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44GE44GL44KT"
+      ],
+      "zhFromB64": "S2Fubg==",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.873Z"
+    },
+    {
+      "id": "tr_mslokrl7_c35ec9",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gr44G+"
+      ],
+      "zhFromB64": "aGFuaW1h",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.875Z"
+    },
+    {
+      "id": "tr_mslokrla_1a0a73",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KC44Gh"
+      ],
+      "zhFromB64": "aGltb2NoaQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.878Z"
+    },
+    {
+      "id": "tr_mslokrld_80e192",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gy44KF"
+      ],
+      "zhFromB64": "aHVo",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.881Z"
+    },
+    {
+      "id": "tr_mslokrld_4fa2bf",
+      "enabled": true,
+      "title": "batch-0809",
+      "note": "latin/batch-0809",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KC44Gh"
+      ],
+      "zhFromB64": "aGlybw==",
+      "zhToB64": "",
+      "createdAt": "2026-08-09T10:49:44.881Z"
+    },
+    {
+      "id": "tr_msml4bcg_39f036",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "invent_rod/batch-0810",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Oa44OL44Kr"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-10T02:00:44.656Z"
+    },
+    {
+      "id": "tr_msml4bch_0a748d",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "invent_rod/batch-0810",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Oa44OL44K5"
+      ],
+      "zhFromB64": "6Zi06IyO",
+      "zhToB64": "6IKJ5qOS",
+      "createdAt": "2026-08-10T02:00:44.657Z"
+    },
+    {
+      "id": "tr_msml4bck_b699eb",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KT44KT"
+      ],
+      "zhFromB64": "aGluaW4=",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.660Z"
+    },
+    {
+      "id": "tr_msml4bcn_24e670",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB44KA"
+      ],
+      "zhFromB64": "aGFtdQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.663Z"
+    },
+    {
+      "id": "tr_msml4bcq_516e6b",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KF44GP44KT"
+      ],
+      "zhFromB64": "S3Vu",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.666Z"
+    },
+    {
+      "id": "tr_msml4bcs_6e31d4",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44G244Gv44Gj"
+      ],
+      "zhFromB64": "aHViYS1oYQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.669Z"
+    },
+    {
+      "id": "tr_msml4bcv_5f53d9",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gy44KF"
+      ],
+      "zhFromB64": "WXVrIFl1aw==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.671Z"
+    },
+    {
+      "id": "tr_msml4bcy_b864e3",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KI44GX44KF"
+      ],
+      "zhFromB64": "WW9zaHVu",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.674Z"
+    },
+    {
+      "id": "tr_msml4bd1_31141a",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44KT44Gj"
+      ],
+      "zhFromB64": "QW5r",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.677Z"
+    },
+    {
+      "id": "tr_msml4bd4_948e96",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "latin/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44KD"
+      ],
+      "zhFromB64": "aHlh",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.680Z"
+    },
+    {
+      "id": "tr_msml4bd4_264e92",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "heixiu/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gy44KF"
+      ],
+      "zhFromB64": "5Zi/5ZK7",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.680Z"
+    },
+    {
+      "id": "tr_msml4bd5_6bee01",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "sfx_halluc/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244GY44KF"
+      ],
+      "zhFromB64": "5ZC45ZCn",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.681Z"
+    },
+    {
+      "id": "tr_msml4bd6_4b5931",
+      "enabled": true,
+      "title": "batch-0810",
+      "note": "sfx_halluc/batch-0810",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KT44G244GY44KF44G244Gj"
+      ],
+      "zhFromB64": "5Zev5ZCn5ZC45ZCn",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T02:00:44.682Z"
+    },
+    {
+      "id": "tr_msmsnity_f3ce4f",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5pyA5L2O"
+      ],
+      "zhFromB64": "bG93ZXN0",
+      "zhToB64": "5beu5Yqy",
+      "createdAt": "2026-08-10T05:31:38.134Z"
+    },
+    {
+      "id": "tr_msmsniuz_b99710",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB44Gv44GB"
+      ],
+      "zhFromB64": "YnJlYXRo",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.171Z"
+    },
+    {
+      "id": "tr_msmsnivc_632520",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44GB44KA"
+      ],
+      "zhFromB64": "bXVu",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.184Z"
+    },
+    {
+      "id": "tr_msmsnivg_4b7d4d",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gz44KF44G7"
+      ],
+      "zhFromB64": "YmlzaG8=",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.188Z"
+    },
+    {
+      "id": "tr_msmsnivk_155aac",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G144G144Gj"
+      ],
+      "zhFromB64": "ZnUgZnU=",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.192Z"
+    },
+    {
+      "id": "tr_msmsnivn_1cb47f",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GY44KF44KK44KF"
+      ],
+      "zhFromB64": "anUgcnk=",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.195Z"
+    },
+    {
+      "id": "tr_msmsnivr_f42e1e",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44KK44KF44KK44KF"
+      ],
+      "zhFromB64": "dSByeXU=",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.199Z"
+    },
+    {
+      "id": "tr_msmsnivu_c25d12",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GS44G244GH"
+      ],
+      "zhFromB64": "Z2VwxJPEkw==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.202Z"
+    },
+    {
+      "id": "tr_msmsnivy_6ca261",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GV44G+"
+      ],
+      "zhFromB64": "c2FtYQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.206Z"
+    },
+    {
+      "id": "tr_msmsniw5_4c9194",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GN44KC44Gy44GE"
+      ],
+      "zhFromB64": "a2ltb2hpaQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.213Z"
+    },
+    {
+      "id": "tr_msmsniw9_eb4c26",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G844KK"
+      ],
+      "zhFromB64": "Ym9yaQ==",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.217Z"
+    },
+    {
+      "id": "tr_msmsniwc_3bcf32",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "latin/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G844KT44G844KT"
+      ],
+      "zhFromB64": "Ym9uYm9u",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.220Z"
+    },
+    {
+      "id": "tr_msmsniwc_2c39bf",
+      "enabled": true,
+      "title": "batch-0810pm",
+      "note": "heixiu/batch-0810pm",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gy44Gj44GP"
+      ],
+      "zhFromB64": "5Zi/5ZK7",
+      "zhToB64": "",
+      "createdAt": "2026-08-10T05:31:38.220Z"
+    },
+    {
+      "id": "tr_mso8kpy6_d4f7be",
+      "enabled": true,
+      "title": "batch-0811",
+      "note": "latin/batch-0811",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gh44KF44G844Gj"
+      ],
+      "zhFromB64": "Qm9laA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-11T05:45:07.422Z"
+    },
+    {
+      "id": "tr_mso8kpy9_0c61ea",
+      "enabled": true,
+      "title": "batch-0811",
+      "note": "latin/batch-0811",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44GN"
+      ],
+      "zhFromB64": "YWtp",
+      "zhToB64": "",
+      "createdAt": "2026-08-11T05:45:07.425Z"
+    },
+    {
+      "id": "tr_mso8kpyc_d9ff24",
+      "enabled": true,
+      "title": "batch-0811",
+      "note": "latin/batch-0811",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44Gv44Gy44KF"
+      ],
+      "zhFromB64": "WXVr",
+      "zhToB64": "",
+      "createdAt": "2026-08-11T05:45:07.428Z"
+    },
+    {
+      "id": "tr_mso8kpyf_0534b3",
+      "enabled": true,
+      "title": "batch-0811",
+      "note": "latin/batch-0811",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G244GjIQ=="
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-11T05:45:07.431Z"
+    },
+    {
+      "id": "tr_mso8kpyj_850c36",
+      "enabled": true,
+      "title": "batch-0811",
+      "note": "latin/batch-0811",
+      "mode": "blank",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44G244Gj"
+      ],
+      "zhFromB64": "YnVtcA==",
+      "zhToB64": "",
+      "createdAt": "2026-08-11T05:45:07.435Z"
     }
   ],
   "asrPairs": []

@@ -164,6 +164,34 @@ describe('env-check', () => {
             { id: 'gpuRuntime', status: 'ok', detail: 'CPU 模式，无需 CUDA 运行库' },
         ]);
         assert.equal(cpuOnly.ensureGpu, false);
+
+        const ct2Missing = planEnvFixes([
+            {
+                id: 'gpuRuntime',
+                status: 'warn',
+                detail: '未安装 CTranslate2（Whisper / Opus-MT 运行库）。请对 Whisper 运行库点一键修复',
+                ctranslate2CudaReason: 'ctranslate2_not_installed',
+            },
+        ]);
+        assert.equal(ct2Missing.ensureGpu, false);
+        assert.ok(ct2Missing.modelIds.includes('whisper-tiny'));
+        assert.ok(ct2Missing.steps.some((s) => s.id === 'whisperRuntime'));
+    });
+
+    it('planEnvFixes skips whisper reinstall when probe only timed out', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'whisperRuntime',
+                status: 'warn',
+                detail: 'Whisper 运行库探测超时（首次导入较慢）。库可能已装好，请再点一次重新检测',
+                probeTimedOut: true,
+            },
+            { id: 'vcRedist', status: 'ok', detail: 'ok' },
+            { id: 'sensevoiceRuntime', status: 'ok', detail: 'ok' },
+        ], { engineAsrModel: 'whisper-large-v3-turbo' });
+        assert.equal(plan.modelIds.includes('whisper-tiny'), false);
+        assert.equal(plan.steps.some((s) => s.id === 'whisperRuntime'), false);
     });
 
     it('planEnvFixes forces ASR and whisper runtime when models are missing', () => {
@@ -221,10 +249,10 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'warn',
-                detail: '已安装 b10077，可更新至 b10236 · win-cuda12-x64',
+                detail: '已安装 b10077，可更新至 b10437 · win-cuda12-x64',
                 outdated: true,
                 installedTag: 'b10077',
-                catalogTag: 'b10236',
+                catalogTag: 'b10437',
             },
         ]);
         assert.equal(outdated.ensureLlamaRuntime, true);
@@ -237,7 +265,7 @@ describe('env-check', () => {
                 status: 'warn',
                 detail: '偏好「CUDA」，当前为「Vulkan」，请重新安装运行时',
                 mismatch: true,
-                catalogTag: 'b10236',
+                catalogTag: 'b10437',
                 recommendRuntimeId: 'win-cuda13-x64',
             },
         ]);
@@ -252,7 +280,7 @@ describe('env-check', () => {
                 recommendInstall: true,
                 recommendRuntimeId: 'win-cuda13-x64',
                 preferredPackageId: 'win-cuda13-x64',
-                catalogTag: 'b10236',
+                catalogTag: 'b10437',
             },
         ]);
         assert.equal(recommendInstall.ensureLlamaRuntime, true);
@@ -263,7 +291,7 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'ok',
-                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10236）',
+                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10437）',
             },
         ]);
         assert.equal(unused.ensureLlamaRuntime, false);
@@ -276,5 +304,22 @@ describe('env-check', () => {
         assert.ok(['ok', 'warn', 'fail'].includes(item.status));
         assert.equal(typeof item.detail, 'string');
         assert.equal(item.blocking, false);
+    });
+
+    it('normalizeEnvCheckScope accepts base/runtime/full', () => {
+        const {
+            normalizeEnvCheckScope,
+            ENV_CHECK_BASE_IDS,
+            ENV_CHECK_RUNTIME_IDS,
+        } = require('../electron/env-check');
+        assert.equal(normalizeEnvCheckScope('base'), 'base');
+        assert.equal(normalizeEnvCheckScope('runtime'), 'runtime');
+        assert.equal(normalizeEnvCheckScope(''), 'full');
+        assert.equal(normalizeEnvCheckScope('other'), 'full');
+        assert.ok(ENV_CHECK_BASE_IDS.includes('engine'));
+        assert.ok(!ENV_CHECK_BASE_IDS.includes('whisperRuntime'));
+        assert.ok(ENV_CHECK_RUNTIME_IDS.includes('whisperRuntime'));
+        assert.ok(ENV_CHECK_RUNTIME_IDS.includes('sensevoiceRuntime'));
+        assert.ok(!ENV_CHECK_RUNTIME_IDS.includes('ffmpeg'));
     });
 });

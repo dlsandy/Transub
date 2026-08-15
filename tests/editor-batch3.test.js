@@ -1,7 +1,6 @@
 const assert = require('assert');
 const meta = require('../src/js/subtitle-meta-core');
 const findCore = require('../src/js/find-replace-core');
-const speakerSuggest = require('../src/js/speaker-suggest-core');
 const { serializeAss } = require('../electron/subtitle-format');
 const { parseIssues } = require('../electron/advanced-bilingual-semantic');
 const { seedAsrConfidenceMeta, pickEngineCuesForConfidence } = require('../electron/asr-confidence-seed');
@@ -15,7 +14,7 @@ describe('confidenceFromAsrMeta', () => {
         const high = meta.confidenceFromAsrMeta({ avgLogprob: -0.15, noSpeechProb: 0.1 });
         const low = meta.confidenceFromAsrMeta({ avgLogprob: -0.9, noSpeechProb: 0.7 });
         assert.ok(high.confidence > 0.7);
-        assert.strictEqual(high.source, 'asr');
+        assert.ok(high.source === 'asr' || high.source === 'asr_logprob');
         assert.ok(low.confidence < 0.4);
         assert.ok(low.low);
         assert.ok(low.flags.includes('low_logprob'));
@@ -28,7 +27,7 @@ describe('confidenceFromAsrMeta', () => {
         ]);
         assert.strictEqual(doc.entries.length, 2);
         assert.ok(doc.entries[0].confidence > doc.entries[1].confidence);
-        assert.strictEqual(doc.entries[0].source, 'asr');
+        assert.ok(doc.entries[0].source === 'asr' || doc.entries[0].source === 'asr_logprob');
     });
 });
 
@@ -49,25 +48,29 @@ describe('asr-confidence-seed', () => {
 });
 
 describe('serializeAss', () => {
-    it('emits speaker styles and dialogue names', () => {
+    it('emits Default style and empty Name without speakers', () => {
         const cues = [
             { startMs: 0, endMs: 1000, text: '你好' },
             { startMs: 1200, endMs: 2200, text: '世界' },
         ];
-        const speakers = [
-            { id: 'spk_1', name: '甲', color: '#ff0000' },
-            { id: 'spk_2', name: '乙', color: '#00ff00' },
-        ];
-        const cueMarkers = {
-            '0:0': { speakerId: 'spk_1' },
-            '1:1200': { speakerId: 'spk_2' },
-        };
-        const ass = serializeAss(cues, { title: 'Test', speakers, cueMarkers });
-        assert.ok(ass.includes('Style: Sp1'));
-        assert.ok(ass.includes('Style: Sp2'));
-        assert.ok(ass.includes(',甲,'));
-        assert.ok(ass.includes(',乙,'));
+        const ass = serializeAss(cues, { title: 'Test' });
+        assert.ok(ass.includes('Style: Default,'));
+        assert.ok(!ass.includes('Style: Sp1'));
         assert.ok(ass.includes('Dialogue:'));
+        assert.ok(ass.includes(',Default,,0,0,0,,你好'));
+    });
+
+    it('uses cue.ass.style and cue.ass.name when present', () => {
+        const cues = [
+            {
+                startMs: 0,
+                endMs: 1000,
+                text: '你好',
+                ass: { style: 'Lead', name: '甲' },
+            },
+        ];
+        const ass = serializeAss(cues, { title: 'Map' });
+        assert.ok(ass.includes(',Lead,甲,'));
     });
 
     it('stacks bilingual Source style at bottom (not screen top)', () => {
@@ -100,6 +103,30 @@ describe('serializeAss', () => {
     });
 });
 
+describe('serializeDualAss', () => {
+    const { serializeDualAss } = require('../electron/subtitle-format');
+
+    it('emits Source+ZH dialogues with stacked margins', () => {
+        const primary = [{ startMs: 0, endMs: 1000, text: '你好' }];
+        const pair = [{ startMs: 0, endMs: 1000, text: 'hello' }];
+        const ass = serializeDualAss(primary, pair, {
+            title: 'DualDoc',
+            primaryRole: 'target',
+            lineOrder: 'target-first',
+        });
+        assert.ok(ass.includes('Style: Source,'));
+        assert.ok(ass.includes('Style: ZH,'));
+        assert.ok(ass.includes(',Source,,'));
+        assert.ok(ass.includes(',ZH,,'));
+        assert.ok(ass.includes('hello'));
+        assert.ok(ass.includes('你好'));
+        const sourceStyle = ass.split('\n').find((line) => line.startsWith('Style: Source,'));
+        const zhStyle = ass.split('\n').find((line) => line.startsWith('Style: ZH,'));
+        assert.strictEqual(Number(sourceStyle.split(',')[21]), 56);
+        assert.strictEqual(Number(zhStyle.split(',')[21]), 112);
+    });
+});
+
 describe('bilingual semantic parse', () => {
     it('parses fenced JSON issues', () => {
         const issues = parseIssues('```json\n{"issues":[{"index":2,"type":"omission","message":"漏译姓名","severity":"warn"}]}\n```');
@@ -121,21 +148,6 @@ describe('find-replace-core', () => {
         assert.strictEqual(matches[0].start, 0);
         assert.ok(findCore.shouldOffloadFind(250));
         assert.ok(!findCore.shouldOffloadFind(10));
-    });
-});
-
-describe('speaker-suggest-core', () => {
-    it('switches speaker after long gap', () => {
-        const cues = [
-            { startMs: 0, endMs: 800, text: 'a' },
-            { startMs: 900, endMs: 1600, text: 'b' },
-            { startMs: 4000, endMs: 4800, text: 'c' },
-        ];
-        const res = speakerSuggest.suggestAlternatingSpeakers(cues, { switchGapMs: 1400 });
-        assert.strictEqual(res.speakers.length, 2);
-        assert.strictEqual(res.cueMarkers['0:0'].speakerId, res.speakers[0].id);
-        assert.strictEqual(res.cueMarkers['1:900'].speakerId, res.speakers[0].id);
-        assert.strictEqual(res.cueMarkers['2:4000'].speakerId, res.speakers[1].id);
     });
 });
 

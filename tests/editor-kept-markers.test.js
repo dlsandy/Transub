@@ -127,7 +127,7 @@ describe('export-checklist-core', () => {
         assert.ok(report.items.some((i) => i.id === 'overlap' && i.count >= 1));
     });
 
-    it('summarizes review, speakers, and bookmarks across all cues', () => {
+    it('summarizes review and bookmarks across all cues (no speaker checklist)', () => {
         const report = checklist.buildExportChecklist({
             cues: [
                 { startMs: 0, endMs: 1000, text: 'a' },
@@ -151,9 +151,7 @@ describe('export-checklist-core', () => {
         assert.match(review.detail, /通过 1/);
         assert.match(review.detail, /未看 1/);
         assert.ok(report.items.some((i) => i.id === 'bookmarks' && i.count === 1));
-        const speakers = report.items.find((i) => i.id === 'speakers');
-        assert.ok(speakers);
-        assert.strictEqual(speakers.count, 2); // unlabeled
+        assert.ok(!report.items.some((i) => i.id === 'speakers'));
     });
 
     it('adds Pro extras for semantic review and ASS', () => {
@@ -164,6 +162,8 @@ describe('export-checklist-core', () => {
             ],
             hasDualPair: true,
             proExtras: true,
+            assExportAvailable: true,
+            hasAssDualPair: true,
             lastSemanticReview: {
                 ok: true,
                 issues: [{ index: 0, type: 'omission', message: '漏译' }],
@@ -184,6 +184,8 @@ describe('export-checklist-core', () => {
         assert.strictEqual(sem.severity, 'warn');
         assert.strictEqual(sem.count, 1);
         assert.ok(report.items.some((i) => i.id === 'ass_styles'));
+        assert.ok(report.items.some((i) => i.id === 'ass_dual'));
+        assert.ok(!report.items.some((i) => i.id === 'speakers'));
     });
 });
 

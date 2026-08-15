@@ -2,6 +2,11 @@
  * Global single-slot lock for heavy compute (engine / TWAI / Advanced LLM / Sakura).
  * Nested work inside a batch must pass `_batchMode`, `_engineExternalMt`, or
  * `_skipComputeLock` so it does not re-acquire.
+ *
+ * Concurrency note (see docs/asr.md):
+ * - Desktop product path is intentionally single-slot.
+ * - Engine may allow TRANSUB_MAX_CONCURRENT_JOBS > 1 for its own scheduler,
+ *   but UI-driven batches still serialize through this lock.
  */
 
 const crypto = require('crypto');
@@ -12,6 +17,7 @@ let holder = null;
 const KIND_LABELS = {
     engine_batch: '引擎字幕任务',
     engine_range: '引擎区间重转写',
+    engine_resume: '引擎断点恢复',
     engine_opus_text: '机器翻译',
     twai_batch: '字幕生成任务',
     twai_range: '区间重转写',

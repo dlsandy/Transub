@@ -126,7 +126,6 @@
                 let approved = 0;
                 let edited = 0;
                 let unseen = 0;
-                let withSpeaker = 0;
                 const cueMarkers = markers.cueMarkers && typeof markers.cueMarkers === 'object'
                     ? markers.cueMarkers
                     : {};
@@ -138,7 +137,6 @@
                     if (s === 'approved' || s === 'done' || s === 'ok' || s === 'pass') approved += 1;
                     else if (s === 'edited' || s === 'changed' || s === 'dirty') edited += 1;
                     else unseen += 1;
-                    if (m?.speakerId) withSpeaker += 1;
                 }
                 items.push({
                     id: 'review',
@@ -149,20 +147,6 @@
                     detail: `通过 ${approved} · 已改 ${edited} · 未看 ${unseen} / 共 ${cues.length}`,
                     count: cues.length - approved,
                 });
-
-                const speakers = Array.isArray(markers.speakers) ? markers.speakers : [];
-                if (speakers.length > 0 || withSpeaker > 0) {
-                    const unlabeled = cues.length - withSpeaker;
-                    items.push({
-                        id: 'speakers',
-                        severity: unlabeled > 0 ? 'info' : 'ok',
-                        label: '说话人',
-                        detail: speakers.length
-                            ? `${speakers.length} 人 · 已标注 ${withSpeaker}/${cues.length} 条`
-                            : `已标注 ${withSpeaker}/${cues.length} 条`,
-                        count: unlabeled,
-                    });
-                }
             }
         }
 
@@ -194,19 +178,26 @@
                 }
             }
 
-            const speakers = Array.isArray(input.markersDoc?.speakers)
-                ? input.markersDoc.speakers
-                : [];
-            if (speakers.length > 0 || input.assExportAvailable) {
+            if (input.assExportAvailable) {
                 items.push({
                     id: 'ass_styles',
-                    severity: speakers.length ? 'info' : 'ok',
-                    label: 'ASS 说话人样式（Pro）',
-                    detail: speakers.length
-                        ? `${speakers.length} 位说话人 · 可导出着色 ASS`
-                        : '可导出 ASS（无说话人时用默认样式）',
-                    count: speakers.length,
+                    severity: 'ok',
+                    label: 'ASS 样式（Pro）',
+                    detail: '可导出当前文档样式 ASS',
+                    count: 0,
                 });
+                if (input.hasAssDualPair) {
+                    items.push({
+                        id: 'ass_dual',
+                        severity: 'info',
+                        label: '双语 ASS（Pro）',
+                        detail: '已挂副轨 · 可导出 Source+ZH 双 Dialogue',
+                        count: 1,
+                    });
+                }
+                if (Array.isArray(input.assFontItems) && input.assFontItems.length) {
+                    items.push(...input.assFontItems);
+                }
             }
         }
 

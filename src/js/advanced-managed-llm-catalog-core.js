@@ -12,10 +12,10 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function advancedManagedLlmCatalogFactory() {
     const DEFAULT_SERVER_PORT = 39281;
-    const LLAMA_CPP_TAG = 'b10236';
+    const LLAMA_CPP_TAG = 'b10437';
     const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
     const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
-    /** 免费管线翻译：软件内白名单模型参数量上限（十亿） */
+    /** 未解锁 Pro 时目录可见的轻量模型上限（十亿）；智能翻译仍需 Pro */
     const FREE_PIPELINE_TRANSLATE_MAX_B = 7;
 
     function loadSakuraSourceCatalog() {
@@ -47,8 +47,13 @@
                 sizeHint: e.sizeHint,
                 sizeBytes: e.sizeBytes,
                 ramHint: e.ramHint,
-                note: `${e.note || '日→简中'}；免费管线翻译可用；不适合语境/影片理解重构`,
-                paramBillion: /7b/i.test(String(e.id)) ? 7 : 1.5,
+                note: `${e.note || '日→简中'}；免费推理翻译可用；不适合智能翻译 / 语境与影片重构`,
+                paramBillion: Number.isFinite(Number(e.paramBillion)) && Number(e.paramBillion) > 0
+                    ? Number(e.paramBillion)
+                    : (() => {
+                        const m = String(e.id || '').match(/(\d+(?:\.\d+)?)b/i);
+                        return m ? Number(m[1]) : 1.5;
+                    })(),
                 freePipelineTranslate: true,
                 translateOnly: true,
                 recommended: false,
@@ -65,7 +70,7 @@
                 sizeHint: '约 1.2 GB',
                 sizeBytes: 1259173504,
                 ramHint: '建议 ≥4 GB 内存',
-                note: '日→简中 · 免费轻量；仅翻译专用，不适合语境/影片理解重构；CC-BY-NC-SA',
+                note: '日→简中 · 免费推理翻译；仅翻译专用，不适合智能翻译 / 语境与影片重构；CC-BY-NC-SA',
                 paramBillion: 1.5,
                 freePipelineTranslate: true,
                 translateOnly: true,
@@ -204,7 +209,7 @@
             sizeHint: '约 1.0 GB',
             sizeBytes: 986048768,
             ramHint: '建议 ≥4 GB 内存',
-            note: '极轻量中文；免费管线翻译可用；低配机器首选，质量弱于 3B/7B',
+            note: '极轻量中文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；低配机器首选，质量弱于 3B/7B',
             paramBillion: 1.5,
             freePipelineTranslate: true,
             ollamaTag: 'qwen2.5:1.5b',
@@ -219,7 +224,7 @@
             sizeHint: '约 1.9 GB',
             sizeBytes: 1932735283,
             ramHint: '建议 ≥6 GB 内存',
-            note: '轻量中文；免费管线翻译可用；低配机器可用，质量弱于 7B',
+            note: '轻量中文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；低配机器可用，质量弱于 7B',
             paramBillion: 3,
             freePipelineTranslate: true,
             ollamaTag: 'qwen2.5:3b',
@@ -234,7 +239,7 @@
             sizeHint: '约 4.7 GB',
             sizeBytes: 4683075488,
             ramHint: '建议 ≥8 GB 内存',
-            note: '中文首选；免费管线翻译可用；速度与质量均衡',
+            note: '中文首选；轻量 ≤7B，可浏览下载；智能翻译需 Pro；速度与质量均衡',
             paramBillion: 7,
             freePipelineTranslate: true,
             recommended: true,
@@ -278,7 +283,7 @@
             sizeHint: '约 1.3 GB',
             sizeBytes: 1282439584,
             ramHint: '建议 ≥4 GB 内存',
-            note: 'Qwen3 极轻量；免费管线翻译可用；支持思考模式，翻译时可关闭 thinking',
+            note: 'Qwen3 极轻量；轻量 ≤7B，可浏览下载；智能翻译需 Pro；支持思考模式，翻译时可关闭 thinking',
             paramBillion: 1.7,
             freePipelineTranslate: true,
             ollamaTag: 'qwen3:1.7b',
@@ -293,7 +298,7 @@
             sizeHint: '约 2.5 GB',
             sizeBytes: 2497280736,
             ramHint: '建议 ≥6 GB 内存',
-            note: 'Qwen3 Instruct；免费管线翻译可用；中文与指令跟随优于同体量 2.5',
+            note: 'Qwen3 Instruct；轻量 ≤7B，可浏览下载；智能翻译需 Pro；中文与指令跟随优于同体量 2.5',
             paramBillion: 4,
             freePipelineTranslate: true,
             ollamaTag: 'qwen3:4b',
@@ -308,7 +313,7 @@
             sizeHint: '约 2.5 GB',
             sizeBytes: 2497280736,
             ramHint: '建议 ≥6 GB 内存',
-            note: '偏推理思考；改写可能较啰嗦（不在免费管线白名单）',
+            note: '偏推理思考；改写可能较啰嗦（需 Pro（非轻量档））',
             paramBillion: 4,
             freePipelineTranslate: false,
             ollamaTag: 'qwen3:4b-thinking',
@@ -365,7 +370,7 @@
             sizeHint: '约 0.8 GB',
             sizeBytes: 807694464,
             ramHint: '建议 ≥4 GB 内存',
-            note: '极轻量英文；免费管线翻译可用；中文弱于同体量 Qwen',
+            note: '极轻量英文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；中文弱于同体量 Qwen',
             paramBillion: 1,
             freePipelineTranslate: true,
             ollamaTag: 'llama3.2:1b',
@@ -380,7 +385,7 @@
             sizeHint: '约 2.0 GB',
             sizeBytes: 2018631680,
             ramHint: '建议 ≥6 GB 内存',
-            note: '轻量英文；免费管线翻译可用；中文弱于同体量 Qwen',
+            note: '轻量英文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；中文弱于同体量 Qwen',
             paramBillion: 3,
             freePipelineTranslate: true,
             ollamaTag: 'llama3.2:3b',
@@ -409,7 +414,7 @@
             sizeHint: '约 1.7 GB',
             sizeBytes: 1708582752,
             ramHint: '建议 ≥4 GB 内存',
-            note: '轻量英文；免费管线翻译可用；中文一般',
+            note: '轻量英文；轻量 ≤7B，可浏览下载；智能翻译需 Pro；中文一般',
             paramBillion: 2,
             freePipelineTranslate: true,
             ollamaTag: 'gemma2:2b',
@@ -438,7 +443,7 @@
             sizeHint: '约 2.5 GB',
             sizeBytes: 2489758112,
             ramHint: '建议 ≥6 GB 内存',
-            note: 'Gemma3 轻量；免费管线翻译可用；多语优于 Gemma2',
+            note: 'Gemma3 轻量；轻量 ≤7B，可浏览下载；智能翻译需 Pro；多语优于 Gemma2',
             paramBillion: 4,
             freePipelineTranslate: true,
             ollamaTag: 'gemma3:4b',
@@ -467,7 +472,7 @@
             sizeHint: '约 2.4 GB',
             sizeBytes: 2399141888,
             ramHint: '建议 ≥6 GB 内存',
-            note: '微软小模型，推理快；免费管线翻译可用；中文一般',
+            note: '微软小模型，推理快；轻量 ≤7B，可浏览下载；智能翻译需 Pro；中文一般',
             paramBillion: 3.8,
             freePipelineTranslate: true,
             ollamaTag: 'phi3.5',
@@ -482,7 +487,7 @@
             sizeHint: '约 2.5 GB',
             sizeBytes: 2491874688,
             ramHint: '建议 ≥6 GB 内存',
-            note: '微软 Phi-4 小模型；免费管线翻译可用；推理优于 3.5',
+            note: '微软 Phi-4 小模型；轻量 ≤7B，可浏览下载；智能翻译需 Pro；推理优于 3.5',
             paramBillion: 3.8,
             freePipelineTranslate: true,
             ollamaTag: 'phi4-mini',
@@ -511,7 +516,7 @@
             sizeHint: '约 4.7 GB',
             sizeBytes: 4683075488,
             ramHint: '建议 ≥8 GB 内存',
-            note: '偏推理；改写时可能较啰嗦（不在免费管线白名单）',
+            note: '偏推理；改写时可能较啰嗦（需 Pro（非轻量档））',
             paramBillion: 7,
             freePipelineTranslate: false,
             ollamaTag: 'deepseek-r1:7b',
@@ -570,7 +575,7 @@
             sizeHint: '约 4.7 GB',
             sizeBytes: 4683075488,
             ramHint: '建议 ≥8 GB 内存',
-            note: '偏代码；不在免费管线白名单；一般字幕请优先选 Instruct 版',
+            note: '偏代码；需 Pro（非轻量档）；一般字幕请优先选 Instruct 版',
             paramBillion: 7,
             freePipelineTranslate: false,
             ollamaTag: 'qwen2.5-coder:7b',
@@ -858,7 +863,7 @@
             : normalizeManagedLlm(managedOrDoc);
         const smart = String(managed.smartTranslateModelId || '').trim();
         const active = String(managed.activeModelId || '').trim();
-        // Sakura / translate-only cannot do 影片简要 + JSON cue protocol.
+        // Sakura / translate-only cannot write 影片简要 (chat names / terms).
         if (smart && !isTranslateOnlyModel(smart)) return smart;
         if (active && !isTranslateOnlyModel(active)) return active;
         return smart || active;
@@ -937,7 +942,8 @@
     }
 
     /**
-     * 目录项是否可作为「免费管线翻译」模型：显式白名单 + 参数量 ≤ 上限。
+     * 未解锁 Pro 时目录可见的轻量模型：显式白名单 + 参数量 ≤ 上限。
+     * 不等于免费智能翻译资格（智能翻译始终需 Pro）。
      * @param {string|object|null|undefined} modelIdOrEntry
      */
     function isFreePipelineTranslateModel(modelIdOrEntry) {
@@ -976,7 +982,7 @@
     }
 
     /**
-     * 是否适合语境重构 / 影片理解 / 智能翻译（通用对话 + JSON）。
+     * 是否适合语境重构 / 影片理解 / 智能翻译（通用对话 / 影片简要）。
      */
     function supportsAdvancedReconstruct(modelIdOrEntry) {
         return !isTranslateOnlyModel(modelIdOrEntry);
@@ -999,7 +1005,62 @@
     }
 
     /**
-     * Block Sakura / translate-only models from smart translate (needs JSON + Brief).
+     * When hybrid sentence MT will unload the chat model anyway, prefer a small
+     * installed Instruct for film brief (faster load, less VRAM) if the user
+     * picked a 7B+ chat model.
+     * @param {{ requestedId?: string, installedIds?: string[] }} [input]
+     * @returns {string}
+     */
+    function pickHybridBriefModelId(input = {}) {
+        const requested = String(input?.requestedId || '').trim();
+        const ids = Array.isArray(input?.installedIds)
+            ? input.installedIds.map((x) => String(x || '').trim()).filter(Boolean)
+            : [];
+        const weight = (id) => {
+            const key = String(id || '').trim();
+            if (!key) return Infinity;
+            const entry = findCatalogEntry(key);
+            if (!entry || isTranslateOnlyModel(entry)) return Infinity;
+            const b = Number(entry.paramBillion);
+            return Number.isFinite(b) && b > 0 ? b : 99;
+        };
+        const reqW = requested ? weight(requested) : Infinity;
+        if (requested && reqW <= 4) return requested;
+        const small = ids
+            .filter((id) => weight(id) <= 4)
+            .sort((a, b) => weight(a) - weight(b) || a.localeCompare(b))[0] || '';
+        if (small && reqW > 4) return small;
+        return requested;
+    }
+
+    /**
+     * If the requested Instruct is not among installedIds, pick a capable installed one.
+     * Prefers ~7B; does not select translate-only models.
+     * @param {{ requestedId?: string, installedIds?: string[] }} [input]
+     * @returns {string}
+     */
+    function pickInstalledSmartTranslateModelId(input = {}) {
+        const requested = String(input?.requestedId || '').trim();
+        const capable = (Array.isArray(input?.installedIds) ? input.installedIds : [])
+            .map((x) => String(x || '').trim())
+            .filter((id) => {
+                if (!id) return false;
+                const entry = findCatalogEntry(id);
+                return !!(entry && !isTranslateOnlyModel(entry));
+            });
+        if (!capable.length) return requested;
+        const hit = capable.find((id) => id.toLowerCase() === requested.toLowerCase());
+        if (hit) return hit;
+        const score = (id) => {
+            const b = Number(findCatalogEntry(id)?.paramBillion);
+            const n = Number.isFinite(b) && b > 0 ? b : 99;
+            return Math.abs(n - 7) + (n > 8 ? 8 : 0);
+        };
+        return capable.slice().sort((a, b) => score(a) - score(b) || a.localeCompare(b))[0] || requested;
+    }
+
+    /**
+     * Block Sakura / translate-only models from smart translate (needs Brief + chat).
      * @returns {null | { ok: false, error: string, code: string, modelId?: string }}
      */
     function getSmartTranslateModelBlock(modelIdOrName) {
@@ -1009,7 +1070,7 @@
         const label = entry?.name || id;
         return {
             ok: false,
-            error: `「${label}」是翻译专用模型，无法完成智能翻译（需影片简要与 JSON 分块译）。请改选 Qwen2.5 Instruct 等通用对话模型；Sakura 请用于「推理翻译」。`,
+            error: `「${label}」是翻译专用模型，无法完成智能翻译（需影片简要）。请改选 Qwen2.5 Instruct 等通用对话模型；Sakura 请用于「推理翻译」或智能翻译的句级混合。`,
             code: 'model_translate_only',
             modelId: entry?.id || id,
         };
@@ -1038,6 +1099,8 @@
         normalizeManagedLlm,
         resolveSmartTranslateModelId,
         resolveSmartTranslateModelChoice,
+        pickHybridBriefModelId,
+        pickInstalledSmartTranslateModelId,
         normalizeLlmSource,
         parseMinRamGbFromHint,
         getModelScaleTier,

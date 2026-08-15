@@ -35,7 +35,8 @@ function getLastServerLogTail(maxLen = 800) {
 function parseLlamaCppTag(text) {
     const s = String(text || '');
     const numbered = s.match(/\bversion:\s*(\d+)\b/i);
-    if (numbered) return `b${numbered[1]}`;
+    // Reject truncated/garbage probes (e.g. "version: 0") — real llama.cpp builds are 4+ digits.
+    if (numbered && /^\d{4,}$/.test(numbered[1])) return `b${numbered[1]}`;
     const tagged = s.match(/\b(b\d{4,})\b/i);
     return tagged ? `b${tagged[1].slice(1)}` : '';
 }

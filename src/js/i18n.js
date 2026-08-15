@@ -49,11 +49,13 @@
             if (sel === 'h1') {
                 el.innerHTML = `<i class="fa fa-closed-captioning text-violet-600 mr-2"></i>${text}`;
             } else if (sel === '#openFeedbackBtn') {
-                el.innerHTML = `<i class="fa fa-comment-o mr-1 text-gray-400"></i>${text}`;
+                el.innerHTML = `<i class="fa fa-comment-o mr-1 text-gray-400" aria-hidden="true"></i>${text}`;
             } else if (sel === '#openParamsBtn') {
-                el.innerHTML = `<i class="fa fa-cog mr-1"></i>${text}`;
+                el.innerHTML = `<i class="fa fa-cog mr-1 text-gray-400"></i>${text}`;
             } else {
-                el.lastChild && (el.lastChild.textContent = ` ${text}`);
+                const label = el.querySelector('span');
+                if (label) label.textContent = text;
+                else el.lastChild && (el.lastChild.textContent = ` ${text}`);
             }
         });
     }

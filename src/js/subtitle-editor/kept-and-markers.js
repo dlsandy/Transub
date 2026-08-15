@@ -1,5 +1,5 @@
 /**
- * 字幕编辑器 — 原文缓存利用、标记（书签/A-B/说话人/审校）、导出检查、情境条
+ * 字幕编辑器 — 原文缓存利用、标记（书签/A-B/审校）、导出检查、情境条
  */
 (function (global) {
     function installKeptAndMarkers(ctx) {
@@ -39,8 +39,10 @@
         const startTextTranslate = ctx.startTextTranslate;
         const openSmartSplitModal = ctx.openSmartSplitModal;
         const runSemanticBilingualReview = ctx.runSemanticBilingualReview;
-        const exportAssWithSpeakerStyles = ctx.exportAssWithSpeakerStyles;
+        const exportAssDocument = ctx.exportAssDocument || ctx.exportAssWithSpeakerStyles;
         const selectCue = ctx.selectCue;
+        const getAssStylesUi = ctx.getAssStylesUi;
+        const editorChoice = ctx.editorChoice;
 
         if (!compareCore || !markersCore || !checklistCore) {
             throw new Error('installKeptAndMarkers: compare/markers/checklist cores required');
@@ -466,11 +468,12 @@
 
         function refreshListAfterMarkerChange(indexes) {
             const filter = String(state.listFilter || 'all');
-            const speakerFilterOn = !!String(state.listFilterSpeakerId || '').trim();
-            const needsRescope = speakerFilterOn
-                || filter === 'unseen'
+            const needsRescope = filter === 'unseen'
                 || filter === 'edited'
                 || filter === 'approved'
+                || filter === 'review-unseen'
+                || filter === 'review-edited'
+                || filter === 'review-approved'
                 || filter === 'bookmarks';
             if (needsRescope) {
                 renderCueList?.({ listOnly: true, reuseMeta: true });
@@ -685,7 +688,7 @@
             setStatus(`已标记为「${markersCore.reviewStatusLabel(status)}」×${indexes.length}`, 'ok');
         }
 
-        async function applySpeakerNameToSelected(name) {
+        async function applyAssStyleToSelected() {
             const indexes = typeof getSelectedCueIndexes === 'function'
                 ? getSelectedCueIndexes()
                 : (state.selectedIndex >= 0 ? [state.selectedIndex] : []);
@@ -693,204 +696,52 @@
                 setStatus('请先选择字幕', 'err');
                 return;
             }
-            const speakerName = String(name || '').trim();
-            if (!speakerName) {
-                setStatus('请输入说话人名称', 'err');
+            const ui = typeof getAssStylesUi === 'function' ? getAssStylesUi() : null;
+            if (!ui?.listStyleNames || !ui?.applyStyleByName) {
+                setStatus('ASS 样式模块未加载', 'err');
                 return;
             }
-            const ensured = markersCore.ensureSpeaker(state.markers, speakerName);
-            state.markers = ensured.doc;
-            if (!ensured.speaker) {
-                setStatus(ensured.error || '无法添加说话人', 'err');
+            const names = ui.listStyleNames();
+            if (!names.length) {
+                await ui.openModal?.({ tab: 'styles' });
+                setStatus('请先在 ASS 样式面板创建样式', 'info');
                 return;
             }
-            for (const idx of indexes) {
-                const cue = state.cues[idx];
-                if (!cue) continue;
-                const key = markersCore.cueMarkerKey(cue, idx);
-                state.markers = markersCore.setCueMarker(state.markers, key, {
-                    speakerId: ensured.speaker.id,
+            if (names.length === 1) {
+                const applied = ui.applyStyleByName(names[0], indexes);
+                setStatus(`已将 ${applied.changed} 条套用为 ${applied.styleName}`, 'ok');
+                return;
+            }
+            if (typeof editorChoice === 'function') {
+                const buttons = names.slice(0, 8);
+                buttons.push('打开样式面板…');
+                const pick = await editorChoice('为选中字幕选择 ASS Style', {
+                    title: '应用 ASS 样式',
+                    buttons,
+                    cancelId: buttons.length - 1,
                 });
-            }
-            refreshMarkersUi();
-            refreshListAfterMarkerChange(indexes);
-            void persistMarkers();
-            setStatus(`已设说话人「${ensured.speaker.name}」×${indexes.length}`, 'ok');
-        }
-
-        function showSpeakerPickerModal() {
-            const indexes = typeof getSelectedCueIndexes === 'function'
-                ? getSelectedCueIndexes()
-                : (state.selectedIndex >= 0 ? [state.selectedIndex] : []);
-            if (!indexes.length) {
-                setStatus('请先选择字幕', 'err');
+                if (pick < 0) return;
+                if (pick >= names.length || pick === buttons.length - 1) {
+                    await ui.openModal?.({ tab: 'styles' });
+                    return;
+                }
+                const applied = ui.applyStyleByName(names[pick], indexes);
+                setStatus(`已将 ${applied.changed} 条套用为 ${applied.styleName}`, 'ok');
                 return;
             }
-
-            function speakerAttrSelector(attr, value) {
-                const safe = String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-                return `[${attr}="${safe}"]`;
-            }
-
-            function renderSpeakerRows(editingId = '') {
-                const existing = state.markers?.speakers || [];
-                if (!existing.length) {
-                    return '<p class="text-xs mb-2" style="color:var(--ed-muted)">尚无说话人，请在下方新建</p>';
-                }
-                const rows = existing.map((sp) => {
-                    if (editingId && sp.id === editingId) {
-                        return `
-                            <div class="mb-1" data-speaker-edit-row="${esc(sp.id)}" style="display:flex;align-items:center;gap:0.35rem">
-                                <span class="cue-marker-dot" style="background:${esc(sp.color || '#e11d48')}"></span>
-                                <input type="text" maxlength="40" value="${esc(sp.name)}" data-rename-input="${esc(sp.id)}"
-                                    style="flex:1;min-width:0;padding:0.3rem 0.45rem;border:1px solid var(--ed-border);border-radius:0.3rem;background:var(--ed-surface);color:var(--ed-text);font-size:0.8rem" />
-                                <button type="button" data-kept-action="save-rename" data-speaker-id="${esc(sp.id)}" class="primary" style="flex-shrink:0">保存</button>
-                                <button type="button" data-kept-action="cancel-rename" style="flex-shrink:0">取消</button>
-                            </div>
-                        `;
-                    }
-                    return `
-                        <div class="mb-1" style="display:flex;align-items:center;gap:0.35rem">
-                            <button type="button" class="ed-btn-block" data-kept-action="pick-speaker" data-speaker="${esc(sp.name)}"
-                                style="flex:1;display:flex;align-items:center;gap:0.4rem;margin:0">
-                                <span class="cue-marker-dot" style="background:${esc(sp.color || '#e11d48')}"></span>
-                                ${esc(sp.name)}
-                            </button>
-                            <button type="button" data-kept-action="start-rename" data-speaker-id="${esc(sp.id)}"
-                                title="修改名称" style="flex-shrink:0;padding:0.3rem 0.5rem;font-size:0.75rem">改名</button>
-                        </div>
-                    `;
-                }).join('');
-                return `<div class="mb-3 max-h-48 overflow-auto" id="editorSpeakerList">${rows}</div>`;
-            }
-
-            function refreshModalBody(editingId = '') {
-                const existing = state.markers?.speakers || [];
-                const defaultName = existing[0]?.name || '';
-                if (els.genericModalBody) {
-                    els.genericModalBody.innerHTML = `
-                        <p class="text-xs mb-2" style="color:var(--ed-muted)">点击名称应用到选中的 ${indexes.length} 条；点「改名」可修改已有名称</p>
-                        ${renderSpeakerRows(editingId)}
-                        <label class="text-xs block mb-1" for="editorSpeakerNameInput">新建 / 输入名称后应用</label>
-                        <input id="editorSpeakerNameInput" type="text" maxlength="40" value="${esc(defaultName)}" placeholder="例如：甲、旁白"
-                            style="width:100%;margin-bottom:0.75rem;padding:0.4rem 0.55rem;border:1px solid var(--ed-border);border-radius:0.35rem;background:var(--ed-surface);color:var(--ed-text);font-size:0.875rem" />
-                        <div class="editor-modal-actions">
-                            <button type="button" data-kept-action="close">取消</button>
-                            <button type="button" class="primary" data-kept-action="apply-speaker">应用</button>
-                        </div>
-                    `;
-                }
-                if (editingId) {
-                    const renameInput = els.genericModalBody?.querySelector?.(speakerAttrSelector('data-rename-input', editingId));
-                    if (renameInput) {
-                        renameInput.focus();
-                        renameInput.select?.();
-                        renameInput.addEventListener('keydown', (e) => {
-                            if (e.key === 'Enter') {
-                                e.preventDefault();
-                                void commitRename(editingId);
-                            } else if (e.key === 'Escape') {
-                                e.preventDefault();
-                                refreshModalBody('');
-                            }
-                        });
-                        return;
-                    }
-                }
-                wireNewNameInput();
-            }
-
-            async function commitRename(speakerId) {
-                const id = String(speakerId || '').trim();
-                if (!id) return;
-                const input = els.genericModalBody?.querySelector?.(speakerAttrSelector('data-rename-input', id));
-                const newName = String(input?.value || '').trim();
-                const renamed = markersCore.renameSpeaker(state.markers, id, newName);
-                if (!renamed.speaker) {
-                    setStatus(renamed.error || '改名失败', 'err');
-                    input?.focus();
-                    return;
-                }
-                state.markers = renamed.doc;
-                refreshMarkersUi();
-                refreshListAfterMarkerChange([]);
-                void persistMarkers();
-                setStatus(renamed.unchanged ? '名称未变更' : `已改名为「${renamed.speaker.name}」`, 'ok');
-                refreshModalBody('');
-            }
-
-            function wireNewNameInput() {
-                const input = els.genericModalBody?.querySelector?.('#editorSpeakerNameInput');
-                if (!input) return;
-                input.focus();
-                input.select?.();
-                input.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        void state._genericModalHandler?.('apply-speaker', e);
-                    } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        closePanelModal();
-                    }
-                });
-            }
-
-            state._genericModalHandler = async (action, ev) => {
-                if (action === 'close') {
-                    closePanelModal();
-                    return;
-                }
-                if (action === 'start-rename') {
-                    const id = ev?.target?.closest?.('[data-speaker-id]')?.getAttribute('data-speaker-id');
-                    if (!id) return;
-                    refreshModalBody(id);
-                    return;
-                }
-                if (action === 'cancel-rename') {
-                    refreshModalBody('');
-                    return;
-                }
-                if (action === 'save-rename') {
-                    const id = ev?.target?.closest?.('[data-speaker-id]')?.getAttribute('data-speaker-id');
-                    await commitRename(id);
-                    return;
-                }
-                if (action === 'pick-speaker') {
-                    const name = ev?.target?.closest?.('[data-speaker]')?.getAttribute('data-speaker');
-                    if (!name) return;
-                    closePanelModal();
-                    await applySpeakerNameToSelected(name);
-                    return;
-                }
-                if (action === 'apply-speaker') {
-                    const input = els.genericModalBody?.querySelector?.('#editorSpeakerNameInput');
-                    const name = String(input?.value || '').trim();
-                    if (!name) {
-                        setStatus('请输入说话人名称', 'err');
-                        input?.focus();
-                        return;
-                    }
-                    closePanelModal();
-                    await applySpeakerNameToSelected(name);
-                }
-            };
-
-            openPanelModal('设置说话人', '<div></div>');
-            refreshModalBody('');
-        }
-
-        async function assignSpeakerToSelected(name) {
-            const given = String(name || '').trim();
-            if (given) {
-                await applySpeakerNameToSelected(given);
-                return;
-            }
-            // Electron 中 window.prompt 不可用，改用编辑器弹窗
-            showSpeakerPickerModal();
+            await ui.openModal?.({ tab: 'styles' });
         }
 
         function buildExportChecklistReport() {
             const low = (state.cueMeta || []).filter((m) => m?.low).length;
+            const stylesCore = global.TransubAssStyles;
+            const overrideCore = global.TransubAssOverride;
+            let assFontItems = [];
+            if (stylesCore?.parseStylesFromHeader && overrideCore?.buildFontChecklistItems) {
+                const styles = stylesCore.parseStylesFromHeader(state.header || []).styles || [];
+                let availableFonts = Array.isArray(state.systemFonts) ? state.systemFonts : null;
+                assFontItems = overrideCore.buildFontChecklistItems({ styles, availableFonts });
+            }
             return checklistCore.buildExportChecklist({
                 cues: state.cues,
                 qcResult: state.lastQcResult || null,
@@ -905,6 +756,8 @@
                 proExtras: true,
                 lastSemanticReview: state.lastSemanticReview || null,
                 assExportAvailable: true,
+                hasAssDualPair: typeof hasDualPair === 'function' ? hasDualPair() : false,
+                assFontItems,
             });
         }
 
@@ -921,9 +774,7 @@
             if (canSemantic) {
                 proActions.push('<button type="button" data-kept-action="run-semantic">语义审阅 ◆</button>');
             }
-            if ((state.markers?.speakers || []).length) {
-                proActions.push('<button type="button" data-kept-action="export-ass">导出 ASS ◆</button>');
-            }
+            proActions.push('<button type="button" data-kept-action="export-ass">导出 ASS ◆</button>');
             state._genericModalHandler = (action) => {
                 if (action === 'close') {
                     closePanelModal();
@@ -936,7 +787,7 @@
                 }
                 if (action === 'export-ass') {
                     closePanelModal();
-                    void exportAssWithSpeakerStyles?.();
+                    void exportAssDocument?.();
                 }
             };
             openPanelModal(`导出前检查 · ${report.summary}`, `
@@ -1016,9 +867,9 @@
             if (hasSel) {
                 reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="review-approved">标为已通过</button>');
                 reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="review-edited">标为已改</button>');
-                reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="speaker">说话人…</button>');
+                reviewGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ass-style" title="Pro：为选中字幕套用 ASS Style">◆ ASS 样式</button>');
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ctx-reconstruct" title="Pro：语境重构选中条">◆ 语境重构</button>');
-                aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="smart-translate" title="智能翻译选中条（Pro）">◆ 智能翻译</button>');
+                aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="smart-translate" title="Pro：智能翻译选中条（专训句级 + 剧情贴合润色）">◆ 智能翻译</button>');
             }
             if (hasBookmarks) {
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="bm-reconstruct" title="Pro：仅重构覆盖书签的字幕">◆ 书签段重构</button>');
@@ -1251,8 +1102,8 @@
                     closeCtxMenus();
                     return;
                 }
-                if (action === 'speaker') {
-                    void assignSpeakerToSelected();
+                if (action === 'ass-style') {
+                    void applyAssStyleToSelected();
                     closeCtxMenus();
                     return;
                 }
@@ -1374,7 +1225,6 @@
             cueCoversBookmark,
             tickAbLoop,
             setSelectedReviewStatus,
-            assignSpeakerToSelected,
             buildExportChecklistReport,
             showExportChecklistModal,
             refreshContextActionBar,

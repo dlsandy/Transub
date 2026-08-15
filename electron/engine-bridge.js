@@ -16,6 +16,70 @@ const {
     DEFAULT_ENGINE_URL,
 } = require('./engine-options');
 const { getBundledEnginePath, getBundledEnginePathIfPresent, isValidEngineRoot } = require('./app-paths');
+const { normalizeHfEndpoint, buildHubUrls } = require('./engine-download-urls');
+const {
+    resolvePythonCommand,
+    resolveEngineRuntimePython,
+    resolveEngineEntrypoints,
+    findEngineBundledFfmpeg,
+    injectNvidiaCudaPathEnv,
+    injectFfmpegPathEnv,
+} = require('./engine-runtime-env');
+const {
+    modelIdsNeedWhisperExtras,
+    modelIdsNeedSensevoiceExtras,
+    ensureRuntimeExtrasOffline,
+    ensureAsrWhisperOffline,
+    ensureAsrSensevoiceOffline,
+} = require('./engine-runtime-extras');
+const downloadInfo = require('./engine-download-info');
+const {
+    resolveDownloadModelIds,
+    manualPlaceHintForModel,
+    normalizeEngineDownloadKind,
+    getEngineModelsRoot,
+    buildEngineDownloadInfo: buildEngineDownloadInfoCore,
+} = downloadInfo;
+
+async function buildEngineDownloadInfo(payload = {}) {
+    return buildEngineDownloadInfoCore(payload, {
+        mergeEngineOptions,
+        resolveEngineInstallPath,
+        ensureEngineRunning,
+        listModels,
+        buildHubUrls,
+        normalizeHfEndpoint,
+    });
+}
+const {
+    normalizeEngineLogLine,
+    shouldDropEngineLogLine,
+    friendlyEngineError,
+} = require('./engine-log-filter');
+const {
+    mapEngineStageToItemStage,
+    engineStageZh,
+    buildUiProgress,
+    extractOutputPaths,
+    mapEngineResultsToHistoryOutputs,
+} = require('./engine-job-progress');
+const {
+    parseHostPort,
+    mapDeviceForEngine,
+    sleep,
+    waitForHealth: waitForHealthPoll,
+} = require('./engine-spawn-utils');
+const {
+    interpretCreateJobResponse,
+    interpretWaitJobResult,
+    progressFieldsFromWaitEvent,
+    resolveFileMtPlan,
+    buildFailedItemResult,
+    buildCancelledItemResult,
+    buildSkippedItemResult,
+    summarizeAsrRunMeta,
+    appendAsrRunToDetail,
+} = require('./engine-batch-item');
 const {
     getHealth,
     getCapabilities,
@@ -35,8 +99,22 @@ const {
     ensureAudioSeparateRuntimeStream,
     createJob,
     cancelJob,
+    resumeJob,
+    getJobCheckpoint,
     waitJob,
 } = require('./engine-client');
+const {
+    runEngineJobWithAsrFailover,
+    resumeEngineJobAndWait,
+    attachCheckpointResumeHint,
+} = require('./engine-run-asr-job');
+const rangeAsrPolicy = require('./engine-range-asr-policy');
+const {
+    summarizeDomainFixChanges,
+    formatDomainFixLogLine,
+} = require('./asr-domain-fix-trace');
+const { exportAsrDiagnosticsPack } = require('./asr-diagnostics-export');
+const batchRecovery = require('../src/js/batch-recovery-core');
 const { mergeTransWithAiOptions, stripPostTaskFields } = require('./transwithai-options');
 const { mergeSenseOverrides, sanitizeSakuraMtForLanguage } = require('../src/js/content-profile-core');
 const { buildVadJobOptions, buildAudioJobOptions } = require('./engine-audio-options');
@@ -54,6 +132,12 @@ const {
     validateWhlFiles,
     installLocalWheels,
 } = require('./local-whl-install');
+const { createEngineLogIo } = require('./engine-log-io');
+const { createEngineProcessLifecycle } = require('./engine-process-lifecycle');
+const { createProgressEmitter } = require('./engine-progress-emit');
+const { createEngineBatchHistory } = require('./engine-batch-history');
+const batchMtPlan = require('./engine-batch-mt-plan');
+const batchPostprocessPlan = require('./engine-batch-postprocess-plan');
 
 let engineProc = null;
 let engineBaseUrl = DEFAULT_ENGINE_URL;
@@ -64,1554 +148,53 @@ let currentJobId = '';
 let ensureBridgeFn = null;
 /** @type {AbortController | null} */
 let batchMtAbortController = null;
-/** @type {string} */
-let engineLogPathCached = '';
-/** @type {string} */
-let engineLogLineBuf = '';
-let engineLogLastKept = '';
-let engineLogRepeatCount = 0;
-let engineLogLastDroppedKey = '';
-let engineLogDroppedCount = 0;
-/** @type {string[]} */
-let engineLogWriteQueue = [];
-/** @type {ReturnType<typeof setTimeout> | null} */
-let engineLogFlushTimer = null;
 /** @type {AbortController|null} */
 let downloadAbort = null;
 let downloadBusy = false;
 /** @type {AbortController|null} */
 let opusTextAbortController = null;
 
-/** Fallback Hub ids (keep in sync with Transub-Engine models_catalog). */
-const ENGINE_MODEL_HUB_FALLBACK = {
-    'sensevoice-small': {
-        hubId: 'FunAudioLLM/SenseVoiceSmall',
-        kind: 'asr',
-        name: 'SenseVoice Small',
-        note: '多语种快速语音识别；中文与日语表现好，适合默认/均衡档',
+const engineLogIo = createEngineLogIo({
+    emitLine(payload, invokeSender) {
+        emitToSubtitleUi('transwithai-infer-log', payload, invokeSender);
+        emitToSubtitleUi('transub-engine-infer-log', payload, invokeSender);
     },
-    'whisper-tiny': {
-        hubId: 'Systran/faster-whisper-tiny',
-        kind: 'asr',
-        name: 'Whisper tiny',
-        note: '体积小、速度快；精度较低，适合试跑与低配机器',
-    },
-    'whisper-large-v3-turbo': {
-        hubId: 'deepdml/faster-whisper-large-v3-turbo-ct2',
-        kind: 'asr',
-        name: 'Whisper large-v3-turbo',
-        note: '可选 · 质量与速度较均衡；多语种高精度识别（非默认安装）',
-    },
-    'whisper-large-v2': {
-        hubId: 'Systran/faster-whisper-large-v2',
-        kind: 'asr',
-        name: 'Whisper large-v2',
-        note: '可选 · 经典 large-v2 CT2；多语种高质量识别（非默认安装）',
-    },
-    'whisper-large-v3': {
-        hubId: 'Systran/faster-whisper-large-v3',
-        kind: 'asr',
-        name: 'Whisper large-v3',
-        note: '识别质量更高；体积与显存/内存占用更大',
-    },
-    'whisper-ja-1.5b': {
-        hubId: 'TransWithAI/whisper-ja-1.5B-ct2',
-        kind: 'asr',
-        name: 'Whisper JA 1.5B（日语微调）',
-        note: '日语微调 ASR；适合日语影视、轻声与口语内容',
-    },
-    'anime-whisper': {
-        hubId: 'quantumcookie/anime-whisper-ct2-fp16',
-        kind: 'asr',
-        name: 'Anime Whisper（动画/Galgame）',
-        note: 'kotoba-v2.0 动画演技微调；软声/NSFW 更稳；引擎自动禁 prompt 并分窗转写（避免全片崩溃）',
-    },
-    'kotoba-whisper-v2.0-faster': {
-        hubId: 'kotoba-tech/kotoba-whisper-v2.0-faster',
-        kind: 'asr',
-        name: 'Kotoba Whisper v2.0（日语）',
-        note: 'kotoba 日语蒸馏 Whisper；通用日语、段级时间戳可用；偏广播域，非软 AV 特化',
-    },
-    'reazonspeech-k2': {
-        hubId: 'reazon-research/reazonspeech-k2-v2',
-        kind: 'asr',
-        name: 'ReazonSpeech K2（日语）',
-        note: 'Zipformer/sherpa-onnx；自带 subword 时间戳；≤25s 分窗；偏广播域',
-    },
-    'qwen3-asr-0.6b': {
-        hubId: 'Qwen/Qwen3-ASR-0.6B',
-        kind: 'asr',
-        name: 'Qwen3-ASR 0.6B',
-        note: 'Qwen3 专用 ASR；下载时附带 ForcedAligner 做时间戳；依赖较重、长片较慢',
-    },
-    'qwen3-forced-aligner-0.6b': {
-        hubId: 'Qwen/Qwen3-ForcedAligner-0.6B',
-        kind: 'asr',
-        name: 'Qwen3 ForcedAligner 0.6B',
-        note: '为 Qwen3-ASR 提供词/字级时间戳（随 qwen3-asr-0.6b 自动下载）',
-    },
-    'opus-mt-en-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-en-zh',
-        kind: 'mt',
-        name: 'Opus-MT EN→ZH',
-        note: '英语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-ja-zh': {
-        hubId: 'shun89/opus-mt-ja-zh',
-        kind: 'mt',
-        name: 'Opus-MT JA→ZH',
-        note: '日语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-ko-zh': {
-        hubId: 'shun89/opus-mt-ko-zh',
-        kind: 'mt',
-        name: 'Opus-MT KO→ZH',
-        note: '韩语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-de-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-de-ZH',
-        kind: 'mt',
-        name: 'Opus-MT DE→ZH',
-        note: '德语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-es-zh': {
-        hubId: 'Helsinki-NLP/opus-tatoeba-es-zh',
-        kind: 'mt',
-        name: 'Opus-MT ES→ZH',
-        note: '西班牙语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-fi-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-fi-ZH',
-        kind: 'mt',
-        name: 'Opus-MT FI→ZH',
-        note: '芬兰语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-sv-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-sv-ZH',
-        kind: 'mt',
-        name: 'Opus-MT SV→ZH',
-        note: '瑞典语→简中机器翻译；本地 Opus-MT',
-    },
-    'sakura-1.5b': {
-        hubId: '',
-        kind: 'mt',
-        name: 'Sakura 1.5B（日→中 · 免费）',
-        backend: 'sakura-gguf',
-        note: '日→简中推理翻译；免费轻量，适合本地 LLM 管线',
-    },
-    'sakura-7b': {
-        hubId: '',
-        kind: 'mt',
-        name: 'Sakura 7B（日→中 · 免费）',
-        backend: 'sakura-gguf',
-        note: '日→简中推理翻译；质量更好，建议内存更充裕时选用',
-    },
-    'fsmn-vad': {
-        hubId: 'alextomcat/speech_fsmn_vad_zh-cn-16k-common-pytorch',
-        kind: 'vad',
-        name: 'FSMN-VAD',
-        note: 'FunASR 语音活动检测；配合 SenseVoice 管线使用',
-    },
-    'silero-vad': {
-        hubId: '',
-        kind: 'vad',
-        name: 'Silero VAD（随 faster-whisper 内置）',
-        note: '随 faster-whisper 内置；无需单独下载',
-    },
-    'whisperseg-asmr': {
-        hubId: 'TransWithAI/Whisper-Vad-EncDec-ASMR-onnx',
-        kind: 'vad',
-        name: 'WhisperSeg ASMR（日语轻声）',
-        note: '必装 · 灵敏检出 / 日语软声；需配合 Whisper ASR',
-    },
-};
-
-const ENGINE_PROFILE_MODELS = {
-    speed: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
-    balanced: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
-    // quality no longer auto-installs whisper-large-v3-turbo (optional download).
-    quality: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
-};
-
-/**
- * GPU CUDA12 pip wheels — direct win_amd64 .whl links (not simple index pages).
- * Filenames/hashes may be refreshed when mirrors publish newer builds.
- */
-const GPU_MANUAL_PACKAGES = [
-    {
-        id: 'nvidia-cublas-cu12',
-        name: 'NVIDIA cuBLAS (CUDA 12)',
-        fileName: 'nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl',
-    },
-    {
-        id: 'nvidia-cuda-runtime-cu12',
-        name: 'NVIDIA CUDA Runtime (CUDA 12)',
-        fileName: 'nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl',
-    },
-    {
-        id: 'nvidia-cudnn-cu12',
-        name: 'NVIDIA cuDNN (CUDA 12)',
-        fileName: 'nvidia_cudnn_cu12-9.9.0.52-py3-none-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/6f/5c/f77147ce7e27a4e9087fb34b0539ff085c68e7093e96ee85576fe31fe064/nvidia_cudnn_cu12-9.9.0.52-py3-none-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/6f/5c/f77147ce7e27a4e9087fb34b0539ff085c68e7093e96ee85576fe31fe064/nvidia_cudnn_cu12-9.9.0.52-py3-none-win_amd64.whl',
-    },
-    {
-        id: 'nvidia-cufft-cu12',
-        name: 'NVIDIA cuFFT (CUDA 12)',
-        fileName: 'nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/20/ee/29955203338515b940bd4f60ffdbc073428f25ef9bfbce44c9a066aedc5c/nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/20/ee/29955203338515b940bd4f60ffdbc073428f25ef9bfbce44c9a066aedc5c/nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl',
-    },
-    {
-        id: 'nvidia-curand-cu12',
-        name: 'NVIDIA cuRAND (CUDA 12)',
-        fileName: 'nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/b9/75/70c05b2f3ed5be3bb30b7102b6eb78e100da4bbf6944fd6725c012831cab/nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b9/75/70c05b2f3ed5be3bb30b7102b6eb78e100da4bbf6944fd6725c012831cab/nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl',
-    },
-];
-
-/**
- * WhisperSeg onnxruntime-gpu — mutually exclusive with CPU ``onnxruntime``.
- * CUDA 12 drivers → 1.21.x (<1.27); CUDA 13 drivers → >=1.27.
- */
-const ORT_GPU_MANUAL_PACKAGES = {
-    cuda12: {
-        id: 'onnxruntime-gpu',
-        name: 'onnxruntime-gpu（WhisperSeg · CUDA 12）',
-        target: 'cuda12',
-        requirement: 'onnxruntime-gpu>=1.21,<1.27',
-        fileName: 'onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/dc/ad/a9199df9350b5fee6b7377d3af03ed45a2ef162feb10679b0bc10f270515/onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/dc/ad/a9199df9350b5fee6b7377d3af03ed45a2ef162feb10679b0bc10f270515/onnxruntime_gpu-1.21.1-cp312-cp312-win_amd64.whl',
-        group: 'WhisperSeg / onnxruntime-gpu',
-        note: '灵敏检出 GPU；与 CPU 版 onnxruntime 互斥，装前请先卸载后者',
-    },
-    cuda13: {
-        id: 'onnxruntime-gpu',
-        name: 'onnxruntime-gpu（WhisperSeg · CUDA 13）',
-        target: 'cuda13',
-        requirement: 'onnxruntime-gpu>=1.27',
-        fileName: 'onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/e5/9e/92554acd080db68f549fd0e653fcf51a9dea7cb31e70c497714a9f2310fc/onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e5/9e/92554acd080db68f549fd0e653fcf51a9dea7cb31e70c497714a9f2310fc/onnxruntime_gpu-1.28.0-cp312-cp312-win_amd64.whl',
-        group: 'WhisperSeg / onnxruntime-gpu',
-        note: '灵敏检出 GPU（驱动 CUDA 13+）；与 CPU 版 onnxruntime 互斥',
-    },
-};
-
-/** Best-effort: nvidia-smi CUDA major for picking the ORT GPU wheel. */
-function detectDriverCudaMajorQuick() {
-    try {
-        const { execFileSync } = require('child_process');
-        const out = execFileSync('nvidia-smi', [], {
-            encoding: 'utf8',
-            windowsHide: true,
-            timeout: 4000,
-        });
-        const m = String(out || '').match(/CUDA\s+(?:UMD\s+)?Version:\s*(\d+)\.(\d+)/i);
-        if (m) return Number(m[1]) || 0;
-    } catch (_) { /* ignore */ }
-    return 0;
-}
-
-function resolveOrtGpuManualPackage(payload = {}) {
-    const desired = String(
-        payload.ortGpuDesiredTarget
-        || payload.ortGpuTarget
-        || '',
-    ).trim().toLowerCase();
-    if (desired === 'cuda13' || desired === 'cuda12') {
-        return ORT_GPU_MANUAL_PACKAGES[desired];
-    }
-    const req = String(payload.ortGpuRequirement || '').trim();
-    // Prefer explicit upper bound (CUDA 12 pin) over ">=1.27" substring matches.
-    if (/<\s*1\.27/.test(req)) {
-        return ORT_GPU_MANUAL_PACKAGES.cuda12;
-    }
-    if (/>=\s*1\.27/.test(req)) {
-        return ORT_GPU_MANUAL_PACKAGES.cuda13;
-    }
-    const major = detectDriverCudaMajorQuick();
-    if (major >= 13) return ORT_GPU_MANUAL_PACKAGES.cuda13;
-    return ORT_GPU_MANUAL_PACKAGES.cuda12;
-}
-
-function mapGpuManualItem(pkg, { group = 'GPU 组件', primary = false } = {}) {
-    return {
-        id: pkg.id,
-        name: pkg.name,
-        kind: 'gpu',
-        group: pkg.group || group,
-        fileName: pkg.fileName,
-        officialUrl: pkg.officialUrl,
-        mirrorUrl: pkg.mirrorUrl,
-        defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
-        note: pkg.note || pkg.fileName || 'pip 包（whl）· 直链下载',
-        primary: !!primary,
-    };
-}
-
-/** SenseVoice extras (torch / torchaudio / funasr / numpy) — direct .whl links.
- * numpy must be <2.5 (numba/librosa requirement); 2.5+ forces numba source builds.
- */
-const SENSEVOICE_MANUAL_PACKAGES = [
-    {
-        id: 'numpy',
-        name: 'NumPy（需 <2.5，兼容 numba）',
-        fileName: 'numpy-2.4.6-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'numba',
-        name: 'Numba（funasr/librosa 依赖）',
-        fileName: 'numba-0.66.0-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/fc/eb/9e6171e378822ab191c7abcfd3d8cfc8644516f6c7834c22e210e4acc070/numba-0.66.0-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/fc/eb/9e6171e378822ab191c7abcfd3d8cfc8644516f6c7834c22e210e4acc070/numba-0.66.0-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'llvmlite',
-        name: 'llvmlite（numba 依赖）',
-        fileName: 'llvmlite-0.48.0-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/16/78/d824ffff7521cd140dc2006e44ce2bc82e64b48d1b32e90e956308c85a74/llvmlite-0.48.0-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/16/78/d824ffff7521cd140dc2006e44ce2bc82e64b48d1b32e90e956308c85a74/llvmlite-0.48.0-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'scipy',
-        name: 'SciPy（funasr / librosa 依赖）',
-        fileName: 'scipy-1.15.3-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/e6/eb/3bf6ea8ab7f1503dca3a10df2e4b9c3f6b3316df07f6c0ded94b281c7101/scipy-1.15.3-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/eb/3bf6ea8ab7f1503dca3a10df2e4b9c3f6b3316df07f6c0ded94b281c7101/scipy-1.15.3-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'torch',
-        name: 'PyTorch（torch）',
-        fileName: 'torch-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'torchaudio',
-        name: 'TorchAudio',
-        fileName: 'torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'funasr',
-        name: 'FunASR',
-        fileName: 'funasr-1.3.30-py3-none-any.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
-    },
-];
-
-/** Whisper extras (faster-whisper / ctranslate2 / numpy) — direct .whl links. */
-const WHISPER_MANUAL_PACKAGES = [
-    {
-        id: 'numpy',
-        name: 'NumPy（需 <2.5）',
-        fileName: 'numpy-2.4.6-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'ctranslate2',
-        name: 'CTranslate2（Whisper 推理核心）',
-        fileName: 'ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/c0/82/0a5f7f2b03b4e10aacb3146715724e1b96bb993cc7d199be28c9825aa120/ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/c0/82/0a5f7f2b03b4e10aacb3146715724e1b96bb993cc7d199be28c9825aa120/ctranslate2-4.8.1-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'onnxruntime',
-        name: 'ONNX Runtime（Silero VAD）',
-        fileName: 'onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/5f/9d/fb8895b2cb38c9965d4b4e0a9aa1398f3e3f16c4acb75cf3b61689780a65/onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/5f/9d/fb8895b2cb38c9965d4b4e0a9aa1398f3e3f16c4acb75cf3b61689780a65/onnxruntime-1.21.1-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'faster-whisper',
-        name: 'faster-whisper',
-        fileName: 'faster_whisper-1.2.1-py3-none-any.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/05/99/49ee85903dee060d9f08297b4a342e5e0bcfca2f027a07b4ee0a38ab13f9/faster_whisper-1.2.1-py3-none-any.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/05/99/49ee85903dee060d9f08297b4a342e5e0bcfca2f027a07b4ee0a38ab13f9/faster_whisper-1.2.1-py3-none-any.whl',
-    },
-];
-
-function getEngineModelsRoot(engineInstallPath = '') {
-    const root = String(engineInstallPath || process.env.TRANSUB_ENGINE_HOME || '').trim();
-    if (root) {
-        return path.join(path.resolve(root), 'models');
-    }
-    // Fallback when install path is unknown (should be rare).
-    const local = process.env.LOCALAPPDATA || process.env.HOME || os.homedir();
-    return path.join(local, 'TransubEngine', 'models');
-}
-
-function normalizeHfEndpoint(value) {
-    return String(value || '').trim().replace(/\/+$/, '') || 'https://hf-mirror.com';
-}
-
-function uniqueIds(ids) {
-    const seen = new Set();
-    const out = [];
-    for (const id of ids) {
-        const mid = String(id || '').trim();
-        if (!mid || seen.has(mid)) continue;
-        seen.add(mid);
-        out.push(mid);
-    }
-    return out;
-}
-
-function resolveDownloadModelIds(payload = {}) {
-    const ids = [];
-    if (Array.isArray(payload.modelIds)) {
-        ids.push(...payload.modelIds);
-    }
-    const profile = String(payload.profile || '').trim();
-    if (profile && ENGINE_PROFILE_MODELS[profile]) {
-        ids.push(...ENGINE_PROFILE_MODELS[profile]);
-    }
-    if (!ids.length) {
-        ids.push(...ENGINE_PROFILE_MODELS.balanced);
-    }
-    const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-    // Sakura GGUF is downloaded via managed LLM path, not engine Hub.
-    return uniqueIds(ids).filter((id) => !sakuraCatalog.isSakuraMtModel(id));
-}
-
-function buildHubUrls(hubId, hfEndpoint) {
-    const id = String(hubId || '').trim();
-    if (!id) return { officialUrl: '', mirrorUrl: '' };
-    const mirror = normalizeHfEndpoint(hfEndpoint);
-    return {
-        officialUrl: `https://huggingface.co/${id}`,
-        mirrorUrl: `${mirror}/${id}`,
-    };
-}
-
-/**
- * Manual-install weight cue for Hub models (ASR / MT / VAD).
- * @param {{ id?: string, kind?: string, backend?: string }} spec
- * @returns {{ weightFile: string, placeSteps: string }}
- */
-function manualPlaceHintForModel(spec = {}) {
-    const mid = String(spec.id || '').toLowerCase();
-    const kindName = String(spec.kind || '').toLowerCase();
-    const be = String(spec.backend || '').toLowerCase();
-    let weightFile = '模型权重文件';
-    if (
-        be.includes('whisper')
-        || mid.includes('whisper')
-        || mid === 'anime-whisper'
-        || mid.startsWith('kotoba-')
-    ) {
-        weightFile = 'model.bin';
-    } else if (be === 'reazon-k2' || mid.includes('reazon')) {
-        weightFile = 'encoder-*.onnx 与 tokens.txt';
-    } else if (be.includes('qwen') || mid.includes('qwen3')) {
-        weightFile = 'model.safetensors（或分片）';
-    } else if (be.includes('whisperseg') || mid.includes('whisperseg')) {
-        weightFile = 'model.onnx';
-    } else if (kindName === 'mt' || be.includes('opus') || be.includes('marian')) {
-        weightFile = 'pytorch_model.bin 或 model.safetensors';
-    } else if (
-        kindName === 'vad'
-        || mid.includes('sensevoice')
-        || mid.includes('fsmn')
-        || be.includes('sensevoice')
-        || be.includes('fsmn')
-    ) {
-        weightFile = 'model.pt';
-    } else if (kindName === 'asr') {
-        weightFile = 'model.pt 或 model.bin';
-    }
-    return {
-        weightFile,
-        placeSteps: [
-            '在打开的仓库页下载全部文件（可用「下载整个仓库」或逐个下载）',
-            '将文件直接放入下方目录（不要再套一层同名文件夹）',
-            `确认关键权重「${weightFile}」为完整文件（不能是几十字节的 LFS 指针）`,
-        ].join('\n'),
-    };
-}
-
-/** @param {string} value @returns {'models'|'gpu'|'demucs'|'sensevoice'|'whisper'} */
-function normalizeEngineDownloadKind(value) {
-    const k = String(value || 'models').trim().toLowerCase();
-    if (k === 'gpu') return 'gpu';
-    if (k === 'demucs' || k === 'audio-separate' || k === 'audioseparate' || k === 'separate') {
-        return 'demucs';
-    }
-    if (k === 'sensevoice' || k === 'sensevoice-runtime' || k === 'runtime-sensevoice') {
-        return 'sensevoice';
-    }
-    if (k === 'whisper' || k === 'whisper-runtime' || k === 'runtime-whisper') {
-        return 'whisper';
-    }
-    return 'models';
-}
-
-async function buildEngineDownloadInfo(payload = {}) {
-    const kind = normalizeEngineDownloadKind(payload.kind);
-    const merged = mergeEngineOptions(payload || {});
-    merged.engineInstallPath = resolveEngineInstallPath(merged.engineInstallPath);
-    const hfEndpoint = payload.hfEndpoint != null
-        ? String(payload.hfEndpoint || '').trim()
-        : String(merged.engineHfEndpoint || '').trim();
-    const modelsRoot = getEngineModelsRoot(merged.engineInstallPath);
-
-    if (kind === 'gpu') {
-        const installPath = String(merged.engineInstallPath || '').trim();
-        const runtimeSite = path.join(installPath, 'runtime', 'Lib', 'site-packages', 'nvidia');
-        const venvSite = path.join(installPath, '.venv', 'Lib', 'site-packages', 'nvidia');
-        const runtimePy = resolveEngineRuntimePython(installPath);
-        const folder = fs.existsSync(runtimeSite)
-            ? runtimeSite
-            : (fs.existsSync(venvSite)
-                ? venvSite
-                : (runtimePy
-                    ? path.join(installPath, 'runtime')
-                    : path.join(installPath, '.venv')));
-        const pipPrefix = runtimePy
-            ? `"${runtimePy}" -m pip`
-            : 'python -m pip';
-        const ortPkg = resolveOrtGpuManualPackage(payload || {});
-        const ortOnly = payload?.ortOnly === true
-            || (payload?.asrGpuReady === true && payload?.ortGpuCuda === false);
-        // Prefer the driver-matched ORT wheel first — ASR/CT2 cuBLAS is often
-        // already ready while WhisperSeg still needs onnxruntime-gpu.
-        const ortItem = mapGpuManualItem(ortPkg, {
-            group: 'WhisperSeg / onnxruntime-gpu',
-            primary: true,
-        });
-        // Also offer the alternate pin so CUDA 13 drivers can fall back to
-        // CUDA 12 ORT when cu13 extras are unavailable.
-        const altTarget = ortPkg.target === 'cuda13' ? 'cuda12' : 'cuda13';
-        const altPkg = ORT_GPU_MANUAL_PACKAGES[altTarget];
-        const altItem = mapGpuManualItem({
-            ...altPkg,
-            name: `${altPkg.name}（备选）`,
-        }, { group: 'WhisperSeg / onnxruntime-gpu（备选）' });
-        const cudaItems = GPU_MANUAL_PACKAGES.map((pkg) => mapGpuManualItem(pkg));
-        const items = ortOnly
-            ? [ortItem, altItem]
-            : [ortItem, altItem, ...cudaItems];
-        const ortPip = ortPkg.requirement || 'onnxruntime-gpu>=1.27';
-        const cudaPip = 'nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12';
-        const pipPkgs = ortOnly ? `"${ortPip}"` : `${cudaPip} "${ortPip}"`;
-        return {
-            ok: true,
-            info: {
-                kind: 'gpu',
-                title: ortOnly ? '下载 WhisperSeg GPU（onnxruntime-gpu）' : '下载 GPU 支持',
-                folder,
-                pipCommand: `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com ${pipPkgs}`,
-                hint: ortOnly
-                    ? `ASR/CTranslate2 已就绪；请安装 ${ortPip}（与 CPU 版 onnxruntime 互斥）。优先点下方「下载文件」，或复制 pip 命令。`
-                    : '优先阿里云 PyPI（失败自动回退华为云 / 清华）。WhisperSeg 灵敏检出还需 onnxruntime-gpu（见清单首项）。也可点下方「下载文件」获取 win_amd64 .whl。',
-                wheelHint: ortOnly
-                    ? `请下载 ${ortPkg.fileName} 后本地安装。若已装 CPU 版 onnxruntime，请先卸载再装 GPU 版。`
-                    : '请先装 WhisperSeg / onnxruntime-gpu，再按需补齐下方 NVIDIA CUDA 12 组件。',
-                items,
-                ortGpuRequirement: ortPkg.requirement,
-                ortGpuTarget: ortPkg.target,
-            },
-        };
-    }
-
-    if (kind === 'demucs') {
-        const installPath = String(merged.engineInstallPath || '').trim();
-        const runtimePy = resolveEngineRuntimePython(installPath);
-        const runtimeDir = path.join(installPath, 'runtime');
-        const venv = path.join(installPath, '.venv');
-        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
-        const pipPrefix = runtimePy
-            ? `"${runtimePy}" -m pip`
-            : 'python -m pip';
-        const demucsPip = `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com demucs`;
-        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
-        return {
-            ok: true,
-            info: {
-                kind: 'demucs',
-                title: '下载 Demucs（人声分离）',
-                folder,
-                pipCommand: `${demucsPip}\n${torchCudaPip}`,
-                hint: '自动安装 Demucs；有 NVIDIA GPU 时会强制重装 CUDA 版 PyTorch（优先阿里云 cu126 直链 whl，约 2.5GB），替换 CPU torch。与「下载 GPU 支持」（ASR）互补。失败时可浏览器下载 .whl 后手动安装。',
-                wheelHint: '至少选择 demucs；若需 GPU 加速请一并下载下方 torch / torchaudio（cu126、cp312、win_amd64）',
-                items: [
-                    {
-                        id: 'demucs',
-                        name: 'Demucs（Meta 人声分离）',
-                        kind: 'demucs',
-                        group: '人声分离',
-                        fileName: 'demucs-4.1.0-py3-none-any.whl',
-                        officialUrl: 'https://files.pythonhosted.org/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
-                        note: 'demucs-4.1.0-py3-none-any.whl',
-                    },
-                    {
-                        id: 'torch-cuda',
-                        name: 'PyTorch CUDA（cu126）',
-                        kind: 'demucs',
-                        group: '人声分离 · GPU',
-                        fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        note: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl · 约 2.5GB',
-                    },
-                    {
-                        id: 'torchaudio-cuda',
-                        name: 'TorchAudio CUDA（cu126）',
-                        kind: 'demucs',
-                        group: '人声分离 · GPU',
-                        fileName: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        note: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                    },
-                ],
-            },
-        };
-    }
-
-    if (kind === 'sensevoice') {
-        const installPath = String(merged.engineInstallPath || '').trim();
-        const runtimePy = resolveEngineRuntimePython(installPath);
-        const runtimeDir = path.join(installPath, 'runtime');
-        const venv = path.join(installPath, '.venv');
-        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
-        const pipPrefix = runtimePy
-            ? `"${runtimePy}" -m pip`
-            : 'python -m pip';
-        return {
-            ok: true,
-            info: {
-                kind: 'sensevoice',
-                title: '手动安装 SenseVoice 运行库',
-                folder,
-                pipCommand: `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba torch torchaudio funasr`,
-                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。请用下方直链下载 .whl（勿装 numpy 2.5+，否则 numba 会源码编译失败）。',
-                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite/scipy，再装 torch / torchaudio / funasr。可多选后一次安装。',
-                items: SENSEVOICE_MANUAL_PACKAGES.map((pkg) => ({
-                    id: pkg.id,
-                    name: pkg.name,
-                    kind: 'sensevoice',
-                    group: 'SenseVoice 运行库',
-                    fileName: pkg.fileName,
-                    officialUrl: pkg.officialUrl,
-                    mirrorUrl: pkg.mirrorUrl,
-                    defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
-                    note: pkg.fileName || 'pip 包（whl）· SenseVoice',
-                })),
-            },
-        };
-    }
-
-    if (kind === 'whisper') {
-        const installPath = String(merged.engineInstallPath || '').trim();
-        const runtimePy = resolveEngineRuntimePython(installPath);
-        const runtimeDir = path.join(installPath, 'runtime');
-        const venv = path.join(installPath, '.venv');
-        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
-        const pipPrefix = runtimePy
-            ? `"${runtimePy}" -m pip`
-            : 'python -m pip';
-        return {
-            ok: true,
-            info: {
-                kind: 'whisper',
-                title: '手动安装 Whisper 运行库',
-                folder,
-                pipCommand: `${pipPrefix} install --upgrade --prefer-binary -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "faster-whisper>=1.1.0" "ctranslate2>=4.0.0" "onnxruntime>=1.14.0,<1.22" "av>=10.0.0" "numpy>=1.24.0,<2.5"`,
-                hint: 'Whisper 需要 faster-whisper / ctranslate2 / onnxruntime（Silero VAD）/ av / numpy(<2.5)。若提示「应用程序控制策略」拦截，请关闭智能应用控制或将引擎目录加入排除（重装 .whl 无效）。',
-                wheelHint: '优先排除系统策略拦截。若确缺包：先装 ctranslate2、onnxruntime 与 numpy 2.4.x，再装 faster-whisper；av 为音频解码依赖。',
-                items: WHISPER_MANUAL_PACKAGES.map((pkg) => ({
-                    id: pkg.id,
-                    name: pkg.name,
-                    kind: 'whisper',
-                    group: 'Whisper 运行库',
-                    fileName: pkg.fileName,
-                    officialUrl: pkg.officialUrl,
-                    mirrorUrl: pkg.mirrorUrl,
-                    defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
-                    note: pkg.fileName || 'pip 包（whl）· Whisper',
-                })),
-            },
-        };
-    }
-
-    /** @type {Map<string, any>} */
-    const byId = new Map();
-    try {
-        const ensure = await ensureEngineRunning(merged);
-        if (ensure.ok) {
-            const listed = await listModels(ensure.baseUrl, { timeoutMs: 20000 });
-            const models = Array.isArray(listed.data?.models) ? listed.data.models : [];
-            for (const m of models) {
-                if (m?.id) byId.set(String(m.id), m);
-            }
-        }
-    } catch { /* fallback catalog */ }
-
-    const sakuraMt = require('./sakura-mt');
-    const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-    for (const m of sakuraMt.listSakuraModelsForEngine()) {
-        byId.set(String(m.id), m);
-    }
-
-    const profile = String(payload.profile || merged.engineProfile || 'balanced').trim();
-    const profileIds = ENGINE_PROFILE_MODELS[profile] || ENGINE_PROFILE_MODELS.balanced;
-    const hasExplicitModelIds = Array.isArray(payload.modelIds);
-    const requestedIds = hasExplicitModelIds
-        ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
-        : [
-            merged.engineAsrModel,
-            merged.engineMtModel,
-            merged.engineVadModel,
-        ].filter(Boolean);
-    const preselected = new Set([
-        ...profileIds,
-        ...requestedIds,
-    ]);
-
-    const catalogIds = uniqueIds([
-        ...Object.keys(ENGINE_MODEL_HUB_FALLBACK),
-        ...sakuraCatalog.listCatalog().map((e) => e.id),
-        ...byId.keys(),
-    ]);
-    const kindOrder = { asr: 0, mt: 1, vad: 2 };
-
-    const catalog = catalogIds.map((id) => {
-        const live = byId.get(id) || {};
-        const fallback = ENGINE_MODEL_HUB_FALLBACK[id] || {};
-        const sakuraEntry = sakuraCatalog.findCatalogEntry(id);
-        const kindName = String(live.kind || fallback.kind || sakuraEntry?.kind || '').trim() || 'mt';
-        const hubId = String(live.hub_id || live.hubId || fallback.hubId || '').trim();
-        const name = String(
-            live.name || fallback.name || sakuraEntry?.name || id,
-        ).trim();
-        const sizeHint = sakuraEntry?.sizeHint
-            || (Number(live.size_hint_mb) > 0 ? `约 ${live.size_hint_mb} MB` : '')
-            || '';
-        const backend = String(
-            live.backend || fallback.backend || sakuraEntry?.backend || '',
-        ).trim();
-        const installed = sakuraEntry
-            ? !!live.installed
-            : (live.installed === true || (id === 'silero-vad'));
-        return {
-            id,
-            name,
-            kind: kindName,
-            hubId,
-            installed: !!installed,
-            incomplete: !!live.incomplete,
-            selected: preselected.has(id),
-            recommended: profileIds.includes(id),
-            sizeHint,
-            backend,
-            note: sakuraEntry?.note
-                || fallback.note
-                || (hubId ? `Hub：${hubId}` : (backend === 'sakura-gguf' ? 'Sakura GGUF' : '')),
-        };
-    }).sort((a, b) => {
-        const ka = kindOrder[a.kind] ?? 9;
-        const kb = kindOrder[b.kind] ?? 9;
-        if (ka !== kb) return ka - kb;
-        return String(a.name).localeCompare(String(b.name), 'zh');
-    });
-
-    // Manual links: when caller passes modelIds, only those (do not expand to whole profile).
-    const linkIds = uniqueIds(
-        hasExplicitModelIds && requestedIds.length
-            ? requestedIds
-            : [
-                ...catalog.filter((c) => c.selected).map((c) => c.id),
-                ...requestedIds,
-            ],
-    );
-    const items = linkIds.map((id) => {
-        const live = byId.get(id) || {};
-        const fallback = ENGINE_MODEL_HUB_FALLBACK[id] || {};
-        const sakuraEntry = sakuraCatalog.findCatalogEntry(id);
-        const hubId = String(live.hub_id || live.hubId || fallback.hubId || '').trim();
-        const name = String(live.name || fallback.name || sakuraEntry?.name || id).trim();
-        const kindName = String(live.kind || fallback.kind || sakuraEntry?.kind || '').trim();
-        if (sakuraEntry) {
-            return {
-                id,
-                name,
-                kind: 'mt',
-                hubId: '',
-                bundled: false,
-                officialUrl: sakuraEntry.ggufUrl,
-                mirrorUrl: String(sakuraEntry.ggufUrl || '').replace(
-                    '://huggingface.co',
-                    '://hf-mirror.com',
-                ),
-                defaultUrl: sakuraEntry.ggufUrl,
-                localDir: require('./advanced-llm-fs').getModelsDir(),
-                note: `${sakuraEntry.note || 'Sakura GGUF'} · ${sakuraEntry.sizeHint || ''}`,
-                backend: 'sakura-gguf',
-            };
-        }
-        const urls = buildHubUrls(hubId, hfEndpoint || 'https://hf-mirror.com');
-        const localDirName = String(live.local_dirname || live.localDirname || id).trim();
-        const localDir = path.join(modelsRoot, kindName || 'asr', localDirName);
-        const backend = String(live.backend || fallback.backend || '').trim();
-        const place = manualPlaceHintForModel({ id, kind: kindName, backend });
-        const sizeHint = Number(live.size_hint_mb) > 0
-            ? `约 ${live.size_hint_mb} MB`
-            : (fallback.sizeHint || '');
-        return {
-            id,
-            name,
-            kind: kindName,
-            hubId,
-            backend,
-            bundled: !hubId,
-            officialUrl: urls.officialUrl,
-            mirrorUrl: urls.mirrorUrl,
-            defaultUrl: urls.mirrorUrl || urls.officialUrl,
-            localDir,
-            folder: localDir,
-            sizeHint,
-            weightFile: place.weightFile,
-            placeSteps: place.placeSteps,
-            note: hubId
-                ? `Hub：${hubId} · 默认镜像`
-                : '无需单独下载（运行时内置）',
-        };
-    });
-
-    return {
-        ok: true,
-        info: {
-            kind: 'models',
-            title: '下载引擎模型',
-            folder: modelsRoot,
-            hfEndpoint: normalizeHfEndpoint(hfEndpoint || 'https://hf-mirror.com'),
-            profile,
-            hint: '勾选需要的模型后点「开始下载」。Opus/ASR/VAD 走引擎 Hub；Sakura 走本地 GGUF（含 llama-server）。网络不佳时可在卡片上「手动下载」。',
-            catalog,
-            selectedIds: catalog.filter((c) => c.selected).map((c) => c.id),
-            items,
-        },
-    };
-}
-
-function friendlyEngineError(raw) {
-    const msg = String(raw || '').trim();
-    if (!msg) return '引擎任务失败';
-    const lower = msg.toLowerCase();
-    if (
-        lower === 'aborted'
-        || lower === 'cancelled'
-        || lower.includes('operation was aborted')
-        || lower.includes('user aborted')
-        || lower.includes('aborterror')
-    ) {
-        return '操作已中止或请求超时，请重试';
-    }
-    if (lower.includes('cublas64_12') || (lower.includes('cublas') && lower.includes('not found'))) {
-        return (
-            '缺少 CUDA 12 运行库 cublas64_12.dll（Whisper/CTranslate2 需要）。'
-            + '引擎已尽量回退 CPU；若仍失败请将设置 → 推理设备改为 CPU，'
-            + '或安装 CUDA Toolkit 12 并把其 bin 加入系统 PATH 后重启引擎。'
-            + ` 原始错误：${msg}`
-        );
-    }
-    const mtMissing = msg.match(/MT model not installed:\s*([^\s.]+)/i)
-        || msg.match(/未安装翻译模型\s+([^\s。]+)/);
-    if (mtMissing) {
-        const id = mtMissing[1];
-        return (
-            `未安装翻译模型 ${id}。`
-            + '请在「设置 → 环境 / 模型」下载后再生成；'
-            + '若转写已完成，可查看同目录下的 `*.src.partial.*` / `*.src.*` 原文后单独翻译。'
-            + ` 原始错误：${msg}`
-        );
-    }
-    return msg;
-}
-
-function resolvePythonCommand() {
-    if (process.env.TRANSUB_ENGINE_PYTHON) {
-        return process.env.TRANSUB_ENGINE_PYTHON;
-    }
-    return process.platform === 'win32' ? 'python' : 'python3';
-}
-
-function resolveEngineRuntimePython(installPath) {
-    const root = path.resolve(String(installPath || '').trim() || '.');
-    const candidates = process.platform === 'win32'
-        ? [
-            path.join(root, 'runtime', 'python.exe'),
-            path.join(root, 'runtime', 'Scripts', 'python.exe'),
-        ]
-        : [
-            path.join(root, 'runtime', 'bin', 'python'),
-            path.join(root, 'runtime', 'bin', 'python3'),
-        ];
-    for (const exe of candidates) {
-        if (fs.existsSync(exe)) return exe;
-    }
-    return '';
-}
-
-function modelIdsNeedWhisperExtras(modelIds) {
-    const list = Array.isArray(modelIds) ? modelIds : [];
-    return list.some((id) => {
-        const s = String(id || '').toLowerCase();
-        return s.includes('whisper') && !s.includes('whisperseg');
-    });
-}
-
-function modelIdsNeedSensevoiceExtras(modelIds) {
-    const list = Array.isArray(modelIds) ? modelIds : [];
-    return list.some((id) => String(id || '').toLowerCase().includes('sensevoice'));
-}
-
-/**
- * Install ASR pip extras with engine stopped (fresh python.exe).
- * Avoids WinError 5 when the HTTP server already imported native wheels.
- * @param {object} opts
- * @param {'ensure-asr-whisper'|'ensure-asr-sensevoice'} opts.command
- * @param {string} [opts.label]
- */
-function ensureRuntimeExtrasOffline(opts = {}) {
-    const pythonPath = String(opts.pythonPath || '').trim();
-    const cwd = String(opts.cwd || '').trim();
-    const command = String(opts.command || '').trim();
-    const label = String(opts.label || '运行库').trim() || '运行库';
-    if (!pythonPath || !fs.existsSync(pythonPath)) {
-        return Promise.resolve({ ok: false, error: '找不到引擎 Python（runtime\\python.exe）' });
-    }
-    if (!command) {
-        return Promise.resolve({ ok: false, error: '缺少 runtime ensure 命令' });
-    }
-    const force = !!opts.force;
-    const timeoutMs = Math.max(60_000, Number(opts.timeoutMs) || 1_800_000);
-    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
-    const signal = opts.signal;
-    const args = [
-        '-m', 'transub_engine', 'runtime', command,
-        '--progress', 'jsonl',
-    ];
-    if (force) args.push('--force');
-
-    return new Promise((resolve) => {
-        if (signal?.aborted) {
-            resolve({ ok: false, cancelled: true, error: 'cancelled' });
-            return;
-        }
-        let child;
-        try {
-            child = spawn(pythonPath, args, {
-                cwd: cwd || undefined,
-                windowsHide: true,
-                env: {
-                    ...process.env,
-                    PYTHONUNBUFFERED: '1',
-                    PYTHONIOENCODING: 'utf-8',
-                },
-            });
-        } catch (err) {
-            resolve({ ok: false, error: err.message || String(err) });
-            return;
-        }
-
-        const lines = [];
-        let settled = false;
-        let resultPayload = null;
-        const finish = (payload) => {
-            if (settled) return;
-            settled = true;
-            try { signal?.removeEventListener?.('abort', onAbort); } catch { /* ignore */ }
-            clearTimeout(timer);
-            resolve(payload);
-        };
-        const onAbort = () => {
-            try { child.kill(); } catch { /* ignore */ }
-            finish({ ok: false, cancelled: true, error: 'cancelled' });
-        };
-        if (signal) {
-            if (signal.aborted) {
-                onAbort();
-                return;
-            }
-            signal.addEventListener('abort', onAbort, { once: true });
-        }
-        const timer = setTimeout(() => {
-            try { child.kill(); } catch { /* ignore */ }
-            finish({ ok: false, error: `${label}安装超时（${Math.round(timeoutMs / 1000)} 秒）` });
-        }, timeoutMs);
-
-        const handleLine = (raw) => {
-            const text = String(raw || '').trim();
-            if (!text) return;
-            lines.push(text);
-            if (lines.length > 80) lines.splice(0, lines.length - 60);
-            let ev;
-            try { ev = JSON.parse(text); } catch { return; }
-            if (!ev || typeof ev !== 'object') return;
-            if (ev.type === 'progress' || ev.stage || ev.detail) {
-                onProgress?.(ev);
-            }
-            if (ev.type === 'result' || (ev.ok != null && (ev.ready != null || ev.code || ev.installed))) {
-                resultPayload = ev;
-            }
-        };
-
-        let buf = '';
-        const onChunk = (chunk) => {
-            buf += chunk.toString('utf8');
-            const parts = buf.split(/\r?\n/);
-            buf = parts.pop() || '';
-            for (const part of parts) handleLine(part);
-        };
-        child.stdout?.on('data', onChunk);
-        child.stderr?.on('data', onChunk);
-        child.on('error', (err) => {
-            finish({ ok: false, error: err.message || String(err), logTail: lines.slice(-20).join('\n') });
-        });
-        child.on('close', (code) => {
-            if (buf.trim()) handleLine(buf);
-            const logTail = lines.slice(-20).join('\n');
-            if (resultPayload && resultPayload.ok) {
-                finish({ ok: true, ...resultPayload, logTail });
-                return;
-            }
-            if (code === 0) {
-                finish({ ok: true, ...(resultPayload || {}), logTail });
-                return;
-            }
-            const err = resultPayload?.message
-                || resultPayload?.error
-                || (logTail ? logTail.slice(-400) : `${label}安装失败（exit ${code}）`);
-            finish({
-                ok: false,
-                error: err,
-                code: resultPayload?.code || '',
-                logTail,
-                ...(resultPayload || {}),
-            });
-        });
-    });
-}
-
-/**
- * Install Whisper pip extras with engine stopped (fresh python.exe).
- * Avoids WinError 5 when the HTTP server already imported native wheels.
- */
-function ensureAsrWhisperOffline(opts = {}) {
-    return ensureRuntimeExtrasOffline({
-        ...opts,
-        command: 'ensure-asr-whisper',
-        label: 'Whisper 运行库',
-    });
-}
-
-/**
- * Install SenseVoice / FunASR pip extras with engine stopped.
- * Same WinError 5 rationale as Whisper (torch / numba already mapped in-process).
- */
-function ensureAsrSensevoiceOffline(opts = {}) {
-    return ensureRuntimeExtrasOffline({
-        ...opts,
-        command: 'ensure-asr-sensevoice',
-        label: 'SenseVoice 运行库',
-    });
-}
-
-function resolveEngineEntrypoints(installPath) {
-    const root = path.resolve(String(installPath || '').trim() || '.');
-    // Prefer standalone dist (embeddable CPython) — not system Python / source tree.
-    const runtimePy = resolveEngineRuntimePython(root);
-    if (runtimePy) {
-        return {
-            type: 'module',
-            command: runtimePy,
-            args: ['-m', 'transub_engine'],
-            cwd: root,
-            runtime: true,
-        };
-    }
-    const candidates = [
-        path.join(root, 'transub-engine.exe'),
-        path.join(root, 'dist', 'transub-engine.exe'),
-        path.join(root, '.venv', 'Scripts', 'transub-engine.exe'),
-        path.join(root, '.venv', 'bin', 'transub-engine'),
-    ];
-    for (const exe of candidates) {
-        if (fs.existsSync(exe)) {
-            return { type: 'exe', command: exe, args: [] };
-        }
-    }
-    // Dev / source checkout: system python -m transub_engine
-    if (fs.existsSync(path.join(root, 'transub_engine')) || fs.existsSync(path.join(root, 'pyproject.toml'))) {
-        return {
-            type: 'module',
-            command: resolvePythonCommand(),
-            args: ['-m', 'transub_engine'],
-            cwd: root,
-        };
-    }
-    return null;
-}
-
-function parseHostPort(url) {
-    try {
-        const u = new URL(url);
-        return {
-            host: u.hostname || '127.0.0.1',
-            port: Number(u.port) || 8765,
-        };
-    } catch {
-        return { host: '127.0.0.1', port: 8765 };
-    }
-}
-
-async function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
-}
-
-async function waitForHealth(baseUrl, {
-    timeoutMs = 30000,
-    intervalMs = 400,
-    shouldStop = null,
-} = {}) {
-    const started = Date.now();
-    let lastErr = '';
-    while (Date.now() - started < timeoutMs) {
-        if (typeof shouldStop === 'function' && shouldStop()) {
-            return { ok: false, error: '已取消', cancelled: true };
-        }
-        try {
-            const res = await getHealth(baseUrl, { timeoutMs: 2000 });
-            if (res.ok && res.data?.ok) return res;
-            lastErr = res.data?.message || `HTTP ${res.status}`;
-        } catch (err) {
-            lastErr = err.message || String(err);
-        }
-        await sleep(intervalMs);
-    }
-    return { ok: false, error: lastErr || '引擎健康检查超时' };
-}
-
-function mapDeviceForEngine(device) {
-    const d = String(device || '').trim().toLowerCase();
-    if (d === 'cpu') return 'cpu';
-    // Pass cuda explicitly so Demucs / ASR do not silently treat preference as vague "auto".
-    if (d === 'cuda' || d === 'cuda_low_vram' || d === 'cuda_batch' || d === 'gpu') return 'cuda';
-    return 'auto';
-}
-
-function stopEngineProcess() {
-    if (!engineProc) return;
-    const pid = engineProc.pid;
-    try {
-        if (process.platform === 'win32' && pid) {
-            // Kill entire tree (Demucs children survive a plain SIGTERM on Windows).
-            const { spawnSync } = require('child_process');
-            spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
-                windowsHide: true,
-                stdio: 'ignore',
-                timeout: 15000,
-            });
-        } else {
-            engineProc.kill('SIGTERM');
-        }
-    } catch { /* ignore */ }
-    try {
-        engineProc.kill();
-    } catch { /* ignore */ }
-    engineProc = null;
-}
-
-/**
- * After failed / cancelled work, stop managed Python serve and any orphan on the port.
- * Successful batches keep the engine hot for the next job.
- */
-function stopEngineProcessAndPort() {
-    stopEngineProcess();
-    try {
-        const { port } = parseHostPort(engineBaseUrl || DEFAULT_ENGINE_URL);
-        killListenersOnPort(port);
-    } catch { /* ignore */ }
-}
-
-function stopLlamaServerQuiet() {
-    try {
-        require('./advanced-llama-server').stopLlamaServer();
-    } catch { /* ignore */ }
-}
-
-/**
- * Reclaim background compute after an engine batch ends.
- * - External MT always stops llama-server (same as TWAI smart-translate batch).
- * - Failed / cancelled batches also stop the Python engine so it cannot linger.
- */
-function reclaimLocalComputeAfterEngineBatch({ usedExternalMt = false, failedOrCancelled = false } = {}) {
-    if (usedExternalMt || failedOrCancelled) {
-        stopLlamaServerQuiet();
-    }
-    if (failedOrCancelled) {
-        stopEngineProcessAndPort();
-        appendEngineLogLine('[engine] 任务失败或已中断 · 已停止引擎与本地 LLM 进程');
-    } else if (usedExternalMt) {
-        appendEngineLogLine('[engine] 批次结束 · 已停止本地 LLM（llama-server）');
-    }
-}
-
-/** Kill whatever is listening on the engine HTTP port (orphan serve after failed respawn). */
-function killListenersOnPort(port) {
-    const p = Number(port) || 8765;
-    if (!p) return;
-    try {
-        if (process.platform === 'win32') {
-            const { spawnSync } = require('child_process');
-            const ps = `
-$conns = Get-NetTCPConnection -LocalPort ${p} -State Listen -ErrorAction SilentlyContinue;
-foreach ($c in @($conns)) {
-  $procId = [int]$c.OwningProcess;
-  if ($procId -gt 0) { taskkill /PID $procId /T /F 2>$null | Out-Null }
-}
-`;
-            spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], {
-                windowsHide: true,
-                stdio: 'ignore',
-                timeout: 15000,
-            });
-        } else {
-            const { spawnSync } = require('child_process');
-            const out = spawnSync('lsof', ['-ti', `tcp:${p}`], { encoding: 'utf8' });
-            const pids = String(out.stdout || '')
-                .split(/\s+/)
-                .map((x) => x.trim())
-                .filter(Boolean);
-            for (const pid of pids) {
-                try { process.kill(Number(pid), 'SIGTERM'); } catch { /* ignore */ }
-            }
-        }
-    } catch { /* ignore */ }
-}
-
-/**
- * Free Whisper/Demucs VRAM before starting Sakura llama-server (same GPU).
- * Prefer soft release API, then stop managed + orphan engine on the port.
- */
-async function releaseEngineVramBeforeLocalLlm(options = {}) {
-    const opts = mergeEngineOptions(options || {});
-    const baseUrl = opts.engineUrl || engineBaseUrl || DEFAULT_ENGINE_URL;
-    const { port } = parseHostPort(baseUrl);
-    try {
-        const soft = await releaseGpuMemory(baseUrl, { timeoutMs: 15000 });
-        if (soft?.ok) {
-            appendEngineLogLine('[engine] 已释放 GPU 缓存（准备本地 LLM）');
-        }
-    } catch { /* ignore */ }
-    stopEngineProcess();
-    killListenersOnPort(port);
-    await sleep(1200);
-    appendEngineLogLine('[engine] 已停止引擎进程以释放显存（Sakura / llama-server）');
-}
-
-function getEngineLogPath() {
-    if (engineLogPathCached) return engineLogPathCached;
-    const root = process.env.LOCALAPPDATA
-        || process.env.HOME
-        || os.homedir()
-        || process.cwd();
-    engineLogPathCached = path.join(root, 'TransubEngine', 'latest.log');
-    return engineLogPathCached;
-}
-
-function resetEngineLogFile() {
-    try {
-        const logPath = getEngineLogPath();
-        fs.mkdirSync(path.dirname(logPath), { recursive: true });
-        fs.writeFileSync(
-            logPath,
-            `===== Transub Engine log ${new Date().toISOString()} =====\n`,
-            'utf8',
-        );
-    } catch { /* ignore */ }
-    engineLogLineBuf = '';
-    engineLogLastKept = '';
-    engineLogRepeatCount = 0;
-    engineLogLastDroppedKey = '';
-    engineLogDroppedCount = 0;
-}
-
-const ENGINE_LOG_DROP_PATTERNS = [
-    /^\s*\d+%\|/, // tqdm bars
-    /rtf_avg:/i,
-    /\{'load_data':/,
-    /Both `max_new_tokens`/,
-    /Token indices sequence length is longer/,
-    /Recommended: pip install sacremoses/,
-    /Loading weights:\s+\d+%/,
-    /Notice: ffmpeg is not installed/i,
-    /download models from model hub/i,
-    /trust_remote_code:/i,
-    /scope_map:/i,
-    /excludes:/i,
-    /Loading ckpt:/i,
-    /Loading pretrained params from/i,
-    /Building VAD model/i,
-    /funasr version:/i,
-    /INFO:\s+\S+\s+-\s+"GET \/v1\/(?:jobs|health|capabilities)/i,
-    /WARNING:.*max_new_tokens/i,
-];
-
-function stripAnsi(text) {
-    // eslint-disable-next-line no-control-regex -- strip ANSI CSI sequences from engine logs
-    return String(text || '').replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '');
-}
-
-function normalizeEngineLogLine(line) {
-    return stripAnsi(line)
-        .replace(/\r/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function shouldDropEngineLogLine(line) {
-    const text = normalizeEngineLogLine(line);
-    if (!text) return true;
-    // Pure progress fragments / spinner leftovers (no letters)
-    if (!/[A-Za-z\u4e00-\u9fff]/.test(text) && /[|.\d%-]+/.test(text) && text.length < 80) {
-        return true;
-    }
-    return ENGINE_LOG_DROP_PATTERNS.some((re) => re.test(text));
-}
-
-function flushDroppedEngineLogSummary(invokeSender = null) {
-    if (engineLogDroppedCount <= 0) return;
-    const n = engineLogDroppedCount;
-    engineLogDroppedCount = 0;
-    engineLogLastDroppedKey = '';
-    if (n >= 8) {
-        appendEngineLogLineRaw(`[engine] （已省略 ${n} 条重复/进度噪音）`, invokeSender);
-    }
-}
-
-function flushEngineLogRepeats(invokeSender = null) {
-    if (engineLogRepeatCount > 1 && engineLogLastKept) {
-        appendEngineLogLineRaw(`[engine] （上条重复 ${engineLogRepeatCount} 次）`, invokeSender);
-    }
-    engineLogRepeatCount = engineLogLastKept ? 1 : 0;
-}
-
-function flushEngineLogWriteQueue() {
-    engineLogFlushTimer = null;
-    if (!engineLogWriteQueue.length) return;
-    const chunk = `${engineLogWriteQueue.join('\n')}\n`;
-    engineLogWriteQueue = [];
-    try {
-        const logPath = getEngineLogPath();
-        fs.mkdir(path.dirname(logPath), { recursive: true }, (mkdirErr) => {
-            if (mkdirErr) return;
-            fs.appendFile(logPath, chunk, 'utf8', () => { /* ignore */ });
-        });
-    } catch { /* ignore */ }
-}
-
-function appendEngineLogLineRaw(line, invokeSender = null) {
-    const text = String(line ?? '').replace(/\r/g, '').trimEnd();
-    if (!text) return;
-    engineLogWriteQueue.push(text);
-    if (!engineLogFlushTimer) {
-        engineLogFlushTimer = setTimeout(flushEngineLogWriteQueue, 200);
-    }
-    emitToSubtitleUi('transwithai-infer-log', {
-        line: text,
-        source: 'engine',
-    }, invokeSender);
-    emitToSubtitleUi('transub-engine-infer-log', {
-        line: text,
-        source: 'engine',
-    }, invokeSender);
-}
-
-function appendEngineLogLine(line, invokeSender = null) {
-    const text = normalizeEngineLogLine(line);
-    if (!text) return;
-
-    if (shouldDropEngineLogLine(text)) {
-        const key = text.slice(0, 120);
-        if (key === engineLogLastDroppedKey) {
-            engineLogDroppedCount += 1;
-        } else {
-            flushDroppedEngineLogSummary(invokeSender);
-            engineLogLastDroppedKey = key;
-            engineLogDroppedCount = 1;
-        }
-        return;
-    }
-
-    flushDroppedEngineLogSummary(invokeSender);
-
-    if (text === engineLogLastKept) {
-        engineLogRepeatCount += 1;
-        return;
-    }
-    flushEngineLogRepeats(invokeSender);
-    engineLogLastKept = text;
-    engineLogRepeatCount = 1;
-    appendEngineLogLineRaw(text, invokeSender);
-}
-
-function flushEngineLogChunk(chunk, invokeSender = null) {
-    // tqdm often uses CR updates without newline — treat CR as line break.
-    engineLogLineBuf += String(chunk || '').replace(/\r/g, '\n');
-    const parts = engineLogLineBuf.split(/\n/);
-    engineLogLineBuf = parts.pop() || '';
-    for (const part of parts) {
-        appendEngineLogLine(part, invokeSender);
-    }
-}
-
-function attachEngineProcessLogs(proc) {
-    if (!proc) return;
-    engineLogLineBuf = '';
-    engineLogLastKept = '';
-    engineLogRepeatCount = 0;
-    engineLogLastDroppedKey = '';
-    engineLogDroppedCount = 0;
-    const onData = (buf) => flushEngineLogChunk(buf, null);
-    try {
-        proc.stdout?.on('data', onData);
-        proc.stderr?.on('data', onData);
-        proc.on('exit', () => {
-            if (engineLogLineBuf) {
-                appendEngineLogLine(engineLogLineBuf, null);
-                engineLogLineBuf = '';
-            }
-            flushDroppedEngineLogSummary(null);
-            flushEngineLogRepeats(null);
-        });
-    } catch { /* ignore */ }
-}
-
-function openEngineLatestLog() {
-    const logPath = getEngineLogPath();
-    if (!fs.existsSync(logPath)) {
-        return { ok: false, error: `未找到引擎日志：${logPath}` };
-    }
-    const { shell } = require('electron');
-    shell.openPath(logPath);
-    return { ok: true, path: logPath };
-}
-
-function findEngineBundledFfmpeg(installPath) {
-    const root = path.resolve(String(installPath || '').trim() || '.');
-    const names = process.platform === 'win32'
-        ? ['ffmpeg.exe', 'ffmpeg']
-        : ['ffmpeg', 'ffmpeg.exe'];
-    for (const name of names) {
-        const candidates = [
-            path.join(root, '_internal', 'bin', name),
-            path.join(root, '_internal', name),
-            path.join(root, 'bin', name),
-        ];
-        for (const candidate of candidates) {
-            if (fs.existsSync(candidate)) return candidate;
-        }
-    }
-    return '';
-}
-
-function injectFfmpegPathEnv(env, ffmpegPathSetting, engineInstallPath = '') {
-    const next = { ...env };
-    try {
-        const ffmpegBridge = require('./ffmpeg-bridge');
-        const resolved = ffmpegBridge.resolveFfmpegForExecution(ffmpegPathSetting);
-        let exe = resolved?.ok ? String(resolved.path || '').trim() : '';
-        // Prefer Transub's bundled ffmpeg — engine dist no longer ships a copy.
-        if (!exe || exe === 'ffmpeg') {
-            exe = String(ffmpegBridge.findBundledFfmpegPath?.() || '').trim();
-        }
-        if (!exe || exe === 'ffmpeg') {
-            exe = String(findEngineBundledFfmpeg(engineInstallPath) || '').trim();
-        }
-        if (!exe || exe === 'ffmpeg' || !fs.existsSync(exe)) {
-            return injectNvidiaCudaPathEnv(next, engineInstallPath);
-        }
-        const dir = path.dirname(exe);
-        const sep = path.delimiter;
-        const current = String(next.PATH || process.env.PATH || '');
-        const parts = current.split(sep).map((p) => p.toLowerCase());
-        if (!parts.includes(dir.toLowerCase())) {
-            next.PATH = `${dir}${sep}${current}`;
-        }
-        next.FFMPEG_BINARY = exe;
-        next.FFMPEG_PATH = exe;
-        if (engineInstallPath) {
-            next.TRANSUB_ENGINE_HOME = path.resolve(String(engineInstallPath).trim());
-        }
-    } catch { /* ignore */ }
-    return injectNvidiaCudaPathEnv(next, engineInstallPath);
-}
-
-/**
- * Prepend nvidia-* wheel bin dirs (cublas64_12.dll etc.) so CT2/Whisper can use GPU.
- */
-function injectNvidiaCudaPathEnv(env, engineInstallPath = '') {
-    const next = { ...(env || {}) };
-    try {
-        const root = path.resolve(String(engineInstallPath || '').trim() || '.');
-        const candidates = [
-            path.join(root, 'runtime', 'Lib', 'site-packages', 'nvidia'),
-            path.join(root, 'runtime', 'lib', 'site-packages', 'nvidia'),
-            path.join(root, '.venv', 'Lib', 'site-packages', 'nvidia'),
-            path.join(root, 'venv', 'Lib', 'site-packages', 'nvidia'),
-            path.join(root, '.venv', 'lib', 'site-packages', 'nvidia'),
-        ];
-        const sep = path.delimiter;
-        let current = String(next.PATH || process.env.PATH || '');
-        const lower = new Set(current.split(sep).map((p) => p.toLowerCase()).filter(Boolean));
-        const prepend = [];
-        for (const nvidiaRoot of candidates) {
-            if (!fs.existsSync(nvidiaRoot)) continue;
-            let entries = [];
-            try {
-                entries = fs.readdirSync(nvidiaRoot, { withFileTypes: true });
-            } catch {
-                continue;
-            }
-            for (const ent of entries) {
-                if (!ent.isDirectory()) continue;
-                for (const sub of ['bin', 'lib', path.join('lib', 'x64')]) {
-                    const dir = path.join(nvidiaRoot, ent.name, sub);
-                    if (!fs.existsSync(dir)) continue;
-                    const key = dir.toLowerCase();
-                    if (lower.has(key)) continue;
-                    lower.add(key);
-                    prepend.push(dir);
-                }
-            }
-        }
-        if (prepend.length) {
-            next.PATH = `${prepend.join(sep)}${sep}${current}`;
-        }
-        if (engineInstallPath) {
-            next.TRANSUB_ENGINE_HOME = path.resolve(String(engineInstallPath).trim());
-        }
-    } catch { /* ignore */ }
-    return next;
+});
+const {
+    getEngineLogPath,
+    resetEngineLogFile,
+    flushDroppedEngineLogSummary,
+    flushEngineLogRepeats,
+    flushEngineLogWriteQueue,
+    appendEngineLogLineRaw,
+    appendEngineLogLine,
+    flushEngineLogChunk,
+    attachEngineProcessLogs,
+    openEngineLatestLog,
+} = engineLogIo;
+
+const engineLifecycle = createEngineProcessLifecycle({
+    getProc: () => engineProc,
+    setProc: (p) => { engineProc = p; },
+    getBaseUrl: () => engineBaseUrl,
+    parseHostPort,
+    defaultUrl: DEFAULT_ENGINE_URL,
+    appendEngineLogLine,
+    releaseGpuMemory,
+    mergeEngineOptions,
+    sleep,
+});
+const {
+    stopEngineProcess,
+    stopEngineProcessAndPort,
+    stopLlamaServerQuiet,
+    reclaimLocalComputeAfterEngineBatch,
+    killListenersOnPort,
+    releaseEngineVramBeforeLocalLlm,
+} = engineLifecycle;
+
+async function waitForHealth(baseUrl, opts = {}) {
+    return waitForHealthPoll(baseUrl, { ...opts, getHealth });
 }
 
 async function ensureEngineRunning(options = {}) {
@@ -1758,251 +341,28 @@ async function ensureEngineRunning(options = {}) {
 
 let engineUiWindowManager = null;
 
-function getMainWebContents() {
-    const win = engineUiWindowManager?.getMainWindow?.();
-    if (!win || win.isDestroyed()) return null;
-    const wc = win.webContents;
-    if (!wc || wc.isDestroyed()) return null;
-    return wc;
-}
+const progressEmitter = createProgressEmitter({
+    getWindowManager: () => engineUiWindowManager,
+    appendEngineLogLine,
+});
+const {
+    getMainWebContents,
+    emitToSubtitleUi,
+    sendProgress,
+} = progressEmitter;
 
-function emitToSubtitleUi(channel, payload, invokeSender = null) {
-    try {
-        engineUiWindowManager?.sendToRenderer?.(channel, payload);
-    } catch { /* ignore */ }
-    try {
-        if (!invokeSender || invokeSender.isDestroyed?.()) return;
-        const mainWc = getMainWebContents();
-        if (mainWc && mainWc.id === invokeSender.id) return;
-        invokeSender.send(channel, payload);
-    } catch { /* ignore */ }
-}
-
-function mapEngineStageToItemStage(stage) {
-    const s = String(stage || '').toLowerCase();
-    if (!s || s === 'queued' || s === 'starting' || s === 'status') return 'starting';
-    if (s === 'model' || s === 'vad' || s === 'denoise' || s === 'separate') return s;
-    if (s === 'scene' || s === 'vad_failover' || s === 'cleanup') return s;
-    if (s === 'translate' || s === 'mt') return 'translate';
-    if (s === 'done' || s === 'batch_done') return 'done';
-    if (s === 'cancelled') return 'cancelled';
-    if (s === 'error' || s === 'failed') return 'failed';
-    if (s === 'running') return 'transcribe';
-    return s === 'transcribe' ? 'transcribe' : 'transcribe';
-}
-
-/** 主界面引擎日志用的简洁阶段名（与 UI 状态徽章一致） */
-const ENGINE_STAGE_ZH = {
-    starting: '启动',
-    denoise: '轻度降噪',
-    separate: '人声分离',
-    scene: '场景切分',
-    vad: '语音检测',
-    vad_failover: 'VAD 回退',
-    cleanup: '字幕清理',
-    model: '加载模型',
-    transcribe: '转写',
-    translate: '翻译',
-    save: '保存',
-    done: '完成',
-    failed: '失败',
-    cancelled: '已取消',
-    download: '下载',
-    trim: '截取',
-    cancel: '取消',
-};
-
-function engineStageZh(stage) {
-    const s = String(stage || '').toLowerCase();
-    return ENGINE_STAGE_ZH[s] || '处理中';
-}
-
-function buildUiProgress({
-    file,
-    index1,
-    total,
-    stage,
-    detail,
-    percent,
-    error,
-    subtitlePath,
-    sourceSubtitlePath,
-    targetSubtitlePath,
-    bilingualSubtitlePath,
-    processedSec,
-    mediaDurationSec,
-}) {
-    const itemStage = mapEngineStageToItemStage(stage);
-    let phase = 'running';
-    if (itemStage === 'done') phase = 'done';
-    else if (itemStage === 'cancelled') phase = 'cancelled';
-    else if (itemStage === 'failed') phase = 'failed';
-    const itemProgress = Number.isFinite(Number(percent)) ? Number(percent) : (
-        phase === 'done' ? 100 : (
-            itemStage === 'starting' || itemStage === 'model' || itemStage === 'vad'
-            || itemStage === 'denoise' || itemStage === 'separate'
-            || itemStage === 'scene' || itemStage === 'vad_failover' || itemStage === 'cleanup' ? 0 : undefined
-        )
-    );
-    const totalSec = Number(mediaDurationSec);
-    const currentSec = Number(processedSec);
-    const dualPhase = itemStage === 'translate'
-        ? 'translate'
-        : (itemStage === 'transcribe' ? 'source' : null);
-    return {
-        fullPath: file,
-        index: index1,
-        total,
-        phase,
-        itemStage,
-        itemDualPhase: dualPhase,
-        itemDetail: detail || stage || '',
-        itemProgress,
-        error: phase === 'failed' ? (error || detail || '失败') : undefined,
-        subtitlePath,
-        sourceSubtitlePath,
-        targetSubtitlePath,
-        bilingualSubtitlePath,
-        videoCurrentSec: Number.isFinite(currentSec) && currentSec >= 0 ? currentSec : undefined,
-        videoTotalSec: Number.isFinite(totalSec) && totalSec > 0 ? totalSec : undefined,
-    };
-}
-
-let lastEngineUiLogAt = 0;
-let lastEngineUiLogKey = '';
-
-function sendProgress(invokeSender, payload) {
-    const ui = buildUiProgress({
-        file: payload.file || payload.fullPath || '',
-        index1: Number(payload.index1) || ((Number(payload.index) || 0) + 1),
-        total: payload.total,
-        stage: payload.stage || payload.itemStage,
-        detail: payload.detail || payload.itemDetail,
-        percent: payload.percent ?? payload.itemProgress,
-        error: payload.error,
-        subtitlePath: payload.subtitlePath,
-        sourceSubtitlePath: payload.sourceSubtitlePath,
-        targetSubtitlePath: payload.targetSubtitlePath,
-        bilingualSubtitlePath: payload.bilingualSubtitlePath,
-        processedSec: payload.processedSec ?? payload.videoCurrentSec,
-        mediaDurationSec: payload.mediaDurationSec ?? payload.videoTotalSec,
-    });
-    emitToSubtitleUi('transub-engine-progress', { ...payload, ...ui }, invokeSender);
-    emitToSubtitleUi('transwithai-progress', ui, invokeSender);
-    const detail = String(ui.itemDetail || payload.detail || '').trim();
-    if (!detail) return;
-    const name = ui.fullPath ? path.basename(ui.fullPath) : '';
-    const stageZh = engineStageZh(ui.itemStage);
-    const line = `[engine] #${ui.index}/${ui.total} ${stageZh}${name ? ` ${name}` : ''} · ${detail}`;
-    const isHeartbeat = /转写中|转写重试|分片转写|首次加载|Transcribing|翻译\s+\d+\/\d+/i.test(detail);
-    const now = Date.now();
-    // Normalize timers / counters so "翻译 10/100" and "翻译 20/100" share a throttle key by stage.
-    const key = `${ui.itemStage}|${detail
-        .replace(/\d+:\d{2}/g, 't')
-        .replace(/\d+\s*\/\s*\d+/g, 'n/m')
-        .replace(/\d+/g, '#')}`;
-    const throttleMs = /翻译/.test(detail) ? 8000 : 12000;
-    if (isHeartbeat && key === lastEngineUiLogKey && now - lastEngineUiLogAt < throttleMs) {
-        return;
-    }
-    lastEngineUiLogKey = key;
-    lastEngineUiLogAt = now;
-    appendEngineLogLine(line, invokeSender);
-}
-
-function extractOutputPaths(result) {
-    const outputs = Array.isArray(result?.outputs) ? result.outputs : [];
-    const dual = outputs.find((o) => o?.role === 'dual') || null;
-    const source = outputs.find((o) => o?.role === 'source') || null;
-    const target = outputs.find((o) => (
-        o?.role === 'zh' || o?.role === 'target' || o?.role === 'translation'
-    )) || null;
-    const any = outputs[0] || null;
-    return {
-        subtitlePath: dual?.path || target?.path || source?.path || any?.path || '',
-        sourceSubtitlePath: source?.path || '',
-        targetSubtitlePath: target?.path || '',
-        bilingualSubtitlePath: dual?.path || '',
-    };
-}
-
-function loadEngineGlossaryPairs(merged = {}) {
-    if (merged.glossaryMtEnabled === false) return [];
-    const task = String(merged.task || '');
-    if (task !== 'translate' && task !== 'dual') return [];
-    // Opus only: Engine protect/restore/enforce with placeholders.
-    // Sakura / smart use prompt glossary in the adapter (same as the editor).
-    if (merged.mtGlossaryMode === 'prompt' || merged._skipEngineGlossaryProtect) {
-        return [];
-    }
-    try {
-        const { readGlossary } = require('./glossary-data');
-        const gloss = readGlossary();
-        if (!gloss?.ok || !gloss.glossary) return [];
-        return buildEngineGlossaryPairs(gloss.glossary);
-    } catch {
-        return [];
-    }
-}
-
-function abortBatchMtAdapter() {
-    if (batchMtAbortController) {
-        try {
-            batchMtAbortController.abort();
-        } catch { /* ignore */ }
-        batchMtAbortController = null;
-    }
-}
-
-function mapEngineResultsToHistoryOutputs(results) {
-    return (Array.isArray(results) ? results : []).map((r) => ({
-        videoPath: String(r?.path || '').trim(),
-        subtitlePath: String(r?.subtitlePath || '').trim(),
-        sourceSubtitlePath: String(r?.sourceSubtitlePath || '').trim(),
-        targetSubtitlePath: String(r?.targetSubtitlePath || '').trim(),
-        bilingualSubtitlePath: String(r?.bilingualSubtitlePath || '').trim(),
-        status: r?.cancelled ? 'cancelled' : (r?.ok ? 'done' : 'failed'),
-    })).filter((o) => o.subtitlePath || o.videoPath);
-}
-
-function recordEngineBatchHistory({
-    list,
-    merged,
-    finished,
-    startedAt,
-    startedMs,
-    extraErrors = [],
-}) {
-    try {
-        const { appendTaskHistory } = require('./task-history');
-        const results = Array.isArray(finished?.results) ? finished.results : [];
-        const resultErrors = results
-            .filter((r) => !r?.ok && r?.error && r.error !== 'cancelled')
-            .slice(0, 8)
-            .map((r) => `${path.basename(String(r.path || ''))}: ${r.error}`);
-        const errors = [...extraErrors, ...resultErrors].slice(0, 8);
-        const totalDurationSec = (Array.isArray(list) ? list : []).reduce(
-            (sum, item) => sum + Math.max(0, Number(item?.durationSec || item?.duration) || 0),
-            0,
-        );
-        appendTaskHistory({
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            wallSec: Math.max(0, Math.round((Date.now() - startedMs) / 1000)),
-            totalDurationSec,
-            device: merged?.device,
-            task: merged?.task,
-            total: Array.isArray(list) ? list.length : (Number(finished?.total) || 0),
-            generated: Number(finished?.generated) || 0,
-            skipped: Number(finished?.skipped) || 0,
-            failed: Number(finished?.failed) || 0,
-            cancelled: !!finished?.cancelled,
-            options: stripPostTaskFields(merged || {}),
-            errors,
-            outputs: mapEngineResultsToHistoryOutputs(results),
-        });
-    } catch { /* ignore */ }
-}
+const engineBatchHistory = createEngineBatchHistory({
+    buildEngineGlossaryPairs,
+    getAbortController: () => batchMtAbortController,
+    setAbortController: (c) => { batchMtAbortController = c; },
+    stripPostTaskFields,
+    mapEngineResultsToHistoryOutputs,
+});
+const {
+    loadEngineGlossaryPairs,
+    abortBatchMtAdapter,
+    recordEngineBatchHistory,
+} = engineBatchHistory;
 
 async function runEngineBatch({ items, options, invokeSender, minimizeToTray = false }) {
     if (batchRunning) {
@@ -2059,33 +419,23 @@ async function runEngineBatchLocked({
         sakuraCatalog.isLlmInferenceMtModel?.(id)
         || sakuraCatalog.isSakuraMtModel(id)
     );
-    const translateLikeBatch = merged.task === 'translate' || merged.task === 'dual';
-    const fileMergedList = list.map((it) => {
-        const fo = mergeSenseOverrides(merged, it?.optionOverrides || {});
-        // Hard guard: never keep Sakura when the merged file language is known non-Japanese.
-        return sanitizeSakuraMtForLanguage(fo, fo.language).options;
+    // Hard guard: never keep Sakura when the merged file language is known non-Japanese.
+    const fileMergedList = batchMtPlan.buildSanitizedFileMergedList(list, merged, {
+        mergeSenseOverrides,
+        sanitizeSakuraMtForLanguage,
     });
-    const batchWantsSmart = translateLikeBatch && (
-        !!merged.smartTranslate
-        || fileMergedList.some((fo) => !!fo.smartTranslate)
-    );
-    const sakuraFile = fileMergedList.find((fo) => (
-        isLlmMtId(fo.engineMtModel)
-        && !fo.smartTranslate
-        && translateLikeBatch
-    ));
     // Prefer per-file (post-sanitize) decisions so a global Sakura form cannot force
     // Sakura onto sensed non-Japanese items.
-    const batchWantsSakura = translateLikeBatch && !batchWantsSmart && (
-        !!sakuraFile
-        || (
-            list.length === 0
-            && isLlmMtId(merged.engineMtModel)
-            && !merged.smartTranslate
-        )
-    );
-    const sakuraModelId = sakuraFile?.engineMtModel
-        || (list.length === 0 && isLlmMtId(merged.engineMtModel) ? merged.engineMtModel : null);
+    const {
+        batchWantsSmart,
+        batchWantsSakura,
+        sakuraModelId,
+    } = batchMtPlan.resolveBatchMtPlan({
+        fileMergedList,
+        merged,
+        listLength: list.length,
+        isLlmMtId,
+    });
 
     // Gate Advanced features before job-start so UI never flashes "running" then fails.
     if (batchWantsSmart) {
@@ -2105,11 +455,7 @@ async function runEngineBatchLocked({
             return { ok: false, error: err.message || String(err) };
         }
     }
-    if (merged.filmAudioEnhance || merged.filmVadPreset
-        || list.some((it) => {
-            const fo = mergeSenseOverrides(merged, it?.optionOverrides || {});
-            return !!(fo.filmAudioEnhance || fo.filmVadPreset);
-        })) {
+    if (batchMtPlan.batchNeedsFilmAudioGate(list, merged, mergeSenseOverrides)) {
         try {
             const { requireFilmAudioEnhance } = require('./advanced-gates');
             const gate = requireFilmAudioEnhance();
@@ -2123,13 +469,14 @@ async function runEngineBatchLocked({
             return { ok: false, error: err.message || String(err) };
         }
     }
-
     batchRunning = true;
     batchCancelled = false;
     currentJobId = '';
     abortBatchMtAdapter();
     batchMtAbortController = new AbortController();
     let lastOutputDir = '';
+    const liveBatch = require('./live-batch-queue');
+    liveBatch.begin(list);
 
     const jobStartedAt = new Date().toISOString();
     const jobStartedMs = Date.now();
@@ -2174,32 +521,14 @@ async function runEngineBatchLocked({
     let mtAdapter = null;
     try {
         if (usedExternalMt) {
-            const sakuraNsfwFromItems = list.some((item) => {
-                const o = item?.optionOverrides || {};
-                return o.sakuraNsfwPrompt === true;
+            const launch = batchMtPlan.resolveBatchMtAdapterLaunch({
+                batchWantsSmart,
+                sakuraModelId,
+                merged,
+                list,
             });
-            const sakuraNsfwPrompt = merged.sakuraNsfwPrompt === false
-                ? false
-                : (
-                    merged.sakuraNsfwPrompt === true
-                    || sakuraNsfwFromItems
-                    || !!merged.smartTranslateFaithfulTone
-                );
             mtAdapter = await startEngineMtAdapter({
-                mode: batchWantsSmart ? 'smart' : 'sakura',
-                modelId: batchWantsSmart
-                    ? merged.engineMtModel
-                    : (sakuraModelId || merged.engineMtModel),
-                options: {
-                    ...merged,
-                    sakuraNsfwPrompt,
-                    ...(batchWantsSmart
-                        ? {
-                            windowCues: merged.windowCues ?? 10,
-                            overlapCues: merged.overlapCues ?? 2,
-                        }
-                        : {}),
-                },
+                ...launch,
                 signal: batchMtAbortController.signal,
                 onProgress: (info) => {
                     if (batchCancelled) return;
@@ -2287,6 +616,21 @@ async function runEngineBatchLocked({
             const mediaPath = path.resolve(String(item.fullPath || item.path || ''));
             const index1 = i + 1;
 
+            if (liveBatch.consumeSkip(mediaPath)) {
+                skipped += 1;
+                results.push(buildCancelledItemResult(mediaPath, { removedFromQueue: true }));
+                sendProgress(invokeSender, {
+                    stage: 'cancelled',
+                    index1,
+                    total: list.length,
+                    file: mediaPath,
+                    detail: '已从队列移除',
+                    error: 'cancelled',
+                    percent: 0,
+                });
+                continue;
+            }
+
             sendProgress(invokeSender, {
                 stage: 'starting',
                 index1,
@@ -2296,6 +640,8 @@ async function runEngineBatchLocked({
                 percent: 0,
             });
 
+            liveBatch.setCurrent(mediaPath);
+            try {
             if (!fs.existsSync(mediaPath)) {
                 failed += 1;
                 results.push({ ok: false, path: mediaPath, error: '文件不存在' });
@@ -2343,14 +689,11 @@ async function runEngineBatchLocked({
                     if (pair.complete) {
                         skipped += 1;
                         const skipPath = pair.targetPath || pair.sourcePath || '';
-                        results.push({
-                            ok: true,
-                            path: mediaPath,
-                            skipped: true,
+                        results.push(buildSkippedItemResult(mediaPath, {
                             subtitlePath: skipPath,
                             sourceSubtitlePath: pair.sourcePath || '',
                             targetSubtitlePath: pair.targetPath || '',
-                        });
+                        }));
                         sendProgress(invokeSender, {
                             stage: 'skipped',
                             index1,
@@ -2368,12 +711,9 @@ async function runEngineBatchLocked({
                     const existing = resolveLocalSubtitlePath(mediaPath, outDir);
                     if (existing) {
                         skipped += 1;
-                        results.push({
-                            ok: true,
-                            path: mediaPath,
-                            skipped: true,
+                        results.push(buildSkippedItemResult(mediaPath, {
                             subtitlePath: existing,
-                        });
+                        }));
                         sendProgress(invokeSender, {
                             stage: 'skipped',
                             index1,
@@ -2388,19 +728,16 @@ async function runEngineBatchLocked({
                 }
             }
 
-            const useSakuraMt = isLlmMtId(fileMerged.engineMtModel)
-                && !fileMerged.smartTranslate
-                && (fileMerged.task === 'translate' || fileMerged.task === 'dual');
-            const useSmartTranslate = !!fileMerged.smartTranslate
-                && (fileMerged.task === 'translate' || fileMerged.task === 'dual');
-            const useExternalMt = usesExternalMt({
-                smartTranslate: useSmartTranslate,
-                sakuraMt: useSakuraMt,
-            });
-
-            const engineTask = mapTaskToEngineTask(fileMerged.task, {
-                smartTranslate: useSmartTranslate,
-                sakuraMt: useSakuraMt,
+            const {
+                useSakuraMt,
+                useSmartTranslate,
+                useExternalMt,
+                engineTask,
+                jobMtModel,
+            } = resolveFileMtPlan(fileMerged, {
+                isLlmMtId,
+                usesExternalMt,
+                mapTaskToEngineTask,
             });
 
             // Never silently fall through to Opus when Sakura/smart was requested but
@@ -2411,7 +748,7 @@ async function runEngineBatchLocked({
                         ? `感知/表单指定了 ${fileMerged.engineMtModel || 'Sakura'}，但外部翻译适配器未启动`
                         : '智能翻译适配器未启动');
                 failed += 1;
-                results.push({ ok: false, path: mediaPath, error: errMsg });
+                results.push(buildFailedItemResult(mediaPath, errMsg));
                 sendProgress(invokeSender, {
                     stage: 'failed',
                     index1,
@@ -2442,10 +779,6 @@ async function runEngineBatchLocked({
                     invokeSender,
                 );
             }
-
-            const jobMtModel = useExternalMt
-                ? null
-                : (fileMerged.engineMtModel || null);
 
             // Film flags were gated before job-start; only apply when requested.
             const filmEntitled = !!(fileMerged.filmAudioEnhance || fileMerged.filmVadPreset);
@@ -2503,6 +836,10 @@ async function runEngineBatchLocked({
                 audio: buildAudioJobOptions(fileMerged, {
                     entitled: (!!fileMerged.filmAudioEnhance || !!fileMerged.filmVadPreset) && filmEntitled !== false,
                 }),
+                perfProfile: (() => {
+                    const v = String(fileMerged.perfProfile || 'quality').trim().toLowerCase();
+                    return v === 'speed' ? 'speed' : 'quality';
+                })(),
                 releaseGpuAfter: jobFlags.releaseGpuAfter,
                 includeWords: jobFlags.includeWords,
                 karaokeVtt: jobFlags.karaokeVtt,
@@ -2539,121 +876,179 @@ async function runEngineBatchLocked({
                 sync: false,
             };
 
+            const primaryAsr = String(fileMerged.engineAsrModel || 'sensevoice-small').trim()
+                || 'sensevoice-small';
+            const asrCandidates = rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr);
+
             sendProgress(invokeSender, {
                 stage: 'model',
                 index1,
                 total: list.length,
                 file: mediaPath,
-                detail: `创建引擎任务（${fileMerged.engineAsrModel || 'sensevoice-small'}）…`,
+                detail: `创建引擎任务（${primaryAsr}）…`,
                 percent: 2,
             });
 
-            let created;
-            try {
-                created = await createJob(ensure.baseUrl, jobBody, { timeoutMs: 60000 });
-            } catch (err) {
-                const errMsg = friendlyEngineError(err.message || String(err));
-                failed += 1;
-                results.push({ ok: false, path: mediaPath, error: errMsg });
-                sendProgress(invokeSender, {
-                    stage: 'error',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: errMsg,
-                    error: errMsg,
-                });
-                continue;
-            }
-            if (!created.ok || !created.data?.id) {
-                const err = friendlyEngineError(
-                    created.data?.message || created.data?.error || `创建任务失败 (HTTP ${created.status || '?'})`,
-                );
-                failed += 1;
-                results.push({ ok: false, path: mediaPath, error: err });
-                sendProgress(invokeSender, {
-                    stage: 'error',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: err,
-                    error: err,
-                });
-                continue;
-            }
-
-            currentJobId = created.data.id;
-            sendProgress(invokeSender, {
-                stage: 'transcribe',
-                index1,
-                total: list.length,
-                file: mediaPath,
-                detail: `引擎转写中（任务 ${currentJobId}）…`,
-                percent: 8,
+            const buildJobBody = (asrModel) => ({
+                ...jobBody,
+                asrModel,
             });
 
-            const waited = await waitJob(ensure.baseUrl, currentJobId, {
+            const runOutcome = await runEngineJobWithAsrFailover({
+                baseUrl: ensure.baseUrl,
+                buildJobBody,
+                primaryAsr,
+                candidates: asrCandidates,
+                createJob,
+                waitJob,
                 shouldStop: () => batchCancelled,
-                onEvent: (ev) => {
+                onCandidate: ({ asrModel, index: candIdx }) => {
                     if (batchCancelled) return;
-                    const progress = ev.progress || {};
-                    const stage = progress.stage || ev.status || 'running';
-                    const detail = progress.detail
-                        || (ev.status === 'queued' ? '排队中…'
-                            : ev.status === 'running' ? '引擎转写中…'
-                                : String(ev.status || '处理中'));
-                    const percent = Number.isFinite(Number(progress.percent))
-                        ? Number(progress.percent)
-                        : (ev.status === 'running' ? 15 : 5);
+                    if (candIdx > 0) {
+                        appendEngineLogLine(
+                            `[engine] ASR 回退：${primaryAsr} → ${asrModel}`,
+                            invokeSender,
+                        );
+                    }
                     sendProgress(invokeSender, {
-                        stage,
+                        stage: 'transcribe',
                         index1,
                         total: list.length,
                         file: mediaPath,
-                        detail,
-                        percent,
+                        detail: candIdx === 0
+                            ? `引擎转写中（${asrModel}）…`
+                            : `${primaryAsr} 无结果，改用 ${asrModel}…`,
+                        percent: 8,
+                    });
+                },
+                onJobCreated: (jobId) => {
+                    currentJobId = String(jobId || '');
+                },
+                onEvent: (ev) => {
+                    if (batchCancelled) return;
+                    const fields = progressFieldsFromWaitEvent(ev);
+                    const jid = ev?.data?.id || currentJobId;
+                    if (jid) currentJobId = String(jid);
+                    sendProgress(invokeSender, {
+                        ...fields,
+                        index1,
+                        total: list.length,
+                        file: mediaPath,
                         jobId: currentJobId,
-                        processedSec: progress.processedSec,
-                        mediaDurationSec: progress.mediaDurationSec ?? progress.audioDurationSec,
                     });
                 },
             });
+            // Keep last job id for cancel / checkpoint probe
+            if (runOutcome.jobId) currentJobId = String(runOutcome.jobId);
+            if (runOutcome.ok && runOutcome.asrModel && runOutcome.asrAttempts > 1) {
+                appendEngineLogLine(
+                    `[engine] ASR 回退成功：第 ${runOutcome.asrAttempts} 次候选 ${runOutcome.asrModel}`,
+                    invokeSender,
+                );
+            }
+            const waited = runOutcome.ok
+                ? {
+                    ok: true,
+                    data: runOutcome.waited?.data || { result: runOutcome.result, id: runOutcome.jobId },
+                    jobId: runOutcome.jobId,
+                    asrModel: runOutcome.asrModel,
+                }
+                : {
+                    ok: false,
+                    error: runOutcome.error,
+                    code: runOutcome.code,
+                    cancelled: runOutcome.cancelled,
+                    data: runOutcome.waited?.data,
+                    jobId: runOutcome.jobId,
+                    result: runOutcome.result,
+                };
+            const failedJobId = currentJobId;
             currentJobId = '';
 
-            if (batchCancelled || waited?.cancelled || waited?.error === 'cancelled') {
-                results.push({ ok: false, path: mediaPath, error: 'cancelled', cancelled: true });
+            const waitInterp = interpretWaitJobResult(waited, batchCancelled);
+            if (waitInterp.kind === 'cancelled') {
+                const hint = await attachCheckpointResumeHint(
+                    ensure.baseUrl,
+                    failedJobId || waitInterp.jobId,
+                    getJobCheckpoint,
+                );
+                const recovery = batchRecovery.buildBatchFailureGuidance({
+                    message: '已取消',
+                    code: 'cancelled',
+                    resumable: hint.resumable,
+                    resumeFromJobId: hint.resumeFromJobId,
+                });
+                results.push(buildCancelledItemResult(mediaPath, {
+                    ...hint,
+                    recovery,
+                }));
                 sendProgress(invokeSender, {
                     stage: 'cancelled',
                     index1,
                     total: list.length,
                     file: mediaPath,
-                    detail: '已取消',
+                    detail: hint.resumable
+                        ? `已取消（可从断点继续：${hint.resumeFromJobId}）`
+                        : '已取消',
                     error: 'cancelled',
+                    ...hint,
+                    recovery,
                 });
                 break;
             }
 
-            if (!waited.ok) {
-                const err = friendlyEngineError(waited.error || '任务失败');
+            if (waitInterp.kind === 'failed') {
+                const err = friendlyEngineError(waitInterp.error || '任务失败');
+                const hint = await attachCheckpointResumeHint(
+                    ensure.baseUrl,
+                    failedJobId || waitInterp.jobId,
+                    getJobCheckpoint,
+                );
+                const recovery = batchRecovery.buildBatchFailureGuidance({
+                    message: err,
+                    code: waitInterp.code || hint.checkpointStage || '',
+                    resumable: hint.resumable,
+                    resumeFromJobId: hint.resumeFromJobId,
+                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
+                    asrAttempts: runOutcome.asrAttempts,
+                    primaryAsr,
+                    asrModel: runOutcome.asrModel,
+                });
                 failed += 1;
-                results.push({ ok: false, path: mediaPath, error: err });
+                results.push(buildFailedItemResult(mediaPath, err, {
+                    code: waitInterp.code || '',
+                    ...hint,
+                    recovery,
+                    asrAttempts: runOutcome.asrAttempts,
+                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
+                    asrModel: runOutcome.asrModel || '',
+                    primaryAsr,
+                }));
                 sendProgress(invokeSender, {
                     stage: 'error',
                     index1,
                     total: list.length,
                     file: mediaPath,
-                    detail: err,
+                    detail: recovery.shortTip ? `${err} · ${recovery.shortTip}` : err,
                     error: err,
+                    errorCode: waitInterp.code || '',
+                    ...hint,
+                    recovery,
+                    asrAttempts: runOutcome.asrAttempts,
+                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
+                    asrModel: runOutcome.asrModel || '',
+                    primaryAsr,
                 });
                 continue;
             }
 
             if (batchCancelled) {
-                results.push({ ok: false, path: mediaPath, error: 'cancelled', cancelled: true });
+                results.push(buildCancelledItemResult(mediaPath));
                 break;
             }
 
-            const outPaths = extractOutputPaths(waited.data?.result);
+            const outPaths = extractOutputPaths(waitInterp.result || waited.data?.result);
+            const jobResult = waitInterp.result || waited.data?.result || null;
 
             // Free-path postprocess (same knobs as UI post-batch): strip Whisper YouTube-style hallucinations etc.
             const { applyPostBatchPipeline } = require('./post-batch-pipeline');
@@ -2680,24 +1075,14 @@ async function runEngineBatchLocked({
 
             // File-level MT sanitize (Opus + any adapter miss): strip trailing cast-name
             // hallucinations / Gloss / loops on ZH against JA source or result.cues.source.
-            const translateLike = fileMerged.task === 'translate' || fileMerged.task === 'dual'
-                || engineTask === 'translate' || engineTask === 'dual' || engineTask === 'translate_mt';
+            const translateLike = batchPostprocessPlan.isTranslateLikeTask(fileMerged.task, engineTask);
             if (translateLike && merged.mtSanitize !== false) {
                 try {
                     const { sanitizeMtSubtitlePair } = require('./extensions-bridge');
-                    const srcResolved = outPaths.sourceSubtitlePath
-                        ? path.resolve(String(outPaths.sourceSubtitlePath))
-                        : '';
-                    const zhCandidates = [
-                        outPaths.targetSubtitlePath,
-                        outPaths.subtitlePath,
-                    ].filter(Boolean);
-                    const uniqueZh = [...new Set(zhCandidates.map((p) => path.resolve(String(p))))]
-                        .filter((subPath) => {
-                            if (!/\.(srt|vtt|lrc)$/i.test(subPath)) return false;
-                            if (srcResolved && subPath === srcResolved) return false;
-                            return fs.existsSync(subPath);
-                        });
+                    const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(outPaths, {
+                        resolve: path.resolve,
+                        existsSync: (p) => fs.existsSync(p),
+                    });
                     for (const zhPath of uniqueZh) {
                         sendProgress(invokeSender, {
                             stage: 'translate',
@@ -2708,7 +1093,7 @@ async function runEngineBatchLocked({
                             percent: 97,
                         });
                         const sm = sanitizeMtSubtitlePair(zhPath, outPaths.sourceSubtitlePath, {
-                            sourceCues: waited.data?.result?.cues?.source,
+                            sourceCues: jobResult?.cues?.source,
                             contentProfile: fileMerged.contentProfile || fileMerged.senseProfile,
                             senseProfile: fileMerged.senseProfile || fileMerged.contentProfile,
                             sakuraNsfwPrompt: fileMerged.sakuraNsfwPrompt,
@@ -2725,6 +1110,15 @@ async function runEngineBatchLocked({
                                 `[engine] ${sm.summary || '译后清洗'} ${path.basename(zhPath)}`,
                                 invokeSender,
                             );
+                            if (sm.jaAsrDomainChanged > 0 || sm.sourceDomainCleaned > 0) {
+                                const trace = summarizeDomainFixChanges([{
+                                    from: 'ja-asr-domain',
+                                    to: 'applied',
+                                    count: (sm.jaAsrDomainChanged || 0) + (sm.sourceDomainCleaned || 0),
+                                }], 'desktop_sanitize');
+                                const line = formatDomainFixLogLine(trace);
+                                if (line) appendEngineLogLine(line, invokeSender);
+                            }
                         }
                     }
                 } catch (err) {
@@ -2735,50 +1129,48 @@ async function runEngineBatchLocked({
                 }
             }
 
-            // Optional compact delivery: drop pure interjection pairs from ZH+JA and renumber.
-            if (translateLike && merged.postBatchCompactPureInterjections === true) {
+            // Optional compact delivery: drop pure discourse / onomatopoeia pairs from ZH+JA.
+            const {
+                dropDiscourse,
+                dropOnomatopoeia,
+                shouldCompact,
+            } = batchPostprocessPlan.resolveInterjectionDropFlags(merged);
+            if (translateLike && shouldCompact) {
                 try {
                     const { compactPureInterjectionSubtitlePair } = require('./extensions-bridge');
-                    const srcResolved = outPaths.sourceSubtitlePath
-                        ? path.resolve(String(outPaths.sourceSubtitlePath))
-                        : '';
-                    const zhCandidates = [
-                        outPaths.targetSubtitlePath,
-                        outPaths.subtitlePath,
-                    ].filter(Boolean);
-                    const uniqueZh = [...new Set(zhCandidates.map((p) => path.resolve(String(p))))]
-                        .filter((subPath) => {
-                            if (!/\.(srt|vtt|lrc)$/i.test(subPath)) return false;
-                            if (srcResolved && subPath === srcResolved) return false;
-                            return fs.existsSync(subPath);
-                        });
+                    const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(outPaths, {
+                        resolve: path.resolve,
+                        existsSync: (p) => fs.existsSync(p),
+                    });
                     for (const zhPath of uniqueZh) {
                         sendProgress(invokeSender, {
                             stage: 'translate',
                             index1,
                             total: list.length,
                             file: mediaPath,
-                            detail: '后处理：精简纯语气词…',
+                            detail: '后处理：清除语气/拟声…',
                             percent: 97.5,
                         });
                         const cm = compactPureInterjectionSubtitlePair(
                             zhPath,
                             outPaths.sourceSubtitlePath,
                             {
-                                sourceCues: waited.data?.result?.cues?.source,
+                                sourceCues: jobResult?.cues?.source,
                                 backupMode: 'off',
+                                dropDiscourse,
+                                dropOnomatopoeia,
                             },
                         );
                         if (cm?.ok && cm.dropped) {
                             appendEngineLogLine(
-                                `[engine] ${cm.summary || '精简纯语气词'} ${path.basename(zhPath)}`,
+                                `[engine] ${cm.summary || '清除语气/拟声'} ${path.basename(zhPath)}`,
                                 invokeSender,
                             );
                         }
                     }
                 } catch (err) {
                     appendEngineLogLine(
-                        `[engine] 精简纯语气词跳过：${err.message || err}`,
+                        `[engine] 清除语气/拟声跳过：${err.message || err}`,
                         invokeSender,
                     );
                 }
@@ -2787,17 +1179,20 @@ async function runEngineBatchLocked({
             // Keep ASR/source transcript archive before optional dual-track deletion.
             // translate_mt normally deletes `.src.partial.*` and only returns zh outputs —
             // fall back to result.cues.source so「保存转录字幕」 still works.
+            // Prefer the keep path for history/library when the sidecar is later deleted.
+            let keptSourcePath = '';
             try {
                 const { keepTranscriptFromJobResult } = require('./transcript-keep');
                 const kept = keepTranscriptFromJobResult({
                     task: merged.task,
                     sourceSubtitlePath: outPaths.sourceSubtitlePath,
                     subtitlePath: outPaths.subtitlePath,
-                    sourceCues: waited.data?.result?.cues?.source,
+                    sourceCues: jobResult?.cues?.source,
                     mediaPath,
                     options: merged,
                 });
                 if (kept?.ok && kept.kept?.length) {
+                    keptSourcePath = String(kept.kept[0] || '').trim();
                     appendEngineLogLine(
                         `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
                         invokeSender,
@@ -2811,35 +1206,6 @@ async function runEngineBatchLocked({
             } catch (err) {
                 appendEngineLogLine(
                     `[engine] 保存转录字幕跳过: ${err.message || err}`,
-                    invokeSender,
-                );
-            }
-
-            // Seed .transub.json from Whisper avgLogprob / noSpeechProb when available.
-            try {
-                const { seedAsrConfidenceMeta, pickEngineCuesForConfidence } = require('./asr-confidence-seed');
-                const engineCues = pickEngineCuesForConfidence(waited.data?.result);
-                const seedTargets = [
-                    outPaths.sourceSubtitlePath,
-                    outPaths.subtitlePath,
-                    outPaths.targetSubtitlePath,
-                ].filter(Boolean);
-                const uniqueSeeds = [...new Set(seedTargets.map((p) => path.resolve(String(p))))];
-                for (const subPath of uniqueSeeds) {
-                    if (!fs.existsSync(subPath)) continue;
-                    if (!/\.(srt|vtt|lrc)$/i.test(subPath)) continue;
-                    const seeded = seedAsrConfidenceMeta(subPath, engineCues);
-                    if (seeded?.ok && seeded.entryCount) {
-                        appendEngineLogLine(
-                            `[engine] 已写入 ASR 置信度 ${seeded.entryCount} 条 → ${path.basename(subPath)}`,
-                            invokeSender,
-                        );
-                        break;
-                    }
-                }
-            } catch (err) {
-                appendEngineLogLine(
-                    `[engine] ASR 置信度写入跳过: ${err.message || err}`,
                     invokeSender,
                 );
             }
@@ -2868,6 +1234,12 @@ async function runEngineBatchLocked({
                             `[engine] 已合并双语 → ${path.basename(finalized.mergedPath)}`,
                             invokeSender,
                         );
+                        // Ensure player-facing bilingual inherits viewing punct / in-cue clear.
+                        applyPostBatchPipeline([finalized.mergedPath], merged, {
+                            onLog: (line) => {
+                                appendEngineLogLine(`[engine] ${line}`, invokeSender);
+                            },
+                        });
                     }
                 } catch (err) {
                     appendEngineLogLine(
@@ -2877,11 +1249,41 @@ async function runEngineBatchLocked({
                 }
             }
 
+            // Seed ASR confidence after paths are final (post-merge).
+            try {
+                const { runBatchSuccessHandoff } = require('./engine-batch-success-handoff');
+                const handoff = runBatchSuccessHandoff(jobResult, outPaths);
+                for (const line of (handoff.logs || [])) {
+                    appendEngineLogLine(`[engine] ${line}`, invokeSender);
+                }
+            } catch (err) {
+                appendEngineLogLine(
+                    `[engine] 完成后交接跳过: ${err.message || err}`,
+                    invokeSender,
+                );
+            }
+
+            // Library 原文轨需要每次任务的转录：旁路被合并删除后改指向 keep 归档。
+            const liveSource = String(outPaths.sourceSubtitlePath || '').trim();
+            if ((!liveSource || !fs.existsSync(liveSource)) && keptSourcePath && fs.existsSync(keptSourcePath)) {
+                outPaths.sourceSubtitlePath = keptSourcePath;
+            }
+
             generated += 1;
+            const asrRun = summarizeAsrRunMeta({
+                asrModel: runOutcome.asrModel || waited.asrModel || primaryAsr,
+                primaryAsr,
+                asrAttempts: runOutcome.asrAttempts,
+            });
+            doneDetail = appendAsrRunToDetail(doneDetail, asrRun);
             results.push({
                 ok: true,
                 path: mediaPath,
-                result: waited.data?.result,
+                result: jobResult,
+                asrModel: asrRun.asrModel,
+                primaryAsr: asrRun.primaryAsr,
+                asrAttempts: asrRun.asrAttempts,
+                asrFailedOver: asrRun.failedOver,
                 ...outPaths,
             });
             sendProgress(invokeSender, {
@@ -2891,8 +1293,15 @@ async function runEngineBatchLocked({
                 file: mediaPath,
                 percent: 100,
                 detail: doneDetail,
+                asrModel: asrRun.asrModel,
+                primaryAsr: asrRun.primaryAsr,
+                asrAttempts: asrRun.asrAttempts,
+                asrFailedOver: asrRun.failedOver,
                 ...outPaths,
             });
+            } finally {
+                liveBatch.clearCurrent();
+            }
         }
 
         const cancelled = batchCancelled;
@@ -2973,6 +1382,9 @@ async function runEngineBatchLocked({
         } catch { /* ignore */ }
         batchRunning = false;
         currentJobId = '';
+        try {
+            require('./live-batch-queue').end();
+        } catch { /* ignore */ }
     }
 }
 
@@ -3353,14 +1765,18 @@ function setupEngineBridge(api, {
             if (batchRunning) {
                 return { ok: false, error: '字幕任务进行中，请先停止任务再下载模型 / 组件' };
             }
-            if (engineProc) {
-                stopEngineProcess();
-                await sleep(600);
+            // Always reclaim engine + listen port before pip extras — orphaned
+            // runtime\\python.exe holding onnxruntime/av DLLs causes WinError 5.
+            try {
+                stopEngineProcessAndPort();
+            } catch {
+                try { stopEngineProcess(); } catch { /* ignore */ }
             }
+            await sleep(1200);
 
             // ASR extras must install while the engine is stopped: a running
             // server already imports native wheels and Windows then denies
-            // --force-reinstall (WinError 5 / 拒绝访问).
+            // overwrite (WinError 5 / 拒绝访问).
             const earlyModelIds = Array.isArray(payload.modelIds)
                 ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
                 : [];
@@ -3398,21 +1814,28 @@ function setupEngineBridge(api, {
                     && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
                     && !signal?.aborted
                 ) {
+                    // Do NOT --force-reinstall the full Whisper stack: onnxruntime-gpu
+                    // from 「下载 GPU 支持」is often already mapped and WinError 5 again.
+                    // Stop harder, wait, then install only still-missing wheels.
                     emit({
                         phase: 'progress',
-                        message: `${label}需强制重装，正在独立进程中重写（引擎已停止）…`,
+                        message: `${label}文件被占用，正在彻底停止引擎后重试（仅补缺失项）…`,
                         pct: pctBase + 2,
                     });
+                    try {
+                        stopEngineProcessAndPort();
+                    } catch { /* ignore */ }
+                    await sleep(1500);
                     pre = await ensureFn({
                         pythonPath,
                         cwd: installPath,
-                        force: true,
+                        force: false,
                         signal,
                         onProgress: (ev) => {
                             const pct = Number(ev.percent);
                             emit({
                                 phase: 'progress',
-                                message: ev.detail || ev.message || `正在强制重装 ${label}…`,
+                                message: ev.detail || ev.message || `正在重试安装 ${label}…`,
                                 pct: Number.isFinite(pct)
                                     ? Math.min(pctBase + 14, pctBase + 2 + Math.round(pct * 0.12))
                                     : pctBase + 4,
@@ -3902,6 +2325,214 @@ function setupEngineBridge(api, {
         return { ok: true, cancelled: true };
     });
 
+    register('transub-engine-job-checkpoint', async (_event, payload = {}) => {
+        try {
+            const options = await readMergedOptions(payload);
+            const ensure = await ensureEngineRunning(options);
+            if (!ensure.ok) return ensure;
+            const jobId = String(payload.jobId || payload.id || '').trim();
+            if (!jobId) return { ok: false, error: '缺少 jobId' };
+            return getJobCheckpoint(ensure.baseUrl, jobId);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-resume-job', async (event, payload = {}) => {
+        try {
+            const options = await readMergedOptions(payload.options || payload);
+            const ensure = await ensureEngineRunning(options);
+            if (!ensure.ok) return ensure;
+            const fromJobId = String(payload.jobId || payload.resumeFromJobId || payload.id || '').trim();
+            if (!fromJobId) return { ok: false, error: '缺少可恢复的 jobId' };
+            const computeLock = require('./compute-task-lock');
+            return computeLock.runWithComputeLock({
+                kind: 'engine_resume',
+                owner: '引擎',
+                source: 'resumeJob',
+            }, async () => {
+                batchCancelled = false;
+                const invokeSender = event.sender;
+                const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
+                const { planResumeMt, buildResumeMtOverrides } = require('./engine-resume-mt');
+                const isLlmMtId = (id) => !!(
+                    sakuraCatalog.isLlmInferenceMtModel?.(id)
+                    || sakuraCatalog.isSakuraMtModel(id)
+                );
+                const { fileMerged, useExternalMt, useSmartTranslate, useSakuraMt } = planResumeMt(
+                    options,
+                    {
+                        isLlmMtId,
+                        usesExternalMt,
+                        mapTaskToEngineTask,
+                        mergeSenseOverrides,
+                        sanitizeSakuraMtForLanguage,
+                        mediaPath: payload.mediaPath,
+                        optionOverrides: payload.optionOverrides,
+                    },
+                );
+
+                let mtAdapter = null;
+                let resumeOverrides = {};
+                abortBatchMtAdapter();
+                batchMtAbortController = new AbortController();
+                try {
+                    if (useExternalMt) {
+                        if (useSmartTranslate) {
+                            try {
+                                const { requireSmartTranslate } = require('./advanced-gates');
+                                const gate = requireSmartTranslate({
+                                    faithfulTone: !!fileMerged.smartTranslateFaithfulTone,
+                                });
+                                if (!gate.ok) {
+                                    return {
+                                        ok: false,
+                                        error: gate.error || '智能翻译需解锁 Pro',
+                                        code: gate.code,
+                                    };
+                                }
+                            } catch (err) {
+                                return { ok: false, error: err.message || String(err) };
+                            }
+                        }
+                        const launch = batchMtPlan.resolveBatchMtAdapterLaunch({
+                            batchWantsSmart: useSmartTranslate,
+                            sakuraModelId: useSakuraMt ? fileMerged.engineMtModel : null,
+                            merged: fileMerged,
+                            list: [{ path: payload.mediaPath, optionOverrides: payload.optionOverrides }],
+                        });
+                        mtAdapter = await startEngineMtAdapter({
+                            ...launch,
+                            signal: batchMtAbortController.signal,
+                            onProgress: (info) => {
+                                if (batchCancelled) return;
+                                appendEngineLogLine(
+                                    `[engine-translate] ${info?.message || info?.detail || info?.phase || '翻译中'}`,
+                                    invokeSender,
+                                );
+                            },
+                        });
+                        const built = buildResumeMtOverrides({
+                            useExternalMt: true,
+                            useSmartTranslate,
+                            fileMerged,
+                            mtAdapter,
+                        });
+                        if (!built.ok) {
+                            return { ok: false, error: built.error, code: built.code };
+                        }
+                        resumeOverrides = built.overrides || {};
+                        const mtModeZh = useSmartTranslate
+                            ? '智能翻译'
+                            : (useSakuraMt ? 'Sakura' : '外部');
+                        appendEngineLogLine(
+                            `[engine] 断点恢复 · 外部翻译适配器 · ${mtModeZh} · ${mtAdapter.url}`,
+                            invokeSender,
+                        );
+                    }
+
+                    appendEngineLogLine(`[engine] 从断点恢复 ${fromJobId}…`, invokeSender);
+                    const outcome = await resumeEngineJobAndWait({
+                        baseUrl: ensure.baseUrl,
+                        fromJobId,
+                        resumeJob,
+                        waitJob,
+                        overrides: resumeOverrides,
+                        shouldStop: () => batchCancelled,
+                        onEvent: (ev) => {
+                            if (batchCancelled) return;
+                            const fields = progressFieldsFromWaitEvent(ev);
+                            currentJobId = String(ev?.data?.id || currentJobId || '');
+                            sendProgress(invokeSender, {
+                                ...fields,
+                                file: payload.mediaPath || '',
+                                jobId: currentJobId,
+                                detail: fields.detail || `断点恢复中（自 ${fromJobId}）…`,
+                            });
+                        },
+                    });
+                    currentJobId = '';
+                    if (!outcome.ok) {
+                        return {
+                            ok: false,
+                            cancelled: !!outcome.cancelled,
+                            error: friendlyEngineError(outcome.error || '断点恢复失败'),
+                            code: outcome.code,
+                            resumedFrom: fromJobId,
+                        };
+                    }
+                    const result = outcome.result || outcome.waited?.data?.result || null;
+                    const outPaths = extractOutputPaths(result);
+                    appendEngineLogLine(
+                        `[engine] 断点恢复完成 → ${path.basename(outPaths.subtitlePath || outPaths.targetSubtitlePath || '')}`,
+                        invokeSender,
+                    );
+                    return {
+                        ok: true,
+                        resumedFrom: fromJobId,
+                        jobId: outcome.jobId,
+                        result,
+                        ...outPaths,
+                    };
+                } finally {
+                    abortBatchMtAdapter();
+                    try {
+                        const { stopLlamaServer } = require('./advanced-llama-server');
+                        stopLlamaServer();
+                    } catch (_) { /* optional */ }
+                }
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-export-diagnostics', async (_event, payload = {}) => {
+        try {
+            const options = await readMergedOptions(payload.options || payload);
+            let checkpoint = null;
+            const jobId = String(payload.jobId || '').trim();
+            if (jobId) {
+                try {
+                    const ensure = await ensureEngineRunning(options);
+                    if (ensure.ok) {
+                        const ck = await getJobCheckpoint(ensure.baseUrl, jobId);
+                        if (ck?.ok) checkpoint = ck.data;
+                    }
+                } catch { /* ignore */ }
+            }
+            let engineLogPath = '';
+            try {
+                engineLogPath = String(getEngineLogPath?.() || '').trim();
+            } catch { /* ignore */ }
+            const out = exportAsrDiagnosticsPack({
+                outDir: payload.outDir,
+                options,
+                jobId,
+                mediaPath: payload.mediaPath,
+                checkpoint,
+                domainFixTrace: payload.domainFixTrace,
+                cueStats: payload.cueStats,
+                logLines: payload.logLines,
+                engineLogPath,
+                d01Version: payload.d01Version,
+                extra: {
+                    note: 'Local diagnostics only — not uploaded.',
+                    concurrency: {
+                        desktopLock: 'compute-task-lock single slot',
+                        engineMaxJobs: 'TRANSUB_MAX_CONCURRENT_JOBS (default 1)',
+                    },
+                },
+            });
+            if (out.ok) {
+                appendEngineLogLine(`[engine] 已导出诊断包 → ${out.dir}`);
+            }
+            return out;
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-engine-open-latest-log', async () => {
         try {
             return openEngineLatestLog();
@@ -4208,6 +2839,7 @@ function setupEngineBridge(api, {
         }
         return transcribeRangeWithEngine(payload || {}, {
             options,
+            invokeSender: event.sender,
             onProgress: (progress) => {
                 try {
                     if (!event?.sender?.isDestroyed?.()) {
@@ -4286,34 +2918,15 @@ async function translateCuesWithEngineOpus(payload = {}, deps = {}) {
     });
     options.engineInstallPath = resolveEngineInstallPath(options.engineInstallPath);
     const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-    const cuesIn = Array.isArray(payload.cues) ? payload.cues : [];
-    const normalized = cuesIn
-        .map((c, i) => {
-            const index = Number.isInteger(Number(c?.index)) ? Number(c.index)
-                : (Number.isInteger(Number(c?.id)) ? Number(c.id) : i);
-            const text = String(c?.text ?? '').trim();
-            const startMs = Number(c?.startMs);
-            const endMs = Number(c?.endMs);
-            const start = Number.isFinite(startMs) ? startMs / 1000
-                : (Number.isFinite(Number(c?.start)) ? Number(c.start) : index);
-            const end = Number.isFinite(endMs) ? endMs / 1000
-                : (Number.isFinite(Number(c?.end)) ? Number(c.end) : start + 1);
-            return { index, id: index, text, start, end };
-        })
-        .filter((c) => c.text);
+    const normalized = rangeAsrPolicy.normalizeOpusTextCues(payload.cues);
     if (!normalized.length) {
         return { ok: false, error: '没有可翻译的字幕', code: 'empty_cues' };
     }
 
-    let mtModel = String(
-        payload.mtModel
-        || options.engineOpusMtModel
-        || options.engineMtModel
-        || '',
-    ).trim();
-    if (sakuraCatalog.isSakuraMtModel(mtModel) || sakuraCatalog.isLlmInferenceMtModel?.(mtModel)) {
-        mtModel = String(options.engineOpusMtModel || '').trim();
-    }
+    const mtModel = rangeAsrPolicy.resolveNativeOpusMtModel(options, payload, {
+        isSakuraMtModel: (id) => sakuraCatalog.isSakuraMtModel(id),
+        isLlmInferenceMtModel: (id) => !!sakuraCatalog.isLlmInferenceMtModel?.(id),
+    });
 
     const language = String(payload.language || options.language || 'ja').trim() || 'ja';
     if (opusTextAbortController) {
@@ -4455,9 +3068,14 @@ async function translateCuesWithEngineOpus(payload = {}, deps = {}) {
 async function transcribeRangeWithEngine(payload = {}, deps = {}) {
     const os = require('os');
     const mediaPath = path.resolve(String(payload.mediaPath || payload.videoPath || ''));
-    const startMs = Math.max(0, Math.round(Number(payload.startMs) || 0));
-    const endMs = Math.max(startMs + 200, Math.round(Number(payload.endMs) || 0));
-    const padMs = Math.max(0, Math.min(2000, Math.round(Number(payload.padMs) || 350)));
+    const rangeWin = rangeAsrPolicy.clampRangeWindow({
+        startMs: payload.startMs,
+        endMs: payload.endMs,
+        padMs: payload.padMs,
+    });
+    const startMs = rangeWin.startMs;
+    const endMs = rangeWin.endMs;
+    const padMs = rangeWin.padMs;
     const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
     const options = mergeEngineOptions(deps.options || {});
 
@@ -4480,8 +3098,8 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
         const ensure = await ensureEngineRunning(options);
         if (!ensure.ok) return ensure;
 
-        const clipStartMs = Math.max(0, startMs - padMs);
-        const clipEndMs = endMs + padMs;
+        const clipStartMs = rangeWin.clipStartMs;
+        const clipEndMs = rangeWin.clipEndMs;
         const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-engine-re-'));
         const clipPath = path.join(tempRoot, 'clip.wav');
         const outputDir = path.join(tempRoot, 'out');
@@ -4511,38 +3129,17 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             );
             // Never pass Sakura/smart ids as native Engine Opus mtModel.
             const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-            let mtModel = options.engineMtModel || null;
-            if (
-                options.smartTranslate
-                || sakuraCatalog.isSakuraMtModel(mtModel)
-                || sakuraCatalog.isLlmInferenceMtModel?.(mtModel)
-                || sakuraCatalog.isSakuraMtModel(options.engineLlmMtModel)
-                || sakuraCatalog.isLlmInferenceMtModel?.(options.engineLlmMtModel)
-            ) {
-                mtModel = String(options.engineOpusMtModel || '').trim() || null;
-            }
+            const mtModel = rangeAsrPolicy.resolveRangeAsrMtModel(options, {
+                isSakuraMtModel: (id) => sakuraCatalog.isSakuraMtModel(id),
+                isLlmInferenceMtModel: (id) => !!sakuraCatalog.isLlmInferenceMtModel?.(id),
+            });
 
             const primaryAsr = String(
                 payload.asrModel || options.engineAsrModel || 'sensevoice-small',
             ).trim() || 'sensevoice-small';
-            const isSenseVoice = /sensevoice/i.test(primaryAsr);
             // SenseVoice 对短窗/AV 常空：有必要时再换 Whisper 试一次（未安装则原样失败）
-            const asrCandidates = isSenseVoice
-                ? [primaryAsr, 'whisper-tiny', 'whisper-large-v3-turbo']
-                : [primaryAsr];
-
-            const isEmptyAsrFail = (res) => {
-                const code = String(res?.code || '');
-                const msg = String(res?.error || '');
-                return code === 'ASR_EMPTY'
-                    || /未识别到有效字幕|重转写结果为空|结果为空/i.test(msg);
-            };
-            const isRetryableAsrFail = (res) => {
-                if (isEmptyAsrFail(res)) return true;
-                const msg = String(res?.error || '');
-                // Fallback model missing → try next candidate
-                return /not installed|未安装|model not found|找不到.*模型/i.test(msg);
-            };
+            const asrCandidates = rangeAsrPolicy.buildRangeAsrCandidates(primaryAsr);
+            const isRetryableAsrFail = rangeAsrPolicy.isRetryableAsrFail;
 
             const runAsrOnce = async (asrModel) => {
                 onProgress?.({
@@ -4616,16 +3213,95 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                 const raw = fs.readFileSync(outPath, 'utf8');
                 const { parseSubtitle } = require('./subtitle-format');
                 const parsed = parseSubtitle(raw, 'srt');
-                const cues = (parsed.cues || []).map((cue) => ({
-                    startMs: Math.max(0, Math.round(Number(cue.startMs) || 0) + clipStartMs),
-                    endMs: Math.max(
-                        0,
-                        Math.round((cue.endMs != null ? cue.endMs : (Number(cue.startMs) || 0) + 1000) + clipStartMs),
-                    ),
-                    text: String(cue.text || '').trim(),
-                })).filter((cue) => cue.text);
+                let cues = rangeAsrPolicy.remapClipCuesToTimeline(parsed.cues || [], clipStartMs);
                 if (!cues.length) {
                     return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
+                }
+                // Same source-prep as batch sanitizeMtSubtitlePair: name-loop + JA domain.
+                let cleanupMeta = null;
+                try {
+                    const { cleanupAsrCues } = require('./asr-cue-cleanup');
+                    const cleaned = cleanupAsrCues(cues, {
+                        nameLoop: options.asrNameLoopClean !== false,
+                        jaAsrDomainFix: options.jaAsrDomainFix !== false,
+                    });
+                    cues = cleaned.cues;
+                    cleanupMeta = cleaned;
+                    if (cleaned.changed) {
+                        try {
+                            const { formatDomainFixLogLine, summarizeDomainFixChanges } = require('./asr-domain-fix-trace');
+                            if (cleaned.domainChanged) {
+                                const trace = summarizeDomainFixChanges([{
+                                    from: 'ja-asr-domain',
+                                    to: 'applied',
+                                    count: cleaned.domainChanged,
+                                }], 'range_asr');
+                                const line = formatDomainFixLogLine(trace);
+                                if (line) appendEngineLogLine(line, deps.invokeSender || null);
+                            }
+                            appendEngineLogLine(`[engine] 局部重转写 ${cleaned.summary}`, deps.invokeSender || null);
+                        } catch { /* log optional */ }
+                    }
+                } catch (err) {
+                    appendEngineLogLine(
+                        `[engine] 局部重转写 ASR 清理跳过：${err.message || err}`,
+                        deps.invokeSender || null,
+                    );
+                }
+                if (!cues.length) {
+                    return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
+                }
+                // Prefer engine result cue scores when SRT parse has none.
+                try {
+                    const { pickEngineCuesForConfidence, cueHasAsrScoreMeta } = require('./asr-confidence-seed');
+                    const scored = pickEngineCuesForConfidence(waited.data?.result || {});
+                    if (scored.length && cues.some((c) => !cueHasAsrScoreMeta(c))) {
+                        const byText = new Map();
+                        for (const s of scored) {
+                            const key = String(s?.text || '').trim();
+                            if (key && cueHasAsrScoreMeta(s) && !byText.has(key)) byText.set(key, s);
+                        }
+                        if (byText.size) {
+                            cues = cues.map((c) => {
+                                if (cueHasAsrScoreMeta(c)) return c;
+                                const hit = byText.get(String(c?.text || '').trim());
+                                if (!hit) return c;
+                                return {
+                                    ...c,
+                                    avgLogprob: hit.avgLogprob ?? hit.avg_logprob,
+                                    noSpeechProb: hit.noSpeechProb ?? hit.no_speech_prob,
+                                    confidence: hit.confidence,
+                                    score: hit.score,
+                                    probability: hit.probability ?? hit.prob,
+                                    meta: hit.meta && typeof hit.meta === 'object' ? hit.meta : c.meta,
+                                };
+                            });
+                        }
+                    }
+                } catch { /* optional score enrich */ }
+                const subtitlePath = String(
+                    payload.subtitlePath || payload.sourceSubtitlePath || options.subtitlePath || '',
+                ).trim();
+                let confidenceSeed = null;
+                if (subtitlePath) {
+                    try {
+                        const { mergeRangeAsrConfidenceMeta } = require('./asr-confidence-seed');
+                        confidenceSeed = mergeRangeAsrConfidenceMeta(subtitlePath, cues, {
+                            startMs,
+                            endMs,
+                        });
+                        if (confidenceSeed?.ok && confidenceSeed.entryCount) {
+                            appendEngineLogLine(
+                                `[engine] 局部重转写已合并 ASR 置信度 ${confidenceSeed.entryCount} 条${confidenceSeed.heuristic ? '（启发式）' : ''} → ${path.basename(subtitlePath)}`,
+                                deps.invokeSender || null,
+                            );
+                        }
+                    } catch (err) {
+                        appendEngineLogLine(
+                            `[engine] 局部重转写置信度合并跳过：${err.message || err}`,
+                            deps.invokeSender || null,
+                        );
+                    }
                 }
                 onProgress?.({ stage: 'done', detail: '重转写完成' });
                 return {
@@ -4639,6 +3315,14 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
                     result: waited.data?.result,
                     task,
                     asrModel,
+                    confidenceSeed,
+                    asrCleanup: cleanupMeta
+                        ? {
+                            nameLoopsChanged: cleanupMeta.nameLoopsChanged,
+                            domainChanged: cleanupMeta.domainChanged,
+                            summary: cleanupMeta.summary,
+                        }
+                        : null,
                 };
             };
 
@@ -4704,6 +3388,29 @@ function setupComputeTaskStatusIpc(register) {
         const computeLock = require('./compute-task-lock');
         return { ok: true, ...computeLock.getStatus() };
     });
+    register('transub-compute-task-force-release', async () => {
+        const computeLock = require('./compute-task-lock');
+        const before = computeLock.getStatus();
+        const res = computeLock.forceRelease();
+        return { ok: true, released: !!res?.released, before };
+    });
+    register('transub-compute-task-cancel', async () => {
+        const computeLock = require('./compute-task-lock');
+        const before = computeLock.getStatus();
+        try {
+            require('./active-task-guard').stopActiveJobs();
+        } catch {
+            // Fallback if guard fails: still cancel engine jobs from this module.
+            try { stopEngineJobs(); } catch { /* ignore */ }
+        }
+        // Do not forceRelease here — holders release in finally; avoids orphaning mid-cancel.
+        return {
+            ok: true,
+            stopped: true,
+            before: before?.busy ? before : null,
+            busy: !!computeLock.getStatus()?.busy,
+        };
+    });
 }
 
 module.exports = {
@@ -4722,4 +3429,9 @@ module.exports = {
     buildHubUrls,
     manualPlaceHintForModel,
     getEngineModelsRoot,
+    mapEngineStageToItemStage,
+    buildUiProgress,
+    extractOutputPaths,
+    mapDeviceForEngine,
+    parseHostPort,
 };

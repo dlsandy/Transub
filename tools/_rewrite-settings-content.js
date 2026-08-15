@@ -66,7 +66,7 @@ const content = `
                                 <input type="checkbox" id="smartTranslateFaithfulCheck" class="rounded" checked>
                                 <span class="settings-label font-medium text-gray-700">
                                     忠实语气（成人向 / R 级）
-                                    <button type="button" class="settings-tip" aria-label="忠实语气说明" aria-expanded="false">?<span class="settings-tip-bubble">保留粗口与成人语义。</span></button>
+                                    <button type="button" class="settings-tip" aria-label="忠实语气说明" aria-expanded="false">?<span class="settings-tip-bubble">保留粗口与原貌语义。</span></button>
                                 </span>
                             </label>
                             <p id="translateModeHint" class="text-xs text-violet-700 min-h-[1rem]"></p>
@@ -175,6 +175,9 @@ const content = `
                                         <option value="opus-mt-sv-zh">opus-mt-sv-zh</option>
                                         <option value="sakura-1.5b">sakura-1.5b · 日→中 免费（默认轻量）</option>
                                         <option value="sakura-7b">sakura-7b · 日→中 免费</option>
+                                        <option value="sakura-galtransl-7b">sakura-galtransl-7b · Gal v3.7 IQ4</option>
+                                        <option value="sakura-galtransl-7b-q6k">sakura-galtransl-7b-q6k · Gal v3.7 Q6_K</option>
+                                        <option value="sakura-galtransl-v4-4b">sakura-galtransl-v4-4b · Gal v4 4B</option>
                                     </select>
                                 </label>
                                 <label class="block text-sm">
@@ -256,8 +259,8 @@ const content = `
                                     <input type="number" id="transcriptKeepDaysInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" min="0" max="3650" step="1" value="90">
                                 </label>
                             </div>
-                            <button type="button" id="openHistoryBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">
-                                <i class="fa fa-history w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开任务历史列表
+                            <button type="button" id="openLibraryBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">
+                                <i class="fa fa-archive w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开字幕库
                             </button>
                         </fieldset>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-2">

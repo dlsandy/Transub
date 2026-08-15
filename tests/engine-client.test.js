@@ -108,6 +108,22 @@ describe('engine-client against mock HTTP', () => {
         assert.ok(waited.data.result.outputs[0].path);
     });
 
+    it('golden path: translate_mt job returns dual-ready outputs', async () => {
+        const created = await createJob(mock.baseUrl, {
+            task: 'translate_mt',
+            mediaPath: 'C:/tmp/b.wav',
+            mtBackend: 'opus',
+        });
+        assert.strictEqual(created.ok, true);
+        const waited = await waitJob(mock.baseUrl, created.data.id, { intervalMs: 20, timeoutMs: 2000 });
+        assert.strictEqual(waited.ok, true);
+        assert.strictEqual(waited.data.status, 'done');
+        assert.ok(Array.isArray(waited.data.result.outputs));
+        assert.ok(waited.data.result.outputs.length >= 1);
+        // External MT adapter dryRun is covered in engine-mt-adapter.test.js;
+        // this skeleton locks the Engine HTTP job contract used by engine-bridge.
+    });
+
     it('maps fetch AbortError to Chinese timeout instead of throwing', async () => {
         const server = http.createServer((_req, _res) => {
             // Intentionally never respond — forces client-side abort/timeout.

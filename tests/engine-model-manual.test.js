@@ -6,9 +6,14 @@ const path = require('path');
 describe('engine Hub model manual install helpers', () => {
     const {
         buildHubUrls,
+    } = require('../electron/engine-download-urls');
+    const {
         manualPlaceHintForModel,
         getEngineModelsRoot,
-    } = require('../electron/engine-bridge');
+        normalizeEngineDownloadKind,
+        resolveDownloadModelIds,
+        resolveOrtGpuManualPackage,
+    } = require('../electron/engine-download-info');
 
     it('builds official and mirror Hub URLs', () => {
         const urls = buildHubUrls('quantumcookie/anime-whisper-ct2-fp16', 'https://hf-mirror.com');
@@ -45,5 +50,25 @@ describe('engine Hub model manual install helpers', () => {
     it('resolves models root under engine install path', () => {
         const root = getEngineModelsRoot(path.join('C:', 'Transub', 'engine'));
         assert.ok(root.replace(/\\/g, '/').endsWith('engine/models'));
+    });
+
+    it('normalizeEngineDownloadKind aliases', () => {
+        assert.strictEqual(normalizeEngineDownloadKind('gpu'), 'gpu');
+        assert.strictEqual(normalizeEngineDownloadKind('audio-separate'), 'demucs');
+        assert.strictEqual(normalizeEngineDownloadKind('runtime-whisper'), 'whisper');
+        assert.strictEqual(normalizeEngineDownloadKind(''), 'models');
+    });
+
+    it('resolveDownloadModelIds filters Sakura and expands profile', () => {
+        const ids = resolveDownloadModelIds({ profile: 'balanced' });
+        assert.ok(ids.includes('sensevoice-small'));
+        assert.ok(!ids.some((id) => String(id).startsWith('sakura')));
+    });
+
+    it('resolveOrtGpuManualPackage honors requirement pin', () => {
+        const c12 = resolveOrtGpuManualPackage({ ortGpuRequirement: 'onnxruntime-gpu>=1.21,<1.27' });
+        assert.strictEqual(c12.target, 'cuda12');
+        const c13 = resolveOrtGpuManualPackage({ ortGpuRequirement: 'onnxruntime-gpu>=1.27' });
+        assert.strictEqual(c13.target, 'cuda13');
     });
 });

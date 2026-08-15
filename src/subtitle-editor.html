@@ -392,6 +392,41 @@ body.editor-waveform-on .editor-timeline-panel {
     padding: 0 1.5rem; pointer-events: none;
 }
 .editor-video-subtitle.hidden { display: none; }
+.editor-video-subtitle.ass-approx-preview.ass-align-top { top: 8%; bottom: auto; }
+.editor-video-subtitle.ass-approx-preview.ass-align-middle { top: 50%; bottom: auto; transform: translateY(-50%); }
+.editor-video-subtitle.ass-approx-preview.ass-align-bottom { bottom: 10%; top: auto; transform: none; }
+.editor-video-subtitle.ass-approx-preview.ass-align-left { align-items: flex-start; }
+.editor-video-subtitle.ass-approx-preview.ass-align-center { align-items: center; }
+.editor-video-subtitle.ass-approx-preview.ass-align-right { align-items: flex-end; }
+.editor-ass-preview-badge {
+    position: absolute; right: 0.45rem; top: 0.45rem; z-index: 3;
+    font-size: 0.62rem; padding: 0.1rem 0.35rem; border-radius: 0.25rem;
+    background: rgba(15, 23, 42, 0.72); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.35);
+    pointer-events: none; letter-spacing: 0.02em;
+}
+.editor-ass-preview-badge.is-jassub {
+    color: #86efac; border-color: rgba(134, 239, 172, 0.4);
+}
+.editor-ass-preview-badge.hidden { display: none; }
+.editor-video-frame > canvas.JASSUB {
+    z-index: 2;
+    pointer-events: none;
+}
+.ass-override-bar {
+    display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.2rem 0 0.35rem; align-items: center;
+}
+.ass-override-bar.hidden { display: none; }
+.ass-override-bar button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text);
+    border-radius: 0.3rem; padding: 0.12rem 0.35rem; font-size: 0.65rem; cursor: pointer; line-height: 1.2;
+}
+.ass-override-bar button:hover { background: var(--ed-surface-2); color: var(--ed-accent); }
+.ass-override-bar .ass-ov-sep {
+    width: 1px; height: 0.9rem; background: var(--ed-border); margin: 0 0.1rem;
+}
+.ass-override-bar .ass-ov-hint {
+    font-size: 0.6rem; color: var(--ed-faint); margin-left: 0.15rem;
+}
 .editor-video-subtitle-source {
     max-width: 92%; padding: 0.25rem 0.7rem; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.88);
     font-size: clamp(12px, 1.8vw, 18px); line-height: 1.4; text-align: center;
@@ -1374,8 +1409,77 @@ textarea.recon-review-after {
 .editor-modal.editor-drawer .editor-modal-panel.break-words-panel,
 .editor-modal.editor-drawer .editor-modal-panel.find-replace-panel,
 .editor-modal.editor-drawer .editor-modal-panel.qc-panel,
-.editor-modal.editor-drawer .editor-modal-panel.workflow-panel {
+.editor-modal.editor-drawer .editor-modal-panel.workflow-panel,
+.editor-modal.editor-drawer .editor-modal-panel.ass-styles-panel {
     width: min(28rem, 96vw);
+}
+.ass-style-list {
+    max-height: 9.5rem; overflow: auto; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; margin-bottom: 0.55rem; background: var(--ed-surface);
+}
+.ass-style-item {
+    display: flex; align-items: center; gap: 0.45rem; width: 100%;
+    padding: 0.4rem 0.5rem; border: 0; border-bottom: 1px solid var(--ed-border);
+    background: transparent; color: var(--ed-text); text-align: left; cursor: pointer; font-size: 0.72rem;
+}
+.ass-style-item:last-child { border-bottom: 0; }
+.ass-style-item:hover { background: var(--ed-surface-2); }
+.ass-style-item.active { background: var(--ed-accent-soft); }
+.ass-style-swatch {
+    width: 0.85rem; height: 0.85rem; border-radius: 0.2rem; border: 1px solid var(--ed-border); flex-shrink: 0;
+}
+.ass-style-meta { min-width: 0; flex: 1; }
+.ass-style-name { display: block; font-weight: 600; }
+.ass-style-sub {
+    display: block; color: var(--ed-muted); font-size: 0.65rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ass-style-form { display: grid; gap: 0.4rem; margin-bottom: 0.55rem; }
+.ass-style-form label { font-size: 0.65rem; color: var(--ed-muted); display: block; margin-bottom: 0.15rem; }
+.ass-style-form input[type="text"],
+.ass-style-form input[type="number"],
+.ass-style-form select {
+    width: 100%; font-size: 0.75rem; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.3rem 0.45rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.ass-style-form input[type="color"] {
+    width: 100%; height: 1.85rem; padding: 0.1rem; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; background: var(--ed-surface); cursor: pointer;
+}
+.ass-style-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.ass-style-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
+.ass-style-check-row {
+    display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted);
+    align-items: center;
+}
+.ass-style-check-row label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; margin: 0; color: var(--ed-text); }
+.ass-tab-bar {
+    display: flex; gap: 0.25rem; margin-bottom: 0.55rem; flex-wrap: wrap;
+}
+.ass-tab-bar button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-muted);
+    border-radius: 0.375rem; padding: 0.25rem 0.55rem; font-size: 0.72rem; cursor: pointer;
+}
+.ass-tab-bar button:hover { background: var(--ed-surface-2); color: var(--ed-text); }
+.ass-tab-bar button.active {
+    background: var(--ed-accent-soft); color: var(--ed-accent); border-color: var(--ed-accent);
+}
+.ass-map-row {
+    display: flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.45rem;
+    border-bottom: 1px solid var(--ed-border); font-size: 0.72rem;
+}
+.ass-map-row:last-child { border-bottom: 0; }
+.ass-map-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ass-map-select {
+    width: 7.5rem; font-size: 0.72rem; border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.2rem 0.3rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.editor-cue-table .col-style { width: 3.6rem; display: none; }
+.editor-cue-table.has-ass-style-col .col-style,
+.editor-cue-table.has-ass-style-col .col-style-head { display: table-cell; }
+.editor-cue-table .cell-style {
+    font-size: 0.65rem; color: var(--ed-muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 3.6rem;
 }
 
 .split-mode-list { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.75rem; }
@@ -1488,6 +1592,56 @@ textarea.recon-review-after {
     background: var(--ed-accent-soft); color: var(--ed-accent); font-weight: 600; flex-shrink: 0;
 }
 .editor-chip-warn { background: var(--ed-warn-bg); color: var(--ed-warn-text); }
+.editor-library-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.65rem;
+    padding: 0.28rem 0.7rem; border-bottom: 1px solid var(--ed-border);
+    background: color-mix(in srgb, var(--ed-accent-soft) 55%, var(--ed-surface));
+    flex-shrink: 0; font-size: 12px; min-height: 2rem;
+}
+.editor-library-bar.hidden { display: none !important; }
+.editor-library-bar-main {
+    display: flex; align-items: center; gap: 0.4rem; min-width: 0; flex: 1;
+}
+.editor-library-bar-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    color: var(--ed-accent); flex-shrink: 0;
+}
+.editor-library-bar-title { font-weight: 650; color: var(--ed-text); max-width: 14rem; }
+.editor-library-bar-recipe { color: var(--ed-muted); font-size: 11px; max-width: 22rem; }
+.editor-library-bar-actions { display: inline-flex; align-items: center; gap: 0.35rem; }
+#editorLibraryMediaStatus:not(.hidden) { margin-left: 0.1rem; }
+.editor-library-bar-actions .editor-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.editor-library-bar-actions .editor-btn.is-active {
+    color: var(--ed-accent);
+    border-color: color-mix(in srgb, var(--ed-accent) 45%, var(--ed-border));
+}
+#editorLibraryDiffModal .editor-modal-panel { width: min(40rem, 94vw); max-height: min(80vh, 40rem); display: flex; flex-direction: column; }
+#editorLibraryDiffBody {
+    flex: 1;
+    min-height: 12rem;
+    max-height: min(55vh, 28rem);
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    border: 1px solid var(--ed-line, rgba(127,127,127,0.25));
+    border-radius: 6px;
+    padding: 0.5rem 0.65rem;
+    background: var(--ed-panel-soft, rgba(0,0,0,0.04));
+}
+#editorLibraryDiffBody .lib-diff-add { color: #15803d; }
+#editorLibraryDiffBody .lib-diff-del { color: #b91c1c; }
+#editorLibraryDiffBody .lib-diff-skip { color: var(--ed-muted); font-style: italic; }
+#editorLibraryDiffBody .lib-diff-eq { color: var(--ed-muted); }
+html.dark #editorLibraryDiffBody .lib-diff-add,
+body.dark #editorLibraryDiffBody .lib-diff-add { color: #4ade80; }
+html.dark #editorLibraryDiffBody .lib-diff-del,
+body.dark #editorLibraryDiffBody .lib-diff-del { color: #f87171; }
+.editor-library-save-intent { display: inline-flex; align-items: center; }
+.sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
 
 .editor-status-bar {
     display: flex; align-items: center; gap: 0.55rem;
@@ -2007,11 +2161,17 @@ button.needs-video.is-no-video { opacity: 0.45; }
     overflow: auto;
 }
 .editor-welcome.hidden { display: none !important; }
-.editor-welcome-open-generator {
+.editor-welcome-top-links {
     position: absolute;
     top: 0.85rem;
     right: 1rem;
     z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+.editor-welcome-open-generator,
+.editor-welcome-open-library {
     padding: 0.35rem 0.15rem;
     border: none;
     background: transparent;
@@ -2023,7 +2183,8 @@ button.needs-video.is-no-video { opacity: 0.45; }
     text-decoration: none;
     transition: color 0.12s ease, opacity 0.12s ease;
 }
-.editor-welcome-open-generator:hover {
+.editor-welcome-open-generator:hover,
+.editor-welcome-open-library:hover {
     color: var(--ed-accent-hover);
     text-decoration: underline;
 }
@@ -2122,16 +2283,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
 }
 .editor-welcome-history-item {
     display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
+    align-items: stretch;
+    gap: 0.35rem;
     width: 100%;
-    text-align: left;
-    padding: 0.55rem 0.7rem;
-    border: none;
     border-radius: 0.45rem;
-    background: transparent;
-    color: var(--ed-text);
-    cursor: pointer;
     transition: background 0.12s ease;
 }
 .editor-welcome-history-item:hover {
@@ -2139,6 +2294,37 @@ button.needs-video.is-no-video { opacity: 0.45; }
 }
 .editor-welcome-history-item.is-missing {
     opacity: 0.55;
+}
+.editor-welcome-history-open {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 0.55rem 0.35rem 0.55rem 0.7rem;
+    border: none;
+    border-radius: 0.45rem;
+    background: transparent;
+    color: var(--ed-text);
+    cursor: pointer;
+}
+.editor-welcome-history-lib {
+    flex-shrink: 0;
+    align-self: center;
+    margin-right: 0.4rem;
+    padding: 0.2rem 0.45rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.35rem;
+    background: var(--ed-surface);
+    color: var(--ed-muted);
+    font-size: 0.68rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+.editor-welcome-history-lib:hover {
+    color: var(--ed-accent);
+    border-color: color-mix(in srgb, var(--ed-accent) 45%, var(--ed-border));
 }
 .editor-welcome-history-name {
     font-size: 0.82rem;
@@ -2252,6 +2438,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <i class="fa fa-check-square-o"></i>
             </button>
             <button type="button" id="editorOpenGeneratorBtn" class="editor-btn editor-btn-icon" title="打开字幕生成器" aria-label="字幕生成器"><i class="fa fa-play-circle"></i></button>
+            <button type="button" id="editorOpenLibraryBtn" class="editor-btn editor-btn-icon" title="打开字幕库" aria-label="字幕库"><i class="fa fa-archive"></i></button>
             <button type="button" id="editorSettingsBtn" class="editor-btn editor-btn-icon" title="设置" aria-label="设置"><i class="fa fa-cog"></i></button>
             <button type="button" id="editorShortcutsBtn" class="editor-btn editor-btn-icon" title="快捷键说明" aria-label="快捷键"><i class="fa fa-keyboard-o"></i></button>
             <button type="button" id="editorTourReplayBtn" class="editor-btn editor-btn-icon" title="重新查看导览" aria-label="导览"><i class="fa fa-question-circle"></i></button>
@@ -2264,6 +2451,32 @@ button.needs-video.is-no-video { opacity: 0.45; }
         </div>
     </header>
 
+    <div id="editorLibraryBar" class="editor-library-bar hidden" aria-label="字幕库会话">
+        <div class="editor-library-bar-main min-w-0">
+            <span class="editor-library-bar-label">库</span>
+            <span id="editorLibraryTitle" class="editor-library-bar-title truncate" title="">—</span>
+            <span id="editorLibraryRole" class="editor-chip shrink-0">—</span>
+            <span id="editorLibraryActive" class="editor-chip shrink-0 hidden">当前</span>
+            <span id="editorLibraryMediaStatus" class="editor-chip editor-chip-warn shrink-0 hidden">未关联媒体</span>
+            <span id="editorLibraryRecipe" class="editor-library-bar-recipe truncate" title="">—</span>
+        </div>
+        <div class="editor-library-bar-actions shrink-0">
+            <label class="editor-library-save-intent" title="保存时如何写回字幕库">
+                <span class="sr-only">保存意图</span>
+                <select id="editorLibrarySaveIntent" class="editor-btn" style="max-width:12rem;padding:0.2rem 0.45rem;font-size:12px">
+                    <option value="current">保存并设为当前</option>
+                    <option value="draft">仅入库草稿</option>
+                    <option value="ab">保存为对照 B</option>
+                </select>
+            </label>
+            <button type="button" id="editorLibraryFixMediaBtn" class="editor-btn hidden" title="选择并关联媒体">关联媒体</button>
+            <button type="button" id="editorLibraryLoadCompareBtn" class="editor-btn editor-btn-icon" title="挂载对照 A/B 为只读副轨" aria-label="挂载对照副轨"><i class="fa fa-columns"></i></button>
+            <button type="button" id="editorLibraryAbDiffBtn" class="editor-btn editor-btn-icon" title="对比已标对照 A/B" aria-label="对比对照"><i class="fa fa-exchange"></i></button>
+            <button type="button" id="editorLibraryRerunBtn" class="editor-btn editor-btn-icon" title="配方再跑（主窗口）" aria-label="配方再跑"><i class="fa fa-refresh"></i></button>
+            <button type="button" id="editorLibraryFocusBtn" class="editor-btn editor-btn-icon" title="在字幕库中查看此版本" aria-label="在字幕库中查看"><i class="fa fa-archive"></i></button>
+        </div>
+    </div>
+
     <div id="editorModeTools" class="editor-mode-tools" role="toolbar" aria-label="当前工作区工具">
         <button type="button" id="editorAddCueBtn" class="editor-btn-icon" data-tool-group="entry" title="在末尾添加一条字幕" aria-label="添加字幕"><i class="fa fa-plus"></i></button>
         <button type="button" id="editorShiftBackBtn" data-tool-group="timing" title="全体字幕 -500ms">全体 -0.5s</button>
@@ -2272,10 +2485,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
         <div class="editor-menu-wrap" data-tool-group="text" data-tool-menu="text">
             <button type="button" class="editor-mode-dd-btn" data-dd-trigger="text" title="更多文本工具" aria-haspopup="true" aria-expanded="false">文本 <i class="fa fa-caret-down" aria-hidden="true"></i></button>
             <div class="editor-dropdown hidden" role="menu" aria-label="文本工具">
-                <button type="button" id="editorSuggestSpeakersBtn" data-tool-group="text" role="menuitem" title="按句间静音启发式建议说话人（非声纹分离）"><i class="fa fa-users"></i> 建议说话人</button>
                 <button type="button" id="editorBreakWordsBtn" data-tool-group="text" role="menuitem" title="管理智能断句使用的断句词"><i class="fa fa-ellipsis-h"></i> 断句词</button>
                 <button type="button" id="editorChineseConvertBtn" data-tool-group="text" role="menuitem" title="批量简繁体转换"><i class="fa fa-language"></i> 简繁转换</button>
                 <button type="button" id="editorCompressRepBtn" data-tool-group="text" role="menuitem" title="压缩叠词叠句，降低 CPS"><i class="fa fa-compress"></i> 压缩叠词</button>
+                <button type="button" id="editorViewingPunctBtn" data-tool-group="text" role="menuitem" title="观影精简标点：标点改空格，保留问号感叹号"><i class="fa fa-minus-circle"></i> 观影精简标点</button>
             </div>
         </div>
         <button type="button" id="editorSmartAdjustBtn" data-tool-group="batch" title="智能修复重叠、CPS 与时长"><i class="fa fa-magic"></i>智能调整</button>
@@ -2287,6 +2500,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <button type="button" id="editorSilenceSplitBtn" class="needs-video" data-tool-group="batch" role="menuitem" title="按视频静音批量分割字幕（需关联视频）"><i class="fa fa-volume-off"></i> 静音分割</button>
                 <button type="button" id="editorRemoveNoiseBtn" data-tool-group="batch" role="menuitem" title="批量删除语气碎片、音效标签等杂音字幕"><i class="fa fa-filter"></i> 删除杂音</button>
                 <button type="button" id="editorRetranscribeDurBtn" class="needs-video" data-tool-group="batch" role="menuitem" title="从起始点按指定时长重转写（需关联视频）"><i class="fa fa-refresh"></i> 按时长重转</button>
+                <button type="button" id="editorRetranscribeLowConfBtn" class="needs-video" data-tool-group="batch" role="menuitem" title="合并邻近低置信条目后按时间窗批量重转（需关联视频）"><i class="fa fa-exclamation-circle"></i> 重转低置信</button>
             </div>
         </div>
         <button type="button" id="editorKeptDiffBtn" data-tool-group="kept" title="与原文缓存对照 Diff" disabled><i class="fa fa-files-o"></i>对照 Diff</button>
@@ -2295,16 +2509,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
         <div class="editor-menu-wrap" data-tool-group="dual" data-tool-menu="dual-export">
             <button type="button" class="editor-mode-dd-btn" data-dd-trigger="dual-export" title="双语导出" aria-haspopup="true" aria-expanded="false">导出 <i class="fa fa-caret-down" aria-hidden="true"></i></button>
             <div class="editor-dropdown hidden" role="menu" aria-label="双语导出">
-                <button type="button" id="editorExportAssBtn" class="is-pro-tool" data-tool-group="dual pro" role="menuitem" title="Pro：导出 ASS（按说话人着色样式）"><i class="fa fa-file-code-o"></i> 导出 ASS ◆</button>
+                <button type="button" id="editorExportAssBtn" class="is-pro-tool" data-tool-group="dual pro" role="menuitem" title="Pro：导出 ASS（当前样式）"><i class="fa fa-file-code-o"></i> 导出 ASS ◆</button>
+                <button type="button" id="editorExportDualAssBtn" class="is-pro-tool hidden" data-tool-group="dual pro" role="menuitem" title="Pro：导出双语 ASS（Source+ZH）"><i class="fa fa-files-o"></i> 导出双语 ASS ◆</button>
                 <button type="button" id="editorExportDualMenuBtn" class="hidden" data-tool-group="dual" role="menuitem" title="将原文与译文合并为一份字幕导出"><i class="fa fa-language"></i> 导出合并双语</button>
             </div>
         </div>
-        <button type="button" id="editorSmartTranslateBtn" data-tool-group="ai" title="Pro 智能翻译（选中或全部；影片简要 → 分块译 → 一致性）"><i class="fa fa-exchange"></i>智能翻译</button>
+        <button type="button" id="editorSmartTranslateBtn" data-tool-group="ai" title="Pro 智能翻译（选中或全部；专训句级 + 剧情贴合润色，跟随设置）"><i class="fa fa-exchange"></i>智能翻译</button>
         <span class="editor-pro-hint" data-tool-group="pro" aria-hidden="true">Pro 专属</span>
         <button type="button" id="editorContextReconstructBtn" class="is-pro-tool" data-tool-group="ai pro" title="Pro：按窗口润色译文"><i class="fa fa-magic"></i>语境重构 ◆</button>
         <button type="button" id="editorFilmContextReconstructBtn" class="is-pro-tool" data-tool-group="ai pro" title="Pro：先分析全片再按场景重构，更贴合剧情"><i class="fa fa-film"></i>影片理解重构 ◆</button>
         <button type="button" id="editorSemanticReviewBtn" class="is-pro-tool" data-tool-group="dual pro" title="Pro：LLM 双语语义审阅"><i class="fa fa-balance-scale"></i>语义审阅 ◆</button>
-        <button type="button" id="editorProAssBtn" class="is-pro-tool" data-tool-group="pro" title="Pro：导出 ASS（按说话人着色样式）"><i class="fa fa-file-code-o"></i>导出 ASS ◆</button>
+        <button type="button" id="editorAssStylesBtn" class="is-pro-tool" data-tool-group="pro" title="Pro：编辑 ASS 样式（字体/颜色/边距）并套用到字幕"><i class="fa fa-paint-brush"></i>ASS 样式 ◆</button>
+        <button type="button" id="editorProAssBtn" class="is-pro-tool" data-tool-group="pro" title="Pro：导出 ASS（当前样式）"><i class="fa fa-file-code-o"></i>导出 ASS ◆</button>
         <div class="editor-menu-wrap" data-tool-menu="more">
             <button type="button" class="editor-mode-dd-btn" data-dd-trigger="more" title="更多工具" aria-haspopup="true" aria-expanded="false">更多 <i class="fa fa-caret-down" aria-hidden="true"></i></button>
             <div class="editor-dropdown hidden" role="menu" aria-label="更多工具">
@@ -2337,9 +2553,6 @@ button.needs-video.is-no-video { opacity: 0.45; }
                         <button type="button" data-list-filter="review-approved" role="menuitemradio" aria-checked="false">已通过</button>
                     </div>
                 </div>
-                <select id="editorSpeakerFilter" class="editor-filter-select" title="按说话人筛选" aria-label="按说话人筛选">
-                    <option value="">说话人</option>
-                </select>
                 <button type="button" id="editorNextIssueBtn" class="editor-filter-btn" title="跳到下一条问题">下一条问题</button>
                 <span style="flex:1"></span>
                 <span id="editorFilterCount" style="font-size:0.65rem;color:var(--ed-faint);font-variant-numeric:tabular-nums"></span>
@@ -2354,6 +2567,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                             <th class="text-left col-time">结束</th>
                             <th class="text-left col-dur">时长</th>
                             <th class="text-left col-cps">CPS</th>
+                            <th class="text-left col-style col-style-head">Style</th>
                             <th class="text-left col-text-head">文本</th>
                             <th class="text-left col-pair-head col-pair">对照</th>
                         </tr>
@@ -2403,9 +2617,25 @@ button.needs-video.is-no-video { opacity: 0.45; }
                             <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
                         </div>
                     </div>
+                    <div id="editorAssOverrideBar" class="ass-override-bar hidden" role="toolbar" aria-label="ASS 标签工具">
+                        <button type="button" data-ass-ov="an" data-an="7" title="{\an7} 左上">↖</button>
+                        <button type="button" data-ass-ov="an" data-an="8" title="{\an8} 中上">↑</button>
+                        <button type="button" data-ass-ov="an" data-an="9" title="{\an9} 右上">↗</button>
+                        <button type="button" data-ass-ov="an" data-an="4" title="{\an4} 左中">←</button>
+                        <button type="button" data-ass-ov="an" data-an="5" title="{\an5} 正中">●</button>
+                        <button type="button" data-ass-ov="an" data-an="6" title="{\an6} 右中">→</button>
+                        <button type="button" data-ass-ov="an" data-an="1" title="{\an1} 左下">↙</button>
+                        <button type="button" data-ass-ov="an" data-an="2" title="{\an2} 中下">↓</button>
+                        <button type="button" data-ass-ov="an" data-an="3" title="{\an3} 右下">↘</button>
+                        <span class="ass-ov-sep" aria-hidden="true"></span>
+                        <button type="button" data-ass-ov="b" title="粗体 {\b1}"><b>B</b></button>
+                        <button type="button" data-ass-ov="i" title="斜体 {\i1}"><i>I</i></button>
+                        <button type="button" data-ass-ov="n" title="软换行 \N">\N</button>
+                        <span class="ass-ov-hint">ASS 标签</span>
+                    </div>
                     <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
                     <div id="editorDetailPairWrap" class="hidden" style="margin-top:0.35rem">
-                        <div style="font-size:10px;color:var(--ed-muted);margin-bottom:0.15rem">对照轨（只读）</div>
+                        <div id="editorDetailPairLabel" style="font-size:10px;color:var(--ed-muted);margin-bottom:0.15rem">对照轨</div>
                         <div id="editorDetailPairText" style="font-size:0.74rem;color:var(--ed-muted);line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:4.5rem;overflow:auto;padding:0.35rem 0.45rem;border:1px solid var(--ed-border);border-radius:0.35rem;background:var(--ed-surface-2)"></div>
                     </div>
                 </div>
@@ -2481,6 +2711,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div id="editorVideoSubtitleSource" class="editor-video-subtitle-source"></div>
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
+                <div id="editorAssPreviewBadge" class="editor-ass-preview-badge hidden" title="CSS 近似预览（非 libass）">近似预览</div>
             </div>
             <p id="editorVideoHint" class="editor-video-hint">未关联媒体，可点击「关联媒体」；亦可仅编辑文本与时间轴</p>
         </aside>
@@ -2573,7 +2804,10 @@ button.needs-video.is-no-video { opacity: 0.45; }
     </div>
 
     <div id="editorWelcome" class="editor-welcome hidden" aria-label="字幕编辑器启动页">
-        <button type="button" id="editorWelcomeOpenGeneratorBtn" class="editor-welcome-open-generator" title="打开字幕生成器">打开字幕生成器</button>
+        <div class="editor-welcome-top-links">
+            <button type="button" id="editorWelcomeOpenLibraryBtn" class="editor-welcome-open-library" title="打开字幕库">打开字幕库</button>
+            <button type="button" id="editorWelcomeOpenGeneratorBtn" class="editor-welcome-open-generator" title="打开字幕生成器">打开字幕生成器</button>
+        </div>
         <div class="editor-welcome-inner">
             <div id="editorWelcomeIconWrap" class="editor-welcome-icon-wrap" title="将字幕文件拖放到此处打开">
                 <img id="editorWelcomeIcon" class="editor-welcome-icon" src="tseditor.png" alt="TS EDITOR" width="120" height="120" draggable="false">
@@ -2755,6 +2989,152 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <div class="editor-modal-actions">
                     <button type="button" id="editorGlossaryCancel" data-glossary-dismiss>关闭</button>
                     <button type="button" id="editorGlossaryConfirm">统一全部别名</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorAssStylesModal" class="editor-modal editor-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="editorAssStylesTitle">
+            <div class="editor-modal-backdrop" data-ass-styles-dismiss></div>
+            <div class="editor-modal-panel ass-styles-panel">
+                <h3 id="editorAssStylesTitle">ASS 样式 ◆</h3>
+                <p class="break-words-hint">编辑样式并导出单语/双语 ASS。与引擎 ass-dual 的 Source+ZH 叠层一致。</p>
+                <div class="ass-tab-bar" role="tablist" aria-label="ASS 样式分区">
+                    <button type="button" data-ass-tab="styles" class="active" role="tab" aria-selected="true">样式</button>
+                    <button type="button" data-ass-tab="dual" role="tab" aria-selected="false">双语模板</button>
+                </div>
+                <div data-ass-tab-panel="styles">
+                <div class="glossary-toolbar">
+                    <button type="button" id="editorAssStyleAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
+                    <select id="editorAssStylePresetSelect" title="应用内置样式预设" aria-label="样式预设"
+                        style="max-width:8.5rem;font-size:0.72rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.15rem 0.3rem;background:var(--ed-surface);color:var(--ed-text)">
+                        <option value="">样式预设…</option>
+                    </select>
+                    <button type="button" id="editorAssStyleExportBtn" title="按当前样式导出 ASS"><i class="fa fa-download mr-1"></i>导出 ASS</button>
+                </div>
+                <div id="editorAssStyleList" class="ass-style-list" role="list"></div>
+                <div class="ass-style-form">
+                    <div>
+                        <label for="editorAssStyleName">名称</label>
+                        <input type="text" id="editorAssStyleName" spellcheck="false" placeholder="Default">
+                    </div>
+                    <div class="ass-style-grid-2">
+                        <div>
+                            <label for="editorAssStyleFont">字体</label>
+                            <input type="text" id="editorAssStyleFont" spellcheck="false" placeholder="Microsoft YaHei" list="editorAssFontSuggestions">
+                            <datalist id="editorAssFontSuggestions">
+                                <option value="Microsoft YaHei"></option>
+                                <option value="Source Han Sans SC"></option>
+                                <option value="Noto Sans CJK SC"></option>
+                                <option value="Arial"></option>
+                                <option value="SimHei"></option>
+                            </datalist>
+                        </div>
+                        <div>
+                            <label for="editorAssStyleSize">字号</label>
+                            <input type="number" id="editorAssStyleSize" min="8" max="200" step="1">
+                        </div>
+                    </div>
+                    <div class="ass-style-grid-3">
+                        <div>
+                            <label for="editorAssStylePrimary">主色</label>
+                            <input type="color" id="editorAssStylePrimary" value="#ffffff">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleOutline">描边色</label>
+                            <input type="color" id="editorAssStyleOutline" value="#000000">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleBack">阴影色</label>
+                            <input type="color" id="editorAssStyleBack" value="#000000">
+                        </div>
+                    </div>
+                    <div class="ass-style-grid-3">
+                        <div>
+                            <label for="editorAssStyleOutlineWidth">描边</label>
+                            <input type="number" id="editorAssStyleOutlineWidth" min="0" max="20" step="0.5">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleShadow">阴影</label>
+                            <input type="number" id="editorAssStyleShadow" min="0" max="20" step="0.5">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleAlign">对齐</label>
+                            <select id="editorAssStyleAlign">
+                                <option value="1">1 左下</option>
+                                <option value="2" selected>2 中下</option>
+                                <option value="3">3 右下</option>
+                                <option value="4">4 左中</option>
+                                <option value="5">5 正中</option>
+                                <option value="6">6 右中</option>
+                                <option value="7">7 左上</option>
+                                <option value="8">8 中上</option>
+                                <option value="9">9 右上</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="ass-style-grid-3">
+                        <div>
+                            <label for="editorAssStyleMarginL">边距 L</label>
+                            <input type="number" id="editorAssStyleMarginL" min="0" max="600" step="1">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleMarginR">边距 R</label>
+                            <input type="number" id="editorAssStyleMarginR" min="0" max="600" step="1">
+                        </div>
+                        <div>
+                            <label for="editorAssStyleMarginV">边距 V</label>
+                            <input type="number" id="editorAssStyleMarginV" min="0" max="600" step="1">
+                        </div>
+                    </div>
+                    <div class="ass-style-check-row">
+                        <label><input type="checkbox" id="editorAssStyleBold"> 粗体</label>
+                        <label><input type="checkbox" id="editorAssStyleItalic"> 斜体</label>
+                        <button type="button" id="editorAssStyleSaveBtn" class="text-xs px-2 py-1 border rounded">保存样式</button>
+                        <button type="button" id="editorAssStyleDeleteBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除</button>
+                        <button type="button" id="editorAssStyleApplyBtn" class="text-xs px-2 py-1 border rounded" title="将当前样式套用到选中字幕">应用到选中</button>
+                    </div>
+                </div>
+                </div>
+                <div data-ass-tab-panel="dual" class="hidden">
+                    <div class="ass-style-form">
+                        <div>
+                            <label for="editorAssDualPreset">预设</label>
+                            <select id="editorAssDualPreset">
+                                <option value="watch">观影双行（译文在上）</option>
+                                <option value="source-top">原文置顶</option>
+                                <option value="target-only">仅译文样式</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="editorAssDualLineOrder">行序</label>
+                            <select id="editorAssDualLineOrder">
+                                <option value="target-first">译文在上 / 原文在下</option>
+                                <option value="source-first">原文在上 / 译文在下</option>
+                            </select>
+                        </div>
+                        <div class="ass-style-grid-2">
+                            <div>
+                                <label for="editorAssDualSourceStyle">原文 Style</label>
+                                <select id="editorAssDualSourceStyle"></select>
+                            </div>
+                            <div>
+                                <label for="editorAssDualTargetStyle">译文 Style</label>
+                                <select id="editorAssDualTargetStyle"></select>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="editorAssDualMarginGap">垂直间距（MarginV 差）</label>
+                            <input type="number" id="editorAssDualMarginGap" min="24" max="200" step="4" value="56">
+                        </div>
+                        <div class="ass-style-check-row">
+                            <button type="button" id="editorAssDualApplyBtn" class="text-xs px-2 py-1 border rounded">写入双语样式</button>
+                            <button type="button" id="editorAssDualExportBtn" class="text-xs px-2 py-1 border rounded" title="导出 Source+ZH 双 Dialogue ASS">导出双语 ASS ◆</button>
+                        </div>
+                    </div>
+                </div>
+                <p id="editorAssStyleHint" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorAssStylesClose" data-ass-styles-dismiss>关闭</button>
                 </div>
             </div>
         </div>
@@ -3230,7 +3610,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-compress-rep-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorCompressRepTitle">压缩叠词</h3>
-                <p>将连续重复 ≥3 次的短语/单字压成「词…词！」（如「好的」×8 →「好的…好的！」），降低 CPS。不改时间轴；强度用省略号表达，请听音校对。</p>
+                <p>将连续重复 ≥3 次的短语/单字压成两次叠写（如「好的」×8 →「好的好的！」），降低 CPS。不改时间轴；不再插入省略号，请听音校对。</p>
                 <div class="split-mode-list">
                     <label class="split-mode-item">
                         <input type="radio" name="editorCompressRepScope" id="editorCompressRepScopeAll" value="all" checked>
@@ -3242,7 +3622,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     </label>
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorCompressRepSingleChar" checked>
-                        <span>压缩单字叠音（啊啊啊 / 哈哈哈…）</span>
+                        <span>压缩单字叠音（啊啊啊 / 哈哈哈）</span>
                     </label>
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorCompressRepExclaim" checked>
@@ -3253,6 +3633,29 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <div class="editor-modal-actions">
                     <button type="button" id="editorCompressRepCancel" data-compress-rep-dismiss>取消</button>
                     <button type="button" id="editorCompressRepConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorViewingPunctModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorViewingPunctTitle">
+            <div class="editor-modal-backdrop" data-viewing-punct-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorViewingPunctTitle">观影精简标点</h3>
+                <p>句号、顿号/逗号、破折号与装饰省略号（…）改为空格（多空格收成一个）；保留问号与感叹号（重复收紧为一个）。不改时间轴。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorViewingPunctScope" id="editorViewingPunctScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorViewingPunctScope" id="editorViewingPunctScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                </div>
+                <p id="editorViewingPunctPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorViewingPunctCancel" data-viewing-punct-dismiss>取消</button>
+                    <button type="button" id="editorViewingPunctConfirm">执行</button>
                 </div>
             </div>
         </div>
@@ -3296,7 +3699,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     </div>
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorQcCompressRep" checked>
-                        <span>压缩叠词（词…词！）</span>
+                        <span>压缩叠词（词词！）</span>
                     </label>
                     <label class="split-mode-item">
                         <input type="checkbox" id="editorQcRemoveNoise" checked>
@@ -3341,7 +3744,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
             <div class="editor-modal-backdrop" data-retranscribe-dur-dismiss></div>
             <div class="editor-modal-panel batch-dur-panel">
                 <h3 id="editorRetranscribeDurTitle">按时长重转写</h3>
-                <p>从起始点向后截取指定时长，调用 TransWithAI 重转写，并替换该时间窗内重叠的字幕。加速选项可在「设置 → 字幕编辑器」中开启「重转写加速」。</p>
+                <p>从起始点向后截取指定时长，调用本地引擎重转写，并替换该时间窗内重叠的字幕。加速选项可在「设置 → 字幕编辑器」中开启「重转写加速」。</p>
                 <div class="split-mode-list">
                     <label class="split-mode-item">
                         <input type="radio" name="editorRetranscribeDurStart" value="selected" checked>
@@ -3649,6 +4052,18 @@ button.needs-video.is-no-video { opacity: 0.45; }
         </div>
     </div>
 
+    <div id="editorLibraryDiffModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorLibraryDiffTitle">
+        <div id="editorLibraryDiffBackdrop" class="editor-modal-backdrop" data-library-diff-dismiss></div>
+        <div class="editor-modal-panel">
+            <h3 id="editorLibraryDiffTitle">对照 A/B 对比</h3>
+            <p id="editorLibraryDiffMeta" class="truncate" title=""></p>
+            <div id="editorLibraryDiffBody" aria-live="polite"></div>
+            <div class="editor-modal-actions" style="margin-top: 0.75rem;">
+                <button type="button" id="editorLibraryDiffClose" data-library-diff-dismiss>关闭</button>
+            </div>
+        </div>
+    </div>
+
     <div id="editorCueContextMenu" class="editor-context-menu hidden" role="menu" aria-label="字幕操作">
         <!-- 翻译（本条） -->
         <button type="button" data-ctx-action="sakura-translate" role="menuitem">翻译本条</button>
@@ -3703,16 +4118,24 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/transcript-compare-core.js"></script>
     <script src="js/editor-markers-core.js"></script>
     <script src="js/export-checklist-core.js"></script>
+    <script src="js/ass-styles-core.js"></script>
+    <script src="js/ass-override-core.js"></script>
     <script src="js/cue-list-window-core.js"></script>
     <script src="js/undo-patch-core.js"></script>
     <script src="js/timeline-magnet-core.js"></script>
     <script src="js/editor-workspace-core.js"></script>
     <script src="js/bilingual-review-core.js"></script>
     <script src="js/find-replace-core.js"></script>
-    <script src="js/speaker-suggest-core.js"></script>
     <!-- Pro reconstruct prompt cores stay out of renderer; UI uses IPC + local fallbacks -->
     <script src="js/sakura-mt-catalog-core.js"></script>
     <script src="js/subtitle-editor/utils.js"></script>
+    <script src="js/subtitle-editor/qc-summary-ui.js"></script>
+    <script src="js/subtitle-editor/cue-split-plan.js"></script>
+    <script src="js/subtitle-editor/silence-split-plan.js"></script>
+    <script src="js/subtitle-editor/audio-snap-duration-plan.js"></script>
+    <script src="js/subtitle-editor/retranscribe-range-plan.js"></script>
+    <script src="js/subtitle-editor/low-conf-retranscribe.js"></script>
+    <script src="js/subtitle-editor/batch-cue-filter-plan.js"></script>
     <script src="js/subtitle-editor/undo.js"></script>
     <script src="js/subtitle-editor/modals.js"></script>
     <script src="js/subtitle-editor/boot.js"></script>
@@ -3724,6 +4147,9 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-editor/qc-worker-client.js"></script>
     <script src="js/subtitle-editor/find-worker-client.js"></script>
     <script src="js/subtitle-editor/workspace-ui.js"></script>
+    <script src="js/subtitle-editor/ass-styles-ui.js"></script>
+    <script src="js/subtitle-editor/ass-override-ui.js"></script>
+    <script src="js/subtitle-editor/jassub-preview.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>
 </html>
