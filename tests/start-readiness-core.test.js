@@ -82,4 +82,37 @@ describe('start-readiness-core', () => {
             computeBusy: false,
         }), false);
     });
+
+    it('buildParamsModeChipViewModel shows manual ASR when no preset', () => {
+        const sense = ready.buildParamsModeChipViewModel({
+            autoEnabled: true,
+            autoSenseUi: { chipLabel: '闲置', tone: 'idle' },
+        });
+        assert.strictEqual(sense.label, '智能感知');
+
+        const preset = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+            presetId: 'film',
+            presetName: '影视对白',
+        });
+        assert.strictEqual(preset.label, '影视对白');
+
+        const manual = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+            asrModelLabel: 'kotoba-whisper-v2.0',
+        });
+        assert.strictEqual(manual.label, 'kotoba-whis…');
+        assert.match(manual.title, /手动 ASR/);
+
+        const shortAsr = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+            asrModelLabel: 'sensevoice',
+        });
+        assert.strictEqual(shortAsr.label, 'sensevoice');
+
+        const emptyCustom = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+        });
+        assert.strictEqual(emptyCustom.label, '设置');
+    });
 });

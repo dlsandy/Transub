@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' file: blob: transub-media:; connect-src 'self'; font-src 'self' data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' file: blob: transub-media:; connect-src 'self'; font-src 'self' data:;">
     <title>Transub Editor</title>
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
@@ -412,20 +412,228 @@ body.editor-waveform-on .editor-timeline-panel {
     z-index: 2;
     pointer-events: none;
 }
+.editor-ass-pos-handle {
+    position: absolute;
+    z-index: 5;
+    width: 16px;
+    height: 16px;
+    margin-left: -8px;
+    margin-top: -8px;
+    border-radius: 50%;
+    border: 2px solid #38bdf8;
+    background: rgba(56, 189, 248, 0.4);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+    cursor: grab;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+}
+.editor-ass-pos-handle.hidden { display: none; }
+.editor-ass-pos-handle.is-dragging,
+.editor-video-frame.ass-pos-dragging .editor-ass-pos-handle {
+    cursor: grabbing;
+    background: rgba(56, 189, 248, 0.75);
+    transform: scale(1.15);
+}
+.editor-ass-pos-hint {
+    position: absolute;
+    left: 0.45rem;
+    bottom: 0.45rem;
+    z-index: 4;
+    font-size: 0.62rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    background: rgba(15, 23, 42, 0.72);
+    color: #7dd3fc;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    pointer-events: none;
+    letter-spacing: 0.02em;
+}
+.editor-ass-pos-hint.hidden { display: none; }
+.editor-video-frame.ass-pos-drag-ready .editor-video-subtitle-inner {
+    pointer-events: auto;
+    cursor: grab;
+}
+.editor-video-subtitle.ass-pos-dragging,
+.editor-video-subtitle.ass-pos-placed {
+    z-index: 4;
+    pointer-events: none;
+}
+/* ASS 详情工具：排版行 + 样式/位置行 */
+.ass-detail-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin: 0.15rem 0 0.35rem;
+    flex: 0 0 auto;
+}
+.ass-detail-stack:not(:has(.ass-override-bar:not(.hidden), .detail-ass-style-wrap:not(.hidden), .detail-ass-pos-wrap:not(.hidden))) {
+    display: none;
+}
+.ass-detail-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.45rem;
+    padding: 0.28rem 0.4rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.35rem;
+    background: var(--ed-surface);
+}
+.ass-detail-row-title {
+    flex: 0 0 auto;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ed-muted);
+    text-transform: none;
+    margin-right: 0.1rem;
+}
+.ass-detail-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+.ass-detail-group-label {
+    font-size: 0.58rem;
+    color: var(--ed-faint);
+    white-space: nowrap;
+}
+.ass-detail-menu {
+    max-width: 6.75rem;
+    min-width: 0;
+    font-size: 0.65rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.2rem;
+    background: var(--ed-surface-2);
+    color: var(--ed-text);
+}
 .ass-override-bar {
-    display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.2rem 0 0.35rem; align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.45rem;
+    margin: 0;
+    align-items: center;
 }
 .ass-override-bar.hidden { display: none; }
 .ass-override-bar button {
-    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text);
+    border: 1px solid var(--ed-border); background: var(--ed-surface-2); color: var(--ed-text);
     border-radius: 0.3rem; padding: 0.12rem 0.35rem; font-size: 0.65rem; cursor: pointer; line-height: 1.2;
 }
-.ass-override-bar button:hover { background: var(--ed-surface-2); color: var(--ed-accent); }
+.ass-override-bar button:hover { background: var(--ed-accent-soft); color: var(--ed-accent); }
 .ass-override-bar .ass-ov-sep {
-    width: 1px; height: 0.9rem; background: var(--ed-border); margin: 0 0.1rem;
+    width: 1px; height: 0.9rem; background: var(--ed-border); margin: 0 0.05rem;
 }
-.ass-override-bar .ass-ov-hint {
-    font-size: 0.6rem; color: var(--ed-faint); margin-left: 0.15rem;
+.ass-override-bar select,
+.ass-detail-row select {
+    max-width: 8.5rem;
+    min-width: 0;
+    font-size: 0.65rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.2rem;
+    background: var(--ed-surface-2);
+    color: var(--ed-text);
+}
+.ass-override-bar select.ass-detail-menu,
+.ass-detail-row select.ass-detail-menu {
+    max-width: 6.75rem;
+}
+.ass-override-bar input[type="number"] {
+    width: 2.6rem;
+    font-size: 0.65rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.15rem;
+    background: var(--ed-surface-2);
+    color: var(--ed-text);
+}
+.ass-override-bar input[type="color"] {
+    width: 1.4rem;
+    height: 1.2rem;
+    padding: 0;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    background: transparent;
+    cursor: pointer;
+}
+.detail-ass-style-wrap {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.detail-ass-style-wrap.hidden { display: none; }
+.detail-ass-style-wrap label {
+    font-size: 10px;
+    color: var(--ed-muted);
+    white-space: nowrap;
+}
+.detail-ass-style-wrap select {
+    flex: 1 1 5.5rem;
+    min-width: 0;
+    max-width: 9rem;
+    font-size: 0.72rem;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.3rem;
+    background: var(--ed-surface-2);
+    color: var(--ed-text);
+}
+.detail-ass-pos-wrap {
+    display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center;
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.detail-ass-pos-wrap.hidden { display: none; }
+.detail-ass-pos-wrap input[type="number"] {
+    width: 3.2rem; font-size: 0.65rem;
+    border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.05rem 0.15rem; background: var(--ed-surface-2); color: var(--ed-text);
+}
+.detail-ass-pos-wrap > button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface-2); color: var(--ed-text);
+    border-radius: 0.3rem; padding: 0.1rem 0.3rem; font-size: 0.62rem; cursor: pointer; line-height: 1.2;
+}
+.detail-ass-pos-wrap > button:hover { background: var(--ed-accent-soft); color: var(--ed-accent); }
+.ass-detail-row--placement:not(:has(.detail-ass-style-wrap:not(.hidden), .detail-ass-pos-wrap:not(.hidden))) {
+    display: none;
+}
+.detail-ass-pos-label {
+    font-size: 0.62rem; color: var(--ed-faint); font-family: ui-monospace, monospace;
+    max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.detail-text-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.15rem;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+.detail-text-head label {
+    font-size: 10px;
+    color: var(--ed-muted);
+}
+.detail-text-head select {
+    max-width: 8.5rem;
+    min-width: 0;
+    font-size: 10px;
+    border: 1px solid var(--ed-border);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.2rem;
+    background: var(--ed-surface);
+    color: var(--ed-text);
+}
+.detail-meta-cps {
+    font-size: 0.65rem;
+    color: var(--ed-accent);
+    font-weight: 500;
+    white-space: nowrap;
 }
 .editor-video-subtitle-source {
     max-width: 92%; padding: 0.25rem 0.7rem; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.88);
@@ -820,8 +1028,8 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
 
 .detail-times-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(6.75rem, 8rem);
-    gap: 0.3rem;
+    grid-template-columns: 1fr 1fr minmax(6.5rem, 0.7fr);
+    gap: 0.35rem 0.45rem;
     align-items: end;
     flex: 0 0 auto;
 }
@@ -937,9 +1145,13 @@ tr.cue-row-selected .low-conf-dot { background: #fff; color: var(--ed-warn-text)
     .detail-text-wrap { min-height: 1.75rem; }
     .detail-meta-stats { display: none; }
     #editorDetailPairWrap { display: none !important; }
+    .ass-detail-group--presets,
+    .ass-detail-row-title { display: none; }
+    .ass-detail-row { padding: 0.15rem 0.3rem; gap: 0.25rem; }
 }
 @container detail-panel (max-height: 8.5rem) {
     .detail-times-row { display: none; }
+    .ass-detail-stack { display: none; }
     .detail-meta {
         gap: 0.25rem;
     }
@@ -1411,11 +1623,122 @@ textarea.recon-review-after {
 .editor-modal.editor-drawer .editor-modal-panel.qc-panel,
 .editor-modal.editor-drawer .editor-modal-panel.workflow-panel,
 .editor-modal.editor-drawer .editor-modal-panel.ass-styles-panel {
-    width: min(28rem, 96vw);
+    width: min(42rem, 98vw);
+    max-width: 98vw;
 }
 .ass-style-list {
-    max-height: 9.5rem; overflow: auto; border: 1px solid var(--ed-border);
-    border-radius: 0.375rem; margin-bottom: 0.55rem; background: var(--ed-surface);
+    max-height: none; flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; margin-bottom: 0; background: var(--ed-surface);
+}
+.ass-speaker-list.ass-style-list {
+    max-height: 14rem; flex: none; margin-bottom: 0.55rem;
+}
+.ass-styles-workspace {
+    display: grid;
+    grid-template-columns: minmax(9.5rem, 11.5rem) minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: stretch;
+    min-height: 22rem;
+    max-height: min(70vh, 36rem);
+}
+.ass-styles-sidebar {
+    display: flex; flex-direction: column; gap: 0.35rem; min-height: 0;
+}
+.ass-styles-sidebar-tools {
+    display: flex; flex-wrap: wrap; gap: 0.25rem;
+}
+.ass-styles-sidebar-tools button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text);
+    border-radius: 0.3rem; padding: 0.15rem 0.4rem; font-size: 0.65rem; cursor: pointer;
+}
+.ass-styles-sidebar-tools button:hover { background: var(--ed-surface-2); color: var(--ed-accent); }
+.ass-styles-editor {
+    display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; min-height: 0; overflow: auto;
+}
+.ass-style-preview {
+    border: 1px solid var(--ed-border); border-radius: 0.4rem; background: #0b1220;
+    min-height: 3.1rem; padding: 0.55rem 0.75rem; display: flex; align-items: flex-end; justify-content: center;
+    overflow: hidden;
+}
+.ass-style-preview-text {
+    color: #fff; font-size: 1.15rem; line-height: 1.25; text-align: center;
+    text-shadow: 0 0 2px #000, 0 1px 2px #000;
+    white-space: pre-wrap; word-break: break-word; max-width: 100%;
+}
+.ass-style-section {
+    border: 1px solid var(--ed-border); border-radius: 0.4rem; padding: 0.4rem 0.5rem 0.5rem;
+    background: var(--ed-surface);
+    display: grid; gap: 0.35rem;
+}
+.ass-style-section-title {
+    font-size: 0.65rem; font-weight: 600; color: var(--ed-muted);
+    letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 0.35rem;
+}
+.ass-style-form { display: grid; gap: 0.4rem; margin-bottom: 0; }
+.ass-style-form label { font-size: 0.65rem; color: var(--ed-muted); display: block; margin-bottom: 0.15rem; }
+.ass-style-form input[type="text"],
+.ass-style-form input[type="number"],
+.ass-style-form select {
+    width: 100%; font-size: 0.75rem; border: 1px solid var(--ed-border); border-radius: 0.375rem;
+    padding: 0.3rem 0.45rem; background: var(--ed-surface-2, var(--ed-surface)); color: var(--ed-text);
+}
+.ass-style-form input[type="color"] {
+    width: 100%; height: 1.85rem; padding: 0.1rem; border: 1px solid var(--ed-border);
+    border-radius: 0.375rem; background: var(--ed-surface); cursor: pointer;
+}
+.ass-style-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.ass-style-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
+.ass-style-align-grid {
+    display: inline-grid; grid-template-columns: repeat(3, 1.55rem); gap: 0.2rem;
+}
+.ass-style-align-grid button {
+    width: 1.55rem; height: 1.55rem; padding: 0; font-size: 0.7rem; line-height: 1;
+    border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    background: var(--ed-surface-2, var(--ed-surface)); color: var(--ed-text); cursor: pointer;
+}
+.ass-style-align-grid button:hover { color: var(--ed-accent); border-color: var(--ed-accent); }
+.ass-style-align-grid button.active {
+    background: var(--ed-accent-soft); color: var(--ed-accent); border-color: var(--ed-accent);
+}
+.ass-style-check-row {
+    display: flex; flex-wrap: wrap; gap: 0.55rem; font-size: 0.72rem; color: var(--ed-muted);
+    align-items: center;
+}
+.ass-style-check-row label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; margin: 0; color: var(--ed-text); }
+.ass-styles-primary-actions {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.15rem;
+}
+.ass-styles-primary-actions button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-text);
+    border-radius: 0.3rem; padding: 0.2rem 0.45rem; font-size: 0.68rem; cursor: pointer;
+}
+.ass-styles-primary-actions button:hover { background: var(--ed-surface-2); color: var(--ed-accent); }
+.ass-styles-primary-actions button.primary {
+    background: var(--ed-accent-soft); color: var(--ed-accent); border-color: var(--ed-accent);
+}
+.ass-styles-secondary {
+    display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
+    margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px solid var(--ed-border);
+}
+.ass-styles-secondary select {
+    max-width: 9rem; font-size: 0.72rem; border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.15rem 0.3rem; background: var(--ed-surface); color: var(--ed-text);
+}
+.ass-styles-secondary button {
+    border: 1px solid var(--ed-border); background: var(--ed-surface); color: var(--ed-muted);
+    border-radius: 0.3rem; padding: 0.15rem 0.4rem; font-size: 0.65rem; cursor: pointer;
+}
+.ass-styles-secondary button:hover { color: var(--ed-text); background: var(--ed-surface-2); }
+.ass-styles-secondary-label {
+    font-size: 0.62rem; color: var(--ed-faint); margin-right: 0.1rem;
+}
+@media (max-width: 640px) {
+    .ass-styles-workspace {
+        grid-template-columns: 1fr;
+        max-height: none;
+        min-height: 0;
+    }
+    .ass-style-list { max-height: 8rem; }
 }
 .ass-style-item {
     display: flex; align-items: center; gap: 0.45rem; width: 100%;
@@ -1434,25 +1757,13 @@ textarea.recon-review-after {
     display: block; color: var(--ed-muted); font-size: 0.65rem;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ass-style-form { display: grid; gap: 0.4rem; margin-bottom: 0.55rem; }
-.ass-style-form label { font-size: 0.65rem; color: var(--ed-muted); display: block; margin-bottom: 0.15rem; }
-.ass-style-form input[type="text"],
-.ass-style-form input[type="number"],
-.ass-style-form select {
-    width: 100%; font-size: 0.75rem; border: 1px solid var(--ed-border); border-radius: 0.375rem;
-    padding: 0.3rem 0.45rem; background: var(--ed-surface); color: var(--ed-text);
+.ass-speaker-list .ass-style-item { cursor: default; }
+.ass-speaker-list .ass-style-item.is-selected { background: var(--ed-accent-soft); }
+.ass-speaker-list .ass-speaker-style-select {
+    max-width: 6.5rem; font-size: 0.65rem;
+    border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.1rem 0.2rem; background: var(--ed-surface); color: var(--ed-text);
 }
-.ass-style-form input[type="color"] {
-    width: 100%; height: 1.85rem; padding: 0.1rem; border: 1px solid var(--ed-border);
-    border-radius: 0.375rem; background: var(--ed-surface); cursor: pointer;
-}
-.ass-style-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
-.ass-style-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
-.ass-style-check-row {
-    display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.72rem; color: var(--ed-muted);
-    align-items: center;
-}
-.ass-style-check-row label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; margin: 0; color: var(--ed-text); }
 .ass-tab-bar {
     display: flex; gap: 0.25rem; margin-bottom: 0.55rem; flex-wrap: wrap;
 }
@@ -1474,9 +1785,14 @@ textarea.recon-review-after {
     width: 7.5rem; font-size: 0.72rem; border: 1px solid var(--ed-border); border-radius: 0.25rem;
     padding: 0.2rem 0.3rem; background: var(--ed-surface); color: var(--ed-text);
 }
-.editor-cue-table .col-style { width: 3.6rem; display: none; }
+.editor-cue-table .col-style { width: 5.2rem; display: none; }
 .editor-cue-table.has-ass-style-col .col-style,
 .editor-cue-table.has-ass-style-col .col-style-head { display: table-cell; }
+.ass-row-style-select {
+    width: 100%; max-width: 5rem; font-size: 0.65rem;
+    border: 1px solid var(--ed-border); border-radius: 0.25rem;
+    padding: 0.05rem 0.15rem; background: var(--ed-surface); color: var(--ed-text);
+}
 .editor-cue-table .cell-style {
     font-size: 0.65rem; color: var(--ed-muted); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; max-width: 3.6rem;
@@ -2607,31 +2923,86 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 </div>
 
                 <div class="detail-text-wrap">
-                    <div class="flex items-center justify-between mb-0.5" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.15rem;gap:0.35rem">
-                        <label for="editorDetailText" style="font-size:10px;color:var(--ed-muted)">文本</label>
-                        <div style="display:flex;align-items:center;gap:0.35rem;min-width:0">
-                            <select id="editorTextPresetQuickSelect" title="插入预设组" aria-label="插入预设组"
-                                style="max-width:8.5rem;font-size:10px;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.05rem 0.2rem;background:var(--ed-surface);color:var(--ed-text)">
-                                <option value="">插入预设组…</option>
-                            </select>
-                            <span id="editorDetailCps" style="font-size:10px;color:var(--ed-accent);font-weight:500">CPS —</span>
-                        </div>
+                    <div class="detail-text-head">
+                        <label for="editorDetailText">文本</label>
+                        <select id="editorTextPresetQuickSelect" title="插入预设组" aria-label="插入预设组">
+                            <option value="">插入预设组…</option>
+                        </select>
                     </div>
-                    <div id="editorAssOverrideBar" class="ass-override-bar hidden" role="toolbar" aria-label="ASS 标签工具">
-                        <button type="button" data-ass-ov="an" data-an="7" title="{\an7} 左上">↖</button>
-                        <button type="button" data-ass-ov="an" data-an="8" title="{\an8} 中上">↑</button>
-                        <button type="button" data-ass-ov="an" data-an="9" title="{\an9} 右上">↗</button>
-                        <button type="button" data-ass-ov="an" data-an="4" title="{\an4} 左中">←</button>
-                        <button type="button" data-ass-ov="an" data-an="5" title="{\an5} 正中">●</button>
-                        <button type="button" data-ass-ov="an" data-an="6" title="{\an6} 右中">→</button>
-                        <button type="button" data-ass-ov="an" data-an="1" title="{\an1} 左下">↙</button>
-                        <button type="button" data-ass-ov="an" data-an="2" title="{\an2} 中下">↓</button>
-                        <button type="button" data-ass-ov="an" data-an="3" title="{\an3} 右下">↘</button>
-                        <span class="ass-ov-sep" aria-hidden="true"></span>
-                        <button type="button" data-ass-ov="b" title="粗体 {\b1}"><b>B</b></button>
-                        <button type="button" data-ass-ov="i" title="斜体 {\i1}"><i>I</i></button>
-                        <button type="button" data-ass-ov="n" title="软换行 \N">\N</button>
-                        <span class="ass-ov-hint">ASS 标签</span>
+                    <div class="ass-detail-stack">
+                        <div id="editorAssOverrideBar" class="ass-override-bar ass-detail-row ass-detail-row--format hidden" role="toolbar" aria-label="ASS 排版">
+                            <span class="ass-detail-row-title">排版</span>
+                            <div class="ass-detail-group" role="group" aria-label="ASS 对齐 an1–an9">
+                                <span class="ass-detail-group-label">对齐</span>
+                                <select id="editorAssOverrideAn" class="ass-detail-menu" title="写入 {\anN} 对齐（落点请用「落点」菜单）" aria-label="ASS 对齐">
+                                    <option value="">对齐…</option>
+                                    <option value="7">↖ 左上</option>
+                                    <option value="8">↑ 中上</option>
+                                    <option value="9">↗ 右上</option>
+                                    <option value="4">← 左中</option>
+                                    <option value="5">● 正中</option>
+                                    <option value="6">→ 右中</option>
+                                    <option value="1">↙ 左下</option>
+                                    <option value="2">↓ 中下</option>
+                                    <option value="3">↘ 右下</option>
+                                </select>
+                            </div>
+                            <span class="ass-ov-sep" aria-hidden="true"></span>
+                            <div class="ass-detail-group" role="group" aria-label="字重与换行">
+                                <button type="button" data-ass-ov="b" title="粗体 {\b1}"><b>B</b></button>
+                                <button type="button" data-ass-ov="i" title="斜体 {\i1}"><i>I</i></button>
+                                <button type="button" data-ass-ov="n" title="软换行 \N">\N</button>
+                            </div>
+                            <span class="ass-ov-sep" aria-hidden="true"></span>
+                            <div class="ass-detail-group" role="group" aria-label="颜色与字号">
+                                <input type="color" id="editorAssOverrideColour" title="主色 {\c&H…&}" value="#ffffff">
+                                <button type="button" data-ass-ov="fs-dec" title="字号 -2">A−</button>
+                                <input type="number" id="editorAssOverrideFs" min="8" max="200" step="1" value="48"
+                                    title="字号 {\fsN}" aria-label="ASS 字号">
+                                <button type="button" data-ass-ov="fs-inc" title="字号 +2">A+</button>
+                            </div>
+                            <span class="ass-ov-sep" aria-hidden="true"></span>
+                            <div class="ass-detail-group ass-detail-group--presets" role="group" aria-label="特效">
+                                <select id="editorAssEffectPreset" title="插入 ASS 行内特效" aria-label="ASS 特效">
+                                    <option value="">特效…</option>
+                                </select>
+                                <button type="button" data-ass-ov="fx-sel" title="将当前特效应用到多选字幕">应用到选中</button>
+                            </div>
+                        </div>
+                        <div class="ass-detail-row ass-detail-row--placement">
+                            <span class="ass-detail-row-title">样式 · 位置</span>
+                            <div id="editorDetailAssStyleWrap" class="detail-ass-style-wrap hidden">
+                                <label for="editorDetailAssStyle">Style</label>
+                                <select id="editorDetailAssStyle" title="当前字幕的 ASS Style" aria-label="ASS Style"></select>
+                                <label for="editorDetailAssEffect" title="Dialogue Effect 字段（Banner / Scroll）">Effect</label>
+                                <select id="editorDetailAssEffect" title="Dialogue Effect（非行内标签）" aria-label="ASS Dialogue Effect">
+                                    <option value="">（无）</option>
+                                </select>
+                            </div>
+                            <div id="editorDetailAssPosWrap" class="detail-ass-pos-wrap hidden" title="PlayRes 坐标系下的 {\pos(x,y)}">
+                                <span class="ass-detail-group-label">pos</span>
+                                <input type="number" id="editorDetailAssPosX" min="0" max="10000" step="1" title="pos X（PlayRes）" aria-label="ASS pos X">
+                                <input type="number" id="editorDetailAssPosY" min="0" max="10000" step="1" title="pos Y（PlayRes）" aria-label="ASS pos Y">
+                                <button type="button" id="editorDetailAssPosApply" title="写入 {\pos(x,y)}">应用</button>
+                                <button type="button" id="editorDetailAssPosClear" title="清除 {\pos}">清除</button>
+                                <span id="editorDetailAssPosLabel" class="detail-ass-pos-label">pos —</span>
+                                <div class="ass-detail-group" role="group" aria-label="落点定位">
+                                    <span class="ass-detail-group-label">落点</span>
+                                    <select id="editorDetailAssPosSnap" class="ass-detail-menu" title="按九宫格锚点写入 {\pos(x,y)}" aria-label="ASS 落点">
+                                        <option value="">落点…</option>
+                                        <option value="7">↖ 左上</option>
+                                        <option value="8">↑ 中上</option>
+                                        <option value="9">↗ 右上</option>
+                                        <option value="4">← 左中</option>
+                                        <option value="5">● 正中</option>
+                                        <option value="6">→ 右中</option>
+                                        <option value="1">↙ 左下</option>
+                                        <option value="2">↓ 中下</option>
+                                        <option value="3">↘ 右下</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <textarea id="editorDetailText" spellcheck="false" placeholder="输入字幕文本…"></textarea>
                     <div id="editorDetailPairWrap" class="hidden" style="margin-top:0.35rem">
@@ -2644,6 +3015,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div class="detail-meta-stats">
                         <span>单行 <strong id="editorLineLen">0</strong></span>
                         <span>总长 <strong id="editorTextLen">0</strong></span>
+                        <span id="editorDetailCps" class="detail-meta-cps">CPS —</span>
                         <span class="inline-flex items-center gap-1" style="display:inline-flex;align-items:center;gap:0.25rem">
                             目标 CPS
                             <input type="number" id="editorTargetCps" min="0.1" max="100" step="0.1" value="3"
@@ -2711,6 +3083,8 @@ button.needs-video.is-no-video { opacity: 0.45; }
                     <div id="editorVideoSubtitleSource" class="editor-video-subtitle-source"></div>
                     <div id="editorVideoSubtitleText" class="editor-video-subtitle-inner"></div>
                 </div>
+                <div id="editorAssPosHandle" class="editor-ass-pos-handle hidden" title="拖动调整 ASS 字幕位置" role="button" tabindex="-1" aria-label="拖动调整字幕位置"></div>
+                <div id="editorAssPosHint" class="editor-ass-pos-hint hidden">拖点调位置 · 视频区方向键微调 · 双击清除 \\pos</div>
                 <div id="editorAssPreviewBadge" class="editor-ass-preview-badge hidden" title="CSS 近似预览（非 libass）">近似预览</div>
             </div>
             <p id="editorVideoHint" class="editor-video-hint">未关联媒体，可点击「关联媒体」；亦可仅编辑文本与时间轴</p>
@@ -3000,100 +3374,162 @@ button.needs-video.is-no-video { opacity: 0.45; }
                 <p class="break-words-hint">编辑样式并导出单语/双语 ASS。与引擎 ass-dual 的 Source+ZH 叠层一致。</p>
                 <div class="ass-tab-bar" role="tablist" aria-label="ASS 样式分区">
                     <button type="button" data-ass-tab="styles" class="active" role="tab" aria-selected="true">样式</button>
+                    <button type="button" data-ass-tab="map" role="tab" aria-selected="false">说话人</button>
                     <button type="button" data-ass-tab="dual" role="tab" aria-selected="false">双语模板</button>
                 </div>
                 <div data-ass-tab-panel="styles">
-                <div class="glossary-toolbar">
-                    <button type="button" id="editorAssStyleAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
-                    <select id="editorAssStylePresetSelect" title="应用内置样式预设" aria-label="样式预设"
-                        style="max-width:8.5rem;font-size:0.72rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.15rem 0.3rem;background:var(--ed-surface);color:var(--ed-text)">
+                <div class="ass-styles-workspace">
+                    <aside class="ass-styles-sidebar" aria-label="样式列表">
+                        <div class="ass-styles-sidebar-tools">
+                            <button type="button" id="editorAssStyleAddBtn"><i class="fa fa-plus mr-1"></i>新建</button>
+                        </div>
+                        <div id="editorAssStyleList" class="ass-style-list" role="list"></div>
+                    </aside>
+                    <div class="ass-styles-editor">
+                        <div id="editorAssStylePreview" class="ass-style-preview" aria-hidden="true" title="当前草稿样式预览">
+                            <div id="editorAssStylePreviewText" class="ass-style-preview-text">样例字幕 Preview</div>
+                        </div>
+                        <div class="ass-style-form">
+                            <div class="ass-style-section">
+                                <div class="ass-style-section-title">文字</div>
+                                <div>
+                                    <label for="editorAssStyleName">名称</label>
+                                    <input type="text" id="editorAssStyleName" spellcheck="false" placeholder="Default">
+                                </div>
+                                <div class="ass-style-grid-2" style="margin-top:0.35rem">
+                                    <div>
+                                        <label for="editorAssStyleFont">字体</label>
+                                        <input type="text" id="editorAssStyleFont" spellcheck="false" placeholder="Microsoft YaHei" list="editorAssFontSuggestions">
+                                        <datalist id="editorAssFontSuggestions">
+                                            <option value="Microsoft YaHei"></option>
+                                            <option value="Source Han Sans SC"></option>
+                                            <option value="Noto Sans CJK SC"></option>
+                                            <option value="Arial"></option>
+                                            <option value="SimHei"></option>
+                                        </datalist>
+                                    </div>
+                                    <div>
+                                        <label for="editorAssStyleSize">字号</label>
+                                        <input type="number" id="editorAssStyleSize" min="8" max="200" step="1">
+                                    </div>
+                                </div>
+                                <div class="ass-style-check-row" style="margin-top:0.4rem">
+                                    <label><input type="checkbox" id="editorAssStyleBold"> 粗体</label>
+                                    <label><input type="checkbox" id="editorAssStyleItalic"> 斜体</label>
+                                </div>
+                            </div>
+                            <div class="ass-style-section">
+                                <div class="ass-style-section-title">描边与颜色</div>
+                                <div class="ass-style-grid-3">
+                                    <div>
+                                        <label for="editorAssStylePrimary">主色</label>
+                                        <input type="color" id="editorAssStylePrimary" value="#ffffff">
+                                    </div>
+                                    <div>
+                                        <label for="editorAssStyleOutline">描边色</label>
+                                        <input type="color" id="editorAssStyleOutline" value="#000000">
+                                    </div>
+                                    <div>
+                                        <label for="editorAssStyleBack">阴影色</label>
+                                        <input type="color" id="editorAssStyleBack" value="#000000">
+                                    </div>
+                                </div>
+                                <div class="ass-style-grid-3" style="margin-top:0.35rem">
+                                    <div>
+                                        <label for="editorAssStyleOutlineWidth">描边</label>
+                                        <input type="number" id="editorAssStyleOutlineWidth" min="0" max="20" step="0.5">
+                                    </div>
+                                    <div>
+                                        <label for="editorAssStyleShadow">阴影</label>
+                                        <input type="number" id="editorAssStyleShadow" min="0" max="20" step="0.5">
+                                    </div>
+                                    <div>
+                                        <label for="editorAssStyleBorder">边框样式</label>
+                                        <select id="editorAssStyleBorder" title="BorderStyle：1=描边+阴影，3=不透明底盒">
+                                            <option value="1" selected>1 描边</option>
+                                            <option value="3">3 底盒</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ass-style-section">
+                                <div class="ass-style-section-title">默认对齐（Style · 同名样式共用）</div>
+                                <div class="ass-style-grid-2">
+                                    <div>
+                                        <label>对齐</label>
+                                        <select id="editorAssStyleAlign" class="hidden" aria-hidden="true" tabindex="-1">
+                                            <option value="1">1</option>
+                                            <option value="2" selected>2</option>
+                                            <option value="3">3</option>
+                                            <option value="4">4</option>
+                                            <option value="5">5</option>
+                                            <option value="6">6</option>
+                                            <option value="7">7</option>
+                                            <option value="8">8</option>
+                                            <option value="9">9</option>
+                                        </select>
+                                        <div id="editorAssStyleAlignGrid" class="ass-style-align-grid" role="group" aria-label="ASS 对齐 an1–an9">
+                                            <button type="button" data-ass-style-align="7" title="左上 an7">↖</button>
+                                            <button type="button" data-ass-style-align="8" title="中上 an8">↑</button>
+                                            <button type="button" data-ass-style-align="9" title="右上 an9">↗</button>
+                                            <button type="button" data-ass-style-align="4" title="左中 an4">←</button>
+                                            <button type="button" data-ass-style-align="5" title="正中 an5">●</button>
+                                            <button type="button" data-ass-style-align="6" title="右中 an6">→</button>
+                                            <button type="button" data-ass-style-align="1" title="左下 an1">↙</button>
+                                            <button type="button" data-ass-style-align="2" title="中下 an2" class="active">↓</button>
+                                            <button type="button" data-ass-style-align="3" title="右下 an3">↘</button>
+                                        </div>
+                                    </div>
+                                    <div class="ass-style-grid-3" style="grid-template-columns:1fr 1fr 1fr">
+                                        <div>
+                                            <label for="editorAssStyleMarginL">边距 L</label>
+                                            <input type="number" id="editorAssStyleMarginL" min="0" max="600" step="1">
+                                        </div>
+                                        <div>
+                                            <label for="editorAssStyleMarginR">边距 R</label>
+                                            <input type="number" id="editorAssStyleMarginR" min="0" max="600" step="1">
+                                        </div>
+                                        <div>
+                                            <label for="editorAssStyleMarginV">边距 V</label>
+                                            <input type="number" id="editorAssStyleMarginV" min="0" max="600" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ass-styles-primary-actions">
+                                <button type="button" id="editorAssStyleSaveBtn" class="primary">保存样式</button>
+                                <button type="button" id="editorAssStyleApplyBtn" title="将当前样式套用到选中字幕">应用到选中</button>
+                                <button type="button" id="editorAssStyleDeleteBtn" class="text-red-600">删除</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="ass-styles-secondary" aria-label="预设与导出">
+                    <span class="ass-styles-secondary-label">更多</span>
+                    <select id="editorAssStylePresetSelect" title="应用内置或我的样式预设" aria-label="样式预设">
                         <option value="">样式预设…</option>
                     </select>
+                    <button type="button" id="editorAssPackSaveBtn" title="把当前样式表保存为我的预设"><i class="fa fa-bookmark mr-1"></i>存预设</button>
+                    <button type="button" id="editorAssPackDeleteBtn" title="删除下拉里选中的我的预设"><i class="fa fa-trash mr-1"></i></button>
+                    <button type="button" id="editorAssConvertBtn" title="将当前 SRT/VTT/LRC 转为 ASS 编辑"><i class="fa fa-exchange mr-1"></i>转为 ASS</button>
                     <button type="button" id="editorAssStyleExportBtn" title="按当前样式导出 ASS"><i class="fa fa-download mr-1"></i>导出 ASS</button>
                 </div>
-                <div id="editorAssStyleList" class="ass-style-list" role="list"></div>
-                <div class="ass-style-form">
-                    <div>
-                        <label for="editorAssStyleName">名称</label>
-                        <input type="text" id="editorAssStyleName" spellcheck="false" placeholder="Default">
-                    </div>
-                    <div class="ass-style-grid-2">
-                        <div>
-                            <label for="editorAssStyleFont">字体</label>
-                            <input type="text" id="editorAssStyleFont" spellcheck="false" placeholder="Microsoft YaHei" list="editorAssFontSuggestions">
-                            <datalist id="editorAssFontSuggestions">
-                                <option value="Microsoft YaHei"></option>
-                                <option value="Source Han Sans SC"></option>
-                                <option value="Noto Sans CJK SC"></option>
-                                <option value="Arial"></option>
-                                <option value="SimHei"></option>
-                            </datalist>
-                        </div>
-                        <div>
-                            <label for="editorAssStyleSize">字号</label>
-                            <input type="number" id="editorAssStyleSize" min="8" max="200" step="1">
-                        </div>
-                    </div>
-                    <div class="ass-style-grid-3">
-                        <div>
-                            <label for="editorAssStylePrimary">主色</label>
-                            <input type="color" id="editorAssStylePrimary" value="#ffffff">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleOutline">描边色</label>
-                            <input type="color" id="editorAssStyleOutline" value="#000000">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleBack">阴影色</label>
-                            <input type="color" id="editorAssStyleBack" value="#000000">
-                        </div>
-                    </div>
-                    <div class="ass-style-grid-3">
-                        <div>
-                            <label for="editorAssStyleOutlineWidth">描边</label>
-                            <input type="number" id="editorAssStyleOutlineWidth" min="0" max="20" step="0.5">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleShadow">阴影</label>
-                            <input type="number" id="editorAssStyleShadow" min="0" max="20" step="0.5">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleAlign">对齐</label>
-                            <select id="editorAssStyleAlign">
-                                <option value="1">1 左下</option>
-                                <option value="2" selected>2 中下</option>
-                                <option value="3">3 右下</option>
-                                <option value="4">4 左中</option>
-                                <option value="5">5 正中</option>
-                                <option value="6">6 右中</option>
-                                <option value="7">7 左上</option>
-                                <option value="8">8 中上</option>
-                                <option value="9">9 右上</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="ass-style-grid-3">
-                        <div>
-                            <label for="editorAssStyleMarginL">边距 L</label>
-                            <input type="number" id="editorAssStyleMarginL" min="0" max="600" step="1">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleMarginR">边距 R</label>
-                            <input type="number" id="editorAssStyleMarginR" min="0" max="600" step="1">
-                        </div>
-                        <div>
-                            <label for="editorAssStyleMarginV">边距 V</label>
-                            <input type="number" id="editorAssStyleMarginV" min="0" max="600" step="1">
-                        </div>
-                    </div>
-                    <div class="ass-style-check-row">
-                        <label><input type="checkbox" id="editorAssStyleBold"> 粗体</label>
-                        <label><input type="checkbox" id="editorAssStyleItalic"> 斜体</label>
-                        <button type="button" id="editorAssStyleSaveBtn" class="text-xs px-2 py-1 border rounded">保存样式</button>
-                        <button type="button" id="editorAssStyleDeleteBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除</button>
-                        <button type="button" id="editorAssStyleApplyBtn" class="text-xs px-2 py-1 border rounded" title="将当前样式套用到选中字幕">应用到选中</button>
-                    </div>
                 </div>
+                <div data-ass-tab-panel="map" class="hidden">
+                    <p class="break-words-hint" style="margin-top:0">为选中字幕指定说话人，映射到 ASS Style 后可套用/导出（Dialogue Style + Name）。</p>
+                    <div class="glossary-toolbar">
+                        <input type="text" id="editorAssSpeakerName" spellcheck="false" placeholder="说话人名称"
+                            style="flex:1;min-width:5rem;font-size:0.72rem;border:1px solid var(--ed-border);border-radius:0.25rem;padding:0.15rem 0.35rem;background:var(--ed-surface);color:var(--ed-text)">
+                        <button type="button" id="editorAssSpeakerAddBtn"><i class="fa fa-plus mr-1"></i>添加</button>
+                        <button type="button" id="editorAssSpeakerAssignBtn" title="将当前说话人指定到选中字幕">指定到选中</button>
+                        <button type="button" id="editorAssSpeakerClearBtn" title="清除选中字幕的说话人">清除选中</button>
+                    </div>
+                    <div id="editorAssSpeakerList" class="ass-style-list ass-speaker-list" role="list"></div>
+                    <div class="ass-style-check-row">
+                        <button type="button" id="editorAssSpeakerGenStylesBtn" class="text-xs px-2 py-1 border rounded" title="按说话人生成 Sp1/Sp2… 样式并写入映射">生成 Sp* 样式</button>
+                        <button type="button" id="editorAssSpeakerApplyMapBtn" class="text-xs px-2 py-1 border rounded" title="按映射写入 cue.ass.style / Name">应用到字幕</button>
+                        <button type="button" id="editorAssSpeakerDeleteBtn" class="text-xs px-2 py-1 border rounded text-red-600">删除说话人</button>
+                    </div>
                 </div>
                 <div data-ass-tab-panel="dual" class="hidden">
                     <div class="ass-style-form">
@@ -3128,6 +3564,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
                         </div>
                         <div class="ass-style-check-row">
                             <button type="button" id="editorAssDualApplyBtn" class="text-xs px-2 py-1 border rounded">写入双语样式</button>
+                            <button type="button" id="editorAssDualDocumentBtn" class="text-xs px-2 py-1 border rounded" title="把主轨+副轨展开为 Source+ZH 双 Dialogue 并进入 ASS 编辑">写入叠层文档 ◆</button>
                             <button type="button" id="editorAssDualExportBtn" class="text-xs px-2 py-1 border rounded" title="导出 Source+ZH 双 Dialogue ASS">导出双语 ASS ◆</button>
                         </div>
                     </div>
@@ -4114,11 +4551,15 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-workflows-core.js"></script>
     <script src="vendor/opencc-js/full.js"></script>
     <script src="js/subtitle-chinese-core.js"></script>
+    <script src="js/i18n-core.js"></script>
+    <script src="js/i18n-catalogs.js"></script>
+    <script src="js/i18n.js"></script>
     <script src="js/dual-subtitle-core.js"></script>
     <script src="js/transcript-compare-core.js"></script>
     <script src="js/editor-markers-core.js"></script>
     <script src="js/export-checklist-core.js"></script>
     <script src="js/ass-styles-core.js"></script>
+    <script src="js/ass-style-packs-core.js"></script>
     <script src="js/ass-override-core.js"></script>
     <script src="js/cue-list-window-core.js"></script>
     <script src="js/undo-patch-core.js"></script>
@@ -4149,6 +4590,7 @@ button.needs-video.is-no-video { opacity: 0.45; }
     <script src="js/subtitle-editor/workspace-ui.js"></script>
     <script src="js/subtitle-editor/ass-styles-ui.js"></script>
     <script src="js/subtitle-editor/ass-override-ui.js"></script>
+    <script src="js/subtitle-editor/ass-pos-drag.js"></script>
     <script src="js/subtitle-editor/jassub-preview.js"></script>
     <script src="js/subtitle-editor.js"></script>
 </body>

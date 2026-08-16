@@ -34,6 +34,7 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(out.postBatchSimplifyViewingPunctuation, true);
         assert.strictEqual(out.deleteSourcesAfterMergeBilingual, true);
         assert.strictEqual(out.rememberLastOpenDir, true);
+        assert.strictEqual(out.uiLocale, 'zh-Hans');
         assert.strictEqual(out.smartTranslateHybridMt, true);
         assert.strictEqual(out.smartTranslatePlotPolish, true);
         assert.strictEqual(out.activePresetId, '');

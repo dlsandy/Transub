@@ -37,6 +37,7 @@ describe('ASR software improvements', () => {
         assert.ok(ja.includes('whisper-tiny'));
         const anime = rangeAsr.buildBatchAsrCandidates('anime-whisper');
         assert.ok(anime.indexOf('kotoba-whisper-v2.0-faster') < anime.indexOf('sensevoice-small'));
+        assert.ok(anime.includes('qwen3-asr-1.7b-ja-anime-galgame'));
         assert.deepStrictEqual(
             rangeAsr.buildRangeAsrCandidates('sensevoice-small'),
             rangeAsr.buildBatchAsrCandidates('sensevoice-small'),
@@ -66,6 +67,42 @@ describe('ASR software improvements', () => {
         assert.strictEqual(out.asrModel, 'whisper-tiny');
         assert.ok(calls.length >= 2);
         assert.strictEqual(calls[0], 'sensevoice-small');
+    });
+
+    it('runSingleEngineJob restarts engine and retries same ASR on network fail', async () => {
+        const calls = [];
+        let creates = 0;
+        let restarts = 0;
+        const createJob = async (_url, body) => {
+            creates += 1;
+            calls.push(body.asrModel);
+            if (creates === 1) {
+                return { ok: false, error: 'fetch failed', code: 'network' };
+            }
+            return { ok: true, data: { id: 'j-ok' } };
+        };
+        const waitJob = async () => ({
+            ok: true,
+            data: { result: { cues: { source: [{ start: 0, end: 1, text: 'ok' }] } } },
+        });
+        const out = await runAsr.runEngineJobWithAsrFailover({
+            baseUrl: 'http://127.0.0.1:9',
+            primaryAsr: 'anime-whisper',
+            candidates: ['anime-whisper', 'whisper-tiny'],
+            buildJobBody: (asrModel) => ({ asrModel, task: 'transcribe' }),
+            createJob,
+            waitJob,
+            restartEngine: async () => {
+                restarts += 1;
+                return { ok: true, baseUrl: 'http://127.0.0.1:9' };
+            },
+        });
+        assert.ok(out.ok);
+        assert.strictEqual(out.asrModel, 'anime-whisper');
+        assert.strictEqual(creates, 2);
+        assert.strictEqual(restarts, 1);
+        assert.deepStrictEqual(calls, ['anime-whisper', 'anime-whisper']);
+        assert.strictEqual(runAsr.isEngineNetworkFail({ ok: false, code: 'network', error: 'fetch failed' }), true);
     });
 
     it('attachCheckpointResumeHint marks asr_done resumable', async () => {
@@ -99,6 +136,15 @@ describe('ASR software improvements', () => {
             batchRecovery.buildBatchRecoveryChipsHtml(idle, 0, (s) => s, { running: true }),
             '',
         );
+        const net = batchRecovery.buildBatchFailureGuidance({
+            message: '引擎连接失败，可点「重试本条」',
+            code: 'network',
+            asrCandidates: ['anime-whisper'],
+            asrAttempts: 1,
+        });
+        assert.strictEqual(net.primaryAction.id, 'retry-item');
+        assert.ok(net.tip.includes('重试本条'));
+        assert.ok(!net.tip.includes('打开引擎日志') || net.primaryAction.id === 'retry-item');
     });
 
     it('domain fix trace summarizes stages', () => {

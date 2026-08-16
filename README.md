@@ -3,7 +3,7 @@
 **智能化字幕生成工具 & 字幕优化编辑**
 
 批量生成 · 精修成片 · Windows 桌面  
-当前版本 **3.1.0** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
+当前版本 **3.1.1** · [下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub)
 
 包含：Transub字幕生成器、Transub Editor字幕编辑器、Transub Engine引擎
 
@@ -88,7 +88,7 @@ Pro版本支持质疑问题进行深入修复
 | 智能翻译        | 专训句级 + 剧情贴合润色（默认可关；云端 BYOK 或本机模型） |
 | 影视音频增强      | 人声分离 + 更稳的切分                      |
 | 双语语义审阅      | 查漏译 / 错译并采纳建议                     |
-| ASS 样式导出    | 按当前样式 / 双语模板导出 ASS                |
+| ASS 样式（Pro） | 列表 Style / 我的预设 / 转为 ASS / 说话人 / 特效 / 预览拖·微调·九宫格定位 / 双语叠层写入与导出 |
 
 
 购买：[爱发电](https://afdian.com/a/transub) → 设置 → Pro → 订单号领取。  

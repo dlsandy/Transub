@@ -47,6 +47,10 @@ function friendlyEngineError(raw) {
     const msg = String(raw || '').trim();
     if (!msg) return '引擎任务失败';
     const lower = msg.toLowerCase();
+    if (/fetch failed|failed to fetch|引擎连接失败|引擎未响应|引擎连接被重置/i.test(msg)) {
+        if (msg.includes('重试本条')) return msg;
+        return '引擎连接失败，可点「重试本条」';
+    }
     if (
         lower === 'aborted'
         || lower === 'cancelled'

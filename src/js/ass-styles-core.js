@@ -343,6 +343,57 @@
         return { cues: list, changed, styleName: name };
     }
 
+    function defaultAssMeta(partial) {
+        const src = partial && typeof partial === 'object' ? partial : {};
+        return {
+            layer: src.layer != null && src.layer !== '' ? String(src.layer) : '0',
+            style: sanitizeStyleName(src.style || 'Default'),
+            name: String(src.name || '').slice(0, 40),
+            marginL: src.marginL != null && src.marginL !== '' ? String(src.marginL) : '0',
+            marginR: src.marginR != null && src.marginR !== '' ? String(src.marginR) : '0',
+            marginV: src.marginV != null && src.marginV !== '' ? String(src.marginV) : '0',
+            effect: String(src.effect || '').replace(/,/g, ' '),
+        };
+    }
+
+    /**
+     * Convert an in-memory subtitle document to ASS edit session
+     * (header + cue.ass meta). Optionally rewrite path stem to .ass.
+     */
+    function convertDocumentToAss(cues, headerLines, options = {}) {
+        const title = options.title || 'Transub';
+        const prevFormat = String(options.format || '').toLowerCase();
+        const alreadyAss = prevFormat === 'ass' || prevFormat === 'ssa';
+        const header = ensureAssHeader(headerLines, title);
+        let metaFilled = 0;
+        const list = (Array.isArray(cues) ? cues : []).map((cue) => {
+            if (cue?.ass && typeof cue.ass === 'object' && String(cue.ass.style || '').trim()) {
+                return cue;
+            }
+            metaFilled += 1;
+            return { ...cue, ass: defaultAssMeta(cue?.ass) };
+        });
+        let pathOut = options.path != null ? String(options.path) : '';
+        let pathChanged = false;
+        if (pathOut && !/\.(ass|ssa)$/i.test(pathOut)) {
+            const next = pathOut.replace(/\.[^.\\/]+$/, '') + '.ass';
+            if (next !== pathOut) {
+                pathOut = next;
+                pathChanged = true;
+            }
+        }
+        return {
+            cues: list,
+            header,
+            format: 'ass',
+            path: pathOut || options.path || '',
+            pathChanged,
+            alreadyAss,
+            metaFilled,
+            changed: !alreadyAss || metaFilled > 0 || pathChanged,
+        };
+    }
+
     function uniqueStyleName(existingNames, base) {
         const root = sanitizeStyleName(base || 'Style');
         const taken = new Set((Array.isArray(existingNames) ? existingNames : []).map((n) => String(n || '').toLowerCase()));
@@ -525,7 +576,104 @@
                 });
             }
         });
+        // Preserve lineOrder for export/serialize: target-first shows ZH then Source in file
+        // when both exist at same time — build order already Source then ZH; callers that need
+        // visual stack rely on MarginV from ensureDualTemplateStyles.
+        if (String(options.lineOrder || '').toLowerCase() === 'target-first'
+            || String(options.lineOrder || '') === 'target') {
+            // Keep Source then ZH; MarginV handles visual stacking.
+        }
         return out;
+    }
+
+    function pickSecondaryText(pairList, startMs, endMs, findOverlap) {
+        if (typeof findOverlap === 'function') {
+            const hit = findOverlap(pairList, startMs, endMs);
+            return String(hit?.cue?.text || hit?.text || '').trim();
+        }
+        let best = null;
+        let bestDist = Infinity;
+        for (const p of Array.isArray(pairList) ? pairList : []) {
+            const ps = Number(p?.startMs) || 0;
+            const pe = Math.max(ps, Number(p?.endMs) || ps);
+            const overlap = Math.min(endMs, pe) - Math.max(startMs, ps);
+            const dist = overlap > 0 ? -overlap : Math.abs(ps - startMs);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = p;
+            }
+        }
+        return String(best?.text || '').trim();
+    }
+
+    /**
+     * Build in-editor dual ASS document (header + Source/ZH Dialogue cues)
+     * from primary track + pair track.
+     */
+    function buildDualDocumentFromTracks(primaryCues, pairCues, options = {}) {
+        const title = String(options.title || 'Transub Dual').replace(/[\r\n]/g, ' ');
+        const primaryRole = options.primaryRole === 'source' ? 'source' : 'target';
+        const template = normalizeDualTemplate({
+            ...options.dualTemplate,
+            lineOrder: options.lineOrder || options.dualTemplate?.lineOrder,
+            sourceStyle: options.sourceStyle || options.dualTemplate?.sourceStyle,
+            targetStyle: options.targetStyle || options.dualTemplate?.targetStyle,
+            marginGap: options.marginGap != null ? options.marginGap : options.dualTemplate?.marginGap,
+        });
+        const pairs = [];
+        const list = Array.isArray(primaryCues) ? primaryCues : [];
+        const pairList = Array.isArray(pairCues) ? pairCues : [];
+        const findOverlap = typeof options.findBestOverlapCue === 'function'
+            ? options.findBestOverlapCue
+            : null;
+
+        list.forEach((cue) => {
+            const startMs = Number(cue?.startMs) || 0;
+            const endMs = Math.max(startMs, Number(cue?.endMs) || startMs + 2000);
+            const primary = String(cue?.text || '').trim();
+            const secondary = pickSecondaryText(pairList, startMs, endMs, findOverlap);
+            let sourceText = '';
+            let targetText = '';
+            if (primaryRole === 'source') {
+                sourceText = primary;
+                targetText = secondary;
+            } else {
+                targetText = primary;
+                sourceText = secondary;
+            }
+            if (sourceText || targetText) {
+                pairs.push({ startMs, endMs, sourceText, targetText });
+            }
+        });
+
+        const baseStyles = Array.isArray(options.existingStyles) ? options.existingStyles : [];
+        const ensured = ensureDualTemplateStyles(baseStyles, {
+            lineOrder: template.lineOrder,
+            sourceStyle: template.sourceStyle,
+            targetStyle: template.targetStyle,
+            marginGap: template.marginGap,
+        });
+        const header = writeStylesToHeader(
+            options.headerLines || defaultAssHeaderLines(title),
+            ensured.styles,
+            { title },
+        );
+        const titled = header.map((l) => (/^Title:/i.test(String(l).trim()) ? `Title: ${title}` : l));
+        const cues = buildDualAssCues(pairs, {
+            sourceStyle: ensured.sourceStyle,
+            targetStyle: ensured.targetStyle,
+            lineOrder: template.lineOrder,
+        });
+        return {
+            ok: true,
+            cues,
+            header: titled,
+            template,
+            pairCount: pairs.length,
+            dialogueCount: cues.length,
+            sourceStyle: ensured.sourceStyle,
+            targetStyle: ensured.targetStyle,
+        };
     }
 
     function defaultDualTemplate() {
@@ -636,6 +784,105 @@
                         alignment: 8,
                         marginV: 28,
                         bold: -1,
+                    }),
+                ],
+            },
+            {
+                id: 'box',
+                label: '盒底字幕',
+                detail: 'BorderStyle=3 不透明底盒 · 远场更易读',
+                styles: () => [
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Default',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 46,
+                        primaryColour: '&H00FFFFFF',
+                        outlineColour: '&H00000000',
+                        backColour: '&H80000000',
+                        borderStyle: 3,
+                        outline: 4,
+                        shadow: 0,
+                        alignment: 2,
+                        marginV: 52,
+                    }),
+                ],
+            },
+            {
+                id: 'note',
+                label: '注释顶注',
+                detail: '小号灰字顶中 · 适合旁白/注记',
+                styles: () => [
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Default',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 48,
+                        primaryColour: '&H00FFFFFF',
+                        alignment: 2,
+                        marginV: 48,
+                    }),
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Note',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 32,
+                        primaryColour: '&H00B0B0B0',
+                        outline: 1,
+                        shadow: 0,
+                        alignment: 8,
+                        marginV: 28,
+                    }),
+                ],
+            },
+            {
+                id: 'karaoke',
+                label: '歌词粗描边',
+                detail: '大字 + 厚描边 · 适合歌词/高潮',
+                styles: () => [
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Default',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 60,
+                        primaryColour: '&H00FFFFFF',
+                        outlineColour: '&H00000000',
+                        outline: 4,
+                        shadow: 2,
+                        bold: -1,
+                        alignment: 2,
+                        marginV: 64,
+                    }),
+                ],
+            },
+            {
+                id: 'neon',
+                label: '霓虹黄字',
+                detail: '亮黄主色 + 紫描边 · 强调条',
+                styles: () => [
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Default',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 50,
+                        primaryColour: '&H0000E5FF',
+                        outlineColour: '&H00C000C0',
+                        outline: 3,
+                        shadow: 1,
+                        bold: -1,
+                        alignment: 2,
+                        marginV: 52,
+                    }),
+                    normalizeStyle({
+                        ...DEFAULT_STYLE,
+                        name: 'Emphasis',
+                        fontname: 'Microsoft YaHei',
+                        fontsize: 44,
+                        primaryColour: '&H0000FFFF',
+                        outlineColour: '&H00000000',
+                        outline: 2,
+                        alignment: 8,
+                        marginV: 36,
                     }),
                 ],
             },
@@ -774,6 +1021,8 @@
         deleteStyleFromHeader,
         countStyleUsage,
         applyStyleToCues,
+        defaultAssMeta,
+        convertDocumentToAss,
         uniqueStyleName,
         createStyleFromSpeakers,
         normalizeSpeakerStyleMap,
@@ -783,6 +1032,7 @@
         dualMarginPair,
         ensureDualTemplateStyles,
         buildDualAssCues,
+        buildDualDocumentFromTracks,
         defaultDualTemplate,
         normalizeDualTemplate,
         listStylePresets,

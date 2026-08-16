@@ -16,6 +16,12 @@ describe('engine-options', () => {
         assert.strictEqual(opts.engineInstallPath, '');
         assert.ok(String(opts.engineUrl).includes('127.0.0.1'));
         assert.strictEqual(opts.engineHfEndpoint, 'https://hf-mirror.com');
+        assert.strictEqual(opts.engineHfToken, '');
+    });
+
+    it('preserves Hugging Face token from options', () => {
+        const opts = mergeEngineOptions({ engineHfToken: 'hf_test_token' });
+        assert.strictEqual(opts.engineHfToken, 'hf_test_token');
     });
 
     it('preserves empty engine install path', () => {

@@ -50,7 +50,9 @@
         { id: 'whisper-ja-1.5b', label: 'Whisper JA 1.5B（日语微调）', langs: ['ja', 'auto'] },
         { id: 'kotoba-whisper-v2.0-faster', label: 'Kotoba Whisper v2.0（日语）', langs: ['ja', 'auto'] },
         { id: 'reazonspeech-k2', label: 'ReazonSpeech K2（日语·带时间戳）', langs: ['ja', 'auto'] },
-        { id: 'qwen3-asr-0.6b', label: 'Qwen3-ASR 0.6B（多语·带对齐）', langs: ['auto', 'ja', 'zh', 'en'] },
+        { id: 'qwen3-asr-0.6b', label: 'Qwen3-ASR 0.6B（多语·VAD 时间戳）', langs: ['auto', 'ja', 'zh', 'en'] },
+        { id: 'qwen3-asr-1.7b-ja-anime-galgame', label: 'Qwen3-ASR 1.7B JA Anime/Galgame（可选·约4GB）', langs: ['ja', 'auto'] },
+        { id: 'qwen3-asr-1.7b-ja', label: 'Qwen3-ASR 1.7B JA neosophie（可选·专有名词）', langs: ['ja', 'auto', 'en'] },
     ];
     /** Preferred JA specialized ASR when Sakura / soft-AV needs a Whisper JA model. */
     const WHISPER_JA_PRIMARY = 'whisper-ja-1.5b';

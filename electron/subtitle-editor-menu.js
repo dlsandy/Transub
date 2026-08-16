@@ -380,6 +380,10 @@ function applySubtitleEditorMenu(win, viewState) {
     };
     assertNoNativeRoles(template);
 
+    try {
+        require('./i18n').localizeMenuTemplate(template);
+    } catch { /* optional */ }
+
     const menu = Menu.buildFromTemplate(template);
     win.setMenu(menu);
     win.setMenuBarVisibility(true);

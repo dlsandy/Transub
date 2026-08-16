@@ -2173,7 +2173,7 @@
                                     <span>打开识别设置</span>
                                 </button>
                             </div>
-                            <p id="paramsModeCustomHint" class="translate-menu-hint hidden" hidden>当前用设置里的参数。选「智能感知」或下面的类型即可改掉。</p>
+                            <p id="paramsModeCustomHint" class="translate-menu-hint hidden" hidden>当前为手动 ASR。选「智能感知」或下面的类型即可改掉。</p>
                             <button type="button" class="post-task-menu-item has-desc active" data-params-mode="sense" role="menuitem">
                                 <i class="fa fa-check post-task-check" aria-hidden="true"></i>
                                 <span class="post-task-menu-copy">
@@ -2184,6 +2184,21 @@
                             <p class="post-task-menu-hint mt-1">预设类型</p>
                             <div id="paramsModePresetTabs" class="params-mode-preset-tabs hidden" role="tablist" aria-label="预设分类"></div>
                             <div id="paramsModePresetList" role="tabpanel"></div>
+                            <div id="paramsModeAsrSection">
+                                <p class="post-task-menu-hint mt-1" id="paramsModeAsrSectionLabel">ASR 模型</p>
+                                <div id="paramsModeAsrPickSwitch" class="translate-mt-pick-switch" role="group" aria-label="ASR 选择方式">
+                                    <button type="button" class="translate-mt-pick-btn is-active" data-asr-pick="auto" id="paramsModeAsrAutoBtn" aria-pressed="true">
+                                        自动
+                                    </button>
+                                    <button type="button" class="translate-mt-pick-btn" data-asr-pick="manual" id="paramsModeAsrManualBtn" aria-pressed="false">
+                                        手动
+                                    </button>
+                                </div>
+                                <p id="paramsModeAsrHint" class="translate-menu-hint"></p>
+                                <div id="paramsModeAsrModelListWrap" class="translate-mt-model-list-wrap hidden">
+                                    <div id="paramsModeAsrModelList"></div>
+                                </div>
+                            </div>
                             <button type="button" class="post-task-menu-item" data-params-mode="open-settings" role="menuitem">
                                 <i class="fa fa-sliders w-4 text-center text-gray-400" aria-hidden="true"></i>
                                 <span>打开识别设置…</span>
@@ -2467,7 +2482,7 @@
                     </aside>
                     <div class="flex-1 min-h-0 overflow-y-auto p-4 settings-content" id="settingsContent">
 
-                    <div class="params-tab-panel active" data-tab-panel="runtime" data-settings-search="常规 任务 翻译 界面 启动 编辑器 密度 缩放 4K 向导 CPU GPU 内存 资源 占用 主题 深色 浅色 目录 打开 记住 智能翻译 Pro">
+                    <div class="params-tab-panel active" data-tab-panel="runtime" data-settings-search="常规 任务 翻译 界面 启动 编辑器 密度 缩放 4K 向导 CPU GPU 内存 资源 占用 主题 深色 浅色 目录 打开 记住 智能翻译 Pro 语言 繁体 简体 介面 語言">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">任务默认</legend>
                             <div class="settings-fields-grid">
@@ -2548,8 +2563,18 @@
                             <div id="smartTranslateWrap" class="hidden" aria-hidden="true"></div>
                         </fieldset>
                         <fieldset class="settings-section">
-                            <legend class="settings-section-title">启动与界面</legend>
+                            <legend class="settings-section-title" data-i18n="settings.startupAppearance.title">启动与界面</legend>
                             <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    <span data-i18n="settings.uiLocale.label">界面语言</span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip" data-i18n="settings.uiLocale.tip">软件界面显示语言。与「中文字幕类型」无关；字幕简繁请在任务或目标语言中单独设置。</span></span>
+                                </span>
+                                <select id="uiLocaleSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="zh-Hans" data-i18n="settings.uiLocale.zhHans">简体中文</option>
+                                    <option value="zh-Hant-TW" data-i18n="settings.uiLocale.zhHantTW">繁体中文</option>
+                                </select>
+                            </label>
                             <label class="block text-sm">
                                 <span class="settings-label text-gray-700 font-medium">
                                     默认启动界面
@@ -3727,7 +3752,7 @@
                         </fieldset>
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">Hugging Face 镜像</legend>
-                            <p class="text-xs text-gray-500 leading-relaxed mb-3">下载模型超时时请用国内镜像；可留空或点「官方」直连。镜像与代理可同时使用：镜像改下载源，代理改出网路径。</p>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-3">下载模型超时时请用国内镜像；可留空或点「官方」直连。镜像与代理可同时使用：镜像改下载源，代理改出网路径。门禁模型（如 Cohere Transcribe）需先在官网同意条款，并填写下方 Token；门禁下载建议用「官方」端点。</p>
                             <label class="block text-sm">
                                 <span class="settings-label text-gray-700 font-medium">镜像地址<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">引擎下载模型时使用的 Hugging Face Hub 地址。默认国内镜像；留空则直连官方。</span></span></span>
                                 <div class="flex gap-2 mt-1">
@@ -3735,6 +3760,10 @@
                                     <button type="button" id="engineHfMirrorPresetBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">国内镜像</button>
                                     <button type="button" id="engineHfOfficialPresetBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">官方</button>
                                 </div>
+                            </label>
+                            <label class="block text-sm mt-3">
+                                <span class="settings-label text-gray-700 font-medium">Hugging Face Token（门禁模型）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在 huggingface.co 同意模型条款后，于 Settings → Access Tokens 创建 Read 权限 Token。仅本地保存，用于下载门禁仓库。</span></span></span>
+                                <input type="password" id="engineHfTokenInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="hf_…" maxlength="256" autocomplete="off" spellcheck="false">
                             </label>
                             <div class="flex flex-wrap items-center gap-2 mt-2">
                                 <button type="button" id="engineHfTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">测试连接</button>
@@ -4361,6 +4390,11 @@
     </div>
 
     <script src="js/eta-core.js"></script>
+    <script src="vendor/opencc-js/full.js"></script>
+    <script src="js/subtitle-chinese-core.js"></script>
+    <script src="js/i18n-core.js"></script>
+    <script src="js/i18n-catalogs.js"></script>
+    <script src="js/i18n.js"></script>
     <script src="js/media-extensions-core.js"></script>
     <script src="js/app-path-utils-core.js"></script>
     <script src="js/infer-stage-progress-core.js"></script>

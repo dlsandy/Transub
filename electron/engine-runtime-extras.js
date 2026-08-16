@@ -51,14 +51,18 @@ function ensureRuntimeExtrasOffline(opts = {}) {
         }
         let child;
         try {
+            let extrasEnv = {
+                ...process.env,
+                PYTHONUNBUFFERED: '1',
+                PYTHONIOENCODING: 'utf-8',
+            };
+            try {
+                extrasEnv = require('./temp-cleanup').applyEngineTempEnv(extrasEnv);
+            } catch { /* optional */ }
             child = spawn(pythonPath, args, {
                 cwd: cwd || undefined,
                 windowsHide: true,
-                env: {
-                    ...process.env,
-                    PYTHONUNBUFFERED: '1',
-                    PYTHONIOENCODING: 'utf-8',
-                },
+                env: extrasEnv,
             });
         } catch (err) {
             resolve({ ok: false, error: err.message || String(err) });
@@ -73,6 +77,9 @@ function ensureRuntimeExtrasOffline(opts = {}) {
             settled = true;
             try { signal?.removeEventListener?.('abort', onAbort); } catch { /* ignore */ }
             clearTimeout(timer);
+            try {
+                require('./temp-cleanup').cleanupAfterJob();
+            } catch { /* ignore */ }
             resolve(payload);
         };
         const onAbort = () => {

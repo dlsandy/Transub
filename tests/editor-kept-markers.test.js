@@ -109,6 +109,24 @@ describe('editor-markers-core', () => {
             ),
             [0],
         );
+
+        const cues = [{ startMs: 100, text: 'a' }, { startMs: 200, text: 'b' }];
+        const assigned = markers.assignSpeakerToIndexes(doc, cues, [0, 1], sp.speaker.id);
+        doc = assigned.doc;
+        assert.ok(assigned.changed >= 1);
+        assert.strictEqual(markers.countSpeakerUsage(cues, doc, sp.speaker.id), 2);
+        doc = markers.setSpeakerStyleMap(doc, { [sp.speaker.id]: 'Lead' });
+        assert.strictEqual(doc.speakerStyleMap[sp.speaker.id], 'Lead');
+        const cleared = markers.assignSpeakerToIndexes(doc, cues, [1], '');
+        doc = cleared.doc;
+        assert.strictEqual(cleared.changed, 1);
+        assert.strictEqual(markers.countSpeakerUsage(cues, doc, sp.speaker.id), 1);
+        const removed = markers.removeSpeaker(doc, sp.speaker.id);
+        doc = removed.doc;
+        assert.strictEqual(removed.removed, true);
+        assert.ok(!doc.speakers.some((s) => s.id === sp.speaker.id));
+        assert.ok(!doc.speakerStyleMap[sp.speaker.id]);
+        assert.strictEqual(markers.countSpeakerUsage(cues, doc, sp.speaker.id), 0);
     });
 });
 

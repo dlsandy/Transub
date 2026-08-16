@@ -74,6 +74,16 @@ describe('asr settings UI wiring', () => {
         assert.strictEqual(keep.changed, false);
         assert.strictEqual(keep.overrides.engineAsrModel, 'whisper-ja-1.5b');
 
+        const keepCohere = asrSettings.applyHardwareAsrRecommend(
+            { engineAsrModel: 'cohere-transcribe-03-2026' },
+            {
+                recommendedAsr: 'whisper-large-v3-turbo',
+                installedModels: ['cohere-transcribe-03-2026', 'whisper-large-v3-turbo'],
+            },
+        );
+        assert.strictEqual(keepCohere.changed, false);
+        assert.strictEqual(keepCohere.overrides.engineAsrModel, 'cohere-transcribe-03-2026');
+
         const skipMissing = asrSettings.applyHardwareAsrRecommend(
             { engineAsrModel: 'sensevoice-small' },
             { recommendedAsr: 'whisper-large-v3-turbo', installedModels: ['sensevoice-small'] },

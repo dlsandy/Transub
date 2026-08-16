@@ -2,6 +2,8 @@
 
 引擎契约细节见 [`transub-engine/docs/api-v1.md`](../transub-engine/docs/api-v1.md) 与 [engine-boundary.md](./engine-boundary.md)。本文只覆盖 **Transub 桌面侧** 编排、回退、置信度与排障。
 
+**已接入：** [Cohere Transcribe 本地 ASR](./asr-cohere-transcribe-feasibility.md)（`cohere-transcribe-03-2026`；引擎 `cohere-asr`；不绑 CrispASR）。
+
 ## 流程
 
 ```mermaid
@@ -25,12 +27,17 @@ flowchart TD
 | 场景 | 候选链 |
 |------|--------|
 | 主模型 SenseVoice | SenseVoice → whisper-tiny → whisper-large-v3-turbo |
+| Cohere Transcribe | Cohere → parakeet-tdt-0.6b-v2 → SenseVoice → tiny（必要时 + turbo） |
 | JA / anime / kotoba / Reazon / Qwen ASR | 主模型 → **同族专科** → SenseVoice → tiny（必要时 + turbo） |
 | 其他 Whisper 等 | 主模型 → SenseVoice → tiny（必要时 + turbo） |
 
-实现：`electron/engine-range-asr-policy.buildBatchAsrCandidates`（范围重转与整文件 batch 共用）。专科链按主模型族优先试兄弟专科（例如 anime → kotoba → whisper-ja），避免空结果时立刻掉到通用 tiny。
+实现：`electron/engine-range-asr-policy.buildBatchAsrCandidates`（范围重转与整文件 batch 共用）。专科链按主模型族优先试兄弟专科（例如 anime → Qwen Galgame 1.7B → kotoba → whisper-ja），避免空结果时立刻掉到通用 tiny。
 
-内容档（如 `av_soft` → `whisper-ja-1.5b`）仍由 `content-profile-core` / 感知覆盖；回退链在空结果 / 缺模型时生效。
+内容档（如 `av_soft` → `anime-whisper` / 可选 `qwen3-asr-1.7b-ja-anime-galgame`）仍由 `content-profile-core` / 感知覆盖；回退链在空结果 / 缺模型时生效。
+
+**Qwen3-ASR：** 默认 TEN/VAD 帧时间戳（不加载 ForcedAligner，约省 1GB 显存）；`timingAlignModel=qwen3-forced-aligner-0.6b` 时才用词级对齐。可选 `timingAlignModel=firered` 或 VAD 选 `firered-vad` 改用 FireRedVAD。专科含 `qwen3-asr-0.6b`、`qwen3-asr-1.7b-ja-anime-galgame`、`qwen3-asr-1.7b-ja`（neosophie）。
+
+**FireRedVAD：** 随包装（`firered-vad`，约 2MB 权重 + 内置 `fireredvad` wheel）。用于 anime-whisper / Qwen 的 VAD 拥有时间轴路径；默认仍为 TEN。运行需 torch（与 SenseVoice/Qwen 相同，按需安装）。
 
 ## Sense / 语种
 

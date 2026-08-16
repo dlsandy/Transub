@@ -338,6 +338,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         engineInstallPath: String(merged.engineInstallPath || '').trim(),
         engineUrl: String(merged.engineUrl || '').trim().replace(/\/+$/, ''),
         engineHfEndpoint: String(merged.engineHfEndpoint || '').trim().replace(/\/+$/, ''),
+        engineHfToken: String(merged.engineHfToken || '').trim(),
         ...(() => {
             try {
                 const { normalizeProxyOptions } = require('./proxy-settings');
@@ -468,6 +469,13 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         // Faithful tone applies to all translate modes (engine / sakura / smart); only needs translate|dual.
         smartTranslateFaithfulTone: !!merged.smartTranslateFaithfulTone
             && (normalizeTask(merged.task) === 'translate' || normalizeTask(merged.task) === 'dual'),
+        // Pro 智能翻译管线偏好：必须进白名单，否则取消勾选保存后会被丢弃并回默认勾选。
+        smartTranslateHybridMt: merged.smartTranslateHybridMt !== false,
+        smartTranslatePlotPolish: merged.smartTranslatePlotPolish !== false,
+        smartTranslatePolishSampleLimit: (() => {
+            const n = Number(merged.smartTranslatePolishSampleLimit);
+            return Number.isFinite(n) ? Math.max(4, Math.min(36, Math.round(n))) : 36;
+        })(),
         // null = auto (AV sense / preset / faithful); true/false = force
         sakuraNsfwPrompt: (() => {
             if (merged.sakuraNsfwPrompt === true || merged.sakuraNsfwPrompt === false) {
@@ -477,6 +485,10 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         })(),
         filmAudioEnhance: !!merged.filmAudioEnhance,
         filmVadPreset: !!merged.filmVadPreset && !merged.filmAudioEnhance,
+        filmVadThreshold: merged.filmVadThreshold ?? null,
+        filmVadMinSpeechDurationMs: merged.filmVadMinSpeechDurationMs ?? null,
+        filmVadMinSilenceDurationMs: merged.filmVadMinSilenceDurationMs ?? null,
+        filmHallucinationSilenceThreshold: merged.filmHallucinationSilenceThreshold ?? null,
         neuralDiarize: !!merged.neuralDiarize,
         vadEnabled: merged.vadEnabled !== false,
         vadSensitive: !!merged.vadSensitive,
@@ -530,6 +542,15 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             const raw = String(merged.startupWindow || '').trim().toLowerCase();
             return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
         })(),
+        uiLocale: (() => {
+            try {
+                const { normalizeUiLocale } = require('../src/js/i18n-core');
+                return normalizeUiLocale(merged.uiLocale);
+            } catch {
+                const raw = String(merged.uiLocale || '').trim();
+                return raw === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans';
+            }
+        })(),
         autoUpdateCheckInterval: (() => {
             try {
                 const { normalizeAutoUpdateCheckInterval } = require('./auto-update-check');
@@ -545,6 +566,18 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             const raw = String(merged.postBatchQcFixMode || '').trim().toLowerCase();
             return (raw === 'fix' || raw === 'smart') ? raw : 'none';
         })(),
+        qcSmartLlmSplit: merged.qcSmartLlmSplit !== false,
+        qcSmartRetranscribe: merged.qcSmartRetranscribe !== false,
+        qcSmartSemanticReview: merged.qcSmartSemanticReview !== false,
+        qcSmartIntensity: (() => {
+            const v = String(merged.qcSmartIntensity || '').trim().toLowerCase();
+            return (v === 'medium' || v === 'strong') ? v : 'light';
+        })(),
+        qcSmartMaxRetranscribeRanges: (() => {
+            const n = Number(merged.qcSmartMaxRetranscribeRanges);
+            return Number.isFinite(n) ? Math.max(1, Math.min(24, Math.round(n))) : 8;
+        })(),
+        libraryOpenAfterBatch: !!merged.libraryOpenAfterBatch,
         autoSense: (() => {
             if (Object.prototype.hasOwnProperty.call(merged, 'autoSense')) {
                 return merged.autoSense !== false;
@@ -745,6 +778,13 @@ async function saveTransWithAiOptions(getAppRoot, patch) {
     syncTrayNotifyFromOptions(next);
     syncMinimizeToTrayFromOptions(next);
     syncAutoUpdateCheckFromSavedOptions(next);
+    try {
+        require('./i18n').initFromOptions(next);
+    } catch { /* optional */ }
+    try {
+        const { rebuildTrayMenus } = require('./i18n-runtime');
+        rebuildTrayMenus();
+    } catch { /* optional */ }
     try {
         const { applyProxyFromSettings } = require('./proxy-settings');
         const { session } = require('electron');
@@ -2462,6 +2502,9 @@ async function transcribeMediaRange(payload = {}, deps = {}) {
             jobCancelled = false;
             activeProc = null;
             safeRmDir(tempRoot);
+            try {
+                require('./temp-cleanup').cleanupAfterJob();
+            } catch { /* ignore */ }
         }
     });
 }
@@ -2679,7 +2722,7 @@ function setupTransWithAiBridge(api, deps) {
                 patch.installPath = normalizeInstallPath(payload.installPath);
             }
             [
-                'engineBackend', 'engineInstallPath', 'engineUrl', 'engineHfEndpoint',
+                'engineBackend', 'engineInstallPath', 'engineUrl', 'engineHfEndpoint', 'engineHfToken',
                 'engineProfile', 'engineAsrModel', 'engineMtModel',
                 'engineOpusMtModel', 'engineLlmMtModel', 'engineVadModel',
                 'engineAutoStart',
@@ -2705,8 +2748,17 @@ function setupTransWithAiBridge(api, deps) {
                 'postBatchContextReconstruct',
                 'smartTranslate',
                 'smartTranslateFaithfulTone',
+                'smartTranslateHybridMt',
+                'smartTranslatePlotPolish',
+                'smartTranslatePolishSampleLimit',
                 'sakuraNsfwPrompt',
-                'filmAudioEnhance', 'filmVadPreset', 'neuralDiarize',
+                'filmAudioEnhance', 'filmVadPreset',
+                'filmVadThreshold', 'filmVadMinSpeechDurationMs',
+                'filmVadMinSilenceDurationMs', 'filmHallucinationSilenceThreshold',
+                'neuralDiarize',
+                'qcSmartLlmSplit', 'qcSmartRetranscribe', 'qcSmartSemanticReview',
+                'qcSmartIntensity', 'qcSmartMaxRetranscribeRanges',
+                'libraryOpenAfterBatch',
                 'vadEnabled', 'vadSensitive', 'vadAggressive', 'audioLightDenoise',
                 'autoSuggestSpeakers', 'speakerCount', 'perfProfile',
                 'vadMaxSingleSegmentMs',
@@ -2714,6 +2766,7 @@ function setupTransWithAiBridge(api, deps) {
                 'retranscribeWarmLight', 'subtitleBakMode',
                 'keepTranscript', 'transcriptKeepDir', 'transcriptKeepLimit', 'transcriptKeepDays',
                 'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow',
+                'uiLocale',
                 'rememberLastOpenDir',
                 'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
                 'postBatchQc',

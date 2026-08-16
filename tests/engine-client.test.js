@@ -9,6 +9,8 @@ const {
     listModels,
     recommendModels,
     engineFetch,
+    formatEngineNetworkError,
+    isRetryableEngineNetworkResult,
 } = require('../electron/engine-client');
 
 function startMockEngine() {
@@ -291,6 +293,101 @@ describe('engine-client against mock HTTP', () => {
             assert.strictEqual(waited.ok, false);
             assert.strictEqual(waited.error, '任务长时间无响应');
             assert.strictEqual(waited.code, 'idle_timeout');
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
+
+    it('formats opaque fetch failed for local engine', () => {
+        const opaque = new Error('fetch failed');
+        opaque.cause = { message: 'fetch failed' };
+        assert.strictEqual(formatEngineNetworkError(opaque), '引擎连接失败');
+        const refused = new Error('fetch failed');
+        refused.cause = { code: 'ECONNREFUSED' };
+        assert.ok(formatEngineNetworkError(refused).includes('连接被拒绝'));
+        assert.strictEqual(
+            isRetryableEngineNetworkResult({ ok: false, code: 'network', error: 'fetch failed' }),
+            true,
+        );
+        assert.strictEqual(
+            isRetryableEngineNetworkResult({ ok: false, code: 'timeout', error: '请求超时' }),
+            false,
+        );
+    });
+
+    it('retries createJob after a dropped connection', async () => {
+        let posts = 0;
+        const server = http.createServer((req, res) => {
+            if (req.method === 'POST' && req.url === '/v1/jobs') {
+                posts += 1;
+                if (posts === 1) {
+                    req.destroy();
+                    return;
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, id: 'job-retry', status: 'queued' }));
+                return;
+            }
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false }));
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        try {
+            const created = await createJob(`http://127.0.0.1:${port}`, { task: 'transcribe' });
+            assert.strictEqual(created.ok, true);
+            assert.strictEqual(created.data.id, 'job-retry');
+            assert.ok(posts >= 2);
+        } finally {
+            await new Promise((r) => server.close(r));
+        }
+    });
+
+    it('falls back to poll when SSE done snapshot GET fails', async () => {
+        let jobGets = 0;
+        const server = http.createServer((req, res) => {
+            const url = new URL(req.url, 'http://127.0.0.1');
+            if (url.pathname.endsWith('/events')) {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                res.write('data: {"type":"done","status":"done"}\n\n');
+                res.end();
+                return;
+            }
+            if (url.pathname === '/v1/jobs' && req.method === 'POST') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, id: 'snap1', status: 'queued' }));
+                return;
+            }
+            const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
+            if (jobMatch && req.method === 'GET') {
+                jobGets += 1;
+                if (jobGets <= 3) {
+                    req.destroy();
+                    return;
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    ok: true,
+                    id: jobMatch[1],
+                    status: 'done',
+                    result: { outputs: [{ path: 'C:/tmp/ok.srt' }] },
+                }));
+                return;
+            }
+            res.writeHead(404);
+            res.end();
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        try {
+            const waited = await waitJob(`http://127.0.0.1:${port}`, 'snap1', {
+                intervalMs: 20,
+                idleTimeoutMs: 4000,
+                pollTimeoutMs: 500,
+            });
+            assert.strictEqual(waited.ok, true);
+            assert.strictEqual(waited.data.status, 'done');
+            assert.ok(jobGets > 3);
         } finally {
             await new Promise((r) => server.close(r));
         }

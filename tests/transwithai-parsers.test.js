@@ -66,6 +66,7 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.compressionRatioThreshold, 2.4);
     assert.strictEqual(defaults.hallucinationSilenceThreshold, null);
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
+    assert.strictEqual(defaults.uiLocale, 'zh-Hans');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchCpsSplit, true);
         assert.strictEqual(defaults.postBatchQcFixMode, 'smart');

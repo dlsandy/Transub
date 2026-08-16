@@ -27,7 +27,9 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
         confirmQuitApp: () => confirmQuitApp(),
         dialogShowMessageBox: (win, opts) => dialog.showMessageBox(win, opts),
     });
-
+    try {
+        require('./i18n-runtime').registerTrayRebuilder(() => tray.rebuildTrayMenu?.());
+    } catch { /* optional */ }
     function showMainWindow() {
         return tray.showMainWindow();
     }
@@ -274,6 +276,7 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
         getMainWindow: () => mainWindow,
         sendToRenderer,
         setupTray: () => tray.setupTray(),
+        rebuildTrayMenu: () => tray.rebuildTrayMenu?.(),
         updateTrayProgress: (payload) => tray.updateTrayProgress(payload),
         clearTrayProgress: () => tray.clearTrayProgress(),
         setTrayProgressEnabled: (enabled) => tray.setTrayProgressEnabled(enabled),

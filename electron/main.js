@@ -24,6 +24,12 @@ if (zipUpdateProgressPath) {
 
 registerMediaScheme();
 
+try {
+    require('./i18n-install').installI18nDialogHooks();
+} catch (err) {
+    console.warn('[main] i18n dialog hooks skipped:', err?.message || err);
+}
+
 /** @type {string[]} */
 let earlyPendingFiles = [];
 let transwithaiBridgeLoaded = false;
@@ -190,6 +196,9 @@ ipcMain.handle('transwithai-get-options', async (_event, payload = {}) => {
             ...stripPostTaskFields(loadSettings(() => getAppRoot(app)).options || {}),
             ...stripPostTaskFields(payload || {}),
         });
+        try {
+            require('./i18n').initFromOptions(options);
+        } catch { /* optional */ }
         return { ok: true, options };
     } catch (err) {
         return { ok: false, error: err.message || String(err) };

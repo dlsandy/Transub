@@ -34,10 +34,11 @@
         vad_failover: 2,
         model: 3,
         transcribe: 4,
-        translate: 4,
-        save: 5,
-        done: 6,
-        failed: 6,
+        cleanup: 5,
+        translate: 6,
+        save: 7,
+        done: 8,
+        failed: 8,
     };
 
     function stageRank(stage) {

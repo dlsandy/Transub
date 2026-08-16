@@ -77,6 +77,12 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         name: 'Parakeet TDT 0.6B v2（英语）',
         note: 'NVIDIA NeMo 英语 ASR；标点/大小写/词级时间戳；OpenASR 前列',
     },
+    'cohere-transcribe-03-2026': {
+        hubId: 'CohereLabs/cohere-transcribe-03-2026',
+        kind: 'asr',
+        name: 'Cohere Transcribe 03-2026',
+        note: 'Cohere 2B Conformer；14 语；英语很强；短窗切条。门禁：HF 同意条款 + Token（建议官方端点）。依赖 transformers≥5.6。若提示 processor 缺失请强制重下（需完整 config/tokenizer）',
+    },
     'parakeet-tdt-0.6b-v3': {
         hubId: 'nvidia/parakeet-tdt-0.6b-v3',
         kind: 'asr',
@@ -87,13 +93,25 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         hubId: 'Qwen/Qwen3-ASR-0.6B',
         kind: 'asr',
         name: 'Qwen3-ASR 0.6B',
-        note: 'Qwen3 专用 ASR；下载时附带 ForcedAligner 做时间戳；依赖较重、长片较慢',
+        note: 'Qwen3 专用 ASR；默认 TEN/VAD 帧时间戳（省显存）；可选下载 ForcedAligner 做词级对齐；依赖较重',
+    },
+    'qwen3-asr-1.7b-ja-anime-galgame': {
+        hubId: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame',
+        kind: 'asr',
+        name: 'Qwen3-ASR 1.7B JA Anime/Galgame',
+        note: '日语动漫/Galgame 微调（约 4GB）；补漏句更强，可能多出 junk；需较多显存，按需下载',
+    },
+    'qwen3-asr-1.7b-ja': {
+        hubId: 'neosophie/Qwen3-ASR-1.7B-JA',
+        kind: 'asr',
+        name: 'Qwen3-ASR 1.7B JA（neosophie）',
+        note: '日语专有名词/汉字表达微调（约 4GB）；弱音较好，汉字偏多；需较多显存，按需下载',
     },
     'qwen3-forced-aligner-0.6b': {
         hubId: 'Qwen/Qwen3-ForcedAligner-0.6B',
         kind: 'asr',
         name: 'Qwen3 ForcedAligner 0.6B',
-        note: '为 Qwen3-ASR 提供词/字级时间戳（随 qwen3-asr-0.6b 自动下载）',
+        note: '可选：为 Qwen3-ASR 提供词/字级时间戳（timingAlignModel=qwen3-forced-aligner-0.6b）；默认不随 ASR 下载',
     },
     'opus-mt-en-zh': {
         hubId: 'Helsinki-NLP/opus-mt-en-zh',
@@ -168,6 +186,12 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         kind: 'vad',
         name: 'WhisperSeg ASMR（日语轻声）',
         note: '必装 · 灵敏检出 / 日语软声；需配合 Whisper ASR',
+    },
+    'firered-vad': {
+        hubId: 'FireRedTeam/FireRedVAD',
+        kind: 'vad',
+        name: 'FireRedVAD（随包装）',
+        note: 'SOTA 多语 VAD（约 2MB，随包装无需下载）；用于 anime-whisper / Qwen 帧时间戳（timingAlignModel=firered 或选此 VAD）；误报低于 TEN；需已有 torch（SenseVoice/Qwen 等会安装）',
     },
 };
 

@@ -171,6 +171,26 @@ print(json.dumps({
         );
     });
 
+    it('known wheel must satisfy requirement pin (Cohere needs transformers>=5.6)', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runExtras(`
+import json
+from transub_engine.pip_mirror_util import (
+    known_wheel_version,
+    known_wheel_satisfies_requirement,
+)
+print(json.dumps({
+    'tfVer': known_wheel_version('transformers'),
+    'whisperOk': known_wheel_satisfies_requirement('transformers>=4.40.0'),
+    'cohereOk': known_wheel_satisfies_requirement('transformers>=5.6.0,<6'),
+}))
+`);
+        const j = JSON.parse(out);
+        assert.strictEqual(j.tfVer, '4.57.3');
+        assert.strictEqual(j.whisperOk, true);
+        assert.strictEqual(j.cohereOk, false);
+    });
+
     it('asr-whisper onnxruntime pin accepts installed onnxruntime-gpu', function () {
         if (process.platform !== 'win32') {
             this.skip();

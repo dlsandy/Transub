@@ -560,6 +560,15 @@ def _run_qwen_gate():
                     with patch('transub_engine.runtime_extras.ensure_extras_for_models'):
                         return qwen3_asr.qwen3_asr_transcribe(media_path='x.mp4')
 
+def _run_cohere_gate():
+    from transub_engine.asr import cohere_transcribe
+    with patch.object(cohere_transcribe, '_probe_duration_s', return_value=0.0):
+        with patch.object(cohere_transcribe, 'is_model_installed', return_value=True):
+            with patch.object(cohere_transcribe, 'model_local_path', return_value=Path('.')):
+                with patch.object(cohere_transcribe, '_get_asr_bundle', return_value=(object(), object())):
+                    with patch('transub_engine.runtime_extras.ensure_extras_for_models'):
+                        return cohere_transcribe.cohere_transcribe(media_path='x.mp4')
+
 def _run_reazon_gate():
     with patch.object(reazon_k2, '_probe_duration_s', return_value=0.0):
         with patch.object(reazon_k2, 'is_model_installed', return_value=True):
@@ -569,11 +578,16 @@ def _run_reazon_gate():
                         return reazon_k2.reazon_k2_transcribe(media_path='x.mp4')
 
 qe = ''
+ce = ''
 re = ''
 try:
     _run_qwen_gate()
 except Exception as err:
     qe = str(err)
+try:
+    _run_cohere_gate()
+except Exception as err:
+    ce = str(err)
 try:
     _run_reazon_gate()
 except Exception as err:
@@ -595,18 +609,23 @@ rel = release_gpu_memory(reason='test', unload_models=True)
 freed = ' '.join(rel.get('freed') or [])
 print(json.dumps({
     'qwen_gate': '时长' in qe or '不能安全' in qe,
+    'cohere_gate': '时长' in ce or '不能安全' in ce,
     'reazon_gate': '时长' in re or '不能安全' in re,
     'qwen_msg': qe[:160],
+    'cohere_msg': ce[:160],
     'reazon_msg': re[:160],
     'flush_n': len(flush_marks),
     'flush_lt_old': len(flush_marks) < 200 // 8,
     'has_wav2vec_release': 'wav2vec_align_cache' in freed,
+    'has_cohere_release': 'cohere_asr_cache' in freed,
 }))
 `);
         const j = JSON.parse(out);
         assert.strictEqual(j.qwen_gate, true, j.qwen_msg);
+        assert.strictEqual(j.cohere_gate, true, j.cohere_msg);
         assert.strictEqual(j.reazon_gate, true, j.reazon_msg);
         assert.ok(j.flush_lt_old, `expected fewer flushes than every-8, got ${j.flush_n}`);
         assert.strictEqual(j.has_wav2vec_release, true);
+        assert.strictEqual(j.has_cohere_release, true);
     });
 });

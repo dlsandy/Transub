@@ -98,6 +98,8 @@ function buildBatchAsrCandidates(primaryAsr) {
         'anime-whisper',
         'kotoba-whisper-v2.0-faster',
         'reazonspeech-k2',
+        'qwen3-asr-1.7b-ja-anime-galgame',
+        'qwen3-asr-1.7b-ja',
         'qwen3-asr-0.6b',
     ];
     const isJaSpecialist = jaSpecialists.some((id) => low === id || low.startsWith(id));
@@ -106,13 +108,26 @@ function buildBatchAsrCandidates(primaryAsr) {
     const isWhisperJa = low.includes('whisper-ja');
     const isReazon = low.includes('reazon');
     const isQwenAsr = low.includes('qwen3-asr');
+    const isCohereAsr = low.includes('cohere-transcribe') || low.includes('cohere-asr');
 
     if (/sensevoice/i.test(primary)) {
         chain.push('whisper-tiny', 'whisper-large-v3-turbo');
+    } else if (isCohereAsr) {
+        chain.push(
+            'parakeet-tdt-0.6b-v2',
+            'sensevoice-small',
+            'whisper-tiny',
+            'whisper-large-v3-turbo',
+        );
     } else if (isJaSpecialist || isAnime || isKotoba || isWhisperJa || isReazon || isQwenAsr) {
         // Prefer other JA-domain models before generic Whisper tiny/turbo.
         if (isAnime) {
-            chain.push('kotoba-whisper-v2.0-faster', 'whisper-ja-1.5b', 'reazonspeech-k2');
+            chain.push(
+                'qwen3-asr-1.7b-ja-anime-galgame',
+                'kotoba-whisper-v2.0-faster',
+                'whisper-ja-1.5b',
+                'reazonspeech-k2',
+            );
         } else if (isKotoba) {
             chain.push('anime-whisper', 'whisper-ja-1.5b', 'reazonspeech-k2');
         } else if (isWhisperJa) {
@@ -120,6 +135,16 @@ function buildBatchAsrCandidates(primaryAsr) {
         } else if (isReazon) {
             chain.push('whisper-ja-1.5b', 'kotoba-whisper-v2.0-faster', 'qwen3-asr-0.6b');
         } else if (isQwenAsr) {
+            // Sibling Qwen variants first, then other JA specialists.
+            if (!low.includes('1.7b-ja-anime')) {
+                chain.push('qwen3-asr-1.7b-ja-anime-galgame');
+            }
+            if (!low.includes('1.7b-ja') || low.includes('anime')) {
+                chain.push('qwen3-asr-1.7b-ja');
+            }
+            if (!low.includes('0.6b')) {
+                chain.push('qwen3-asr-0.6b');
+            }
             chain.push('whisper-ja-1.5b', 'reazonspeech-k2', 'kotoba-whisper-v2.0-faster');
         } else {
             for (const id of jaSpecialists) chain.push(id);

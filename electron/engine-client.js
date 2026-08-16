@@ -9,7 +9,37 @@ function joinUrl(base, pathPart) {
     return `${b}${p.startsWith('/') ? p : `/${p}`}`;
 }
 
-async function engineFetch(baseUrl, pathPart, options = {}) {
+function sleep(ms) {
+    return new Promise((r) => setTimeout(r, Math.max(0, Number(ms) || 0)));
+}
+
+/**
+ * Turn opaque undici "fetch failed" into a local-engine Chinese message.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function formatEngineNetworkError(err) {
+    const e = err && typeof err === 'object' ? err : {};
+    const cause = e.cause && typeof e.cause === 'object' ? e.cause : {};
+    const nested = cause.cause && typeof cause.cause === 'object' ? cause.cause : {};
+    const code = String(nested.code || cause.code || e.code || '').toUpperCase();
+    const msg = String(nested.message || cause.message || e.message || err || '').trim();
+    if (code === 'ECONNREFUSED') return '引擎未响应（连接被拒绝）';
+    if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') return '引擎连接被重置';
+    if (/fetch failed|failed to fetch/i.test(msg) || !msg) return '引擎连接失败';
+    return msg;
+}
+
+function isRetryableEngineNetworkResult(res) {
+    if (!res || res.ok || res.cancelled) return false;
+    const code = String(res.code || '').toLowerCase();
+    if (code === 'timeout' || code === 'cancelled') return false;
+    if (code === 'network') return true;
+    return /引擎连接|fetch failed|failed to fetch|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET/i
+        .test(String(res.error || ''));
+}
+
+async function engineFetchOnce(baseUrl, pathPart, options = {}) {
     const url = joinUrl(baseUrl, pathPart);
     const {
         method = 'GET',
@@ -80,7 +110,7 @@ async function engineFetch(baseUrl, pathPart, options = {}) {
             ok: false,
             status: 0,
             data: null,
-            error: err?.message || String(err),
+            error: formatEngineNetworkError(err),
             code: 'network',
         };
     } finally {
@@ -89,6 +119,23 @@ async function engineFetch(baseUrl, pathPart, options = {}) {
             try { signal.removeEventListener('abort', onOuterAbort); } catch { /* ignore */ }
         }
     }
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {string} pathPart
+ * @param {object} [options]
+ * @param {number} [options.retries] extra attempts on transient network errors (default 0)
+ */
+async function engineFetch(baseUrl, pathPart, options = {}) {
+    const retries = Math.max(0, Math.min(5, Math.floor(Number(options.retries) || 0)));
+    let last = await engineFetchOnce(baseUrl, pathPart, options);
+    for (let i = 0; i < retries && isRetryableEngineNetworkResult(last); i += 1) {
+        if (options.signal?.aborted) return last;
+        await sleep(200 * (i + 1));
+        last = await engineFetchOnce(baseUrl, pathPart, options);
+    }
+    return last;
 }
 
 async function getHealth(baseUrl, options = {}) {
@@ -243,7 +290,12 @@ async function engineFetchSse(baseUrl, pathPart, {
                 data: lastPayload,
             };
         }
-        return { ok: false, error: err.message || String(err), data: lastPayload };
+        return {
+            ok: false,
+            error: formatEngineNetworkError(err),
+            code: 'network',
+            data: lastPayload,
+        };
     } finally {
         clearTimeout(timer);
         if (signal) {
@@ -342,6 +394,9 @@ async function createJob(baseUrl, body = {}, options = {}) {
         method: 'POST',
         body,
         timeoutMs: options.timeoutMs || 600000,
+        // POST is not auto-retried by undici; stale keep-alive after a long ASR job
+        // otherwise surfaces as opaque "fetch failed" / network on the next item.
+        retries: options.retries ?? 2,
     });
 }
 
@@ -491,10 +546,16 @@ async function waitJobViaEvents(baseUrl, jobId, {
             return { ok: false, error: '已取消', cancelled: true };
         }
         // Always refresh final job snapshot (result / error payload).
-        const finalJob = await getJob(baseUrl, jobId, { signal, timeoutMs: 60000 });
+        const finalJob = await getJob(baseUrl, jobId, { signal, timeoutMs: 60000, retries: 2 });
         if (!finalJob.ok) {
             if (terminal?.kind === 'done') {
-                return { ok: false, error: finalJob.error || 'job snapshot failed', data: finalJob.data };
+                // Job likely finished; a flaky GET must not mark the item failed.
+                return {
+                    ok: false,
+                    error: finalJob.error || 'job snapshot failed',
+                    code: 'sse_unavailable',
+                    data: finalJob.data,
+                };
             }
             if (terminal?.kind === 'error') {
                 return { ok: false, error: terminal.error || '任务失败', data: finalJob.data };
@@ -634,6 +695,8 @@ async function waitJob(baseUrl, jobId, {
 
 module.exports = {
     joinUrl,
+    formatEngineNetworkError,
+    isRetryableEngineNetworkResult,
     engineFetch,
     engineFetchSse,
     getHealth,

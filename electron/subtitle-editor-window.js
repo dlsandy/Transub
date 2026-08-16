@@ -389,6 +389,13 @@ function createSubtitleEditorWindow(app, opts = {}) {
         unbindEditorWindow(win);
         armMainMinimizeSuppress(1600);
         restoreMainAfterEditorClosed();
+        // Last editor gone: drop idle llama-server so homepage ASR does not OOM.
+        // Skip when homepage engine/TWAI still holds the compute lock (may need LLM).
+        if (!anyOtherEditorOpen()) {
+            try {
+                require('./local-llm-reclaim').reclaimLocalLlmWhenEditorsGone();
+            } catch (_) { /* ignore */ }
+        }
     });
 
     bindEditorWindow(win, resolvedSub);

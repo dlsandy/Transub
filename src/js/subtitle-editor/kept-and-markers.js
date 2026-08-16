@@ -732,6 +732,49 @@
             await ui.openModal?.({ tab: 'styles' });
         }
 
+        async function assignSpeakerToSelected() {
+            const indexes = typeof getSelectedCueIndexes === 'function'
+                ? getSelectedCueIndexes()
+                : (state.selectedIndex >= 0 ? [state.selectedIndex] : []);
+            if (!indexes.length) {
+                setStatus('请先选择字幕', 'err');
+                return;
+            }
+            const ui = typeof getAssStylesUi === 'function' ? getAssStylesUi() : null;
+            if (!ui?.openSpeakerMap) {
+                setStatus('ASS 样式模块未加载', 'err');
+                return;
+            }
+            let speakers = typeof ui.listSpeakers === 'function' ? ui.listSpeakers() : [];
+            if (!speakers.length) {
+                await ui.openSpeakerMap();
+                setStatus('请先在说话人面板添加说话人', 'info');
+                return;
+            }
+            if (typeof editorChoice === 'function') {
+                const buttons = speakers.slice(0, 8).map((s) => s.name);
+                buttons.push('清除说话人');
+                buttons.push('打开说话人面板…');
+                const pick = await editorChoice('为选中字幕指定说话人', {
+                    title: '指定说话人',
+                    buttons,
+                    cancelId: buttons.length - 1,
+                });
+                if (pick < 0) return;
+                if (pick === speakers.length) {
+                    ui.clearSpeakerFromSelection?.();
+                    return;
+                }
+                if (pick > speakers.length || pick === buttons.length - 1) {
+                    await ui.openSpeakerMap();
+                    return;
+                }
+                ui.assignSpeakerToSelection?.(speakers[pick].id);
+                return;
+            }
+            await ui.openSpeakerMap();
+        }
+
         function buildExportChecklistReport() {
             const low = (state.cueMeta || []).filter((m) => m?.low).length;
             const stylesCore = global.TransubAssStyles;
@@ -868,6 +911,7 @@
                 reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="review-approved">标为已通过</button>');
                 reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="review-edited">标为已改</button>');
                 reviewGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ass-style" title="Pro：为选中字幕套用 ASS Style">◆ ASS 样式</button>');
+                reviewGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ass-speaker" title="Pro：为选中字幕指定说话人">◆ 说话人</button>');
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ctx-reconstruct" title="Pro：语境重构选中条">◆ 语境重构</button>');
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="smart-translate" title="Pro：智能翻译选中条（专训句级 + 剧情贴合润色）">◆ 智能翻译</button>');
             }
@@ -1104,6 +1148,11 @@
                 }
                 if (action === 'ass-style') {
                     void applyAssStyleToSelected();
+                    closeCtxMenus();
+                    return;
+                }
+                if (action === 'ass-speaker') {
+                    void assignSpeakerToSelected();
                     closeCtxMenus();
                     return;
                 }

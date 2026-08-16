@@ -1,6 +1,5 @@
 /**
- * 编辑器标记：书签、A-B 循环、审校状态（浏览器与 Node 共用）
- * 兼容旧 sidecar 中的 speakers / speakerId（只读容忍，无产品 UI）
+ * 编辑器标记：书签、A-B 循环、审校状态、说话人（浏览器与 Node 共用）
  */
 (function (global, factory) {
     const api = factory();
@@ -250,6 +249,79 @@
         return { doc: normalized, speaker: updated };
     }
 
+    function removeSpeaker(doc, speakerId) {
+        const next = normalizeMarkersDoc(doc);
+        const id = String(speakerId || '').trim();
+        if (!id) return { doc: next, removed: false, error: '缺少说话人' };
+        if (!next.speakers.some((s) => s.id === id)) {
+            return { doc: next, removed: false, error: '找不到该说话人' };
+        }
+        next.speakers = next.speakers
+            .filter((s) => s.id !== id)
+            .map((s, i) => normalizeSpeaker(s, i))
+            .filter(Boolean);
+        for (const [key, marker] of Object.entries(next.cueMarkers)) {
+            if (marker?.speakerId !== id) continue;
+            const cleaned = normalizeCueMarker({ ...marker, speakerId: '' });
+            if (cleaned) next.cueMarkers[key] = cleaned;
+            else delete next.cueMarkers[key];
+        }
+        if (next.speakerStyleMap && next.speakerStyleMap[id] != null) {
+            delete next.speakerStyleMap[id];
+        }
+        return { doc: normalizeMarkersDoc(next), removed: true };
+    }
+
+    /**
+     * Assign or clear speakerId on cue indexes.
+     * Pass empty speakerId to clear.
+     */
+    function assignSpeakerToIndexes(doc, cues, indexes, speakerId) {
+        let next = normalizeMarkersDoc(doc);
+        const id = String(speakerId || '').trim();
+        if (id && !next.speakers.some((s) => s.id === id)) {
+            return { doc: next, changed: 0, error: '找不到该说话人' };
+        }
+        const list = Array.isArray(cues) ? cues : [];
+        const idxList = Array.isArray(indexes) ? indexes : [];
+        let changed = 0;
+        for (const raw of idxList) {
+            const i = Number(raw);
+            if (!Number.isInteger(i) || i < 0 || i >= list.length) continue;
+            const cue = list[i];
+            if (!cue) continue;
+            const key = cueMarkerKey(cue, i);
+            const prev = next.cueMarkers[key] || {};
+            const prevId = String(prev.speakerId || '').trim();
+            if (id) {
+                if (prevId === id) continue;
+                next = setCueMarker(next, key, { ...prev, speakerId: id });
+            } else {
+                if (!prevId) continue;
+                next = setCueMarker(next, key, { ...prev, speakerId: '' });
+            }
+            changed += 1;
+        }
+        return { doc: next, changed, speakerId: id || null };
+    }
+
+    function setSpeakerStyleMap(doc, speakerStyleMap) {
+        const next = normalizeMarkersDoc(doc);
+        const styleMap = {};
+        const rawMap = speakerStyleMap && typeof speakerStyleMap === 'object' ? speakerStyleMap : {};
+        for (const [sid, styleName] of Object.entries(rawMap)) {
+            const id = String(sid || '').trim().slice(0, 40);
+            const style = String(styleName || '').replace(/[,]/g, ' ').trim().slice(0, 64);
+            if (id && style) styleMap[id] = style;
+        }
+        next.speakerStyleMap = styleMap;
+        return next;
+    }
+
+    function countSpeakerUsage(cues, doc, speakerId) {
+        return filterIndexesBySpeaker(cues, doc, speakerId).length;
+    }
+
     function setCueMarker(doc, cueKey, patch = {}) {
         const next = normalizeMarkersDoc(doc);
         const key = String(cueKey);
@@ -392,6 +464,10 @@
         abLoopSeekTarget,
         ensureSpeaker,
         renameSpeaker,
+        removeSpeaker,
+        assignSpeakerToIndexes,
+        setSpeakerStyleMap,
+        countSpeakerUsage,
         setCueMarker,
         getCueMarker,
         cueMarkerKey,

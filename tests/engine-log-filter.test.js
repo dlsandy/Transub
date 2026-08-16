@@ -50,6 +50,8 @@ describe('engine-log-filter', () => {
         assert.ok(Array.isArray(ENGINE_LOG_DROP_PATTERNS) && ENGINE_LOG_DROP_PATTERNS.length > 5);
         assert.ok(friendlyEngineError('').includes('失败'));
         assert.ok(friendlyEngineError('aborted').includes('中止'));
+        assert.ok(friendlyEngineError('fetch failed').includes('重试本条'));
+        assert.ok(friendlyEngineError('引擎连接失败').includes('重试本条'));
         const bridgePath = path.join(__dirname, '..', 'electron', 'engine-bridge.js');
         const source = require('fs').readFileSync(bridgePath, 'utf8');
         assert.ok(source.includes("require('./engine-log-filter')"));
