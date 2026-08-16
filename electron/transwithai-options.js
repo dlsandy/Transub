@@ -164,6 +164,7 @@ function mergeTransWithAiOptions(input = {}) {
         rememberLastOpenDir: true,
         lastOpenDir: '',
         startupWindow: 'generator',
+        uiLocale: 'zh-Hans',
         autoUpdateCheckInterval: 'weekly',
         lastAutoUpdateCheckAt: '',
         autoSense: true,
@@ -269,6 +270,15 @@ function mergeTransWithAiOptions(input = {}) {
     merged.startupWindow = (startupRaw === 'editor' || startupRaw === 'subtitle-editor')
         ? 'editor'
         : 'generator';
+
+    // Normalize UI locale (interface language; independent of chineseSubtitleVariant)
+    try {
+        const { normalizeUiLocale } = require('../src/js/i18n-core');
+        merged.uiLocale = normalizeUiLocale(merged.uiLocale);
+    } catch {
+        const raw = String(merged.uiLocale || '').trim();
+        merged.uiLocale = raw === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans';
+    }
 
     // Normalize auto update check frequency
     try {

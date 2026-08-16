@@ -11,10 +11,18 @@ function isTrayNotifyEnabled() {
     return trayNotifyEnabled;
 }
 
+function tx(text) {
+    try {
+        return require('./i18n').tx(text);
+    } catch {
+        return String(text || '');
+    }
+}
+
 function sendNotification(body) {
     if (!trayNotifyEnabled) return false;
     if (!Notification.isSupported()) return false;
-    const text = String(body || '').trim();
+    const text = tx(String(body || '').trim());
     if (!text) return false;
     try {
         const n = new Notification({

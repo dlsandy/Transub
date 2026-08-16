@@ -15,7 +15,10 @@ describe('extracted cores (first-pass monolith split)', () => {
 
     it('infer-stage-progress-core maps stages', () => {
         assert.strictEqual(infer.stageRank('transcribe'), 4);
+        assert.ok(infer.stageRank('translate') > infer.stageRank('transcribe'));
+        assert.ok(infer.stageRank('cleanup') > infer.stageRank('transcribe'));
         assert.strictEqual(infer.isPreTranscribeStage('vad'), true);
+        assert.strictEqual(infer.isPreTranscribeStage('cleanup'), false);
         assert.strictEqual(infer.mapStageProgress('transcribe', 100, 600, 600), 68);
         assert.strictEqual(infer.mapStageProgress('translate', 50), 82);
         assert.strictEqual(infer.mapStageProgress('save'), 99);

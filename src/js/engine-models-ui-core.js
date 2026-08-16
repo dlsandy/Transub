@@ -49,6 +49,9 @@
             || msg.includes('浏览器能打开镜像站')
             || msg.includes('文件实际跳转到')
             || msg.includes('Hub 仓库不存在')
+            || msg.includes('门禁模型')
+            || msg.includes('authorized list')
+            || /gated repo/i.test(msg)
         ) {
             return msg;
         }

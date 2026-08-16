@@ -56,6 +56,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/find-worker-client.js',
     'js/subtitle-editor/workspace-ui.js',
     'js/subtitle-editor/ass-override-ui.js',
+    'js/subtitle-editor/ass-pos-drag.js',
     'js/subtitle-editor/ass-styles-ui.js',
     'js/subtitle-editor/jassub-preview.js',
     'js/subtitle-editor/low-conf-retranscribe.js',
@@ -66,6 +67,9 @@ const REQUIRED_RENDERER_FILES = [
     'js/update-progress.js',
     'js/advanced-llm-pick-window.js',
     'js/eta-core.js',
+    'js/i18n-core.js',
+    'js/i18n-catalogs.js',
+    'js/i18n.js',
     'js/media-extensions-core.js',
     'js/app-path-utils-core.js',
     'js/infer-stage-progress-core.js',
@@ -104,6 +108,7 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-library-core.js',
     'js/library-player-core.js',
     'js/ass-override-core.js',
+    'js/ass-style-packs-core.js',
     'js/ass-styles-core.js',
     'vendor/opencc-js/full.js',
     'vendor/jassub/jassub.js',
@@ -618,6 +623,7 @@ function main() {
         const requiredIncludes = [
             'models/asr/whisper-tiny/**',
             'models/vad/fsmn-vad/**',
+            'models/vad/firered-vad/**',
         ];
         for (const pattern of requiredIncludes) {
             if (!filter.includes(pattern)) {
@@ -714,10 +720,11 @@ function main() {
             errors.push(`内置 FFmpeg 无法运行: ${err && err.message ? err.message : err}`);
         }
     }
-    // Dev tree: large Hub weights OK locally; packaging re-includes only whisper-tiny + fsmn-vad
+    // Dev tree: large Hub weights OK locally; packaging re-includes whisper-tiny + fsmn-vad + firered-vad
     const shippedModels = [
         ['asr', 'whisper-tiny', 'model.bin'],
         ['vad', 'fsmn-vad', 'model.pt'],
+        ['vad', 'firered-vad', path.join('VAD', 'model.pth.tar')],
     ];
     for (const [kind, id, marker] of shippedModels) {
         const markerPath = path.join(root, 'transub-engine', 'models', kind, id, marker);
@@ -733,7 +740,7 @@ function main() {
         try {
             const kids = fs.readdirSync(p).filter((name) => {
                 if (dir === 'asr' && name === 'whisper-tiny') return false;
-                if (dir === 'vad' && name === 'fsmn-vad') return false;
+                if (dir === 'vad' && (name === 'fsmn-vad' || name === 'firered-vad')) return false;
                 return true;
             });
             return kids.length > 0;
@@ -743,7 +750,7 @@ function main() {
     });
     if (engineModelsHeavy) {
         warnings.push(
-            'transub-engine/models 含额外已下载模型（打包仅放行 whisper-tiny / fsmn-vad；其余按需下载）',
+            'transub-engine/models 含额外已下载模型（打包仅放行 whisper-tiny / fsmn-vad / firered-vad；其余按需下载）',
         );
     }
     const engineNvidia = path.join(
@@ -839,7 +846,7 @@ function main() {
             errors.push(`解包目录缺少 Transub Editor.lnk（期望: ${editorLnk}）`);
         }
 
-        // Engine extraFiles: CUDA runtime never ships; only whisper-tiny + fsmn-vad weights ship
+        // Engine extraFiles: CUDA runtime never ships; whisper-tiny + fsmn-vad + firered-vad weights ship
         const packedEngine = path.join(unpackedRoot, 'transub-engine');
         if (fs.existsSync(packedEngine)) {
             const packedNvidia = path.join(
@@ -879,8 +886,9 @@ function main() {
             const allowedWeightDirs = new Set([
                 path.join('models', 'asr', 'whisper-tiny'),
                 path.join('models', 'vad', 'fsmn-vad'),
+                path.join('models', 'vad', 'firered-vad'),
             ]);
-            const weightRe = /\.(onnx|pt|pth|bin|safetensors|gguf|ct2|ckpt)$/i;
+            const weightRe = /\.(onnx|pt|pth|bin|safetensors|gguf|ct2|ckpt|tar)$/i;
             const walkHeavy = (dir, relBase = '', depth = 0) => {
                 if (depth > 8 || !fs.existsSync(dir)) return null;
                 let entries;
@@ -912,6 +920,7 @@ function main() {
             for (const [kind, id, marker] of [
                 ['asr', 'whisper-tiny', 'model.bin'],
                 ['vad', 'fsmn-vad', 'model.pt'],
+                ['vad', 'firered-vad', path.join('VAD', 'model.pth.tar')],
             ]) {
                 const markerPath = path.join(packedEngine, 'models', kind, id, marker);
                 if (!fs.existsSync(markerPath)) {
@@ -929,11 +938,14 @@ function main() {
                 }
                 const allowed = new Set();
                 if (sub === 'asr') allowed.add('whisper-tiny');
-                if (sub === 'vad') allowed.add('fsmn-vad');
+                if (sub === 'vad') {
+                    allowed.add('fsmn-vad');
+                    allowed.add('firered-vad');
+                }
                 const extras = kids.filter((name) => !allowed.has(name));
                 if (extras.length > 0) {
                     errors.push(
-                        `发行包误含 transub-engine/models/${sub}/{${extras.join(',')}}（仅允许 whisper-tiny / fsmn-vad）`,
+                        `发行包误含 transub-engine/models/${sub}/{${extras.join(',')}}（仅允许 whisper-tiny / fsmn-vad / firered-vad）`,
                     );
                 }
             }

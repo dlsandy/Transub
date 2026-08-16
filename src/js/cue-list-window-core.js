@@ -52,11 +52,45 @@
         };
     }
 
+    /**
+     * Scroll offset that keeps `index` visible (nearest / start / center).
+     * `index` is the row position in the currently filtered list (0..total-1).
+     */
+    function scrollTopForIndex({
+        index = 0,
+        total = 0,
+        viewportHeight = 400,
+        rowHeight = DEFAULT_ROW_HEIGHT,
+        currentScrollTop = 0,
+        align = 'nearest',
+    } = {}) {
+        const rh = Math.max(16, Number(rowHeight) || DEFAULT_ROW_HEIGHT);
+        const n = Math.max(0, Math.floor(Number(total) || 0));
+        const vh = Math.max(0, Number(viewportHeight) || 0);
+        if (!n) return 0;
+        const idx = Math.max(0, Math.min(n - 1, Math.floor(Number(index) || 0)));
+        const rowTop = idx * rh;
+        const rowBottom = rowTop + rh;
+        let st = Math.max(0, Number(currentScrollTop) || 0);
+        if (align === 'center') {
+            st = rowTop - Math.max(0, (vh - rh) / 2);
+        } else if (align === 'start') {
+            st = rowTop;
+        } else if (rowTop < st) {
+            st = rowTop;
+        } else if (rowBottom > st + vh) {
+            st = rowBottom - vh;
+        }
+        const maxScroll = Math.max(0, n * rh - vh);
+        return Math.max(0, Math.min(maxScroll, st));
+    }
+
     return {
         DEFAULT_ROW_HEIGHT,
         DEFAULT_OVERSCAN,
         VIRTUALIZE_THRESHOLD,
         shouldVirtualize,
         computeWindow,
+        scrollTopForIndex,
     };
 }));

@@ -6,6 +6,7 @@ const path = require('path');
 
 describe('jassub vendor assets', () => {
     const vendor = path.join(__dirname, '..', 'src', 'vendor', 'jassub');
+    const editorHtml = path.join(__dirname, '..', 'src', 'subtitle-editor.html');
 
     it('has bundled ESM entry, worker, wasm and default font', () => {
         const needed = [
@@ -24,5 +25,14 @@ describe('jassub vendor assets', () => {
         assert.ok(main.includes('workerUrl') || main.includes('new Worker'));
         const worker = fs.readFileSync(path.join(vendor, 'worker.js'), 'utf8');
         assert.ok(worker.includes('setTrack'));
+    });
+
+    it('editor CSP allows wasm + workers for JASSUB', () => {
+        const html = fs.readFileSync(editorHtml, 'utf8');
+        const m = html.match(/http-equiv="Content-Security-Policy"[^>]*content="([^"]+)"/i);
+        assert.ok(m, 'CSP meta missing');
+        const csp = m[1];
+        assert.ok(csp.includes("'wasm-unsafe-eval'"), 'script-src needs wasm-unsafe-eval');
+        assert.ok(/worker-src[^;]*'self'/.test(csp), 'worker-src should allow self');
     });
 });

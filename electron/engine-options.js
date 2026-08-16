@@ -45,6 +45,9 @@ function normalizeVadModelId(value, fallback = 'fsmn-vad') {
     if (!raw) return fallback;
     const lower = raw.toLowerCase();
     if (lower === 'silero' || lower === 'silero_vad') return 'silero-vad';
+    if (lower === 'firered' || lower === 'firered_vad' || lower === 'fire-red' || lower === 'fireredvad') {
+        return 'firered-vad';
+    }
     return raw;
 }
 
@@ -54,6 +57,7 @@ function mergeEngineOptions(input = {}) {
         engineInstallPath: DEFAULT_ENGINE_INSTALL_PATH,
         engineUrl: DEFAULT_ENGINE_URL,
         engineHfEndpoint: DEFAULT_ENGINE_HF_ENDPOINT,
+        engineHfToken: '',
         engineProfile: 'balanced',
         engineAsrModel: 'sensevoice-small',
         engineMtModel: '',
@@ -73,6 +77,11 @@ function mergeEngineOptions(input = {}) {
     } else {
         merged.engineHfEndpoint = String(input.engineHfEndpoint || '').trim().replace(/\/+$/, '');
     }
+    merged.engineHfToken = String(
+        Object.prototype.hasOwnProperty.call(input, 'engineHfToken')
+            ? input.engineHfToken
+            : (merged.engineHfToken || ''),
+    ).trim();
     merged.engineProfile = String(merged.engineProfile || 'balanced').trim() || 'balanced';
     merged.engineAsrModel = String(merged.engineAsrModel || 'sensevoice-small').trim();
     merged.engineMtModel = String(merged.engineMtModel || '').trim();

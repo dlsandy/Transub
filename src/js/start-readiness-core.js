@@ -161,9 +161,16 @@
             label = shortParamsModeLabel(presetId, 12);
             title = `按预设「${presetId}」识别`;
         } else {
-            tone = 'off';
-            label = '设置';
-            title = '按设置里的识别参数';
+            const asrLabel = String(input.asrModelLabel || input.asrModelId || '').trim();
+            if (asrLabel) {
+                tone = 'off';
+                label = shortParamsModeLabel(asrLabel, 12);
+                title = `手动 ASR：${asrLabel}`;
+            } else {
+                tone = 'off';
+                label = '设置';
+                title = '按设置里的识别参数';
+            }
         }
 
         return {

@@ -261,4 +261,34 @@ describe('film audio / free audio options persistence', () => {
         assert.strictEqual(normalized.vadMinSilenceDurationMs, 0);
         assert.strictEqual(normalized.vadSpeechPadMs, 0);
     });
+
+    it('persists smartTranslateHybridMt / plotPolish false when unchecked', () => {
+        const normalized = buildTransWithAiOptionsFromPayload({
+            smartTranslate: true,
+            smartTranslateHybridMt: false,
+            smartTranslatePlotPolish: false,
+            smartTranslatePolishSampleLimit: 12,
+            task: 'translate',
+        }, {});
+        assert.strictEqual(normalized.smartTranslateHybridMt, false);
+        assert.strictEqual(normalized.smartTranslatePlotPolish, false);
+        assert.strictEqual(normalized.smartTranslatePolishSampleLimit, 12);
+
+        const defaults = buildTransWithAiOptionsFromPayload({}, {});
+        assert.strictEqual(defaults.smartTranslateHybridMt, true);
+        assert.strictEqual(defaults.smartTranslatePlotPolish, true);
+        assert.strictEqual(defaults.smartTranslatePolishSampleLimit, 36);
+
+        // Uncheck must overwrite a previously-saved true (not keep current via omission).
+        const off = buildTransWithAiOptionsFromPayload({
+            smartTranslateHybridMt: false,
+            smartTranslatePlotPolish: false,
+        }, {
+            smartTranslateHybridMt: true,
+            smartTranslatePlotPolish: true,
+            smartTranslatePolishSampleLimit: 36,
+        });
+        assert.strictEqual(off.smartTranslateHybridMt, false);
+        assert.strictEqual(off.smartTranslatePlotPolish, false);
+    });
 });

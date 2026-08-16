@@ -30,6 +30,7 @@
         let instance = null;
         let mode = 'off'; // 'off' | 'jassub' | 'approx'
         let failed = false;
+        let lastError = '';
         let lastContent = '';
         let syncTimer = null;
         let startPromise = null;
@@ -50,11 +51,32 @@
             return fmt === 'ass' || fmt === 'ssa' || !!ctx.state.showAssStyleColumn;
         }
 
+        function hideCssOverlay() {
+            const wrap = ctx.els.videoSubtitle;
+            if (!wrap) return;
+            wrap.classList.add('hidden');
+            wrap.classList.remove(
+                'ass-approx-preview',
+                'ass-pos-placed',
+                'ass-align-top', 'ass-align-middle', 'ass-align-bottom',
+                'ass-align-left', 'ass-align-center', 'ass-align-right',
+            );
+            wrap.removeAttribute('data-an');
+            // Never leave drag/pos absolute geometry on the shared overlay node.
+            wrap.style.left = '';
+            wrap.style.right = '';
+            wrap.style.top = '';
+            wrap.style.bottom = '';
+            wrap.style.transform = '';
+            wrap.style.alignItems = '';
+            ctx.els.videoSubtitleText && (ctx.els.videoSubtitleText.textContent = '');
+            ctx.els.videoSubtitleSource && (ctx.els.videoSubtitleSource.textContent = '');
+        }
+
         function buildAssContent() {
             if (!stylesCore?.serializeAssDocument) return EMPTY_ASS;
-            try {
-                ctx.syncDetailToCue?.();
-            } catch { /* ignore */ }
+            // Do NOT syncDetailToCue here: a stale detail textarea can overwrite the
+            // wrong cue while selection is changing, and can smear {\pos} across lines.
             const header = Array.isArray(ctx.state.header) && ctx.state.header.length
                 ? ctx.state.header
                 : (stylesCore.ensureAssHeader
@@ -78,25 +100,12 @@
                 badge.classList.remove('hidden');
                 badge.classList.remove('is-jassub');
                 badge.textContent = '近似预览';
-                badge.title = 'CSS 近似预览（非 libass）。颜色/对齐/字号按 Style 与 {\\an} 等常见 override 估算。';
+                const base = 'CSS 近似预览（非 libass）。颜色/对齐/字号按 Style 与 {\\an}/{\\pos} 等常见 override 估算。';
+                badge.title = lastError ? `${base} JASSUB 未启动：${lastError}` : base;
                 return;
             }
             badge.classList.add('hidden');
             badge.classList.remove('is-jassub');
-        }
-
-        function hideCssOverlay() {
-            const wrap = ctx.els.videoSubtitle;
-            if (!wrap) return;
-            wrap.classList.add('hidden');
-            wrap.classList.remove(
-                'ass-approx-preview',
-                'ass-align-top', 'ass-align-middle', 'ass-align-bottom',
-                'ass-align-left', 'ass-align-center', 'ass-align-right',
-            );
-            wrap.removeAttribute('data-an');
-            ctx.els.videoSubtitleText && (ctx.els.videoSubtitleText.textContent = '');
-            ctx.els.videoSubtitleSource && (ctx.els.videoSubtitleSource.textContent = '');
         }
 
         function notifyMode(next) {
@@ -148,6 +157,7 @@
                     hideCssOverlay();
                     return instance;
                 } catch (err) {
+                    lastError = String(err?.message || err || 'init failed');
                     console.warn('[jassub-preview] init failed, using CSS approx', err);
                     failed = true;
                     instance = null;
@@ -171,11 +181,18 @@
             try {
                 await inst.ready;
                 await inst.renderer.setTrack(content);
-                // paused video needs a forced redraw
-                if (ctx.els.video?.paused) {
+                // Force a redraw for both paused and playing — otherwise {\fad}/{\blur}/Effect
+                // edits may not appear until the next natural cue change.
+                try {
                     await inst.resize?.(true);
+                } catch { /* ignore */ }
+                if (!ctx.els.video?.paused && typeof inst.setCurrentTime === 'function') {
+                    try {
+                        inst.setCurrentTime(ctx.els.video.currentTime);
+                    } catch { /* ignore */ }
                 }
             } catch (err) {
+                lastError = String(err?.message || err || 'setTrack failed');
                 console.warn('[jassub-preview] setTrack failed', err);
                 failed = true;
                 await destroyInstance();
@@ -191,8 +208,15 @@
                 return;
             }
             if (failed) {
-                notifyMode('approx');
-                return;
+                // One-shot retry after leaving ASS (disable clears failed); force also retries.
+                if (force) {
+                    failed = false;
+                    lastError = '';
+                } else {
+                    notifyMode('approx');
+                    setBadge('approx');
+                    return;
+                }
             }
             if (syncTimer) clearTimeout(syncTimer);
             syncTimer = setTimeout(() => {
@@ -219,6 +243,9 @@
 
         async function disable() {
             await destroyInstance();
+            // Allow a fresh JASSUB attempt when returning to ASS context.
+            failed = false;
+            lastError = '';
             if (mode !== 'off') {
                 notifyMode('off');
                 setBadge('off');
@@ -228,6 +255,7 @@
         async function destroy() {
             destroyed = true;
             failed = false;
+            lastError = '';
             await disable();
         }
 
@@ -241,17 +269,24 @@
 
         /**
          * Called from overlay refresh. Returns true when CSS approx should be skipped.
+         * @param {boolean} [force] when true, rebuild libass track immediately (override/effect edits).
          */
-        function onOverlayRefresh() {
+        function onOverlayRefresh(force) {
             if (!isAssContext()) {
                 if (mode !== 'off') void disable();
                 return false;
             }
             if (failed) {
-                notifyMode('approx');
-                return false;
+                if (force) {
+                    failed = false;
+                    lastError = '';
+                } else {
+                    notifyMode('approx');
+                    setBadge('approx');
+                    return false;
+                }
             }
-            scheduleSync(false);
+            scheduleSync(!!force);
             if (mode === 'jassub' || instance) {
                 hideCssOverlay();
                 setBadge('jassub');

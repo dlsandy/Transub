@@ -102,7 +102,7 @@
             return { overrides: out, notes, changed: false };
         }
         // Keep domain specialists chosen by content profile / sense.
-        if (/whisper-ja|anime-whisper|kotoba|reazon|qwen3-asr/i.test(current)) {
+        if (/whisper-ja|anime-whisper|kotoba|reazon|qwen3-asr|cohere-transcribe/i.test(current)) {
             notes.push(`保留感知 ASR ${current}（未改用硬件推荐 ${recommended}）`);
             return { overrides: out, notes, changed: false };
         }

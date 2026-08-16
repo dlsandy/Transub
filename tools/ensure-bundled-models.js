@@ -1,6 +1,7 @@
 /**
  * Ensure small shipped-with-app engine models exist before packaging.
- * Ships: whisper-tiny (LID / smoke) + fsmn-vad (default VAD). Other weights stay on-demand.
+ * Ships: whisper-tiny (LID / smoke) + fsmn-vad (SenseVoice VAD) + firered-vad
+ * (anime/Qwen timing). Other weights stay on-demand.
  *
  * Usage:
  *   node tools/ensure-bundled-models.js
@@ -14,7 +15,7 @@ const root = path.join(__dirname, '..');
 const engineRoot = path.join(root, 'transub-engine');
 const pythonExe = path.join(engineRoot, 'runtime', 'python.exe');
 
-/** @type {{ id: string, kind: string, hubId: string, marker: string }[]} */
+/** @type {{ id: string, kind: string, hubId: string, marker: string, ignorePatterns?: string[] }[]} */
 const SHIPPED = [
     {
         id: 'whisper-tiny',
@@ -27,6 +28,14 @@ const SHIPPED = [
         kind: 'vad',
         hubId: 'alextomcat/speech_fsmn_vad_zh-cn-16k-common-pytorch',
         marker: 'model.pt',
+    },
+    {
+        id: 'firered-vad',
+        kind: 'vad',
+        hubId: 'FireRedTeam/FireRedVAD',
+        // Nested Hub layout; only non-streaming VAD (~2MB).
+        marker: path.join('VAD', 'model.pth.tar'),
+        ignorePatterns: ['AED/**', 'AED/*', 'Stream-VAD/**', 'Stream-VAD/*'],
     },
 ];
 
@@ -55,6 +64,7 @@ function downloadMissing(missing) {
             hubId: e.hubId,
             dest: modelDir(e).replace(/\\/g, '/'),
             id: e.id,
+            ignorePatterns: e.ignorePatterns || null,
         })),
     );
     // Weights only — do not go through models download (that also pip-installs ASR extras).
@@ -71,7 +81,11 @@ for it in items:
     dest = it["dest"]
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     print(f"[ensure-bundled-models] downloading {it['id']} -> {dest}", flush=True)
-    snapshot_download(repo_id=it["hubId"], local_dir=dest)
+    kwargs = {"repo_id": it["hubId"], "local_dir": dest}
+    ignore = it.get("ignorePatterns") or None
+    if ignore:
+        kwargs["ignore_patterns"] = ignore
+    snapshot_download(**kwargs)
     print(f"[ensure-bundled-models] ok {it['id']}", flush=True)
 `;
     const result = spawnSync(pythonExe, ['-c', py, payload], {
@@ -95,7 +109,7 @@ for it in items:
 function main() {
     const missing = SHIPPED.filter((e) => !isReady(e));
     if (!missing.length) {
-        console.log('[ensure-bundled-models] whisper-tiny + fsmn-vad already present');
+        console.log('[ensure-bundled-models] whisper-tiny + fsmn-vad + firered-vad already present');
         return;
     }
     const names = missing.map((e) => e.id).join(', ');

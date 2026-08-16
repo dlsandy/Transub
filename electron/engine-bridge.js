@@ -258,6 +258,11 @@ async function ensureEngineRunning(options = {}) {
             || 'ignore::UserWarning:transformers,ignore::FutureWarning',
     };
     try {
+        const { applyEngineTempEnv } = require('./temp-cleanup');
+        // Keep ASR/Demucs/ffmpeg scratch out of %TEMP%; cleared after each job.
+        env = applyEngineTempEnv(env);
+    } catch { /* optional */ }
+    try {
         const { applyProxyToEnv, normalizeProxyOptions } = require('./proxy-settings');
         // Prefer explicit proxy fields on opts (full settings payload); otherwise keep
         // the proxy already applied to the main process (activeProxy / process.env).
@@ -271,6 +276,11 @@ async function ensureEngineRunning(options = {}) {
     const hfEndpoint = String(opts.engineHfEndpoint || '').trim().replace(/\/+$/, '');
     if (hfEndpoint) {
         env.HF_ENDPOINT = hfEndpoint;
+    }
+    const hfToken = String(opts.engineHfToken || opts.hfToken || '').trim();
+    if (hfToken) {
+        env.HF_TOKEN = hfToken;
+        env.HUGGING_FACE_HUB_TOKEN = hfToken;
     }
     // Avoid Xet/CAS 401s when pulling LFS weights via domestic mirrors.
     if (!env.HF_HUB_DISABLE_XET) {
@@ -400,8 +410,12 @@ async function runEngineBatchLocked({
     minimizeToTray = false,
 }) {
     batchCancelled = false;
+    // Editor LLM idle keep-alive can still hold VRAM; free it before ASR.
+    try {
+        require('./local-llm-reclaim').reclaimLocalLlmBeforeEngineJob(appendEngineLogLine);
+    } catch (_) { /* ignore */ }
     // Restart only when env/PATH/version changed; otherwise reuse a healthy engine.
-    const ensure = await ensureEngineRunning({
+    let ensure = await ensureEngineRunning({
         ...merged,
         shouldStop: () => batchCancelled,
     });
@@ -477,6 +491,13 @@ async function runEngineBatchLocked({
     let lastOutputDir = '';
     const liveBatch = require('./live-batch-queue');
     liveBatch.begin(list);
+    const {
+        createMtUiProgressTracker,
+        setMtUiCurrent,
+        noteEngineTranslatePercent,
+        mapAdapterMtProgress,
+    } = require('./engine-mt-ui-progress');
+    const mtUiProgress = createMtUiProgressTracker();
 
     const jobStartedAt = new Date().toISOString();
     const jobStartedMs = Date.now();
@@ -532,10 +553,27 @@ async function runEngineBatchLocked({
                 signal: batchMtAbortController.signal,
                 onProgress: (info) => {
                     if (batchCancelled) return;
+                    const detail = info?.message || info?.detail || info?.phase || '翻译中';
                     appendEngineLogLine(
-                        `[engine-translate] ${info?.message || info?.detail || info?.phase || '翻译中'}`,
+                        `[engine-translate] ${detail}`,
                         invokeSender,
                     );
+                    // Adapter ticks never reach engine SSE until the HTTP batch returns —
+                    // push them to the UI so translate % / status keep moving.
+                    if (!mtUiProgress.file) {
+                        const cur = liveBatch.getCurrent?.() || '';
+                        if (cur) {
+                            setMtUiCurrent(mtUiProgress, {
+                                file: cur,
+                                index1: liveBatch.getCurrentIndex1?.() || 1,
+                                total: list.length,
+                            });
+                        }
+                    }
+                    const mapped = mapAdapterMtProgress(info, mtUiProgress);
+                    if (mapped) {
+                        sendProgress(invokeSender, mapped);
+                    }
                 },
             });
             if (!mtAdapter?.ok) {
@@ -641,6 +679,11 @@ async function runEngineBatchLocked({
             });
 
             liveBatch.setCurrent(mediaPath);
+            setMtUiCurrent(mtUiProgress, {
+                file: mediaPath,
+                index1,
+                total: list.length,
+            });
             try {
             if (!fs.existsSync(mediaPath)) {
                 failed += 1;
@@ -902,6 +945,35 @@ async function runEngineBatchLocked({
                 createJob,
                 waitJob,
                 shouldStop: () => batchCancelled,
+                pingHealth: async (url) => {
+                    const health = await getHealth(url || ensure.baseUrl, { timeoutMs: 2000 });
+                    return {
+                        ok: !!(health?.ok && health.data?.ok),
+                        code: health?.code || '',
+                        baseUrl: ensure.baseUrl,
+                    };
+                },
+                restartEngine: async () => {
+                    appendEngineLogLine(
+                        '[engine] 引擎连接失败，正在重启后重试本条…',
+                        invokeSender,
+                    );
+                    sendProgress(invokeSender, {
+                        stage: 'starting',
+                        index1,
+                        total: list.length,
+                        file: mediaPath,
+                        detail: '引擎连接失败，正在重启后重试本条…',
+                        percent: 2,
+                    });
+                    const again = await ensureEngineRunning({
+                        ...merged,
+                        forceRestart: true,
+                        shouldStop: () => batchCancelled,
+                    });
+                    if (again?.ok) ensure = again;
+                    return again;
+                },
                 onCandidate: ({ asrModel, index: candIdx }) => {
                     if (batchCancelled) return;
                     if (candIdx > 0) {
@@ -929,6 +1001,10 @@ async function runEngineBatchLocked({
                     const fields = progressFieldsFromWaitEvent(ev);
                     const jid = ev?.data?.id || currentJobId;
                     if (jid) currentJobId = String(jid);
+                    if (String(fields.stage || '').toLowerCase() === 'translate'
+                        || String(fields.stage || '').toLowerCase() === 'mt') {
+                        noteEngineTranslatePercent(mtUiProgress, fields.percent);
+                    }
                     sendProgress(invokeSender, {
                         ...fields,
                         index1,
@@ -1301,6 +1377,9 @@ async function runEngineBatchLocked({
             });
             } finally {
                 liveBatch.clearCurrent();
+                try {
+                    require('./temp-cleanup').cleanupAfterJob();
+                } catch { /* ignore */ }
             }
         }
 
@@ -1374,6 +1453,9 @@ async function runEngineBatchLocked({
             mtAdapter?.stop?.();
         } catch { /* ignore */ }
         abortBatchMtAdapter();
+        try {
+            require('./temp-cleanup').cleanupAfterJob();
+        } catch { /* ignore */ }
         try {
             reclaimLocalComputeAfterEngineBatch({
                 usedExternalMt,
@@ -1564,7 +1646,14 @@ function setupEngineBridge(api, {
             const hfEndpoint = payload.hfEndpoint != null
                 ? String(payload.hfEndpoint || '').trim().replace(/\/+$/, '')
                 : String(options.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-            const optionsWithHf = { ...options, engineHfEndpoint: hfEndpoint };
+            const hfToken = payload.hfToken != null
+                ? String(payload.hfToken || '').trim()
+                : String(options.engineHfToken || '').trim();
+            const optionsWithHf = {
+                ...options,
+                engineHfEndpoint: hfEndpoint,
+                engineHfToken: hfToken,
+            };
             // Restart managed engine so HF_ENDPOINT is applied before Hub downloads.
             if (engineProc) {
                 stopEngineProcess();
@@ -1579,6 +1668,7 @@ function setupEngineBridge(api, {
                 profile: payload.profile || options.engineProfile,
                 modelIds,
                 hfEndpoint,
+                hfToken: hfToken || undefined,
                 force: !!payload.force,
             }, { timeoutMs: 600000 });
             if (!res.ok) {
@@ -1586,7 +1676,9 @@ function setupEngineBridge(api, {
                 const hint = /connecttimeout|10060|timed out|internet connection|connection reset|10054/i.test(String(rawMsg))
                     && !hfEndpoint
                     ? '（可在设置中填写 Hugging Face 镜像 https://hf-mirror.com 后重试）'
-                    : '';
+                    : /gated|authorized list|门禁/i.test(String(rawMsg)) && !hfToken
+                        ? '（请在设置 → 网络填写 Hugging Face Token，并在官网同意模型条款后重试）'
+                        : '';
                 return {
                     ok: false,
                     error: `${rawMsg}${hint}`,
@@ -1760,7 +1852,14 @@ function setupEngineBridge(api, {
             const hfEndpoint = payload.hfEndpoint != null
                 ? String(payload.hfEndpoint || '').trim().replace(/\/+$/, '')
                 : String(options.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-            const optionsWithHf = { ...options, engineHfEndpoint: hfEndpoint };
+            const hfToken = payload.hfToken != null
+                ? String(payload.hfToken || '').trim()
+                : String(options.engineHfToken || '').trim();
+            const optionsWithHf = {
+                ...options,
+                engineHfEndpoint: hfEndpoint,
+                engineHfToken: hfToken,
+            };
 
             if (batchRunning) {
                 return { ok: false, error: '字幕任务进行中，请先停止任务再下载模型 / 组件' };
@@ -2151,6 +2250,7 @@ function setupEngineBridge(api, {
                     profile: profile || undefined,
                     modelIds: engineIds.length ? engineIds : undefined,
                     hfEndpoint,
+                    hfToken: hfToken || undefined,
                     force: !!payload.force,
                 }, {
                     timeoutMs: 1800000,
@@ -2209,7 +2309,9 @@ function setupEngineBridge(api, {
                     const hint = /connecttimeout|10060|timed out|internet connection|connection reset|10054/i.test(String(rawMsg))
                         && !hfEndpoint
                         ? '（可在设置中填写 Hugging Face 镜像 https://hf-mirror.com 后重试）'
-                        : '';
+                        : /gated|authorized list|门禁/i.test(String(rawMsg)) && !hfToken
+                            ? '（请在设置 → 网络填写 Hugging Face Token，并在官网同意模型条款后重试）'
+                            : '';
                     const err = `${rawMsg}${hint}`;
                     emit({ phase: 'error', ok: false, message: err, pct: 0 });
                     return { ok: false, error: err, raw: res.data };
@@ -2374,6 +2476,18 @@ function setupEngineBridge(api, {
 
                 let mtAdapter = null;
                 let resumeOverrides = {};
+                const {
+                    createMtUiProgressTracker,
+                    setMtUiCurrent,
+                    noteEngineTranslatePercent,
+                    mapAdapterMtProgress,
+                } = require('./engine-mt-ui-progress');
+                const resumeMtUi = createMtUiProgressTracker();
+                setMtUiCurrent(resumeMtUi, {
+                    file: String(payload.mediaPath || ''),
+                    index1: 1,
+                    total: 1,
+                });
                 abortBatchMtAdapter();
                 batchMtAbortController = new AbortController();
                 try {
@@ -2406,10 +2520,13 @@ function setupEngineBridge(api, {
                             signal: batchMtAbortController.signal,
                             onProgress: (info) => {
                                 if (batchCancelled) return;
+                                const detail = info?.message || info?.detail || info?.phase || '翻译中';
                                 appendEngineLogLine(
-                                    `[engine-translate] ${info?.message || info?.detail || info?.phase || '翻译中'}`,
+                                    `[engine-translate] ${detail}`,
                                     invokeSender,
                                 );
+                                const mapped = mapAdapterMtProgress(info, resumeMtUi);
+                                if (mapped) sendProgress(invokeSender, mapped);
                             },
                         });
                         const built = buildResumeMtOverrides({
@@ -2443,6 +2560,10 @@ function setupEngineBridge(api, {
                             if (batchCancelled) return;
                             const fields = progressFieldsFromWaitEvent(ev);
                             currentJobId = String(ev?.data?.id || currentJobId || '');
+                            if (String(fields.stage || '').toLowerCase() === 'translate'
+                                || String(fields.stage || '').toLowerCase() === 'mt') {
+                                noteEngineTranslatePercent(resumeMtUi, fields.percent);
+                            }
                             sendProgress(invokeSender, {
                                 ...fields,
                                 file: payload.mediaPath || '',
@@ -3095,6 +3216,9 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
         owner: '字幕编辑器',
         source: 'transcribeRangeWithEngine',
     }, async () => {
+        try {
+            require('./local-llm-reclaim').reclaimLocalLlmBeforeEngineJob(appendEngineLogLine);
+        } catch (_) { /* ignore */ }
         const ensure = await ensureEngineRunning(options);
         if (!ensure.ok) return ensure;
 
@@ -3364,6 +3488,9 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             currentJobId = '';
             try {
                 fs.rmSync(tempRoot, { recursive: true, force: true });
+            } catch { /* ignore */ }
+            try {
+                require('./temp-cleanup').cleanupAfterJob();
             } catch { /* ignore */ }
         }
     });

@@ -76,6 +76,7 @@ flowchart LR
 | 批处理 / ASR 失败引导 | `src/js/batch-recovery-core.js` |
 | ASR 设置归一 / 推荐芯片文案 | `src/js/asr-settings-core.js` |
 | ASR 桌面编排说明 | [asr.md](./asr.md) |
+| ASR 候选：Cohere Transcribe | [asr-cohere-transcribe-feasibility.md](./asr-cohere-transcribe-feasibility.md) |
 | 主窗口任务表排序 | `src/js/task-list-sort-core.js` |
 | 主窗口任务行 HTML | `src/js/task-list-row-core.js` |
 | 主窗口进度展示 | `src/js/progress-display-core.js` |

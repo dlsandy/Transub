@@ -894,6 +894,45 @@ function createMainWindowTray(deps) {
         return win;
     }
 
+    function localizeTip(text) {
+        try {
+            return require('./i18n').tx(text);
+        } catch {
+            return String(text || '');
+        }
+    }
+
+    function rebuildTrayMenu() {
+        if (!tray) return;
+        try {
+            const contextMenu = Menu.buildFromTemplate([
+                { label: localizeTip('显示任务窗口'), click: () => showMainWindow() },
+                {
+                    label: localizeTip('字幕编辑器'),
+                    click: () => {
+                        try {
+                            const { openSubtitleEditorOrPick } = require('./subtitle-editor-window');
+                            void openSubtitleEditorOrPick(app);
+                        } catch (_) { /* ignore */ }
+                    },
+                },
+                {
+                    label: localizeTip('设置'),
+                    click: () => {
+                        try {
+                            const { openSettingsWindow } = require('./settings-window');
+                            openSettingsWindow(app);
+                        } catch (_) { /* ignore */ }
+                    },
+                },
+                { type: 'separator' },
+                { label: localizeTip('退出'), click: () => { void confirmQuitApp(); } },
+            ]);
+            tray.setContextMenu(contextMenu);
+            applyTrayTooltip();
+        } catch (_) { /* ignore */ }
+    }
+
     function maybeShowTrayHint() {
         if (trayHintShown || !tray) return;
         sendNotification('任务已在后台运行，双击托盘图标可查看进度。');
@@ -904,7 +943,7 @@ function createMainWindowTray(deps) {
         if (!tray) return;
         try {
             if (trayProgressEnabled) return;
-            tray.setToolTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP);
+            tray.setToolTip(localizeTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP));
         } catch (_) { /* ignore */ }
     }
 
@@ -925,32 +964,8 @@ function createMainWindowTray(deps) {
         if (icon.isEmpty()) return;
 
         tray = new Tray(icon);
-        tray.setToolTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP);
-
-        const contextMenu = Menu.buildFromTemplate([
-            { label: '显示任务窗口', click: () => showMainWindow() },
-            {
-                label: '字幕编辑器',
-                click: () => {
-                    try {
-                        const { openSubtitleEditorOrPick } = require('./subtitle-editor-window');
-                        void openSubtitleEditorOrPick(app);
-                    } catch (_) { /* ignore */ }
-                },
-            },
-            {
-                label: '设置',
-                click: () => {
-                    try {
-                        const { openSettingsWindow } = require('./settings-window');
-                        openSettingsWindow(app);
-                    } catch (_) { /* ignore */ }
-                },
-            },
-            { type: 'separator' },
-            { label: '退出', click: () => { void confirmQuitApp(); } },
-        ]);
-        tray.setContextMenu(contextMenu);
+        tray.setToolTip(localizeTip(downloadTrayTip || DEFAULT_TRAY_TOOLTIP));
+        rebuildTrayMenu();
         tray.on('double-click', () => showMainWindow());
         tray.on('click', () => {
             if (process.platform === 'win32') showMainWindow();
@@ -1119,10 +1134,10 @@ function createMainWindowTray(deps) {
             const i = Number(payload.index) || 0;
             const t = Number(payload.total) || 0;
             const pct = Number(payload.batchPct);
-            let tip = DEFAULT_TRAY_TOOLTIP;
-            if (t > 0 && i > 0) tip += ` · 第 ${i}/${t}`;
+            let tip = localizeTip(DEFAULT_TRAY_TOOLTIP);
+            if (t > 0 && i > 0) tip += localizeTip(` · 第 ${i}/${t}`);
             if (Number.isFinite(pct)) tip += ` · ${Math.round(pct)}%`;
-            if (payload.etaText) tip += ` · 剩余 ${payload.etaText}`;
+            if (payload.etaText) tip += localizeTip(` · 剩余 ${payload.etaText}`);
             tray.setToolTip(tip);
         }
     }
@@ -1164,6 +1179,7 @@ function createMainWindowTray(deps) {
         revealMainWindowChrome,
         maybeShowTrayHint,
         setupTray,
+        rebuildTrayMenu,
         destroyTray,
         attachTrayBehavior,
         attachOwnedWindowMinimizeGuard,

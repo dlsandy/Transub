@@ -40,6 +40,21 @@ describe('engine-range-asr-policy', () => {
         assert.ok(tiny.includes('sensevoice-small'));
         const ja = policy.buildBatchAsrCandidates('whisper-ja-1.5b');
         assert.ok(ja.indexOf('reazonspeech-k2') < ja.indexOf('sensevoice-small'));
+        const cohere = policy.buildBatchAsrCandidates('cohere-transcribe-03-2026');
+        assert.deepStrictEqual(cohere, [
+            'cohere-transcribe-03-2026',
+            'parakeet-tdt-0.6b-v2',
+            'sensevoice-small',
+            'whisper-tiny',
+            'whisper-large-v3-turbo',
+        ]);
+        const anime = policy.buildBatchAsrCandidates('anime-whisper');
+        assert.ok(anime.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        assert.ok(anime.indexOf('qwen3-asr-1.7b-ja-anime-galgame') < anime.indexOf('sensevoice-small'));
+        const qwen = policy.buildBatchAsrCandidates('qwen3-asr-0.6b');
+        assert.ok(qwen.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        assert.ok(qwen.includes('qwen3-asr-1.7b-ja'));
+        assert.ok(qwen.indexOf('whisper-ja-1.5b') < qwen.indexOf('sensevoice-small'));
         assert.strictEqual(policy.isEmptyAsrFail({ code: 'ASR_EMPTY' }), true);
         assert.strictEqual(policy.isRetryableAsrFail({ error: 'model not found' }), true);
         assert.strictEqual(policy.isRetryableAsrFail({ error: 'cuda oom' }), false);

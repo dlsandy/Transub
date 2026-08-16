@@ -50,6 +50,8 @@ const PACKAGES = [
     { id: 'typing_extensions', spec: 'typing_extensions==4.16.0', importName: 'typing_extensions', required: true },
     { id: 'protobuf', spec: 'protobuf==7.35.1', importName: 'google.protobuf', required: false },
     { id: 'flatbuffers', spec: 'flatbuffers==25.12.19', importName: 'flatbuffers', required: false },
+    // FireRedVAD Python API (weights ship separately; torch still on-demand)
+    { id: 'fireredvad', spec: 'fireredvad==0.0.2', importName: 'fireredvad', required: true },
 ];
 
 function listWheelFiles() {

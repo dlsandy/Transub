@@ -9,6 +9,8 @@ describe('settings-options-normalize-core', () => {
         assert.strictEqual(n.normalizeViewingCleanMode('nope', 'off'), 'off');
         assert.strictEqual(n.normalizeChineseSubtitleVariant('traditional-hk'), 'traditional-hk');
         assert.ok(n.chineseSubtitleVariantLabel('simplified').includes('简'));
+        assert.strictEqual(n.normalizeUiLocale('zh-TW'), 'zh-Hant-TW');
+        assert.strictEqual(n.normalizeUiLocale(''), 'zh-Hans');
     });
 
     it('clamps numeric fields', () => {

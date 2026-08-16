@@ -27,6 +27,15 @@ function classifyWaitFailure(waited) {
     };
 }
 
+function isEngineNetworkFail(res) {
+    if (!res || res.ok || res.cancelled) return false;
+    const code = String(res.code || '').toLowerCase();
+    if (code === 'timeout' || code === 'cancelled') return false;
+    if (code === 'network') return true;
+    return /引擎连接|fetch failed|failed to fetch|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET/i
+        .test(String(res.error || res.data?.message || res.data?.error || ''));
+}
+
 /**
  * Run one createJob + waitJob cycle.
  */
@@ -40,11 +49,80 @@ async function runSingleEngineJob({
     onJobCreated = null,
     createTimeoutMs = 60000,
     waitOptions = {},
+    pingHealth = null,
+    restartEngine = null,
+    createNetworkRetries = 1,
 } = {}) {
-    if (typeof shouldStop === 'function' && shouldStop()) {
-        return { ok: false, cancelled: true, error: '已取消', code: 'cancelled' };
+    let activeBaseUrl = baseUrl;
+    const maxCreateTries = 1 + Math.max(0, Math.min(3, Math.floor(Number(createNetworkRetries) || 0)));
+
+    async function prepare(forceRestart) {
+        if (typeof shouldStop === 'function' && shouldStop()) {
+            return { ok: false, cancelled: true, error: '已取消', code: 'cancelled' };
+        }
+        if (!forceRestart && typeof pingHealth === 'function') {
+            try {
+                const health = await pingHealth(activeBaseUrl);
+                if (health?.ok) {
+                    if (health.baseUrl) activeBaseUrl = health.baseUrl;
+                    return { ok: true };
+                }
+                // Busy engine may miss a short health ping; still try createJob.
+                if (String(health?.code || '') === 'timeout') {
+                    return { ok: true };
+                }
+            } catch { /* treat as down */ }
+        }
+        if (typeof restartEngine === 'function' && (forceRestart || typeof pingHealth === 'function')) {
+            const revived = await restartEngine({
+                forceRestart: true,
+                reason: forceRestart ? 'network' : 'unhealthy',
+            });
+            if (revived?.baseUrl) activeBaseUrl = revived.baseUrl;
+            if (revived && revived.ok === false) {
+                return {
+                    ok: false,
+                    cancelled: !!revived.cancelled,
+                    error: String(revived.error || '引擎未就绪'),
+                    code: revived.code || 'network',
+                };
+            }
+        }
+        return { ok: true };
     }
-    const created = await createJob(baseUrl, jobBody, { timeoutMs: createTimeoutMs });
+
+    const first = await prepare(false);
+    if (first.ok === false) {
+        return {
+            ok: false,
+            cancelled: !!first.cancelled,
+            error: first.error,
+            code: first.code || 'network',
+        };
+    }
+
+    let created = await createJob(activeBaseUrl, jobBody, { timeoutMs: createTimeoutMs });
+    for (let tryN = 1; tryN < maxCreateTries && (!created?.ok || !created?.data?.id); tryN += 1) {
+        if (typeof shouldStop === 'function' && shouldStop()) {
+            return { ok: false, cancelled: true, error: '已取消', code: 'cancelled' };
+        }
+        if (!isEngineNetworkFail(created) && !created?.cancelled) break;
+        if (created?.cancelled) {
+            return { ok: false, cancelled: true, error: '已取消', code: 'cancelled', created };
+        }
+        const revived = await prepare(true);
+        if (revived.ok === false) {
+            return {
+                ok: false,
+                cancelled: !!revived.cancelled,
+                error: revived.error,
+                code: revived.code || created?.code || 'network',
+                created,
+            };
+        }
+        created = await createJob(activeBaseUrl, jobBody, { timeoutMs: createTimeoutMs });
+    }
+
     if (!created?.ok || !created?.data?.id) {
         return {
             ok: false,
@@ -63,7 +141,7 @@ async function runSingleEngineJob({
     if (typeof onJobCreated === 'function') {
         try { onJobCreated(jobId, created); } catch { /* ignore */ }
     }
-    const waited = await waitJob(baseUrl, jobId, {
+    const waited = await waitJob(activeBaseUrl, jobId, {
         shouldStop,
         onEvent,
         ...waitOptions,
@@ -105,6 +183,9 @@ async function runEngineJobWithAsrFailover({
     createTimeoutMs = 60000,
     waitOptions = {},
     candidates = null,
+    pingHealth = null,
+    restartEngine = null,
+    createNetworkRetries = 1,
 } = {}) {
     const list = Array.isArray(candidates) && candidates.length
         ? candidates.map((c) => String(c || '').trim()).filter(Boolean)
@@ -133,6 +214,9 @@ async function runEngineJobWithAsrFailover({
             onJobCreated,
             createTimeoutMs,
             waitOptions,
+            pingHealth,
+            restartEngine,
+            createNetworkRetries,
         });
         if (outcome.ok) {
             return { ...outcome, asrModel, asrAttempts: i + 1, asrCandidates: list };
@@ -266,6 +350,7 @@ async function attachCheckpointResumeHint(baseUrl, jobId, getJobCheckpoint) {
 
 module.exports = {
     classifyWaitFailure,
+    isEngineNetworkFail,
     runSingleEngineJob,
     runEngineJobWithAsrFailover,
     resumeEngineJobAndWait,

@@ -1356,6 +1356,9 @@
             'readinessStrip', 'readinessStripText', 'readinessStripAction',
             'paramsModeMenuWrap', 'paramsModeChip', 'paramsModeBtn', 'paramsModeLabel', 'paramsModeMenu', 'paramsModePresetList',
             'paramsModePresetTabs', 'paramsModeCustomHint',
+            'paramsModeAsrSection', 'paramsModeAsrSectionLabel', 'paramsModeAsrPickSwitch',
+            'paramsModeAsrAutoBtn', 'paramsModeAsrManualBtn', 'paramsModeAsrHint',
+            'paramsModeAsrModelListWrap', 'paramsModeAsrModelList',
             'postBatchQcFixLabel', 'postBatchQcFixMenuWrap', 'postBatchQcFixMenu',
             'senseMemoryStatus', 'clearSenseMemoryBtn',
             'transWithAiStatus', 'openFeedbackBtn', 'openParamsBtn',
@@ -1373,7 +1376,7 @@
             'advancedFeaturesLockHint', 'advancedFeaturesGotoProBtn',
             'engineBackendSelect', 'engineSettingsBlock', 'twaiSettingsBlock', 'twaiCompatFieldset', 'twaiCompatDetails',
             'engineInstallPathInput', 'engineInstallBrowseBtn', 'engineInstallUseBundledBtn', 'engineUrlInput',
-            'engineHfEndpointInput', 'engineHfMirrorPresetBtn', 'engineHfOfficialPresetBtn', 'engineHfTestBtn', 'networkHfStatus',
+            'engineHfEndpointInput', 'engineHfTokenInput', 'engineHfMirrorPresetBtn', 'engineHfOfficialPresetBtn', 'engineHfTestBtn', 'networkHfStatus',
             'proxyEnabledCheck', 'proxyUrlInput', 'proxyBypassInput', 'proxyTestBtn', 'proxyTestStatus', 'proxySettingsFields',
             'engineProfileSelect', 'perfProfileSelect', 'engineAsrModelSelect',
             'asrRecommendChip', 'asrRecommendChipLabel', 'asrRecommendChipDetail',
@@ -1424,7 +1427,7 @@
             'keepTranscriptCheck', 'transcriptKeepDirInput', 'transcriptKeepLimitInput',
             'transcriptKeepDaysInput', 'clearTranscriptCacheBtn', 'historySettingsStatus',
             'trayProgressCheck', 'showTaskResourceUsageCheck', 'rememberLastOpenDirCheck', 'minimizeToTrayCheck', 'minimizeToTrayOnStartCheck', 'trayNotifyCheck',
-            'startupWindowSelect', 'autoUpdateCheckIntervalSelect',
+            'startupWindowSelect', 'uiLocaleSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'postBatchViewingPunctModeSelect', 'postBatchInterjectionModeSelect', 'postBatchOnomatopoeiaModeSelect',
             'autoDeepSenseCheck',
@@ -2032,7 +2035,7 @@
             if (!els.engineAsrModelSelect) return;
             els.engineAsrModelSelect.value = els.quickAsrModelSelect.value;
             els.engineAsrModelSelect.dispatchEvent(new Event('change'));
-            void persistFormOptionsQuiet();
+            adoptManualAsrFromUserChange({ persist: true });
         });
         els.quickVadModelSelect?.addEventListener('change', () => {
             if (!els.engineVadModelSelect) return;
@@ -2096,6 +2099,20 @@
             if (recover && els.paramsModeMenu.contains(recover)) {
                 setParamsModeMenuOpen(false);
                 applySenseRecoveryAction(recover.getAttribute('data-sense-recover-global'));
+                return;
+            }
+            const asrPick = event.target?.closest?.('[data-asr-pick]');
+            if (asrPick && els.paramsModeMenu.contains(asrPick)) {
+                void setParamsModeAsrPickMode(asrPick.getAttribute('data-asr-pick'));
+                return;
+            }
+            const asrModel = event.target?.closest?.('[data-asr-model]');
+            if (asrModel && els.paramsModeMenu.contains(asrModel)) {
+                const id = String(asrModel.getAttribute('data-asr-model') || '').trim();
+                if (id) {
+                    setParamsModeMenuOpen(false);
+                    void selectParamsModeAsrManual(id, { persist: true });
+                }
                 return;
             }
             const item = event.target?.closest?.('[data-params-mode], [data-preset-id]');
@@ -2354,6 +2371,8 @@
     const modelApi = global.TransubTransWithAiModels || null;
     let cachedModelItems = [];
     let cachedEnginePickCatalog = [];
+    /** @type {object | null} */
+    let cachedDemucsProbe = null;
     const ENGINE_DEMUCS_MODEL_ID = 'demucs';
     let engineModelsBusy = false;
     let engineModelsFilter = 'all';
@@ -3850,7 +3869,137 @@
             if (paramsModePresetCache.length) {
                 rebuildParamsModePresetItems(paramsModePresetCache, { preferActiveGroup: true });
             }
+            rebuildParamsModeAsrSection();
         }
+    }
+
+    let paramsModeAsrManualBrowse = false;
+
+    function listInstalledAsrModels() {
+        const models = Array.isArray(cachedEngineModels) ? cachedEngineModels : [];
+        return models.filter((m) => {
+            if (!m?.installed || m?.incomplete) return false;
+            if (String(m.kind || '').toLowerCase() !== 'asr') return false;
+            return !!String(m.id || '').trim();
+        });
+    }
+
+    function resolveParamsModeAsrLabel() {
+        const id = String(els.engineAsrModelSelect?.value || els.quickAsrModelSelect?.value || '').trim();
+        if (!id) return '';
+        const fromSelect = [...(els.engineAsrModelSelect?.options || [])]
+            .find((o) => o.value === id);
+        const selectLabel = String(fromSelect?.textContent || '').trim();
+        if (selectLabel) return selectLabel;
+        const model = listInstalledAsrModels().find((m) => String(m.id || '') === id);
+        return formatEngineModelOptionLabel(model) || id;
+    }
+
+    function rebuildParamsModeAsrSection() {
+        const host = els.paramsModeAsrModelList || document.getElementById('paramsModeAsrModelList');
+        const listWrap = els.paramsModeAsrModelListWrap || document.getElementById('paramsModeAsrModelListWrap');
+        const autoBtn = els.paramsModeAsrAutoBtn || document.getElementById('paramsModeAsrAutoBtn');
+        const manualBtn = els.paramsModeAsrManualBtn || document.getElementById('paramsModeAsrManualBtn');
+        const hint = els.paramsModeAsrHint || document.getElementById('paramsModeAsrHint');
+        const auto = isAutoSenseEnabled() || !!getActiveParamsPresetId();
+        const showManual = !auto || paramsModeAsrManualBrowse;
+        const activeId = String(els.engineAsrModelSelect?.value || '').trim();
+
+        if (auto && !paramsModeAsrManualBrowse) paramsModeAsrManualBrowse = false;
+
+        if (autoBtn) {
+            autoBtn.classList.toggle('is-active', !showManual);
+            autoBtn.setAttribute('aria-pressed', (!showManual) ? 'true' : 'false');
+        }
+        if (manualBtn) {
+            manualBtn.classList.toggle('is-active', !!showManual);
+            manualBtn.setAttribute('aria-pressed', showManual ? 'true' : 'false');
+        }
+        if (hint) {
+            hint.textContent = showManual
+                ? '选用已下载的识别模型；将关闭智能感知与预设类型。'
+                : (isAutoSenseEnabled()
+                    ? '智能感知开启时，ASR 由每部片子决定。'
+                    : '当前随所选预设类型使用其 ASR。');
+        }
+        if (listWrap) {
+            listWrap.classList.toggle('hidden', !showManual);
+        }
+        if (!host) return;
+        host.innerHTML = '';
+        if (!showManual) return;
+        const list = listInstalledAsrModels();
+        if (!list.length) {
+            const row = document.createElement('p');
+            row.className = 'post-task-menu-hint px-1 py-1 border-0 mb-0';
+            row.textContent = '暂无已下载识别模型 · 请到设置 → 模型下载';
+            host.appendChild(row);
+            return;
+        }
+        for (const model of list) {
+            const id = String(model.id || '').trim();
+            if (!id) continue;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'post-task-menu-item';
+            btn.dataset.asrModel = id;
+            btn.setAttribute('role', 'menuitem');
+            if (!auto && id === activeId) btn.classList.add('active');
+            btn.innerHTML = '<i class="fa fa-check post-task-check" aria-hidden="true"></i><span></span>';
+            btn.querySelector('span').textContent = formatEngineModelOptionLabel(model) || id;
+            host.appendChild(btn);
+        }
+    }
+
+    async function setParamsModeAsrPickMode(pick) {
+        const next = String(pick || '').trim() === 'manual' ? 'manual' : 'auto';
+        if (next === 'auto') {
+            paramsModeAsrManualBrowse = false;
+            selectParamsModeSense({ persist: true });
+            rebuildParamsModeAsrSection();
+            return;
+        }
+        paramsModeAsrManualBrowse = true;
+        applyActivePresetIdToSelect('');
+        setAutoSenseEnabled(false, { persist: false });
+        await persistFormOptionsQuiet();
+        rebuildParamsModeAsrSection();
+        syncParamsModeChipUi();
+        syncSenseLockedExtras();
+    }
+
+    async function selectParamsModeAsrManual(modelId, { persist = true } = {}) {
+        const id = String(modelId || '').trim();
+        if (!id || !els.engineAsrModelSelect) return;
+        paramsModeAsrManualBrowse = false;
+        applyActivePresetIdToSelect('');
+        setAutoSenseEnabled(false, { persist: false });
+        ensureSelectValue(els.engineAsrModelSelect, id, { label: id });
+        els.engineAsrModelSelect.dispatchEvent(new Event('change'));
+        mirrorSelectValue(els.engineAsrModelSelect, els.quickAsrModelSelect);
+        if (persist) await persistFormOptionsQuiet();
+        syncParamsModeChipUi();
+        rebuildParamsModeAsrSection();
+        syncTranslateChipUi();
+        syncSenseLockedExtras();
+        const label = resolveParamsModeAsrLabel() || id;
+        showToast(`已手动选用 ASR：${label}`, 'ok');
+    }
+
+    /**
+     * User changed ASR outside the recognition menu (settings / 快捷): leave preset chip.
+     */
+    function adoptManualAsrFromUserChange({ persist = true } = {}) {
+        if (isAutoSenseEnabled()) {
+            if (persist) void persistFormOptionsQuiet();
+            return;
+        }
+        const hadPreset = !!getActiveParamsPresetId();
+        paramsModeAsrManualBrowse = false;
+        if (hadPreset) applyActivePresetIdToSelect('');
+        syncParamsModeChipUi();
+        rebuildParamsModeAsrSection();
+        if (persist) void persistFormOptionsQuiet();
     }
 
     let paramsModePresetTabGroup = '';
@@ -4035,6 +4184,8 @@
                 mtUseForm: !!mtUseFormState,
                 translateTask: readTaskFromForm() === 'translate' || readTaskFromForm() === 'dual',
                 presetDesc: String(activeItem?.title || '').trim(),
+                asrModelId: String(els.engineAsrModelSelect?.value || '').trim(),
+                asrModelLabel: resolveParamsModeAsrLabel(),
             })
             : { label: '设置', title: '', tone: 'off', autoEnabled, presetId };
 
@@ -4068,10 +4219,12 @@
             item.classList.toggle('active', active);
             item.setAttribute('aria-checked', active ? 'true' : 'false');
         });
+        rebuildParamsModeAsrSection();
         syncSenseLockedExtras();
     }
 
     function selectParamsModeSense({ persist = true } = {}) {
+        paramsModeAsrManualBrowse = false;
         if (els.presetSelect) els.presetSelect.value = '';
         setMtUseForm(false, { persist: false });
         setAutoSenseEnabled(true, { persist });
@@ -4081,10 +4234,11 @@
     }
 
     function selectParamsModeCustom({ persist = true } = {}) {
+        paramsModeAsrManualBrowse = true;
         applyActivePresetIdToSelect('');
         setAutoSenseEnabled(false, { persist: false });
         if (persist) void persistFormOptionsQuiet();
-        showToast('已改用设置里的识别参数', 'warn');
+        showToast('已改用手动 ASR', 'warn');
         syncTranslateChipUi();
         syncParamsModeChipUi();
         syncSenseLockedExtras();
@@ -4093,6 +4247,7 @@
     async function selectParamsModePreset(presetId, { persist = true } = {}) {
         const id = String(presetId || '').trim();
         if (!id) return;
+        paramsModeAsrManualBrowse = false;
         const features = global.TransubFeatures;
         const name = (() => {
             const item = [...(els.paramsModeMenu?.querySelectorAll?.('[data-preset-id]') || [])]
@@ -4938,6 +5093,9 @@
         if (els.engineHfEndpointInput && options.engineHfEndpoint != null) {
             els.engineHfEndpointInput.value = options.engineHfEndpoint;
         }
+        if (els.engineHfTokenInput && options.engineHfToken != null) {
+            els.engineHfTokenInput.value = options.engineHfToken;
+        }
         if (els.proxyEnabledCheck) {
             els.proxyEnabledCheck.checked = !!options.proxyEnabled;
         }
@@ -5200,6 +5358,14 @@
                 ? 'editor'
                 : 'generator';
         }
+        if (els.uiLocaleSelect) {
+            const nextLocale = (window.TransubI18n?.normalizeUiLocale
+                || ((v) => (String(v || '').trim() === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans')))(
+                options.uiLocale,
+            );
+            els.uiLocaleSelect.value = nextLocale;
+            window.TransubI18n?.setLocale?.(nextLocale, { apply: true, persist: true });
+        }
         if (els.autoUpdateCheckIntervalSelect) {
             const interval = String(options.autoUpdateCheckInterval || 'weekly').trim().toLowerCase();
             els.autoUpdateCheckIntervalSelect.value = ['off', 'daily', 'weekly', 'monthly'].includes(interval)
@@ -5291,6 +5457,7 @@
                 engineInstallPath: engineInstallPathForSave(),
                 engineUrl: els.engineUrlInput?.value.trim() || 'http://127.0.0.1:8765',
                 engineHfEndpoint: els.engineHfEndpointInput?.value?.trim() ?? 'https://hf-mirror.com',
+                engineHfToken: els.engineHfTokenInput?.value?.trim() ?? '',
                 proxyEnabled: !!els.proxyEnabledCheck?.checked,
                 proxyUrl: els.proxyUrlInput?.value?.trim() || '',
                 proxyBypass: els.proxyBypassInput?.value?.trim() || '',
@@ -5379,6 +5546,9 @@
                 minimizeToTrayOnStart: !!els.minimizeToTrayOnStartCheck?.checked,
                 trayNotifyEnabled: !!els.trayNotifyCheck?.checked,
                 startupWindow: els.startupWindowSelect?.value,
+                uiLocale: els.uiLocaleSelect?.value
+                    || window.TransubI18n?.getLocale?.()
+                    || 'zh-Hans',
                 autoUpdateCheckInterval: els.autoUpdateCheckIntervalSelect?.value,
                 autoSense: isAutoSenseEnabled(),
                 activePresetId: isAutoSenseEnabled()
@@ -6394,6 +6564,7 @@
             engineInstallPath: els.engineInstallPathInput?.value.trim() || cachedBundledEnginePath || '',
             engineUrl: els.engineUrlInput?.value.trim() || '',
             engineHfEndpoint: els.engineHfEndpointInput?.value.trim() || '',
+            engineHfToken: els.engineHfTokenInput?.value.trim() || '',
             engineAutoStart: !!els.engineAutoStartCheck?.checked,
         };
     }
@@ -8155,6 +8326,7 @@
 
         const profile = els.engineProfileSelect?.value || 'balanced';
         const hfEndpoint = els.engineHfEndpointInput?.value.trim() || '';
+        const hfToken = els.engineHfTokenInput?.value.trim() || '';
         engineDownloadActiveSource = 'engine';
         engineDownloadLogLines.length = 0;
         if (els.engineDownloadLog) els.engineDownloadLog.textContent = '';
@@ -8175,6 +8347,7 @@
                 profile,
                 modelIds,
                 hfEndpoint,
+                hfToken,
                 force,
             });
             if (res?.ok) {
@@ -8351,7 +8524,9 @@
         });
         renderList();
         updateStartButton();
-        appendLog(`已选中「${basename(item.path)}」，可点击开始重新处理`, 'info');
+        appendLog(`正在重试「${basename(item.path)}」…`, 'info');
+        showToast('正在重试本条…', 'ok');
+        void startSubtitleGeneration();
     }
 
     async function resumeSingleItem(idx) {
@@ -12348,6 +12523,16 @@
                 void electron?.transubSetUiZoom?.({ uiZoom });
             });
         }
+        if (els.uiLocaleSelect && els.uiLocaleSelect.dataset.bound !== '1') {
+            els.uiLocaleSelect.dataset.bound = '1';
+            els.uiLocaleSelect.addEventListener('change', () => {
+                const next = window.TransubI18n?.normalizeUiLocale?.(els.uiLocaleSelect.value)
+                    || (els.uiLocaleSelect.value === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans');
+                els.uiLocaleSelect.value = next;
+                window.TransubI18n?.setLocale?.(next, { apply: true, persist: true });
+                void persistFormOptionsQuiet();
+            });
+        }
         electron?.onOpenParams?.((payload) => {
             const tab = String(payload?.tab || 'runtime').trim() || 'runtime';
             if (!isStandaloneSettings) {
@@ -12861,6 +13046,8 @@
             }
             syncExpertCustomHints();
             syncExpertExtraChipsUi();
+            // Settings / recommend / quick-ASR may change the model while a preset chip is shown.
+            adoptManualAsrFromUserChange({ persist: false });
         });
         els.vadAggressiveCheck?.addEventListener('change', () => {
             if (els.vadAggressiveCheck?.checked && els.vadSensitiveCheck) {

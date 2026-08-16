@@ -49,6 +49,18 @@ function setCurrent(mediaPath) {
     session.currentKey = normKey(mediaPath);
 }
 
+function getCurrent() {
+    if (!session || !session.currentKey) return '';
+    const item = session.list.find((it) => normKey(itemPath(it)) === session.currentKey);
+    return itemPath(item) || '';
+}
+
+function getCurrentIndex1() {
+    if (!session || !session.currentKey) return 0;
+    const idx = session.list.findIndex((it) => normKey(itemPath(it)) === session.currentKey);
+    return idx >= 0 ? idx + 1 : 0;
+}
+
 function clearCurrent() {
     if (!session) return;
     session.currentKey = '';
@@ -164,6 +176,8 @@ module.exports = {
     isActive,
     getTotal,
     setCurrent,
+    getCurrent,
+    getCurrentIndex1,
     clearCurrent,
     append,
     skip,

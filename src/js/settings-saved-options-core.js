@@ -65,6 +65,9 @@
             engineHfEndpoint: fields.engineHfEndpoint != null
                 ? String(fields.engineHfEndpoint).trim()
                 : 'https://hf-mirror.com',
+            engineHfToken: fields.engineHfToken != null
+                ? String(fields.engineHfToken).trim()
+                : '',
             proxyEnabled: !!fields.proxyEnabled,
             proxyUrl: String(fields.proxyUrl || '').trim(),
             proxyBypass: String(fields.proxyBypass || '').trim()
@@ -180,6 +183,9 @@
             startupWindow: norm.normalizeStartupWindow
                 ? norm.normalizeStartupWindow(fields.startupWindow)
                 : (fields.startupWindow === 'editor' ? 'editor' : 'generator'),
+            uiLocale: norm.normalizeUiLocale
+                ? norm.normalizeUiLocale(fields.uiLocale)
+                : (String(fields.uiLocale || '').trim() === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans'),
             autoUpdateCheckInterval: norm.normalizeAutoUpdateCheckInterval
                 ? norm.normalizeAutoUpdateCheckInterval(fields.autoUpdateCheckInterval)
                 : 'weekly',

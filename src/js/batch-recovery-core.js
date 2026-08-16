@@ -32,6 +32,9 @@
         if (code === 'idle_timeout' || /长时间无响应|idle/i.test(raw)) {
             return 'retry-item';
         }
+        if (code === 'network' || /引擎连接|fetch failed|连接被重置|连接被拒绝/i.test(raw)) {
+            return 'retry-item';
+        }
         if (/模型|未下载|未安装|未就绪|missing model|not found|ASR_EMPTY/i.test(raw) || code === 'asr_empty') {
             return 'open-models';
         }

@@ -21,4 +21,27 @@ describe('cue-list-window-core', () => {
         assert.strictEqual(w.topPad, w.start * 36);
         assert.ok(w.bottomPad >= 0);
     });
+
+    it('scrollTopForIndex keeps row in view (nearest)', () => {
+        const below = win.scrollTopForIndex({
+            index: 50,
+            total: 500,
+            viewportHeight: 360,
+            rowHeight: 36,
+            currentScrollTop: 0,
+            align: 'nearest',
+        });
+        assert.ok(below >= 50 * 36 - 360);
+        assert.ok(below <= 50 * 36);
+
+        const above = win.scrollTopForIndex({
+            index: 2,
+            total: 500,
+            viewportHeight: 360,
+            rowHeight: 36,
+            currentScrollTop: 2000,
+            align: 'nearest',
+        });
+        assert.strictEqual(above, 2 * 36);
+    });
 });

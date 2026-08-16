@@ -96,7 +96,9 @@
     /** Soft-AV ASR preference (installed-first via refineSenseModels). */
     const JA_SOFT_ASR_WANTED = Object.freeze([
         'anime-whisper',
+        'qwen3-asr-1.7b-ja-anime-galgame',
         'whisper-ja-1.5b',
+        'qwen3-asr-1.7b-ja',
         'qwen3-asr-0.6b',
         'whisper-large-v3-turbo',
         'whisper-large-v2',
@@ -1637,6 +1639,8 @@
                 'whisper-ja-1.5b',
                 'kotoba-whisper-v2.0-faster',
                 'anime-whisper',
+                'qwen3-asr-1.7b-ja-anime-galgame',
+                'qwen3-asr-1.7b-ja',
                 'qwen3-asr-0.6b',
                 'whisper-large-v3-turbo',
                 'whisper-large-v2',
@@ -1835,7 +1839,9 @@
                 label: '日语软声 anime-whisper',
                 // Near-equivalent specialists only — turbo/large do not satisfy soft preference.
                 altIds: [
+                    'qwen3-asr-1.7b-ja-anime-galgame',
                     'whisper-ja-1.5b',
+                    'qwen3-asr-1.7b-ja',
                     'qwen3-asr-0.6b',
                 ],
             });
@@ -1845,7 +1851,14 @@
                 kind: 'model',
                 role: 'asr',
                 label: '日语识别 whisper-ja-1.5b',
-                altIds: ['kotoba-whisper-v2.0-faster', 'anime-whisper', 'reazonspeech-k2', 'qwen3-asr-0.6b'],
+                altIds: [
+                    'kotoba-whisper-v2.0-faster',
+                    'anime-whisper',
+                    'reazonspeech-k2',
+                    'qwen3-asr-1.7b-ja-anime-galgame',
+                    'qwen3-asr-1.7b-ja',
+                    'qwen3-asr-0.6b',
+                ],
             });
         } else if (profile === PROFILES.film) {
             push({

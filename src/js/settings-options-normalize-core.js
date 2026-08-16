@@ -84,6 +84,23 @@
         return value === 'editor' ? 'editor' : 'generator';
     }
 
+    function resolveI18nCore() {
+        if (typeof module !== 'undefined' && module.exports) {
+            try { return require('./i18n-core'); } catch { /* ignore */ }
+        }
+        const g = typeof globalThis !== 'undefined' ? globalThis : null;
+        return (g && g.TransubI18nCore) || null;
+    }
+
+    function normalizeUiLocale(value) {
+        const core = resolveI18nCore();
+        if (core && typeof core.normalizeUiLocale === 'function') {
+            return core.normalizeUiLocale(value);
+        }
+        const s = String(value || '').trim();
+        return s === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans';
+    }
+
     function normalizeAutoUpdateCheckInterval(value) {
         const v = String(value || '');
         return AUTO_UPDATE_INTERVALS.includes(v) ? v : 'weekly';
@@ -163,6 +180,7 @@
         optionalFiniteNumber,
         normalizeSubtitleBakMode,
         normalizeStartupWindow,
+        normalizeUiLocale,
         normalizeAutoUpdateCheckInterval,
         resolveEngineMtModelForPersist,
         viewingCleanModesToLegacyFlags,

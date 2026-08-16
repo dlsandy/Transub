@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -43,6 +43,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "i18n:sync": "node tools/sync-i18n-catalogs.js",
+    "i18n:seed-hant": "node tools/seed-zh-hant-tw.js",
     "fetch:av-makers": "node tools/fetch-av-makers.js",
     "encode:tdp": "node tools/encode-tdp-pack.js",
     "encode:tdp:sign": "node tools/encode-tdp-pack.js --sign",
@@ -109,6 +111,7 @@
       "src/js/*-core.js",
       "!src/js/advanced-film-reconstruct-core.js",
       "!src/js/advanced-smart-translate-core.js",
+      "src/js/i18n-catalogs.js",
       "src/js/mt-opaque-strings.js",
       "src/js/mt-sanitize-lexicon.js",
       "src/vendor/opencc-js/**/*",
@@ -118,7 +121,8 @@
       "src/js/av-makers-embed.js",
       "shared/ja-asr-domain-fixes.json",
       "shared/mt-trained-remaps.json",
-      "shared/tdp/tdp-bundled.tpack"
+      "shared/tdp/tdp-bundled.tpack",
+      "shared/i18n/**/*"
     ],
     "asarUnpack": [
       "electron/app.ico",
@@ -226,6 +230,7 @@
           "!**/*.ckpt",
           "models/asr/whisper-tiny/**",
           "models/vad/fsmn-vad/**",
+          "models/vad/firered-vad/**",
           "!models/**/.cache/**"
         ]
       }

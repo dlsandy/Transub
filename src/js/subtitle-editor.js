@@ -28,6 +28,7 @@
     if (!j?.installAssStylesUi) throw new Error("subtitle-editor/ass-styles-ui.js must load before subtitle-editor.js");
     if (!j?.installAssOverrideUi) throw new Error("subtitle-editor/ass-override-ui.js must load before subtitle-editor.js");
     if (!j?.installJassubPreview) throw new Error("subtitle-editor/jassub-preview.js must load before subtitle-editor.js");
+    if (!j?.installAssPosDrag) throw new Error("subtitle-editor/ass-pos-drag.js must load before subtitle-editor.js");
     if (!T.TransubAssStyles) throw new Error("ass-styles-core.js must load before subtitle-editor.js");
     if (!T.TransubAssOverride) throw new Error("ass-override-core.js must load before subtitle-editor.js");
     const {
@@ -165,6 +166,7 @@
         As = null,
         Ov = null,
         Jp = null,
+        Pd = null,
         Xt = null,
         Yt = null,
         st = null,
@@ -1002,7 +1004,7 @@
             i = r >= 0 && r < t.cues.length,
             s = !!n.fromPlayback;
         if (e.detailPane && (e.detailPane.style.opacity = i ? "1" : "0.5"), !i) {
-            e.detailStart && (e.detailStart.value = ""), e.detailDuration && (e.detailDuration.value = ""), e.detailEnd && (e.detailEnd.value = ""), e.detailText && (e.detailText.value = ""), e.detailCps && (e.detailCps.textContent = "CPS \u2014"), e.lineLen && (e.lineLen.textContent = "0"), e.textLen && (e.textLen.textContent = "0"), e.detailWarn && e.detailWarn.classList.add("hidden"), e.detailPairWrap && e.detailPairWrap.classList.add("hidden"), e.detailPairText && (e.detailPairText.textContent = ""), s || at(), t.detailRenderedDurSec = null, t.detailSyncing = !1;
+            e.detailStart && (e.detailStart.value = ""), e.detailDuration && (e.detailDuration.value = ""), e.detailEnd && (e.detailEnd.value = ""), e.detailText && (e.detailText.value = ""), e.detailCps && (e.detailCps.textContent = "CPS \u2014"), e.lineLen && (e.lineLen.textContent = "0"), e.textLen && (e.textLen.textContent = "0"), e.detailWarn && e.detailWarn.classList.add("hidden"), e.detailPairWrap && e.detailPairWrap.classList.add("hidden"), e.detailPairText && (e.detailPairText.textContent = ""), s || at(), t.detailRenderedDurSec = null, t.detailSyncing = !1, As?.syncDetailStyleSelect?.();
             return
         }
         const a = t.cues[r];
@@ -1014,7 +1016,7 @@
                     ? `${t.libraryCompareLabel}（只读）`
                     : (t.pairReadOnly ? "对照轨（只读）" : "对照轨"))
             } else e.detailPairText.textContent = "", e.detailPairWrap.classList.add("hidden");
-        s || at(), wt(), t.detailRenderedDurSec = V(a) / 1e3, t.detailSyncing = !1
+        s || at(), wt(), t.detailRenderedDurSec = V(a) / 1e3, t.detailSyncing = !1, As?.syncDetailStyleSelect?.(), Ov?.syncOverrideControls?.(), Pd?.syncHandle?.()
     }
 
     function Qe() {
@@ -1153,7 +1155,9 @@
                     let q = 0;
                     u.addEventListener("scroll", () => {
                         q || (q = requestAnimationFrame(() => {
-                            q = 0, !(!e.video?.paused && Et()) && C({
+                            // Always refresh the virtual window on scroll. Skipping while
+                            // playing + autoFocus left pad-only blank rows until pause.
+                            q = 0, C({
                                 listOnly: !0,
                                 reuseMeta: !0
                             })
@@ -1210,7 +1214,7 @@
                 <td class="font-mono text-[11px] tabular-nums align-middle ${o.end?"cell-warn":""}">${b(Z(I(i),t.format))}</td>
                 <td class="text-[11px] tabular-nums align-middle ${o.dur?"cell-warn":""}">${b(xt(V(i)))}</td>
                 <td class="cue-cps-cell align-middle ${g?"hot":""}">${m!=null?b(m):"\u2014"}</td>
-                ${styleCol?`<td class="cell-style align-middle col-style" title="${b(styleName)}">${b(styleName)}</td>`:""}
+                ${styleCol?`<td class="cell-style align-middle col-style">${As?.renderStyleCellHtml?.(n, styleName) || b(styleName)}</td>`:""}
                 <td class="cell-text align-middle">${b(l||"\u2014")}</td>
                 ${r?`<td class="cell-pair align-middle" title="${b(c||"")}">${b(c||"\u2014")}</td>`:""}
             </tr>`
@@ -1248,7 +1252,7 @@
                 textIdx = styleCol ? 6 : 5,
                 pairIdx = styleCol ? 7 : 6,
                 styleName = String(i?.ass?.style || "").trim() || "Default";
-            styleCol && l[5] && (l[5].textContent = styleName, l[5].title = styleName), l[textIdx] && (l[textIdx].textContent = c || "\u2014"), U() && l[pairIdx] && (l[pairIdx].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[pairIdx].title = l[pairIdx].textContent === "\u2014" ? "" : l[pairIdx].textContent)
+            styleCol && l[5] && (As?.syncStyleCell ? As.syncStyleCell(l[5], n, styleName) : (l[5].textContent = styleName, l[5].title = styleName)), l[textIdx] && (l[textIdx].textContent = c || "\u2014"), U() && l[pairIdx] && (l[pairIdx].textContent = String(an(i) || "").replace(/\s+/g, " ").trim() || "\u2014", l[pairIdx].title = l[pairIdx].textContent === "\u2014" ? "" : l[pairIdx].textContent)
         }
         n > 0 && vs(n - 1), n < t.cues.length - 1 && vs(n + 1)
     }
@@ -1346,19 +1350,50 @@
             const a = Math.max(0, t.cues[n].startMs / 1e3);
             e.video.currentTime = a, r.play && e.video.play().catch(() => {})
         }
-        if (r.scroll && (e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`)?.scrollIntoView({
-                block: "nearest",
+        if (r.scroll) {
+            zl(n, {
                 behavior: r.fromPlayback ? "auto" : "smooth"
-            }), !r.fromPlayback)) {
-            const o = t.cues[n];
-            if (o && he()) {
-                const l = Math.round((o.startMs + I(o)) / 2);
-                Wi(l, {
-                    marginRatio: .08
-                }) && Be()
+            });
+            if (!r.fromPlayback) {
+                const o = t.cues[n];
+                if (o && he()) {
+                    const l = Math.round((o.startMs + I(o)) / 2);
+                    Wi(l, {
+                        marginRatio: .08
+                    }) && Be()
+                }
             }
         }
         r.fromPlayback || H?.refreshContextActionBar?.()
+    }
+
+    /** Bring a cue into the virtualized list window and scrollIntoView. */
+    function zl(n, r = {}) {
+        if (!e.cueBody || n < 0 || n >= t.cues.length) return null;
+        let i = e.cueBody.querySelector(`tr[data-cue-idx="${n}"]`);
+        const s = T.TransubCueListWindow,
+            a = e.listWrap || e.cueBody.closest?.(".editor-list-wrap"),
+            o = Vt();
+        if (!i && s?.shouldVirtualize?.(o.length) && a) {
+            const l = o.indexOf(n);
+            if (l >= 0) {
+                const c = s.scrollTopForIndex({
+                    index: l,
+                    total: o.length,
+                    viewportHeight: a.clientHeight || 400,
+                    currentScrollTop: a.scrollTop || 0,
+                    align: "nearest"
+                });
+                Math.abs((a.scrollTop || 0) - c) > 1 && (a.scrollTop = c), C({
+                    listOnly: !0,
+                    reuseMeta: !0
+                }), i = e.cueBody.querySelector(`tr[data-cue-idx="${n}"]`)
+            }
+        }
+        return i && (!Na(i) || r.force) && i.scrollIntoView({
+            block: "nearest",
+            behavior: r.behavior || "auto"
+        }), i
     }
 
     function Ss() {
@@ -1544,10 +1579,10 @@
             });
             a = u.sourceText, o = u.targetText, l = u.visible
         } else o = i, l = !!i;
-        if (Ov?.isAssContext?.() && Jp?.onOverlayRefresh?.()) {
+        if (Ov?.isAssContext?.() && Jp?.onOverlayRefresh?.(n)) {
             t.overlayText = `${a}
 ${o}
-${t.dualLineOrder||""}`, t.overlaySourceText = a, t.overlayVisible = !1;
+${t.dualLineOrder||""}`, t.overlaySourceText = a, t.overlayVisible = !1, Pd?.syncHandle?.();
             return
         }
         const c = `${a}
@@ -1555,7 +1590,7 @@ ${o}
 ${t.dualLineOrder||""}`;
         if (!(!n && c === t.overlayText && a === t.overlaySourceText && l === t.overlayVisible)) {
             if (t.overlayText = c, t.overlaySourceText = a, t.overlayVisible = l, !l) {
-                e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText.textContent = "", e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), e.videoSubtitle.classList.remove("line-order-target-first"), Ov?.resetOverlayStyles?.();
+                e.videoSubtitle.classList.add("hidden"), e.videoSubtitleText.textContent = "", e.videoSubtitleSource && (e.videoSubtitleSource.textContent = ""), e.videoSubtitle.classList.remove("line-order-target-first"), Ov?.resetOverlayStyles?.(), Pd?.syncHandle?.();
                 return
             }
             e.videoSubtitleSource && (e.videoSubtitleSource.textContent = a), e.videoSubtitleText.textContent = o, e.videoSubtitle.classList.toggle("line-order-target-first", (t.dualLineOrder || "source-first") === "target-first" && !!(a && o)), e.videoSubtitle.classList.remove("hidden")
@@ -1567,7 +1602,8 @@ ${t.dualLineOrder||""}`;
                 sourceText: a,
                 primaryCue: u
             })
-        } else if (!Ov?.isAssContext?.()) Ov?.resetOverlayStyles?.()
+        } else if (!Ov?.isAssContext?.()) Ov?.resetOverlayStyles?.();
+        Pd?.syncHandle?.()
     }
 
     function Na(n) {
@@ -1665,7 +1701,7 @@ ${t.dualLineOrder||""}`;
                     r = n ? ` \xB7 ${n}` : "";
                 e.videoHint.textContent = `${G(t.videoPath)}${r} \xB7 Space \u64AD\u653E \xB7 Ctrl+S \u4FDD\u5B58`
             } else e.videoHint.textContent = "\u672A\u5173\u8054\u5A92\u4F53\uFF0C\u53EF\u70B9\u51FB\u300C\u5173\u8054\u5A92\u4F53\u300D\uFF1B\u4EA6\u53EF\u4EC5\u7F16\u8F91\u6587\u672C\u4E0E\u65F6\u95F4\u8F74";
-            e.videoEmpty && e.videoEmpty.classList.toggle("visible", !t.videoPath), qr(), Nn(), me()
+            e.videoEmpty && e.videoEmpty.classList.toggle("visible", !t.videoPath), qr(), Nn(), me(), Pd?.syncHandle?.()
         }
     }
     async function _a(n) {
@@ -1748,7 +1784,7 @@ ${t.dualLineOrder||""}`;
             });
             if (!o?.ok) return d(o?.error || "\u52A0\u8F7D\u5B57\u5E55\u5931\u8D25", "err"), !1;
             const l = await Ba(o.path);
-            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), qr(), Ml(), jr({
+            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), Pd?.syncHandle?.(), qr(), Ml(), jr({
                 detail: `\u5DF2\u8BFB\u53D6 ${t.cues.length} \u6761\uFF0C\u6B63\u5728\u51C6\u5907\u7F16\u8F91\u533A\u2026`,
                 statusMessage: `\u6B63\u5728\u6E32\u67D3 ${t.cues.length} \u6761\u5B57\u5E55\u2026`
             }), await Ta(o.path), H?.loadMarkersFromSidecar?.(), Jo(), await Br(o.path), await _r(), C(), jr({
@@ -5712,9 +5748,7 @@ ${t.dualLineOrder||""}`;
     function Ei(n) {
         if (Et() && !(!Number.isFinite(n) || n < 0 || n >= t.cues.length) && !(!e.video || e.video.paused || e.video.ended) && !Nr()) {
             if (n === t.selectedIndex) {
-                const r = e.cueBody?.querySelector(`tr[data-cue-idx="${n}"]`);
-                r && !Na(r) && r.scrollIntoView({
-                    block: "nearest",
+                zl(n, {
                     behavior: "auto"
                 });
                 return
@@ -6993,7 +7027,7 @@ ${t.dualLineOrder||""}`;
             syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), C({
                 listOnly: !0,
                 reuseMeta: !0
-            }), Jp?.scheduleSync?.(!0), It(!0)
+            }), Jp?.scheduleSync?.(!0), It(!0), Pd?.syncHandle?.()
         }
     }), Ov = j.installAssOverrideUi({
         state: t,
@@ -7006,7 +7040,12 @@ ${t.dualLineOrder||""}`;
         syncDetailToCue: x,
         renderCueList: C,
         renderDetailPane: R,
-        refreshOverlay: It
+        refreshOverlay: It,
+        getSelectedCueIndexes: J,
+        isPixelPreviewActive: () => !!Jp?.isActive?.(),
+        onOverrideCommitted: () => {
+            Jp?.scheduleSync?.(!0)
+        }
     }), Jp = j.installJassubPreview({
         state: t,
         els: e,
@@ -7015,7 +7054,28 @@ ${t.dualLineOrder||""}`;
         isAssContext: () => !!Ov?.isAssContext?.(),
         refreshOverlay: It,
         onModeChange: n => {
-            n === "jassub" ? It(!0) : n === "off" && Ov?.syncToolbarVisibility?.()
+            n === "jassub" ? It(!0) : n === "off" && Ov?.syncToolbarVisibility?.(), Pd?.syncHandle?.()
+        }
+    }), Pd = j.installAssPosDrag({
+        state: t,
+        els: e,
+        assOverrideCore: T.TransubAssOverride,
+        assStylesCore: T.TransubAssStyles,
+        setStatus: d,
+        recordUndoBeforeChange: $,
+        setDirty: P,
+        syncDetailToCue: x,
+        renderCueList: C,
+        renderDetailPane: R,
+        refreshOverlay: It,
+        isAssContext: () => !!Ov?.isAssContext?.(),
+        isVideoFocused: () => {
+            const n = document.activeElement;
+            return !!(e.videoWrap && (n === e.videoWrap || e.videoWrap.contains(n)));
+        },
+        isTypingTarget: n => Ct(n),
+        onPosCommitted: () => {
+            Jp?.scheduleSync?.(!0)
         }
     });
     async function runEditorBilingualReview() {
@@ -7208,11 +7268,12 @@ ${t.dualLineOrder||""}`;
         const stylePayload = As?.getExportDocumentPayload?.() || As?.getExportSpeakerPayload?.() || {},
             styles = stylePayload.styles || [],
             header = stylePayload.header || As?.ensureHeader?.() || t.header,
+            exportCues = stylePayload.cues || t.cues,
             summary = As?.summarizeExport?.({
                 assMode: "document",
                 styles,
-                cueCount: t.cues.length
-            }) || `${styles.length || 1} \u4E2A Style \xB7 ${t.cues.length} \u6761`;
+                cueCount: exportCues.length
+            }) || `${styles.length || 1} \u4E2A Style \xB7 ${exportCues.length} \u6761`;
         if (As?.confirmAssExport && !await As.confirmAssExport(summary, "\u5BFC\u51FA ASS\uFF08\u5F53\u524D\u6837\u5F0F\uFF09")) return;
         const i = G(t.path || "subtitle.srt").replace(/\.[^.]+$/, "");
         let s = `${i}.ass`;
@@ -7226,7 +7287,7 @@ ${t.dualLineOrder||""}`;
             defaultName: s,
             format: "ass",
             assMode: "document",
-            cues: t.cues,
+            cues: exportCues,
             styles,
             header
         });
@@ -8313,6 +8374,7 @@ ${t.dualLineOrder||""}`;
         }), e.dualLineOrderSelect?.addEventListener("change", () => {
             ya(e.dualLineOrderSelect.value)
         }), t.dualDisplayMode = zn(), t.dualLineOrder = nn(), e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode), e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder), e.cueBody?.addEventListener("click", s => {
+            if (s.target.closest("select[data-ass-row-style], .ass-row-style-select")) return;
             const a = s.target.closest("tr[data-cue-idx]");
             if (!a) return;
             const o = Number(a.dataset.cueIdx);
@@ -8322,6 +8384,7 @@ ${t.dualLineOrder||""}`;
                 range: s.shiftKey
             }), er()
         }), e.cueBody?.addEventListener("dblclick", s => {
+            if (s.target.closest("select[data-ass-row-style], .ass-row-style-select")) return;
             const a = s.target.closest("tr[data-cue-idx]");
             if (!a) return;
             const o = Number(a.dataset.cueIdx);
@@ -8330,6 +8393,7 @@ ${t.dualLineOrder||""}`;
                 scroll: !0
             }), er()
         }), e.cueBody?.addEventListener("contextmenu", s => {
+            if (s.target.closest("select[data-ass-row-style], .ass-row-style-select")) return;
             const a = s.target.closest("tr[data-cue-idx]");
             a && (s.preventDefault(), or(Number(a.dataset.cueIdx), s.clientX, s.clientY, {
                 scroll: !1
@@ -8522,7 +8586,7 @@ ${t.dualLineOrder||""}`;
         }), e.video?.addEventListener("ratechange", () => {
             e.video && !e.video.paused && ot()
         }), e.video?.addEventListener("loadedmetadata", () => {
-            Nn(), me(), Wr()
+            Nn(), me(), Wr(), Pd?.syncHandle?.(true)
         }), e.video?.addEventListener("timeupdate", () => {
             if (!e.video || e.video.paused) return;
             const s = performance.now();
@@ -8667,9 +8731,13 @@ ${t.dualLineOrder||""}`;
             assStyleOutlineWidth: document.getElementById("editorAssStyleOutlineWidth"),
             assStyleShadow: document.getElementById("editorAssStyleShadow"),
             assStyleAlign: document.getElementById("editorAssStyleAlign"),
+            assStyleAlignGrid: document.getElementById("editorAssStyleAlignGrid"),
+            assStylePreview: document.getElementById("editorAssStylePreview"),
+            assStylePreviewText: document.getElementById("editorAssStylePreviewText"),
             assStyleMarginL: document.getElementById("editorAssStyleMarginL"),
             assStyleMarginR: document.getElementById("editorAssStyleMarginR"),
             assStyleMarginV: document.getElementById("editorAssStyleMarginV"),
+            assStyleBorder: document.getElementById("editorAssStyleBorder"),
             assStyleBold: document.getElementById("editorAssStyleBold"),
             assStyleItalic: document.getElementById("editorAssStyleItalic"),
             assStyleAddBtn: document.getElementById("editorAssStyleAddBtn"),
@@ -8677,17 +8745,43 @@ ${t.dualLineOrder||""}`;
             assStyleDeleteBtn: document.getElementById("editorAssStyleDeleteBtn"),
             assStyleApplyBtn: document.getElementById("editorAssStyleApplyBtn"),
             assStylePresetSelect: document.getElementById("editorAssStylePresetSelect"),
+            assPackSaveBtn: document.getElementById("editorAssPackSaveBtn"),
+            assPackDeleteBtn: document.getElementById("editorAssPackDeleteBtn"),
             assStyleExportBtn: document.getElementById("editorAssStyleExportBtn"),
+            assConvertBtn: document.getElementById("editorAssConvertBtn"),
             assStyleHint: document.getElementById("editorAssStyleHint"),
+            assSpeakerList: document.getElementById("editorAssSpeakerList"),
+            assSpeakerName: document.getElementById("editorAssSpeakerName"),
+            assSpeakerAddBtn: document.getElementById("editorAssSpeakerAddBtn"),
+            assSpeakerAssignBtn: document.getElementById("editorAssSpeakerAssignBtn"),
+            assSpeakerClearBtn: document.getElementById("editorAssSpeakerClearBtn"),
+            assSpeakerDeleteBtn: document.getElementById("editorAssSpeakerDeleteBtn"),
+            assSpeakerGenStylesBtn: document.getElementById("editorAssSpeakerGenStylesBtn"),
+            assSpeakerApplyMapBtn: document.getElementById("editorAssSpeakerApplyMapBtn"),
             assDualPreset: document.getElementById("editorAssDualPreset"),
             assDualLineOrder: document.getElementById("editorAssDualLineOrder"),
             assDualSourceStyle: document.getElementById("editorAssDualSourceStyle"),
             assDualTargetStyle: document.getElementById("editorAssDualTargetStyle"),
             assDualMarginGap: document.getElementById("editorAssDualMarginGap"),
             assDualApplyBtn: document.getElementById("editorAssDualApplyBtn"),
+            assDualDocumentBtn: document.getElementById("editorAssDualDocumentBtn"),
             assDualExportBtn: document.getElementById("editorAssDualExportBtn"),
             exportDualAssBtn: document.getElementById("editorExportDualAssBtn"),
             assOverrideBar: document.getElementById("editorAssOverrideBar"),
+            assOverrideColour: document.getElementById("editorAssOverrideColour"),
+            assOverrideFs: document.getElementById("editorAssOverrideFs"),
+            assEffectPreset: document.getElementById("editorAssEffectPreset"),
+            detailAssStyleWrap: document.getElementById("editorDetailAssStyleWrap"),
+            detailAssStyle: document.getElementById("editorDetailAssStyle"),
+            detailAssEffect: document.getElementById("editorDetailAssEffect"),
+            detailAssPosWrap: document.getElementById("editorDetailAssPosWrap"),
+            detailAssPosX: document.getElementById("editorDetailAssPosX"),
+            detailAssPosY: document.getElementById("editorDetailAssPosY"),
+            detailAssPosApply: document.getElementById("editorDetailAssPosApply"),
+            detailAssPosClear: document.getElementById("editorDetailAssPosClear"),
+            detailAssPosLabel: document.getElementById("editorDetailAssPosLabel"),
+            detailAssPosSnap: document.getElementById("editorDetailAssPosSnap"),
+            assOverrideAn: document.getElementById("editorAssOverrideAn"),
             assPreviewBadge: document.getElementById("editorAssPreviewBadge"),
             semanticReviewBtn: document.getElementById("editorSemanticReviewBtn"),
             sakuraTranslateBtn: document.getElementById("editorSakuraTranslateBtn"),
@@ -9008,6 +9102,8 @@ ${t.dualLineOrder||""}`;
             videoSubtitle: document.getElementById("editorVideoSubtitle"),
             videoSubtitleSource: document.getElementById("editorVideoSubtitleSource"),
             videoSubtitleText: document.getElementById("editorVideoSubtitleText"),
+            assPosHandle: document.getElementById("editorAssPosHandle"),
+            assPosHint: document.getElementById("editorAssPosHint"),
             statusLine: document.getElementById("editorStatusLine"),
             bootProgress: document.getElementById("editorBootProgress"),
             welcome: document.getElementById("editorWelcome"),
@@ -9051,7 +9147,7 @@ ${t.dualLineOrder||""}`;
 
     function da() {
         if (!(!p?.isDesktop || !document.getElementById("editorCueBody")))
-            if (loadLibrarySaveIntent(), syncLibraryBar(), Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
+            if (loadLibrarySaveIntent(), syncLibraryBar(), Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), Pd?.bindUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
                     n?.classList.contains("hidden") && n.setAttribute("inert", "")
                 }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), void loadSystemFontsForAss(), p?.onTransubComputeTaskChanged?.(n => {
                     t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", t.computeBusySince = n?.busy ? Number(n.since) || Date.now() : 0, ar(), Qe()

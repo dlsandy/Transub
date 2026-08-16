@@ -80,6 +80,9 @@ foreach ($c in @($conns)) {
             const { port } = deps.parseHostPort(deps.getBaseUrl() || deps.defaultUrl);
             killListenersOnPort(port);
         } catch { /* ignore */ }
+        try {
+            require('./temp-cleanup').cleanupAfterJob();
+        } catch { /* ignore */ }
     }
 
     function stopLlamaServerQuiet() {

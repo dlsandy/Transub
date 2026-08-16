@@ -1,0 +1,8 @@
+{
+  "app.name": "Transub 字幕生成",
+  "settings.startupAppearance.title": "启动与界面",
+  "settings.uiLocale.label": "界面语言",
+  "settings.uiLocale.tip": "软件界面显示语言。与「中文字幕类型」无关；字幕简繁请在任务或目标语言中单独设置。切换后界面文案会即时转换。",
+  "settings.uiLocale.zhHans": "简体中文",
+  "settings.uiLocale.zhHantTW": "繁体中文"
+}

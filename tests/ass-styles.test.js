@@ -172,7 +172,14 @@ describe('ass-styles-core', () => {
         assert.strictEqual(applied.cues[0].ass.style, 'Lead');
 
         const presets = listStylePresets();
-        assert.ok(presets.length >= 3);
+        assert.ok(presets.length >= 7);
+        assert.ok(presets.some((p) => p.id === 'box'));
+        assert.ok(presets.some((p) => p.id === 'note'));
+        assert.ok(presets.some((p) => p.id === 'karaoke'));
+        assert.ok(presets.some((p) => p.id === 'neon'));
+        const box = applyStylePreset([], 'box', { title: 'P' });
+        assert.strictEqual(box.ok, true);
+        assert.strictEqual(box.styles[0].borderStyle, 3);
         const pack = applyStylePreset([], 'dual-gray', { title: 'P' });
         assert.strictEqual(pack.ok, true);
         assert.ok(pack.styles.some((s) => s.name === 'Source'));
@@ -187,6 +194,31 @@ describe('ass-styles-core', () => {
             lineOrder: 'target-first',
             cueCount: 10,
         }).includes('双语'));
+    });
+
+    it('converts SRT-like cues to ASS session', () => {
+        const { convertDocumentToAss, parseStylesFromHeader } = require('../src/js/ass-styles-core');
+        const result = convertDocumentToAss(
+            [
+                { startMs: 0, endMs: 1000, text: '你好' },
+                { startMs: 1000, endMs: 2000, text: '世界', ass: { style: 'Title' } },
+            ],
+            [],
+            { title: 'Clip', format: 'srt', path: 'F:/work/demo.srt' },
+        );
+        assert.strictEqual(result.format, 'ass');
+        assert.strictEqual(result.pathChanged, true);
+        assert.ok(String(result.path).endsWith('demo.ass'));
+        assert.strictEqual(result.metaFilled, 1);
+        assert.strictEqual(result.cues[0].ass.style, 'Default');
+        assert.strictEqual(result.cues[1].ass.style, 'Title');
+        assert.ok(parseStylesFromHeader(result.header).styles.some((s) => s.name === 'Default'));
+        const again = convertDocumentToAss(result.cues, result.header, {
+            format: 'ass',
+            path: result.path,
+        });
+        assert.strictEqual(again.alreadyAss, true);
+        assert.strictEqual(again.changed, false);
     });
 
     it('serializes ASS document for JASSUB preview', () => {

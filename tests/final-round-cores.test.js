@@ -127,5 +127,21 @@ describe('final-round cores', () => {
         });
         assert.strictEqual(chip.label, '智能感知');
         assert.ok(chip.title.includes('影片') || chip.title.includes('类型') || chip.title.includes('匹配'));
+        const manualAsr = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+            presetId: '',
+            asrModelLabel: 'SenseVoice Small',
+            asrModelId: 'sensevoice-small',
+        });
+        assert.strictEqual(manualAsr.label, 'SenseVoice …');
+        assert.ok(manualAsr.title.includes('手动 ASR'));
+        assert.ok(manualAsr.title.includes('SenseVoice Small'));
+        const presetStillWins = ready.buildParamsModeChipViewModel({
+            autoEnabled: false,
+            presetId: 'ja-av',
+            presetName: '日语软声',
+            asrModelLabel: 'whisper-large-v3-turbo',
+        });
+        assert.strictEqual(presetStillWins.label, '日语软声');
     });
 });
