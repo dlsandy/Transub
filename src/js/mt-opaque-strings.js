@@ -666,6 +666,8 @@
         if (/まんこいっ/.test(s)) return true;
         if (/(?:乳首|ちくび).{0,12}(?:イキ|イッ|いっちゃ|いく)/.test(s)) return true;
         if (/(?:イキ|イッ|いっちゃ).{0,12}(?:乳首|ちくび)/.test(s)) return true;
+        // Nipple without male shoot cue — keep 要去了 (hypothetic 舐められたら / bare 乳首)
+        if (/乳首|ちくび/.test(s)) return true;
         if (/イッちゃいそうよ|イっちゃいそうよ|いっちゃいそうよ|いきそうよ/.test(s)) return true;
         if (/らめらめ|ラメラメ|らめ[ぇえにェ]|ラメェ/.test(s) && /イク|イッ|いっちゃ|イキ/.test(s)) {
             return true;
@@ -958,9 +960,12 @@
                 id: 'dashite.kure.stub',
                 needs: ['dashite'],
                 match: (cur, src) => /出してくれ|出して下さい|出してください/.test(src)
-                    && !/声/.test(src)
-                    && /^(?:拿出来|给我拿|拿来)[…。．.!！?\s]*$/u.test(cur.trim()),
-                ok: (cur, src) => T.shootOutZh,
+                    && !/声|手出|おっぱい/.test(src)
+                    && (
+                        /^(?:拿出来|给我拿|拿来)[…。．.!！?\s]*$/u.test(cur.trim())
+                        || /请摸|摸我|摸吧/.test(cur)
+                    ),
+                ok: (cur, src) => (/请摸|摸我|摸吧/.test(cur) ? T.pleaseShootZh : T.shootOutZh),
             },
             {
                 id: 'dashite.ii.sweat.stub',
@@ -1028,8 +1033,11 @@
             const rule = rules[i];
             if (rule && typeof rule.test === 'function' && rule.test(ctx)) {
                 const out = typeof rule.apply === 'function' ? rule.apply(ctx) : undefined;
-                if (typeof out === 'string') ctx.next = out;
-                return true;
+                if (typeof out === 'string') {
+                    ctx.next = out;
+                    return true;
+                }
+                // undefined apply → try next rule (avoid no-op claim)
             }
         }
         return false;
@@ -1051,8 +1059,8 @@
             rodCoverNoYangwu: new RegExp(`${T.meatRodZh}|${T.rodZh}|${T.jiJiZh}`),
             glans: new RegExp(T.glansZh),
             mankoCover: new RegExp(T.pussyZh),
-            dashiteCover: re('5bCEfOeyvua2snzlj6PmsLR854ix5ray'),
-            ikuCover: re('6KaB5bCEfOimgeWOu3zlsITkuoZ85Y675LqGfOmrmOa9rnzlho3ljrt85LiN6IO95Y67fOWwhOW+l3zlsITov4c='),
+            dashiteCover: re('5bCEfOeyvua2snzlj6PmsLR854ix5rayfOaOj+WHunzmjo/lh7rmnaV85ou/5Ye65p2lfOWwhOeyvnzlsITkuoY='),
+            ikuCover: re('6KaB5bCEfOimgeWOu3zlsITkuoZ85Y675LqGfOmrmOa9rnzlho3ljrt85LiN6IO95Y67fOWwhOW+l3zlsITov4d85bCE5LiA5qyh'),
             senseiCover: re('6ICB5biIfOWFiOeUn3zljLvnlJ8='),
             lickCover: re('6IiUfOWQq3zlj6PkuqR85ZC5'),
             touchCover: re('5pG4fOinpnznorA='),
@@ -1536,7 +1544,12 @@
             },
             {
                 id: 'rod.censored.ochi',
-                test: (ctx) => /おち[○〇◯*]ちん/.test(ctx.s) && !G.rodCoverNoYangwu.test(ctx.next),
+                test: (ctx) => /おち[○〇◯*]ちん/.test(ctx.s) && !G.rodCoverNoYangwu.test(ctx.next)
+                    && (
+                        /出したい|一杯出|出れ|出して|入れない|入れて|挿入|欲しい|直接|最初|さっぱり|すっきり/.test(ctx.s)
+                        || /拿出来|流|插|进不去|想要|直接|^哈|清干净|清爽/.test(ctx.next)
+                        || ctx.len() <= 10
+                    ),
                 apply: (ctx) => {
                     const next = ctx.next;
                     const s = ctx.s;
@@ -1545,8 +1558,631 @@
                     if (/入れない|入れて|挿入/.test(s) || /插|进不去|放不/.test(next)) return S.rodNoInsert;
                     if (/欲しい|直接/.test(s) || /想要|直接/.test(next)) return S.wantRodDirect;
                     if (/最初|出れも/.test(s)) return S.rodFirstTime;
+                    if (/さっぱり|清干净/.test(s + next)) {
+                        return /老师|先生|せんせい/.test(s + next)
+                            ? `那我就来帮老师把${T.meatRodZh}也清干净吧`
+                            : `那我就来把${T.meatRodZh}也清干净吧`;
+                    }
+                    if (/すっきり|清爽/.test(s + next)) return `${T.meatRodZh}感觉好清爽了吗？`;
                     if (ctx.len() <= 10) return T.meatRodEllZh;
+                    return undefined;
+                },
+            },
+            // ── batch-0817 rod unders ──
+            {
+                id: 'rod.taste',
+                test: (ctx) => /味わ|品尝/.test(ctx.s + ctx.next) && /ちんぽ|おちん|しんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `好好品尝这根${T.meatRodZh}的味道吧`,
+            },
+            {
+                id: 'rod.stand',
+                test: (ctx) => /立てて|立起来/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `只要把${T.meatRodZh}立起来就好了哦`,
+            },
+            {
+                id: 'rod.morning.nip',
+                test: (ctx) => /朝のチンポ|早上的/.test(ctx.s + ctx.next) && /乳首|乳头|いっちゃ/.test(ctx.s + ctx.next),
+                apply: () => `用早上的${T.meatRodZh}把乳头弄到去了呢`,
+            },
+            {
+                id: 'rod.not.finger',
+                test: (ctx) => /指じゃなくてちんちん|不是用手指而是用/.test(ctx.s + ctx.next) && /ちんちん|おちん/.test(ctx.s),
+                apply: () => `因为这是第一次不是用手指而是用${T.meatRodZh}啊`,
+            },
+            {
+                id: 'rod.finger.or',
+                test: (ctx) => /指ちんちん/.test(ctx.s) && /插进去|でしょう/.test(ctx.s + ctx.next),
+                apply: () => `用手指还是${T.meatRodZh}插进去吧`,
+            },
+            {
+                id: 'rod.ochinpo.short',
+                test: (ctx) => /おチンポ|おちんぽ/.test(ctx.s) && ctx.len() <= 8 && !G.meatRod.test(ctx.next),
+                apply: () => T.meatRodEllZh,
+            },
+            {
+                id: 'rod.hard.bang',
+                test: (ctx) => /硬邦邦|好硬好硬|变得好硬|已经硬|パンパン|カチカチ/.test(ctx.next + ctx.s)
+                    && /おちん|ちんちん|ちんぽ|デカチン|でかちん/.test(ctx.s),
+                apply: (ctx) => {
+                    if (/デカチン|でかちん/.test(ctx.s)) return `大${T.meatRodZh}…`;
+                    let next = ctx.next;
+                    if (/硬邦邦|好硬|变得好硬|已经硬/.test(next) && !G.meatRod.test(next)) {
+                        next = `${T.meatRodZh}${next}`;
+                    } else if (/パンパン|カチカチ/.test(ctx.s) && !G.meatRod.test(next)) {
+                        next = `${T.meatRodZh}硬得胀鼓鼓的…`;
+                    }
                     return next;
+                },
+            },
+            {
+                id: 'rod.want.more',
+                test: (ctx) => /もっと欲しく|越来越想要/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `越来越想要${T.meatRodZh}了…`,
+            },
+            {
+                id: 'rod.insert.this',
+                test: (ctx) => /入れてもいい|插进来也可以|把这根插/.test(ctx.s + ctx.next)
+                    && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: (ctx) => {
+                    let next = ctx.next
+                        .replace(/把这根(?:肉棒)?/, `把${T.meatRodZh}`)
+                        .replace(/这根(?!肉棒)/, T.meatRodZh);
+                    if (!G.meatRod.test(next)) next = `把${T.meatRodZh}插进来也可以哦`;
+                    return next;
+                },
+            },
+            {
+                id: 'rod.sit',
+                test: (ctx) => /座ってほしい|坐到/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `坐到${T.meatRodZh}上…`,
+            },
+            {
+                id: 'rod.insert.feel',
+                test: (ctx) => /挿れたら|插进来以后|插进来/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんぽ|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: (ctx) => ctx.next.replace(/插进/, `${T.meatRodZh}插进`),
+            },
+            {
+                id: 'rod.want.lick',
+                test: (ctx) => /舐めてほしい|想让你舔/.test(ctx.s + ctx.next)
+                    && /ちんちん|おちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `想让你舔${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.raw.never',
+                test: (ctx) => /生ちんぽ|还没有用插过|入れたことありません/.test(ctx.s + ctx.next),
+                apply: () => `还没有用生${T.meatRodZh}插过…`,
+            },
+            {
+                id: 'rod.refresh',
+                test: (ctx) => /すっきり|清爽/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}感觉好清爽了吗？`,
+            },
+            {
+                id: 'rod.bare.manko.wrong',
+                test: (ctx) => /^(?:小穴)[…。．.!！?\s]*$/u.test(ctx.next.trim())
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !/まんこ/.test(ctx.s),
+                apply: () => T.meatRodEllZh,
+            },
+            {
+                id: 'rod.sensei.big',
+                test: (ctx) => /先生|老师/.test(ctx.s + ctx.next)
+                    && /ちんちん|おちん|デカ/.test(ctx.s)
+                    && /困って|因为|デカく/.test(ctx.s + ctx.next),
+                apply: () => `老师，我的${T.meatRodZh}太大了好烦恼…`,
+            },
+            {
+                id: 'rod.never.licked',
+                test: (ctx) => /舐められたこともない|还没被舔过/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}还没被舔过呢`,
+            },
+            {
+                id: 'rod.bad.kid.out',
+                test: (ctx) => /悪い子のおちん|坏孩子的/.test(ctx.s + ctx.next)
+                    && /出して|掏出/.test(ctx.s + ctx.next),
+                apply: () => `请把这根坏孩子的${T.meatRodZh}掏出来`,
+            },
+            {
+                id: 'rod.sensei.nade',
+                test: (ctx) => /先生/.test(ctx.s) && /おちんちん/.test(ctx.s) && /なでなで|おっぱいしながら/.test(ctx.s),
+                apply: () => `一边揉着老师的奶子，一边色气地摸${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.chiro.remember',
+                test: (ctx) => /ちろちろ/.test(ctx.s) && /おちんちん|ちんちん/.test(ctx.s),
+                apply: () => `${T.meatRodZh}滑来滑去…还记得吗…`,
+            },
+            {
+                id: 'rod.deka',
+                test: (ctx) => /デカチン|でかちん/.test(ctx.s) && !G.meatRod.test(ctx.next) && ctx.len() <= 12,
+                apply: () => `大${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.pain.q',
+                test: (ctx) => /苦しくなっちゃった|变难受/.test(ctx.s + ctx.next) && /おちん|ちんちん/.test(ctx.s),
+                apply: () => `${T.meatRodZh}难受了吗？`,
+            },
+            // ── batch-0817b rod unders ──
+            {
+                id: 'rod.nani.ochi',
+                test: (ctx) => /なにおちん|什么嘛/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s) && ctx.len() <= 8,
+                apply: () => `什么嘛…${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.insert.clean',
+                test: (ctx) => /入れてるところ|插进去的地方/.test(ctx.s + ctx.next)
+                    && /チンポ|ちんぽ|おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `等我把${T.meatRodZh}插进去的地方也弄干净`,
+            },
+            {
+                id: 'rod.longer',
+                test: (ctx) => /長くなっ|变长了/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ|チンポ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}变长了，真是想象得到啊`,
+            },
+            {
+                id: 'rod.holding',
+                test: (ctx) => /持って|拿着/.test(ctx.s + ctx.next) && /おちんちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `拿着${T.meatRodZh}呢`,
+            },
+            {
+                id: 'rod.twitch',
+                test: (ctx) => /ビクビク|一抽一抽/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}一抽一抽的…`,
+            },
+            {
+                id: 'rod.erect.all',
+                test: (ctx) => /勃き|勃起|ピん勃/.test(ctx.s + ctx.next) && /おちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}全都勃起了呢`,
+            },
+            {
+                id: 'rod.times.iku',
+                test: (ctx) => /ちんちん.{0,8}回|回いく/.test(ctx.s) && /おちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}去了大概三次左右…`,
+            },
+            {
+                id: 'rod.how.want',
+                test: (ctx) => /どうしたい|想做什么/.test(ctx.s + ctx.next) && /おちんちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}想做什么？`,
+            },
+            {
+                id: 'rod.fun.q',
+                test: (ctx) => /楽しい|开心/.test(ctx.s + ctx.next) && /チンポ|ちんぽ|ちんちん|おちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}就这么开心吗？`,
+            },
+            {
+                id: 'rod.stand.short',
+                test: (ctx) => /構まり|挺立/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}挺立着…`,
+            },
+            {
+                id: 'rod.also.wet',
+                test: (ctx) => /濡れちゃって|也湿了|大概也湿/.test(ctx.s + ctx.next) && /おちんちん|ちんちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}大概也湿了吧`,
+            },
+            {
+                id: 'rod.swell.excite',
+                test: (ctx) => /むくむく|一柱擎天|興奮/.test(ctx.s + ctx.next) && /おちんちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}也一柱擎天了呢…你兴奋了呢`,
+            },
+            {
+                id: 'rod.ojisan',
+                test: (ctx) => /おじさん|大叔/.test(ctx.s + ctx.next) && /チンポ|ちんぽ|ちんちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `大叔的${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.mama',
+                test: (ctx) => /ママ|妈妈/.test(ctx.s + ctx.next) && /チンポ|ちんぽ|ちんちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `妈妈的${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.see.insert',
+                test: (ctx) => /入って見える|插进去了能看见/.test(ctx.s + ctx.next) && /ちんぽ|チンポ|おちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}插进去了能看见…`,
+            },
+            {
+                id: 'rod.smiling',
+                test: (ctx) => /笑てた|笑着/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s) && ctx.len() <= 8,
+                apply: () => `笑着的${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.want.insert',
+                test: (ctx) => /入れたいんだ|想把插进去/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `想把${T.meatRodZh}插进去`,
+            },
+            {
+                id: 'rod.my.insert',
+                test: (ctx) => /俺のチンポ|我的.{0,4}插/.test(ctx.s + ctx.next) && /チンポ|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `我什么都愿意做，快点插我的${T.meatRodZh}啊…不要`,
+            },
+            {
+                id: 'rod.touch.yabai',
+                test: (ctx) => /触ってたい|おちんぴょう|一直想摸/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `一直想摸的这个${T.meatRodZh}好厉害`,
+            },
+            {
+                id: 'rod.nama.maybe',
+                test: (ctx) => /なまちんぽ|生ちんぽ|生可能/.test(ctx.s + ctx.next) && /ちんぽ|チンポ/.test(ctx.s),
+                apply: () => `生${T.meatRodZh}可能更好`,
+            },
+            {
+                id: 'rod.sensei.clean',
+                test: (ctx) => /さっぱり|清干净/.test(ctx.s + ctx.next)
+                    && /おち[○〇◯*]?ちん|おちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: (ctx) => (/老师|先生|せんせい/.test(ctx.s + ctx.next)
+                    ? `那我就来帮老师把${T.meatRodZh}也清干净吧`
+                    : `那我就来把${T.meatRodZh}也清干净吧`),
+            },
+            {
+                id: 'rod.possessive.short',
+                test: (ctx) => /(?:の)?(?:チンポ|ちんぽ|ちんちん|おちんちん)/.test(ctx.s)
+                    && /^(?:大叔的|妈妈的|全国的|笑着的)[…。．.!！?\s]*$/u.test(ctx.next.trim()),
+                apply: (ctx) => `${ctx.next.replace(/[…。．.!！?\s]*$/u, '')}${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.hard.prefix.short',
+                test: (ctx) => /硬/.test(ctx.next) && /おちん|ちんちん|ちんぽ|オチン/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next) && ctx.len() <= 14,
+                apply: (ctx) => (/^硬/.test(ctx.next.trim()) ? `${T.meatRodZh}${ctx.next}` : ctx.next.replace(/硬/, `${T.meatRodZh}硬`)),
+            },
+            // ── batch-0817eve (12-title focus) ──
+            {
+                id: 'rod.feel.good',
+                test: (ctx) => /気持ちいいでしょ|责任|頼まれて/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 20,
+                apply: () => `${T.meatRodZh}很舒服吧…`,
+            },
+            {
+                id: 'rod.dont.break',
+                test: (ctx) => /折らわ|折断/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `先别急着把${T.meatRodZh}折断…`,
+            },
+            {
+                id: 'rod.exam.feel',
+                test: (ctx) => /受験|考试的感觉/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `我的${T.meatRodZh}感觉超像要考试一样吧？`,
+            },
+            {
+                id: 'rod.moan.stub',
+                test: (ctx) => /おちんちん|ちんちん|ちんぽ|チンポ/.test(ctx.s)
+                    && /^(?:嗯嗯|哈\s*哈|哈|呵呵|呜|呼呼|喂喂)[…。．.!！?\s]*$/u.test(ctx.next.trim())
+                    && !G.meatRod.test(ctx.next),
+                apply: () => T.meatRodEllZh,
+            },
+            // ── batch-0818am residual under ──
+            {
+                id: 'rod.from.behind',
+                test: (ctx) => /後ろからおちん|入れてごらん|来吧.{0,4}插/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `来吧…从后面把${T.meatRodZh}插进去…`,
+            },
+            {
+                id: 'rod.clean.pretty',
+                test: (ctx) => /綺麗になって|变干净|お掃除|清理|打扫/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: (ctx) => {
+                    if (/お掃除|清理|打扫/.test(ctx.s + ctx.next)) {
+                        return /まだまだ|还需要|继续/.test(ctx.s + ctx.next)
+                            ? `${T.meatRodZh}还需要我继续打扫呢`
+                            : `我来帮你把${T.meatRodZh}清理干净吧`;
+                    }
+                    return `${T.meatRodZh}变干净了…`;
+                },
+            },
+            {
+                id: 'rod.more.urge',
+                test: (ctx) => /もっとっ?もっとって|还想要更多/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `得让${T.meatRodZh}也变得还想要更多才行呢`,
+            },
+            {
+                id: 'rod.feel.with',
+                test: (ctx) => /おちんちんでも感じ|用也能有感觉/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `用${T.meatRodZh}也能有感觉…`,
+            },
+            {
+                id: 'rod.bad.kid.gloss',
+                test: (ctx) => /悪い.{0,6}おちん|坏坏的|坏孩子的/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: (ctx) => {
+                    if (/頑張|努力/.test(ctx.s + ctx.next)) return `就让这根坏孩子的${T.meatRodZh}好好努力一番吧`;
+                    if (/帰り|回去/.test(ctx.s + ctx.next)) return `这根坏${T.meatRodZh}还不想回去呢`;
+                    return `真是个坏坏的${T.meatRodZh}呢`;
+                },
+            },
+            {
+                id: 'rod.climax.fill',
+                test: (ctx) => /いっぱいいっぱい|高潮连连/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `被${T.meatRodZh}插得高潮连连啊`,
+            },
+            {
+                id: 'rod.big.face',
+                test: (ctx) => /おっきくして|变得这么大/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `一边露出那样的表情，却把${T.meatRodZh}变得这么大`,
+            },
+            {
+                id: 'rod.panpan.cmd',
+                test: (ctx) => /ぱんぱんにしなさい|弄得的吧/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s),
+                apply: () => `把${T.meatRodZh}弄得胀鼓鼓的吧`,
+            },
+            {
+                id: 'rod.suck.pls',
+                test: (ctx) => /しゃぶら|含住/.test(ctx.s + ctx.next)
+                    && /ちんぽ|チンポ|おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `好呀，请让我含住${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.not.belly',
+                test: (ctx) => /チンポ腹|别管肚子/.test(ctx.s + ctx.next) && /チンポ|ちんぽ/.test(ctx.s),
+                apply: () => `首先别管肚子，先顾${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.cute',
+                test: (ctx) => /可愛いおちん|可爱得不得了/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `嗯，这根${T.meatRodZh}真是可爱得不得了呢`,
+            },
+            {
+                id: 'rod.yummy.whose',
+                test: (ctx) => /チンポはどうだ|北乃|好吃吗/.test(ctx.s + ctx.next)
+                    && /チンポ|ちんぽ|おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 16,
+                apply: () => `好吃吗？北乃的${T.meatRodZh}怎么样？`,
+            },
+            {
+                id: 'rod.inside.sfx',
+                test: (ctx) => /いじゅぶ|在里面地/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}在里面…`,
+            },
+            {
+                id: 'rod.yabai.moan',
+                test: (ctx) => /やばっおちん|おちんちんっ/.test(ctx.s)
+                    && /啊啊|唔|哈/.test(ctx.next)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 20,
+                apply: () => `啊…${T.meatRodZh}…`,
+            },
+            // ── batch-0818pm residual under ──
+            {
+                id: 'rod.shiko.awake',
+                test: (ctx) => /シコシコ/.test(ctx.s)
+                    && /ちんちん|おちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `大家都被${T.meatRodZh}激起来了…在撸呢…`,
+            },
+            {
+                id: 'rod.sfx.short',
+                test: (ctx) => /おちんちん|ちんちん|ちんぽ|チンポ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 12
+                    && !/精|射|出|给[^我]|插|舔|去了|好吗|吗？|欲望|原谅/.test(ctx.next)
+                    && (
+                        /^(?:咻)[\s…~～嗯哈呜.。．!！?]*$/u.test(ctx.next.trim())
+                        || /^(?:嗯+|哈+|呜+)[\s…~～.。．!！?]*$/u.test(ctx.next.trim())
+                        || /^(?:给我|可以吗|道)[…。．.!！?\s]*$/u.test(ctx.next.trim())
+                    ),
+                apply: () => T.meatRodEllZh,
+            },
+            {
+                id: 'rod.forgive.sniff',
+                test: (ctx) => /許|原谅/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `就原谅这根${T.meatRodZh}吧…`,
+            },
+            {
+                id: 'rod.naka.insert',
+                test: (ctx) => /(?:この中に|中に).{0,12}おちん|おちんちん入れて/.test(ctx.s)
+                    && /插/.test(ctx.next)
+                    && !G.meatRod.test(ctx.next),
+                apply: (ctx) => {
+                    const base = ctx.next.replace(/[。．.!！?\s]*$/u, '');
+                    if (/插进去/.test(base)) return base.replace(/插进去/, `把${T.meatRodZh}插进去`);
+                    return `${base}…把${T.meatRodZh}插进去…`;
+                },
+            },
+            {
+                id: 'rod.lick.ok.q',
+                test: (ctx) => /(?:いちんちん|おちんちん|ちんちん).{0,8}舐め|舐めていい/.test(ctx.s)
+                    && /舔|可以/.test(ctx.next)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `可以舔${T.meatRodZh}吗？`,
+            },
+            {
+                id: 'rod.hard.mid',
+                test: (ctx) => /硬くなって|硬了/.test(ctx.s + ctx.next)
+                    && /ちんちん|おちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 18,
+                apply: () => `${T.meatRodZh}硬起来了…`,
+            },
+            {
+                id: 'rod.big.start',
+                test: (ctx) => /おっきいおちん|大开始了/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && /始ま|开始/.test(ctx.s + ctx.next),
+                apply: () => `大${T.meatRodZh}开始了…大${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.surprise.stub',
+                test: (ctx) => /すごいちん|ちんちんびっくり|びっくりして/.test(ctx.s)
+                    && /ちんちん|おちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 22,
+                apply: () => `啊不是…这根${T.meatRodZh}吓到我了…`,
+            },
+            {
+                id: 'rod.thrust.below',
+                test: (ctx) => /下から突|从下面顶/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `呐…再用${T.meatRodZh}从下面顶我一次嘛…`,
+            },
+            {
+                id: 'rod.because.of',
+                test: (ctx) => /のちんちん|ちんちんかい/.test(ctx.s)
+                    && /因为是嘛|ふふ/.test(ctx.s + ctx.next)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 18,
+                apply: () => `因为是他的${T.meatRodZh}嘛…`,
+            },
+            {
+                id: 'rod.sukebe',
+                test: (ctx) => /スケベなちんぽ|色色的/.test(ctx.s + ctx.next)
+                    && /ちんぽ|チンポ|おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 14,
+                apply: () => `色色的${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.shiny',
+                test: (ctx) => /テカテカ|ペカテカ|闪的/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `${T.meatRodZh}亮晶晶的…`,
+            },
+            {
+                id: 'rod.muzumuzu',
+                test: (ctx) => /むずむず|拜拜/.test(ctx.s) && /おちんちん|ちんちん/.test(ctx.s),
+                apply: () => `${T.meatRodZh}痒痒的，拜拜咯…`,
+            },
+            {
+                id: 'rod.entered',
+                test: (ctx) => /おちんちん入って|进来了/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 10,
+                apply: () => `${T.meatRodZh}进来了…`,
+            },
+            {
+                id: 'rod.pull.out',
+                test: (ctx) => /ちんぽを出せ|把.{0,4}掏|拔出来/.test(ctx.s + ctx.next) && /ちんぽ|チンポ|ちんちん/.test(ctx.s),
+                apply: () => `把${T.meatRodZh}掏出来`,
+            },
+            {
+                id: 'rod.yummy',
+                test: (ctx) => /美味しいちんぽ|ちんぽ美味しい|美味的/.test(ctx.s + ctx.next)
+                    && /ちんぽ|チンポ|おちん|ちんちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}好美味…美味的${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.gross.q',
+                test: (ctx) => /気持ち悪|恶心/.test(ctx.s + ctx.next) && /おちんちん|ちんちん|ちんぽ/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}还是好恶心啊？`,
+            },
+            {
+                id: 'rod.feel.manko',
+                test: (ctx) => /おちんちんで.{0,8}まんこ|用好好感受/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `用${T.meatRodZh}好好感受一下我的小穴吧`,
+            },
+            {
+                id: 'rod.licked',
+                test: (ctx) => /おちんちん舐め|被舔着/.test(ctx.s + ctx.next)
+                    && /おちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `${T.meatRodZh}被舔着…`,
+            },
+            {
+                id: 'rod.ass',
+                test: (ctx) => /おしりのおちん|上的/.test(ctx.s + ctx.next) && /おちんちん|ちんちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `屁股上的${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.room',
+                test: (ctx) => /ちんちんのお室|的小房间/.test(ctx.s + ctx.next) && /ちんちん|おちん/.test(ctx.s),
+                apply: () => `也不能忘了${T.meatRodZh}的小房间呢`,
+            },
+            {
+                id: 'rod.punish',
+                test: (ctx) => /お仕置き|惩罚|元気すぎる/.test(ctx.s + ctx.next)
+                    && /おちんちん|ちんちん|ちんぽ/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next),
+                apply: () => `对这根精力过剩的${T.meatRodZh}需要好好惩罚一下呢`,
+            },
+            {
+                id: 'rod.this.fault',
+                test: (ctx) => /このおちんちんのせい|都是这根的错/.test(ctx.s + ctx.next) && /おちん|ちんちん/.test(ctx.s),
+                apply: () => `都是这根${T.meatRodZh}的错吧？`,
+            },
+            {
+                id: 'rod.like',
+                test: (ctx) => /ちんちん好き|好喜欢/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s) && ctx.len() <= 8,
+                apply: () => `好喜欢${T.meatRodZh}`,
+            },
+            {
+                id: 'rod.nama.insert.before',
+                test: (ctx) => /生チンポ|生のチンポ|插入之前/.test(ctx.s + ctx.next) && /チンポ|ちんぽ|入れ/.test(ctx.s),
+                apply: () => `在把生${T.meatRodZh}插进去之前先放松一下吧`,
+            },
+            {
+                id: 'rod.here.nama',
+                test: (ctx) => /生のチンポ入|被插过/.test(ctx.s + ctx.next) && /チンポ|ちんぽ/.test(ctx.s),
+                apply: () => `这里被生${T.meatRodZh}插过了吧？`,
+            },
+            {
+                id: 'rod.hold.mouth',
+                test: (ctx) => /チンポを咥え|咥えん/.test(ctx.s) && /ちんぽ|チンポ|おちん/.test(ctx.s) && !G.meatRod.test(ctx.next),
+                apply: () => `说过喜欢含${T.meatRodZh}的…`,
+            },
+            {
+                id: 'rod.ride',
+                test: (ctx) => /乗って.{0,12}ちんちん|骑在上面/.test(ctx.s + ctx.next) && /ちんちん|おちん|ちんぽ/.test(ctx.s),
+                apply: () => `骑在${T.meatRodZh}上面…`,
+            },
+            {
+                id: 'rod.shy.wet',
+                test: (ctx) => /恥ずかしい/.test(ctx.s) && /ちんちん|おちん|ちんぽ/.test(ctx.s)
+                    && /^(?:好害羞)[…。．.!！?\s啊]*$/u.test(ctx.next.trim()),
+                apply: () => `好害羞啊…${T.meatRodZh}…`,
+            },
+            {
+                id: 'rod.prefix.late',
+                test: (ctx) => /おちんちん|ちんちん|ちんぽ|チンポ|おち[○〇◯*]ちん/.test(ctx.s)
+                    && !G.meatRod.test(ctx.next)
+                    && ctx.len() <= 18
+                    && !/キッチン|スイッチ|ディッチン/.test(ctx.s)
+                    && (
+                        /^(?:什么嘛|诶|拿着呢|挺立着|笑着的|大叔的|妈妈的|嗯嗯|哈\s*哈|喂喂)[…。．.!！?\s]*$/u.test(ctx.next.trim())
+                        || /插进|想把|弄干净|变长|勃起|一抽|湿了|开心|想做什么|清干净|好厉害|可能更好|进来了|恶心|被舔|美味|惩罚|的错/.test(ctx.next)
+                    ),
+                apply: (ctx) => {
+                    const next = ctx.next.trim();
+                    if (/^(?:什么嘛|诶|拿着呢|挺立着|笑着的|大叔的|妈妈的|嗯嗯|哈\s*哈|喂喂)[…。．.!！?\s]*$/u.test(next)) {
+                        return `${next.replace(/[…。．.!！?\s]*$/u, '')}…${T.meatRodZh}…`;
+                    }
+                    if (/插进|想把|弄干净|变长|勃起|一抽|湿了|开心|想做什么|清干净|好厉害|可能更好|进来了|恶心|被舔|美味|惩罚|的错/.test(next)) {
+                        return /肉棒/.test(next) ? next : `${T.meatRodZh}${next}`;
+                    }
+                    return undefined;
                 },
             },
         ];
@@ -1569,8 +2205,18 @@
             },
             {
                 id: 'manko.kitchen',
-                test: (ctx) => /おまんこに|キッチンちん|插进去/.test(ctx.next + ctx.s) && /まんこ/.test(ctx.s),
+                // Only invent 肉棒 when JA also has rod/insert — bare おまんこに失礼 must not invent_rod
+                test: (ctx) => /まんこ/.test(ctx.s) && (
+                    /キッチンちん/.test(ctx.s)
+                    || (/おまんこに/.test(ctx.s) && /(?:入れ|挿入|ちんぽ|おちん|チンポ|ちんちん)/.test(ctx.s))
+                    || (/插进去|插肉棒/.test(ctx.next) && /まんこ/.test(ctx.s))
+                ),
                 apply: () => S.pussyInsertRod,
+            },
+            {
+                id: 'manko.excuse',
+                test: (ctx) => /おまんこに/.test(ctx.s) && /失礼/.test(ctx.s) && ctx.len() <= 12,
+                apply: () => `往色色的${T.pussyZh}里…失礼了…`,
             },
             {
                 id: 'manko.look.lick',
@@ -1653,8 +2299,15 @@
             },
             {
                 id: 'dashite.forced',
-                test: (ctx) => /出されて/.test(ctx.s) && /肉棒|ちんぽ/.test(ctx.next + ctx.s),
-                apply: () => S.forcedShoot,
+                test: (ctx) => /出されて/.test(ctx.s) && /肉棒|ちんぽ|精子|精液|ザーメン|射精/.test(ctx.next + ctx.s),
+                apply: (ctx) => {
+                    if (/精子|精液|ザーメン/.test(ctx.s)) {
+                        let next = ctx.next;
+                        if (!/射/.test(next)) next = `${next.replace(/[。．.!！?\s]*$/u, '')}…射出来了`;
+                        return next;
+                    }
+                    return S.forcedShoot;
+                },
             },
             {
                 id: 'dashite.are',
@@ -1685,9 +2338,97 @@
                     return T.shootOutEllZh;
                 },
             },
+            {
+                id: 'dashite.moan.stub',
+                test: (ctx) => /出して/.test(ctx.s)
+                    && !/セレブ|感出|書き出|口出|手出|声出|突き出|車出|足出|提出|話しながら|知りつき|喋い/.test(ctx.s)
+                    && /^(?:嗯[\s嗯]*|哈\s*哈|哈|哈呜)[…。．.!！?\s]*$/u.test(ctx.next.trim())
+                    && !G.dashiteCover.test(ctx.next),
+                apply: (ctx) => (/もっと/.test(ctx.s) ? `再多射出来…嗯` : T.shootOutEllZh),
+            },
+            {
+                id: 'dashite.kure.touch',
+                test: (ctx) => /出してくれ|出して下さい|出してください/.test(ctx.s)
+                    && !/声|手出|おっぱい|触って/.test(ctx.s)
+                    && /摸/.test(ctx.next)
+                    && !G.dashiteCover.test(ctx.next),
+                apply: () => T.pleaseShootZh,
+            },
+            {
+                id: 'dashite.dame.you',
+                test: (ctx) => /ダメ出して|だめ出して/.test(ctx.s),
+                apply: () => `不行了…射出来吧…`,
+            },
+            {
+                id: 'dashite.semen.proof',
+                test: (ctx) => /射精して/.test(ctx.s) && /証拠|证据|仲良く/.test(ctx.s + ctx.next),
+                apply: () => `作为关系变好的证据…就这样射着…`,
+            },
+            {
+                id: 'dashite.talk.while',
+                test: (ctx) => /話しながら出して|出してたじゃん/.test(ctx.s),
+                apply: () => `刚才还一边说话一边射出来了呢`,
+            },
+            {
+                id: 'dashite.deep.lots',
+                test: (ctx) => /奥にたくさん出して|たくさん出して/.test(ctx.s) && /ダメ|だめ|もう/.test(ctx.s),
+                apply: () => `不行了…往深处多射出来…`,
+            },
+            {
+                id: 'dashite.want.more',
+                test: (ctx) => /出してほし|出してよ|もっと\s*出して|高潮了/.test(ctx.s + ctx.next)
+                    && /出して/.test(ctx.s)
+                    && !/セレブ|感出|書き出|喋い|知りつき|話しながら/.test(ctx.s)
+                    && !G.dashiteCover.test(ctx.next),
+                apply: (ctx) => {
+                    if (/高潮/.test(ctx.next)) return `别再让我高潮了…再射出来啊…`;
+                    if (/もっと/.test(ctx.s)) return `再多射出来…`;
+                    return T.shootOutEllZh;
+                },
+            },
+            {
+                id: 'dashite.bare.ok',
+                test: (ctx) => /^出して[。．.!！?\s]*$/u.test(ctx.s.trim())
+                    && /可以的吧|可以吗/.test(ctx.next),
+                apply: () => T.shootOutEllZh,
+            },
+            {
+                id: 'dashite.naka.plenty',
+                test: (ctx) => /中にたっぷり出され|出されたな/.test(ctx.s)
+                    && /^(?:嗯嗯|哈\s*哈|哈)[…。．.!！?\s]*$/u.test(ctx.next.trim()),
+                apply: () => `里面被射得好满…`,
+            },
+            {
+                id: 'dashite.continue',
+                test: (ctx) => /元と出して|就先继续/.test(ctx.s + ctx.next) && /出して/.test(ctx.s),
+                apply: () => `继续射出来…嗯`,
+            },
         ];
 
         const iku = [
+            {
+                id: 'iku.dont.want',
+                test: (ctx) => /イキたくない|不想去/.test(ctx.s + ctx.next),
+                apply: () => `我可不想去啊…`,
+            },
+            {
+                id: 'iku.want.insert',
+                test: (ctx) => /いっちゃ入れたく|让人想要插/.test(ctx.s + ctx.next) && /いっちゃ|イッちゃ/.test(ctx.s),
+                apply: () => `要去了…让人想插进去嘛`,
+            },
+            {
+                id: 'iku.want.big.rod',
+                test: (ctx) => /おっきいおちん|欲しい/.test(ctx.s)
+                    && /イクッ|イッちゃう|イッて/.test(ctx.s)
+                    && /肉棒|想要/.test(ctx.next)
+                    && !/要去了|要射了|去了|射了/.test(ctx.next),
+                apply: (ctx) => `${ctx.next.replace(/[。．.!！?\s]*$/u, '')}…${ctx.go ? T.aboutToGoZh : T.aboutToCumZh}`,
+            },
+            {
+                id: 'iku.oppai.ore',
+                test: (ctx) => /おっぱい.{0,12}イッ|俺にもイッ/.test(ctx.s) && /不行了|奶子/.test(ctx.next),
+                apply: () => `不行了…这奶子也让我要射了…`,
+            },
             {
                 id: 'iku.bare',
                 test: (ctx) => /^我去[…。．.!！?\s]*$/u.test(ctx.next.trim()) || /^イク/.test(ctx.s.trim()),
@@ -1775,8 +2516,11 @@
         const sensei = [
             {
                 id: 'sensei.nip.iku',
-                test: (ctx) => /乳首|ちくび|乳头/.test(ctx.s + ctx.next) && /イキ|イッ|射|去/.test(ctx.s + ctx.next),
-                apply: (ctx) => (/報告|告诉|报告/.test(ctx.s + ctx.next)
+                // Only rewrite when JA/ZH actually asks to report climax — not bare 乳首舐め+要去了
+                test: (ctx) => /乳首|ちくび|乳头/.test(ctx.s + ctx.next)
+                    && /イキ|イッ|射|去/.test(ctx.s + ctx.next)
+                    && (/報告|告诉|报告|イキますって/.test(ctx.s + ctx.next) || /先生|せんせい|老师/.test(ctx.s)),
+                apply: (ctx) => (/報告|告诉|报告|イキますって/.test(ctx.s + ctx.next)
                     ? T.nippleReportZh
                     : `${T.senseiPrefZh}${ctx.next}`),
             },
@@ -1813,6 +2557,65 @@
         ];
 
         const lick = [
+            {
+                id: 'lick.fella.skill',
+                test: (ctx) => /フェラ/.test(ctx.s)
+                    && (/上手|厉害|女朋友|进到里面/.test(ctx.next) || /上手/.test(ctx.s)),
+                apply: () => d('5Y+j5Lqk5b6X55yf5aW95ZWK4oCm'),
+            },
+            {
+                id: 'lick.oppai.maybe',
+                test: (ctx) => /おっぱい.{0,10}舐め|舐めちゃいそう/.test(ctx.s) && /おっぱい|ナオ/.test(ctx.s),
+                apply: () => `就算不是他的…你的奶子也让人想舔…`,
+            },
+            {
+                id: 'lick.sweat',
+                test: (ctx) => /汗.{0,8}舐|舐めるから/.test(ctx.s) && /汗|エッチ|ずむ/.test(ctx.s),
+                apply: () => `色色的汗黏糊糊的，我来舔…`,
+            },
+            {
+                id: 'lick.dont.want',
+                test: (ctx) => /舐めたくない/.test(ctx.s) && ctx.len() <= 8,
+                apply: () => `不想舔吧？`,
+            },
+            {
+                id: 'lick.moan.stub',
+                test: (ctx) => /舐め/.test(ctx.s)
+                    && /^(?:嗯嗯|哈\s*哈|哈|呜)[…。．.!！?\s]*$/u.test(ctx.next.trim()),
+                apply: () => `舔…`,
+            },
+            {
+                id: 'lick.yummy.look',
+                test: (ctx) => /美味そうに舐め|夹着/.test(ctx.s + ctx.next) && /舐め/.test(ctx.s),
+                apply: () => `再舔得更香一点…来…`,
+            },
+            {
+                id: 'lick.body',
+                test: (ctx) => /身体を.{0,8}舐め|手を舐め/.test(ctx.s) && ctx.len() <= 8,
+                apply: () => `这么美的身体…我可要舔上去了哦？`,
+            },
+            {
+                id: 'lick.hypothetic.nip',
+                test: (ctx) => /舐められたら|どうなっちゃう|どうなるかな/.test(ctx.s)
+                    && /乳首|ちくび/.test(ctx.s)
+                    && !/報告|イキますって/.test(ctx.s),
+                apply: () => `被舔${T.nippleZh}的话会怎么样呢…${T.aboutToGoZh}`,
+            },
+            {
+                id: 'lick.wetter',
+                test: (ctx) => /舐めたら|舔的话/.test(ctx.s + ctx.next) && /濡れ|更湿/.test(ctx.s + ctx.next),
+                apply: () => d('6IiU55qE6K+d5Lya5pu05rm/4oCm'),
+            },
+            {
+                id: 'lick.passive',
+                test: (ctx) => /舐められちゃう|被舔/.test(ctx.s + ctx.next) && (/摸|触/.test(ctx.next) || ctx.len() <= 6),
+                apply: () => d('6KaB6KKr6IiU5Yiw5LqG4oCm'),
+            },
+            {
+                id: 'lick.while.look',
+                test: (ctx) => /見ながら舐めて|一边看/.test(ctx.s + ctx.next) && /舐めて|舔/.test(ctx.s + ctx.next),
+                apply: () => d('55yL552A5oiR5LiA6L656IiU4oCm'),
+            },
             {
                 id: 'lick.kiss.to.lick',
                 test: (ctx) => /亲得满嘴|亲一下/.test(ctx.next),
@@ -1914,12 +2717,16 @@
                     const next = ctx.next;
                     const s = ctx.s;
                     if (/擦|こすれ/.test(s + next)) return S.nipRub;
+                    // Hypothetic nipple-lick — keep 要去了 polarity; never invent report stub
+                    if (/舐められたら|どうなっちゃう|どうなるかな/.test(s) && !/イキ|イッ|報告|告诉|报告/.test(s + next)) {
+                        return `被舔${T.nippleZh}的话会怎么样呢…${T.aboutToGoZh}`;
+                    }
                     if (/舐めて/.test(s)) return S.lickRodNip;
                     if (/びんびん|变长/.test(s + next)) return S.nipHard;
                     if (/起鸡皮|起き出/.test(s + next)) return S.nipUp;
                     if (/手指|插进|っぱい/.test(s + next)) return S.playNip;
-                    if (/乳首でイキ|イキますって報告|乳头高潮|報告するんだよ/.test(s + next)
-                        || (/イキます|要射了|要去了/.test(next) && /乳首|ちくび/.test(s))) {
+                    if (/乳首でイキ|イキますって報告|乳頭でイキ|報告するんだよ/.test(s)
+                        || (/報告|告诉|报告/.test(next) && /乳首|ちくび/.test(s) && /イキ|イッ|要去|要射/.test(s + next))) {
                         return T.nippleReportZh;
                     }
                     if (/抽动|舒服/.test(next)) {
@@ -1939,6 +2746,19 @@
         ];
 
         const rame = [
+            {
+                id: 'rame.shame.stop',
+                test: (ctx) => /やめて|やめね/.test(ctx.s) && /恥ずかし|羞耻/.test(ctx.s + ctx.next),
+                apply: (ctx) => (/先生|せんせい|老师/.test(ctx.s + ctx.next)
+                    ? `老师…太羞耻了…不要…`
+                    : `太羞耻了…不要…`),
+            },
+            {
+                id: 'rame.moan.stub',
+                test: (ctx) => /らめ[ぇえ]|らめらめ|ラメラメ/.test(ctx.s)
+                    && /^(?:哈\s*哈|哈)[…。．.!！?\s]*$/u.test(ctx.next.trim()),
+                apply: () => T.dameEllZh,
+            },
             {
                 id: 'rame.remap',
                 test: (ctx) => /^(?:勒梅|嘞嘞|真他娘的|真他妈|该死的|该死)[…。．.!！?\s]*$/u.test(ctx.next.trim())
@@ -1993,6 +2813,54 @@
         ];
 
         const irete = [
+            {
+                id: 'irete.also',
+                test: (ctx) => /こっちも入れ|这边也插|玩乳头/.test(ctx.s + ctx.next) && /入れ/.test(ctx.s),
+                apply: () => d('6L+Z6L655Lmf5o+S6L+b5Y674oCm'),
+            },
+            {
+                id: 'irete.all',
+                test: (ctx) => /全部入れる|全部插|踢踢腿/.test(ctx.s + ctx.next) && /入れる/.test(ctx.s),
+                apply: () => d('5YWo6YOo5o+S6L+b5Y675ZOm4oCm'),
+            },
+            {
+                id: 'irete.mouth.drool',
+                test: (ctx) => /口の中入れ|よだれ|那口水/.test(ctx.s + ctx.next) && /入れ/.test(ctx.s),
+                apply: () => d('5oqK5ruh5piv5Y+j5rC055qE5Zi06YeM5o+S6L+b5Y675Lya5oCO5LmI5qC35ZGi77yf'),
+            },
+            {
+                id: 'irete.want.now',
+                test: (ctx) => /入れたくなっ|想插|想舔老师/.test(ctx.s + ctx.next)
+                    && /入れたく/.test(ctx.s)
+                    && ctx.len() <= 14,
+                apply: () => d('5oOz5o+S6L+b5p2l5LqG4oCm'),
+            },
+            {
+                id: 'irete.sensei.naka',
+                test: (ctx) => /中入れ|入れないと/.test(ctx.s) && /先生|せんせい|老师/.test(ctx.s + ctx.next),
+                apply: () => `老师，不插进去中出的话就不让摸…等等啊老师…`,
+            },
+            {
+                id: 'irete.soon.stub',
+                test: (ctx) => /もう入れたら|早く入れ/.test(ctx.s)
+                    && (/^(?:哈\s*哈|哈)[…。．.!！?\s]*$/u.test(ctx.next.trim()) || /拜托|抱歉|比起/.test(ctx.next)),
+                apply: (ctx) => (/もう入れたら/.test(ctx.s) ? `再插进去的话…` : `快点插进去…`),
+            },
+            {
+                id: 'irete.deeper.now',
+                test: (ctx) => /奥まで入れる|もっと奥/.test(ctx.s) && /入れる|入れ/.test(ctx.s),
+                apply: () => `现在感觉不错…再往更深处插进去哦`,
+            },
+            {
+                id: 'irete.sorry.need',
+                test: (ctx) => /ちょっと入れね|入れね/.test(ctx.s) && /ごめん|抱歉/.test(ctx.s + ctx.next),
+                apply: () => `光是说抱歉可不行…还是稍微插进去一点吧…`,
+            },
+            {
+                id: 'irete.throat.self',
+                test: (ctx) => /喉奥まで入れ|もぐもぐ/.test(ctx.s) && /入れ/.test(ctx.s),
+                apply: () => `我喜欢…能自己吞到喉咙深处…`,
+            },
             {
                 id: 'irete.try',
                 test: (ctx) => /指入れて|試しでさ入れて|入れてみて/.test(ctx.s) || /试一下|稍微试/.test(ctx.next),
@@ -2132,7 +3000,7 @@
             runFirstMatch(pack.nipple, ctx);
         }
 
-        if (missing.has('rame') && !G.rameCover.test(ctx.next) && /らめ/.test(s) && ctx.len() <= 18) {
+        if (missing.has('rame') && !G.rameCover.test(ctx.next) && /らめ|やめて|やめね|やめろ/.test(s) && ctx.len() <= 18) {
             runFirstMatch(pack.rame, ctx);
         }
 
@@ -2307,10 +3175,20 @@
         // 出してくれ mid-line「拿出来」
         if (
             /出してくれ|出してください|出して下さい/.test(src)
-            && !/声/.test(src)
+            && !/声|手出|おっぱい/.test(src)
             && /拿出来/.test(cur)
         ) {
             cur = cur.replace(/拿出来/g, T.shootOutZh);
+            note('domain_term');
+        }
+        // 出して下さい →「请摸我吧」touch hallucination
+        if (
+            /出してくれ|出してください|出して下さい/.test(src)
+            && !/声|手出|おっぱい|触って/.test(src)
+            && /摸/.test(cur)
+            && !/射/.test(cur)
+        ) {
+            cur = T.pleaseShootZh;
             note('domain_term');
         }
 
@@ -3250,7 +4128,9 @@
         }
 
         // Invented anatomy / climax ZH with no matching JA cue (ADN-798 / SNOS-293)
-        const jaHasRod = RE.jaHasRodSrc.test(src);
+        const jaHasRod = lexicon?.jaHasRodCue
+            ? lexicon.jaHasRodCue(src, RE)
+            : (RE.dekachinSrc.test(src) || RE.jaHasRodSrc.test(src));
         const zhHadClinicalRod = RE.clinicalRodZhSrc.test(before);
         if (RE.meatRodSrc.test(cur) && !jaHasRod && !zhHadClinicalRod) {
             const next = cur
@@ -3270,6 +4150,16 @@
                 .replace(RE.cockG, '');
             if (next !== cur) {
                 cur = next.replace(/\s{2,}/g, ' ').replace(/…+/g, '…').trim();
+                note('domain_hallucination');
+            }
+        }
+        // 鸡鸡 invent without JA rod cue (焼酎 / ディッチンコ / ビスホ ASR scraps)
+        if ((cur.includes(T.jiJiZh) || /小鸡鸡/.test(cur)) && !jaHasRod && !zhHadClinicalRod) {
+            const next = cur
+                .replace(/小鸡鸡/g, '')
+                .replace(new RegExp(T.jiJiZh, 'g'), '');
+            if (next !== cur) {
+                cur = next.replace(/\s{2,}/g, ' ').replace(/…+/g, '…').trim() || '…';
                 note('domain_hallucination');
             }
         }
@@ -3324,9 +4214,11 @@
                 .replace(RE.meatRodG, T.nippleZh);
             note('domain_term');
         }
-        // おちんこ / おじんぽ / おこちょ → 鸡鸡 → 肉棒
+        // おちんこ / おじんぽ / おこちょ / ち○こ / ンポ → 鸡鸡 → 肉棒
         {
-            const hasRodJa = /おちん|ちんぽ|ちんちん|チンポ|チンチン|おじんぽ|おちんこ|ちんこ|おこちょ|おちんちょ/.test(src);
+            const hasRodJa = lexicon?.jaHasRodCue
+                ? lexicon.jaHasRodCue(src, RE)
+                : /おちん|ちんぽ|ちんちん|チンポ|チンチン|おじんぽ|おちんこ|ちんこ|おこちょ|おちんちょ|ち[○〇◯*]こ|ンポ|キンち[ンん]/.test(src);
             if (hasRodJa && (cur.includes(T.jiJiZh) || /小鸡鸡|的鸡鸡/.test(cur))) {
                 cur = cur
                     .replace(/小鸡鸡/g, T.meatRodZh)
@@ -3774,6 +4666,17 @@
             && !/不要|别/.test(cur)
         ) {
             cur = `${cur.replace(/[。．.!！?\s]*$/u, '')}…${T.yameteZh}`;
+            note('domain_term');
+        }
+        // False nipple-report stub (prior overfire) when JA has no 報告 cue
+        if (
+            (cur.includes(T.nippleReportZh) || /要跟老师报告是乳头/.test(cur))
+            && /乳首|ちくび/.test(src)
+            && !/報告|イキますって|報告するんだよ|乳首でイキ/.test(src)
+        ) {
+            cur = /舐められたら|どうなっちゃう|どうなるかな/.test(src)
+                ? `被舔${T.nippleZh}的话会怎么样呢…${T.aboutToGoZh}`
+                : T.aboutToGoZh;
             note('domain_term');
         }
         // いっぱい出してる under「拉得满满」

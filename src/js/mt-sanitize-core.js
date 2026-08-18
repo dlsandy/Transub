@@ -325,7 +325,7 @@
         };
     }
 
-    function loadBundledTrainedRemaps() {
+    function loadOfficialTrainedRemaps() {
         if (typeof module !== 'undefined' && module.exports) {
             try {
                 const fs = require('fs');
@@ -337,6 +337,35 @@
             } catch (_) { /* fall through */ }
         }
         return { version: 1, zhRemaps: [], asrPairs: [] };
+    }
+
+    function loadUserSandboxTrainedRemaps() {
+        if (typeof module === 'undefined' || !module.exports) {
+            return { version: 1, zhRemaps: [], asrPairs: [] };
+        }
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = String(process.env.TRANSUB_MT_USER_REMAPS || '').trim();
+            const rootEnv = String(process.env.TRANSUB_MT_SANDBOX_ROOT || '').trim();
+            const filePath = envPath
+                || path.join(rootEnv || path.join(__dirname, '..', '..'), 'mt-user-remaps.json');
+            if (fs.existsSync(filePath)) {
+                return normalizeTrainedPack(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+            }
+        } catch (_) { /* fall through */ }
+        return { version: 1, zhRemaps: [], asrPairs: [] };
+    }
+
+    /** Official pack + optional local sandbox layered on top. */
+    function loadBundledTrainedRemaps() {
+        const official = loadOfficialTrainedRemaps();
+        const user = loadUserSandboxTrainedRemaps();
+        return {
+            version: Math.max(Number(official.version) || 1, Number(user.version) || 1),
+            zhRemaps: [...official.zhRemaps, ...user.zhRemaps],
+            asrPairs: [...official.asrPairs, ...user.asrPairs],
+        };
     }
 
     function decodeTrainedZhRule(rule) {
@@ -3527,6 +3556,8 @@
         applyTrainedZhRemaps,
         reloadTrainedRemaps,
         loadBundledTrainedRemaps,
+        loadOfficialTrainedRemaps,
+        loadUserSandboxTrainedRemaps,
         get TRAINED_ZH_REMAPS() { return TRAINED_ZH_REMAPS; },
         get TRAINED_ASR_PAIRS() { return TRAINED_ASR_PAIRS; },
         isBlankOrPunctTranslation,

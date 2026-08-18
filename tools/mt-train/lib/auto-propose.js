@@ -6,6 +6,7 @@
  */
 const train = require('./train');
 const autoQuality = require('./auto-quality');
+const trainRoute = require('./train-route');
 
 const HOT = new Set([
     'prompt_leak', 'iku_shoot', 'dechau_out', 'yame_shoot', 'iku_xing',
@@ -13,25 +14,20 @@ const HOT = new Set([
     'heixiu', 'under_stub', 'ja_echo',
 ]);
 
-const SKIP_ISSUES = new Set(['align_suspect', 'align_gap', 'moan_expand', 'other', 'asr_garbage']);
+const SKIP_ISSUES = trainRoute.SKIP_ISSUES;
 
 function primaryHotIssue(hit) {
-    const issues = Array.isArray(hit?.issues) ? hit.issues : [];
-    return issues.find((i) => HOT.has(i)) || '';
+    return trainRoute.primaryIssue(hit) || '';
 }
 
 function shouldSkipHit(hit) {
+    const routed = trainRoute.classifyTrainRoute(hit);
+    if (routed.route === trainRoute.ROUTE.skip) return routed.reason;
     const src = String(hit?.src || '').trim();
     const dst = String(hit?.dst || '').trim();
     const issues = Array.isArray(hit?.issues) ? hit.issues : [];
-    if (!issues.length) return '无问题标签';
-    if (issues.every((i) => String(i).startsWith('fixed:'))) return '已修好样例';
-    if (issues.some((i) => SKIP_ISSUES.has(i)) && !issues.some((i) => HOT.has(i))) {
-        return '次要/对齐问题';
-    }
     try {
         const lex = require('../../../src/js/mt-sanitize-lexicon');
-        if (lex.isAsrGarbageJa?.(src)) return 'ASR糊片，跳过训练';
         // Hot issues (iku_shoot / invent_rod / …) still need training even when
         // the ZH surface "covers" JA anchors — e.g. 要去了 vs 要射了.
         if (
@@ -41,9 +37,6 @@ function shouldSkipHit(hit) {
             return 'ZH已充分覆盖锚点';
         }
     } catch (_) { /* ignore */ }
-    if (src.length <= 2 || /^[&＋+\-—…·.。,，、\s]+$/u.test(src)) {
-        return '日文锚点过短或残片';
-    }
     if (src.length <= 4 && dst.length >= 10) return '疑似对齐错误';
     if (!primaryHotIssue(hit) && !hit.expect) return '非高热度问题且无期望';
     return '';
@@ -55,8 +48,55 @@ function shouldSkipHit(hit) {
  */
 function heuristicExpect(hit) {
     const issue = primaryHotIssue(hit);
+    if (!issue) return null;
+
+    // under_stub / kimochi_stub can fire before dirty is usable (blanked after, empty stub)
+    if (issue === 'kimochi_stub') {
+        return { expect: '好舒服', mode: 'replace', reason: 'kimochi_stub：补全「舒服」' };
+    }
+    if (issue === 'under_stub') {
+        const ja = String(hit.src || '');
+        const stub = String(hit.dst || hit.after || '').trim();
+        const after = String(hit.after || hit.dst || '').trim();
+        // Messy ASR lines: do not invent stub fills from a buried お願い etc.
+        if (ja.length > 28 && stub.length > 10) return null;
+        const table = [
+            [/おちん|ちんぽ|おち○|チンチン/, /ビンビン|びんびん|勃起/, '肉棒硬邦邦'],
+            [/お願い|おねがい|頼む/, null, '拜托了'],
+            [/気持ち|きもち|キモチ/, null, '好舒服'],
+            [/入れて/, null, '插进来'],
+            [/出して/, null, '射出来'],
+            [/舐めて|なめて/, null, '舔我'],
+            [/触って|さわって/, null, '摸我'],
+            [/吸って/, null, '吸'],
+            [/キス|ちゅ/, null, '亲亲'],
+            [/イッ|イク|いく|いっちゃ/, null, '要射了'],
+            [/だめ|ダメ|やめて/, null, '不要'],
+        ];
+        for (const row of table) {
+            const reJa = row[0];
+            const reExtra = row[1];
+            const phrase = row[2];
+            if (!reJa.test(ja)) continue;
+            if (reExtra && !reExtra.test(ja)) continue;
+            if (after === phrase || after.includes(phrase)) return null;
+            // お願い often appears mid-sentence; only fill when stub looks like a failed gloss of "please"
+            if (phrase === '拜托了') {
+                if (/没事|大丈夫|好的|可以|嗯|啊|哦/.test(after) || /没事|大丈夫/.test(stub)) continue;
+                if (stub.length > 4 && !/请|求|拜托/.test(stub)) continue;
+            }
+            if (!stub || stub.length <= 8 || stub === '…' || stub === '...') {
+                return { expect: phrase, mode: 'replace', reason: 'under_stub：短译补全（启发式）' };
+            }
+            if (!stub.includes(phrase) && stub.length <= 12) {
+                return { expect: phrase, mode: 'replace', reason: 'under_stub：锚点补全（启发式）' };
+            }
+        }
+        return null;
+    }
+
     const dirty = String(hit.after || hit.dst || '');
-    if (!issue || !dirty) return null;
+    if (!dirty) return null;
 
     if (issue === 'prompt_leak' || issue === 'sfx_halluc' || issue === 'latin' || issue === 'heixiu') {
         return { expect: '…', mode: 'blank', reason: `${issue} → 清空弱化` };
@@ -90,6 +130,9 @@ function heuristicExpect(hit) {
         return { expect: next, mode: 'replace', reason: 'dechau_out：出来→射（启发式）' };
     }
     if (issue === 'yame_shoot') {
+        const ja = String(hit.src || '');
+        // Require explicit やめ* — bare イッちゃう must NOT propose 要射了→停下
+        if (!/やめ[ろねて]|やめて|やめないで|やめっ/.test(ja)) return null;
         let next = dirty
             .replace(/不要射了/g, '不要了')
             .replace(/别射了/g, '别这样')
@@ -108,9 +151,6 @@ function heuristicExpect(hit) {
         let next = dirty.replace(/进去了/g, '喜欢上了').replace(/进入了/g, '喜欢上了');
         if (next === dirty) return null;
         return { expect: next, mode: 'replace', reason: 'kiniri：进去→喜欢上了' };
-    }
-    if (issue === 'kimochi_stub') {
-        return { expect: '好舒服', mode: 'replace', reason: 'kimochi_stub：补全「舒服」' };
     }
     if (issue === 'clinical_rod' || issue === 'invent_rod') {
         const ja = String(hit.src || '');
@@ -150,15 +190,14 @@ function heuristicExpect(hit) {
     if (issue === 'ja_echo') {
         return { expect: '…', mode: 'blank', reason: 'ja_echo：日文残留→清空' };
     }
-    if (issue === 'under_stub') {
-        return null; // needs model / human
-    }
     return null;
 }
 
 function buildProposalPayload(hit, { title, expect, mode, pinFinal, zhFrom, zhTo, jaAnchor } = {}) {
     const issue = primaryHotIssue(hit);
-    const dirty = String(hit.dst || hit.after || '');
+    // Residual training: prefer sanitize output (after). Raw MT (dst) can already look
+    // "fixed" while after still wrong — or the reverse for soft-policy regressions.
+    const dirty = String(hit.after || hit.dst || '');
     const ja = String(hit.src || '');
     const resolvedMode = mode === 'blank' ? 'blank' : 'replace';
     const expectText = resolvedMode === 'blank' ? '…' : String(expect || '').trim();
@@ -230,7 +269,15 @@ function listExistingRuleKeys() {
 /**
  * @param {object} sanitize
  * @param {object[]} hits
- * @param {{ title?: string, max?: number, expects?: Record<string,string>|Array, pinFinal?: boolean }} opts
+ * @param {{
+ *   title?: string,
+ *   max?: number,
+ *   expects?: Record<string,string>|Array,
+ *   pinFinal?: boolean,
+ *   cluster?: string|string[],
+ *   clusterOnly?: boolean,
+ *   corpus?: object[],
+ * }} opts
  */
 function proposeFromHits(sanitize, hits, opts = {}) {
     const max = Math.min(40, Math.max(1, Number(opts.max) || 12));
@@ -256,10 +303,17 @@ function proposeFromHits(sanitize, hits, opts = {}) {
     }
 
     const existingKeys = listExistingRuleKeys();
-    const ranked = (Array.isArray(hits) ? hits : [])
-        .map((h, idx) => ({ h, idx, hot: primaryHotIssue(h) }))
-        .filter((x) => x.hot || expectMap.has(String(x.h.ji)) || shouldSkipHit(x.h))
+    let pool = Array.isArray(hits) ? hits.slice() : [];
+    if (opts.cluster) {
+        pool = trainRoute.filterHitsByCluster(pool, opts.cluster);
+    }
+    pool = trainRoute.sortHitsByClusterQueue(pool);
+
+    const ranked = pool
+        .map((h, idx) => ({ h, idx, hot: primaryHotIssue(h), route: trainRoute.classifyTrainRoute(h) }))
+        .filter((x) => x.hot || expectMap.has(String(x.h.ji)) || shouldSkipHit(x.h) || x.route.route !== 'zh_remap')
         .sort((a, b) => {
+            // Prefer current cluster queue order already applied; keep hot first within
             const ra = a.hot ? 0 : (expectMap.has(String(a.h.ji)) ? 1 : 2);
             const rb = b.hot ? 0 : (expectMap.has(String(b.h.ji)) ? 1 : 2);
             if (ra !== rb) return ra - rb;
@@ -268,12 +322,76 @@ function proposeFromHits(sanitize, hits, opts = {}) {
 
     const proposals = [];
     let skipped = 0;
+    const routeCounts = { zh_remap: 0, asr: 0, skip: 0, re_mt: 0 };
     const maxSkipShown = Math.min(8, max);
     const seenKeys = new Map(); // ruleKey -> proposal index
 
-    for (const { h } of ranked) {
+    for (const { h, route: routed } of ranked) {
         const actionableCount = proposals.filter((p) => !['skipped', 'duplicate', 'exists'].includes(p.status)).length;
         if (actionableCount >= max) break;
+        routeCounts[routed.route] = (routeCounts[routed.route] || 0) + 1;
+
+        // ASR routes: never invent ZH remaps without an explicit expect
+        if (routed.route === trainRoute.ROUTE.asr && !expectMap.has(String(h.ji))) {
+            skipped += 1;
+            if (proposals.filter((p) => p.status === 'skipped' || p.status === 'needs_expect').length < maxSkipShown + 4) {
+                proposals.push({
+                    status: 'needs_expect',
+                    reason: routed.reason,
+                    route: routed.route,
+                    routeLabel: routed.label,
+                    ji: h.ji,
+                    src: h.src,
+                    dst: h.dst,
+                    after: h.after,
+                    issues: h.issues || [],
+                    issue: routed.issue || primaryHotIssue(h),
+                    accepted: false,
+                });
+            }
+            continue;
+        }
+        // re_mt (typical under_stub): still try domain heuristics; only stall when none apply
+        if (routed.route === trainRoute.ROUTE.re_mt && !expectMap.has(String(h.ji))) {
+            const heurPeek = heuristicExpect(h);
+            if (!heurPeek) {
+                skipped += 1;
+                proposals.push({
+                    status: 'needs_expect',
+                    reason: routed.reason,
+                    route: routed.route,
+                    routeLabel: routed.label,
+                    ji: h.ji,
+                    src: h.src,
+                    dst: h.dst,
+                    after: h.after,
+                    issues: h.issues || [],
+                    issue: 'under_stub',
+                    accepted: false,
+                });
+                continue;
+            }
+            // fall through — heuristic will populate expect below
+        }
+        if (routed.route === trainRoute.ROUTE.skip && !expectMap.has(String(h.ji))) {
+            const skip = shouldSkipHit(h) || routed.reason;
+            skipped += 1;
+            if (proposals.filter((p) => p.status === 'skipped').length < maxSkipShown) {
+                proposals.push({
+                    status: 'skipped',
+                    reason: skip,
+                    route: routed.route,
+                    routeLabel: routed.label,
+                    ji: h.ji,
+                    src: h.src,
+                    dst: h.dst,
+                    after: h.after,
+                    issues: h.issues || [],
+                });
+            }
+            continue;
+        }
+
         const skip = shouldSkipHit(h);
         if (skip && !expectMap.has(String(h.ji))) {
             skipped += 1;
@@ -281,6 +399,8 @@ function proposeFromHits(sanitize, hits, opts = {}) {
                 proposals.push({
                     status: 'skipped',
                     reason: skip,
+                    route: routed.route,
+                    routeLabel: routed.label,
                     ji: h.ji,
                     src: h.src,
                     dst: h.dst,
@@ -296,6 +416,8 @@ function proposeFromHits(sanitize, hits, opts = {}) {
                 proposals.push({
                     status: 'skipped',
                     reason: skip,
+                    route: routed.route,
+                    routeLabel: routed.label,
                     ji: h.ji,
                     src: h.src,
                     issues: h.issues || [],
@@ -355,11 +477,33 @@ function proposeFromHits(sanitize, hits, opts = {}) {
             expect = '…';
         } else if (zhFromOverride && !expect) {
             // Fragment-only model output: synthesize expect for try-run
-            const dirty = String(h.dst || h.after || '');
+            const dirty = String(h.after || h.dst || '');
             const to = String(zhToOverride || '');
             expect = dirty.split(String(zhFromOverride)).join(to);
             mode = 'replace';
             reason = reason || '使用模型局部片段';
+        }
+
+        // Already correct after sanitize — nothing to train
+        if (
+            mode === 'replace'
+            && expect
+            && String(h.after || h.dst || '').trim() === String(expect).trim()
+        ) {
+            skipped += 1;
+            proposals.push({
+                status: 'skipped',
+                reason: '清洗后已等于期望，无需入库',
+                route: routed.route,
+                routeLabel: routed.label,
+                ji: h.ji,
+                src: h.src,
+                dst: h.dst,
+                after: h.after,
+                issues: h.issues || [],
+                issue: primaryHotIssue(h),
+            });
+            continue;
         }
 
         let pinFinal = opts.pinFinal !== false;
@@ -456,14 +600,22 @@ function proposeFromHits(sanitize, hits, opts = {}) {
         }
 
         const blocking = (quality.warnings || []).some((w) => /宽泛|过短|残片/.test(w));
-        const status = trial.matchesExpect
+        let status = trial.matchesExpect
             ? (blocking || payload.wholeSentence ? 'review' : 'ready')
             : 'failed';
+
+        const oppose = trainRoute.opposingIntentHint(payload);
+        if (oppose?.risk && status === 'ready') {
+            status = 'review';
+            reason = `${reason} · ${oppose.note}`;
+        }
 
         const item = {
             status,
             reason,
             source,
+            route: routed.route,
+            routeLabel: routed.label,
             ji: h.ji,
             src: h.src,
             dst: h.dst,
@@ -472,6 +624,7 @@ function proposeFromHits(sanitize, hits, opts = {}) {
             issue: payload.issue,
             payload,
             ruleKey,
+            opposingIntent: oppose || null,
             trial: {
                 matchesExpect: trial.matchesExpect,
                 final: trial.final,
@@ -491,7 +644,27 @@ function proposeFromHits(sanitize, hits, opts = {}) {
         ...(Array.isArray(hits) ? hits : []),
         ...(Array.isArray(opts.corpus) ? opts.corpus : []),
     ]);
-    const finalized = autoQuality.finalizeProposals(proposals, { corpus });
+    const finalized = autoQuality.finalizeProposals(proposals, {
+        corpus,
+        crossMulti: opts.crossMulti || null,
+    });
+    // Demote auto→review when opposing intent still unmarked after merge
+    for (const p of finalized.proposals) {
+        if (!p?.payload || p.confidence?.level !== 'auto') continue;
+        const oppose = p.opposingIntent || trainRoute.opposingIntentHint(p.payload);
+        if (oppose?.risk) {
+            p.opposingIntent = oppose;
+            p.confidence = {
+                ...p.confidence,
+                level: 'review',
+                label: '建议改',
+                score: Math.min(p.confidence.score || 60, 60),
+                reasons: [...(p.confidence.reasons || []), oppose.note],
+            };
+            p.accepted = false;
+            p.forceRequired = true;
+        }
+    }
     const next = finalized.proposals;
 
     const ready = next.filter((p) => p.confidence?.level === 'auto' || p.status === 'ready').length;
@@ -499,6 +672,12 @@ function proposeFromHits(sanitize, hits, opts = {}) {
     const failed = next.filter((p) => p.status === 'failed').length;
     const needs = next.filter((p) => p.status === 'needs_expect').length;
     const dupes = next.filter((p) => p.status === 'duplicate' || p.status === 'exists').length;
+    const clusterHint = opts.cluster
+        ? `当前队列：${Array.isArray(opts.cluster) ? opts.cluster.join(',') : opts.cluster}。`
+        : '未限 cluster 时按热度队列排序；点芯片可只训一类。';
+    const crossHint = finalized.crossTitleCount
+        ? `跨片语料 ${finalized.crossTitleCount} 部已估误伤。`
+        : '';
 
     return {
         ok: true,
@@ -511,8 +690,11 @@ function proposeFromHits(sanitize, hits, opts = {}) {
         duplicates: dupes,
         mergeCount: finalized.mergeCount || 0,
         confidence: finalized.confidence || null,
+        routeCounts,
+        cluster: opts.cluster || null,
+        crossTitleCount: finalized.crossTitleCount || 0,
         proposals: next,
-        hint: '只写入跨片名可复用片段。整句润色与单片特化已排除；「需收窄」请改短 zhFrom 或锚点后再写。',
+        hint: `${clusterHint}${crossHint}只写入跨片名可复用片段。听写/宜重译项勿当 ZH remap；整句润色与单片特化已排除。`,
     };
 }
 
@@ -601,4 +783,5 @@ module.exports = {
     proposeFromHits,
     applyProposals,
     autoQuality,
+    trainRoute,
 };
