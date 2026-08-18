@@ -897,7 +897,7 @@ function getMediaDetail(mediaId, {
         versions = versions.map((v) => ({
             ...v,
             tags: core.normalizeLibraryTags(v.tags),
-            recipeSummary: core.formatRecipeSummary(v.recipe),
+            ...core.decorateVersionRecipe(v),
             roleLabel: core.roleLabel(track.role),
             statusLabel: core.statusLabel(v.status),
             isActive: track.activeVersionId === v.id,

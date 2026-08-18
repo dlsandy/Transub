@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Dev-only Sanitize 训练台 window: spawn/reuse local HTTP console and open BrowserWindow.
- * Packaged builds must never start the server or open this window.
+ * Learning wizard window: spawn/reuse local HTTP console and open BrowserWindow.
+ * Dev: always available. Packaged: Transub Pro only; writes forced to local sandbox.
  */
 const { BrowserWindow, app: electronApp } = require('electron');
 const path = require('path');
@@ -13,13 +13,14 @@ const { attachUiZoom } = require('./ui-zoom');
 
 const TRAIN_PORT = Number(process.env.MT_TRAIN_PORT) || 8787;
 const TRAIN_HOST = '127.0.0.1';
-const TRAIN_URL = `http://${TRAIN_HOST}:${TRAIN_PORT}/`;
 
 /** @type {import('electron').BrowserWindow|null} */
 let mtTrainWindow = null;
 /** @type {import('child_process').ChildProcess|null} */
 let trainServerChild = null;
 let quitHookInstalled = false;
+/** @type {'dev'|'pro'} */
+let activeAudience = 'dev';
 
 function isDevBuild(app = electronApp) {
     try {
@@ -29,7 +30,46 @@ function isDevBuild(app = electronApp) {
     }
 }
 
+function isProEntitledForTrain() {
+    try {
+        const gates = require('./advanced-gates');
+        return !!gates.requireFeature('*')?.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * @param {import('electron').App} [app]
+ * @returns {{ ok: boolean, audience?: 'dev'|'pro', error?: string, code?: string, isDev?: boolean, isPro?: boolean }}
+ */
+function canOpenMtTrain(app = electronApp) {
+    if (isDevBuild(app)) {
+        return { ok: true, audience: 'dev', isDev: true, isPro: isProEntitledForTrain() };
+    }
+    if (isProEntitledForTrain()) {
+        return { ok: true, audience: 'pro', isDev: false, isPro: true };
+    }
+    return {
+        ok: false,
+        error: '学习向导需要 Transub Pro',
+        code: 'not_entitled',
+        isDev: false,
+        isPro: false,
+    };
+}
+
+function trainWizardUrl(audience = activeAudience) {
+    const q = audience === 'pro' ? '?pro=1' : '';
+    return `http://${TRAIN_HOST}:${TRAIN_PORT}/${q}`;
+}
+
 function getRepoRoot() {
+    try {
+        if (electronApp?.isPackaged && typeof electronApp.getAppPath === 'function') {
+            return electronApp.getAppPath();
+        }
+    } catch (_) { /* ignore */ }
     return path.resolve(__dirname, '..');
 }
 
@@ -51,9 +91,20 @@ function probeTrainServer(timeoutMs = 800) {
                 }
                 try {
                     const data = JSON.parse(raw || '{}');
-                    const hasAuto = !!(data?.features?.autoPropose);
-                    // Old servers lack /api/health → fall through via titles probe
-                    resolve({ up: true, stale: !hasAuto, version: data.version || 0 });
+                    const f = data?.features || {};
+                    const required = [
+                        'autoPropose', 'loopReport', 'crossCollateral', 'wizardOnly',
+                        'residualDirty', 'harvestReport', 'feedPack', 'asrSuggest',
+                        'opposingFixtures', 'userSandbox', 'wizardUxSimplify',
+                        'wizardAutoApply', 'wizardDoneState',
+                    ];
+                    const stale = required.some((k) => !f[k]);
+                    resolve({
+                        up: true,
+                        stale,
+                        version: data.version || 0,
+                        audience: data.audience === 'pro' ? 'pro' : 'dev',
+                    });
                 } catch (_) {
                     resolve({ up: true, stale: true });
                 }
@@ -88,46 +139,79 @@ function probeTrainServerLegacy(timeoutMs = 800) {
 }
 
 function resolveNodeBinary() {
+    if (!isDevBuild()) {
+        return process.execPath;
+    }
     if (process.env.npm_node_execpath && require('fs').existsSync(process.env.npm_node_execpath)) {
         return process.env.npm_node_execpath;
     }
     return 'node';
 }
 
-async function waitForTrainServer({ attempts = 40, intervalMs = 250 } = {}) {
+async function waitForTrainServer({ attempts = 40, intervalMs = 250, audience = 'dev' } = {}) {
     for (let i = 0; i < attempts; i += 1) {
         const probe = await probeTrainServer();
-        if (probe.up && !probe.stale) return true;
-        // Legacy up but no health → treat as ready only after we restarted with --force
+        if (probe.up && !probe.stale) {
+            if (audience === 'pro' && probe.audience !== 'pro') {
+                // wrong mode — keep waiting / caller will force restart
+            } else {
+                return true;
+            }
+        }
         await new Promise((r) => setTimeout(r, intervalMs));
     }
     return false;
 }
 
-async function ensureTrainServer() {
+/**
+ * @param {{ audience?: 'dev'|'pro' }} [opts]
+ */
+async function ensureTrainServer(opts = {}) {
+    const audience = opts.audience === 'pro' ? 'pro' : 'dev';
+    activeAudience = audience;
+    const url = trainWizardUrl(audience);
+
     const probe = await probeTrainServer();
-    if (probe.up && !probe.stale) {
-        return { ok: true, reused: true, url: TRAIN_URL };
+    const audienceMismatch = probe.up && !probe.stale && audience === 'pro' && probe.audience !== 'pro';
+    if (probe.up && !probe.stale && !audienceMismatch) {
+        return { ok: true, reused: true, url, audience };
     }
-    // Old process without auto-propose, or nothing listening → start with --force
+
     const legacyUp = !probe.up && await probeTrainServerLegacy();
-    const needForce = probe.stale || legacyUp || probe.up;
+    const needForce = probe.stale || legacyUp || probe.up || audienceMismatch;
 
     const root = getRepoRoot();
     const serverJs = path.join(root, 'tools', 'mt-train', 'server.js');
     if (!require('fs').existsSync(serverJs)) {
-        return { ok: false, error: `找不到训练台服务：${serverJs}` };
+        return {
+            ok: false,
+            error: isDevBuild()
+                ? `找不到学习向导服务：${serverJs}`
+                : '安装包缺少学习向导组件，请更新到最新版',
+        };
     }
     stopTrainServerChild();
     const nodeBin = resolveNodeBinary();
     const args = [serverJs, `--port=${TRAIN_PORT}`];
     if (needForce) args.push('--force');
     try {
+        const { getWritableRoot } = require('./app-paths');
+        const writable = getWritableRoot();
+        const env = {
+            ...process.env,
+            TRANSUB_MT_SANDBOX_ROOT: writable,
+            TRANSUB_MT_USER_REMAPS: path.join(writable, 'mt-user-remaps.json'),
+            MT_TRAIN_TARGET: 'sandbox',
+            TRANSUB_MT_TRAIN_AUDIENCE: audience,
+        };
+        if (!isDevBuild()) {
+            env.ELECTRON_RUN_AS_NODE = '1';
+        }
         trainServerChild = spawn(nodeBin, args, {
             cwd: root,
             stdio: 'ignore',
             windowsHide: true,
-            env: { ...process.env },
+            env,
         });
         trainServerChild.on('exit', () => {
             if (trainServerChild) trainServerChild = null;
@@ -138,12 +222,12 @@ async function ensureTrainServer() {
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
-    const ready = await waitForTrainServer();
+    const ready = await waitForTrainServer({ audience });
     if (!ready) {
         stopTrainServerChild();
-        return { ok: false, error: `训练台服务未能在 ${TRAIN_PORT} 端口就绪` };
+        return { ok: false, error: `学习向导服务未能在 ${TRAIN_PORT} 端口就绪` };
     }
-    return { ok: true, reused: false, url: TRAIN_URL, restarted: needForce };
+    return { ok: true, reused: false, url, audience, restarted: needForce };
 }
 
 function stopTrainServerChild() {
@@ -195,12 +279,13 @@ function consumePendingLibraryPair() {
 
 /**
  * @param {import('electron').App} app
- * @param {{ jaPath?: string, zhPath?: string, title?: string, zhPathA?: string, zhPathB?: string }} [pending]
- * @returns {Promise<{ ok: boolean, error?: string, url?: string }>}
+ * @param {{ jaPath?: string, zhPath?: string, title?: string, zhPathA?: string, zhPathB?: string, source?: string }} [pending]
+ * @returns {Promise<{ ok: boolean, error?: string, url?: string, code?: string }>}
  */
 async function openMtTrainWindow(app, pending = null) {
-    if (!isDevBuild(app)) {
-        return { ok: false, error: '仅开发模式可用' };
+    const access = canOpenMtTrain(app);
+    if (!access.ok) {
+        return { ok: false, error: access.error || '无法打开学习向导', code: access.code };
     }
     installQuitHook(app);
 
@@ -215,8 +300,10 @@ async function openMtTrainWindow(app, pending = null) {
         });
     }
 
-    const server = await ensureTrainServer();
+    const audience = access.audience || 'dev';
+    const server = await ensureTrainServer({ audience });
     if (!server.ok) return server;
+    const url = server.url || trainWizardUrl(audience);
 
     const existing = focusMtTrainWindow();
     if (existing) {
@@ -226,28 +313,29 @@ async function openMtTrainWindow(app, pending = null) {
             existing.webContents.send('transub-mt-train-pending-pair', pair || {});
         } catch (_) { /* ignore */ }
         try {
+            if (existing.webContents.getURL() !== url) {
+                await existing.loadURL(url);
+            }
             existing.focus();
         } catch (_) { /* ignore */ }
-        return { ok: true, url: TRAIN_URL, focused: true, reusedServer: server.reused };
+        return { ok: true, url, focused: true, reusedServer: server.reused, audience };
     }
 
-    let backgroundColor = '#f4f1ea';
+    let backgroundColor = '#eef2ef';
     try {
         const { getAppTheme, MAIN_BG } = require('./app-theme');
         backgroundColor = MAIN_BG[getAppTheme()] || backgroundColor;
     } catch (_) { /* ignore */ }
 
     const win = new BrowserWindow({
-        width: 1280,
-        height: 840,
-        minWidth: 960,
-        minHeight: 640,
-        title: 'Transub Sanitize训练台',
-        icon: getWindowIconOption(),
-        autoHideMenuBar: true,
-        backgroundColor,
+        width: 1100,
+        height: 820,
+        minWidth: 720,
+        minHeight: 560,
         show: false,
-        modal: false,
+        backgroundColor,
+        title: 'Transub 学习向导',
+        ...getWindowIconOption(),
         webPreferences: {
             preload: path.join(__dirname, 'preload-mt-train.js'),
             contextIsolation: true,
@@ -266,7 +354,7 @@ async function openMtTrainWindow(app, pending = null) {
         if (mtTrainWindow === win) mtTrainWindow = null;
     });
 
-    await win.loadURL(TRAIN_URL);
+    await win.loadURL(url);
 
     win.once('ready-to-show', () => {
         if (win.isDestroyed()) return;
@@ -275,7 +363,7 @@ async function openMtTrainWindow(app, pending = null) {
         win.focus();
     });
 
-    return { ok: true, url: TRAIN_URL, reusedServer: server.reused };
+    return { ok: true, url, reusedServer: server.reused, audience };
 }
 
 function getMtTrainWindow() {
@@ -289,13 +377,16 @@ function isMtTrainWindowSender(webContents) {
 }
 
 module.exports = {
+    TRAIN_PORT,
     isDevBuild,
+    canOpenMtTrain,
+    isProEntitledForTrain,
+    ensureTrainServer,
+    stopTrainServerChild,
     openMtTrainWindow,
     getMtTrainWindow,
     isMtTrainWindowSender,
-    stopTrainServerChild,
     setPendingLibraryPair,
     consumePendingLibraryPair,
-    TRAIN_URL,
-    TRAIN_PORT,
+    trainWizardUrl,
 };

@@ -118,6 +118,7 @@ const REQUIRED_RENDERER_FILES = [
     'vendor/jassub/wasm/jassub-worker-modern.wasm',
     'js/subtitle-qc-core.js',
     'js/subtitle-qc-smart-core.js',
+    'js/subtitle-qc-silence-core.js',
     'js/subtitle-glossary-core.js',
     'js/subtitle-fluency-core.js',
     'js/mt-sanitize-core.js',
@@ -168,6 +169,7 @@ const ELECTRON_MUST_EXIST = [
     'electron/subtitle-library.js',
     'electron/subtitle-library-window.js',
     'electron/smart-translate-hybrid.js',
+    'electron/advanced-closed-api.js',
     'electron/live-batch-bridge.js',
     'electron/live-batch-queue.js',
 ];
@@ -259,12 +261,16 @@ const PROPRIETARY_ASAR_FORBIDDEN = [
     'electron/advanced-smart-translate.js',
     'src/js/advanced-film-reconstruct-core.js',
     'src/js/advanced-smart-translate-core.js',
+    'src/js/smart-translate-verify-core.js',
+    'src/js/smart-translate-address-core.js',
 ];
 
 /** Same closed cores must not leak through renderer-dist/** → asar */
 const PROPRIETARY_RENDERER_DIST_FORBIDDEN = [
     'renderer-dist/js/advanced-film-reconstruct-core.js',
     'renderer-dist/js/advanced-smart-translate-core.js',
+    'renderer-dist/js/smart-translate-verify-core.js',
+    'renderer-dist/js/smart-translate-address-core.js',
 ];
 
 function isProprietaryAsarPath(rel) {
@@ -549,6 +555,9 @@ function main() {
             errors.push(`闭源源码不应进入 asar files 白名单: ${rel}`);
         }
     }
+    if (packageFilesCover('docs/architecture.md') || packageFilesCover('docs/advanced-boundary.md')) {
+        errors.push('docs/ 不应进入 asar files 白名单');
+    }
     for (const rel of PROPRIETARY_RENDERER_DIST_FORBIDDEN) {
         if (fs.existsSync(path.join(root, rel))) {
             errors.push(`renderer-dist 仍含闭源算法（应在 build-renderer 删除）: ${rel}`);
@@ -580,6 +589,7 @@ function main() {
     } else {
         const filter = Array.isArray(engineExtra.filter) ? engineExtra.filter.map(String) : [];
         const requiredExcludes = [
+            '!docs/**',
             '!wheels-edition/**',
             '!models/asr/**',
             '!models/mt/**',
@@ -808,6 +818,10 @@ function main() {
                 && ![...set].some((x) => x === 'shared/ja-asr-domain-fixes.json' || x.endsWith('/shared/ja-asr-domain-fixes.json'))) {
                 errors.push('asar 缺少: shared/ja-asr-domain-fixes.json');
             }
+            const leakedDocs = [...set].find((x) => x === 'docs' || x.startsWith('docs/'));
+            if (leakedDocs) {
+                errors.push(`asar 误含 docs: ${leakedDocs}`);
+            }
         } else if (fs.existsSync(asarRoot) && fs.statSync(asarRoot).isDirectory()) {
             for (const rel of mustInAsar) {
                 if (!fs.existsSync(path.join(asarRoot, rel))) {
@@ -845,6 +859,9 @@ function main() {
         if (!fs.existsSync(editorLnk)) {
             errors.push(`解包目录缺少 Transub Editor.lnk（期望: ${editorLnk}）`);
         }
+        if (fs.existsSync(path.join(unpackedRoot, 'docs'))) {
+            errors.push('发行包误含 docs/（文档不随发行包分发）');
+        }
 
         // Engine extraFiles: CUDA runtime never ships; whisper-tiny + fsmn-vad + firered-vad weights ship
         const packedEngine = path.join(unpackedRoot, 'transub-engine');
@@ -861,6 +878,9 @@ function main() {
             }
             if (fs.existsSync(path.join(packedEngine, 'wheels-edition'))) {
                 errors.push('发行包误含 transub-engine/wheels-edition（版次 wheel 缓存不得打进 slim 包）');
+            }
+            if (fs.existsSync(path.join(packedEngine, 'docs'))) {
+                errors.push('发行包误含 transub-engine/docs/（文档不随发行包分发）');
             }
             const packedSite = path.join(packedEngine, 'runtime', 'Lib', 'site-packages');
             const forbiddenPackedPkgs = [

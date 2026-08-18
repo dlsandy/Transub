@@ -21,6 +21,11 @@ const { resolveMediaUrl } = require('./media-protocol');
 const { loadSettings, saveSettings, getSettingsFilePath } = require('./settings-data');
 const { getProjectRoot, getWritableRoot } = require('./app-paths');
 const { asString, assertEditableSubtitlePath, assertSubtitleMetaPath, assertVideoFilePath } = require('./ipc-validate');
+const {
+    buildSubtitleSaveDialogOptions,
+    formatFromSavePath,
+    ensureSubtitleSaveExtension,
+} = require('./subtitle-save-dialog');
 const { refocusWindow } = require('./window-focus');
 const { readSubtitleMeta, writeSubtitleMeta } = require('./subtitle-meta');
 const {
@@ -2070,6 +2075,62 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-qc-silence-split', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            const mediaPath = asString(payload.mediaPath || payload.videoPath, 4096).trim();
+            if (!mediaPath) {
+                return { ok: true, skipped: true, reason: 'no_media', written: false, summary: '未关联视频，跳过超长句静音分割' };
+            }
+            const doc = readSubtitleDocument(filePath);
+            if (!doc?.ok) return { ok: false, error: doc?.error || '读取字幕失败', path: filePath };
+            const cues = Array.isArray(doc.cues) ? doc.cues : [];
+            if (!cues.length) {
+                return { ok: true, skipped: true, reason: 'empty', written: false, summary: '无字幕条目' };
+            }
+            const qcSilenceSplit = require('./qc-silence-split');
+            const settings = loadSettings(getAppRoot).options || {};
+            const applied = await qcSilenceSplit.runQcSilenceSplitOnCues(cues, {
+                mediaPath,
+                maxChars: payload.maxChars ?? payload.qcSilenceSplitChars ?? settings.qcSilenceSplitChars,
+                ffmpegPath: asString(payload.ffmpegPath, 4096).trim() || String(settings.ffmpegPath || '').trim(),
+                silenceDb: payload.silenceDb,
+                silenceDur: payload.silenceDur,
+                gapMs: payload.gapMs,
+                fixOverlap: payload.fixOverlap !== false,
+            });
+            const summary = qcSilenceSplit.summarizeQcSilenceSplit(applied.stats);
+            if (applied.stats?.skipped || !(applied.stats?.splitCount > 0)) {
+                return {
+                    ok: true,
+                    skipped: true,
+                    written: false,
+                    path: filePath,
+                    stats: applied.stats,
+                    summary,
+                };
+            }
+            const written = writeSubtitleDocument(filePath, {
+                cues: applied.cues,
+                format: doc.format,
+                header: doc.header,
+                backupMode: payload.backupMode || 'off',
+            });
+            if (!written.ok) return written;
+            return {
+                ok: true,
+                written: true,
+                path: filePath,
+                stats: applied.stats,
+                summary,
+                beforeCount: cues.length,
+                afterCount: applied.cues.length,
+            };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-compact-pure-interjections', async (_event, payload = {}) => {
         try {
             const targetPath = assertEditableSubtitlePath(payload.path || payload.targetPath);
@@ -2242,29 +2303,21 @@ function setupExtensionsBridge(api, deps) {
         try {
             const cues = Array.isArray(payload.cues) ? payload.cues : [];
             if (!cues.length) return { ok: false, error: '字幕内容为空' };
-            const formatHint = String(payload.format || 'srt').toLowerCase();
-            const format = ['srt', 'vtt', 'lrc', 'ass'].includes(formatHint) ? formatHint : 'srt';
-            const defaultName = asString(payload.defaultName || payload.suggestedName || '', 512).trim()
-                || `subtitle.${format}`;
-            const title = asString(payload.title || '', 200).trim() || '导出字幕';
+            const dialogOpts = buildSubtitleSaveDialogOptions({
+                format: payload.format,
+                defaultName: payload.defaultName || payload.suggestedName,
+                title: payload.title || '导出字幕',
+            });
             const win = browserWindowFromEvent(event);
-            const filters = format === 'vtt'
-                ? [{ name: 'WebVTT', extensions: ['vtt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
-                : format === 'lrc'
-                    ? [{ name: 'LRC', extensions: ['lrc'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
-                    : format === 'ass'
-                        ? [{ name: 'Advanced SubStation', extensions: ['ass'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }]
-                        : [{ name: 'SubRip', extensions: ['srt'] }, { name: '所有字幕', extensions: ['srt', 'vtt', 'lrc', 'ass'] }];
             const result = await dialog.showSaveDialog(win || undefined, {
-                title,
-                defaultPath: defaultName,
-                filters,
+                title: dialogOpts.title,
+                defaultPath: dialogOpts.defaultPath,
+                filters: dialogOpts.filters,
             });
             refocusWindow(win);
             if (result.canceled || !result.filePath) return { ok: true, canceled: true };
-            const dest = result.filePath;
-            const ext = path.extname(dest).toLowerCase().replace(/^\./, '');
-            const saveFormat = ['srt', 'vtt', 'lrc', 'ass'].includes(ext) ? ext : format;
+            const dest = ensureSubtitleSaveExtension(result.filePath, dialogOpts.format);
+            const saveFormat = formatFromSavePath(dest, dialogOpts.format);
             if (saveFormat === 'ass') {
                 const { serializeAss, serializeSubtitle, serializeDualAss } = require('./subtitle-format');
                 const assMode = String(payload.assMode || '').trim().toLowerCase();
@@ -2309,6 +2362,49 @@ function setupExtensionsBridge(api, deps) {
                 header: payload.header,
                 backupMode: 'off',
             });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-pick-save-subtitle', async (event, payload = {}) => {
+        try {
+            const win = browserWindowFromEvent(event);
+            if (win && !win.isDestroyed()) {
+                if (win.isMinimized()) win.restore();
+                win.show();
+                win.focus();
+            }
+            const dialogOpts = buildSubtitleSaveDialogOptions({
+                format: payload.format,
+                defaultPath: payload.defaultPath || payload.defaultName,
+                title: payload.title || '另存为',
+            });
+            let defaultPath = dialogOpts.defaultPath;
+            const hinted = asString(payload.defaultPath || payload.defaultName || '', 4096).trim();
+            if (!hinted) {
+                const { resolveDialogDefaultPath } = require('./last-open-dir');
+                const dir = resolveDialogDefaultPath(getAppRoot, '');
+                if (dir) defaultPath = path.join(dir, `subtitle.${dialogOpts.format}`);
+            }
+            const result = await dialog.showSaveDialog(win || undefined, {
+                title: dialogOpts.title,
+                defaultPath,
+                filters: dialogOpts.filters,
+            });
+            refocusWindow(win);
+            if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+            const dest = path.resolve(ensureSubtitleSaveExtension(result.filePath, dialogOpts.format));
+            try {
+                const { rememberOpenPath } = require('./last-open-dir');
+                rememberOpenPath(getAppRoot, dest);
+            } catch { /* ignore */ }
+            return {
+                ok: true,
+                canceled: false,
+                path: dest,
+                format: formatFromSavePath(dest, dialogOpts.format),
+            };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

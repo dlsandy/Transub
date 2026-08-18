@@ -63,9 +63,10 @@ function handoffAsrConfidence(jobResult, outPaths = {}, options = {}) {
 }
 
 /**
- * Run confidence handoff; returns log lines for the bridge.
+ * Run confidence handoff + optional low-confidence ASR second opinion.
+ * Returns log lines for the bridge.
  */
-function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
+async function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
     const logs = [];
     const confidence = handoffAsrConfidence(jobResult, outPaths, options);
     if (confidence.ok && confidence.entryCount) {
@@ -76,7 +77,71 @@ function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
         logs.push(`ASR 置信度写入跳过: ${confidence.error}`);
     }
 
-    return { confidence, logs };
+    let secondOpinion = { ok: true, skipped: true, reason: 'not_run' };
+    try {
+        const mediaPath = asStringLike(options.mediaPath || outPaths.mediaPath);
+        const subtitlePath = pickSecondOpinionSubtitlePath(outPaths, confidence);
+        if (mediaPath && subtitlePath) {
+            const { runAsrSecondOpinionPass } = require('./engine-asr-second-opinion');
+            secondOpinion = await runAsrSecondOpinionPass({
+                mediaPath,
+                subtitlePath,
+                targetSubtitlePath: pickSecondOpinionTargetPath(outPaths, subtitlePath),
+                primaryAsr: options.primaryAsr || options.engineAsrModel || options.asrModel,
+                options,
+                onLog: (line) => logs.push(line),
+                onProgress: options.onProgress,
+            });
+            if (secondOpinion?.replacedWindows > 0) {
+                logs.push(
+                    `ASR 低置信二意见已采纳 ${secondOpinion.replacedWindows} 窗`
+                    + (secondOpinion.sibling ? `（${secondOpinion.sibling}）` : ''),
+                );
+                if (secondOpinion.targetBlanked > 0) {
+                    logs.push(
+                        `ASR 二意见译文档已对齐清空 ${secondOpinion.targetBlanked} 条（可补译）`,
+                    );
+                }
+            } else if (secondOpinion && !secondOpinion.skipped && secondOpinion.attempted) {
+                logs.push('ASR 低置信二意见已跑，未采纳更优结果');
+            }
+        }
+    } catch (err) {
+        logs.push(`ASR 二意见跳过: ${err.message || err}`);
+        secondOpinion = { ok: false, error: err.message || String(err) };
+    }
+
+    return { confidence, secondOpinion, logs };
+}
+
+function asStringLike(v) {
+    return String(v || '').trim();
+}
+
+function pickSecondOpinionSubtitlePath(outPaths = {}, confidence = {}) {
+    const candidates = [
+        outPaths.sourceSubtitlePath,
+        confidence.path,
+        outPaths.subtitlePath,
+    ].filter(Boolean).map((p) => path.resolve(String(p)));
+    for (const p of candidates) {
+        if (/\.(srt|vtt|lrc)$/i.test(p) && fs.existsSync(p)) return p;
+    }
+    return '';
+}
+
+function pickSecondOpinionTargetPath(outPaths = {}, sourcePath = '') {
+    const src = path.resolve(String(sourcePath || ''));
+    const candidates = [
+        outPaths.targetSubtitlePath,
+        outPaths.subtitlePath,
+    ].filter(Boolean).map((p) => path.resolve(String(p)));
+    for (const p of candidates) {
+        if (!p || p === src) continue;
+        if (/\.src\.(srt|vtt|lrc)$/i.test(p)) continue;
+        if (/\.(srt|vtt|lrc)$/i.test(p) && fs.existsSync(p)) return p;
+    }
+    return '';
 }
 
 module.exports = {
@@ -84,4 +149,6 @@ module.exports = {
     engineCuesToMs,
     handoffAsrConfidence,
     runBatchSuccessHandoff,
+    pickSecondOpinionSubtitlePath,
+    pickSecondOpinionTargetPath,
 };

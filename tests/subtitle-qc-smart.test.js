@@ -5,6 +5,8 @@ const {
     selectQcLlmSplitTargets,
     buildQcRetranscribeRanges,
     planLowConfidenceRetranscribeRanges,
+    planMergedQcRetranscribeRanges,
+    planPostBatchResidualHarvest,
     buildQcLlmSplitPayload,
     textsFromBreakIndices,
     parseLlmSplitResponse,
@@ -13,6 +15,9 @@ const {
     expandIndexesWithNeighbors,
     applyQcSmartUpdates,
     selectQcSemanticIndexes,
+    collectBlankEllipsisIndexes,
+    mergeBlankEllipsisIssues,
+    isBlankOrEllipsisZh,
     buildQcSemanticPairs,
     applyQcSemanticSuggestions,
     resolveQcSemanticPairPath,
@@ -45,6 +50,7 @@ describe('subtitle-qc-smart', () => {
 
     it('prioritizes weird cue text for polish', () => {
         assert.ok(looksLikeWeirdCueText('请改成：你好 __GLOSS1__'));
+        assert.ok(looksLikeWeirdCueText('改为符合原文语气'));
         assert.ok(!looksLikeWeirdCueText('今天天气很好。'));
         const cues = [
             { startMs: 0, endMs: 1000, text: '正常对白。' },
@@ -196,6 +202,71 @@ describe('subtitle-qc-smart', () => {
         ]);
         assert.strictEqual(fromMeta.cueCount, 2);
         assert.strictEqual(fromMeta.rangeCount, 1);
+    });
+
+    it('merges connected + low-confidence retranscribe under one budget', () => {
+        const cues = [];
+        for (let i = 0; i < 8; i += 1) {
+            cues.push({
+                startMs: i * 2000,
+                endMs: i * 2000 + 1800,
+                text: `段${i}`,
+            });
+        }
+        const issues = [
+            { index: 0, types: ['connected'], messages: ['连续'] },
+            { index: 1, types: ['connected', 'high_cps'], messages: ['连续'] },
+        ];
+        const merged = planMergedQcRetranscribeRanges(cues, issues, [5, 6, 7], {
+            maxRanges: 2,
+            mergeAdjacentGapMs: 400,
+        });
+        assert.ok(merged.ranges.length >= 1);
+        assert.ok(merged.ranges.length <= 2);
+        assert.ok(merged.connectedIndexes.includes(0));
+        assert.ok(merged.plan.includes('连续'));
+        // With maxRanges=2, connected cluster takes a slot; leftover can cover low-conf
+        assert.ok(merged.lowConfidenceIndexes.includes(5));
+
+        const harvest = planPostBatchResidualHarvest([
+            { index: 2, types: ['fluency'], textPreview: '他走向了' },
+            { index: 3, types: ['weird'], textPreview: '__GLOSS1__' },
+            { index: 4, types: ['overlap'], textPreview: '…' },
+        ], { lowConfidenceIndexes: [7] });
+        assert.ok(harvest.total >= 3);
+        assert.ok(harvest.fluency.includes(2));
+        assert.ok(harvest.weird.includes(3));
+        assert.ok(harvest.blank.includes(4));
+        assert.ok(harvest.lowConfidence.includes(7));
+        assert.ok(harvest.summary.includes('对照训练'));
+        assert.ok(harvest.summary.includes('可补译'));
+    });
+
+    it('collects blank/ellipsis indexes and prefers them for semantic review', () => {
+        assert.strictEqual(isBlankOrEllipsisZh('…'), true);
+        assert.strictEqual(isBlankOrEllipsisZh('请等一下'), false);
+        const targets = [
+            { startMs: 0, endMs: 1000, text: '…' },
+            { startMs: 2000, endMs: 3000, text: '今天天气不错' },
+            { startMs: 4000, endMs: 5000, text: '...' },
+        ];
+        const pair = [
+            { startMs: 0, endMs: 1000, text: '待ってください' },
+            { startMs: 2000, endMs: 3000, text: 'いい天気' },
+            { startMs: 4000, endMs: 5000, text: 'あ' }, // too short JA → skip
+        ];
+        const blanks = collectBlankEllipsisIndexes(targets, pair);
+        assert.deepStrictEqual(blanks, [0]);
+        const merged = mergeBlankEllipsisIssues(targets, [
+            { index: 1, types: ['fluency'], textPreview: '今天天气不错' },
+        ], { blankIndexes: blanks });
+        assert.ok(merged.some((i) => i.index === 0 && i.types.includes('blank')));
+        const indexes = selectQcSemanticIndexes(merged, {
+            blankPreferIndexes: blanks,
+            maxPairs: 10,
+        });
+        assert.strictEqual(indexes[0], 0);
+        assert.ok(indexes.includes(1));
     });
 
     it('parses llm split response and applies break indices', () => {

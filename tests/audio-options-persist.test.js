@@ -277,6 +277,9 @@ describe('film audio / free audio options persistence', () => {
         const defaults = buildTransWithAiOptionsFromPayload({}, {});
         assert.strictEqual(defaults.smartTranslateHybridMt, true);
         assert.strictEqual(defaults.smartTranslatePlotPolish, true);
+        assert.strictEqual(defaults.smartTranslateFaithfulVerify, true);
+        assert.strictEqual(defaults.smartTranslateAddressConsistency, true);
+        assert.strictEqual(defaults.asrSecondOpinion, 'auto');
         assert.strictEqual(defaults.smartTranslatePolishSampleLimit, 36);
 
         // Uncheck must overwrite a previously-saved true (not keep current via omission).

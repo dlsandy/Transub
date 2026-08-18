@@ -59,9 +59,14 @@ function buildVadJobOptions(merged = {}) {
     const isJa = lang.startsWith('ja') || lang === 'japanese' || lang === 'jp';
     const isWhisper = asr.includes('whisper');
     const vadModelRaw = normalizeVadModelId(merged.engineVadModel, '').toLowerCase();
-    // Only Silero is a deliberate Whisper opt-out. fsmn-vad is the SenseVoice default
-    // and should not block JA Whisper translate from using WhisperSeg.
-    const explicitNonSeg = vadModelRaw === 'silero-vad' && !merged.vadSensitive;
+    // Silero / FireRed are deliberate WhisperSeg opt-outs (island timing / Silero filter).
+    // fsmn-vad is the SenseVoice default and should not block JA Whisper translate
+    // from using WhisperSeg.
+    const explicitNonSeg = (
+        vadModelRaw === 'silero-vad'
+        || vadModelRaw === 'firered-vad'
+        || vadModelRaw.includes('firered')
+    ) && !merged.vadSensitive;
 
     // filmAudioEnhance (Demucs) or filmVadPreset (VAD numbers only) both apply film defaults.
     // Demucs must not stack with WhisperSeg (sensitive).
@@ -141,6 +146,7 @@ function buildVadJobOptions(merged = {}) {
             vadL === 'whisperseg-asmr'
             || vadL.includes('whisperseg')
             || vadL === 'silero-vad'
+            || vadL.includes('firered')
         ) {
             vadModel = 'fsmn-vad';
         }

@@ -472,6 +472,17 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         // Pro 智能翻译管线偏好：必须进白名单，否则取消勾选保存后会被丢弃并回默认勾选。
         smartTranslateHybridMt: merged.smartTranslateHybridMt !== false,
         smartTranslatePlotPolish: merged.smartTranslatePlotPolish !== false,
+        smartTranslateFaithfulVerify: merged.smartTranslateFaithfulVerify !== false,
+        smartTranslateAddressConsistency: merged.smartTranslateAddressConsistency !== false,
+        asrSecondOpinion: (() => {
+            const raw = merged.asrSecondOpinion;
+            if (raw === false || raw === 0) return 'off';
+            if (raw === true || raw === 1) return 'on';
+            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
+            if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
+            if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
+            return 'auto';
+        })(),
         smartTranslatePolishSampleLimit: (() => {
             const n = Number(merged.smartTranslatePolishSampleLimit);
             return Number.isFinite(n) ? Math.max(4, Math.min(36, Math.round(n))) : 36;
@@ -565,6 +576,16 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         postBatchQcFixMode: (() => {
             const raw = String(merged.postBatchQcFixMode || '').trim().toLowerCase();
             return (raw === 'fix' || raw === 'smart') ? raw : 'none';
+        })(),
+        qcSilenceSplitChars: (() => {
+            try {
+                const { clampQcSilenceSplitChars } = require('../src/js/settings-options-normalize-core');
+                return clampQcSilenceSplitChars(merged.qcSilenceSplitChars);
+            } catch {
+                const n = Number(merged.qcSilenceSplitChars);
+                if (!Number.isFinite(n)) return 15;
+                return Math.max(0, Math.min(500, Math.round(n)));
+            }
         })(),
         qcSmartLlmSplit: merged.qcSmartLlmSplit !== false,
         qcSmartRetranscribe: merged.qcSmartRetranscribe !== false,
@@ -2750,6 +2771,9 @@ function setupTransWithAiBridge(api, deps) {
                 'smartTranslateFaithfulTone',
                 'smartTranslateHybridMt',
                 'smartTranslatePlotPolish',
+                'smartTranslateFaithfulVerify',
+                'smartTranslateAddressConsistency',
+                'asrSecondOpinion',
                 'smartTranslatePolishSampleLimit',
                 'sakuraNsfwPrompt',
                 'filmAudioEnhance', 'filmVadPreset',
@@ -2771,6 +2795,7 @@ function setupTransWithAiBridge(api, deps) {
                 'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
                 'postBatchQc',
                 'postBatchQcFixMode',
+                'qcSilenceSplitChars',
                 'autoSense', 'autoDeepSense',
                 'activePresetId',
                 'mtUseForm',

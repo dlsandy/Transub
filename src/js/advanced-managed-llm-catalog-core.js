@@ -12,7 +12,7 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function advancedManagedLlmCatalogFactory() {
     const DEFAULT_SERVER_PORT = 39281;
-    const LLAMA_CPP_TAG = 'b10437';
+    const LLAMA_CPP_TAG = 'b10453';
     const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
     const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
     /** 未解锁 Pro 时目录可见的轻量模型上限（十亿）；智能翻译仍需 Pro */
@@ -341,9 +341,10 @@
             ggufUrl: 'https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q4_K_M.gguf',
             sizeHint: '约 9.0 GB',
             sizeBytes: 9001753632,
-            ramHint: '建议 ≥16 GB 内存',
-            note: 'Qwen3 高质量；适合语境重构与复杂翻译（需 Pro）',
+            ramHint: '建议 ≥16 GB 内存 · 约 10 GB 显存可近全载',
+            note: 'Pro 推荐；约 10GB 显存甜点；智能翻译 / 训练台 / 语境重构高质量首选',
             paramBillion: 14,
+            recommended: true,
             ollamaTag: 'qwen3:14b',
         },
         {
@@ -355,8 +356,8 @@
             ggufUrl: 'https://huggingface.co/bartowski/Qwen_Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/main/Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf',
             sizeHint: '约 19 GB',
             sizeBytes: 18632183808,
-            ramHint: '建议 ≥24 GB 内存 / 大显存',
-            note: 'MoE：总参 30B、激活约 3B，质量高且相对省算力（需 Pro）',
+            ramHint: '建议 ≥24 GB 内存；10GB 显存需部分卸内存',
+            note: 'MoE：总参 30B、激活约 3B；比稠密 32B 更适中端显存抬高质量（需 Pro）',
             paramBillion: 30,
             ollamaTag: 'qwen3:30b-a3b',
         },

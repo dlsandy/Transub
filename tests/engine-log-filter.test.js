@@ -67,4 +67,16 @@ describe('engine-log-filter', () => {
         assert.ok(!out.includes('原始错误'));
         assert.ok(out.includes('*.src.partial'));
     });
+
+    it('friendly WinError 999 torch/cublas is not “missing Toolkit”', () => {
+        const raw = (
+            'Whisper 需要 faster-whisper。原始错误: [WinError 999] 执行页内操作时的错误。'
+            + ' Error loading "F:\\Transub\\transub-engine\\runtime\\Lib\\site-packages\\torch\\lib\\cublas64_12.dll"'
+            + ' or one of its dependencies.'
+        );
+        const out = friendlyEngineError(raw);
+        assert.ok(out.includes('Torch CUDA'));
+        assert.ok(out.includes('WinError 999'));
+        assert.ok(!out.includes('缺少 CUDA 12 运行库'));
+    });
 });

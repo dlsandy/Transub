@@ -93,7 +93,7 @@ async function httpGetJson(url, { timeoutMs = 20000, signal } = {}) {
             redirect: 'follow',
         });
         if (!res.ok) {
-            throw new Error(`清单 HTTP ${res.status}`);
+            throw new Error(`清单 HTTP ${res.status}（${url}）`);
         }
         const text = await res.text();
         try {
@@ -142,7 +142,7 @@ async function downloadTdpPack(url, destPath, { signal, expectedBytes, onProgres
         redirect: 'follow',
     });
     if (!res.ok) {
-        throw new Error(`下载 HTTP ${res.status}`);
+        throw new Error(`下载 HTTP ${res.status}（${url}）`);
     }
 
     const totalHeader = Number(res.headers.get('content-length') || 0);
@@ -441,6 +441,11 @@ async function pullUpdate({ onProgress } = {}) {
     } catch (err) {
         if (err?.name === 'AbortError' || err?.code === 'cancelled') {
             return { ok: false, error: '已取消', code: 'cancelled' };
+        }
+        const raw = String(err?.message || '').trim();
+        // Keep explicit HTTP status + URL from downloadTdpPack.
+        if (/^下载 HTTP \d+/.test(raw)) {
+            return { ok: false, error: raw, code: 'download_http' };
         }
         return { ok: false, error: formatTdpNetworkError(err, '下载') };
     }

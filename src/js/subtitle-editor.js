@@ -29,6 +29,7 @@
     if (!j?.installAssOverrideUi) throw new Error("subtitle-editor/ass-override-ui.js must load before subtitle-editor.js");
     if (!j?.installJassubPreview) throw new Error("subtitle-editor/jassub-preview.js must load before subtitle-editor.js");
     if (!j?.installAssPosDrag) throw new Error("subtitle-editor/ass-pos-drag.js must load before subtitle-editor.js");
+    if (!j?.installSubtitleCatUploadUi) throw new Error("subtitle-editor/subtitlecat-upload-ui.js must load before subtitle-editor.js");
     if (!T.TransubAssStyles) throw new Error("ass-styles-core.js must load before subtitle-editor.js");
     if (!T.TransubAssOverride) throw new Error("ass-override-core.js must load before subtitle-editor.js");
     const {
@@ -1890,19 +1891,27 @@ ${t.dualLineOrder||""}`;
         }
         e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden") && Je(), d(`\u5DF2\u5173\u8054\u5A92\u4F53\uFF1A${G(n.path)}`, "ok")
     }
-    async function Pt() {
+    async function Pt(opts = {}) {
         if (x(), !t.cues.length) {
             d("\u65E0\u6CD5\u4FDD\u5B58\uFF1A\u5B57\u5E55\u4E3A\u7A7A", "err");
             return
         }
+        const destPath = String(opts.path || t.path || "").trim();
+        const destFormat = String(opts.format || t.format || "srt");
+        if (!destPath) {
+            d("无法保存：未指定文件路径", "err");
+            return
+        }
+        const prevPath = String(t.path || "").trim();
+        const retarget = destPath !== prevPath || destFormat !== String(t.format || "srt");
         const lib = t.library;
         const intent = lib
             ? (t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab" ? t.librarySaveIntent : "current")
             : "current";
         const asCurrent = !lib || intent === "current";
         const writePayload = {
-            path: t.path,
-            format: t.format,
+            path: destPath,
+            format: destFormat,
             cues: t.cues,
             header: t.header,
             videoPath: t.videoPath || ""
@@ -1924,6 +1933,24 @@ ${t.dualLineOrder||""}`;
             d(n?.error || "\u4FDD\u5B58\u5931\u8D25", "err");
             return
         }
+        if (retarget) {
+            if (prevPath && prevPath !== destPath && p?.transubClearSubtitleDraft) try {
+                await p.transubClearSubtitleDraft({
+                    path: prevPath
+                })
+            } catch {}
+            t.path = n.path || destPath;
+            t.format = destFormat;
+            e.formatBadge && (e.formatBadge.textContent = String(t.format).toUpperCase());
+            try {
+                await p?.transubEditorRegisterPath?.({
+                    path: t.path,
+                    maximize: !1
+                })
+            } catch {}
+            await Ca(t.path, t.videoPath || "");
+            await Ps(t.videoPath, t.path)
+        }
         if (n.libraryIngest?.versionId) {
             t.library = {
                 ...(t.library || {}),
@@ -1937,15 +1964,41 @@ ${t.dualLineOrder||""}`;
             syncLibraryBar()
         }
         P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma();
+        if (retarget) fs();
         let okMsg = n.backupPath ? "\u5DF2\u4FDD\u5B58\uFF08\u5E76\u5199\u5165 .bak\uFF09" : "\u5DF2\u4FDD\u5B58";
-        if (lib && n.libraryIngest) {
+        if (retarget) okMsg = `已另存为：${G(t.path)}`;
+        else if (lib && n.libraryIngest) {
             okMsg = intent === "ab"
                 ? "已保存为对照 B（未抢当前）"
                 : (asCurrent ? "已保存并设为库当前版" : "已保存为库草稿（未抢当前）")
         }
-        d(okMsg, "ok"), e.saveStatus && (e.saveStatus.textContent = "\u5DF2\u4FDD\u5B58", setTimeout(() => {
+        d(okMsg, "ok"), e.saveStatus && (e.saveStatus.textContent = retarget ? "已另存为" : "\u5DF2\u4FDD\u5B58", setTimeout(() => {
             e.saveStatus && (e.saveStatus.textContent = "")
         }, 2e3))
+    }
+    async function saveSubtitleAs() {
+        if (x(), !t.cues.length) {
+            d("无法保存：字幕为空", "err");
+            return
+        }
+        if (!p?.transubPickSaveSubtitle) {
+            d("当前环境不支持另存为", "err");
+            return
+        }
+        const picked = await p.transubPickSaveSubtitle({
+            title: "另存为",
+            defaultPath: t.path || "",
+            format: t.format || "srt"
+        });
+        if (picked?.canceled) return;
+        if (!picked?.ok || !picked.path) {
+            d(picked?.error || "另存为失败", "err");
+            return
+        }
+        await Pt({
+            path: picked.path,
+            format: picked.format || t.format || "srt"
+        })
     }
 
     function Lt() {
@@ -5175,7 +5228,8 @@ ${t.dualLineOrder||""}`;
         const hasRuleEffect = oe.hasQcFixEffect
             ? oe.hasQcFixEffect(ruleApplied?.stats)
             : !!(ruleApplied?.stats?.affected || ruleApplied?.stats?.splitCount || ruleApplied?.stats?.compressRepFixed || ruleApplied?.stats?.noiseRemoved);
-        if (!hasRuleEffect && !wantAnySmart) {
+        const maySilenceSplit = !!(t.videoPath && p?.ffmpegDetectSilence && T.TransubSubtitleQcSilence);
+        if (!hasRuleEffect && !wantAnySmart && !maySilenceSplit) {
             e.qcPreview && (e.qcPreview.textContent = ruleApplied?.summary || "无需修复", e.qcPreview.classList.add("err")), gt();
             return
         }
@@ -5203,14 +5257,14 @@ ${t.dualLineOrder||""}`;
             if (accepted === null) {
                 d("已取消规则修复", "warn");
                 ruleApplied = null;
-                if (!wantAnySmart) {
+                if (!wantAnySmart && !maySilenceSplit) {
                     gt();
                     return
                 }
             } else if (!accepted.length) {
                 d("未勾选任何规则修复", "warn");
                 ruleApplied = null;
-                if (!wantAnySmart) {
+                if (!wantAnySmart && !maySilenceSplit) {
                     gt();
                     return
                 }
@@ -5223,7 +5277,7 @@ ${t.dualLineOrder||""}`;
                 else ruleApplied = null
             }
         }
-        const showWait = !!wantAnySmart;
+        const showWait = !!wantAnySmart || !!maySilenceSplit;
         let progressUnsub = null;
         // 半透明推理遮罩（holdBusy:false），勿用启动遮罩（不透明会整窗空白）
         const qcWait = (detail) => {
@@ -5274,6 +5328,83 @@ ${t.dualLineOrder||""}`;
             }
             En();
             let reuseScan = ruleApplied?.scan || null;
+            // 规则修复后：超长句按设置字数阈值做静音分割（需关联视频）
+            try {
+                const silenceApi = T.TransubSubtitleQcSilence;
+                let maxChars = silenceApi?.DEFAULT_QC_SILENCE_SPLIT_CHARS ?? 15;
+                try {
+                    const optsRes = await p?.transWithAiGetOptions?.();
+                    if (optsRes?.ok !== false && optsRes?.options) {
+                        maxChars = silenceApi?.clampQcSilenceSplitChars
+                            ? silenceApi.clampQcSilenceSplitChars(optsRes.options.qcSilenceSplitChars)
+                            : (Number(optsRes.options.qcSilenceSplitChars) >= 0
+                                ? Number(optsRes.options.qcSilenceSplitChars)
+                                : maxChars);
+                    }
+                } catch {}
+                if (maxChars > 0 && t.videoPath && p?.ffmpegDetectSilence && silenceApi?.applyQcSilenceSplits) {
+                    const matched = silenceApi.selectQcSilenceSplitIndexes(t.cues, {
+                        maxChars
+                    }, {
+                        splitApi: D,
+                        getBreakWords: hn,
+                        // QC：按字数即可，勿用编辑器手动静音分割的「需断点」门槛
+                        canSilenceSplitCue: cue => (silenceApi.canQcSilenceSplitCue
+                            ? silenceApi.canQcSilenceSplitCue(cue, { splitApi: D })
+                            : $t(cue)),
+                        textCharCount: qe
+                    });
+                    if (matched.length) {
+                        qcWait(`超长句静音分割 ${matched.length} 条（>${maxChars} 字）…`);
+                        const applied = await silenceApi.applyQcSilenceSplits(t.cues, {
+                            maxChars
+                        }, {
+                            splitApi: D,
+                            getBreakWords: hn,
+                            canSilenceSplitCue: cue => (silenceApi.canQcSilenceSplitCue
+                                ? silenceApi.canQcSilenceSplitCue(cue, { splitApi: D })
+                                : $t(cue)),
+                            textCharCount: qe,
+                            isCancelled: ne,
+                            planSilenceCueSplit: (cue, opts) => {
+                                if (!silenceSplitPlan?.planSilenceCueSplit) return Rs(cue, opts);
+                                // QC 超长句：不以「需文本断点」拦截，交给静音检测
+                                return silenceSplitPlan.planSilenceCueSplit(cue, {
+                                    ...opts,
+                                    detailDurationSec: Number(e.detailDuration?.value)
+                                }, {
+                                    videoPath: t.videoPath,
+                                    ffmpegPath: Ue || '',
+                                    splitApi: D,
+                                    getEndMs: I,
+                                    getBreakWords: hn,
+                                    isCancelled: ne,
+                                    detectSilence: (detectOpts) => p?.ffmpegDetectSilence?.(detectOpts)
+                                })
+                            },
+                            onProgress: info => {
+                                qcWait(`超长句静音分割 ${info.current}/${info.total}…`)
+                            }
+                        });
+                        if (applied?.stats?.cancelled) {
+                            d("已取消超长句静音分割", "warn");
+                            return
+                        }
+                        if (applied?.stats && !applied.stats.skipped && applied.stats.splitCount > 0) {
+                            $();
+                            t.cues.splice(0, t.cues.length, ...applied.cues);
+                            At();
+                            P(!0), C(), t.selectedIndex >= 0 && R();
+                            d(silenceApi.summarizeQcSilenceSplit(applied.stats), "ok");
+                            reuseScan = null
+                        } else if (applied?.stats && !applied.stats.skipped) {
+                            d(silenceApi.summarizeQcSilenceSplit(applied.stats), "info")
+                        }
+                    }
+                }
+            } catch (silErr) {
+                d(silErr?.message || "超长句静音分割失败", "warn")
+            }
             if (i.llmSplit) {
                 qcWait("智能断句中，请稍候…");
                 const splitRes = await runQcLlmSplitPhase({
@@ -7078,6 +7209,12 @@ ${t.dualLineOrder||""}`;
             Jp?.scheduleSync?.(!0)
         }
     });
+    const subtitleCatUpload = j.installSubtitleCatUploadUi({
+        state: t,
+        electron: p,
+        setStatus: d,
+        basename: G
+    });
     async function runEditorBilingualReview() {
         const n = T.TransubBilingualReview;
         if (!n?.reviewBilingualPair) {
@@ -7599,6 +7736,8 @@ ${t.dualLineOrder||""}`;
                 const opts = (await p?.transWithAiGetOptions?.({}))?.options || {};
                 c.smartTranslateHybridMt = opts.smartTranslateHybridMt !== false;
                 c.smartTranslatePlotPolish = opts.smartTranslatePlotPolish !== false;
+                c.smartTranslateFaithfulVerify = opts.smartTranslateFaithfulVerify !== false;
+                c.smartTranslateAddressConsistency = opts.smartTranslateAddressConsistency !== false;
                 const llmMt = String(opts.engineLlmMtModel || opts.hybridMtModelId || "").trim();
                 if (llmMt) {
                     c.engineLlmMtModel = llmMt;
@@ -7611,6 +7750,8 @@ ${t.dualLineOrder||""}`;
             } catch (_) {
                 c.smartTranslateHybridMt = true;
                 c.smartTranslatePlotPolish = true;
+                c.smartTranslateFaithfulVerify = true;
+                c.smartTranslateAddressConsistency = true;
             }
         }
         const u = await l(c);
@@ -7746,8 +7887,14 @@ ${t.dualLineOrder||""}`;
             case "save":
                 Pt();
                 break;
+            case "save-as":
+                saveSubtitleAs();
+                break;
             case "export-dual":
                 on();
+                break;
+            case "upload-subtitlecat":
+                void subtitleCatUpload.uploadCurrentToSubtitleCat();
                 break;
             case "open-generator":
                 Ai();
@@ -8508,7 +8655,7 @@ ${t.dualLineOrder||""}`;
                 return
             }
             if ((s.ctrlKey || s.metaKey) && (s.key === "s" || s.key === "S")) {
-                s.preventDefault(), Pt();
+                s.preventDefault(), s.shiftKey ? saveSubtitleAs() : Pt();
                 return
             }
             if (s.altKey && !s.ctrlKey && !s.metaKey && !Ct(s.target)) {

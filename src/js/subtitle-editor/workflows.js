@@ -806,6 +806,7 @@
             note = '',
             intensity,
             skipConsistency,
+            briefSampleMode,
             skipReview = false,
             cueIndexes = null,
         } = {}) {
@@ -818,12 +819,30 @@
                     intensity: 'balanced',
                     preserveTiming: true,
                     skipConsistency: false,
+                    briefSampleMode: 'auto',
                 };
             windowCues = Number.isFinite(Number(windowCues)) ? Number(windowCues) : prefs.windowCues;
             overlapCues = Number.isFinite(Number(overlapCues)) ? Number(overlapCues) : prefs.overlapCues;
             preserveTiming = preserveTiming != null ? !!preserveTiming : prefs.preserveTiming !== false;
             intensity = String(intensity || prefs.intensity || 'balanced').trim() || 'balanced';
             skipConsistency = skipConsistency != null ? !!skipConsistency : !!prefs.skipConsistency;
+            let resolvedBriefSampleMode = String(briefSampleMode || '').trim().toLowerCase() === 'full'
+                ? 'full'
+                : '';
+            if (!resolvedBriefSampleMode) {
+                // Editor window cannot read main-window localStorage; use disk settings.
+                try {
+                    const optsRes = await electron?.transWithAiGetOptions?.({});
+                    if (optsRes?.options?.filmBriefSampleMode === 'full') {
+                        resolvedBriefSampleMode = 'full';
+                    }
+                } catch (_) { /* ignore */ }
+            }
+            if (!resolvedBriefSampleMode) {
+                resolvedBriefSampleMode = String(prefs.briefSampleMode || 'auto').trim().toLowerCase() === 'full'
+                    ? 'full'
+                    : 'auto';
+            }
             const filmMode = mode === 'film';
             const invoke = filmMode
                 ? electron?.transubAdvancedFilmContextReconstruct
@@ -1104,6 +1123,7 @@
                     videoPath: state.videoPath || '',
                     _keepManagedServer: keepServer,
                 };
+                if (filmMode) payload.briefSampleMode = resolvedBriefSampleMode;
                 try {
                     const profileApi = global.TransubContentProfile;
                     const hit = profileApi?.classifyContentProfile?.({
@@ -2876,6 +2896,7 @@
                     }
                     if (!userNote && !title && typeof loadFilmHints === 'function') {
                         const saved = loadFilmHints(state.path);
+                        const prefs = global.TransubEditorSettingsPrefs?.getReconstructPrefs?.() || {};
                         return runContextReconstructOnce({
                             scope,
                             preserveTiming: step.params?.preserveTiming !== false,
@@ -2886,23 +2907,28 @@
                             filmSynopsis: saved.synopsis || '',
                             filmTerms: saved.terms || '',
                             intensity: saved.intensity || 'balanced',
+                            briefSampleMode: step.params?.briefSampleMode || prefs.briefSampleMode,
                             userNote: filmCore?.composeFilmUserNote
                                 ? filmCore.composeFilmUserNote(saved)
                                 : '',
                         });
                     }
-                    return runContextReconstructOnce({
-                        scope,
-                        preserveTiming: step.params?.preserveTiming !== false,
-                        mode: 'film',
-                        sceneMaxCues: Number(step.params?.sceneMaxCues) || 36,
-                        sceneGapMs: Number(step.params?.sceneGapMs) || 2500,
-                        filmTitle: title,
-                        filmSynopsis: synopsis,
-                        filmTerms: terms,
-                        intensity: step.params?.intensity || 'balanced',
-                        userNote,
-                    });
+                    {
+                        const prefs = global.TransubEditorSettingsPrefs?.getReconstructPrefs?.() || {};
+                        return runContextReconstructOnce({
+                            scope,
+                            preserveTiming: step.params?.preserveTiming !== false,
+                            mode: 'film',
+                            sceneMaxCues: Number(step.params?.sceneMaxCues) || 36,
+                            sceneGapMs: Number(step.params?.sceneGapMs) || 2500,
+                            filmTitle: title,
+                            filmSynopsis: synopsis,
+                            filmTerms: terms,
+                            intensity: step.params?.intensity || 'balanced',
+                            briefSampleMode: step.params?.briefSampleMode || prefs.briefSampleMode,
+                            userNote,
+                        });
+                    }
                 },
                 'presets.insertGroup': async (_c, step) => {
                     const groupId = String(step.params?.groupId || '');

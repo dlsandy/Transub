@@ -118,10 +118,28 @@
         return Math.max(1, Math.min(24, Math.round(n)));
     }
 
+    /** 0 = disabled; default 15. QC repair silence-splits cues longer than this. */
+    function clampQcSilenceSplitChars(raw) {
+        if (raw == null || String(raw).trim() === '') return 15;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return 15;
+        return Math.max(0, Math.min(500, Math.round(n)));
+    }
+
     function normalizeQcSmartIntensity(value) {
         const v = String(value || '').trim().toLowerCase();
         if (v === 'medium' || v === 'strong' || v === 'light') return v;
         return 'light';
+    }
+
+    /** ASR low-confidence second opinion: auto | on | off */
+    function normalizeAsrSecondOpinion(value) {
+        if (value === false || value === 0) return 'off';
+        if (value === true || value === 1) return 'on';
+        const s = String(value == null ? 'auto' : value).trim().toLowerCase();
+        if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
+        if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
+        return 'auto';
     }
 
     /** Empty / invalid → null (caller uses film built-in defaults). */
@@ -176,7 +194,9 @@
         clampTranscriptKeepDays,
         clampPolishSampleLimit,
         clampQcSmartMaxRetranscribeRanges,
+        clampQcSilenceSplitChars,
         normalizeQcSmartIntensity,
+        normalizeAsrSecondOpinion,
         optionalFiniteNumber,
         normalizeSubtitleBakMode,
         normalizeStartupWindow,

@@ -26,7 +26,7 @@ describe('engine-batch-success-handoff', () => {
         assert.strictEqual(ms[0].endMs, 2000);
     });
 
-    it('handoffAsrConfidence seeds sidecar', () => {
+    it('handoffAsrConfidence seeds sidecar', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-handoff-'));
         const subPath = path.join(dir, 'out.srt');
         fs.writeFileSync(subPath, '1\n00:00:00,000 --> 00:00:01,000\nhello\n');
@@ -35,11 +35,12 @@ describe('engine-batch-success-handoff', () => {
         }, { sourceSubtitlePath: subPath });
         assert.ok(res.ok);
         assert.ok(res.entryCount >= 1);
-        const handoff = runBatchSuccessHandoff({
+        const handoff = await runBatchSuccessHandoff({
             cues: { source: [{ start: 0, end: 1, text: 'hello', confidence: 0.92 }] },
-        }, { sourceSubtitlePath: subPath });
+        }, { sourceSubtitlePath: subPath }, { asrSecondOpinion: 'off' });
         assert.ok(handoff.logs.some((l) => l.includes('置信度')));
         assert.strictEqual(handoff.speakers, undefined);
+        assert.ok(handoff.secondOpinion?.skipped);
         fs.rmSync(dir, { recursive: true, force: true });
     });
 });

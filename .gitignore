@@ -93,9 +93,12 @@ electron/advanced-reconstruct-runtime.js
 electron/advanced-smart-translate.js
 src/js/advanced-film-reconstruct-core.js
 src/js/advanced-smart-translate-core.js
+src/js/smart-translate-verify-core.js
+src/js/smart-translate-address-core.js
 tools/advanced-module-entry.js
 tests/advanced-film-reconstruct.test.js
 tests/advanced-smart-translate.test.js
+tests/smart-translate-verify-core.test.js
 
 # Advanced license private key & generated redeem codes (never commit)
 .advanced-license-private.b64
@@ -127,6 +130,12 @@ tools/av-makers.src.json
 
 # Local sense-memory / runtime prefs
 transub-sense-memory.json
+
+# MT train local sandbox (layered on official shared pack; do not commit)
+mt-user-remaps.json
+mt-user-remaps-history/
+mt-train-sandbox-prefs.json
+mt-train-idle-state.json
 
 # Subtitle library local store / window state
 subtitle-library/

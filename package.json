@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -53,6 +53,7 @@
     "train:mt": "node tools/mt-train/server.js",
     "train:mt:open": "node tools/mt-train/server.js --open",
     "train:mt:restart": "node tools/mt-train/server.js --force --open",
+    "train:mt:idle": "node tools/mt-train/server.js --force --idle-watch",
     "lint": "eslint electron src/js tests tools --max-warnings 200",
     "lint:fix": "eslint electron src/js tests tools --fix",
     "format": "prettier --write \"electron/**/*.js\" \"src/js/**/*.js\" \"tests/**/*.js\" \"tools/**/*.js\"",
@@ -108,12 +109,17 @@
       "renderer-dist/**/*",
       "!renderer-dist/js/advanced-film-reconstruct-core.js",
       "!renderer-dist/js/advanced-smart-translate-core.js",
+      "!renderer-dist/js/smart-translate-verify-core.js",
+      "!renderer-dist/js/smart-translate-address-core.js",
       "src/js/*-core.js",
       "!src/js/advanced-film-reconstruct-core.js",
       "!src/js/advanced-smart-translate-core.js",
+      "!src/js/smart-translate-verify-core.js",
+      "!src/js/smart-translate-address-core.js",
       "src/js/i18n-catalogs.js",
       "src/js/mt-opaque-strings.js",
       "src/js/mt-sanitize-lexicon.js",
+      "src/js/subtitle-editor/silence-split-plan.js",
       "src/vendor/opencc-js/**/*",
       "src/vendor/jassub/**/*",
       "src/js/tone-adapt.tz1",
@@ -122,7 +128,10 @@
       "shared/ja-asr-domain-fixes.json",
       "shared/mt-trained-remaps.json",
       "shared/tdp/tdp-bundled.tpack",
-      "shared/i18n/**/*"
+      "shared/i18n/**/*",
+      "tools/mt-train/**/*",
+      "!docs",
+      "!docs/**/*"
     ],
     "asarUnpack": [
       "electron/app.ico",
@@ -170,6 +179,7 @@
         "to": "transub-engine",
         "filter": [
           "**/*",
+          "!docs/**",
           "!wheels-edition/**",
           "!**/__pycache__/**",
           "!**/*.pyc",

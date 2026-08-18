@@ -1,6 +1,20 @@
 const { app, ipcMain } = require('electron');
 const path = require('path');
 const { getAppRoot, getWritableRoot, migrateLegacyUserDataFiles } = require('./app-paths');
+
+// Layer local MT sandbox remaps on official pack (sanitize / engine paths).
+(() => {
+    try {
+        const writable = getWritableRoot();
+        if (!process.env.TRANSUB_MT_SANDBOX_ROOT) {
+            process.env.TRANSUB_MT_SANDBOX_ROOT = writable;
+        }
+        if (!process.env.TRANSUB_MT_USER_REMAPS) {
+            process.env.TRANSUB_MT_USER_REMAPS = path.join(writable, 'mt-user-remaps.json');
+        }
+    } catch (_) { /* ignore */ }
+})();
+
 const { createDeferredBridgeSetup } = require('./bridge-registry');
 const { createWindowManager } = require('./window-manager');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
@@ -374,9 +388,11 @@ deferredBridges.installLazyRoutes({
     'transub-read-subtitle': 'extensions',
     'transub-write-subtitle': 'extensions',
     'transub-export-subtitle': 'extensions',
+    'transub-pick-save-subtitle': 'extensions',
     'transub-delete-subtitle-files': 'extensions',
     'transub-scan-subtitle-qc': 'extensions',
     'transub-apply-subtitle-postprocess': 'extensions',
+    'transub-qc-silence-split': 'extensions',
     'transub-compact-pure-interjections': 'extensions',
     'transub-merge-bilingual-subtitles': 'extensions',
     'transub-remove-noise-pair': 'extensions',
@@ -404,12 +420,17 @@ deferredBridges.installLazyRoutes({
     'transub-library-start-retranslate': 'editorWindow',
     'transub-library-start-mt-train': 'editorWindow',
     'transub-open-mt-train': 'editorWindow',
+    'transub-mt-train-access': 'editorWindow',
     'transub-is-dev-build': 'editorWindow',
+    'transub-upload-subtitlecat': 'editorWindow',
     'transub-mt-train-infer-suggest': 'editorWindow',
     'transub-mt-train-list-history-pairs': 'editorWindow',
     'transub-mt-train-load-history-pair': 'editorWindow',
     'transub-mt-train-load-history-pairs': 'editorWindow',
     'transub-mt-train-consume-pending-pair': 'editorWindow',
+    'transub-mt-train-idle-status': 'editorWindow',
+    'transub-mt-train-idle-prefs': 'editorWindow',
+    'transub-mt-train-idle-run': 'editorWindow',
     'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
     'transub-consume-pending-setup-wizard': 'editorWindow',
@@ -617,6 +638,14 @@ app.whenReady().then(() => {
             } catch (err) {
                 console.warn('[main] auto update schedule failed:', err.message || err);
             }
+            try {
+                if (!app.isPackaged) {
+                    const { startIdleWatcher } = require('./mt-train-idle');
+                    startIdleWatcher(app);
+                }
+            } catch (err) {
+                console.warn('[main] mt-train idle watcher failed:', err.message || err);
+            }
         } catch (err) {
             console.warn('[main] user data migration failed:', err.message || err);
         }
@@ -675,6 +704,10 @@ app.on('before-quit', () => {
     try {
         const { stopTrainServerChild } = require('./mt-train-window');
         stopTrainServerChild();
+    } catch { /* ignore */ }
+    try {
+        const { stopIdleWatcher } = require('./mt-train-idle');
+        stopIdleWatcher();
     } catch { /* ignore */ }
 });
 

@@ -30,7 +30,21 @@
     const SOURCE_IMPORT = 'import';
 
     const TAG_COMPARE_A = '对照A';
-    const TAG_COMPARE_B = '对照B';
+        const TAG_COMPARE_B = '对照B';
+
+    function looksLikeLlmMtModelId(modelId) {
+        const id = String(modelId || '').trim();
+        if (!id) return false;
+        try {
+            const cat = (typeof require === 'function')
+                ? require('./sakura-mt-catalog-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSakuraMtCatalog : null);
+            if (cat?.isEngineOpusMtModel?.(id)) return false;
+            if (cat?.isLlmInferenceMtModel?.(id) || cat?.isSakuraMtModel?.(id)) return true;
+        } catch (_) { /* fallback heuristic */ }
+        if (/^opus[-_]?mt[-_]/i.test(id) || id.includes('opus-mt-')) return false;
+        return /sakura|galtransl|qwen|gguf|llm|instruct/i.test(id);
+    }
 
     function nowIso(now = Date.now()) {
         const d = now instanceof Date ? now : new Date(now);
@@ -137,10 +151,22 @@
         const presetName = String(extras.presetName || opts.presetName || '').trim();
         const task = String(opts.task || extras.task || '').trim();
         const smartTranslate = !!(opts.smartTranslate || extras.smartTranslate);
-        const sakuraMt = !!(opts.sakuraMt || extras.sakuraMt);
+        const translateModeRaw = String(opts.translateMode || extras.translateMode || '').trim().toLowerCase();
+        const translateMode = translateModeRaw === 'sakura' ? 'llm' : translateModeRaw;
+        let sakuraMt = !!(opts.sakuraMt || extras.sakuraMt);
+        const llmModelHint = String(
+            opts.engineLlmMtModel || opts.sakuraModel || extras.engineLlmMtModel || '',
+        ).trim();
+        const engineMtHint = String(opts.engineMtModel || extras.engineMtModel || '').trim();
+        const opusHint = String(opts.engineOpusMtModel || '').trim();
+        if (!sakuraMt && translateMode === 'llm') sakuraMt = true;
+        if (!sakuraMt && translateMode !== 'engine' && translateMode !== 'smart' && !opusHint) {
+            const id = llmModelHint || engineMtHint;
+            if (id && looksLikeLlmMtModelId(id)) sakuraMt = true;
+        }
         let mtProvider = '';
         let mtModel = '';
-        if (smartTranslate) {
+        if (smartTranslate || translateMode === 'smart') {
             mtProvider = 'smart';
             mtModel = String(
                 opts.smartTranslateModelId
@@ -150,7 +176,9 @@
             ).trim();
         } else if (sakuraMt) {
             mtProvider = 'sakura';
-            mtModel = String(opts.sakuraModel || opts.engineLlmMtModel || opts.engineMtModel || '').trim();
+            mtModel = String(
+                llmModelHint || engineMtHint || opts.engineMtModel || '',
+            ).trim();
         } else if (task === 'translate' || task === 'dual' || opts.engineMtModel || opts.engineOpusMtModel) {
             mtProvider = 'opus';
             mtModel = String(opts.engineOpusMtModel || opts.engineMtModel || '').trim();
@@ -170,8 +198,9 @@
             mt: {
                 provider: mtProvider || null,
                 model: mtModel || null,
-                smartTranslate,
+                smartTranslate: smartTranslate || translateMode === 'smart',
                 sakuraMt,
+                translateMode: translateMode || (smartTranslate ? 'smart' : (sakuraMt ? 'llm' : (mtProvider === 'opus' ? 'engine' : ''))),
             },
             post: {
                 outputFormat: String(opts.subtitleFormat || opts.format || '').trim() || null,
@@ -186,27 +215,106 @@
         const keepKeys = [
             'beamSize', 'vadEnabled', 'vadModel', 'engineVadModel', 'filmAudioEnhance',
             'contentProfile', 'toneAdapt', 'glossaryId',
+            'smartTranslatePlotPolish', 'smartTranslateAddressConsistency',
         ];
         for (const key of keepKeys) {
             if (opts[key] != null && opts[key] !== '') recipe.extras[key] = opts[key];
         }
         Object.assign(recipe.extras, extraBag);
+        if (recipe.mt.smartTranslate) {
+            const polishRaw = recipe.extras.smartTranslatePlotPolish ?? opts.smartTranslatePlotPolish;
+            const namesRaw = recipe.extras.smartTranslateAddressConsistency
+                ?? opts.smartTranslateAddressConsistency;
+            recipe.extras.plotPolish = polishRaw !== false
+                && String(polishRaw ?? '').trim().toLowerCase() !== 'off'
+                && String(polishRaw ?? '').trim().toLowerCase() !== 'false';
+            recipe.extras.namesLocked = namesRaw !== false
+                && String(namesRaw ?? '').trim().toLowerCase() !== 'off'
+                && String(namesRaw ?? '').trim().toLowerCase() !== 'false';
+        }
         return recipe;
+    }
+
+    function optionFlagOn(value, defaultOn = true) {
+        if (value === false || value === 0) return false;
+        const s = String(value == null ? '' : value).trim().toLowerCase();
+        if (s === 'false' || s === '0' || s === 'off' || s === 'no') return false;
+        if (value == null || value === '') return defaultOn;
+        return true;
+    }
+
+    function isSmartRecipe(recipe) {
+        const mt = recipe?.mt || {};
+        return !!(mt.smartTranslate || mt.provider === 'smart' || mt.translateMode === 'smart');
+    }
+
+    function isLlmInferenceRecipe(recipe) {
+        const mt = recipe?.mt || {};
+        if (isSmartRecipe(recipe)) return false;
+        return !!(mt.sakuraMt || mt.provider === 'sakura' || mt.translateMode === 'llm');
+    }
+
+    /**
+     * Watchability-layer labels shown before ASR/model/preset.
+     * Pro译 / 已润色 / 人名已锁 vs 推理译 vs 机器译.
+     */
+    function recipeLayerLabels(recipe) {
+        if (!recipe || typeof recipe !== 'object') return [];
+        const mt = recipe.mt || {};
+        const extras = recipe.extras || {};
+        if (isSmartRecipe(recipe)) {
+            const labels = ['Pro译'];
+            if (optionFlagOn(extras.plotPolish ?? extras.smartTranslatePlotPolish, true)) {
+                labels.push('已润色');
+            }
+            if (optionFlagOn(extras.namesLocked ?? extras.smartTranslateAddressConsistency, true)) {
+                labels.push('人名已锁');
+            }
+            return labels;
+        }
+        if (isLlmInferenceRecipe(recipe)) return ['推理译'];
+        if (mt.provider === 'opus' || mt.translateMode === 'engine') return ['机器译'];
+        return [];
+    }
+
+    function formatRecipeTechSummary(recipe) {
+        if (!recipe || typeof recipe !== 'object') return '';
+        const asr = recipe.asr?.model || recipe.asr?.engine || '';
+        const mtModel = String(recipe.mt?.model || '').trim();
+        const mtProvider = String(recipe.mt?.provider || '').trim();
+        let mtBit = '';
+        if (isSmartRecipe(recipe) || isLlmInferenceRecipe(recipe)) {
+            mtBit = mtModel;
+        } else if (mtModel) {
+            mtBit = mtProvider ? `${mtProvider}:${mtModel}` : mtModel;
+        } else {
+            mtBit = mtProvider;
+        }
+        const preset = recipe.presetName || recipe.presetId || '';
+        const parts = [];
+        if (asr) parts.push(asr);
+        if (mtBit) parts.push(mtBit);
+        if (preset) parts.push(`预设「${preset}」`);
+        if (!parts.length && recipe.task) parts.push(recipe.task);
+        return parts.join(' · ');
     }
 
     function formatRecipeSummary(recipe) {
         if (!recipe || typeof recipe !== 'object') return '—';
-        const asr = recipe.asr?.model || recipe.asr?.engine || '';
-        const mt = recipe.mt?.model
-            ? `${recipe.mt.provider || 'mt'}:${recipe.mt.model}`
-            : (recipe.mt?.provider || '');
-        const preset = recipe.presetName || recipe.presetId || '';
-        const parts = [];
-        if (asr) parts.push(asr);
-        if (mt) parts.push(mt);
-        if (preset) parts.push(`预设「${preset}」`);
-        if (!parts.length && recipe.task) parts.push(recipe.task);
+        const layers = recipeLayerLabels(recipe);
+        const tech = formatRecipeTechSummary(recipe);
+        const parts = [...layers];
+        if (tech) parts.push(tech);
         return parts.join(' · ') || '—';
+    }
+
+    function decorateVersionRecipe(version) {
+        const recipe = version?.recipe;
+        return {
+            recipeLayers: recipeLayerLabels(recipe),
+            recipeSummary: formatRecipeSummary(recipe),
+            recipeTechSummary: formatRecipeTechSummary(recipe) || '—',
+        };
     }
 
     function inheritRecipe(parentRecipe, patch = {}) {
@@ -395,10 +503,10 @@
         const r = recipe && typeof recipe === 'object' ? recipe : {};
         const mt = r.mt && typeof r.mt === 'object' ? r.mt : {};
         let mode = 'llm';
-        if (mt.smartTranslate) mode = 'smart';
-        else if (mt.provider === 'opus' || mt.provider === 'engine') mode = 'engine';
+        if (mt.smartTranslate || mt.provider === 'smart' || mt.translateMode === 'smart') mode = 'smart';
+        else if (mt.translateMode === 'llm' || mt.translateMode === 'sakura') mode = 'llm';
+        else if (mt.provider === 'opus' || mt.provider === 'engine' || mt.translateMode === 'engine') mode = 'engine';
         else if (mt.provider === 'sakura' || mt.sakuraMt) mode = 'llm';
-        else if (mt.provider === 'smart') mode = 'smart';
         const modelId = String(mt.model || '').trim();
         const language = String(r.asr?.language || '').trim() || 'ja';
         const chineseVariant = String(r.post?.chineseVariant || '').trim() || 'simplified';
@@ -624,7 +732,10 @@
         normalizeCatalog,
         getVersionLimit,
         buildRecipeFromOptions,
+        recipeLayerLabels,
+        formatRecipeTechSummary,
         formatRecipeSummary,
+        decorateVersionRecipe,
         inheritRecipe,
         selectVersionsToPrune,
         needsProForParallelTarget,

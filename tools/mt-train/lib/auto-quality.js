@@ -177,7 +177,7 @@ function mergeSameRemaps(proposals) {
  * @param {object} p proposal
  * @param {object|null} collateral
  */
-function scoreConfidence(p, collateral = null) {
+function scoreConfidence(p, collateral = null, crossCollateral = null) {
     if (!p) {
         return { level: 'reject', label: '别写', score: 0, reasons: ['无候选'] };
     }
@@ -217,6 +217,7 @@ function scoreConfidence(p, collateral = null) {
             score: 18,
             reasons: ['日文锚点接近整句，复用性差'],
             collateral,
+            crossCollateral,
             lowReuse: true,
             longAnchor: true,
         };
@@ -233,6 +234,7 @@ function scoreConfidence(p, collateral = null) {
                 score: 12,
                 reasons: ['整句替换复用性差，不适合写入全局规则'],
                 collateral,
+                crossCollateral,
                 lowReuse: true,
             };
         }
@@ -263,7 +265,34 @@ function scoreConfidence(p, collateral = null) {
                 score: Math.min(score, 25),
                 reasons,
                 collateral,
+                crossCollateral,
             };
+        }
+    }
+    if (crossCollateral) {
+        if (crossCollateral.totalHits > 0) {
+            reasons.push(`跨片命中 ${crossCollateral.totalHits}（${crossCollateral.titlesHit} 部）`);
+            // Modest reuse across titles is good; huge fan-out is risky
+            if (crossCollateral.risky) {
+                score -= 28;
+                reasons.push('跨片命中偏多，锚点可能过宽');
+            } else if (crossCollateral.titlesHit >= 2 && crossCollateral.totalHits <= 12) {
+                score += 4;
+                reasons.push('跨片可复用');
+            }
+        }
+        if (crossCollateral.risky && crossCollateral.totalHits > 40) {
+            return {
+                level: 'reject',
+                label: '别写',
+                score: Math.min(score, 22),
+                reasons,
+                collateral,
+                crossCollateral,
+            };
+        }
+        if (crossCollateral.risky) {
+            score = Math.min(score, 55);
         }
     }
     if (p.status === 'review') {
@@ -272,12 +301,12 @@ function scoreConfidence(p, collateral = null) {
     }
 
     if (score >= 75 && p.trial?.matchesExpect) {
-        return { level: 'auto', label: '可直接写', score, reasons, collateral };
+        return { level: 'auto', label: '可直接写', score, reasons, collateral, crossCollateral };
     }
     if (score >= 45 && p.trial?.matchesExpect) {
-        return { level: 'review', label: '建议改', score, reasons, collateral };
+        return { level: 'review', label: '建议改', score, reasons, collateral, crossCollateral };
     }
-    return { level: 'reject', label: '别写', score, reasons, collateral };
+    return { level: 'reject', label: '别写', score, reasons, collateral, crossCollateral };
 }
 
 /**
@@ -285,6 +314,15 @@ function scoreConfidence(p, collateral = null) {
  */
 function finalizeProposals(proposals, opts = {}) {
     const corpus = Array.isArray(opts.corpus) ? opts.corpus : [];
+    const crossMulti = opts.crossMulti || null;
+    const estimateCrossTitleCollateral = opts.estimateCrossTitleCollateral
+        || (() => {
+            try {
+                return require('./multi-corpus').estimateCrossTitleCollateral;
+            } catch (_) {
+                return null;
+            }
+        })();
     const { proposals: mergedList, mergeCount } = mergeSameRemaps(proposals);
     const out = [];
     let autoN = 0;
@@ -302,10 +340,15 @@ function finalizeProposals(proposals, opts = {}) {
         const collateral = corpus.length
             ? estimateCollateral(p.payload, corpus, { targetJis })
             : null;
-        const confidence = scoreConfidence(p, collateral);
+        let crossCollateral = null;
+        if (crossMulti && typeof estimateCrossTitleCollateral === 'function') {
+            crossCollateral = estimateCrossTitleCollateral(p.payload, crossMulti);
+        }
+        const confidence = scoreConfidence(p, collateral, crossCollateral);
         const next = {
             ...p,
             collateral,
+            crossCollateral,
             confidence,
             accepted: confidence.level === 'auto',
             force: false,
@@ -332,6 +375,7 @@ function finalizeProposals(proposals, opts = {}) {
         proposals: out,
         mergeCount,
         confidence: { auto: autoN, review: reviewN, reject: rejectN },
+        crossTitleCount: crossMulti?.titleCount || 0,
     };
 }
 
@@ -348,13 +392,13 @@ function buildCorpusFromHits(hits) {
  * Reuse gate for learning-wizard report buckets.
  * @returns {{ bucket: 'write'|'narrow'|'exclude', reason: string, lowReuse?: boolean }}
  */
-function assessRuleReuse(p) {
+function assessRuleReuse(p, opts = {}) {
     if (!p) return { bucket: 'exclude', reason: '无候选' };
     if (['skipped', 'duplicate', 'exists', 'error'].includes(p.status)) {
         return { bucket: 'exclude', reason: p.reason || p.status };
     }
     if (p.status === 'needs_expect') {
-        return { bucket: 'narrow', reason: p.reason || '缺期望/片段' };
+        return { bucket: 'narrow', reason: p.reason || '缺期望/片段（可手改后写入）' };
     }
     if (!p.payload) {
         return { bucket: 'exclude', reason: p.reason || '无规则载荷' };
@@ -376,7 +420,10 @@ function assessRuleReuse(p) {
             };
         }
         if (!from) {
-            return { bucket: 'exclude', reason: '缺少可替换片段 zhFrom' };
+            return {
+                bucket: opts.wizardMode ? 'narrow' : 'exclude',
+                reason: '缺少可替换片段 zhFrom（可手填）',
+            };
         }
         const mostlyWhole = Boolean(payload.wholeSentence)
             && from.length >= Math.max(12, Math.floor(dirty.length * 0.85));
@@ -394,8 +441,8 @@ function assessRuleReuse(p) {
 
     if (payload.longAnchor || train.isLowReuseAnchor(anchor, fullJa)) {
         return {
-            bucket: 'exclude',
-            reason: '日文锚点接近整句，复用性差（禁止单片特化）',
+            bucket: opts.wizardMode ? 'narrow' : 'exclude',
+            reason: '日文锚点偏长，请改成短短语后再写',
             lowReuse: true,
         };
     }
@@ -406,6 +453,19 @@ function assessRuleReuse(p) {
     const level = p.confidence?.level
         || (p.status === 'ready' ? 'auto' : (p.status === 'review' ? 'review' : 'reject'));
     if (level === 'reject' || p.status === 'failed') {
+        // Wizard: keep editable short rules in「需收窄」instead of burying in 已排除
+        if (
+            opts.wizardMode
+            && payload
+            && (mode === 'blank' || (from && from.length < 16))
+            && !payload.unusable
+            && !(payload.wholeSentence && !payload.expandStub)
+        ) {
+            return {
+                bucket: 'narrow',
+                reason: (p.confidence?.reasons || []).join('；') || p.reason || '需改锚点/片段后重试',
+            };
+        }
         return {
             bucket: 'exclude',
             reason: (p.confidence?.reasons || []).join('；') || p.reason || '置信不足/试跑失败',
@@ -415,19 +475,23 @@ function assessRuleReuse(p) {
     if (level === 'auto' && p.trial?.matchesExpect !== false) {
         return { bucket: 'write', reason: p.reason || '可复用片段' };
     }
+    // expandStub that passed trial → write in wizard
+    if (opts.wizardMode && payload.expandStub && p.trial?.matchesExpect) {
+        return { bucket: 'write', reason: p.reason || '短译补全（可写）' };
+    }
     return { bucket: 'narrow', reason: p.reason || '需收窄锚点或片段' };
 }
 
 /**
  * Wizard-oriented buckets: 建议写入 / 需收窄 / 已排除
  */
-function buildWizardReport(proposals) {
+function buildWizardReport(proposals, opts = {}) {
     const adopt = [];
     const review = [];
     const skip = [];
     let wholeFiltered = 0;
     for (const p of proposals || []) {
-        const reuse = assessRuleReuse(p);
+        const reuse = assessRuleReuse(p, opts);
         const row = { ...p, reuse };
         if (reuse.bucket === 'write') adopt.push(row);
         else if (reuse.bucket === 'narrow') review.push(row);

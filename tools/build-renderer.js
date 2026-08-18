@@ -80,6 +80,8 @@ copyRecursive(path.join(src, 'vendor'), path.join(outDir, 'vendor'));
 const proprietaryRendererJs = [
     'advanced-film-reconstruct-core.js',
     'advanced-smart-translate-core.js',
+    'smart-translate-verify-core.js',
+    'smart-translate-address-core.js',
 ];
 for (const name of proprietaryRendererJs) {
     const full = path.join(outDir, 'js', name);

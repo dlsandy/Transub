@@ -491,7 +491,7 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 win.setMinimumSize(EDITOR_WINDOW.minWidth, EDITOR_WINDOW.minHeight);
                 win.setTitle(`Transub Editor — ${path.basename(resolved)}`);
             } catch (_) { /* ignore */ }
-            maximizeEditorWindow(win);
+            if (payload.maximize !== false) maximizeEditorWindow(win);
             return { ok: true, path: resolved };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -515,6 +515,7 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 tab: payload?.tab || 'runtime',
                 parent: parentWin || undefined,
                 checkUpdate: !!payload?.checkUpdate,
+                openLibrary: !!payload?.openLibrary,
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
@@ -598,9 +599,15 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
     register('transub-library-start-mt-train', async (_event, payload = {}) => {
         try {
             warmBridges?.();
-            const { isDevBuild, openMtTrainWindow } = require('./mt-train-window');
-            if (!isDevBuild(app)) {
-                return { ok: false, error: '仅开发模式可用' };
+            const { canOpenMtTrain, openMtTrainWindow } = require('./mt-train-window');
+            const access = canOpenMtTrain(app);
+            if (!access.ok) {
+                return {
+                    ok: false,
+                    error: access.error || '无法打开学习向导',
+                    code: access.code,
+                    proRequired: access.code === 'not_entitled',
+                };
             }
             const { prepareLibraryMtTrainPair } = require('./subtitle-library');
             const mediaId = String(payload?.mediaId || '').trim();
@@ -626,9 +633,15 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
 
     register('transub-open-mt-train', async (_event, payload = {}) => {
         try {
-            const { isDevBuild, openMtTrainWindow } = require('./mt-train-window');
-            if (!isDevBuild(app)) {
-                return { ok: false, error: '仅开发模式可用' };
+            const { canOpenMtTrain, openMtTrainWindow } = require('./mt-train-window');
+            const access = canOpenMtTrain(app);
+            if (!access.ok) {
+                return {
+                    ok: false,
+                    error: access.error || '无法打开学习向导',
+                    code: access.code,
+                    proRequired: access.code === 'not_entitled',
+                };
             }
             warmBridges?.();
             return await openMtTrainWindow(app, payload || null);
@@ -637,10 +650,37 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         }
     });
 
+    register('transub-mt-train-access', async () => {
+        try {
+            const { canOpenMtTrain } = require('./mt-train-window');
+            const access = canOpenMtTrain(app);
+            return {
+                ok: true,
+                canOpen: !!access.ok,
+                isDev: !!access.isDev,
+                isPro: !!access.isPro,
+                audience: access.audience || null,
+                error: access.ok ? null : (access.error || null),
+                code: access.code || null,
+            };
+        } catch (err) {
+            return { ok: false, canOpen: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-is-dev-build', async () => ({
         ok: true,
         isDev: !app.isPackaged,
     }));
+
+    register('transub-upload-subtitlecat', async (_event, payload = {}) => {
+        try {
+            const { uploadSubtitleToSubtitleCat } = require('./subtitlecat-upload');
+            return await uploadSubtitleToSubtitleCat(payload || {}, app);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
 
     register('transub-show-main-window', async () => {
         try {
@@ -668,11 +708,12 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 tab: tab || null,
                 wizard: !!pending?.wizard,
                 forceWizard: !!pending?.forceWizard,
+                openLibrary: !!pending?.openLibrary,
             };
         } catch {
             const tab = pendingOpenParamsTab;
             pendingOpenParamsTab = null;
-            return { ok: true, tab: tab || null, wizard: false, forceWizard: false };
+            return { ok: true, tab: tab || null, wizard: false, forceWizard: false, openLibrary: false };
         }
     });
 

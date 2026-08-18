@@ -11,8 +11,8 @@ describe('advanced-llama-server version probe', () => {
             'b10077',
         );
         assert.strictEqual(
-            llamaServer.parseLlamaCppTag('version: 10437 (abcdef123)'),
-            'b10437',
+            llamaServer.parseLlamaCppTag('version: 10453 (abcdef123)'),
+            'b10453',
         );
         assert.strictEqual(
             llamaServer.parseLlamaCppTag('llama.cpp b9912 release'),
@@ -27,9 +27,21 @@ describe('advanced-llama-server version probe', () => {
     it('resolveInstalledRuntimeTag prefers runtime.json over live --version', () => {
         const tag = llamaServer.resolveInstalledRuntimeTag(
             path.join(__dirname, 'does-not-exist-llama-server.exe'),
-            { tag: 'b10437', probedTag: 'b10437' },
+            { tag: 'b10453', probedTag: 'b10453' },
         );
-        assert.strictEqual(tag, 'b10437');
+        assert.strictEqual(tag, 'b10453');
+    });
+
+    it('resolveInstalledRuntimeTag skips live --version when meta has no tag', () => {
+        const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'transub-llama-tag-'));
+        const exe = path.join(dir, 'llama-server.exe');
+        fs.writeFileSync(exe, 'not-a-real-binary');
+        const t0 = Date.now();
+        const tag = llamaServer.resolveInstalledRuntimeTag(exe, {});
+        const elapsed = Date.now() - t0;
+        fs.rmSync(dir, { recursive: true, force: true });
+        assert.strictEqual(tag, '');
+        assert.ok(elapsed < 800, `live --version should not run (${elapsed}ms)`);
     });
 
     it('syncRuntimePreferenceToHardware skips when CUDA is not preferred', () => {
@@ -53,6 +65,7 @@ describe('advanced-llama-server version probe', () => {
     });
 
     it('probes local runtime binary when present', () => {
+        if (!process.env.TRANSUB_PROBE_LLAMA) return;
         const exe = path.join(__dirname, '..', 'advanced-llm', 'runtime', 'llama-server.exe');
         if (!fs.existsSync(exe)) return;
         const tag = llamaServer.probeLlamaServerTag(exe);

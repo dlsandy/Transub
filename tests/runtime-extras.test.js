@@ -222,14 +222,25 @@ print(json.dumps({
             this.skip();
         }
         const out = runExtras(`
-import json
+import json, sys, time
+t0 = time.perf_counter()
 from transub_engine.runtime_extras import probe_asr_whisper
-print(json.dumps(probe_asr_whisper()))
+probe = probe_asr_whisper()
+elapsed_ms = int((time.perf_counter() - t0) * 1000)
+loaded = [n for n in ("av", "ctranslate2", "faster_whisper", "onnxruntime") if n in sys.modules]
+print(json.dumps({
+    "probe": probe,
+    "elapsedMs": elapsed_ms,
+    "loaded": loaded,
+}))
 `);
-        const probe = JSON.parse(out);
+        const payload = JSON.parse(out);
+        const probe = payload.probe;
         assert.strictEqual(probe.ok, true);
-        assert.ok(['ready', 'need_install'].includes(probe.status));
+        assert.ok(['ready', 'need_install', 'policy_blocked'].includes(probe.status));
         assert.ok(Array.isArray(probe.packages));
+        assert.deepStrictEqual(payload.loaded, [], `probe loaded native stacks: ${payload.loaded}`);
+        assert.ok(payload.elapsedMs < 5000, `probe too slow (${payload.elapsedMs}ms)`);
     });
 
     it('skips vad-whisperseg pip when requirements already satisfied', { timeout: 60000 }, function () {

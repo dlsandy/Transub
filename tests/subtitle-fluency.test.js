@@ -308,8 +308,47 @@ function testRemoveAlignedNoiseFromCuePairs() {
     assert.ok(!cleaned.jaCues.some((c) => c.text === '完毕'));
     assert.ok(summarizeNoiseRemoval(cleaned.stats).includes('删除'));
 
+    // Length mismatch: time-align instead of skip (never ZH-only removeEmpty).
     const mismatch = removeAlignedNoiseFromCuePairs(zh, ja.slice(0, 1));
-    assert.strictEqual(mismatch.skipped, true);
+    assert.ok(!mismatch.skipped, 'length mismatch should time-align, not skip');
+    assert.strictEqual(mismatch.stats?.alignedBy, 'time');
+
+    // Blank ZH + real JA dialogue must stay (under-translation), equal length.
+    const under = removeAlignedNoiseFromCuePairs(
+        [
+            { startMs: 0, endMs: 800, text: '' },
+            { startMs: 900, endMs: 1600, text: '…' },
+            { startMs: 1700, endMs: 2400, text: '嗯' },
+        ],
+        [
+            { startMs: 0, endMs: 800, text: '今日はよろしくお願いします' },
+            { startMs: 900, endMs: 1600, text: 'ちょっと待ってください' },
+            { startMs: 1700, endMs: 2400, text: 'うん' },
+        ],
+        { removeHallucinations: true },
+    );
+    assert.ok(under.jaCues.some((c) => c.text.includes('よろしく')));
+    assert.ok(under.jaCues.some((c) => c.text.includes('待って')));
+    assert.strictEqual(under.zhCues.length, under.jaCues.length);
+    // 嗯/うん filler pair still removed together
+    assert.ok(!under.zhCues.some((c) => c.text === '嗯'));
+    assert.ok(!under.jaCues.some((c) => c.text === 'うん'));
+
+    // ZH collapsed to a laugh/filler must not delete real JA dialogue.
+    const laugh = removeAlignedNoiseFromCuePairs(
+        [
+            { startMs: 0, endMs: 3900, text: '哈哈' },
+            { startMs: 4000, endMs: 4800, text: '嗯' },
+        ],
+        [
+            { startMs: 0, endMs: 3900, text: 'あははは そんなことないいくつだの?' },
+            { startMs: 4000, endMs: 4800, text: '今日はよろしくお願いします' },
+        ],
+        { removeHallucinations: true },
+    );
+    assert.ok(laugh.jaCues.some((c) => c.text.includes('そんなことない')));
+    assert.ok(laugh.jaCues.some((c) => c.text.includes('よろしく')));
+    assert.strictEqual(laugh.zhCues.length, laugh.jaCues.length);
 }
 
 function testDropPureInterjectionPairs() {
@@ -394,6 +433,30 @@ function testDropPureInterjectionPairs() {
     assert.strictEqual(dropped.zhCues[1].text, '等一下');
     assert.strictEqual(dropped.zhCues[2].text, '啊……');
     assert.ok(summarizePureInterjectionDrop(2).includes('清除'));
+
+    const timed = dropPureInterjectionPairs(
+        [{ startMs: 0, endMs: 2200, text: '哈啊' }],
+        [{ startMs: 0, endMs: 2200, text: 'はぁ…' }],
+    );
+    assert.strictEqual(timed.dropped, 1);
+    assert.strictEqual(timed.zhCues.length, 0);
+
+    assert.ok(isPureInterjectionJa('ロキロキロ'));
+    assert.ok(isPureInterjectionJa('ローコロー'));
+    assert.ok(isPureInterjectionJa('ザァッ'));
+    assert.ok(!isPureInterjectionJa('オイル'));
+    assert.ok(!isPureInterjectionJa('コーヒー'));
+    assert.ok(isPureInterjectionZh('咯吱咯吱'));
+    const kataSfx = dropPureInterjectionPairs(
+        [{ startMs: 0, endMs: 800, text: '罗科罗' }],
+        [{ startMs: 0, endMs: 800, text: 'ローコロー' }],
+    );
+    assert.strictEqual(kataSfx.dropped, 1);
+    const oilKeep = dropPureInterjectionPairs(
+        [{ startMs: 0, endMs: 800, text: '精油' }],
+        [{ startMs: 0, endMs: 800, text: 'オイル' }],
+    );
+    assert.strictEqual(oilKeep.dropped, 0);
 
     // Mismatched counts: clear by time overlap (not skip)
     const mismatch = dropPureInterjectionPairs(

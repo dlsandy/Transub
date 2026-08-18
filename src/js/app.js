@@ -293,6 +293,7 @@
     const isStandaloneWizard = pageQuery.get('standaloneWizard') === '1';
     const isStandaloneChrome = isStandaloneSettings || isStandaloneWizard;
     const initialSettingsTab = String(pageQuery.get('tab') || '').trim();
+    const initialOpenModelsLibrary = pageQuery.get('openLibrary') === '1';
 
     /** Legacy / alias tab ids → current panel ids */
     const PARAMS_TAB_ALIASES = {
@@ -611,7 +612,15 @@
                 const now = Date.now();
                 if (now - lastEngineModelsRefreshAt > 8000) {
                     lastEngineModelsRefreshAt = now;
-                    void refreshEngineModels({ silent: true });
+                    // Do not hammer a busy engine (health/list can wedge or used to kill the job).
+                    void (async () => {
+                        try {
+                            const st = await electron?.transubComputeTaskStatus?.();
+                            const kind = String(st?.kind || '').trim();
+                            if (st?.busy && /^engine_/.test(kind)) return;
+                        } catch (_) { /* ignore */ }
+                        await refreshEngineModels({ silent: true });
+                    })();
                 }
             }
         }
@@ -655,6 +664,20 @@
         if (els.smartTranslatePolishWrap) {
             els.smartTranslatePolishWrap.classList.toggle('opacity-50', !ok);
             els.smartTranslatePolishWrap.classList.toggle('pointer-events-none', !ok);
+        }
+        if (els.smartTranslateVerifyCheck) {
+            els.smartTranslateVerifyCheck.disabled = !ok;
+        }
+        if (els.smartTranslateVerifyWrap) {
+            els.smartTranslateVerifyWrap.classList.toggle('opacity-50', !ok);
+            els.smartTranslateVerifyWrap.classList.toggle('pointer-events-none', !ok);
+        }
+        if (els.smartTranslateAddressCheck) {
+            els.smartTranslateAddressCheck.disabled = !ok;
+        }
+        if (els.smartTranslateAddressWrap) {
+            els.smartTranslateAddressWrap.classList.toggle('opacity-50', !ok);
+            els.smartTranslateAddressWrap.classList.toggle('pointer-events-none', !ok);
         }
         if (els.smartTranslatePolishLimitInput) {
             els.smartTranslatePolishLimitInput.disabled = !ok;
@@ -773,7 +796,7 @@
                 } else if (next === 'smart' && !canUseSmartTranslateUi()) {
                     els.translateModeHint.textContent = '智能翻译为 Pro 专属，请先激活 Pro。';
                 } else if (next === 'smart' && hybridOn && els.smartTranslatePolishCheck?.checked !== false) {
-                    els.translateModeHint.textContent = 'Pro：专训句级 + 剧情贴合润色（语意不变）。';
+                    els.translateModeHint.textContent = 'Pro：专训句级 + 剧情贴合润色（补欠译、锁人名、纠错译）。';
                 } else {
                     els.translateModeHint.textContent = '';
                 }
@@ -1387,7 +1410,10 @@
             'engineAutoStartCheck', 'engineTestBtn',
             'engineCancelDownloadBtn',
             'engineEnsureGpuBtn', 'engineManualGpuBtn', 'engineGpuStatus',
-            'engineRefreshModelsBtn', 'engineDownloadProgress', 'engineDownloadProgressBar',
+            'engineRefreshModelsBtn', 'engineRefreshModelsSummaryBtn',
+            'openEngineModelsLibraryBtn', 'closeEngineModelsLibraryBtn', 'engineModelsLibraryModal',
+            'engineModelsLibraryTabSummary', 'engineModelsLibraryDlStrip', 'engineModelsLibraryDlStripText',
+            'engineDownloadProgress', 'engineDownloadProgressBar',
             'engineDownloadProgressText', 'engineDownloadProgressPct', 'engineDownloadLog',
             'engineModelsPanel', 'engineModelsSummary', 'engineModelsSelectedHint', 'engineModelsList',
             'engineModelsSearch', 'engineModelsFilters',
@@ -1402,7 +1428,10 @@
             'smartTranslateFaithfulCheck', 'smartTranslateFaithfulWrap',
             'smartTranslateHybridCheck', 'smartTranslateHybridWrap',
             'smartTranslatePolishCheck', 'smartTranslatePolishWrap',
+            'smartTranslateVerifyCheck', 'smartTranslateVerifyWrap',
+            'smartTranslateAddressCheck', 'smartTranslateAddressWrap',
             'smartTranslatePolishLimitInput', 'smartTranslatePolishLimitWrap',
+            'asrSecondOpinionSelect',
             'filmAudioEnhanceCheck', 'filmAudioEnhanceWrap',
             'filmVadPresetCheck', 'filmVadPresetWrap',
             'filmVadThresholdInput', 'filmVadMinSpeechInput', 'filmVadMinSilenceInput',
@@ -1430,6 +1459,7 @@
             'startupWindowSelect', 'uiLocaleSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'postBatchViewingPunctModeSelect', 'postBatchInterjectionModeSelect', 'postBatchOnomatopoeiaModeSelect',
+            'qcSilenceSplitCharsInput',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
             'runTrialCompareBtn', 'trialDurationInput', 'trialPresetASelect', 'trialPresetBSelect',
@@ -1888,6 +1918,7 @@
         bindGoto('proFilmAudioGotoProcessBtn', 'process');
         bindGoto('proFilmAudioGotoModelsBtn', 'models');
         bindGoto('proQcGotoProcessBtn', 'process');
+        bindGoto('proQcGotoProcessAsrBtn', 'process');
         bindGoto('proQcGotoLlmBtn', 'pro-llm');
 
         const bindProLockedClick = (el, featureLabel) => {
@@ -1932,13 +1963,16 @@
                 btn.setAttribute('hidden', '');
                 btn.remove();
             };
-            if (typeof electron?.transubIsDevBuild !== 'function') {
-                hideTrainMenu();
-                return;
-            }
             try {
-                const st = await electron.transubIsDevBuild();
-                if (!st?.isDev) {
+                let canOpen = false;
+                if (typeof electron?.transubMtTrainAccess === 'function') {
+                    const access = await electron.transubMtTrainAccess();
+                    canOpen = !!access?.canOpen;
+                } else if (typeof electron?.transubIsDevBuild === 'function') {
+                    const st = await electron.transubIsDevBuild();
+                    canOpen = !!st?.isDev;
+                }
+                if (!canOpen) {
                     hideTrainMenu();
                     return;
                 }
@@ -1948,7 +1982,7 @@
                     setMoreMenuOpen(false);
                     void electron?.transubOpenMtTrain?.().then((res) => {
                         if (res?.ok === false) {
-                            appendLog?.(res.error || '打开训练台失败', 'err');
+                            appendLog?.(res.error || '打开学习向导失败', 'err');
                         }
                     });
                 });
@@ -2743,6 +2777,7 @@
                     tab,
                     wizard: true,
                     forceWizard: opts.forceWizard !== false,
+                    openLibrary: !!opts.openLibrary,
                 });
                 return;
             }
@@ -2753,13 +2788,18 @@
         if (!isStandaloneSettings && isDesktop() && electron?.transubOpenSettings) {
             void electron.transubOpenSettings({
                 tab,
+                openLibrary: !!opts.openLibrary,
             });
             return;
         }
         openParamsModal(tab);
+        if (opts.openLibrary) {
+            void openEngineModelsLibrary({ refresh: true });
+        }
     }
 
     function closeParamsModal(restore = false) {
+        closeEngineModelsLibrary();
         if (restore && savedOptionsSnapshot) {
             void applyOptionsToForm(savedOptionsSnapshot, { applyUiMode: false });
         }
@@ -4371,7 +4411,8 @@
         }
         if (id === 'open-models') {
             void openParamsModal('models');
-            showToast('请在「模型」页下载或指定 ASR', 'info');
+            void openEngineModelsLibrary({ refresh: true });
+            showToast('请在模型库下载或指定 ASR', 'info');
         }
     }
 
@@ -4423,7 +4464,7 @@
             return;
         }
         if (id === 'open-models') {
-            openAppSettings('models');
+            openAppSettings('models', { openLibrary: true });
             showToast('请更换或下载 ASR 模型后重试', 'info');
         }
     }
@@ -5178,11 +5219,39 @@
         if (els.smartTranslatePolishCheck) {
             els.smartTranslatePolishCheck.checked = options.smartTranslatePlotPolish !== false;
         }
+        if (els.smartTranslateVerifyCheck) {
+            els.smartTranslateVerifyCheck.checked = options.smartTranslateFaithfulVerify !== false;
+        }
+        if (els.smartTranslateAddressCheck) {
+            els.smartTranslateAddressCheck.checked = options.smartTranslateAddressConsistency !== false;
+        }
         if (els.smartTranslatePolishLimitInput) {
             const lim = Number(options.smartTranslatePolishSampleLimit);
             els.smartTranslatePolishLimitInput.value = String(
                 Number.isFinite(lim) ? Math.max(4, Math.min(36, Math.round(lim))) : 36,
             );
+        }
+        if (els.asrSecondOpinionSelect) {
+            const mode = settingsNormApi.normalizeAsrSecondOpinion
+                ? settingsNormApi.normalizeAsrSecondOpinion(options.asrSecondOpinion)
+                : (String(options.asrSecondOpinion || 'auto').toLowerCase() === 'off' ? 'off'
+                    : (String(options.asrSecondOpinion || '').toLowerCase() === 'on' ? 'on' : 'auto'));
+            els.asrSecondOpinionSelect.value = mode;
+        }
+        {
+            const briefSel = document.getElementById('reconstructBriefSampleModeSelect')
+                || els.reconstructBriefSampleModeSelect;
+            const mode = options.filmBriefSampleMode === 'full' ? 'full' : 'auto';
+            if (briefSel) briefSel.value = mode;
+            // Keep localStorage reconstruct prefs aligned (main window UI); editor reads options via IPC.
+            try {
+                const key = 'transub-editor-reconstruct-prefs';
+                const raw = JSON.parse(localStorage.getItem(key) || '{}') || {};
+                if (raw.briefSampleMode !== mode) {
+                    raw.briefSampleMode = mode;
+                    localStorage.setItem(key, JSON.stringify(raw));
+                }
+            } catch (_) { /* ignore */ }
         }
         if (els.filmAudioEnhanceCheck) {
             els.filmAudioEnhanceCheck.checked = !!options.filmAudioEnhance;
@@ -5393,6 +5462,12 @@
         if (els.postBatchCpsSplitCheck) {
             els.postBatchCpsSplitCheck.checked = options.postBatchCpsSplit !== false;
         }
+        if (els.qcSilenceSplitCharsInput) {
+            const n = Number(options.qcSilenceSplitChars);
+            els.qcSilenceSplitCharsInput.value = String(
+                Number.isFinite(n) ? Math.max(0, Math.min(500, Math.round(n))) : 15,
+            );
+        }
         if (els.postBatchRemoveNoiseCheck) {
             els.postBatchRemoveNoiseCheck.checked = options.postBatchRemoveNoise !== false;
         }
@@ -5485,7 +5560,16 @@
                 smartTranslatePlotPolish: els.smartTranslatePolishCheck
                     ? !!els.smartTranslatePolishCheck.checked
                     : true,
+                smartTranslateFaithfulVerify: els.smartTranslateVerifyCheck
+                    ? !!els.smartTranslateVerifyCheck.checked
+                    : true,
+                smartTranslateAddressConsistency: els.smartTranslateAddressCheck
+                    ? !!els.smartTranslateAddressCheck.checked
+                    : true,
                 smartTranslatePolishSampleLimitRaw: els.smartTranslatePolishLimitInput?.value,
+                asrSecondOpinion: els.asrSecondOpinionSelect?.value || 'auto',
+                filmBriefSampleMode: document.getElementById('reconstructBriefSampleModeSelect')?.value
+                    || els.reconstructBriefSampleModeSelect?.value,
                 advancedEntitled,
                 filmAudioEnhance: !!els.filmAudioEnhanceCheck?.checked,
                 filmVadPreset: !!els.filmVadPresetCheck?.checked,
@@ -5559,6 +5643,7 @@
                 autoDeepSense: !!els.autoDeepSenseCheck?.checked,
                 postBatchQc: els.postBatchQcCheck ? !!els.postBatchQcCheck.checked : true,
                 postBatchQcFixMode: getPostBatchQcFixMode(),
+                qcSilenceSplitCharsRaw: els.qcSilenceSplitCharsInput?.value,
                 postBatchCpsSplit: els.postBatchCpsSplitCheck ? !!els.postBatchCpsSplitCheck.checked : true,
                 postBatchRemoveNoise: els.postBatchRemoveNoiseCheck ? !!els.postBatchRemoveNoiseCheck.checked : true,
                 postBatchCompressRepetition: els.postBatchCompressRepCheck ? !!els.postBatchCompressRepCheck.checked : true,
@@ -6596,6 +6681,7 @@
         if (els.engineManualGpuBtn) els.engineManualGpuBtn.disabled = !!busy;
         if (els.engineCancelDownloadBtn) els.engineCancelDownloadBtn.disabled = !busy;
         if (els.engineRefreshModelsBtn) els.engineRefreshModelsBtn.disabled = !!busy;
+        if (els.engineRefreshModelsSummaryBtn) els.engineRefreshModelsSummaryBtn.disabled = !!busy;
         if (els.engineModelsSearch) els.engineModelsSearch.disabled = !!busy;
         els.engineModelsFilters?.querySelectorAll('[data-models-filter]').forEach((btn) => {
             btn.disabled = !!busy;
@@ -6603,6 +6689,7 @@
         if (!busy) {
             engineDownloadActiveSource = null;
             renderEngineModelsCards();
+            syncEngineModelsLibraryDlStrip();
         } else {
             els.engineModelsList?.querySelectorAll('[data-model-action]').forEach((btn) => {
                 btn.disabled = true;
@@ -6641,6 +6728,7 @@
         if (els.engineDownloadProgressPct) {
             els.engineDownloadProgressPct.textContent = clamped.label;
         }
+        if (engineModelsBusy) syncEngineModelsLibraryDlStrip();
     }
 
     function formatEngineDownloadBytes(n) {
@@ -6728,6 +6816,70 @@
         if (visible && engineDownloadLogLines.length === 0 && detail) {
             appendEngineDownloadLog(detail);
         }
+        syncEngineModelsLibraryDlStrip(detail);
+    }
+
+    function isEngineModelsLibraryOpen() {
+        return !!els.engineModelsLibraryModal && !els.engineModelsLibraryModal.classList.contains('hidden');
+    }
+
+    function syncEngineModelsLibraryDlStrip(detail = '') {
+        const strip = els.engineModelsLibraryDlStrip;
+        const textEl = els.engineModelsLibraryDlStripText;
+        if (!strip) return;
+        const show = !!engineModelsBusy && !isEngineModelsLibraryOpen();
+        strip.classList.toggle('hidden', !show);
+        if (!show || !textEl) return;
+        const pct = String(els.engineDownloadProgressPct?.textContent || '').trim();
+        const msg = String(detail || els.engineDownloadProgressText?.textContent || '').trim()
+            || '正在下载模型…';
+        textEl.textContent = pct && pct !== '0%' ? `${msg}（${pct}）· 可再次打开模型库查看详情` : `${msg} · 可再次打开模型库查看详情`;
+    }
+
+    function syncEngineModelsLibraryTabSummary() {
+        if (!els.engineModelsLibraryTabSummary) return;
+        const total = cachedEnginePickCatalog.length;
+        if (!total) {
+            els.engineModelsLibraryTabSummary.textContent = engineModelsBusy
+                ? '正在下载模型…可打开模型库查看进度'
+                : '打开模型库可查看本机已装与可下载项';
+            return;
+        }
+        const installed = cachedEnginePickCatalog.filter((m) => m?.installed && !m?.incomplete).length;
+        const base = installed
+            ? `已安装 ${installed} / 共 ${total} 个模型`
+            : `共 ${total} 个模型（尚未标记已安装）`;
+        els.engineModelsLibraryTabSummary.textContent = engineModelsBusy
+            ? `${base} · 下载进行中`
+            : `${base} · 点「打开模型库」浏览下载`;
+    }
+
+    async function openEngineModelsLibrary(opts = {}) {
+        const modal = els.engineModelsLibraryModal;
+        if (!modal) return;
+        // Ensure settings shell is visible when opening from main recovery paths.
+        if (els.paramsModal?.classList.contains('hidden')) {
+            await openParamsModal('models');
+        } else {
+            switchParamsTab('models');
+        }
+        modal.classList.remove('hidden');
+        syncEngineModelsLibraryDlStrip();
+        const refresh = opts.refresh !== false;
+        if (refresh && readEngineBackendFromForm() !== 'twai') {
+            lastEngineModelsRefreshAt = Date.now();
+            await refreshEngineModels({ silent: true });
+        } else {
+            syncEngineModelsLibraryTabSummary();
+            syncEngineModelPickSummary();
+        }
+        try { els.engineModelsSearch?.focus?.(); } catch (_) { /* ignore */ }
+    }
+
+    function closeEngineModelsLibrary() {
+        els.engineModelsLibraryModal?.classList.add('hidden');
+        syncEngineModelsLibraryDlStrip();
+        syncEngineModelsLibraryTabSummary();
     }
 
     function filteredEnginePickItems() {
@@ -6748,6 +6900,7 @@
                 ? engineModelsUi.formatModelsSummary({ total, visible })
                 : (!total ? '检测引擎后显示' : (visible === total ? `共 ${total} 个模型` : `显示 ${visible} / ${total}`));
         }
+        syncEngineModelsLibraryTabSummary();
         if (els.engineModelsSelectedHint) {
             const llmCount = cachedEnginePickCatalog.filter((m) => m.group === 'llm').length;
             const llmHint = llmCount
@@ -6756,8 +6909,8 @@
                     : `LLM 推理翻译 ${llmCount} 个（轻量档；解锁 Pro 可浏览全部）`)
                 : '';
             els.engineModelsSelectedHint.textContent = llmHint
-                ? `点卡片「下载」获取模型 · ${llmHint} · 选用已在本页上方设置`
-                : '点卡片「下载」获取模型 · 选用已在本页上方设置';
+                ? `点卡片「下载」获取模型 · ${llmHint} · 选用已在「模型」页上方设置`
+                : '点卡片「下载」获取模型 · 选用已在「模型」页上方设置';
             els.engineModelsSelectedHint.classList.remove('is-ok');
         }
     }
@@ -7052,7 +7205,7 @@
                 secondaryLabel: '取消',
             };
         const go = await appConfirm(copy);
-        if (go) openAppSettings(tab);
+        if (go) openAppSettings(tab, { openLibrary: tab === 'models' });
         return false;
     }
 
@@ -7139,7 +7292,7 @@
 
         // 串行：引擎下载全局忙锁，模型与 Demucs 并行会把后开任务标成「失败」
         if (modelIds.length) {
-            openAppSettings('models');
+            openAppSettings('models', { openLibrary: true });
             appendLog(`感知缺项：开始下载 ${modelIds.join('、')}`, 'info');
             showToast(`正在下载感知所需模型（${modelIds.length}）…`, 'info');
             await downloadEngineModels({ modelIds, force: false });
@@ -7152,7 +7305,7 @@
             await ensureEngineDemucs({ force: false });
         }
         if (!modelIds.length && !needDemucs) {
-            openAppSettings('models');
+            openAppSettings('models', { openLibrary: true });
         }
     }
 
@@ -7162,7 +7315,24 @@
             if (!silent) setEngineStatusText('当前环境不支持引擎模型列表', 'warn');
             return { ok: false, error: 'unsupported' };
         }
+        try {
+            const st = await electron?.transubComputeTaskStatus?.();
+            const kind = String(st?.kind || '').trim();
+            if (st?.busy && /^engine_/.test(kind)) {
+                if (els.engineModelsSummary) {
+                    els.engineModelsSummary.textContent = '任务进行中，暂不刷新模型列表';
+                }
+                syncEngineModelsLibraryTabSummary();
+                if (!silent) {
+                    setEngineStatusText('字幕任务进行中，请结束后再刷新模型列表', 'warn');
+                }
+                return { ok: true, deferred: true, code: 'compute_busy' };
+            }
+        } catch (_) { /* ignore */ }
         if (els.engineModelsSummary) els.engineModelsSummary.textContent = '刷新中…';
+        if (els.engineModelsLibraryTabSummary) {
+            els.engineModelsLibraryTabSummary.textContent = '正在刷新模型状态…';
+        }
         const prevAsr = els.engineAsrModelSelect?.value || '';
         const prevMt = readOpusMtModelFromForm();
         const prevLlm = readLlmMtModelFromForm();
@@ -7247,11 +7417,23 @@
             fillEngineModelSelect(els.engineVadModelSelect, cachedEngineModels, 'vad', prevVad);
             syncExpertQuickModelSelects();
             syncExpertExtraChipsUi();
-            // Probe Demucs before painting the pick catalog so the 人声分离 card has status.
-            try {
-                const demucsRes = await electron.transubEngineAudioSeparateStatus?.(payload);
-                if (demucsRes?.ok) cachedDemucsProbe = demucsRes;
-            } catch { /* keep previous probe */ }
+            // Demucs probe is best-effort and must not block painting the catalog.
+            // Under Smart App Control, a hung prior /v1/runtime/* request can wedge
+            // the engine; keep UI responsive and refresh Demucs in the background.
+            void (async () => {
+                try {
+                    const demucsRes = await electron.transubEngineAudioSeparateStatus?.(payload);
+                    if (demucsRes?.ok) {
+                        cachedDemucsProbe = demucsRes;
+                        if (cachedEnginePickCatalog.length) {
+                            renderEngineModelsList(
+                                catalog.length ? catalog : cachedEngineModels,
+                                managedCatalogRows,
+                            );
+                        }
+                    }
+                } catch { /* keep previous probe */ }
+            })();
             renderEngineModelsList(catalog.length ? catalog : cachedEngineModels, managedCatalogRows);
             syncMtModelChipUi();
             updateReadinessStrip();
@@ -10373,8 +10555,8 @@
         const pathCount = targets.reduce((n, item) => n + getPostBatchPathsForItem(item).length, 0);
         if (confirm) {
             const confirmMsg = onlyItem
-                ? `确定对「${basename(onlyItem.path)}」做 QC 智能修复吗？\n将按素材类型调整强度，并依次：规则修复 → 智能断句 → 局部重转写（需视频；有必要时执行）→ 通顺整理与清怪；有原文对照时再做语义审阅采纳。`
-                : `确定 QC 智能修复吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕（内容画像 + 规则/断句/必要时局部重转写/通顺整理与清怪；双语任务含语义审阅）。`;
+                ? `确定对「${basename(onlyItem.path)}」做 QC 智能修复吗？\n将按素材类型调整强度，并依次：规则修复 → 智能断句 → 局部重转写（连续句/低置信窗，需视频）→ 通顺整理与清怪；有原文对照时再做语义审阅采纳。`
+                : `确定 QC 智能修复吗？\n将处理 ${targets.length} 条任务、写回 ${pathCount} 个字幕（内容画像 + 规则/断句/连续句与低置信局部重转写/通顺整理与清怪；双语任务含语义审阅）。`;
             const yes = await appConfirm({
                 title: 'QC 智能修复 (Pro)',
                 message: confirmMsg,
@@ -10426,7 +10608,15 @@
                     els.progressLabel.textContent = `QC 智能修复中，请稍候… ${fileTotal}/${pathCount} · ${phaseHint}`;
                     try {
                         const pairPath = resolveQcSemanticPairPathForItem(item, subPath);
-                        const savedQc = savedOptionsSnapshot || {};
+                        let savedQc = savedOptionsSnapshot || {};
+                        try {
+                            const optsRes = await electron?.transWithAiGetOptions?.();
+                            if (optsRes?.options) {
+                                savedQc = { ...savedQc, ...optsRes.options };
+                                savedOptionsSnapshot = optsRes.options;
+                            }
+                        } catch { /* keep snapshot */ }
+                        const silenceCharsRaw = Number(savedQc.qcSilenceSplitChars);
                         const res = await electron.transubAdvancedQcSmartFix({
                             path: subPath,
                             mediaPath: item.path,
@@ -10437,9 +10627,15 @@
                             retranscribeConnected: savedQc.qcSmartRetranscribe !== false,
                             smartFix: true,
                             pairPath: pairPath || undefined,
+                            // Prefer JA/source sidecar for low-confidence retranscribe windows
+                            sourceSubtitlePath: pairPath || subPath,
+                            subtitlePath: subPath,
                             semanticReview: savedQc.qcSmartSemanticReview !== false && !!pairPath,
                             intensity: savedQc.qcSmartIntensity || preset.intensity || 'light',
                             maxRetranscribeRanges: Number(savedQc.qcSmartMaxRetranscribeRanges) || 8,
+                            qcSilenceSplitChars: Number.isFinite(silenceCharsRaw) && silenceCharsRaw >= 0
+                                ? silenceCharsRaw
+                                : 15,
                             backupMode: 'off',
                         });
                         if (res?.ok && res.written) {
@@ -10479,6 +10675,28 @@
                     : `QC 复查：${scanned} 个字幕已通过`,
                 withIssues > 0 ? 'warn' : 'ok',
             );
+            if (withIssues > 0) {
+                try {
+                    const smartApi = global.TransubSubtitleQcSmart;
+                    if (typeof smartApi?.planPostBatchResidualHarvest === 'function') {
+                        const residualIssues = [];
+                        for (const item of targets) {
+                            const list = Array.isArray(item.qcIssues) ? item.qcIssues : [];
+                            for (const issue of list) residualIssues.push(issue);
+                        }
+                        const harvest = smartApi.planPostBatchResidualHarvest(residualIssues);
+                        if (harvest.total > 0) {
+                            appendLog(`${harvest.summary}（可开学习向导对照训练，勿整句润色入库）`, 'info');
+                            if (harvest.blank?.length) {
+                                appendLog(
+                                    `其中空/省略 ${harvest.blank.length} 条可在下次智能修复时优先语义补译`,
+                                    'info',
+                                );
+                            }
+                        }
+                    }
+                } catch (_) { /* ignore */ }
+            }
             els.progressLabel.textContent = withIssues > 0 ? 'QC 智能修复完成（仍有问题）' : 'QC 智能修复完成';
             // 按全表剩余问题数决定横幅，避免单条修复把其它项的 QC 提示一并关掉
             state.qcBannerDismissed = countQcIssues() <= 0;
@@ -10566,18 +10784,52 @@
                                 backupMode: 'off',
                             },
                         });
-                        if (res?.ok && res.written) {
+                        let fileWritten = !!(res?.ok && res.written);
+                        const remainHint = res?.cpsSplit?.remainingText
+                            ? `；${res.cpsSplit.remainingText}`
+                            : '';
+                        let fileSummary = `${res?.summary || '已修复 QC'}${remainHint}`;
+                        if (res?.ok && electron.transubQcSilenceSplit) {
+                            let silenceChars = Number(savedOptionsSnapshot?.qcSilenceSplitChars);
+                            try {
+                                const optsRes = await electron?.transWithAiGetOptions?.();
+                                if (optsRes?.options && optsRes.options.qcSilenceSplitChars != null) {
+                                    silenceChars = Number(optsRes.options.qcSilenceSplitChars);
+                                    savedOptionsSnapshot = {
+                                        ...(savedOptionsSnapshot || {}),
+                                        ...optsRes.options,
+                                    };
+                                }
+                            } catch { /* keep snapshot */ }
+                            const maxChars = Number.isFinite(silenceChars) && silenceChars >= 0
+                                ? silenceChars
+                                : 15;
+                            if (maxChars > 0 && item.path) {
+                                try {
+                                    const sil = await electron.transubQcSilenceSplit({
+                                        path: subPath,
+                                        mediaPath: item.path,
+                                        maxChars,
+                                        backupMode: 'off',
+                                    });
+                                    if (sil?.ok && sil.written) {
+                                        fileWritten = true;
+                                        fileSummary = [fileSummary, sil.summary].filter(Boolean).join('；');
+                                    } else if (sil?.ok && sil.summary) {
+                                        fileSummary = [fileSummary, sil.summary].filter(Boolean).join('；');
+                                    }
+                                } catch (_) { /* silence optional */ }
+                            }
+                        }
+                        if (res?.ok && fileWritten) {
                             written += 1;
                             itemWritten += 1;
                             itemOk = true;
-                            const remainHint = res.cpsSplit?.remainingText
-                                ? `；${res.cpsSplit.remainingText}`
-                                : '';
-                            lastSummary = `${res.summary || '已修复 QC'}${remainHint}`;
+                            lastSummary = fileSummary;
                             appendLog(`${basename(subPath)}：${lastSummary}`, 'ok');
                         } else if (res?.ok) {
                             itemOk = true;
-                            lastSummary = res.summary || '无需写回';
+                            lastSummary = fileSummary || res.summary || '无需写回';
                             appendLog(`${basename(subPath)}：${lastSummary}`, 'info');
                         } else {
                             appendLog(`${basename(subPath)}：${res?.error || 'QC 修复失败'}`, 'err');
@@ -10617,6 +10869,66 @@
         }
     }
 
+    async function resolveQcSilenceSplitCharsFromSaved() {
+        let n = Number(savedOptionsSnapshot?.qcSilenceSplitChars);
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            if (optsRes?.options) {
+                savedOptionsSnapshot = { ...(savedOptionsSnapshot || {}), ...optsRes.options };
+                if (optsRes.options.qcSilenceSplitChars != null) {
+                    n = Number(optsRes.options.qcSilenceSplitChars);
+                }
+            }
+        } catch { /* keep snapshot */ }
+        if (!Number.isFinite(n) || n < 0) return 15;
+        return Math.max(0, Math.min(500, Math.round(n)));
+    }
+
+    /** 无 QC 问题项时仍按字数阈值做超长句静音分割（需视频）。 */
+    async function runPostBatchQcSilenceSplitOnly() {
+        if (!electron?.transubQcSilenceSplit) return;
+        const maxChars = await resolveQcSilenceSplitCharsFromSaved();
+        if (!(maxChars > 0)) return;
+        const targets = state.items.filter((item) => {
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            if (!item.path) return false;
+            return getPostBatchPathsForItem(item).length > 0;
+        });
+        if (!targets.length) return;
+        let written = 0;
+        let touched = 0;
+        for (const item of targets) {
+            for (const subPath of getPostBatchPathsForItem(item)) {
+                try {
+                    const sil = await electron.transubQcSilenceSplit({
+                        path: subPath,
+                        mediaPath: item.path,
+                        maxChars,
+                        backupMode: 'off',
+                    });
+                    if (sil?.ok && sil.written) {
+                        written += 1;
+                        touched += 1;
+                        appendLog(`${basename(subPath)}：${sil.summary || '超长句静音分割'}`, 'ok');
+                    } else if (sil?.ok && sil.summary && !sil.skipped) {
+                        touched += 1;
+                        appendLog(`${basename(subPath)}：${sil.summary}`, 'info');
+                    }
+                } catch (err) {
+                    appendLog(`${basename(subPath)}：${err?.message || '超长句静音分割失败'}`, 'warn');
+                }
+            }
+        }
+        if (touched > 0) {
+            appendLog(
+                written > 0
+                    ? `超长句静音分割写回 ${written} 个字幕`
+                    : `超长句静音分割已分析，无可用静音切点`,
+                written > 0 ? 'ok' : 'info',
+            );
+        }
+    }
+
     async function runPostBatchQcAutoFixIfEnabled() {
         // Prefer saved options so a standalone settings window stays in sync.
         let savedMode = null;
@@ -10624,14 +10936,21 @@
             const optsRes = await electron?.transWithAiGetOptions?.();
             if (optsRes?.options) {
                 savedMode = normalizePostBatchQcFixMode(optsRes.options.postBatchQcFixMode);
+                savedOptionsSnapshot = { ...(savedOptionsSnapshot || {}), ...optsRes.options };
             }
         } catch { /* ignore */ }
         const mode = savedMode || getPostBatchQcFixMode();
         if (mode === 'none') return;
-        if (countQcIssues() <= 0) return;
+        if (countQcIssues() <= 0) {
+            // 扫描无 QC 问题：仍按「超长句静音分割字数」处理（否则永远跑不到）
+            await runPostBatchQcSilenceSplitOnly();
+            return;
+        }
         if (mode === 'smart') {
             if (!advancedEntitled) {
                 // Pro 默认智能修复：未解锁时不自动跑，也不降级成一键（避免免费版行为突变）
+                // 仍做超长句静音分割（不依赖 Pro）
+                await runPostBatchQcSilenceSplitOnly();
                 return;
             }
             await runPostBatchQcSmartFix(null, { confirm: false });
@@ -11394,7 +11713,7 @@
                     if (ids.length) {
                         void downloadEngineModels({ modelIds: ids, force: false });
                     } else {
-                        openAppSettings('models');
+                        openAppSettings('models', { openLibrary: true });
                     }
                     setBadge('待安装', 'warn');
                     appendLog('已打开模型下载；完成后请再次开始生成', 'info');
@@ -12535,16 +12854,21 @@
         }
         electron?.onOpenParams?.((payload) => {
             const tab = String(payload?.tab || 'runtime').trim() || 'runtime';
+            const openLibrary = !!payload?.openLibrary;
             if (!isStandaloneSettings) {
                 openAppSettings(tab, {
                     wizard: !!payload?.wizard,
                     forceWizard: !!payload?.forceWizard,
+                    openLibrary,
                 });
                 void electron?.transubConsumePendingOpenParams?.();
                 return;
             }
             openParamsModal(tab);
             void electron?.transubConsumePendingOpenParams?.();
+            if (openLibrary) {
+                void openEngineModelsLibrary({ refresh: true });
+            }
             if (payload?.wizard) {
                 // Explicit wizard open from main → force; avoid confirm swallowing the UI.
                 const force = payload.forceWizard !== false;
@@ -12832,11 +13156,43 @@
                 }
             } finally {
                 if (btn) {
-                    btn.disabled = false;
+                    btn.disabled = !!engineModelsBusy;
                     btn.textContent = prevLabel;
                 }
             }
         });
+        els.engineRefreshModelsSummaryBtn?.addEventListener('click', async () => {
+            const btn = els.engineRefreshModelsSummaryBtn;
+            if (btn) btn.disabled = true;
+            try {
+                const res = await refreshEngineModels({ silent: false });
+                if (res?.code === 'compute_busy' || res?.deferred) {
+                    showToast('任务进行中，暂不刷新', 'warn');
+                } else if (res?.ok || cachedEngineModels.length) {
+                    showToast('模型状态已刷新', 'ok');
+                } else {
+                    showToast(res?.error || '刷新失败', 'warn');
+                }
+            } finally {
+                if (btn) btn.disabled = !!engineModelsBusy;
+            }
+        });
+        els.openEngineModelsLibraryBtn?.addEventListener('click', () => {
+            void openEngineModelsLibrary({ refresh: true });
+        });
+        els.closeEngineModelsLibraryBtn?.addEventListener('click', () => {
+            closeEngineModelsLibrary();
+        });
+        els.engineModelsLibraryModal?.addEventListener('click', (event) => {
+            if (event.target === els.engineModelsLibraryModal) closeEngineModelsLibrary();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            if (!isEngineModelsLibraryOpen()) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeEngineModelsLibrary();
+        }, true);
         els.ffmpegBrowseBtn?.addEventListener('click', browseFfmpegPath);
         els.ffmpegFolderBtn?.addEventListener('click', browseFfmpegFolder);
         els.ffmpegTestBtn?.addEventListener('click', () => refreshFfmpegStatus({ quick: false }));
@@ -13259,6 +13615,9 @@
             const pendingParams = await electron?.transubConsumePendingOpenParams?.().catch(() => null);
             const tab = pendingParams?.tab || initialSettingsTab || 'runtime';
             openParamsModal(tab);
+            if (pendingParams?.openLibrary || initialOpenModelsLibrary) {
+                void openEngineModelsLibrary({ refresh: true });
+            }
             void global.TransubFeatures?.loadPresets?.();
             const wantWizard = !!pendingParams?.wizard
                 || pageQuery.get('wizard') === '1';
@@ -13341,6 +13700,8 @@
         buildSavedOptionsFromForm,
         openParamsModal,
         openAppSettings,
+        openEngineModelsLibrary,
+        closeEngineModelsLibrary,
         updateEnvBanner,
         markSettingsDirty,
         setSaveParamsStatus,

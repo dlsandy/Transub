@@ -77,4 +77,51 @@ describe('mt-train auto-propose', () => {
         assert.ok(actionable.length <= 1, `expected <=1 actionable, got ${actionable.length}`);
         assert.ok(dups.length >= 1 || out.duplicates >= 1);
     });
+
+    it('heuristicExpect expands under_stub お願い', () => {
+        const hit = {
+            ji: 3,
+            src: 'お願い…',
+            dst: '请',
+            after: '请',
+            issues: ['under_stub'],
+        };
+        const h = autoPropose.heuristicExpect(hit);
+        assert.ok(h);
+        assert.strictEqual(h.expect, '拜托了');
+        assert.strictEqual(h.mode, 'replace');
+    });
+
+    it('proposeFromHits applies under_stub heuristic even when route is re_mt', () => {
+        sanitize.reloadTrainedRemaps({ version: 1, zhRemaps: [], asrPairs: [] });
+        const hits = [{
+            ji: 7,
+            src: 'お願い…',
+            dst: '请',
+            after: '请',
+            issues: ['under_stub'],
+        }];
+        const out = autoPropose.proposeFromHits(sanitize, hits, { max: 4, title: 'STUB' });
+        const actionable = out.proposals.filter((p) => ['ready', 'review', 'failed'].includes(p.status));
+        assert.ok(actionable.length >= 1, `expected actionable under_stub, got ${JSON.stringify(out.proposals)}`);
+        assert.ok(actionable[0].payload?.zhTo === '拜托了' || actionable[0].payload?.expect === '拜托了'
+            || String(actionable[0].payload?.zhTo || '').includes('拜托'));
+    });
+
+    it('buildProposalPayload prefers after over dst for residual remaps', () => {
+        const hit = {
+            ji: 9,
+            src: 'イッちゃう',
+            dst: '要射了啊',
+            after: '要去了啊',
+            issues: ['iku_shoot'],
+        };
+        const payload = autoPropose.buildProposalPayload(hit, {
+            expect: '要射了啊',
+            mode: 'replace',
+        });
+        assert.ok(payload.zhFrom === '去' || payload.zh.includes('去'));
+        assert.ok(payload.zhTo === '射' || payload.expect.includes('射'));
+        assert.strictEqual(payload.unusable, false);
+    });
 });

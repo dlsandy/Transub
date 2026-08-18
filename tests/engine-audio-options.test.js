@@ -210,6 +210,28 @@ describe('engine-audio-options', () => {
         assert.strictEqual(vad.model, 'silero-vad');
     });
 
+    it('JA Whisper translate keeps explicit FireRed when sensitive off', () => {
+        const vad = buildVadJobOptions({
+            language: 'ja',
+            engineAsrModel: 'anime-whisper',
+            task: 'translate',
+            engineVadModel: 'firered-vad',
+            vadSensitive: false,
+            vadThreshold: 0.45,
+            vadMaxSingleSegmentMs: 5000,
+            vadSpeechPadMs: 80,
+            vadMinSilenceDurationMs: 500,
+            vadMinSpeechDurationMs: 220,
+        });
+        assert.strictEqual(vad.sensitive, false);
+        assert.strictEqual(vad.model, 'firered-vad');
+        assert.strictEqual(vad.threshold, 0.45);
+        assert.strictEqual(vad.maxSingleSegmentMs, 5000);
+        assert.strictEqual(vad.speechPadMs, 80);
+        assert.strictEqual(vad.minSilenceMs, 500);
+        assert.strictEqual(vad.minSpeechMs, 220);
+    });
+
     it('legacy silero alias normalizes to silero-vad for Whisper', () => {
         const vad = buildVadJobOptions({
             language: 'ja',

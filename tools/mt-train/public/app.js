@@ -48,6 +48,19 @@
     const btnAutoSelectReady = $('btnAutoSelectReady');
     const btnAutoInferMissing = $('btnAutoInferMissing');
     const btnAutoApply = $('btnAutoApply');
+    const btnIdleReport = $('btnIdleReport');
+    const btnIdleView = $('btnIdleView');
+    const idleAutoWrap = $('idleAutoWrap');
+    const idleAutoEnabled = $('idleAutoEnabled');
+    const idleDlg = $('idleDlg');
+    const idleDlgTitle = $('idleDlgTitle');
+    const idleDlgHelp = $('idleDlgHelp');
+    const idleDlgMeta = $('idleDlgMeta');
+    const idleDlgBody = $('idleDlgBody');
+    const btnIdleSelectAuto = $('btnIdleSelectAuto');
+    const btnIdleAdopt = $('btnIdleAdopt');
+    /** @type {object|null} */
+    let idleReport = null;
     const autoFilters = $('autoFilters');
     const serverBanner = $('serverBanner');
     const trainKindEl = $('trainKind');
@@ -766,7 +779,12 @@
             const beforeLive = currentScan?.liveHitCount;
             const out = await api('/api/train/apply', {
                 method: 'POST',
-                body: JSON.stringify(body),
+                body: JSON.stringify({
+                    ...body,
+                    beforeLiveHitCount: currentScan?.liveHitCount,
+                    beforeSoftHitCount: currentScan?.softHitCount,
+                    beforeLiveClusterCounts: currentScan?.summary?.liveClusterCounts || {},
+                }),
             });
             scanCache.clear();
             trainTryOut.classList.remove('hidden');
@@ -775,6 +793,14 @@
             const afterLive = out.scanSummary?.liveHitCount;
             log(`规则已生效 ${out.rule?.id || ''}`
                 + (beforeLive != null && afterLive != null ? `，待修 ${beforeLive}→${afterLive}` : ''));
+            if (out.loopReport?.text) {
+                log(out.loopReport.text);
+                if (summaryEl && out.loopReport.diff) {
+                    const d = out.loopReport.diff;
+                    summaryEl.textContent = `闭环：待修 ${d.liveBefore}→${d.liveAfter}`
+                        + (d.clusters?.[0] ? ` · ${d.clusters[0].cluster} ${d.clusters[0].before}→${d.clusters[0].after}` : '');
+                }
+            }
             if (trial.matchesExpect) {
                 log('写入验证通过。建议点「发库前检查」再签发 TDP。');
             } else {
@@ -797,12 +823,18 @@
                     }
                 }
             }
+            const titleFilter = window.prompt('按番号/备注筛选规则（可留空看全部）', '') || '';
             const data = await api('/api/train/rules-board', {
                 method: 'POST',
                 body: JSON.stringify({
                     corpus,
                     jaPath: jaPathEl.value.trim() || undefined,
                     zhPath: zhPathEl.value.trim() || undefined,
+                    title: activeCode || '',
+                    titleFilter: titleFilter.trim() || undefined,
+                    crossTitles: true,
+                    crossLimit: Number(batchLimitEl?.value) || 8,
+                    persistStats: true,
                 }),
             });
             const rows = data.rules || [];
@@ -813,16 +845,19 @@
             const wrap = document.createElement('div');
             wrap.className = 'rules-list rules-board';
             wrap.innerHTML = `
-              <div class="rules-board-meta muted">语料 ${data.corpusSize || 0} 句 · 用于估算命中/误伤（有对照时更准）</div>
+              <div class="rules-board-meta muted">语料 ${data.corpusSize || 0} 句 · 跨片 ${data.crossTitleCount || 0} 部 · 陈旧 ${data.staleCount || 0}
+                ${data.staleCount ? ' <button type="button" class="btn ghost" id="btnDisableStale">停用陈旧</button>' : ''}
+              </div>
               ${rows.map((r) => {
                 const stats = r.stats
-                    ? `命中 ${r.stats.totalHits}${r.stats.risky ? ' · 误伤偏高' : (r.stats.extra ? ` · 额外 ${r.stats.extra}` : '')}`
+                    ? `命中 ${r.stats.totalHits}${r.stats.crossHits ? ` · 跨片 ${r.stats.crossHits}/${r.stats.crossTitles}` : ''}${r.stats.stale ? ' · 陈旧' : ''}${r.stats.risky ? ' · 误伤偏高' : (r.stats.extra ? ` · 额外 ${r.stats.extra}` : '')}${r.stats.reason ? ` · ${r.stats.reason}` : ''}`
                     : '暂无语料统计';
                 const summary = r.kind === 'asr'
                     ? escapeHtml(r.fragment || `${r.from} → ${r.to}`)
                     : `${escapeHtml(r.fragment || '')}<br/><span class="muted">锚点 ${escapeHtml(r.anchor || '—')}</span>`;
-                return `<div class="rule-row ${r.enabled === false ? 'disabled' : ''}" data-id="${escapeHtml(r.id)}">
+                return `<div class="rule-row ${r.enabled === false ? 'disabled' : ''} ${r.stats?.stale ? 'stale' : ''}" data-id="${escapeHtml(r.id)}">
           <div><b>${escapeHtml(r.title || r.id)}</b> ${r.enabled === false ? '<span class="badge">已停用</span>' : ''}
+            ${r.stats?.stale ? '<span class="badge">陈旧</span>' : ''}
             <span class="badge soft">${escapeHtml(r.kind || 'zh')}</span></div>
           <div class="rule-meta">${summary}<br/>${r.pinFinal ? '防润色 · ' : ''}${escapeHtml(r.note || '')}<br/>${escapeHtml(stats)}</div>
           <div class="rule-actions">
@@ -838,6 +873,21 @@
             dlgBody.appendChild(wrap);
             dlgWrite.classList.add('hidden');
             if (typeof previewDlg.showModal === 'function') previewDlg.showModal();
+
+            wrap.querySelector('#btnDisableStale')?.addEventListener('click', async () => {
+                if (!confirm(`停用 ${data.staleCount} 条陈旧规则？`)) return;
+                try {
+                    const out = await api('/api/train/disable-stale', {
+                        method: 'POST',
+                        body: JSON.stringify({ ids: data.staleIds || [] }),
+                    });
+                    log(`已停用陈旧规则 ${out.disabled}`);
+                    previewDlg.close();
+                    showRules();
+                } catch (err) {
+                    alert(err.message);
+                }
+            });
 
             wrap.querySelectorAll('button[data-act]').forEach((btn) => {
                 btn.addEventListener('click', async () => {
@@ -928,6 +978,30 @@
         return String(trainTranslateModelEl?.value || '').trim();
     }
 
+    const TRAIN_TRANSLATE_MODEL_PREFER = [
+        'qwen3-14b',
+        'qwen3-30b-a3b',
+        'qwen3-32b',
+        'qwen3-8b',
+        'qwen25-14b',
+        'qwen25-7b',
+    ];
+
+    function pickTrainTranslateDefault(catalog, managed) {
+        const preferred = String(
+            lsGet(LS.translateModelId)
+            || managed?.smartTranslateModelId
+            || managed?.smartTranslateModel?.id
+            || managed?.activeModelId
+            || '',
+        ).trim();
+        if (preferred && catalog.some((m) => String(m.id) === preferred)) return preferred;
+        for (const id of TRAIN_TRANSLATE_MODEL_PREFER) {
+            if (catalog.some((m) => String(m.id) === id)) return id;
+        }
+        return String(catalog[0]?.id || '');
+    }
+
     function fillTrainTranslateModelSelect(managed) {
         if (!trainTranslateModelEl) return;
         const catalog = (Array.isArray(managed?.catalog) ? managed.catalog : [])
@@ -940,6 +1014,7 @@
             || managed?.activeModelId
             || '',
         ).trim();
+        const selected = pickTrainTranslateDefault(catalog, managed);
         const opts = [];
         if (!catalog.length) {
             opts.push('<option value="">（暂无已下载的智能翻译模型）</option>');
@@ -960,10 +1035,10 @@
             }
         }
         trainTranslateModelEl.innerHTML = opts.join('');
-        if (preferred && [...trainTranslateModelEl.options].some((o) => o.value === preferred)) {
+        if (selected && [...trainTranslateModelEl.options].some((o) => o.value === selected)) {
+            trainTranslateModelEl.value = selected;
+        } else if (preferred && [...trainTranslateModelEl.options].some((o) => o.value === preferred)) {
             trainTranslateModelEl.value = preferred;
-        } else if (catalog[0]?.id) {
-            trainTranslateModelEl.value = catalog[0].id;
         } else {
             trainTranslateModelEl.value = '';
         }
@@ -1952,6 +2027,7 @@
         const out = [];
         for (const c of currentScan.clusters || []) {
             if (isSoftCluster(c.cluster)) continue;
+            if (activeClusterFilter && c.cluster !== activeClusterFilter) continue;
             for (const hit of c.samples || []) {
                 out.push({ ...hit, title: activeCode || hit.title || '' });
             }
@@ -1959,7 +2035,8 @@
         // Prefer currently selected hot hits when user has a selection
         if (selected.size) {
             const sel = [...selected.values()].filter((h) =>
-                (h.issues || []).some((i) => HOT.has(i)));
+                (h.issues || []).some((i) => HOT.has(i))
+                && (!activeClusterFilter || (h.issues || []).includes(activeClusterFilter)));
             if (sel.length) return sel;
         }
         return out;
@@ -2105,6 +2182,7 @@
     <label>
       <input type="checkbox" data-accept="${i}" ${checked} ${disabled} />
       <span><b>#${escapeHtml(String(p.ji ?? '?'))}</b>
+        ${p.routeLabel || p.route ? ` · <span class="badge soft">${escapeHtml(p.routeLabel || p.route)}</span>` : ''}
         ${p.issue ? ` · ${escapeHtml(issueLabel(p.issue))}` : ''}
         ${p.source ? ` · ${escapeHtml(p.source === 'heuristic' ? '启发式' : '模型/用户')}` : ''}
         <div class="mono">${escapeHtml(p.src || '')}</div>
@@ -2112,7 +2190,13 @@
         ${finalLine ? `<div class="auto-meta">${escapeHtml(finalLine)}</div>` : ''}
         ${confLine ? `<div class="auto-meta">${escapeHtml(confLine)}</div>` : ''}
         ${colLine ? `<div class="auto-meta">${escapeHtml(colLine)}</div>` : ''}
+        ${(() => {
+            const x = p.crossCollateral;
+            if (!x || !x.totalHits) return '';
+            return `<div class="auto-meta">跨片：命中 ${x.totalHits}（${x.titlesHit}/${x.titleCount || '?'} 部）${x.risky ? ' · 偏多' : ''}</div>`;
+        })()}
         ${mergeLine ? `<div class="auto-meta">${escapeHtml(mergeLine)}</div>` : ''}
+        ${p.opposingIntent?.note ? `<div class="auto-meta">对立意图：${escapeHtml(p.opposingIntent.note)}</div>` : ''}
         ${warn ? `<div class="auto-meta">注意：${escapeHtml(warn)}</div>` : ''}
         ${forceBox}
         ${editBlock}
@@ -2183,6 +2267,16 @@
                 serverBanner.innerHTML = '训练台服务版本过旧，学习向导/自动建议不可用。请关闭窗口重开，或运行 <code>npm run train:mt:restart</code> 后刷新。';
                 return false;
             }
+            if (!h?.features?.loopReport || !h?.features?.idleReport) {
+                serverBanner.classList.remove('hidden', 'ok');
+                serverBanner.innerHTML = '训练台缺少闭环/早报能力。请运行 <code>npm run train:mt:restart</code> 后刷新。';
+                return false;
+            }
+            if (!h?.features?.crossCollateral || !h?.features?.historyPairs) {
+                serverBanner.classList.remove('hidden', 'ok');
+                serverBanner.innerHTML = '训练台缺少跨片误伤/引擎配对。请运行 <code>npm run train:mt:restart</code> 后刷新。';
+                return false;
+            }
             serverBanner.classList.add('hidden');
             return true;
         } catch (_) {
@@ -2220,6 +2314,7 @@
                     jaPath: jaPathEl.value.trim(),
                     zhPath: zhPathEl.value.trim(),
                     corpus: hits,
+                    cluster: activeClusterFilter || undefined,
                 }),
             });
             const next = Array.isArray(out.proposals) ? out.proposals : [];
@@ -2233,15 +2328,19 @@
                 autoProposals = next;
             }
             const conf = out.confidence || {};
+            const routeBits = out.routeCounts
+                ? Object.entries(out.routeCounts).filter(([, n]) => n).map(([k, n]) => `${k}:${n}`).join(' ')
+                : '';
             if (autoDlgTitle) {
-                autoDlgTitle.textContent = `自动训练建议 · 可直接写 ${conf.auto ?? out.ready ?? 0}`
+                autoDlgTitle.textContent = `自动训练建议${activeClusterFilter ? ` · ${activeClusterFilter}` : ''}`
+                    + ` · 可直接写 ${conf.auto ?? out.ready ?? 0}`
                     + ` / 建议改 ${conf.review ?? out.review ?? 0}`
                     + ` / 别写 ${conf.reject ?? out.failed ?? 0}`
                     + (out.mergeCount ? ` / 合并 ${out.mergeCount}` : '');
             }
             if (autoDlgHelp) {
-                autoDlgHelp.textContent = out.hint
-                    || '默认只勾「可直接写」；建议改需勾选并点「仍要写入」。';
+                autoDlgHelp.textContent = (out.hint || '默认只勾「可直接写」；建议改需勾选并点「仍要写入」。')
+                    + (routeBits ? ` 分流 ${routeBits}` : '');
             }
             if (btnAutoInferMissing) {
                 const need = autoProposals.some((p) => p.status === 'needs_expect');
@@ -2251,7 +2350,8 @@
             if (!keepOpen && typeof autoDlg.showModal === 'function') autoDlg.showModal();
             if (!quiet) {
                 log(`自动建议完成：可直接写 ${conf.auto ?? out.ready ?? 0}，建议改 ${conf.review ?? 0}`
-                    + (out.mergeCount ? `，同型合并 ${out.mergeCount}` : ''));
+                    + (out.mergeCount ? `，同型合并 ${out.mergeCount}` : '')
+                    + (out.crossTitleCount ? `，跨片语料 ${out.crossTitleCount} 部` : ''));
             }
             return out;
         } catch (err) {
@@ -2339,17 +2439,27 @@
         try {
             const out = await api('/api/train/auto-apply', {
                 method: 'POST',
-                body: JSON.stringify({ proposals: picked, onlyReady: false }),
+                body: JSON.stringify({
+                    proposals: picked,
+                    onlyReady: false,
+                    title: activeCode || '',
+                    jaPath: jaPathEl.value.trim(),
+                    zhPath: zhPathEl.value.trim(),
+                    beforeLiveHitCount: currentScan?.liveHitCount,
+                    beforeSoftHitCount: currentScan?.softHitCount,
+                    beforeLiveClusterCounts: currentScan?.summary?.liveClusterCounts || {},
+                }),
             });
             log(`自动写入完成：成功 ${out.applied}，拒绝 ${out.rejected}`);
             if (out.rejectedItems?.length) {
                 log(`拒绝原因：${out.rejectedItems.map((x) => `#${x.ji} ${x.reason}`).join('；')}`);
             }
+            if (out.loopReport?.text) log(out.loopReport.text);
             autoDlg.close?.();
             scanCache.clear();
             await runScan({ force: true });
             if (out.applied > 0) {
-                const runTest = confirm(`已写入 ${out.applied} 条。是否立即跑全部测试防回归？`);
+                const runTest = confirm(`已写入 ${out.applied} 条${out.loopReport?.diff ? `（待修 ${out.loopReport.diff.liveBefore}→${out.loopReport.diff.liveAfter}）` : ''}。是否立即跑全部测试防回归？`);
                 if (runTest) $('btnMocha')?.click();
             }
         } catch (err) {
@@ -2512,6 +2622,226 @@
         }
     }
 
+    function syncIdleAdoptEnabled() {
+        if (!btnIdleAdopt || !idleReport) return;
+        const n = (idleReport.proposals || []).filter((p) => p.accepted).length;
+        btnIdleAdopt.disabled = n === 0;
+        btnIdleAdopt.textContent = n ? `采纳勾选（${n}）` : '采纳勾选';
+    }
+
+    function renderIdleReport(report) {
+        idleReport = report;
+        if (!idleDlgBody) return;
+        const conf = report.confidence || {};
+        if (idleDlgTitle) {
+            idleDlgTitle.textContent = `早报 · 可直接写 ${conf.auto || 0} / 建议改 ${conf.review || 0} / 别写 ${conf.reject || 0}`;
+        }
+        if (idleDlgMeta) {
+            idleDlgMeta.textContent = `${report.finishedAt || ''} · ${report.titleCount || 0} 部`
+                + ` · 待修合计 ${report.liveBeforeTotal ?? '—'}`
+                + (report.id ? ` · ${report.id}` : '');
+        }
+        if (idleDlgHelp) idleDlgHelp.textContent = report.hint || '';
+        const rows = (report.proposals || []).filter((p) =>
+            p.confidence?.level === 'auto'
+            || p.confidence?.level === 'review'
+            || ['ready', 'review', 'needs_expect'].includes(p.status));
+        if (!rows.length) {
+            idleDlgBody.innerHTML = '<div class="empty">早报无可写候选（或全部被判别写/跳过）。</div>';
+            syncIdleAdoptEnabled();
+            return;
+        }
+        idleDlgBody.innerHTML = rows.map((p, i) => {
+            const confLevel = p.confidence?.level;
+            const can = confLevel === 'auto' || confLevel === 'review' || p.status === 'ready' || p.status === 'review';
+            const local = p.payload
+                ? `${p.payload.zhFrom || ''}→${p.payload.zhTo || (p.payload.mode === 'blank' ? '…' : '')}`
+                : '';
+            return `<div class="auto-row ${escapeHtml(confLevel || p.status || '')}">
+  <label>
+    <input type="checkbox" data-idle-accept="${i}" ${p.accepted ? 'checked' : ''} ${can ? '' : 'disabled'} />
+    <span><b>${escapeHtml(p.title || '')}</b> #${escapeHtml(String(p.ji ?? '?'))}
+      ${p.routeLabel ? ` · ${escapeHtml(p.routeLabel)}` : ''}
+      ${p.issue ? ` · ${escapeHtml(issueLabel(p.issue))}` : ''}
+      <div class="mono">${escapeHtml(p.src || '')}</div>
+      <div class="auto-meta">${escapeHtml(p.reason || '')}${local ? ` · ${escapeHtml(local)}` : ''}</div>
+      ${p.confidence?.reasons?.length ? `<div class="auto-meta">${escapeHtml(p.confidence.reasons.slice(0, 2).join('；'))}</div>` : ''}
+    </span>
+  </label>
+  <span class="auto-status">${escapeHtml(autoStatusLabel(p.status, p.confidence))}</span>
+</div>`;
+        }).join('');
+        // map checkbox index to proposal in filtered rows
+        idleDlgBody.querySelectorAll('input[data-idle-accept]').forEach((cb) => {
+            cb.addEventListener('change', () => {
+                const i = Number(cb.getAttribute('data-idle-accept'));
+                if (rows[i]) {
+                    rows[i].accepted = cb.checked;
+                    const full = (idleReport.proposals || []).find((p) => p.idleId === rows[i].idleId);
+                    if (full) full.accepted = cb.checked;
+                }
+                syncIdleAdoptEnabled();
+            });
+        });
+        syncIdleAdoptEnabled();
+    }
+
+    async function runIdleGenerate() {
+        const healthy = await checkTrainHealth();
+        if (!healthy) return;
+        const lim = Number(batchLimitEl?.value) || 8;
+        if (btnIdleReport) btnIdleReport.disabled = true;
+        log(`生成早报：扫描最近 ${lim} 部…`);
+        try {
+            const report = await api('/api/idle/run', {
+                method: 'POST',
+                body: JSON.stringify({
+                    maxTitles: lim,
+                    maxPerTitle: 8,
+                    cluster: activeClusterFilter || undefined,
+                    label: 'morning',
+                }),
+            });
+            renderIdleReport(report);
+            if (typeof idleDlg.showModal === 'function') idleDlg.showModal();
+            log(`早报完成：可直接写 ${report.confidence?.auto || 0}，建议改 ${report.confidence?.review || 0}`);
+        } catch (err) {
+            log(`生成早报失败：${err.message}`);
+            alert(err.message);
+        } finally {
+            if (btnIdleReport) btnIdleReport.disabled = false;
+        }
+    }
+
+    async function runIdleView() {
+        try {
+            const report = await api('/api/idle/report');
+            renderIdleReport(report);
+            if (typeof idleDlg.showModal === 'function') idleDlg.showModal();
+        } catch (err) {
+            alert(err.message || '暂无早报，请先点「生成早报」');
+        }
+    }
+
+    async function runIdleAdopt() {
+        if (!idleReport) return;
+        const picked = (idleReport.proposals || []).filter((p) => p.accepted);
+        if (!picked.length) {
+            alert('请先勾选要采纳的项');
+            return;
+        }
+        if (!confirm(`从早报写入 ${picked.length} 条规则（全局生效）。确定？`)) return;
+        btnIdleAdopt.disabled = true;
+        try {
+            const out = await api('/api/idle/adopt', {
+                method: 'POST',
+                body: JSON.stringify({
+                    report: idleReport,
+                    idleIds: picked.map((p) => p.idleId).filter(Boolean),
+                }),
+            });
+            log(`早报采纳：成功 ${out.applied}，拒绝 ${out.rejected}`);
+            if (out.hint) log(out.hint);
+            idleDlg.close?.();
+            scanCache.clear();
+            await loadTitles();
+            if (out.applied > 0) {
+                const go = confirm('已写入。是否跑发库前检查？');
+                if (go) runShipGate();
+            }
+        } catch (err) {
+            log(`早报采纳失败：${err.message}`);
+            alert(err.message);
+        } finally {
+            syncIdleAdoptEnabled();
+        }
+    }
+
+    /** @type {object[]} */
+    let histPairsCache = [];
+
+    function syncHistOpenEnabled() {
+        const btn = $('btnHistOpen');
+        if (!btn) return;
+        const n = histPairsCache.filter((p) => p._sel).length;
+        btn.disabled = n === 0;
+        btn.textContent = n ? `对照选中（${n}）` : '对照选中';
+    }
+
+    function renderHistPairs(pairs) {
+        histPairsCache = (pairs || []).map((p) => ({ ...p, _sel: false }));
+        const body = $('histDlgBody');
+        if (!body) return;
+        if (!histPairsCache.length) {
+            body.innerHTML = '<div class="empty">暂无可用的引擎任务字幕对（需保留 .src.srt 与译文）。</div>';
+            syncHistOpenEnabled();
+            return;
+        }
+        const q = String($('histFilter')?.value || '').trim().toLowerCase();
+        const rows = q
+            ? histPairsCache.filter((p) =>
+                String(p.title || '').toLowerCase().includes(q)
+                || String(p.task || '').toLowerCase().includes(q)
+                || String(p.jobId || '').toLowerCase().includes(q))
+            : histPairsCache;
+        body.innerHTML = rows.map((p) => {
+            const idx = histPairsCache.indexOf(p);
+            const zhName = String(p.zhPath || '').split(/[/\\]/).pop() || '';
+            return `<div class="auto-row">
+  <label>
+    <input type="checkbox" data-hist="${idx}" ${p._sel ? 'checked' : ''} />
+    <span><b>${escapeHtml(p.title || '')}</b>
+      <div class="auto-meta">${escapeHtml(p.task || '')} · ${escapeHtml(p.finishedAt || '')}</div>
+      <div class="mono muted">${escapeHtml(zhName)}</div>
+    </span>
+  </label>
+</div>`;
+        }).join('');
+        body.querySelectorAll('input[data-hist]').forEach((cb) => {
+            cb.addEventListener('change', () => {
+                const i = Number(cb.getAttribute('data-hist'));
+                if (histPairsCache[i]) histPairsCache[i]._sel = cb.checked;
+                syncHistOpenEnabled();
+            });
+        });
+        syncHistOpenEnabled();
+    }
+
+    async function openHistoryPairsDialog() {
+        const dlg = $('histDlg');
+        try {
+            const data = await api('/api/history-pairs?maxPairs=40');
+            renderHistPairs(data.pairs || []);
+            log(`引擎任务配对 ${data.total || 0}（历史条目 ${data.entryCount ?? '—'}）`);
+            if (typeof dlg?.showModal === 'function') dlg.showModal();
+        } catch (err) {
+            alert(err.message || '无法读取任务历史');
+        }
+    }
+
+    async function openSelectedHistoryPairs() {
+        const picked = histPairsCache.filter((p) => p._sel);
+        if (!picked.length) return;
+        try {
+            const first = picked[0];
+            const opened = await api('/api/history-pairs/open', {
+                method: 'POST',
+                body: JSON.stringify({ id: first.id }),
+            });
+            jaPathEl.value = opened.jaPath;
+            zhPathEl.value = opened.zhPath;
+            activeCode = opened.pair?.title || first.title || '';
+            $('histDlg')?.close?.();
+            await runScan({ force: true });
+            log(`已导入引擎任务：${activeCode}`);
+            if (picked.length > 1) {
+                log(`另有 ${picked.length - 1} 部已勾选未打开；可再点「引擎任务」切换。`);
+            }
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
     function isTypingTarget(el) {
         if (!el) return false;
         const tag = el.tagName;
@@ -2528,6 +2858,42 @@
 
     $('btnRefresh').addEventListener('click', () => loadTitles().catch((e) => log(e.message)));
     $('btnBatch').addEventListener('click', () => runBatch());
+    $('btnHistoryPairs')?.addEventListener('click', () => openHistoryPairsDialog());
+    $('btnHistRefresh')?.addEventListener('click', () => openHistoryPairsDialog());
+    $('btnHistOpen')?.addEventListener('click', () => openSelectedHistoryPairs());
+    $('histFilter')?.addEventListener('input', () => {
+        // re-render from cache; selection flags preserved on histPairsCache
+        const body = $('histDlgBody');
+        if (!body) return;
+        const q = String($('histFilter')?.value || '').trim().toLowerCase();
+        const rows = q
+            ? histPairsCache.filter((p) =>
+                String(p.title || '').toLowerCase().includes(q)
+                || String(p.task || '').toLowerCase().includes(q)
+                || String(p.jobId || '').toLowerCase().includes(q))
+            : histPairsCache;
+        body.innerHTML = rows.map((p) => {
+            const idx = histPairsCache.indexOf(p);
+            const zhName = String(p.zhPath || '').split(/[/\\]/).pop() || '';
+            return `<div class="auto-row">
+  <label>
+    <input type="checkbox" data-hist="${idx}" ${p._sel ? 'checked' : ''} />
+    <span><b>${escapeHtml(p.title || '')}</b>
+      <div class="auto-meta">${escapeHtml(p.task || '')} · ${escapeHtml(p.finishedAt || '')}</div>
+      <div class="mono muted">${escapeHtml(zhName)}</div>
+    </span>
+  </label>
+</div>`;
+        }).join('');
+        body.querySelectorAll('input[data-hist]').forEach((cb) => {
+            cb.addEventListener('change', () => {
+                const i = Number(cb.getAttribute('data-hist'));
+                if (histPairsCache[i]) histPairsCache[i]._sel = cb.checked;
+                syncHistOpenEnabled();
+            });
+        });
+        syncHistOpenEnabled();
+    });
     $('btnScan').addEventListener('click', () => runScan({ force: true }));
     $('btnReload').addEventListener('click', async () => {
         try {
@@ -2582,6 +2948,37 @@
     });
     btnAutoInferMissing?.addEventListener('click', () => runAutoInferMissing());
     btnAutoApply?.addEventListener('click', () => runAutoApply());
+    btnIdleReport?.addEventListener('click', () => runIdleGenerate());
+    btnIdleView?.addEventListener('click', () => runIdleView());
+    btnIdleSelectAuto?.addEventListener('click', () => {
+        if (!idleReport) return;
+        for (const p of idleReport.proposals || []) {
+            p.accepted = p.confidence?.level === 'auto';
+        }
+        renderIdleReport(idleReport);
+    });
+    btnIdleAdopt?.addEventListener('click', () => runIdleAdopt());
+    async function syncElectronIdlePrefs() {
+        if (!isElectronTrain || !transubTrain?.idleStatus) return;
+        idleAutoWrap?.classList.remove('hidden');
+        try {
+            const st = await transubTrain.idleStatus();
+            if (idleAutoEnabled) idleAutoEnabled.checked = st.enabled !== false;
+            if (st.lastReportId && st.lastRunAt) {
+                log(`空闲早报：上次 ${st.lastRunAt} · ${st.lastReportId}${st.gate?.ok === false ? ` · ${st.gate.reason}` : ''}`);
+            }
+        } catch (_) { /* ignore */ }
+    }
+    idleAutoEnabled?.addEventListener('change', async () => {
+        if (!transubTrain?.setIdlePrefs) return;
+        try {
+            await transubTrain.setIdlePrefs({ enabled: idleAutoEnabled.checked });
+            log(idleAutoEnabled.checked ? '已开启空闲自动早报（不写入规则）' : '已关闭空闲自动早报');
+        } catch (err) {
+            log(`空闲偏好失败：${err.message}`);
+        }
+    });
+    void syncElectronIdlePrefs();
     void checkTrainHealth();
     $('btnShipGate').addEventListener('click', () => runShipGate());
     $('btnMocha').addEventListener('click', () => runMocha());

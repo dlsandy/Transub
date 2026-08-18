@@ -97,6 +97,7 @@ async function reconstructOneSubtitleFile(file, deps = {}) {
         intensity: options.intensity,
         filmBrief: options.filmBrief || null,
         skipConsistency: options.skipConsistency === true,
+        briefSampleMode: options.briefSampleMode,
         glossary: deps.glossary || null,
         dryRun: !!options.dryRun,
         signal: deps.signal,

@@ -304,9 +304,237 @@
         if (!n) return '无需局部重转写';
         const cueCount = ranges.reduce((sum, r) => sum + (r.indexes?.length || 0), 0);
         const max = clampInt(options.maxRanges, 1, 40, DEFAULT_MAX_RETRANSCRIBE_RANGES);
+        const lowN = Number(options.lowConfidenceCueCount) || 0;
+        const connN = Number(options.connectedCueCount) || 0;
         const parts = [`将对 ${n} 个时间窗重转写（覆盖约 ${cueCount} 条）`];
+        if (connN) parts.push(`连续 ${connN}`);
+        if (lowN) parts.push(`低置信 ${lowN}`);
         if (ranges.length >= max) parts.push(`已截断至 ${max} 窗`);
         return parts.join(' · ');
+    }
+
+    /**
+     * Batch QC: merge connected-issue ranges with low-confidence ASR windows under one budget.
+     * Connected windows fill first; leftover slots go to low-confidence only.
+     * @returns {{
+     *   ranges: object[],
+     *   indexes: number[],
+     *   connectedIndexes: number[],
+     *   lowConfidenceIndexes: number[],
+     *   plan: string,
+     * }}
+     */
+    function planMergedQcRetranscribeRanges(cues, issues, lowConfidenceIndexes, options = {}) {
+        const maxRanges = clampInt(
+            options.maxRanges,
+            1,
+            40,
+            DEFAULT_MAX_RETRANSCRIBE_RANGES,
+        );
+        const rangeOpts = {
+            maxRanges,
+            maxDurationSec: options.maxDurationSec,
+            mergeAdjacentGapMs: options.mergeAdjacentGapMs,
+        };
+        const connectedTargets = selectQcRetranscribeTargets(issues, {
+            maxTargets: options.maxTargets,
+            types: options.types,
+        });
+        const connectedIndexes = connectedTargets.map((t) => Number(t.index))
+            .filter((n) => Number.isInteger(n) && n >= 0);
+        const lowIndexes = [...new Set((Array.isArray(lowConfidenceIndexes) ? lowConfidenceIndexes : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n >= 0))]
+            .sort((a, b) => a - b);
+
+        const connectedRanges = buildQcRetranscribeRanges(cues, connectedIndexes, rangeOpts);
+        const covered = new Set();
+        for (const r of connectedRanges) {
+            for (const idx of r.indexes || []) covered.add(Number(idx));
+        }
+
+        let lowRanges = [];
+        const leftoverSlots = Math.max(0, maxRanges - connectedRanges.length);
+        if (leftoverSlots > 0 && lowIndexes.length) {
+            const leftoverLow = lowIndexes.filter((idx) => !covered.has(idx));
+            if (leftoverLow.length) {
+                lowRanges = buildQcRetranscribeRanges(cues, leftoverLow, {
+                    ...rangeOpts,
+                    maxRanges: leftoverSlots,
+                });
+            }
+        }
+
+        const ranges = [...connectedRanges, ...lowRanges]
+            .sort((a, b) => a.startMs - b.startMs);
+        const indexes = [...new Set(ranges.flatMap((r) => r.indexes || []))]
+            .sort((a, b) => a - b);
+        const lowUsed = lowIndexes.filter((idx) => indexes.includes(idx)).length;
+        return {
+            ranges,
+            indexes,
+            connectedIndexes,
+            lowConfidenceIndexes: lowIndexes,
+            plan: summarizeQcRetranscribePlan(ranges, {
+                maxRanges,
+                connectedCueCount: connectedIndexes.length,
+                lowConfidenceCueCount: lowUsed,
+            }),
+        };
+    }
+
+    /**
+     * After autofix rescan: residual cues worth harvest / train feed (not auto LLM rewrite).
+     * @returns {{
+     *   blank: number[],
+     *   fluency: number[],
+     *   weird: number[],
+     *   lowConfidence: number[],
+     *   total: number,
+     *   summary: string,
+     * }}
+     */
+    function planPostBatchResidualHarvest(issues, options = {}) {
+        const blank = [];
+        const fluency = [];
+        const weird = [];
+        const lowConfidence = [];
+        const seen = {
+            blank: new Set(),
+            fluency: new Set(),
+            weird: new Set(),
+            lowConfidence: new Set(),
+        };
+        const push = (key, bucket, idx) => {
+            const n = Number(idx);
+            if (!Number.isInteger(n) || n < 0 || seen[key].has(n)) return;
+            seen[key].add(n);
+            bucket.push(n);
+        };
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0) continue;
+            const types = Array.isArray(issue.types) ? issue.types : [];
+            const preview = String(issue.textPreview || issue.text || '').trim();
+            if (types.includes('weird')) push('weird', weird, idx);
+            if (types.includes('fluency')) push('fluency', fluency, idx);
+            if (types.includes('low_confidence') || types.includes('asr_low')) {
+                push('lowConfidence', lowConfidence, idx);
+            }
+            if (types.includes('blank') || isBlankOrEllipsisZh(preview)) {
+                push('blank', blank, idx);
+            }
+        }
+        for (const idx of Array.isArray(options.lowConfidenceIndexes) ? options.lowConfidenceIndexes : []) {
+            push('lowConfidence', lowConfidence, idx);
+        }
+        for (const idx of Array.isArray(options.blankIndexes) ? options.blankIndexes : []) {
+            push('blank', blank, idx);
+        }
+        const total = new Set([...blank, ...fluency, ...weird, ...lowConfidence]).size;
+        const parts = [];
+        if (blank.length) parts.push(`空/省略 ${blank.length}（可补译）`);
+        if (fluency.length) parts.push(`通顺度 ${fluency.length}`);
+        if (weird.length) parts.push(`怪句 ${weird.length}`);
+        if (lowConfidence.length) parts.push(`低置信 ${lowConfidence.length}`);
+        return {
+            blank,
+            fluency,
+            weird,
+            lowConfidence,
+            total,
+            summary: total
+                ? `仍有 ${total} 条建议对照训练（${parts.join(' · ')}）`
+                : '无残留训练候选',
+        };
+    }
+
+    function isBlankOrEllipsisZh(text) {
+        const t = String(text || '').trim();
+        if (!t) return true;
+        if (t === '…' || t === '...' || t === '⋯') return true;
+        return /^[….\s]+$/.test(t);
+    }
+
+    /**
+     * ZH blank/ellipsis with JA substance — prefer semantic 补译 (e.g. after ASR second-opinion blanks).
+     * @returns {number[]}
+     */
+    function collectBlankEllipsisIndexes(targetCues, pairCues, options = {}) {
+        const targets = Array.isArray(targetCues) ? targetCues : [];
+        const pairsSrc = Array.isArray(pairCues) ? pairCues : [];
+        const findOverlap = typeof options.findBestOverlapCue === 'function'
+            ? options.findBestOverlapCue
+            : null;
+        const minSrcChars = Math.max(1, Math.min(20, Number(options.minSourceChars) || 2));
+        const max = Math.max(1, Math.min(80, Number(options.maxIndexes) || 40));
+        const out = [];
+        for (let index = 0; index < targets.length; index += 1) {
+            const cue = targets[index];
+            if (!isBlankOrEllipsisZh(cue?.text)) continue;
+            const startMs = Number(cue?.startMs) || 0;
+            const endMs = cueEndMs(cue);
+            let source = '';
+            if (findOverlap && pairsSrc.length) {
+                try {
+                    const hit = findOverlap(pairsSrc, startMs, endMs);
+                    source = String(hit?.cue?.text || hit?.text || '').trim();
+                } catch (_) {
+                    source = '';
+                }
+            }
+            if (!source) source = String(pairsSrc[index]?.text || '').trim();
+            const srcChars = Array.from(source.replace(/\s+/g, '')).length;
+            if (srcChars < minSrcChars) continue;
+            out.push(index);
+            if (out.length >= max) break;
+        }
+        return out;
+    }
+
+    /**
+     * Inject synthetic blank issues so semantic review / harvest see ellipsis cues.
+     */
+    function mergeBlankEllipsisIssues(cues, issues, options = {}) {
+        const list = Array.isArray(cues) ? cues : [];
+        const blankIndexes = Array.isArray(options.blankIndexes)
+            ? options.blankIndexes
+            : collectBlankEllipsisIndexes(list, options.pairCues, options);
+        if (!blankIndexes.length) return Array.isArray(issues) ? issues.slice() : [];
+        const byIndex = new Map();
+        for (const issue of Array.isArray(issues) ? issues : []) {
+            const idx = Number(issue?.index);
+            if (!Number.isInteger(idx) || idx < 0) continue;
+            const prev = byIndex.get(idx);
+            if (!prev) {
+                byIndex.set(idx, {
+                    ...issue,
+                    index: idx,
+                    types: Array.isArray(issue.types) ? issue.types.slice() : [],
+                    messages: Array.isArray(issue.messages) ? issue.messages.slice() : [],
+                    textPreview: issue.textPreview || issue.text || String(list[idx]?.text || ''),
+                });
+            } else {
+                for (const t of (issue.types || [])) {
+                    if (!prev.types.includes(t)) prev.types.push(t);
+                }
+            }
+        }
+        for (const idx of blankIndexes) {
+            const n = Number(idx);
+            if (!Number.isInteger(n) || n < 0 || n >= list.length) continue;
+            const row = byIndex.get(n) || {
+                index: n,
+                types: [],
+                messages: [],
+                textPreview: String(list[n]?.text || '…'),
+            };
+            if (!row.types.includes('blank')) row.types.push('blank');
+            if (!row.messages.includes('空/省略译')) row.messages.push('空/省略译');
+            row.textPreview = row.textPreview || String(list[n]?.text || '…');
+            byIndex.set(n, row);
+        }
+        return [...byIndex.values()].sort((a, b) => a.index - b.index);
     }
 
     /**
@@ -659,7 +887,7 @@
     ].join('');
 
     /**
-     * 从 QC issues 中取待语义审阅的 index（preferIndexes 优先，去重截断）。
+     * 从 QC issues 中取待语义审阅的 index（preferIndexes 优先，空/省略次之，去重截断）。
      * @returns {number[]}
      */
     function selectQcSemanticIndexes(issues, options = {}) {
@@ -667,28 +895,39 @@
         const prefer = Array.isArray(options.preferIndexes)
             ? options.preferIndexes.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0)
             : [];
+        const blankPrefer = Array.isArray(options.blankPreferIndexes)
+            ? options.blankPreferIndexes.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0)
+            : [];
+        const fromBlankIssues = [];
         const fromIssues = [];
         const seen = new Set();
         for (const issue of Array.isArray(issues) ? issues : []) {
             const idx = Number(issue?.index);
             if (!Number.isInteger(idx) || idx < 0 || seen.has(idx)) continue;
             seen.add(idx);
-            fromIssues.push(idx);
+            const types = Array.isArray(issue.types) ? issue.types : [];
+            const preview = String(issue.textPreview || issue.text || '').trim();
+            if (types.includes('blank') || isBlankOrEllipsisZh(preview)) {
+                fromBlankIssues.push(idx);
+            } else {
+                fromIssues.push(idx);
+            }
         }
         const out = [];
         const used = new Set();
-        for (const idx of prefer) {
-            if (used.has(idx)) continue;
-            used.add(idx);
-            out.push(idx);
-            if (out.length >= max) return out;
-        }
-        for (const idx of fromIssues) {
-            if (used.has(idx)) continue;
-            used.add(idx);
-            out.push(idx);
-            if (out.length >= max) break;
-        }
+        const pushAll = (arr) => {
+            for (const idx of arr) {
+                if (used.has(idx)) continue;
+                used.add(idx);
+                out.push(idx);
+                if (out.length >= max) return true;
+            }
+            return false;
+        };
+        if (pushAll(prefer)) return out;
+        if (pushAll(blankPrefer)) return out;
+        if (pushAll(fromBlankIssues)) return out;
+        pushAll(fromIssues);
         return out;
     }
 
@@ -785,6 +1024,9 @@
         QC_SEMANTIC_NOTE,
         looksLikeWeirdCueText,
         mergeWeirdTextIssues,
+        isBlankOrEllipsisZh,
+        collectBlankEllipsisIndexes,
+        mergeBlankEllipsisIssues,
         selectQcSmartTargets,
         selectQcRetranscribeTargets,
         selectQcLlmSplitTargets,
@@ -795,6 +1037,8 @@
         resolveQcSemanticPairPath,
         buildQcRetranscribeRanges,
         planLowConfidenceRetranscribeRanges,
+        planMergedQcRetranscribeRanges,
+        planPostBatchResidualHarvest,
         summarizeQcRetranscribePlan,
         expandIndexesWithNeighbors,
         buildQcSmartCuePayload,

@@ -131,7 +131,11 @@ function mergeTransWithAiOptions(input = {}) {
         smartTranslateFaithfulTone: true,
         smartTranslateHybridMt: true,
         smartTranslatePlotPolish: true,
+        smartTranslateFaithfulVerify: true,
+        smartTranslateAddressConsistency: true,
         smartTranslatePolishSampleLimit: 36,
+        /** auto: av_soft / JA specialist only; on/off force */
+        asrSecondOpinion: 'auto',
         sakuraNsfwPrompt: null,
         filmAudioEnhance: false,
         filmVadPreset: false,
@@ -173,6 +177,8 @@ function mergeTransWithAiOptions(input = {}) {
         autoDeepSense: false,
         postBatchQc: true,
         postBatchQcFixMode: 'smart',
+        /** QC 修复：字数超过此值则尝试静音分割（0=关闭）。默认 15。 */
+        qcSilenceSplitChars: 15,
         qcSmartLlmSplit: true,
         qcSmartRetranscribe: true,
         qcSmartSemanticReview: true,
@@ -296,6 +302,19 @@ function mergeTransWithAiOptions(input = {}) {
 
     merged.smartTranslateHybridMt = merged.smartTranslateHybridMt !== false;
     merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;
+    merged.smartTranslateFaithfulVerify = merged.smartTranslateFaithfulVerify !== false;
+    merged.smartTranslateAddressConsistency = merged.smartTranslateAddressConsistency !== false;
+    {
+        const raw = merged.asrSecondOpinion;
+        if (raw === false || raw === 0) merged.asrSecondOpinion = 'off';
+        else if (raw === true || raw === 1) merged.asrSecondOpinion = 'on';
+        else {
+            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
+            if (s === 'false' || s === '0' || s === 'off' || s === 'no') merged.asrSecondOpinion = 'off';
+            else if (s === 'true' || s === '1' || s === 'on' || s === 'always') merged.asrSecondOpinion = 'on';
+            else merged.asrSecondOpinion = 'auto';
+        }
+    }
     {
         const n = Number(merged.smartTranslatePolishSampleLimit);
         merged.smartTranslatePolishSampleLimit = Number.isFinite(n)

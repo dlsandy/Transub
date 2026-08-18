@@ -12,6 +12,8 @@
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleSplitCoreFactory() {
     const STRONG_PUNCT_RE = /[。！？!?…]/;
     const WEAK_PUNCT_RE = /[，、；：,;:]/;
+    /** Leading punct to strip after a split (next cue must not start with ，。！ etc.). */
+    const LEADING_CUE_PUNCT_RE = /^[。！？!?…⋯．，、；：,;:\.·•—–\-─～~「」『』""''“”‘’（）()【】\[\]《》<>〈〉]+/;
     const DEFAULT_BREAK_WORDS = [
         '而且', '但是', '因为', '所以', '然后', '不过', '然而', '并且', '同时', '另外',
         '因此', '于是', '可是', '虽然', '如果', '那么', '或者', '以及',
@@ -51,6 +53,15 @@
 
     function textCharCount(text) {
         return String(text || '').replace(/\s/g, '').length;
+    }
+
+    /**
+     * After silence/smart split: drop leading punctuation so a cue does not start with ，。！
+     */
+    function stripLeadingCuePunctuation(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return '';
+        return raw.replace(LEADING_CUE_PUNCT_RE, '').trim();
     }
 
     function lineCharCount(text) {
@@ -274,6 +285,35 @@
     }
 
     /**
+     * Sentence boundaries only (after 。！？ etc.), not clause commas.
+     * Indices point to the first char of the next sentence.
+     */
+    function getSentenceBreakIndices(text) {
+        const raw = String(text || '');
+        if (!raw) return [];
+        const breaks = [];
+        for (let i = 0; i < raw.length - 1; i += 1) {
+            if (!STRONG_PUNCT_RE.test(raw[i])) continue;
+            let end = i + 1;
+            while (end < raw.length && (/\s/.test(raw[end]) || STRONG_PUNCT_RE.test(raw[end]))) {
+                end += 1;
+            }
+            if (end > 0 && end < raw.length) breaks.push(end);
+        }
+        const out = [];
+        for (const idx of breaks) {
+            if (!out.length || idx - out[out.length - 1] >= 2) out.push(idx);
+        }
+        return out;
+    }
+
+    function endsWithStrongSentencePunct(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return false;
+        return STRONG_PUNCT_RE.test(raw[raw.length - 1]);
+    }
+
+    /**
      * Text breakpoints for silence split: whitespace + 断句词 (+ optional punctuation).
      */
     function getSilenceTextBreakIndices(text, opts = {}) {
@@ -334,6 +374,141 @@
         return picked.sort((a, b) => a - b);
     }
 
+    /**
+     * Map each silence candidate to the nearest unused text-break ideal.
+     * Cuts only exist where silence was detected — never invent a cut for every space.
+     */
+    function pickSplitPointsForSafeBreaks(candidates, idealTimes, silences, options = {}) {
+        const source = (candidates || []).map((ms) => Math.round(Number(ms) || 0)).filter(Number.isFinite);
+        const ideals = (idealTimes || []).map((ms) => Math.round(Number(ms) || 0)).filter(Number.isFinite);
+        if (!source.length) return [];
+        if (!ideals.length) return source.slice().sort((a, b) => a - b);
+
+        const cueStart = Math.round(Number(options.cueStartMs) || 0);
+        const cueEnd = Math.max(cueStart + 1, Math.round(Number(options.cueEndMs) || 0));
+        const cueDur = Math.max(1, cueEnd - cueStart);
+        const maxSplits = Math.max(
+            1,
+            Math.min(
+                source.length,
+                ideals.length,
+                Math.round(Number(options.maxSplits) || source.length) || source.length,
+            ),
+        );
+        const usedIdeals = new Set();
+        const scored = [];
+
+        for (let i = 0; i < source.length; i += 1) {
+            const ms = source[i];
+            if (!(ms > cueStart && ms < cueEnd)) continue;
+            let bestIdeal = -1;
+            let bestDist = Infinity;
+            for (let n = 0; n < ideals.length; n += 1) {
+                const dist = Math.abs(ms - ideals[n]);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestIdeal = n;
+                }
+            }
+            if (bestIdeal < 0) continue;
+            const maxDist = Math.max(cueDur * 0.55, Math.min(cueDur * 0.9, 4000));
+            if (bestDist > maxDist) continue;
+            const proximity = 1 - (bestDist / Math.max(1, maxDist));
+            const dur = silenceDurationNearPoint(ms, silences);
+            const durNorm = Math.min(1, dur / Math.max(280, cueDur * 0.08));
+            scored.push({
+                ms,
+                idealIdx: bestIdeal,
+                score: (proximity * 0.45) + (durNorm * 0.55),
+            });
+        }
+
+        scored.sort((a, b) => b.score - a.score || a.ms - b.ms);
+        const picked = [];
+        for (const row of scored) {
+            if (picked.length >= maxSplits) break;
+            if (usedIdeals.has(row.idealIdx)) continue;
+            usedIdeals.add(row.idealIdx);
+            picked.push(row.ms);
+        }
+
+        const uniq = [...new Set(picked)].sort((a, b) => a - b);
+        return uniq.filter((ms, i) => {
+            if (!(ms > cueStart && ms < cueEnd)) return false;
+            if (i > 0 && ms - uniq[i - 1] < 80) return false;
+            return true;
+        });
+    }
+
+    /** Snap silence cut times onto nearest whitespace / sentence break indices. */
+    function snapTimesToNearestBreakIndices(text, startMs, endMs, timesMs, breakIndices, options = {}) {
+        const raw = String(text || '');
+        const len = Math.max(1, raw.length);
+        const start = Math.round(Number(startMs) || 0);
+        const end = Math.max(start + 1, Math.round(Number(endMs) || 0));
+        const dur = Math.max(1, end - start);
+        const minPartChars = Math.max(1, Math.round(Number(options.minPartChars) || 2));
+        const countChars = typeof options.textCharCount === 'function'
+            ? options.textCharCount
+            : ((t) => String(t || '').replace(/\s/g, '').length);
+        const breaks = [...new Set(
+            (breakIndices || [])
+                .map((i) => Math.round(Number(i) || 0))
+                .filter((i) => i > 0 && i < len),
+        )].sort((a, b) => a - b);
+        if (!breaks.length) return [];
+
+        const times = (timesMs || [])
+            .map((ms) => Math.round(Number(ms) || 0))
+            .filter((ms) => ms > start && ms < end)
+            .sort((a, b) => a - b);
+        const used = new Set();
+        const out = [];
+        for (const ms of times) {
+            const approx = Math.round(((ms - start) / dur) * len);
+            const ranked = breaks
+                .filter((b) => !used.has(b))
+                .map((b) => ({ b, dist: Math.abs(b - approx) }))
+                .sort((a, b) => a.dist - b.dist || a.b - b.b);
+            let chosen = null;
+            for (const row of ranked) {
+                const left = countChars(raw.slice(0, row.b));
+                const right = countChars(raw.slice(row.b));
+                if (left >= minPartChars && right >= minPartChars) {
+                    chosen = row.b;
+                    break;
+                }
+            }
+            // Fall back to nearest break even if one side is short (better than skipping the silence cut)
+            if (chosen == null && ranked.length) chosen = ranked[0].b;
+            if (chosen == null) continue;
+            used.add(chosen);
+            out.push(chosen);
+        }
+        return out.sort((a, b) => a - b);
+    }
+
+    function splitTextAtBreakIndices(text, breakIndices) {
+        const raw = String(text || '');
+        if (!raw) return [];
+        const cuts = [...new Set(
+            (breakIndices || [])
+                .map((i) => Math.round(Number(i) || 0))
+                .filter((i) => i > 0 && i < raw.length),
+        )].sort((a, b) => a - b);
+        if (!cuts.length) return [raw.trim()].filter(Boolean);
+        const parts = [];
+        let prev = 0;
+        for (const idx of cuts) {
+            const chunk = stripLeadingCuePunctuation(raw.slice(prev, idx).trim());
+            if (chunk) parts.push(chunk);
+            prev = idx;
+        }
+        const tail = stripLeadingCuePunctuation(raw.slice(prev).trim());
+        if (tail) parts.push(tail);
+        return parts;
+    }
+
     function alignSilenceSplitPointsToText(text, startMs, endMs, splitPointsMs, intervals = null, options = {}) {
         const start = Math.round(Number(startMs) || 0);
         const end = Math.round(Number(endMs) || 0);
@@ -341,12 +516,38 @@
             .map((ms) => Math.round(Number(ms) || 0))
             .filter((ms) => ms > start && ms < end)
             .sort((a, b) => a - b);
+
+        const silences = normalizeSilenceIntervals(intervals, start, end);
+
+        // Prefer safe text cuts: sentence ends (。！？) and whitespace.
+        // Only cut where silence was detected (snap to nearest space / sentence break).
+        if (options.respectSentenceBoundaries !== false) {
+            const sentenceBreaks = getSentenceBreakIndices(text);
+            const spaceBreaks = getWhitespaceBreakIndices(text);
+            const safeBreaks = [...new Set([...sentenceBreaks, ...spaceBreaks])]
+                .sort((a, b) => a - b);
+            const hasSilence = sorted.length > 0 || silences.length > 0;
+            if (safeBreaks.length) {
+                if (!hasSilence) return [];
+                const idealTimes = idealTimesForTextBreaks(start, end, text, safeBreaks);
+                return pickSplitPointsForSafeBreaks(sorted, idealTimes, silences, {
+                    cueStartMs: start,
+                    cueEndMs: end,
+                    maxSplits: options.maxSplits,
+                });
+            }
+            if (endsWithStrongSentencePunct(text)) {
+                return [];
+            }
+        }
+
+        if (!sorted.length) return [];
+
         const textBreaks = getSilenceTextBreakIndices(text, options);
-        if (!textBreaks.length || !sorted.length) return sorted;
+        if (!textBreaks.length) return sorted;
 
         const idealTimes = idealTimesForTextBreaks(start, end, text, textBreaks);
         const targetSplitCount = textBreaks.length;
-        const silences = normalizeSilenceIntervals(intervals, start, end);
 
         if (sorted.length > targetSplitCount || silences.length) {
             return pickScoredSplitPointsNearIdeals(sorted, idealTimes, silences, {
@@ -483,6 +684,15 @@
         };
 
         if (idealBreakMs.length) {
+            const maxFromOpts = Math.round(Number(options.maxSplits) || 0);
+            const maxCount = Math.max(
+                1,
+                Math.min(
+                    idealBreakMs.length,
+                    candidates.length,
+                    maxFromOpts > 0 ? maxFromOpts : idealBreakMs.length,
+                ),
+            );
             const picked = pickScoredSplitPointsNearIdeals(
                 candidates.map((c) => c.ms),
                 idealBreakMs,
@@ -490,22 +700,24 @@
                 {
                     cueStartMs: cueStart,
                     cueEndMs: cueEnd,
-                    maxCount: idealBreakMs.length,
+                    maxCount,
                 },
             );
-            // Keep short-but-near-break pauses that scoring may have dropped when farther long pauses exist
-            if (picked.length < idealBreakMs.length) {
+            // Only top up with extra silences when we still need more cuts and they are real pauses
+            if (picked.length < maxCount) {
                 const used = new Set(picked);
+                const ranked = [...candidates]
+                    .filter((c) => c.dur >= minSilenceMs)
+                    .sort((a, b) => b.dur - a.dur || a.ms - b.ms);
                 for (const ideal of idealBreakMs) {
-                    if (picked.length >= idealBreakMs.length) break;
+                    if (picked.length >= maxCount) break;
                     let best = null;
                     let bestDist = Infinity;
-                    for (const c of candidates) {
+                    for (const c of ranked) {
                         if (used.has(c.ms)) continue;
                         const dist = Math.abs(c.ms - ideal);
                         const nearBreakMax = Math.max(550, Math.round(cueDur * 0.18));
                         if (dist > nearBreakMax) continue;
-                        if (c.dur < Math.max(40, minSilenceMs * 0.5)) continue;
                         if (dist < bestDist) {
                             bestDist = dist;
                             best = c.ms;
@@ -517,7 +729,7 @@
                     }
                 }
             }
-            return dedupeByTime(picked);
+            return dedupeByTime(picked).slice(0, maxCount);
         }
 
         // No whitespace ideals: keep the clearest interior pauses (longest first)
@@ -1085,12 +1297,38 @@
         const breakOpts = {
             breakWords: resolveBreakWords(timingOptions),
             includePunctuation: timingOptions.includePunctuation !== false,
+            // Default on: never bisect a complete sentence (。！？) without spaces
+            respectSentenceBoundaries: timingOptions.respectSentenceBoundaries !== false,
         };
-        const sorted = alignSilenceSplitPointsToText(raw, start, end, splitPointsMs, intervals, breakOpts);
+
+        const spaceBreaks = getWhitespaceBreakIndices(raw);
+        const sentenceBreaks = getSentenceBreakIndices(raw);
+        const safeBreaks = [...new Set([...sentenceBreaks, ...spaceBreaks])].sort((a, b) => a - b);
+
+        const alignOpts = {
+            ...breakOpts,
+            maxSplits: timingOptions.maxSplits,
+        };
+        let sorted = alignSilenceSplitPointsToText(raw, start, end, splitPointsMs, intervals, alignOpts);
         if (!sorted.length) return null;
 
-        let texts = buildTextsFromTimeBoundaries(raw, start, end, sorted, snapRadius, breakOpts);
-        if (!texts || texts.length < 2) return null;
+        let texts;
+        if (safeBreaks.length && breakOpts.respectSentenceBoundaries) {
+            // Cut only at spaces / sentence breaks nearest to detected silence (not every space)
+            const cutBreaks = snapTimesToNearestBreakIndices(raw, start, end, sorted, safeBreaks, {
+                minPartChars: 2,
+            });
+            texts = splitTextAtBreakIndices(raw, cutBreaks);
+            if (!texts || texts.length < 2) return null;
+            if (sorted.length !== texts.length - 1) {
+                const redistributed = redistributeBoundariesForTexts(start, end, texts);
+                if (!redistributed) return null;
+                sorted = redistributed.slice(1, -1);
+            }
+        } else {
+            texts = buildTextsFromTimeBoundaries(raw, start, end, sorted, snapRadius, breakOpts);
+            if (!texts || texts.length < 2) return null;
+        }
 
         let boundaries = [start, ...sorted, end];
         if (texts.length !== boundaries.length - 1) {
@@ -1098,7 +1336,10 @@
             if (!boundaries) return null;
         }
 
-        const merged = mergeTinyTextSegments(texts, boundaries, 2);
+        // Prefer not to keep 1-char crumbs; mergeTiny may collapse intentional space cuts —
+        // only merge empty leftovers when sides already passed minPartChars snap.
+        const minMergeChars = 1;
+        const merged = mergeTinyTextSegments(texts, boundaries, minMergeChars);
         texts = merged.texts;
         boundaries = merged.boundaries;
 
@@ -1106,10 +1347,12 @@
 
         let cues = [];
         for (let i = 0; i < texts.length; i += 1) {
+            const rawText = String(texts[i] || '').trim();
+            const cleaned = stripLeadingCuePunctuation(rawText);
             cues.push({
                 startMs: boundaries[i],
                 endMs: boundaries[i + 1],
-                text: texts[i],
+                text: cleaned || rawText,
             });
         }
         if (cues.length < 2) return null;
@@ -1167,7 +1410,7 @@
 
         const texts = [];
         for (let i = 0; i < indices.length - 1; i += 1) {
-            const chunk = raw.slice(indices[i], indices[i + 1]).trim();
+            const chunk = stripLeadingCuePunctuation(raw.slice(indices[i], indices[i + 1]).trim());
             if (chunk) texts.push(chunk);
         }
         return texts.length >= 2 ? texts : null;
@@ -1179,6 +1422,7 @@
         isConnectedText,
         textCharCount,
         lineCharCount,
+        stripLeadingCuePunctuation,
         normalizeBreakWords,
         resolveBreakWords,
         findConnectorBreak,
@@ -1190,6 +1434,10 @@
         splitTextAtIndex,
         alignSilenceSplitPointsToText,
         pickScoredSilenceSplitPoints,
+        pickSplitPointsForSafeBreaks,
+        snapTimesToNearestBreakIndices,
+        splitTextAtBreakIndices,
+        idealTimesForTextBreaks,
         pickScoredSplitPointsNearIdeals,
         applySilenceEdgeBoundaries,
         normalizeSilenceIntervals,
@@ -1202,6 +1450,8 @@
         getWhitespaceBreakIndices,
         getBreakWordBreakIndices,
         getSilenceTextBreakIndices,
+        getSentenceBreakIndices,
+        endsWithStrongSentencePunct,
         snapSplitIndexNearPunctuation,
         buildCuesFromTexts,
         buildTextsFromTimeBoundaries,
