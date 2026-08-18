@@ -91,9 +91,17 @@
             smartTranslateFaithfulTone: translateTask && !!fields.smartTranslateFaithfulTone,
             smartTranslateHybridMt: fields.smartTranslateHybridMt !== false,
             smartTranslatePlotPolish: fields.smartTranslatePlotPolish !== false,
+            smartTranslateFaithfulVerify: fields.smartTranslateFaithfulVerify !== false,
+            smartTranslateAddressConsistency: fields.smartTranslateAddressConsistency !== false,
             smartTranslatePolishSampleLimit: norm.clampPolishSampleLimit
                 ? norm.clampPolishSampleLimit(fields.smartTranslatePolishSampleLimitRaw)
                 : 36,
+            asrSecondOpinion: norm.normalizeAsrSecondOpinion
+                ? norm.normalizeAsrSecondOpinion(fields.asrSecondOpinion)
+                : 'auto',
+            filmBriefSampleMode: String(fields.filmBriefSampleMode || '').trim().toLowerCase() === 'full'
+                ? 'full'
+                : 'auto',
             filmAudioEnhance: entitled && !!fields.filmAudioEnhance,
             filmVadPreset: entitled && !!fields.filmVadPreset && !fields.filmAudioEnhance,
             filmVadThreshold: norm.optionalFiniteNumber
@@ -196,6 +204,13 @@
             autoDeepSense: !!fields.autoDeepSense,
             postBatchQc: fields.postBatchQc !== false,
             postBatchQcFixMode: String(fields.postBatchQcFixMode || 'smart'),
+            qcSilenceSplitChars: norm.clampQcSilenceSplitChars
+                ? norm.clampQcSilenceSplitChars(fields.qcSilenceSplitCharsRaw ?? fields.qcSilenceSplitChars)
+                : (() => {
+                    const n = Number(fields.qcSilenceSplitCharsRaw ?? fields.qcSilenceSplitChars);
+                    if (!Number.isFinite(n)) return 15;
+                    return Math.max(0, Math.min(500, Math.round(n)));
+                })(),
             postBatchCpsSplit: fields.postBatchCpsSplit !== false,
             postBatchRemoveNoise: fields.postBatchRemoveNoise !== false,
             postBatchCompressRepetition: fields.postBatchCompressRepetition !== false,

@@ -83,4 +83,30 @@ print(json.dumps({
         assert.strictEqual(j.frames_6s, 600);
         assert.strictEqual(typeof j.avail, 'boolean');
     });
+
+    it('resolve_firered_params honors soft-AV preset knobs', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from transub_engine.vad.firered_vad_seg import resolve_firered_params
+p = resolve_firered_params({
+    'threshold': 0.45,
+    'maxSingleSegmentMs': 5000,
+    'minSpeechMs': 220,
+    'minSilenceMs': 500,
+    'speechPadMs': 80,
+})
+d = resolve_firered_params({})
+print(json.dumps({'p': p, 'd': d}))
+`);
+        const j = JSON.parse(out);
+        assert.strictEqual(j.p.threshold, 0.45);
+        assert.strictEqual(j.p.max_speech_s, 5);
+        assert.ok(Math.abs(j.p.min_speech_s - 0.22) < 1e-6);
+        assert.ok(Math.abs(j.p.min_silence_s - 0.5) < 1e-6);
+        assert.ok(Math.abs(j.p.pad_s - 0.08) < 1e-6);
+        assert.ok(Math.abs(j.p.merge_gap_s - 0.5) < 1e-6);
+        assert.strictEqual(j.d.max_speech_s, 6);
+        assert.strictEqual(j.d.threshold, 0.4);
+    });
 });

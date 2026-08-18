@@ -17,6 +17,8 @@ const PROPRIETARY_SOURCES = [
     'electron/advanced-smart-translate.js',
     'src/js/advanced-film-reconstruct-core.js',
     'src/js/advanced-smart-translate-core.js',
+    'src/js/smart-translate-verify-core.js',
+    'src/js/smart-translate-address-core.js',
     'tools/advanced-module-entry.js',
 ];
 
@@ -64,8 +66,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.1.1') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.1.1 for this cut)`);
+if (pkg.version === '3.1.2') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.1.2 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');
@@ -113,6 +115,21 @@ const extra = pkg.build?.extraFiles || [];
 const shipsAdvanced = extra.some((e) => e && (e.from === '_advanced' || e.to === '_advanced'));
 if (shipsAdvanced) ok('extraFiles ships _advanced');
 else fail('extraFiles missing _advanced');
+
+const filesNegDocs = files.some((f) => {
+    const n = String(f || '').replace(/\\/g, '/');
+    return n === '!docs' || n === '!docs/**' || n === '!docs/**/*';
+});
+if (filesNegDocs) ok('asar excludes docs/');
+else fail('package.json build.files missing !docs exclusion');
+
+const engineExtraFiles = extra.find((e) => e && (e.from === 'transub-engine' || e.to === 'transub-engine'));
+const engineFilter = Array.isArray(engineExtraFiles?.filter) ? engineExtraFiles.filter.map(String) : [];
+if (engineFilter.includes('!docs/**') || engineFilter.includes('!docs/**/*')) {
+    ok('extraFiles transub-engine excludes docs/');
+} else {
+    fail('package.json transub-engine extraFiles filter missing !docs/**');
+}
 
 console.log('\nLanguage data pack (TDP)');
 const tdpBundled = 'shared/tdp/tdp-bundled.tpack';

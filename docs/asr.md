@@ -31,13 +31,13 @@ flowchart TD
 | JA / anime / kotoba / Reazon / Qwen ASR | 主模型 → **同族专科** → SenseVoice → tiny（必要时 + turbo） |
 | 其他 Whisper 等 | 主模型 → SenseVoice → tiny（必要时 + turbo） |
 
-实现：`electron/engine-range-asr-policy.buildBatchAsrCandidates`（范围重转与整文件 batch 共用）。专科链按主模型族优先试兄弟专科（例如 anime → Qwen Galgame 1.7B → kotoba → whisper-ja），避免空结果时立刻掉到通用 tiny。
+实现：`electron/engine-range-asr-policy.buildBatchAsrCandidates`（范围重转与整文件 batch 共用）。专科链按主模型族优先试兄弟专科（例如 anime → Qwen Galgame 1.7B → kotoba → whisper-ja），避免空结果时立刻掉到通用 tiny。运行时经 `filterAsrCandidatesByInstalled`（`env-check.listInstalledAsrIds`）**只保留已下载权重**；主模型始终保留为首项。低置信二意见选兄弟模型同样只挑已安装 ID。
 
-内容档（如 `av_soft` → `anime-whisper` / 可选 `qwen3-asr-1.7b-ja-anime-galgame`）仍由 `content-profile-core` / 感知覆盖；回退链在空结果 / 缺模型时生效。
+内容档（如 `av_soft` → `anime-whisper` / 可选 `qwen3-asr-1.7b-ja-anime-galgame`）仍由 `content-profile-core` / 感知覆盖；回退链在空结果 / 缺模型时生效。低置信二意见优先选 **已安装且更稳** 的兄弟（SenseVoice / Qwen 等），把易 ACCESS_VIOLATION 的 anime/kotoba CT2 放到末位；批次中引擎子进程已死后允许重新拉起。二意见只覆盖 **低置信且高风险** 窗，跳过过短/空窗，单窗不连试 tiny/turbo；采纳后将译文档重叠句清空为「…」。
 
-**Qwen3-ASR：** 默认 TEN/VAD 帧时间戳（不加载 ForcedAligner，约省 1GB 显存）；`timingAlignModel=qwen3-forced-aligner-0.6b` 时才用词级对齐。可选 `timingAlignModel=firered` 或 VAD 选 `firered-vad` 改用 FireRedVAD。专科含 `qwen3-asr-0.6b`、`qwen3-asr-1.7b-ja-anime-galgame`、`qwen3-asr-1.7b-ja`（neosophie）。
+**Qwen3-ASR：** 默认 TEN/VAD 帧时间戳（不加载 ForcedAligner，约省 1GB 显存）；`timingAlignModel=qwen3-forced-aligner-0.6b` 时才用词级对齐。可选 `timingAlignModel=firered` 或 VAD 选 `firered-vad` 改用 FireRedVAD。专科含 `qwen3-asr-0.6b`、`qwen3-asr-1.7b-ja-anime-galgame`、`qwen3-asr-1.7b-ja`（neosophie）。人声岛默认走 **内存 PCM 切片 + 批量推理**（1.7B 每批 8 段、0.6B 每批 16 段；OOM 自动对半拆批），不再每帧 ffmpeg 切条；与 anime-whisper 同款 VAD 拥有时间轴。运行库 `asr-qwen3` 钉 `transformers` 4.x（`qwen-asr`）；与 Cohere 的 transformers 5.x **互斥**，换模型时由 extras 按需升降级。
 
-**FireRedVAD：** 随包装（`firered-vad`，约 2MB 权重 + 内置 `fireredvad` wheel）。用于 anime-whisper / Qwen 的 VAD 拥有时间轴路径；默认仍为 TEN。运行需 torch（与 SenseVoice/Qwen 相同，按需安装）。
+**FireRedVAD：** 随包装（`firered-vad`，约 2MB 权重 + 内置 `fireredvad` wheel）。用于 anime-whisper / Qwen 的 VAD 拥有时间轴路径；默认仍为 TEN。运行需 torch（与 SenseVoice/Qwen 相同，按需安装）。识别预设「Anime Whisper + FireRed」为 **v3**（FireRed 检测 + TEN 同款岛几何：阈值 0.45 / 最长段 5s / pad 80ms）。软声预设「Qwen3-ASR Galgame + TEN」用同一套 TEN 岛几何，ASR 换成 `qwen3-asr-1.7b-ja-anime-galgame`。
 
 ## Sense / 语种
 

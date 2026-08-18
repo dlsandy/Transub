@@ -2527,6 +2527,15 @@
         try {
             if (global.TransubEnvCheck?.isDone?.()) return false;
         } catch (_) { /* ignore */ }
+        // Returning users already have options on disk — never nag every launch.
+        // Also persist dismiss so a one-off OS close of the wizard window sticks.
+        try {
+            const res = await electron?.transubHasSettingsFile?.();
+            if (res?.exists) {
+                markOnboardingDone();
+                return false;
+            }
+        } catch (_) { /* ignore */ }
         await openWizard({ force: true });
         return true;
     }
@@ -2730,6 +2739,14 @@
         if (isStandaloneWizard && electron?.onOpenSetupWizard) {
             electron.onOpenSetupWizard((payload) => {
                 scheduleOpenWizard({ force: payload?.forceWizard !== false });
+            });
+        }
+
+        // Native window close (title-bar X) bypasses Skip/Close buttons; still
+        // persist dismiss so the next app launch does not auto-open again.
+        if (isStandaloneWizard) {
+            window.addEventListener('pagehide', () => {
+                markDismissed();
             });
         }
 

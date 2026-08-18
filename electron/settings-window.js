@@ -8,38 +8,41 @@ const { attachUiZoom } = require('./ui-zoom');
 /** @type {import('electron').BrowserWindow|null} */
 let settingsWindow = null;
 
-/** @type {{ tab: string|null, wizard: boolean, forceWizard: boolean }} */
+/** @type {{ tab: string|null, wizard: boolean, forceWizard: boolean, openLibrary: boolean }} */
 let pendingSettingsOpen = {
     tab: null,
     wizard: false,
     forceWizard: false,
+    openLibrary: false,
 };
 
 function resolveTab(tab) {
     return asString(tab, 64).trim() || 'runtime';
 }
 
-function setPendingOpen({ tab, wizard, forceWizard } = {}) {
+function setPendingOpen({ tab, wizard, forceWizard, openLibrary } = {}) {
     pendingSettingsOpen = {
         tab: resolveTab(tab),
         wizard: !!wizard,
         forceWizard: !!forceWizard,
+        openLibrary: !!openLibrary,
     };
 }
 
-function sendOpenParams(win, { tab, wizard, forceWizard } = {}) {
+function sendOpenParams(win, { tab, wizard, forceWizard, openLibrary } = {}) {
     if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
     win.webContents.send('transub-open-params', {
         tab: resolveTab(tab),
         wizard: !!wizard,
         forceWizard: !!forceWizard,
+        openLibrary: !!openLibrary,
     });
 }
 
-function focusSettingsWindow({ tab, wizard, forceWizard } = {}) {
+function focusSettingsWindow({ tab, wizard, forceWizard, openLibrary } = {}) {
     const win = settingsWindow;
     if (!win || win.isDestroyed()) return null;
-    setPendingOpen({ tab, wizard, forceWizard });
+    setPendingOpen({ tab, wizard, forceWizard, openLibrary });
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
@@ -48,6 +51,7 @@ function focusSettingsWindow({ tab, wizard, forceWizard } = {}) {
         tab: pendingSettingsOpen.tab,
         wizard: pendingSettingsOpen.wizard,
         forceWizard: pendingSettingsOpen.forceWizard,
+        openLibrary: pendingSettingsOpen.openLibrary,
     };
     const send = () => sendOpenParams(win, payload);
     if (win.webContents.isLoading()) {
@@ -62,21 +66,29 @@ function focusSettingsWindow({ tab, wizard, forceWizard } = {}) {
 /**
  * Open (or focus) the standalone settings window without showing the main task window.
  * @param {import('electron').App} app
- * @param {{ tab?: string, parent?: import('electron').BrowserWindow|null, checkUpdate?: boolean, wizard?: boolean, forceWizard?: boolean }} [options]
+ * @param {{ tab?: string, parent?: import('electron').BrowserWindow|null, checkUpdate?: boolean, wizard?: boolean, forceWizard?: boolean, openLibrary?: boolean }} [options]
  */
-function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, forceWizard } = {}) {
+function openSettingsWindow(app, {
+    tab,
+    parent: _parent,
+    checkUpdate,
+    wizard,
+    forceWizard,
+    openLibrary,
+} = {}) {
     if (checkUpdate) {
         const { openUpdateWindow } = require('./update-window');
         return openUpdateWindow(app, { parent: _parent, autoCheck: true });
     }
 
     const resolved = resolveTab(tab);
-    setPendingOpen({ tab: resolved, wizard, forceWizard });
+    setPendingOpen({ tab: resolved, wizard, forceWizard, openLibrary });
 
     const existing = focusSettingsWindow({
         tab: resolved,
         wizard,
         forceWizard,
+        openLibrary,
     });
     if (existing) {
         return { ok: true };
@@ -124,6 +136,7 @@ function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, fo
     });
     if (wizard) query.set('wizard', '1');
     if (forceWizard) query.set('forceWizard', '1');
+    if (openLibrary) query.set('openLibrary', '1');
 
     win.loadFile(resolveHtmlPath(app, 'index.html'), { search: query.toString() });
 
@@ -136,11 +149,13 @@ function openSettingsWindow(app, { tab, parent: _parent, checkUpdate, wizard, fo
             tab: resolved,
             wizard: !!wizard,
             forceWizard: !!forceWizard,
+            openLibrary: !!openLibrary,
         });
         setTimeout(() => sendOpenParams(win, {
             tab: resolved,
             wizard: !!wizard,
             forceWizard: !!forceWizard,
+            openLibrary: !!openLibrary,
         }), 150);
     });
 
@@ -151,17 +166,18 @@ function consumePendingSettingsTab() {
     const tab = pendingSettingsOpen.tab;
     const wizard = pendingSettingsOpen.wizard;
     const forceWizard = pendingSettingsOpen.forceWizard;
-    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false };
+    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false, openLibrary: false };
     return tab || null;
 }
 
 function consumePendingSettingsOpen() {
     const pending = { ...pendingSettingsOpen };
-    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false };
+    pendingSettingsOpen = { tab: null, wizard: false, forceWizard: false, openLibrary: false };
     return {
         tab: pending.tab || null,
         wizard: !!pending.wizard,
         forceWizard: !!pending.forceWizard,
+        openLibrary: !!pending.openLibrary,
     };
 }
 

@@ -47,7 +47,7 @@ const FILM_VAD = Object.freeze({
     hallucinationSilenceThreshold: 2,
 });
 
-/** Soft / anime dialogue timeline: Silero + TEN short frames (not WhisperSeg). */
+/** Soft / anime dialogue timeline: Silero catalog VAD + TEN short frames. */
 const ANIME_VAD = Object.freeze({
     engineVadModel: 'silero-vad',
     vadEnabled: true,
@@ -72,11 +72,47 @@ const ANIME_VAD = Object.freeze({
     postBatchSimplifyViewingPunctuation: true,
 });
 
+/**
+ * Soft AV FireRed timing v3 (after MIKR-116 v1/v2):
+ * v1 (0.38/7s) spoken~69%, ASR 2594 cues, heavy cleanup.
+ * v2 (0.42/6s) spoken~67%, ASR still 2594 — threshold nudge barely moved ASR.
+ * v3: keep FireRed detector, mirror TEN island geometry (proven ~728 ZH):
+ * threshold 0.45, max 5s, pad 80, minSilence 500, minSpeech 220
+ * (minSpeech slightly above TEN 180 to cut FireRed "short segment" junk).
+ */
+const ANIME_FIRERED_VAD = Object.freeze({
+    ...ANIME_VAD,
+    engineVadModel: 'firered-vad',
+    timingAlignModel: 'firered',
+    vadThreshold: 0.45,
+    vadMinSpeechDurationMs: 220,
+    vadMinSilenceDurationMs: 500,
+    vadSpeechPadMs: 80,
+    vadMaxSingleSegmentMs: 5000,
+});
+
 /** Shared Anime Whisper ASR options (软声 / 动漫各保留一份入口). */
 const ANIME_WHISPER_OPTIONS = Object.freeze({
     device: 'cuda',
     language: 'ja',
     engineAsrModel: 'anime-whisper',
+    contentProfile: 'av_soft',
+    ...ANIME_VAD,
+});
+
+const ANIME_WHISPER_FIRERED_OPTIONS = Object.freeze({
+    device: 'cuda',
+    language: 'ja',
+    engineAsrModel: 'anime-whisper',
+    contentProfile: 'av_soft',
+    ...ANIME_FIRERED_VAD,
+});
+
+/** Soft-AV Qwen3 Galgame + TEN island timing (recommended Qwen pairing). */
+const QWEN_GALGAME_TEN_OPTIONS = Object.freeze({
+    device: 'cuda',
+    language: 'ja',
+    engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
     contentProfile: 'av_soft',
     ...ANIME_VAD,
 });
@@ -99,10 +135,28 @@ const BUILTIN_PRESETS = [
         options: { ...ANIME_WHISPER_OPTIONS },
     },
     {
+        id: 'ja-av-anime-whisper-firered',
+        group: '软声',
+        name: 'Anime Whisper + FireRed',
+        description:
+            '软声听写 + FireRedVAD（实验性）',
+        builtin: true,
+        options: { ...ANIME_WHISPER_FIRERED_OPTIONS },
+    },
+    {
+        id: 'ja-av-qwen3-galgame-ten',
+        group: '软声',
+        name: 'Qwen3-ASR Galgame + TEN',
+        description:
+            'Galgame / 动漫日语微调，配合 TEN 短帧时间轴。字准通常优于 Anime Whisper，约 4GB 显存，速度更慢。',
+        builtin: true,
+        options: { ...QWEN_GALGAME_TEN_OPTIONS },
+    },
+    {
         id: 'ja-av-soft-translate',
         group: '软声',
         name: 'Whisper JA 1.5B',
-        description: '日语微调 ASR，软声听写更准，速度慢于 Anime Whisper。',
+        description: '日语微调 ASR，速度慢于 Anime Whisper。',
         builtin: true,
         options: {
             device: 'cuda',
@@ -194,6 +248,15 @@ const BUILTIN_PRESETS = [
         description: '面向动画与 Galgame 演技，TEN 短帧时间轴，并精简语气词。',
         builtin: true,
         options: { ...ANIME_WHISPER_OPTIONS },
+    },
+    {
+        id: 'anime-whisper-firered',
+        group: '动漫',
+        name: 'Anime Whisper + FireRed',
+        description:
+            '动画 / Galgame + FireRedVAD（v3：FireRed 检测 + TEN 同款岛几何，阈值 0.45 / 最长段 5s）。',
+        builtin: true,
+        options: { ...ANIME_WHISPER_FIRERED_OPTIONS },
     },
     {
         id: 'anime-kotoba',
@@ -423,6 +486,11 @@ module.exports = {
     BUILTIN_PRESETS,
     PRESET_GROUP_ORDER,
     PRESET_SKIP_KEYS,
+    ANIME_VAD,
+    ANIME_FIRERED_VAD,
+    ANIME_WHISPER_OPTIONS,
+    ANIME_WHISPER_FIRERED_OPTIONS,
+    QWEN_GALGAME_TEN_OPTIONS,
     sanitizePresetOptions,
     loadPresets,
     saveCustomPreset,

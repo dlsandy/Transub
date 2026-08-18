@@ -139,6 +139,22 @@ const { createEngineBatchHistory } = require('./engine-batch-history');
 const batchMtPlan = require('./engine-batch-mt-plan');
 const batchPostprocessPlan = require('./engine-batch-postprocess-plan');
 
+/** Prefer installed ASR weights for failover; always keep the primary id. */
+function resolveAsrFailoverCandidates(primaryAsr, engineInstallPath) {
+    const chain = rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr);
+    let installedIds = null;
+    try {
+        const installRoot = String(engineInstallPath || '').trim();
+        if (installRoot) {
+            const { listInstalledAsrIds } = require('./env-check');
+            installedIds = listInstalledAsrIds(installRoot);
+        }
+    } catch (_) {
+        installedIds = null;
+    }
+    return rangeAsrPolicy.filterAsrCandidatesByInstalled(chain, installedIds, { primaryAsr });
+}
+
 let engineProc = null;
 let engineBaseUrl = DEFAULT_ENGINE_URL;
 let batchCancelled = false;
@@ -197,14 +213,41 @@ async function waitForHealth(baseUrl, opts = {}) {
     return waitForHealthPoll(baseUrl, { ...opts, getHealth });
 }
 
+function isEngineChildAlive() {
+    return !!(engineProc && engineProc.exitCode == null && !engineProc.killed);
+}
+
+function readEngineEnsurePolicy(forceRestart = false) {
+    const { decideEngineEnsureAction } = require('./engine-ensure-policy');
+    let computeBusyKind = '';
+    try {
+        const status = require('./compute-task-lock').getStatus();
+        if (status?.busy) computeBusyKind = String(status.kind || '').trim();
+    } catch (_) { /* ignore */ }
+    return decideEngineEnsureAction({
+        forceRestart: !!forceRestart,
+        batchRunning,
+        computeBusyKind,
+        childAlive: isEngineChildAlive(),
+    });
+}
+
 async function ensureEngineRunning(options = {}) {
     const opts = mergeEngineOptions(options);
     opts.engineInstallPath = resolveEngineInstallPath(opts.engineInstallPath);
     engineBaseUrl = opts.engineUrl || DEFAULT_ENGINE_URL;
     const forceRestart = !!options.forceRestart;
     const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : null;
+    const preserve = readEngineEnsurePolicy(forceRestart);
 
     if (forceRestart) {
+        if (!preserve.allowForceRestart) {
+            return {
+                ok: false,
+                error: '字幕任务运行中，无法重启引擎',
+                code: 'compute_busy',
+            };
+        }
         const { port } = parseHostPort(engineBaseUrl);
         stopEngineProcess();
         killListenersOnPort(port);
@@ -226,6 +269,25 @@ async function ensureEngineRunning(options = {}) {
             );
         }
         return { ok: true, baseUrl: engineBaseUrl, health: health.data, spawned: false };
+    }
+
+    // Settings → 模型 (and other catalog probes) call ensureEngineRunning while ASR
+    // may block the engine event loop. A short health timeout must not taskkill the job.
+    if (!preserve.allowKill) {
+        if (preserve.treatAsRunning) {
+            return {
+                ok: true,
+                baseUrl: engineBaseUrl,
+                health: health.data || null,
+                spawned: false,
+                busy: true,
+            };
+        }
+        return {
+            ok: false,
+            error: '字幕任务运行中，暂不拉起/重启引擎',
+            code: 'compute_busy',
+        };
     }
 
     if (!opts.engineAutoStart) {
@@ -921,7 +983,10 @@ async function runEngineBatchLocked({
 
             const primaryAsr = String(fileMerged.engineAsrModel || 'sensevoice-small').trim()
                 || 'sensevoice-small';
-            const asrCandidates = rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr);
+            const asrCandidates = resolveAsrFailoverCandidates(
+                primaryAsr,
+                fileMerged.engineInstallPath,
+            );
 
             sendProgress(invokeSender, {
                 stage: 'model',
@@ -1126,14 +1191,54 @@ async function runEngineBatchLocked({
             const outPaths = extractOutputPaths(waitInterp.result || waited.data?.result);
             const jobResult = waitInterp.result || waited.data?.result || null;
 
+            // translate_mt deletes `.src.partial` and omits role=source from outputs.
+            // Materialize JA into transcript-keep BEFORE post-batch so paired noise
+            // can run (otherwise ZH-only removeEmpty orphans JA dialogue).
+            let keptSourcePath = '';
+            try {
+                const { keepTranscriptFromJobResult } = require('./transcript-keep');
+                const kept = keepTranscriptFromJobResult({
+                    task: merged.task,
+                    sourceSubtitlePath: outPaths.sourceSubtitlePath,
+                    subtitlePath: outPaths.subtitlePath,
+                    sourceCues: jobResult?.cues?.source,
+                    mediaPath,
+                    options: merged,
+                });
+                if (kept?.ok && kept.kept?.length) {
+                    keptSourcePath = String(kept.kept[0] || '').trim();
+                    if (keptSourcePath) {
+                        outPaths.sourceSubtitlePath = outPaths.sourceSubtitlePath || keptSourcePath;
+                    }
+                    appendEngineLogLine(
+                        `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
+                        invokeSender,
+                    );
+                } else if (kept && kept.ok === false && kept.error) {
+                    appendEngineLogLine(
+                        `[engine] 保存转录字幕失败: ${kept.error}`,
+                        invokeSender,
+                    );
+                }
+            } catch (err) {
+                appendEngineLogLine(
+                    `[engine] 保存转录字幕跳过: ${err.message || err}`,
+                    invokeSender,
+                );
+            }
+
             // Free-path postprocess (same knobs as UI post-batch): strip Whisper YouTube-style hallucinations etc.
             const { applyPostBatchPipeline } = require('./post-batch-pipeline');
             applyPostBatchPipeline([
                 outPaths.sourceSubtitlePath,
+                keptSourcePath,
                 outPaths.targetSubtitlePath,
                 outPaths.bilingualSubtitlePath,
                 outPaths.subtitlePath,
-            ], merged, {
+            ], {
+                ...merged,
+                sourceCues: jobResult?.cues?.source,
+            }, {
                 onProgress: (info) => {
                     sendProgress(invokeSender, {
                         stage: 'transcribe',
@@ -1252,38 +1357,37 @@ async function runEngineBatchLocked({
                 }
             }
 
-            // Keep ASR/source transcript archive before optional dual-track deletion.
-            // translate_mt normally deletes `.src.partial.*` and only returns zh outputs —
-            // fall back to result.cues.source so「保存转录字幕」 still works.
-            // Prefer the keep path for history/library when the sidecar is later deleted.
-            let keptSourcePath = '';
-            try {
-                const { keepTranscriptFromJobResult } = require('./transcript-keep');
-                const kept = keepTranscriptFromJobResult({
-                    task: merged.task,
-                    sourceSubtitlePath: outPaths.sourceSubtitlePath,
-                    subtitlePath: outPaths.subtitlePath,
-                    sourceCues: jobResult?.cues?.source,
-                    mediaPath,
-                    options: merged,
-                });
-                if (kept?.ok && kept.kept?.length) {
-                    keptSourcePath = String(kept.kept[0] || '').trim();
+            // Transcript already saved before post-batch when possible. Only materialize
+            // here if that step was skipped (keepTranscript off / no cues).
+            if (!keptSourcePath) {
+                try {
+                    const { keepTranscriptFromJobResult } = require('./transcript-keep');
+                    const kept = keepTranscriptFromJobResult({
+                        task: merged.task,
+                        sourceSubtitlePath: outPaths.sourceSubtitlePath,
+                        subtitlePath: outPaths.subtitlePath,
+                        sourceCues: jobResult?.cues?.source,
+                        mediaPath,
+                        options: merged,
+                    });
+                    if (kept?.ok && kept.kept?.length) {
+                        keptSourcePath = String(kept.kept[0] || '').trim();
+                        appendEngineLogLine(
+                            `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
+                            invokeSender,
+                        );
+                    } else if (kept && kept.ok === false && kept.error) {
+                        appendEngineLogLine(
+                            `[engine] 保存转录字幕失败: ${kept.error}`,
+                            invokeSender,
+                        );
+                    }
+                } catch (err) {
                     appendEngineLogLine(
-                        `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
-                        invokeSender,
-                    );
-                } else if (kept && kept.ok === false && kept.error) {
-                    appendEngineLogLine(
-                        `[engine] 保存转录字幕失败: ${kept.error}`,
+                        `[engine] 保存转录字幕跳过: ${err.message || err}`,
                         invokeSender,
                     );
                 }
-            } catch (err) {
-                appendEngineLogLine(
-                    `[engine] 保存转录字幕跳过: ${err.message || err}`,
-                    invokeSender,
-                );
             }
 
             // 「合并双语」：写出与影片同名的可编辑 SRT（与 TWAI 一致）；可选再删原/译单轨。
@@ -1328,7 +1432,21 @@ async function runEngineBatchLocked({
             // Seed ASR confidence after paths are final (post-merge).
             try {
                 const { runBatchSuccessHandoff } = require('./engine-batch-success-handoff');
-                const handoff = runBatchSuccessHandoff(jobResult, outPaths);
+                const handoff = await runBatchSuccessHandoff(jobResult, outPaths, {
+                    ...merged,
+                    mediaPath,
+                    primaryAsr: runOutcome.asrModel || waited.asrModel || primaryAsr,
+                    engineAsrModel: runOutcome.asrModel || primaryAsr,
+                    onProgress: (info) => {
+                        sendProgress(invokeSender, {
+                            stage: 'transcribe',
+                            index1,
+                            total: list.length,
+                            file: mediaPath,
+                            detail: info?.detail || 'ASR 低置信二意见…',
+                        });
+                    },
+                });
                 for (const line of (handoff.logs || [])) {
                     appendEngineLogLine(`[engine] ${line}`, invokeSender);
                 }
@@ -3198,7 +3316,14 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
     const endMs = rangeWin.endMs;
     const padMs = rangeWin.padMs;
     const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
-    const options = mergeEngineOptions(deps.options || {});
+    const options = mergeEngineOptions(deps.options || payload.options || {});
+    const allowDuringBatch = !!(
+        payload.allowDuringBatch
+        || deps.allowDuringBatch
+        || payload._skipComputeLock
+        || deps._skipComputeLock
+        || payload._batchMode
+    );
 
     if (!mediaPath || !fs.existsSync(mediaPath)) {
         return { ok: false, error: '媒体文件不存在' };
@@ -3206,16 +3331,21 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
     if (endMs - startMs < 200) {
         return { ok: false, error: '字幕时间范围过短，无法重转写' };
     }
-    if (batchRunning) {
+    if (batchRunning && !allowDuringBatch) {
         return { ok: false, error: '已有字幕任务正在运行，请稍后再试', code: 'compute_busy' };
     }
 
     const computeLock = require('./compute-task-lock');
-    return computeLock.runWithComputeLock({
+    const lockPayload = {
+        _skipComputeLock: allowDuringBatch || payload._skipComputeLock || deps._skipComputeLock,
+        _batchMode: payload._batchMode || deps._batchMode,
+    };
+
+    return computeLock.runWithComputeLockUnlessNested({
         kind: 'engine_range',
-        owner: '字幕编辑器',
+        owner: allowDuringBatch ? '引擎低置信二意见' : '字幕编辑器',
         source: 'transcribeRangeWithEngine',
-    }, async () => {
+    }, lockPayload, async () => {
         try {
             require('./local-llm-reclaim').reclaimLocalLlmBeforeEngineJob(appendEngineLogLine);
         } catch (_) { /* ignore */ }
@@ -3261,8 +3391,18 @@ async function transcribeRangeWithEngine(payload = {}, deps = {}) {
             const primaryAsr = String(
                 payload.asrModel || options.engineAsrModel || 'sensevoice-small',
             ).trim() || 'sensevoice-small';
-            // SenseVoice 对短窗/AV 常空：有必要时再换 Whisper 试一次（未安装则原样失败）
-            const asrCandidates = rangeAsrPolicy.buildRangeAsrCandidates(primaryAsr);
+            // SenseVoice 对短窗/AV 常空：有必要时再换已安装的兄弟 ASR 试一次
+            // Callers (e.g. second opinion) may pass an explicit short list to avoid tiny/turbo churn.
+            const asrCandidates = (() => {
+                const forced = payload.asrCandidates || deps.asrCandidates;
+                if (Array.isArray(forced) && forced.length) {
+                    return [...new Set(forced.map((id) => String(id || '').trim()).filter(Boolean))];
+                }
+                return resolveAsrFailoverCandidates(
+                    primaryAsr,
+                    options.engineInstallPath,
+                );
+            })();
             const isRetryableAsrFail = rangeAsrPolicy.isRetryableAsrFail;
 
             const runAsrOnce = async (asrModel) => {

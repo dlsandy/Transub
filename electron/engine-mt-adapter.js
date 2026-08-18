@@ -112,10 +112,8 @@ function parseEngineMtRequest(body) {
  */
 function buildEngineMtResponse(requestCues, translatedCues, options = {}) {
     const mtSanitize = require('../src/js/mt-sanitize-core');
-    let smartCore = null;
-    try {
-        smartCore = require('../src/js/advanced-smart-translate-core');
-    } catch (_) { /* optional closed path */ }
+    const { loadClosedSmartTranslateCore } = require('./advanced-closed-api');
+    const smartCore = loadClosedSmartTranslateCore();
     const opts = asPlainObject(options);
     const cleaned = mtSanitize.sanitizeMtCues(
         (translatedCues || []).map((u) => ({
@@ -216,8 +214,9 @@ function preprocessSourceCuesForMt(cues) {
  */
 function partitionMtCuesForLlm(cues) {
     try {
-        const smartCore = require('../src/js/advanced-smart-translate-core');
-        if (typeof smartCore.partitionDeterministicCues === 'function') {
+        const { loadClosedSmartTranslateCore } = require('./advanced-closed-api');
+        const smartCore = loadClosedSmartTranslateCore();
+        if (typeof smartCore?.partitionDeterministicCues === 'function') {
             return smartCore.partitionDeterministicCues(cues);
         }
     } catch { /* optional */ }
@@ -284,6 +283,8 @@ async function polishExternalFilm(parsed, session, { onProgress, signal } = {}) 
         ),
         smartTranslatePlotPolish: true,
         smartTranslateHybridMt: false,
+        smartTranslateFaithfulVerify: options.smartTranslateFaithfulVerify !== false,
+        smartTranslateAddressConsistency: options.smartTranslateAddressConsistency !== false,
         smartTranslatePolishSampleLimit: options.smartTranslatePolishSampleLimit,
         language: parsed.language || options.language,
         glossary: resolvePromptGlossary(options),

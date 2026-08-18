@@ -57,9 +57,13 @@
     /** Engine protect placeholders + accidental "Gloss1234" / "GLOS2658克" leaks. */
     const GLOSS_TOKEN_RE = /__GLOSS\d*__|__GLOS\d*__|Gloss#{0,4}\d+_*/gi;
     /** Bare glossary ids the model invents without underscores (GLOS2658克 / GLOSS12 / GLOSSES2152). */
-    const BARE_GLOSS_TOKEN_RE = /GLOS[A-Z]*\d{2,8}(?:克|[gG])?/gi;
+    const BARE_GLOSS_TOKEN_RE = /GLOS[\sA-Z]*\d{2,8}(?:克|[gG])?/gi;
+    /** Hash-style gloss debris from llama/BPE (`_#G2643_` / `_#_`). */
+    const HASH_GLOSS_TOKEN_RE = /_#G\d+_?|_#_/gi;
     /** Any double-underscore LLM/meta placeholder (e.g. __香水的代号__). */
     const GENERIC_PLACEHOLDER_RE = /__([^_\n]{1,64})__/g;
+    const CHEW_SFX_CHUNK_RE = /(?:んむ|あむ|はむ|ハム|んぶ|ンブ|むにゃ|もぐ|モグ|むぐ)+[っッぅうゥウ]*/g;
+    const MOAN_CHAR_CLASS_RE = /[あぁアァうぅウゥおぉオォんンっッ゛゜はひふへほハヒフヘホー〜～…・!?！？。、,\s~～〜♡♥❤]/g;
 
     const JA_PERSON_RE = /([一-龯ぁ-んァ-ンー]{1,6}?)(さん|くん|ちゃん|君|様|氏)/g;
     const ZH_PERSON_RE = /([\u4e00-\u9fff]{1,4})(同学|小姐|先生|桑|君|酱|酱酱|大人|老师)/g;
@@ -159,6 +163,9 @@
      * Sensitive adult pairs: mt-opaque-strings (merged at load).
      */
     const JA_ASR_DOMAIN_FIX_PAIRS_FALLBACK = Object.freeze([
+        { from: '埋め合ったら', to: 'お待たせしたら' },
+        { from: '埋めあわせたら', to: 'お待たせしたら' },
+        { from: '埋め合わせたら', to: 'お待たせしたら' },
         { from: 'お客様のペースが柔らかい', to: 'お客様の肌が柔らかい' },
         { from: 'お酒ございましぇん', to: '申し訳ございません' },
         { from: 'パンパンエスニャー', to: 'パンパンですねー' },
@@ -1394,7 +1401,13 @@
         const raw = String(text ?? '');
         let next = raw.replace(GLOSS_TOKEN_RE, '');
         next = next.replace(BARE_GLOSS_TOKEN_RE, '');
+        next = next.replace(HASH_GLOSS_TOKEN_RE, '');
         const glossHit = next !== raw;
+        // Tokenizer splits: 那_ 么 / 这_里 / 那_#_种 (hash already cleared)
+        next = next.replace(/([\u4e00-\u9fff])_+\s*([\u4e00-\u9fff])/g, '$1$2');
+        next = next.replace(/^\s*_+\s+/, '');
+        next = next.replace(/\s+_+\s*$/, '');
+        next = next.replace(/([\u4e00-\u9fff])_+(?=\s|$|[，。！？、])/g, '$1');
         // LLM-invented placeholders: __香水的代号__ → 香水纯；__GLOS2643__ already cleared above
         next = next.replace(GENERIC_PLACEHOLDER_RE, (_, inner) => {
             const s = String(inner || '').trim();
@@ -1424,6 +1437,7 @@
         });
         // Consistency-pass meta: "うちわら小姐\n改成：うちわら小姐" / "旧译→新译"
         next = next.replace(/(?:^|\n)\s*改成[：:]\s*[^\n]*/g, '');
+        next = next.replace(/^(?:改为符合原文语气|改为符合原文)[。．.！!？?]*$/u, '');
         next = next.replace(/改[為为][「『"].*?[」』"]/g, '');
         next = next.replace(/修订译文/g, '');
         if (/→/.test(next) && next.length <= 120 && !/https?:/.test(next)) {
@@ -1492,6 +1506,8 @@
         if (/禁止臆造角色名|文末乱贴人名/.test(t)) hits += 1;
         if (/忠实语气模式/.test(t)) hits += 2;
         if (/禁止以安全政策为由拒答/.test(t)) hits += 2;
+        if (/符合原文语气/.test(t)) hits += 2;
+        if (/^改为/.test(t) && /原文|语气|译文|润色/.test(t)) hits += 2;
         if (/禁止医学化/.test(t)) hits += 1;
         // Dense instruction stack: rare in real dialogue, common in prompt echo
         let meta = 0;
@@ -1902,6 +1918,12 @@
         // If source is 奥さん but model wrote 旦那小姐, prefer 太太 (gender from source).
         if (/奥さん|おくさん/.test(src)) {
             cur = cur.replace(/旦那小姐/g, '太太');
+            if (!/太太|夫人|老婆|妻子/.test(cur) && /对不起|抱歉|不好意思/.test(cur)) {
+                const compact = cur.replace(/[。．.!！?？\s…·.•了啦啊呀哦喔]+/g, '');
+                if (compact.length <= 8) {
+                    cur = `${cur.trim().replace(/[。．.！!？?\s]+$/g, '')}太太`;
+                }
+            }
         }
         if (/旦那小姐/.test(cur) && (/旦那|だんな/.test(src) || !/奥さん|おくさん/.test(src))) {
             cur = cur.replace(/旦那小姐/g, '老公');
@@ -1936,6 +1958,32 @@
             cur = cur.replace(/父小姐|爸爸小姐/g, '爸爸');
         }
         return { text: cur, changed: cur !== before };
+    }
+
+    /**
+     * Vocative ねえねえ + given name collapsed to 呐呐 / 喂喂 — restore the name.
+     * Cue-pattern only (ねえねえ + 2–4 char name), not title-scoped.
+     */
+    function recoverNeeNeeGivenName(text, sourceText = '') {
+        const original = String(text ?? '');
+        const cur = original.trim();
+        const src = String(sourceText || '').trim();
+        const m = src.match(
+            /^(?:ねえねえ|ねぇねぇ|ねえ、ねえ|ねぇ、ねぇ)[\s、,，]+([一-龯]{2,4}|[ァ-ヴー]{2,6}|[ぁ-ん]{2,6})[。．.!！?？\s]*$/,
+        );
+        if (!m) return { text: original, changed: false };
+        const name = m[1];
+        if (/^(?:今度|ちょっと|あなた|お願い|聞いて|見て|それ|これ|どう|なんで|何|待って|ほら|ねえ)$/.test(name)) {
+            return { text: original, changed: false };
+        }
+        if (new RegExp(escapeRegExp(name)).test(cur)) return { text: original, changed: false };
+        if (!/^(?:呐+|喂+|哎+|嘿+|嗨+)[。．.!！?？\s…·.•]*$/u.test(cur)) {
+            return { text: original, changed: false };
+        }
+        return {
+            text: `${cur.replace(/[。．.!！?？\s]+$/g, '')}${name}`,
+            changed: true,
+        };
     }
 
     /**
@@ -2183,6 +2231,160 @@
             .sort((a, b) => b.from.length - a.from.length || a.from.localeCompare(b.from, 'zh-CN'));
     }
 
+    const ZH_NAME_STEM_STOP = new Set([
+        '学长', '学姐', '前辈', '没事', '那个', '什么', '怎么', '自己', '朋友',
+        '完全', '谢谢', '好的', '加油', '可爱', '化妆', '时间', '公司', '房间',
+        '整个', '好烫', '好的', '不要', '等一下',
+    ]);
+
+    function lexiconZhFormsForJaStem(stem) {
+        const s = String(stem || '').trim();
+        const out = [];
+        const preferred = jaNames?.resolveCanonicalZhPersonName?.(s);
+        if (preferred && /^[\u4e00-\u9fff]{2,4}$/.test(preferred)) out.push(preferred);
+        const list = jaNames?.LEXICON?.byKana?.get?.(s);
+        if (Array.isArray(list)) {
+            for (const z of list) {
+                const t = String(z || '').trim();
+                if (/^[\u4e00-\u9fff]{2,4}$/.test(t)) out.push(t);
+            }
+        }
+        return [...new Set(out)];
+    }
+
+    function extractZhGivenNameStems(zh, jaStem) {
+        const text = String(zh || '');
+        const stems = [];
+        for (const zr of extractZhPersonRefs(text)) {
+            if (zr.stem && !ZH_NAME_STEM_STOP.has(zr.stem)) stems.push(zr.stem);
+        }
+        const lead = text.match(/^[\u4e00-\u9fff]{2,3}(?=哥|也|桑|君|酱|同学|小姐|先生|老师|$|[\s，。！？、])/);
+        if (lead && !ZH_NAME_STEM_STOP.has(lead[0])) stems.push(lead[0]);
+        const preferred = lexiconZhFormsForJaStem(jaStem);
+        for (const form of preferred) {
+            if (text.includes(form)) stems.push(form);
+        }
+        return [...new Set(stems)];
+    }
+
+    function foldNameChar(ch) {
+        const c = String(ch || '');
+        if (c === '輝') return '辉';
+        if (c === '姫' || c === '姬') return '希';
+        return c;
+    }
+
+    function nameCharSet(stem, counts) {
+        const chars = new Set();
+        for (const z of counts.keys()) {
+            for (const ch of Array.from(z)) chars.add(foldNameChar(ch));
+        }
+        for (const z of lexiconZhFormsForJaStem(stem)) {
+            for (const ch of Array.from(z)) chars.add(foldNameChar(ch));
+        }
+        for (const ch of Array.from(String(stem || ''))) {
+            if (/[\u4e00-\u9fff]/.test(ch)) chars.add(foldNameChar(ch));
+        }
+        return chars;
+    }
+
+    function absorbGivenNameClusters(map, translatedCues, sourceCues, srcByIndex) {
+        /** @type {Map<string, Map<string, number>>} */
+        const byStem = new Map();
+        (translatedCues || []).forEach((c, i) => {
+            const idx = Number.isInteger(Number(c?.index)) ? Number(c.index) : i;
+            const zh = String(c?.text ?? '');
+            const ja = srcByIndex.has(idx)
+                ? srcByIndex.get(idx)
+                : String(sourceCues?.[i]?.text ?? '');
+            const jaRefs = extractJaPersonRefs(ja).filter((r) => Array.from(r.stem || '').length >= 2);
+            if (!jaRefs.length) return;
+            for (const jr of jaRefs) {
+                if (jaNames?.isAmbiguousHiraganaForm?.(jr.stem)) continue;
+                const zhStems = extractZhGivenNameStems(zh, jr.stem);
+                if (!zhStems.length) continue;
+                if (!byStem.has(jr.stem)) byStem.set(jr.stem, new Map());
+                const counts = byStem.get(jr.stem);
+                for (const zs of zhStems) {
+                    counts.set(zs, (counts.get(zs) || 0) + 1);
+                }
+            }
+        });
+        const stems = [...byStem.keys()];
+        for (let i = 0; i < stems.length; i += 1) {
+            for (let j = i + 1; j < stems.length; j += 1) {
+                const a = stems[i];
+                const b = stems[j];
+                if (!byStem.has(a) || !byStem.has(b)) continue;
+                const kana = /[ぁ-んァ-ン]/.test(a) ? a : (/[ぁ-んァ-ン]/.test(b) ? b : '');
+                if (!kana) continue;
+                const other = kana === a ? b : a;
+                const ca = nameCharSet(a, byStem.get(a));
+                const cb = nameCharSet(b, byStem.get(b));
+                let overlap = false;
+                for (const ch of ca) {
+                    if (cb.has(ch)) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (!overlap) continue;
+                const merged = byStem.get(kana);
+                for (const [form, n] of byStem.get(other)) {
+                    merged.set(form, (merged.get(form) || 0) + n);
+                }
+                byStem.delete(other);
+            }
+        }
+        for (const [jaStem, counts] of byStem) {
+            const total = [...counts.values()].reduce((a, b) => a + b, 0);
+            if (total < 2 || counts.size < 2) continue;
+            const preferred = lexiconZhFormsForJaStem(jaStem);
+            let canonical = '';
+            for (const p of preferred) {
+                if (counts.has(p)) {
+                    canonical = p;
+                    break;
+                }
+            }
+            if (!canonical) {
+                canonical = [...counts.entries()]
+                    .sort((a, b) => b[1] - a[1]
+                        || Array.from(b[0]).length - Array.from(a[0]).length
+                        || a[0].localeCompare(b[0], 'zh-CN'))[0]?.[0] || '';
+            }
+            if (!canonical) continue;
+            for (const [variant] of counts) {
+                if (variant !== canonical) map.set(variant, canonical);
+            }
+        }
+    }
+
+    function absorbSenpaiClusters(map, translatedCues, sourceCues, srcByIndex) {
+        const counts = new Map();
+        (translatedCues || []).forEach((c, i) => {
+            const idx = Number.isInteger(Number(c?.index)) ? Number(c.index) : i;
+            const zh = String(c?.text ?? '');
+            const ja = srcByIndex.has(idx)
+                ? srcByIndex.get(idx)
+                : String(sourceCues?.[i]?.text ?? '');
+            if (!/先輩|せんぱい|センパイ/i.test(ja)) return;
+            for (const form of ['学长', '学姐', '前辈']) {
+                if (zh.includes(form)) counts.set(form, (counts.get(form) || 0) + 1);
+            }
+        });
+        if (counts.size < 2) return;
+        const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'));
+        const winner = ranked[0];
+        const second = ranked[1];
+        const total = ranked.reduce((s, [, n]) => s + n, 0);
+        if (!winner || total < 4) return;
+        if (winner[1] < Math.max(2 * (second?.[1] || 0), Math.ceil(total * 0.7))) return;
+        for (const [form] of ranked) {
+            if (form !== winner[0]) map.set(form, winner[0]);
+        }
+    }
+
     /**
      * Infer ZH name-form consistency from JA honorific co-occurrence across cue pairs.
      * Same 倉木さん → {仓木同学, 仓木小姐, 花菜小姐} ⇒ unify minority forms to majority.
@@ -2256,6 +2458,9 @@
 
         for (const countMap of byJaStem.values()) absorbFullPersonCluster(countMap);
         for (const countMap of byZhStem.values()) absorbFullPersonCluster(countMap);
+
+        absorbGivenNameClusters(map, translatedCues, sourceCues, srcByIndex);
+        absorbSenpaiClusters(map, translatedCues, sourceCues, srcByIndex);
 
         return [...map.entries()]
             .map(([from, to]) => ({ from, to }))
@@ -2343,7 +2548,9 @@
             if (/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ|きもち/.test(s)) {
                 return mtOpaque?.T?.ahahaFeelZh || '哈哈，好舒服';
             }
-            return '哈哈';
+            const laughRest = s.replace(/^[あははははぁァっッ、,，\s…]+/u, '');
+            if (!laughRest || !jaCueHasLexicalResidue(laughRest)) return '哈哈';
+            // Lexical after あはは — fall through so moan-strip remap can recover.
         }
         if (/^はい$/.test(bare)) return '好的';
         if (/^うん$/.test(bare)) return '嗯嗯';
@@ -2376,6 +2583,7 @@
                 bare.replace(/[…・.\s]+$/g, ''),
             )) return /[…・]/.test(s) ? '不行……' : '不行';
             if (/^お願いします$/.test(bare.replace(/[…・.\s]+$/g, ''))) return '拜托了';
+            if (/^お願い$/.test(bare.replace(/[…・.\s]+$/g, ''))) return '拜托';
             if (/^帰らないで$/.test(bare.replace(/[…・.\s]+$/g, ''))) return '别走';
             if (/^ほんとだよ$|^ほんとに$/.test(bare.replace(/[…・.\s]+$/g, ''))) {
                 return /だよ/.test(s) ? '真的啊' : '真的';
@@ -2478,11 +2686,14 @@
                 if (m?.[1]) return `喂，${m[1].trim()}`;
             }
         }
-        if (/^(?:もぐ|モグ|むぐ){2,}/.test(s) && textLen(s) <= 16) return '嗯嗯';
+        if (/^(?:もぐ|モグ|むぐ){2,}/.test(s) && textLen(s) <= 16 && !jaCueHasLexicalResidue(s)) {
+            return '嗯嗯';
+        }
         // Oral chew / muffled moans (んむぅ / あむ / むにゃ) — keep timing, not wet 咕啾
         if (
-            /(?:んむ|あむ|むにゃ|むぐ|もぐ|モグ)/.test(s)
+            /(?:んむ|あむ|はむ|むにゃ|むぐ|もぐ|モグ)/.test(s)
             && textLen(s) <= 28
+            && !jaCueHasLexicalResidue(s)
         ) {
             const lexical = s.replace(
                 /(?:んむ[ぅうゥウっッ]*|あむ[ぅうゥウっッ]*|むにゃ[ぁア]*|むぐ+|もぐ+|モグ+|[ぅうゥウっッむムんンあアぁァはぁはあハァ…・!?！？。、,\s]+)/g,
@@ -2568,6 +2779,9 @@
         if (/あったかい/.test(s) && /べろ|舌/.test(s) && textLen(s) <= 24) {
             return '好温暖的舌头';
         }
+        if (/あったかい/.test(s) && /手/.test(s) && !/べろ|舌/.test(s) && textLen(s) <= 16) {
+            return /初めて/.test(s) ? '第一次的手…好温暖' : '手好温暖';
+        }
         if (/すごいよ/.test(s) && textLen(s) <= 20) {
             return '好厉害';
         }
@@ -2600,7 +2814,8 @@
         const cur = String(text || '').trim();
         const src = String(sourceText || '');
         if (!cur || !src) return { text: cur, changed: false };
-        if (!/^(?:啊[啊]?[，,。．.…]*|嗯[嗯]?[，,。．.…]*|哦[，,。．.]?|哈[啊]?[，,。．.…]*|好|好的|好厉害|哈哈[。．.!！]?|呵呵[，,。．.]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|来吧[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
+        // Include spaced / ellipsis moan stubs like「哈 哈」「哈…哈…」(engine MT often inserts spaces).
+        if (!/^(?:啊[啊]?[，,。．.…]*|嗯[嗯]?[，,。．.…]*|哦[，,。．.]?|哈(?:啊|[…·\s]*哈)+[，,。．.…]*|哈[啊]?[，,。．.…]*|好|好的|好厉害|哈哈[。．.!！]?|呵呵[，,。．.!！]?|喂[，,。．.]?|哥哥[，,。．.]?|来[，,。．.]?|来吧[，,。．.]?|完了[，,。．.]?|不过[，,。．.]?|谢谢[，,。．.]?|哭了|是的|啧[，,。．.]?|…+)$/.test(cur)) {
             // Trailing climax stub:「…啊，」when JA has climax cue
             if (
                 /(?:啊[，,]|啊)$/.test(cur)
@@ -2614,7 +2829,7 @@
             return { text: cur, changed: false };
         }
         if (textLen(src) < 4) return { text: cur, changed: false };
-        const remapped = remapZhFromJaSimple(src);
+        const remapped = remapJaPreferLexical(src);
         if (remapped == null || remapped === cur) return { text: cur, changed: false };
         return { text: remapped, changed: true };
     }
@@ -2648,8 +2863,8 @@
         if (!cur || !src) return { text: cur, changed: false };
         const zk = zhNormKey(cur);
         if (zk.length < 6) return { text: cur, changed: false };
-        const remapped = remapZhFromJaSimple(src);
-        if (remapped == null) return { text: cur, changed: false };
+        const remapped = remapJaPreferLexical(src);
+        if (remapped == null || isFillerOnlyZh(remapped)) return { text: cur, changed: false };
         if (
             /^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.、，,\s♡]+$/.test(src)
             || /^あはは|^ははは/.test(src)
@@ -2964,6 +3179,13 @@
             flags.push('kinship');
         }
 
+        const nee = recoverNeeNeeGivenName(cur, loopStrippedSource || sourceText);
+        if (nee.changed) {
+            cur = nee.text;
+            changed = true;
+            flags.push('nee_name');
+        }
+
         // Leftover NSFW kana in ZH when source had the same form (optional; AV paths enable)
         const wantNsfwLex = options.applyNsfwLexicon === true
             || options.sakuraNsfwPrompt === true
@@ -3207,15 +3429,21 @@
                 return { text: fb, changed: true };
             }
         } catch (_) { /* optional closed/open path */ }
-        const remapped = remapZhFromJaSimple(src);
+        const remapped = remapJaPreferLexical(src);
         if (remapped && !isEllipsisOrEmptyZh(remapped) && remapped !== cur) {
             // Accept even for short JA (うん / はい) — previously required len>=6
             if (!isBlankOrPunctTranslation(remapped, src) || textLen(src) <= 8) {
                 return { text: remapped, changed: true };
             }
         }
-        // すごい… collapsed to moan-only ZH
-        if (/すごい|すげ[えぇー]/.test(src) && (isEllipsisOrEmptyZh(cur) || isFillerOnlyZh(cur))) {
+        const fragments = recoverFillerZhFromLexicalJa(cur, src);
+        if (fragments.changed) return fragments;
+        // すごい… collapsed to moan-only ZH (do not override 気持ちいい → 好舒服)
+        if (
+            /すごい|すげ[えぇー]/.test(src)
+            && !/気持ちいい|きもちいい|きもちいっ|きもちぃ|キモチイイ/.test(src)
+            && (isEllipsisOrEmptyZh(cur) || isFillerOnlyZh(cur))
+        ) {
             return { text: '好厉害', changed: true };
         }
         return { text: cur, changed: false };
@@ -3324,9 +3552,77 @@
     /**
      * JA that is mostly moans / sfx — short ZH glosses are acceptable.
      */
+    function jaCueHasLexicalResidue(sourceText = '') {
+        const s = String(sourceText || '').trim();
+        if (!s) return false;
+        if (/[一-龯]/.test(s)) return true;
+        if (/(?:待っ|やめ|我慢|気持|お願い|先輩|大丈夫|本当|ほんと|だめ|ダメ|駄目|恥ずかしい|落ち着|確認|舐|しゃぶ|あったかい|らめ)/.test(s)) {
+            return true;
+        }
+        const stripped = s
+            .replace(CHEW_SFX_CHUNK_RE, '')
+            .replace(MOAN_CHAR_CLASS_RE, '');
+        return textLen(stripped) >= 3;
+    }
+
+    /** Drop breath/laughter runs so lexical JA under はぁはぁ/あはは can remap. */
+    function stripJaBreathMoans(sourceText = '') {
+        return String(sourceText || '')
+            .replace(/(?:あはは+|ははは+|ふふふ+|ウフフ+|ひっひっ+|はぁ+|はあっ+|はあぁ*|ハァ+|ああぁ+|あぁぁ+|あんっ+|んっ+)[っッ]*/gu, ' ')
+            .replace(/[…・.…!！?？、，,]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /**
+     * Prefer a non-filler remap; when ZH-bound JA is moan-prefixed, remap the remainder.
+     */
+    function remapJaPreferLexical(src) {
+        const raw = String(src || '').trim();
+        if (!raw) return null;
+        const r0 = remapZhFromJaSimple(raw);
+        if (r0 && !isFillerOnlyZh(r0)) return r0;
+        const stripped = stripJaBreathMoans(raw);
+        if (stripped && stripped !== raw && jaCueHasLexicalResidue(raw)) {
+            const r2 = remapZhFromJaSimple(stripped);
+            if (r2 && !isFillerOnlyZh(r2)) return r2;
+            if (r2) return r2;
+        }
+        return r0;
+    }
+
+    function recoverFillerZhFromLexicalJa(text, sourceText = '') {
+        const cur = String(text || '').trim();
+        const raw = String(sourceText || '').trim();
+        if (!raw || (!isEllipsisOrEmptyZh(cur) && !isFillerOnlyZh(cur))) {
+            return { text: cur, changed: false };
+        }
+        if (!jaCueHasLexicalResidue(raw)) return { text: cur, changed: false };
+        const src = stripJaBreathMoans(raw) || raw;
+        const bits = [];
+        if (/らめ[ぇえ]|らめらめ|ラメラメ/.test(src)) bits.push('不行');
+        if (/待って/.test(src)) bits.push('等一下');
+        if (/本当に|ほんと/.test(src) && !/よろしく/.test(src)) bits.push('真的');
+        if (/よろしくお願いします|よろしくお願い/.test(src)) bits.push('请多指教');
+        else if (/お願い/.test(src)) bits.push('拜托了');
+        if (/やめ(?:て|ろ|てください)|やだ|やだい/.test(src)) bits.push('不要');
+        if (/我慢できない/.test(src)) bits.push('忍不住了');
+        if (/舐めないで|舐めない/.test(src)) bits.push('不要舔');
+        else if (/舐め/.test(src)) bits.push('舔');
+        if (/しゃぶ/.test(src)) bits.push('含着');
+        if (/あったかい/.test(src) && /手/.test(src) && !/べろ|舌/.test(src)) {
+            bits.push(/初めて/.test(src) ? '第一次的手…好温暖' : '手好温暖');
+        }
+        if (/音/.test(src) && /(?:ある|する)/.test(src)) bits.push('有声音');
+        const next = bits.join('').trim();
+        if (!next || next === cur) return { text: cur, changed: false };
+        return { text: next, changed: true };
+    }
+
     function isMoanOrSfxHeavyJa(sourceText = '') {
         const s = String(sourceText || '').trim();
         if (!s) return false;
+        if (jaCueHasLexicalResidue(s)) return false;
         if (/^[はハはぁアァうぅウゥんンー〜～っッああん!！?？…。．.\s♡♥❤ク]+$/i.test(s)) return true;
         const climaxMoan = (typeof mtOpaque?.d === 'function'
             ? mtOpaque.d('44Kk44ODK3zjgqTjgq9844GE44Gj44Gh44KD44GG')
@@ -3345,7 +3641,7 @@
     function isFillerOnlyZh(text = '') {
         const t = String(text || '').trim();
         if (!t) return false;
-        if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|请|来|完了|不过|不对[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?|…+)$/.test(t)) {
+        if (/^(?:啊[，,。．.]?|嗯[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|喂[，,。．.]?|哈(?:啊|[…·\s]*哈)+[，,。．.…]*|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|请|来|完了|不过|不对[，,。．.]?|哎呀[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?|…+)$/.test(t)) {
             return true;
         }
         const bare = t.replace(/[。．.、，,\s…·•\-—_~～！!？?]+/g, '');
@@ -3363,8 +3659,44 @@
         if (!t || !src) return false;
         const sl = textLen(src);
         const tl = textLen(t);
-        if (sl < 6) return false;
         if (isMoanOrSfxHeavyJa(src)) return false;
+        // Moan-only ZH vs lexical JA (including short お願い) — engine often stubs as 哈 哈.
+        if (
+            isFillerOnlyZh(t)
+            && sourceLooksLikeJapanese(src)
+            && jaCueHasLexicalResidue(src)
+        ) return true;
+        if (sl < 6) return false;
+        // Complete feel-good gloss vs long JA — do not recover-over 好舒服 via すごい
+        if (
+            /^(?:好舒服|好厉害)[…。．.!！?\s]*$/u.test(t)
+            && /気持ちいい|きもち|すごい/.test(src)
+        ) {
+            return false;
+        }
+        // Past climax イッたよ already glossed 射了/去了 — do not upgrade to 要射了
+        if (
+            /^(?:射了|去了)[…。．.!！?\s]*$/u.test(t)
+            && /イッたよ|イっちゃいました/.test(src)
+            && !/イッちゃう|イっちゃう|いっちゃう/.test(src)
+        ) {
+            return false;
+        }
+        // 小穴要去了 is a complete manko climax gloss — do not recover-over to bare 要去了
+        if (
+            /^小穴(?:要去了|要射了)[…。．.!！?\s]*$/u.test(t)
+            && /(?:お)?まんこ/.test(src)
+        ) {
+            return false;
+        }
+        // らめらめ + イっちゃ already 不要…要去了
+        if (
+            /不要|不行/.test(t)
+            && /要去了|要射了/.test(t)
+            && /らめらめ|ラメラメ/.test(src)
+        ) {
+            return false;
+        }
         // Pure JA interjection/greeting of similar brevity — allow short ZH.
         if (
             sl <= 8
@@ -3510,6 +3842,8 @@
         if (fluency?.hasHeavyRepetition?.(t) && tLen > Math.max(30, srcLen * 2)) return true;
         if (/__GLOSS\d*__|__GLOS\d*__|Gloss#{0,4}\d+_*/i.test(t)) return true;
         if (/GLOS?S?\d{2,8}/i.test(t)) return true;
+        if (/_#G\d+|_#_/.test(t)) return true;
+        if (/[\u4e00-\u9fff]_+[\u4e00-\u9fff]/.test(t)) return true;
         if (/__[^_\n]{1,64}__/.test(t)) return true;
         if (/改成[：:]/.test(t)) return true;
         return false;
@@ -3518,6 +3852,7 @@
     return {
         GLOSS_TOKEN_RE,
         BARE_GLOSS_TOKEN_RE,
+        HASH_GLOSS_TOKEN_RE,
         GENERIC_PLACEHOLDER_RE,
         POLLUTION_NAME_STEMS,
         stripMtArtifacts,
@@ -3537,6 +3872,7 @@
         stripResidualJaInZh,
         normalizeZhHonorificFromJaSan,
         fixKinshipHonorificMistranslations,
+        recoverNeeNeeGivenName,
         sourceJustifiesZhName,
         capPathologicalLength,
         extractJaPersonRefs,
@@ -3549,6 +3885,7 @@
         polishOrphanStuckZh,
         polishTruncatedReactiveZh,
         recoverBlankedAdultZh,
+        jaCueHasLexicalResidue,
         unstickCrossCueZh,
         correctJaAsrDomainMishears,
         correctJaAsrDomainMishearsInCues,

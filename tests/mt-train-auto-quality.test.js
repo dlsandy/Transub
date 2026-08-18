@@ -161,4 +161,25 @@ describe('mt-train auto-quality', () => {
         assert.ok(report.wholeFiltered >= 1);
         assert.strictEqual(report.adopt[0].ji, 1);
     });
+
+    it('wizardMode keeps reject short rules in narrow (not exclude)', () => {
+        const report = autoQuality.buildWizardReport([
+            {
+                status: 'failed',
+                ji: 9,
+                confidence: { level: 'reject', reasons: ['试跑未命中'] },
+                reason: '试跑未命中',
+                payload: {
+                    mode: 'replace',
+                    jaAnchor: 'お願い',
+                    zh: '请',
+                    zhFrom: '请',
+                    zhTo: '拜托了',
+                    expandStub: true,
+                },
+            },
+        ], { wizardMode: true });
+        assert.strictEqual(report.reviewCount, 1);
+        assert.strictEqual(report.skipCount, 0);
+    });
 });

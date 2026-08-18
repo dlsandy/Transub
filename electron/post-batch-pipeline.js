@@ -11,12 +11,15 @@ const fs = require('fs');
 const path = require('path');
 
 /**
+ * Basename stem for JA↔ZH pairing (no directory).
+ * Engine often writes JA under transcript-keep and ZH next to the video — different
+ * folders must still pair, otherwise ZH-only removeEmpty orphans JA cues.
+ *
  * @param {string} filePath
  * @param {(p: string) => boolean} isSourceTrack
  */
 function stemKeyForPairing(filePath, isSourceTrack) {
     const base = path.basename(String(filePath || ''));
-    const dir = path.dirname(path.resolve(String(filePath || '')));
     let stem = base.replace(/\.(srt|vtt|lrc)$/i, '');
     stem = stem
         .replace(/\.src\.partial$/i, '')
@@ -33,7 +36,25 @@ function stemKeyForPairing(filePath, isSourceTrack) {
     if (!isSourceTrack(filePath)) {
         stem = stem.replace(/\.(?:zh|chs|cht|cn|tw)$/i, '');
     }
-    return `${dir}::${stem.toLowerCase()}`;
+    return String(stem || '').toLowerCase();
+}
+
+/**
+ * Pick JA source for a ZH target: prefer same directory, else first stem match.
+ * @param {Map<string, string[]>} sourcesByStem
+ * @param {string} zhPath
+ * @param {(p: string) => boolean} isSourceTrack
+ * @returns {string}
+ */
+function resolveSourceForTarget(sourcesByStem, zhPath, isSourceTrack) {
+    const stem = stemKeyForPairing(zhPath, isSourceTrack);
+    const candidates = sourcesByStem.get(stem) || [];
+    if (!candidates.length) return '';
+    const zhDir = path.dirname(path.resolve(String(zhPath || '')));
+    const sameDir = candidates.find(
+        (p) => path.dirname(path.resolve(String(p || ''))) === zhDir,
+    );
+    return sameDir || candidates[0] || '';
 }
 
 /**
@@ -93,10 +114,14 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
     const sources = unique.filter((p) => isSourceTrack(p));
     const nonSources = unique.filter((p) => !isSourceTrack(p));
 
-    /** @type {Map<string, string>} */
-    const sourceByStem = new Map();
+    /** @type {Map<string, string[]>} */
+    const sourcesByStem = new Map();
     for (const src of sources) {
-        sourceByStem.set(stemKeyForPairing(src, isSourceTrack), src);
+        const stem = stemKeyForPairing(src, isSourceTrack);
+        if (!stem) continue;
+        const list = sourcesByStem.get(stem) || [];
+        list.push(src);
+        sourcesByStem.set(stem, list);
     }
 
     const pairNoiseOpts = {
@@ -109,27 +134,47 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
         backupMode: 'off',
     };
 
+    const memorySourceCues = Array.isArray(options.sourceCues) ? options.sourceCues : null;
+
     // 1) Paired JA↔ZH noise deletion (true delete, keep counts aligned).
     if (doNoise && typeof removeNoiseFromSubtitlePair === 'function') {
         for (const zhPath of nonSources) {
-            const srcPath = sourceByStem.get(stemKeyForPairing(zhPath, isSourceTrack));
-            if (!srcPath || !fs.existsSync(srcPath)) continue;
+            let srcPath = resolveSourceForTarget(sourcesByStem, zhPath, isSourceTrack);
+            if (srcPath && !fs.existsSync(srcPath)) srcPath = '';
+            const pairOpts = { ...pairNoiseOpts };
+            if (!srcPath && memorySourceCues?.length) {
+                pairOpts.sourceCues = memorySourceCues;
+            } else if (!srcPath) {
+                continue;
+            }
             hooks.onProgress?.({
                 detail: '后处理：成对清理杂音/幻觉…',
                 path: zhPath,
             });
             try {
-                const pairRes = removeNoiseFromSubtitlePair(zhPath, srcPath, pairNoiseOpts);
-                processed.push({ path: zhPath, sourcePath: srcPath, result: pairRes, paired: true });
+                const pairRes = removeNoiseFromSubtitlePair(zhPath, srcPath, pairOpts);
+                processed.push({
+                    path: zhPath,
+                    sourcePath: srcPath || undefined,
+                    result: pairRes,
+                    paired: true,
+                    memorySource: !srcPath,
+                });
                 if (pairRes?.ok && !pairRes.skipped) {
                     done.add(zhPath);
-                    done.add(srcPath);
+                    if (srcPath) done.add(srcPath);
                     if (pairRes.removed || pairRes.written) {
                         hooks.onLog?.(
                             `后处理 ${path.basename(zhPath)}`
-                            + ` ↔ ${path.basename(srcPath)} · ${pairRes.summary || '成对清噪完成'}`,
+                            + (srcPath ? ` ↔ ${path.basename(srcPath)}` : ' ↔ (内存原文)')
+                            + ` · ${pairRes.summary || '成对清噪完成'}`,
                         );
                     }
+                } else if (pairRes?.ok && (srcPath || memorySourceCues?.length)) {
+                    // Pair resolved (incl. 0 removals). Mark ZH done so unpaired
+                    // removeEmpty never runs against a translated track.
+                    done.add(zhPath);
+                    if (srcPath) done.add(srcPath);
                 }
             } catch (err) {
                 hooks.onLog?.(`成对清噪跳过：${err.message || err}`);
@@ -203,4 +248,5 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
 module.exports = {
     applyPostBatchPipeline,
     stemKeyForPairing,
+    resolveSourceForTarget,
 };

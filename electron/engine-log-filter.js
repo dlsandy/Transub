@@ -60,6 +60,20 @@ function friendlyEngineError(raw) {
     ) {
         return '操作已中止或请求超时，请重试';
     }
+    // torch\\lib\\cublas WinError 999 = DLL conflict with nvidia-cublas already
+    // mapped for CT2 — not a missing Toolkit. Whisper does not need torch.
+    if (
+        (lower.includes('winerror 999') || lower.includes('[winerror 999]'))
+        && lower.includes('torch')
+        && lower.includes('cublas')
+    ) {
+        return (
+            'Torch CUDA 库与引擎 cuBLAS 冲突（WinError 999）。'
+            + 'Whisper/CTranslate2 不依赖 torch；请完全退出并重启 Transub 后重试。'
+            + '若仍失败，将设置 → 推理设备改为 CPU。'
+            + ` 原始错误：${msg}`
+        );
+    }
     if (lower.includes('cublas64_12') || (lower.includes('cublas') && lower.includes('not found'))) {
         return (
             '缺少 CUDA 12 运行库 cublas64_12.dll（Whisper/CTranslate2 需要）。'

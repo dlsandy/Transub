@@ -121,7 +121,7 @@
         lick: /舐|フェラ/,
         kiss: /キス/,
         touch: /触って|さわって/,
-        iku: /(?<![バヴ])イ[クッき]|いっちゃ|イキ|(?<![行])いく/,
+        iku: /(?<![バヴ])イ[クッっき]|いっちゃ|イキ|(?<![行])いく/,
         rame: /らめ|ラメ/,
         choudai: /ちょうだい|頂戴/,
         yoro: /よろしく/,
@@ -144,20 +144,20 @@
             id: 'rod',
             ja: reFromB64('44GK44Gh44KTfOOBoeOCk+OBvXzjgaHjgpPjgaHjgpN844Kq44OB44OzfOODgeODs+ODnXzjgYrjgZjjgpPjgb1844GK44GT44Gh44KHfOOCpOODgeODouODhHzjg4fjgqvjg4Hjg7N844Oa44OL44K5fOOBiuOBoVvil4vjgIfil69cKl3jgaHjgpN844GhW+KXi+OAh+KXr1wqXeOCkw=='),
             zh: reFromB64('6IKJ5qOSfOm4oeW3tHzpuKHpuKF85qOSfOmYs+WFtw=='),
-            skipJa: /キッチン|キャッチ|ピンチ|ランチ|アンチ|スイッチ|キッチンポール|おちんぱい/,
+            skipJa: /キッチン|キャッチ|ピンチ|ランチ|アンチ|スイッチ|キッチンポール|おちんぱい|おちんの乳首/,
         },
         { id: 'manko', ja: reFromB64('44G+44KT44GTfOOBiuOBvuOCk+OBkw=='), zh: reFromB64('5bCP56m0fOeptHzpmLTllIc=') },
         {
             id: 'dashite',
             ja: /出して|出され|射精|出します|出してる/,
             zh: reFromB64('5bCEfOWHuueyvnznsr7mtrJ85bCE5Ye65p2lfOWPr+S7peWwhHzpnLLlh7rmnaV85Y+j5rC0fOeIsea2snzlhoXlsIR85Ye65p2l5LqGfOmcsuWHunzmjo/lh7p85ou/5Ye65p2lfOWwhOeyvnzlsITkuoZ85bCE5Ye6'),
-            skipJa: /結果|成績|答え|宿題|課題|声出して|声を出|噛み出|(?:あ)?べろ|ベロ出|朝ご飯|朝ごはん|お茶出|舌出|追い出|抽出|呼び出|イライラ|怒られ|気持ちを出|奥義|思い出|手出して|手を出|手伸ば|腕も出|引き出|払い出|鼻血|ハラベラ|畳先輩|エパーテ|復習|一応出して|汗出して|本人出して|教え付き出|突き出して|車出して|口出して|お口出して|足出され|足を出|提出して|出してくる|セレブ感出|感出してる|書き出して|もき出して|慎が|知りつき出|喋い出|話しながら出/,
+            skipJa: /結果|成績|答え|宿題|課題|声出して|声を出|噛み出|(?:あ)?べろ|ベロ出|朝ご飯|朝ごはん|お茶出|舌出|追い出|抽出|呼び出|イライラ|怒られ|気持ちを出|奥義|思い出|手出して|手を出|手伸ば|腕も出|引き出|払い出|鼻血|ハラベラ|畳先輩|エパーテ|復習|一応出して|汗出して|本人出して|教え付き出|突き出して|車出して|口出して|お口出して|足出され|足を出|提出して|出してくる|セレブ感出|感出してる|書き出して|もき出して|慎が|知りつき出|喋い出|話しながら出|一生意気|生意気に/,
         },
         {
             id: 'irete',
             ja: /入れ|挿入|挿れ/,
             zh: /插|进|入|深|塞|放/,
-            skipJa: /シャワー|風呂|お風呂|親に|文化|入れ物|入れるなよ|受け入れ|バイト入れ|セットを入れ|入れます|人の入れる|入れてくれないのね|嫁入れ|嫁入|手に入れ|バイク|イヤホン|音入れ|えあ入れ|エア入れ|手入れ|加点水|水入れ|力入れる|力を入れ|力入れ|差し入れ|挿入必要なかった/,
+            skipJa: /シャワー|風呂|お風呂|親に|文化|入れ物|入れるなよ|受け入れ|バイト入れ|セットを入れ|入れます|人の入れる|入れてくれないのね|嫁入れ|嫁入|手に入れ|バイク|イヤホン|音入れ|えあ入れ|エア入れ|手入れ|加点水|水入れ|力入れる|力を入れ|力入れ|差し入れ|挿入必要なかった|入れひゃん/,
         },
         { id: 'lick', ja: /舐|フェラ/, zh: reFromB64('6IiUfOWQq3zlj6PkuqR85Y+j54KufOWQuQ==') },
         {
@@ -170,19 +170,19 @@
         // 先头 = wrong soft gloss (not sufficient); remap to 前端 in opaque
         { id: 'tip', ja: /先っぽ|先っちょ/, zh: /前端|龟头|顶端|先端|前面|尖端/ },
         {
-            id: 'iku',
-            ja: /(?<![バヴ])イ[クッ]|いっちゃ|イキ/,
+                id: 'iku',
+            ja: /(?<![バヴメ])イ[クッっ]|いっちゃ|イキ/,
             zh: /射了|去了|要射|要去|高潮|出来|要来|忍不住|可以了吗|我去|再去|不能去|射得|射过|要泄|去吧|不想去|射一次|射一/,
             skipJa: /バイク|イッハン|イッチネー|いっちゃかわ|いっちゃ林|いっちゃい$|いちきれい|いっちゃんいっちゃ|いっちゃんいちゃ|イキちゃん|ゴキュイイ|ジャマイク|グージャンケン|あちゅも疲れ|イイイキトアル|いっちゃ大事|いっちゃんこな|いっちゃんローション|クイッツ|イッと引|スイッチ|中行き/,
         },
         { id: 'touch', ja: /触って/, zh: /摸|触|碰/ },
         { id: 'rame', ja: /らめ[ぇえ]|らめらめ|やめね|やめて/, zh: /不行|不要|别|别停|碍事/ },
         // 射 alone must not cover ちょうだい (e.g. 手ぇちょうだい → 把手给我)
-        { id: 'choudai', ja: /ちょうだい/, zh: /给|求/ },
+        { id: 'choudai', ja: /ちょうだい/, zh: /给|求|嘴里|口里|口中/, skipJa: /逃げられ|逃げて.{0,8}ちょうだい|助けて.{0,8}ちょうだい/ },
     ]);
 
     /** Known ASR garble shapes — skip training (source noise). */
-    const ASR_GARBAGE_JA = /こんら|れんぽ|さきっぺ|ちくびゃ|イイチクヨ|インプルム|ヨヲイ|ぺく…|ぢゃいぃ|ヴィヌル|フィオン|マッサン|フォーおまんこ|キューピー|ジョブロベロ|イッチネー|イッハンダッチ|サンコンセオ|アンコレインポ|いっちゃんいっちゃ|ストイキつく|チアレ、メイキング|ゴキュイイカニシシャイキ|オチンナニソナイチシコ|やっぱいびんね先生でなんか毎回/;
+    const ASR_GARBAGE_JA = /こんら|れんぽ|さきっぺ|ちくびゃ|イイチクヨ|インプルム|ヨヲイ|ぺく…|ぢゃいぃ|ヴィヌル|フィオン|マッサン|フォーおまんこ|キューピー|ジョブロベロ|イッチネー|イッハンダッチ|サンコンセオ|アンコレインポ|いっちゃんいっちゃ|ストイキつく|チアレ、メイキング|ゴキュイイカニシシャイキ|オチンナニソナイチシコ|やっぱいびんね先生でなんか毎回|ごきゅんちん|入れひゃん|口目が入れ/;
 
     function textLen(s) {
         return [...String(s || '').replace(/\s/g, '')].length;
@@ -213,6 +213,7 @@
      */
     function jaHasRodCue(src, RE = null) {
         const s = String(src || '');
+        if (/おちんの乳首/.test(s) && !/おちんちん|ちんぽ|チンポ|デカチン/.test(s)) return false;
         if (RE?.dekachinSrc?.test?.(s)) return true;
         // Prefer lookbehind-aware ROD_JA_EXTRA over opaque jaHasRodSrc (bare チン → ディッチンコ FP)
         if (ROD_JA_EXTRA.test(s)) return true;
@@ -343,7 +344,7 @@
         if (/乳首|ちくび/.test(s) && !/射精|出して|出され|ザーメン/.test(s)) female += 2;
         if (/イッちゃいそうよ|イっちゃいそうよ|いっちゃいそうよ|いきそうよ|イッちゃいますか|いっちゃいますか/.test(s)) female += 3;
         // らめ／らめらめ + climax → female resist (including イクイク stacks)
-        if (rameResist && /イク|イッ|いっちゃ|イキ|いく/.test(s)) female += 3;
+        if (rameResist && /イク|イッ|イっ|いっちゃ|イキ|いく/.test(s)) female += 3;
         // ダメイッちゃう / ダメイッちゃった / ASR ダメディッチャ — female resist
         if (
             (
@@ -356,7 +357,14 @@
             female += 2;
         }
         if (/やめね|やめてね|やめないで|やめろ/.test(s) && /イッちゃう|いっちゃう|イっちゃう/.test(s)) female += 2;
-        if (/わた[し]|あたし/.test(s) && /イッ|いき|イキ/.test(s)) female += 1;
+        if (/やめ/.test(s) && /イッちゃいそう|イっちゃいそう|いっちゃいそう/.test(s) && !/出して|射精/.test(s)) female += 2;
+        // イッちゃいなさいダメダメ / イッちゃうからダメ — resist after climax cue
+        if (/(?:イッちゃ|いっちゃ).{0,12}(?:だめ|ダメ)/.test(s) && !/出して|射精/.test(s)) female += 2;
+        // Anal climax without ejac JA → 要去了
+        if (/アナル.{0,10}(?:イッちゃ|イッて|イク)/.test(s) && !/出して|射精/.test(s)) female += 2;
+        if (/わた[し]|あたし/.test(s) && /イッ|いき|イキ|いっちゃ/.test(s)) female += 1;
+        if (/やめ/.test(s) && /イッちゃいました|イッたよ/.test(s) && !/出して|射精/.test(s)) female += 2;
+        if (/お尻.{0,16}イクことなりたくない/.test(s) && !/出して|射精/.test(s)) female += 2;
         if (female >= 2 && female > male) return CLIMAX_POLARITY.prefer_go;
         if (male >= 2 && male > female) return CLIMAX_POLARITY.prefer_shoot;
         if (female > 0 && male === 0) return CLIMAX_POLARITY.prefer_go;

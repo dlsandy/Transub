@@ -198,11 +198,16 @@ describe('subtitle-editor-menu', () => {
             onClose: () => { closed += 1; },
         });
         const fileMenu = template.find((item) => item.label === '文件(&F)');
-        const saveItem = fileMenu.submenu.find((item) => String(item.label || '').startsWith('保存'));
+        const fileLabels = fileMenu.submenu.map((item) => String(item.label || '')).filter(Boolean);
+        assert.ok(fileLabels.includes('保存\tCtrl+S'));
+        assert.ok(fileLabels.includes('另存为(&A)\tCtrl+Shift+S'));
+        const saveItem = fileMenu.submenu.find((item) => String(item.label || '').startsWith('保存\t'));
+        const saveAsItem = fileMenu.submenu.find((item) => String(item.label || '').startsWith('另存为'));
         const closeItem = fileMenu.submenu.find((item) => item.label === '关闭窗口');
         saveItem.click();
+        saveAsItem.click();
         closeItem.click();
-        assert.deepStrictEqual(actions, ['save']);
+        assert.deepStrictEqual(actions, ['save', 'save-as']);
         assert.strictEqual(closed, 1);
     });
 });

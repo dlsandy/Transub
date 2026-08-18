@@ -37,7 +37,18 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(out.uiLocale, 'zh-Hans');
         assert.strictEqual(out.smartTranslateHybridMt, true);
         assert.strictEqual(out.smartTranslatePlotPolish, true);
+        assert.strictEqual(out.smartTranslateFaithfulVerify, true);
+        assert.strictEqual(out.smartTranslateAddressConsistency, true);
+        assert.strictEqual(out.asrSecondOpinion, 'auto');
+        assert.strictEqual(out.filmBriefSampleMode, 'auto');
         assert.strictEqual(out.activePresetId, '');
+    });
+
+    it('persists filmBriefSampleMode full', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            filmBriefSampleMode: 'full',
+        }, norm);
+        assert.strictEqual(out.filmBriefSampleMode, 'full');
     });
 
     it('persists activePresetId when recognition preset is selected', () => {
@@ -54,9 +65,23 @@ describe('settings-saved-options-core', () => {
             task: 'translate',
             smartTranslateHybridMt: false,
             smartTranslatePlotPolish: false,
+            smartTranslateFaithfulVerify: false,
+            smartTranslateAddressConsistency: false,
+            asrSecondOpinion: 'off',
         }, norm);
         assert.strictEqual(out.smartTranslateHybridMt, false);
         assert.strictEqual(out.smartTranslatePlotPolish, false);
+        assert.strictEqual(out.smartTranslateFaithfulVerify, false);
+        assert.strictEqual(out.smartTranslateAddressConsistency, false);
+        assert.strictEqual(out.asrSecondOpinion, 'off');
+    });
+
+    it('normalizes asrSecondOpinion on/auto', () => {
+        assert.strictEqual(norm.normalizeAsrSecondOpinion('ON'), 'on');
+        assert.strictEqual(norm.normalizeAsrSecondOpinion(undefined), 'auto');
+        assert.strictEqual(norm.normalizeAsrSecondOpinion(false), 'off');
+        const on = saved.assembleSavedOptionsFromFields({ asrSecondOpinion: 'always' }, norm);
+        assert.strictEqual(on.asrSecondOpinion, 'on');
     });
 
     it('persists rememberLastOpenDir false', () => {
@@ -64,5 +89,18 @@ describe('settings-saved-options-core', () => {
             rememberLastOpenDir: false,
         }, norm);
         assert.strictEqual(out.rememberLastOpenDir, false);
+    });
+
+    it('persists qcSilenceSplitChars (default 15)', () => {
+        const def = saved.assembleSavedOptionsFromFields({}, norm);
+        assert.strictEqual(def.qcSilenceSplitChars, 15);
+        const off = saved.assembleSavedOptionsFromFields({
+            qcSilenceSplitCharsRaw: '0',
+        }, norm);
+        assert.strictEqual(off.qcSilenceSplitChars, 0);
+        const custom = saved.assembleSavedOptionsFromFields({
+            qcSilenceSplitCharsRaw: '20',
+        }, norm);
+        assert.strictEqual(custom.qcSilenceSplitChars, 20);
     });
 });

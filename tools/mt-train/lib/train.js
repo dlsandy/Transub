@@ -1,11 +1,9 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 
-const ROOT = path.resolve(__dirname, '../../..');
-const TRAINED_PATH = path.join(ROOT, 'shared', 'mt-trained-remaps.json');
+const sandbox = require('./sandbox');
+const TRAINED_PATH = sandbox.OFFICIAL_PATH;
 
 function b64encode(s) {
     return Buffer.from(String(s ?? ''), 'utf8').toString('base64');
@@ -21,32 +19,21 @@ function b64decode(s) {
 }
 
 function emptyPack() {
-    return { version: 1, zhRemaps: [], asrPairs: [] };
+    return sandbox.emptyPack();
 }
 
+/** Active write target (sandbox | official). Mutations go here. */
 function readPack() {
-    try {
-        if (!fs.existsSync(TRAINED_PATH)) return emptyPack();
-        const raw = JSON.parse(fs.readFileSync(TRAINED_PATH, 'utf8'));
-        return {
-            version: Number(raw.version) || 1,
-            zhRemaps: Array.isArray(raw.zhRemaps) ? raw.zhRemaps : [],
-            asrPairs: Array.isArray(raw.asrPairs) ? raw.asrPairs : [],
-        };
-    } catch (_) {
-        return emptyPack();
-    }
+    return sandbox.readActivePack();
 }
 
 function writePack(pack) {
-    const next = {
-        version: Number(pack.version) || 1,
-        zhRemaps: Array.isArray(pack.zhRemaps) ? pack.zhRemaps : [],
-        asrPairs: Array.isArray(pack.asrPairs) ? pack.asrPairs : [],
-    };
-    fs.mkdirSync(path.dirname(TRAINED_PATH), { recursive: true });
-    fs.writeFileSync(TRAINED_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-    return next;
+    return sandbox.writeActivePack(pack).pack;
+}
+
+/** Official + sandbox layered pack for try / sanitize runtime. */
+function readMergedPack() {
+    return sandbox.readMergedPack();
 }
 
 function decodeZhRule(rule) {
@@ -65,6 +52,8 @@ function decodeZhRule(rule) {
         zhFrom: rule.zhFromB64 != null ? b64decode(rule.zhFromB64) : String(rule.zhFrom || ''),
         zhTo: rule.zhToB64 != null ? b64decode(rule.zhToB64) : String(rule.zhTo || ''),
         createdAt: rule.createdAt || null,
+        hitCount: Number(rule.hitCount) || 0,
+        lastHitAt: rule.lastHitAt || null,
     };
 }
 
@@ -77,16 +66,31 @@ function decodeAsrRule(rule) {
         from: rule.fromB64 != null ? b64decode(rule.fromB64) : String(rule.from || ''),
         to: rule.toB64 != null ? b64decode(rule.toB64) : String(rule.to || ''),
         createdAt: rule.createdAt || null,
+        hitCount: Number(rule.hitCount) || 0,
+        lastHitAt: rule.lastHitAt || null,
     };
 }
 
 function listRules() {
-    const pack = readPack();
+    const st = sandbox.status();
+    const official = sandbox.readOfficialPack();
+    const user = sandbox.readSandboxPack();
+    const tag = (decoded, source) => ({ ...decoded, source });
     return {
-        path: TRAINED_PATH,
-        version: pack.version,
-        zhRemaps: pack.zhRemaps.map(decodeZhRule),
-        asrPairs: pack.asrPairs.map(decodeAsrRule),
+        path: st.target === 'sandbox' ? st.sandboxPath : st.officialPath,
+        target: st.target,
+        officialPath: st.officialPath,
+        sandboxPath: st.sandboxPath,
+        version: Math.max(official.version || 1, user.version || 1),
+        zhRemaps: [
+            ...official.zhRemaps.map((r) => tag(decodeZhRule(r), 'official')),
+            ...user.zhRemaps.map((r) => tag(decodeZhRule(r), 'sandbox')),
+        ],
+        asrPairs: [
+            ...official.asrPairs.map((r) => tag(decodeAsrRule(r), 'official')),
+            ...user.asrPairs.map((r) => tag(decodeAsrRule(r), 'sandbox')),
+        ],
+        sandbox: st,
     };
 }
 
@@ -360,6 +364,8 @@ function encodeZhRule(input) {
         zhFromB64: b64encode(input.zhFrom || ''),
         zhToB64: b64encode(mode === 'blank' ? '' : (input.zhTo || '')),
         createdAt: input.createdAt || new Date().toISOString(),
+        hitCount: Number(input.hitCount) || 0,
+        lastHitAt: input.lastHitAt || null,
     };
 }
 
@@ -372,6 +378,8 @@ function encodeAsrRule(input) {
         fromB64: b64encode(input.from || ''),
         toB64: b64encode(input.to || ''),
         createdAt: input.createdAt || new Date().toISOString(),
+        hitCount: Number(input.hitCount) || 0,
+        lastHitAt: input.lastHitAt || null,
     };
 }
 
@@ -455,12 +463,12 @@ function applyWithTempPack(sanitize, pack, fn) {
     try {
         return fn();
     } finally {
-        sanitize.reloadTrainedRemaps();
+        sanitize.reloadTrainedRemaps(readMergedPack());
     }
 }
 
 function tryWithCandidate(sanitize, opts = {}) {
-    const pack = readPack();
+    const pack = readMergedPack();
     let extraZh = null;
     let extraAsr = null;
     const quality = assessRuleQuality(opts);
@@ -538,10 +546,12 @@ function addZhRemap(input) {
     const key = zhRuleKey(decoded);
     const idx = pack.zhRemaps.findIndex((r) => zhRuleKey(decodeZhRule(r)) === key);
     if (idx >= 0) {
-        // Merge: keep id/createdAt, refresh target + pinFinal/note
+        // Merge: keep id/createdAt/stats, refresh target + pinFinal/note
         const prev = pack.zhRemaps[idx];
         rule.id = prev.id || rule.id;
         rule.createdAt = prev.createdAt || rule.createdAt;
+        rule.hitCount = prev.hitCount || 0;
+        rule.lastHitAt = prev.lastHitAt || null;
         pack.zhRemaps[idx] = rule;
     } else {
         pack.zhRemaps.push(rule);
@@ -564,8 +574,7 @@ function addAsrPair(input) {
     return decodeAsrRule(rule);
 }
 
-function toggleRule(id, enabled) {
-    const pack = readPack();
+function findToggleInPack(pack, id, enabled) {
     let hit = null;
     for (const r of pack.zhRemaps) {
         if (r.id === id) {
@@ -579,22 +588,47 @@ function toggleRule(id, enabled) {
             hit = decodeAsrRule(r);
         }
     }
-    if (!hit) throw new Error('规则不存在');
-    writePack(pack);
     return hit;
 }
 
-function removeRule(id) {
-    const pack = readPack();
-    const zhBefore = pack.zhRemaps.length;
-    const asrBefore = pack.asrPairs.length;
-    pack.zhRemaps = pack.zhRemaps.filter((r) => r.id !== id);
-    pack.asrPairs = pack.asrPairs.filter((r) => r.id !== id);
-    if (pack.zhRemaps.length === zhBefore && pack.asrPairs.length === asrBefore) {
-        throw new Error('规则不存在');
+function toggleRule(id, enabled) {
+    const user = sandbox.readSandboxPack();
+    let hit = findToggleInPack(user, id, enabled);
+    if (hit) {
+        sandbox.snapshotSandbox('before-toggle');
+        sandbox.writeJsonPack(sandbox.sandboxPackPath(), user);
+        return { ...hit, source: 'sandbox' };
     }
-    writePack(pack);
-    return { ok: true, id };
+    const official = sandbox.readOfficialPack();
+    hit = findToggleInPack(official, id, enabled);
+    if (hit) {
+        sandbox.writeJsonPack(TRAINED_PATH, official);
+        return { ...hit, source: 'official' };
+    }
+    throw new Error('规则不存在');
+}
+
+function removeRule(id) {
+    const user = sandbox.readSandboxPack();
+    const zhU = user.zhRemaps.length;
+    const asrU = user.asrPairs.length;
+    user.zhRemaps = user.zhRemaps.filter((r) => r.id !== id);
+    user.asrPairs = user.asrPairs.filter((r) => r.id !== id);
+    if (user.zhRemaps.length !== zhU || user.asrPairs.length !== asrU) {
+        sandbox.snapshotSandbox('before-remove');
+        sandbox.writeJsonPack(sandbox.sandboxPackPath(), user);
+        return { ok: true, id, source: 'sandbox' };
+    }
+    const official = sandbox.readOfficialPack();
+    const zhO = official.zhRemaps.length;
+    const asrO = official.asrPairs.length;
+    official.zhRemaps = official.zhRemaps.filter((r) => r.id !== id);
+    official.asrPairs = official.asrPairs.filter((r) => r.id !== id);
+    if (official.zhRemaps.length !== zhO || official.asrPairs.length !== asrO) {
+        sandbox.writeJsonPack(TRAINED_PATH, official);
+        return { ok: true, id, source: 'official' };
+    }
+    throw new Error('规则不存在');
 }
 
 function promoteSnippet(rulePlain) {
@@ -618,6 +652,48 @@ function promoteSnippet(rulePlain) {
     return lines.join('\n');
 }
 
+/**
+ * Persist hitCount / lastHitAt onto existing rules (lifecycle refresh).
+ * Updates both official and sandbox packs by rule id (no sandbox snapshot).
+ * @param {Array<{ id: string, hitCount?: number, lastHitAt?: string|null }>} updates
+ */
+function applyStatsToPack(pack, map) {
+    let n = 0;
+    for (const r of pack.zhRemaps) {
+        const u = map.get(String(r.id));
+        if (!u) continue;
+        if (u.hitCount != null) r.hitCount = Number(u.hitCount) || 0;
+        if (u.lastHitAt !== undefined) r.lastHitAt = u.lastHitAt;
+        n += 1;
+    }
+    for (const r of pack.asrPairs) {
+        const u = map.get(String(r.id));
+        if (!u) continue;
+        if (u.hitCount != null) r.hitCount = Number(u.hitCount) || 0;
+        if (u.lastHitAt !== undefined) r.lastHitAt = u.lastHitAt;
+        n += 1;
+    }
+    return n;
+}
+
+function updateRuleStats(updates = []) {
+    const map = new Map((updates || []).map((u) => [String(u.id), u]));
+    let n = 0;
+    const official = sandbox.readOfficialPack();
+    const nOff = applyStatsToPack(official, map);
+    if (nOff) {
+        sandbox.writeJsonPack(TRAINED_PATH, official);
+        n += nOff;
+    }
+    const user = sandbox.readSandboxPack();
+    const nUser = applyStatsToPack(user, map);
+    if (nUser) {
+        sandbox.writeJsonPack(sandbox.sandboxPackPath(), user);
+        n += nUser;
+    }
+    return { ok: true, updated: n };
+}
+
 module.exports = {
     TRAINED_PATH,
     GENERIC_JA_ANCHORS,
@@ -625,6 +701,7 @@ module.exports = {
     b64decode,
     readPack,
     writePack,
+    readMergedPack,
     listRules,
     suggestLocalReplace,
     forceShortestFragment,
@@ -642,4 +719,6 @@ module.exports = {
     toggleRule,
     removeRule,
     promoteSnippet,
+    updateRuleStats,
+    sandbox,
 };

@@ -819,6 +819,24 @@
      * Classify why a cue is noise (empty / fragment / SFX / symbol / hallucination / duplicate).
      * Returns '' when the cue should be kept.
      */
+    const HARD_JA_NOISE = new Set(['hallucination', 'soundEffect', 'symbolOnly', 'duplicate', 'empty']);
+
+    /**
+     * Drop a JA↔ZH pair only when JA is junk, or both sides are filler.
+     * Do not delete real JA dialogue just because ZH collapsed to 嗯/哈哈.
+     */
+    function shouldDropAlignedNoisePair(zhReason, jaReason, zhText, jaText) {
+        const zh = String(zhText || '').trim();
+        const ja = String(jaText || '').trim();
+        const zhBlank = !zh || zhReason === 'empty' || isBlankOrPunctOnly(zh);
+        if (HARD_JA_NOISE.has(jaReason)) return true;
+        const jaFiller = !!jaReason || isPureInterjectionJa(ja);
+        const zhFiller = (!zhBlank && !!zhReason) || isPureInterjectionZh(zh);
+        if (jaReason === 'fragment' && zhFiller) return true;
+        if (zhFiller && jaFiller) return true;
+        return false;
+    }
+
     function classifyNoiseCue(cue, options = {}, prevKeptText = '') {
         const opts = {
             removeEmpty: options.removeEmpty !== false,
@@ -845,8 +863,9 @@
     }
 
     /**
-     * Delete noise from aligned JA+ZH cue lists together (union of noisy indexes),
-     * so cue counts stay matched without blanking ZH to 「…」.
+     * Delete noise from aligned JA+ZH cue lists together.
+     * Only drop when JA is junk, or both sides are filler — never wipe real JA
+     * just because ZH collapsed to 嗯/哈哈.
      * @returns {{ zhCues: object[], jaCues: object[], stats: object, removedIndexes: number[], skipped?: boolean, reason?: string }}
      */
     function removeAlignedNoiseFromCuePairs(zhCues, jaCues, options = {}) {
@@ -862,17 +881,6 @@
                 reason: 'empty',
             };
         }
-        if (zhList.length !== jaList.length) {
-            return {
-                zhCues: zhList,
-                jaCues: jaList,
-                stats: { removed: 0, kept: 0 },
-                removedIndexes: [],
-                skipped: true,
-                reason: 'length_mismatch',
-            };
-        }
-
         const zhOpts = {
             removeEmpty: options.removeEmpty !== false,
             removeFragments: options.removeFragments !== false,
@@ -906,29 +914,7 @@
             asrLoopChanged = cleaned.changed || 0;
         }
 
-        const drop = new Set();
-        const reasonAt = [];
-        let prevJaKept = '';
-        let prevZhKept = '';
-        for (let i = 0; i < zhWork.length; i += 1) {
-            const zhReason = classifyNoiseCue(zhWork[i], zhOpts, prevZhKept);
-            const jaReason = classifyNoiseCue(jaWork[i], jaOpts, prevJaKept);
-            const reason = zhReason || jaReason;
-            if (reason) {
-                drop.add(i);
-                reasonAt[i] = reason;
-                continue;
-            }
-            prevZhKept = String(zhWork[i]?.text || '').trim();
-            prevJaKept = String(jaWork[i]?.text || '').trim();
-        }
-
-        const zhOut = [];
-        const jaOut = [];
-        const removedIndexes = [];
-        const stats = {
-            removed: 0,
-            kept: 0,
+        const statsBase = {
             blanked: 0,
             empty: 0,
             fragment: 0,
@@ -939,6 +925,39 @@
             asrNameLoops: asrLoopChanged,
             asrNormalize: asrNormChanged,
             paired: true,
+        };
+
+        // Unequal cue counts: time-overlap pairing (never ZH-only removeEmpty).
+        if (zhWork.length !== jaWork.length) {
+            return removeAlignedNoiseFromCuePairsByTime(zhWork, jaWork, zhOpts, jaOpts, statsBase);
+        }
+
+        const drop = new Set();
+        const reasonAt = [];
+        let prevJaKept = '';
+        let prevZhKept = '';
+        for (let i = 0; i < zhWork.length; i += 1) {
+            const zhReason = classifyNoiseCue(zhWork[i], zhOpts, prevZhKept);
+            const jaReason = classifyNoiseCue(jaWork[i], jaOpts, prevJaKept);
+            const zhText = String(zhWork[i]?.text || '').trim();
+            const jaText = String(jaWork[i]?.text || '').trim();
+            const shouldDrop = shouldDropAlignedNoisePair(zhReason, jaReason, zhText, jaText);
+            if (shouldDrop) {
+                drop.add(i);
+                reasonAt[i] = jaReason || zhReason;
+                continue;
+            }
+            prevZhKept = zhText;
+            prevJaKept = jaText;
+        }
+
+        const zhOut = [];
+        const jaOut = [];
+        const removedIndexes = [];
+        const stats = {
+            removed: 0,
+            kept: 0,
+            ...statsBase,
         };
         for (let i = 0; i < zhWork.length; i += 1) {
             if (drop.has(i)) {
@@ -952,6 +971,119 @@
             jaOut.push(jaWork[i]);
             stats.kept += 1;
         }
+        return {
+            zhCues: zhOut,
+            jaCues: jaOut,
+            stats,
+            removedIndexes,
+        };
+    }
+
+    /**
+     * Time-overlap noise drop when JA/ZH lengths differ.
+     * Never deletes a real JA dialogue cue just because ZH is empty/missing.
+     */
+    function removeAlignedNoiseFromCuePairsByTime(zhList, jaList, zhOpts, jaOpts, statsBase = {}) {
+        const zhDrop = new Set();
+        const jaDrop = new Set();
+        const zhRanges = zhList.map(cueTimeRange);
+        const jaRanges = jaList.map(cueTimeRange);
+        const reasonAtZh = [];
+        const reasonAtJa = [];
+
+        for (let i = 0; i < zhList.length; i += 1) {
+            const zhReason = classifyNoiseCue(zhList[i], zhOpts, '');
+            if (!zhReason) continue;
+            const overs = [];
+            for (let j = 0; j < jaList.length; j += 1) {
+                if (cuesOverlap(zhRanges[i], jaRanges[j])) overs.push(j);
+            }
+            if (!overs.length) {
+                zhDrop.add(i);
+                reasonAtZh[i] = zhReason;
+                continue;
+            }
+            const jaReasons = overs.map((j) => classifyNoiseCue(jaList[j], jaOpts, ''));
+            const allJaNoise = jaReasons.every(Boolean);
+            if (zhReason === 'empty' || isBlankOrPunctOnly(zhList[i]?.text)) {
+                // Blank/ellipsis ZH: only drop when every overlapping JA is also noise.
+                if (allJaNoise) {
+                    zhDrop.add(i);
+                    reasonAtZh[i] = zhReason || 'empty';
+                    overs.forEach((j, k) => {
+                        jaDrop.add(j);
+                        reasonAtJa[j] = jaReasons[k];
+                    });
+                }
+                continue;
+            }
+            if (allJaNoise) {
+                zhDrop.add(i);
+                reasonAtZh[i] = zhReason;
+                overs.forEach((j, k) => {
+                    jaDrop.add(j);
+                    reasonAtJa[j] = jaReasons[k];
+                });
+            }
+            // ZH noise under real JA dialogue: keep both (under-translation / laugh collapse).
+        }
+
+        for (let j = 0; j < jaList.length; j += 1) {
+            if (jaDrop.has(j)) continue;
+            const jaReason = classifyNoiseCue(jaList[j], jaOpts, '');
+            if (!jaReason) continue;
+            const overs = [];
+            for (let i = 0; i < zhList.length; i += 1) {
+                if (cuesOverlap(jaRanges[j], zhRanges[i])) overs.push(i);
+            }
+            if (!overs.length) {
+                jaDrop.add(j);
+                reasonAtJa[j] = jaReason;
+                continue;
+            }
+            const allZhNoiseOrDrop = overs.every((i) => (
+                zhDrop.has(i) || classifyNoiseCue(zhList[i], zhOpts, '')
+            ));
+            if (allZhNoiseOrDrop) {
+                jaDrop.add(j);
+                reasonAtJa[j] = jaReason;
+                for (const i of overs) {
+                    const zhReason = classifyNoiseCue(zhList[i], zhOpts, '');
+                    if (zhReason) {
+                        zhDrop.add(i);
+                        reasonAtZh[i] = zhReason;
+                    }
+                }
+            }
+        }
+
+        const zhOut = [];
+        const jaOut = [];
+        const removedIndexes = [...zhDrop].sort((a, b) => a - b);
+        const stats = {
+            removed: 0,
+            kept: 0,
+            ...statsBase,
+            paired: true,
+            alignedBy: 'time',
+        };
+        for (let i = 0; i < zhList.length; i += 1) {
+            if (zhDrop.has(i)) {
+                stats.removed += 1;
+                const reason = reasonAtZh[i];
+                if (reason && stats[reason] != null) stats[reason] += 1;
+                continue;
+            }
+            zhOut.push(zhList[i]);
+            stats.kept += 1;
+        }
+        for (let j = 0; j < jaList.length; j += 1) {
+            if (jaDrop.has(j)) continue;
+            jaOut.push(jaList[j]);
+        }
+        // Prefer counting ZH removals for summary; JA-only orphan noise also tallied.
+        stats.removed = Math.max(stats.removed, jaDrop.size);
+        stats.keptJa = jaOut.length;
         return {
             zhCues: zhOut,
             jaCues: jaOut,
@@ -1088,8 +1220,26 @@
             if (/^(?:うん+|はい+|そう|よし+|ん+|ねえ+|えっと+)$/i.test(compact)) return false;
             return true;
         }
+        if (isKatakanaSfxBurst(t)) return true;
         return everySplitToken(t, isPureOnomatopoeiaJaToken)
             && !isPureDiscourseJa(t);
+    }
+
+    /** ザァッ / バウッ / ロキロキ — katakana impact SFX, not names (オイル stays). */
+    function isKatakanaSfxBurst(text) {
+        const t = stripInterjectionDecor(text).replace(/[。．.!！?？\s]+/g, '');
+        if (!t || t.length < 2 || t.length > 12) return false;
+        if (!/^[ァ-ヴーッっ]+$/.test(t)) return false;
+        // Impact sokuon only — small vowels alone would tag オイル.
+        if (/[ッっ]/.test(t) && t.length <= 8) return true;
+        const noCho = t.replace(/ー/g, '');
+        if (/([ァ-ヴ]{2,3})\1/.test(noCho)) return true;
+        // ローコロー / ローコーロ: prolonged SFX whose wrap mora matches (オイル has no ー)
+        if (/ー/.test(t) && noCho.length >= 2 && noCho.length <= 6 && noCho[0] === noCho[noCho.length - 1]) {
+            return true;
+        }
+        const parts = t.split(/ー+/).filter(Boolean);
+        return parts.length >= 2 && parts[0] === parts[parts.length - 1] && parts[0].length <= 2;
     }
 
     /**
@@ -1123,7 +1273,8 @@
         if (/^(?:bump|boeh|yuk|hamu|hinin|huh|aki|mun|breath|hic|chu|urg|hya|ank|yoshun)[~～\-—_!.]*$/i.test(t)) {
             return true;
         }
-        return /^(?:哈啊?|啊+|呜+|呼+|诶+|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|啧|嗯+|唔嗯|嗯唔|嗯啊)$/u.test(t);
+        if (/^(?:咯吱|咔嚓|咕啾|啪嗒){1,3}$/u.test(t)) return true;
+        return /^(?:哈啊?|啊+|呜+|呼+|诶+|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|啧|嗯+|唔嗯|嗯唔|嗯啊|咕+)$/u.test(t);
     }
 
     function isPureInterjectionZhToken(token) {
@@ -1167,9 +1318,11 @@
         // Mixed moan stacks: 嗯嗯哈啊 / 嗯唔嗯嗯 / 唔嗯唔嗯
         {
             const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
-            if (bare && /^(?:嗯|唔|哈|啊|呜|呼|哦|噢|嘿|呵|哼|呀|哟|哇|嘶|嘻|诶|欸|嗨)+$/.test(bare)) {
+            if (bare && /^(?:嗯|唔|哈|啊|呜|呼|哦|噢|嘿|呵|哼|呀|哟|哇|嘶|嘻|诶|欸|嗨|咕|咯|吱|咔|嚓|啪|砰|嘭|咚)+$/.test(bare)) {
                 return true;
             }
+            // Repeated 1–2 CJK SFX glosses: 咯吱咯吱 / 咔咔
+            if (/^([\u4e00-\u9fff]{1,2})\1+$/.test(bare)) return true;
         }
         // Latin-only short SFX line
         if (/^(?:[A-Za-z]{2,12}(?:\s+[A-Za-z]{2,12}){0,2})[~～\-—_!.]*$/u.test(t.trim())
@@ -1191,7 +1344,7 @@
         if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯+|嗯好|好哦|好喔|没错|哎呀)$/u.test(bare)) {
             return false;
         }
-        return /^(?:啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|嗨|嘿|哼|嘶|呼+|嗯+)+$/.test(bare);
+        return /^(?:啊+|哦+|噢+|喂+|哈+|呵+|唔+|呜+|欸+|诶+|呀+|哟+|哇+|嘻+|嗨|嘿|哼|嘶|呼+|嗯+|咕+)+$/.test(bare);
     }
 
     /**
@@ -1405,7 +1558,9 @@
             let drop = false;
             if (useUnion) {
                 const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
-                drop = jaPure && isPureInterjectionZh(zhText);
+                const zhPure = isPureInterjectionZh(zhText)
+                    || (isKatakanaSfxBurst(jaText) && isShortSfxGlossZh(zhText));
+                drop = jaPure && zhPure;
             } else {
                 drop = matchKind(zhText, jaText);
             }
@@ -1422,6 +1577,13 @@
             dropped: droppedIndexes.length,
             droppedIndexes,
         };
+    }
+
+    function isShortSfxGlossZh(text) {
+        const bare = String(text || '').replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
+        if (!bare || bare.length > 4 || !/^[\u4e00-\u9fff]+$/.test(bare)) return false;
+        if (/[的了吗呢吧我你他她不要想给走来去等对起再还把被让叫说看听在是有没很太最就也都和与及从向到]/u.test(bare)) return false;
+        return true;
     }
 
     function summarizePureInterjectionDrop(dropped, options = {}) {
@@ -1453,7 +1615,9 @@
         const tryPair = (zhText, jaText) => {
             if (dropDiscourse && dropOnomatopoeia) {
                 const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
-                return jaPure && isPureInterjectionZh(zhText);
+                const zhPure = isPureInterjectionZh(zhText)
+                    || (isKatakanaSfxBurst(jaText) && isShortSfxGlossZh(zhText));
+                return jaPure && zhPure;
             }
             if (dropDiscourse) {
                 const jaBlank = !String(jaText).trim() || isBlankOrPunctOnly(jaText);
@@ -1659,6 +1823,8 @@
         if (/GLOS?S?\d{2,8}/i.test(t)) return true;
         if (/__[^_\n]{1,64}__/.test(t)) return true;
         if (/改成[：:]/.test(t)) return true;
+        if (/符合原文语气/.test(t)) return true;
+        if (/^改为/.test(t) && /原文|语气|译文|润色/.test(t)) return true;
         if (/(?:系统|提示|指令)\s*[:：]/.test(t) && /翻译|字幕|角色/.test(t)) return true;
         const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length;
         const latin = (t.match(/[A-Za-z]/g) || []).length;

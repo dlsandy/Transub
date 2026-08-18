@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('transubTrain', {
     loadHistoryPair: (payload) => ipcRenderer.invoke('transub-mt-train-load-history-pair', payload || {}),
     loadHistoryPairs: (payload) => ipcRenderer.invoke('transub-mt-train-load-history-pairs', payload || {}),
     consumePendingPair: () => ipcRenderer.invoke('transub-mt-train-consume-pending-pair'),
+    idleStatus: () => ipcRenderer.invoke('transub-mt-train-idle-status'),
+    setIdlePrefs: (payload) => ipcRenderer.invoke('transub-mt-train-idle-prefs', payload || {}),
+    runIdleNow: (payload) => ipcRenderer.invoke('transub-mt-train-idle-run', payload || {}),
     onPendingPair: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const handler = (_event, payload) => callback(payload);

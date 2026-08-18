@@ -381,25 +381,21 @@ function runEnginePython(engineRoot, code, timeoutMs = 12000) {
 async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
     const needSv = prefersSensevoice(engineAsrModel);
     const modelInstalled = checkModelInstalled(engineRoot, 'sensevoice-small').installed;
-    // Import torch + FunASR stack deps — catches missing VC++ / Smart App Control / slim-pack gaps.
-    // Silence pydub's import-time ffmpeg RuntimeWarning (PATH may lack ffmpeg; app injects it separately).
+    // Metadata-only: do not import torch/funasr. Loading CUDA DLLs during env-check
+    // (or model-picker probes) can freeze Windows when Smart App Control / WDAC
+    // scans unsigned PyTorch binaries, or when CUDA driver init hangs.
     const probe = await runEnginePython(
         engineRoot,
         [
-            'import json,sys,warnings',
-            'warnings.filterwarnings("ignore", message=r".*ffmpeg.*", category=RuntimeWarning)',
-            'warnings.filterwarnings("ignore", message=r".*avconv.*", category=RuntimeWarning)',
+            'import json,sys',
+            'from importlib.metadata import PackageNotFoundError, version',
             'out={"torch":"","funasr":"","numba":"","scipy":"","librosa":"","missing":[],"error":""}',
-            'try:',
-            ' import torch',
-            ' out["torch"]=str(getattr(torch,"__version__","") or "")',
-            'except Exception as e:',
-            ' out["missing"].append("torch"); out["error"]=str(e)',
-            ' print(json.dumps(out,ensure_ascii=False)); sys.exit(2)',
-            'for mod,key in (("funasr","funasr"),("numba","numba"),("scipy","scipy"),("librosa","librosa")):',
+            'for mod,key in (("torch","torch"),("funasr","funasr"),("numba","numba"),("scipy","scipy"),("librosa","librosa")):',
             ' try:',
-            '  m=__import__(mod)',
-            '  out[key]=str(getattr(m,"__version__","") or "ok")',
+            '  out[key]=str(version(mod) or "ok")',
+            ' except PackageNotFoundError as e:',
+            '  out["missing"].append(key)',
+            '  if not out["error"]: out["error"]=str(e)',
             ' except Exception as e:',
             '  out["missing"].append(key)',
             '  if not out["error"]: out["error"]=str(e)',
@@ -415,7 +411,7 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
         data = null;
     }
     const missingList = Array.isArray(data?.missing) ? data.missing.map(String) : [];
-    // Trust structured JSON when imports succeeded, even if stderr still has ffmpeg noise.
+    // Trust structured JSON when package metadata was readable.
     if (data?.torch && missingList.length === 0) {
         const bits = [`torch ${data.torch}`];
         if (data.funasr) bits.push(`funasr ${data.funasr}`);
@@ -476,53 +472,43 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
 
 async function checkWhisperRuntime(engineRoot, engineAsrModel = '') {
     const needWhisper = prefersWhisper(engineAsrModel) || !prefersSensevoice(engineAsrModel);
+    // Metadata-only: do not import av/ctranslate2/onnxruntime. Loading those under
+    // Smart App Control freezes the probe (and can wedge the engine thread pool).
     const probeCode = [
         'import json,sys',
+        'from importlib.metadata import PackageNotFoundError, version',
         'out={"numpy":"","fw":"","av":"","ct2":"","ort":"","missing":[],"errors":[],"policy":False,"dll":False}',
-        'try:',
-        ' import numpy as np',
-        ' out["numpy"]=str(getattr(np,"__version__","") or "")',
-        'except Exception as e:',
-        ' out["missing"].append("numpy"); out["errors"].append(str(e))',
-        'try:',
-        ' import av',
-        ' out["av"]=str(getattr(av,"__version__","") or "ok")',
-        'except Exception as e:',
-        ' out["missing"].append("av"); out["errors"].append(str(e))',
-        'try:',
-        ' import ctranslate2 as ct2',
-        ' out["ct2"]=str(getattr(ct2,"__version__","") or "ok")',
-        'except Exception as e:',
-        ' out["missing"].append("ctranslate2"); out["errors"].append(str(e))',
-        'try:',
-        ' import onnxruntime as ort',
-        ' out["ort"]=str(getattr(ort,"__version__","") or "ok")',
-        'except Exception as e:',
-        ' out["missing"].append("onnxruntime"); out["errors"].append(str(e))',
-        'try:',
-        ' import faster_whisper as fw',
-        ' out["fw"]=str(getattr(fw,"__version__","") or "ok")',
-        'except Exception as e:',
-        ' err=str(e)',
-        ' if "ctranslate2" in err.lower() and "ctranslate2" in out["missing"]:',
-        '  out["errors"].append(err)',
-        ' else:',
-        '  out["missing"].append("faster-whisper"); out["errors"].append(err)',
-        'err=" ".join(out["errors"])',
-        'out["policy"]=("应用程序控制策略" in err) or ("智能应用控制" in err) or ("4551" in err) or ("smart app" in err.lower())',
-        'out["dll"]=(not out["policy"]) and (("dll load failed" in err.lower()) or ("找不到指定的模块" in err) or ("winerror 126" in err.lower()))',
+        'def _ver(name, key, alt=None):',
+        ' try:',
+        '  out[key]=str(version(name) or "ok")',
+        ' except PackageNotFoundError as e:',
+        '  if alt:',
+        '   try:',
+        '    out[key]=str(version(alt) or "ok"); return',
+        '   except PackageNotFoundError:',
+        '    pass',
+        '   except Exception as e2:',
+        '    out["missing"].append(key); out["errors"].append(str(e2)); return',
+        '  out["missing"].append(key); out["errors"].append(str(e))',
+        ' except Exception as e:',
+        '  out["missing"].append(key); out["errors"].append(str(e))',
+        '_ver("numpy","numpy")',
+        '_ver("av","av")',
+        '_ver("ctranslate2","ct2")',
+        '_ver("onnxruntime","ort","onnxruntime-gpu")',
+        '_ver("faster-whisper","fw")',
         'print(json.dumps(out,ensure_ascii=False))',
         'sys.exit(0 if not out["missing"] else 1)',
     ].join('\n');
     // Fresh wheel install + Windows AV can make first import exceed 15s; retry once.
-    let probe = await runEnginePython(engineRoot, probeCode, 45000);
+    let probe = await runEnginePython(engineRoot, probeCode, 20000);
     const probeTimedOut = (p) => {
         const err = String(p?.stderr || '').trim().toLowerCase();
         return !p?.ok && (err === 'timeout' || /\btimeout\b/.test(err))
             && !String(p?.stdout || '').trim();
     };
     if (probeTimedOut(probe)) {
-        probe = await runEnginePython(engineRoot, probeCode, 60000);
+        probe = await runEnginePython(engineRoot, probeCode, 20000);
     }
     let data = null;
     try {

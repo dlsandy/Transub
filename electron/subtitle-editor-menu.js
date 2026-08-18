@@ -50,11 +50,13 @@ function normalizeViewMenuState(raw) {
  *   onClose?: () => void,
  *   collectedActions?: string[],
  *   viewState?: unknown,
+ *   isDev?: boolean,
  * }} [opts]
  */
 function buildSubtitleEditorMenuTemplate(onAction, opts = {}) {
     const collected = opts.collectedActions;
     const view = normalizeViewMenuState(opts.viewState);
+    const isDev = opts.isDev === true;
     const act = (action) => {
         // 同一 action 可挂在多个菜单；测试只登记唯一 id
         if (collected && !collected.includes(action)) collected.push(action);
@@ -65,31 +67,43 @@ function buildSubtitleEditorMenuTemplate(onAction, opts = {}) {
         };
     };
 
+    /** @type {import('electron').MenuItemConstructorOptions[]} */
+    const fileSubmenu = [
+        { label: '打开字幕(&O)', click: act('open-subtitle') },
+        { label: '关联视频(&V)', click: act('link-video') },
+        { type: 'separator' },
+        { label: '保存\tCtrl+S', click: act('save') },
+        { label: '另存为(&A)\tCtrl+Shift+S', click: act('save-as') },
+        { label: '导出合并双语', click: act('export-dual') },
+    ];
+    if (isDev) {
+        fileSubmenu.push({
+            label: '上传到 SubtitleCat（开发）',
+            click: act('upload-subtitlecat'),
+        });
+    }
+    fileSubmenu.push(
+        { type: 'separator' },
+        { label: '打开字幕生成器', click: act('open-generator') },
+        { label: '打开字幕库', click: act('open-library') },
+        { label: '设置(&S)', click: act('open-settings') },
+        { type: 'separator' },
+        { label: '复原到初始', click: act('restore-initial') },
+        { type: 'separator' },
+        {
+            label: '关闭窗口',
+            click: () => {
+                try {
+                    opts.onClose?.();
+                } catch (_) { /* ignore */ }
+            },
+        },
+    );
+
     return [
         {
             label: '文件(&F)',
-            submenu: [
-                { label: '打开字幕(&O)', click: act('open-subtitle') },
-                { label: '关联视频(&V)', click: act('link-video') },
-                { type: 'separator' },
-                { label: '保存\tCtrl+S', click: act('save') },
-                { label: '导出合并双语', click: act('export-dual') },
-                { type: 'separator' },
-                { label: '打开字幕生成器', click: act('open-generator') },
-                { label: '打开字幕库', click: act('open-library') },
-                { label: '设置(&S)', click: act('open-settings') },
-                { type: 'separator' },
-                { label: '复原到初始', click: act('restore-initial') },
-                { type: 'separator' },
-                {
-                    label: '关闭窗口',
-                    click: () => {
-                        try {
-                            opts.onClose?.();
-                        } catch (_) { /* ignore */ }
-                    },
-                },
-            ],
+            submenu: fileSubmenu,
         },
         {
             label: '编辑(&E)',
@@ -261,10 +275,16 @@ function buildSubtitleEditorMenuTemplate(onAction, opts = {}) {
 }
 
 /** 菜单 action 全集（与模板一一对应，供渲染进程 / 测试对齐） */
+/** Dev-only menu actions (gated by opts.isDev / !app.isPackaged). */
+const SUBTITLE_EDITOR_DEV_MENU_ACTIONS = Object.freeze([
+    'upload-subtitlecat',
+]);
+
 const SUBTITLE_EDITOR_MENU_ACTIONS = Object.freeze([
     'open-subtitle',
     'link-video',
     'save',
+    'save-as',
     'export-dual',
     'open-generator',
     'open-library',
@@ -360,8 +380,17 @@ function applySubtitleEditorMenu(win, viewState) {
         win.webContents.send('subtitle-editor-menu-action', { action: id });
     };
 
+    let isDev = false;
+    try {
+        const { app } = require('electron');
+        isDev = !app.isPackaged;
+    } catch (_) {
+        isDev = false;
+    }
+
     const template = buildSubtitleEditorMenuTemplate(sendAction, {
         viewState: nextView,
+        isDev,
         onClose: () => {
             if (!win || win.isDestroyed()) return;
             win.close();
@@ -405,4 +434,5 @@ module.exports = {
     advancedMenuLabel,
     ADVANCED_MENU_MARK,
     SUBTITLE_EDITOR_MENU_ACTIONS,
+    SUBTITLE_EDITOR_DEV_MENU_ACTIONS,
 };

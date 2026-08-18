@@ -20,18 +20,39 @@
 
     function idealBreakMsFromText(text, startMs, endMs, splitApi, breakWords) {
         const cueDur = endMs - startMs;
-        const indices = (
-            typeof splitApi.getSilenceTextBreakIndices === 'function'
-                ? splitApi.getSilenceTextBreakIndices(text, {
-                    breakWords,
-                    includePunctuation: true,
-                })
-                : (typeof splitApi.getWhitespaceBreakIndices === 'function'
-                    ? splitApi.getWhitespaceBreakIndices(text)
-                    : [])
+        const sentenceIndices = (
+            typeof splitApi.getSentenceBreakIndices === 'function'
+                ? splitApi.getSentenceBreakIndices(text)
+                : []
         );
+        const spaceIndices = (
+            typeof splitApi.getWhitespaceBreakIndices === 'function'
+                ? splitApi.getWhitespaceBreakIndices(text)
+                : []
+        );
+        // Safe cuts: sentence boundaries + whitespace (spaces may split even within a sentence)
+        let indices = [...new Set([...(sentenceIndices || []), ...(spaceIndices || [])])]
+            .sort((a, b) => a - b);
+        if (!indices.length) {
+            indices = (
+                typeof splitApi.getSilenceTextBreakIndices === 'function'
+                    ? splitApi.getSilenceTextBreakIndices(text, {
+                        breakWords,
+                        includePunctuation: true,
+                    })
+                    : []
+            );
+        }
+        // Single complete sentence with no spaces / mid-sentence breaks → no ideal cut
+        if (
+            !indices.length
+            && typeof splitApi.endsWithStrongSentencePunct === 'function'
+            && splitApi.endsWithStrongSentencePunct(text)
+        ) {
+            return [];
+        }
         return (indices || []).map((w) => {
-            const A = Math.max(0, Math.min(1, w / Math.max(1, text.length)));
+            const A = Math.max(0, Math.min(1, w / Math.max(1, String(text || '').length)));
             return Math.round(startMs + A * cueDur);
         });
     }
@@ -41,6 +62,7 @@
         minSilenceMs,
         idealBreakMs,
         splitApi,
+        maxSplits,
     } = {}) {
         if (!detectResult?.ok) return [];
         const cueDur = cueEndMs - cueStartMs;
@@ -56,6 +78,7 @@
                     minSpeechMs: 120,
                     idealBreakMs: idealBreakMs || [],
                     minGapMs: edgeMs,
+                    maxSplits,
                 },
             );
         }
@@ -134,6 +157,18 @@
         const silenceDur = opts.silenceDur != null ? opts.silenceDur : 0.12;
         const breakWords = opts.breakWords || getBreakWords();
         const idealBreakMs = idealBreakMsFromText(text, startMs, endMs, splitApi, breakWords);
+        const charCount = typeof splitApi.textCharCount === 'function'
+            ? splitApi.textCharCount(text)
+            : String(text || '').replace(/\s/g, '').length;
+        const maxChars = Math.round(Number(opts.maxChars) || 0);
+        // QC threshold: only enough cuts to bring pieces near the limit (avoid shredding by every space)
+        let maxSplits = Math.round(Number(opts.maxSplits) || 0);
+        if (!(maxSplits > 0) && maxChars > 0 && charCount > maxChars) {
+            maxSplits = Math.max(1, Math.ceil(charCount / maxChars) - 1);
+        }
+        if (!(maxSplits > 0)) {
+            maxSplits = Math.max(1, Math.min(idealBreakMs.length || 8, Math.floor(cueDur / 1600) || 1));
+        }
         const passes = buildSilenceDetectPasses(silenceDb, silenceDur, cueDur);
         const detectSilence = deps.detectSilence;
         if (typeof detectSilence !== 'function') {
@@ -172,6 +207,7 @@
                 minSilenceMs,
                 idealBreakMs,
                 splitApi,
+                maxSplits,
             });
             if (splitPoints.length) break;
         }
@@ -179,6 +215,9 @@
         if (!lastDetect?.ok && lastError) return { error: lastError };
         if (!splitPoints.length) {
             return { error: '该时间段内未检测到足够长的静音，请调低阈值或改用智能断句' };
+        }
+        if (splitPoints.length > maxSplits) {
+            splitPoints = splitPoints.slice(0, maxSplits);
         }
 
         const cues = splitApi.buildCuesFromSilenceSplits(
@@ -197,6 +236,7 @@
                 gapMs: 1,
                 breakWords,
                 includePunctuation: true,
+                maxSplits,
             },
         );
         if (!cues || cues.length < 2) {

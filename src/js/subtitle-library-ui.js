@@ -1015,6 +1015,13 @@
                 active ? chipHtml('当前', 'ok') : '',
                 isCompareA ? chipHtml('对比 A', 'accent') : '',
                 statusChip,
+                ...(Array.isArray(v.recipeLayers) ? v.recipeLayers.map((lab) => {
+                    if (lab === 'Pro译') return chipHtml(lab, 'accent');
+                    if (lab === '推理译') return chipHtml(lab, 'a');
+                    if (lab === '机器译') return chipHtml(lab);
+                    if (lab === '已润色' || lab === '人名已锁') return chipHtml(lab, 'ok');
+                    return chipHtml(lab);
+                }) : []),
                 cueN != null ? chipHtml(`${cueN} 条`) : '',
                 fileMissing ? chipHtml('缺失', 'danger') : '',
                 ...tags.map((t) => chipHtml(t === '对照A' ? 'A' : (t === '对照B' ? 'B' : t), t === '对照B' ? 'b' : (t === '对照A' ? 'a' : ''))),
@@ -1039,7 +1046,7 @@
             html += `<div class="${rowCls}" data-library-version="${escHtml(v.id)}" title="单击试看 · 双击打开编辑器">
                 <div class="min-w-0">
                     <div class="lib-ver-meta">${chips}</div>
-                    ${showRecipe ? `<div class="lib-ver-recipe">${escHtml(v.recipeSummary || '—')}</div>` : ''}
+                    ${showRecipe ? `<div class="lib-ver-recipe">${escHtml(v.recipeTechSummary || v.recipeSummary || '—')}</div>` : ''}
                     <div class="lib-ver-file">${escHtml(basenamePath(v.exportPath))}${v.note ? ` · ${escHtml(v.note)}` : ''}</div>
                 </div>
                 <div class="lib-ver-actions">
@@ -1586,11 +1593,11 @@
         const res = await electron?.transubLibraryStartMtTrain?.({ mediaId });
         if (!res?.ok) {
             if (res?.proRequired) promptProLibrary();
-            else toast(res?.error || '无法打开训练台', 'err');
+            else toast(res?.error || '无法打开学习向导', 'err');
             return;
         }
         const ab = res.prepared?.hasAbPair ? '（已带对照路径）' : '';
-        toast(`已打开训练台并填入路径${ab}`, 'info');
+        toast(`已打开学习向导${ab}`, 'info');
     }
 
     function closeLibraryPreviewModal() {

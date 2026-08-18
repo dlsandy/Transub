@@ -107,6 +107,10 @@ function resolveInstalledRuntimeTag(exePath = '', meta = null, opts = {}) {
     if (!forceProbe) {
         const metaTag = String(meta?.probedTag || meta?.tag || '').trim();
         if (metaTag) return metaTag;
+        // Do not spawn llama-server for a version string. Loading unsigned
+        // ggml / CUDA DLLs under Smart App Control / WDAC can freeze Windows
+        // (Code Integrity 3077 on ggml-cpu-*.dll / llama-server.exe).
+        return '';
     }
     return probeLlamaServerTag(exe);
 }
@@ -902,7 +906,13 @@ function formatSpawnFailure(err, exe) {
     };
 }
 
-async function waitForHealthy(port, { timeoutMs = 180000, signal, onProgress } = {}) {
+async function waitForHealthy(port, {
+    timeoutMs = 180000,
+    signal,
+    onProgress,
+    getLogTail,
+    stallAfterMs = 0,
+} = {}) {
     const started = Date.now();
     let lastMsgAt = 0;
     while (Date.now() - started < timeoutMs) {
@@ -914,6 +924,24 @@ async function waitForHealthy(port, { timeoutMs = 180000, signal, onProgress } =
         }
         if (serverProc && serverProc.exitCode != null) {
             return { ok: false, error: `llama-server 已退出（code ${serverProc.exitCode}）`, code: 'server_exited' };
+        }
+        const tail = String(
+            (typeof getLogTail === 'function' ? getLogTail() : '') || lastServerLogTail || '',
+        );
+        if (/out of memory|CUDA error|failed to allocate|GGML_ASSERT|cannot allocate/i.test(tail)) {
+            return {
+                ok: false,
+                error: 'GPU 加载失败（显存不足或 CUDA 错误）',
+                code: 'gpu_load_failed',
+            };
+        }
+        // GPU load can hang at 503 when Whisper still holds the CUDA context.
+        if (stallAfterMs > 0 && Date.now() - started >= stallAfterMs) {
+            return {
+                ok: false,
+                error: 'GPU 模型加载停滞（可能被 ASR 占用显存）',
+                code: 'gpu_load_stalled',
+            };
         }
         const now = Date.now();
         if (now - lastMsgAt > 3000) {
@@ -1096,9 +1124,15 @@ async function ensureLlamaServer(options = {}) {
         }
 
         const healthy = await waitForHealthy(port, {
-            timeoutMs: Number(opts.timeoutMs) || 180000,
+            // GPU attempts: fail faster so we can drop ngl / fall back to CPU when
+            // Whisper residual VRAM leaves llama-server hung at HTTP 503.
+            timeoutMs: nGpuLayers > 0
+                ? Math.min(Number(opts.timeoutMs) || 180000, 90000)
+                : (Number(opts.timeoutMs) || 180000),
+            stallAfterMs: nGpuLayers > 0 ? 55000 : 0,
             signal: opts.signal,
             onProgress: opts.onProgress,
+            getLogTail: () => logTail,
         });
         if (healthy.ok) {
             serverState = { modelId: entry.id, port, baseUrl };

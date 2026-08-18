@@ -249,10 +249,10 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'warn',
-                detail: '已安装 b10077，可更新至 b10437 · win-cuda12-x64',
+                detail: '已安装 b10077，可更新至 b10453 · win-cuda12-x64',
                 outdated: true,
                 installedTag: 'b10077',
-                catalogTag: 'b10437',
+                catalogTag: 'b10453',
             },
         ]);
         assert.equal(outdated.ensureLlamaRuntime, true);
@@ -265,7 +265,7 @@ describe('env-check', () => {
                 status: 'warn',
                 detail: '偏好「CUDA」，当前为「Vulkan」，请重新安装运行时',
                 mismatch: true,
-                catalogTag: 'b10437',
+                catalogTag: 'b10453',
                 recommendRuntimeId: 'win-cuda13-x64',
             },
         ]);
@@ -280,7 +280,7 @@ describe('env-check', () => {
                 recommendInstall: true,
                 recommendRuntimeId: 'win-cuda13-x64',
                 preferredPackageId: 'win-cuda13-x64',
-                catalogTag: 'b10437',
+                catalogTag: 'b10453',
             },
         ]);
         assert.equal(recommendInstall.ensureLlamaRuntime, true);
@@ -291,7 +291,7 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'ok',
-                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10437）',
+                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10453）',
             },
         ]);
         assert.equal(unused.ensureLlamaRuntime, false);

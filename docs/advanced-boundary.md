@@ -15,7 +15,7 @@
 | 项    | 约定                                                                                                                                                                                                                                                                                 |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 查找路径 | `{安装目录}/_advanced/index.js` 或 `{可写目录}/advanced-modules/index.js`                                                                                                                                                                                                                   |
-| 导出   | `{ name?, version?, features?, getInfo?, contextReconstruct(payload)?, filmContextReconstruct(payload)?, bilingualSemanticReview(payload)? }`                                                                                                                                      |
+| 导出   | `{ name?, version?, features?, getInfo?, helpers?, contextReconstruct(payload)?, filmContextReconstruct(payload)?, bilingualSemanticReview(payload)?, smartTranslate(payload)? }` |
 | 首发能力 | `contextReconstruct`、`filmContextReconstruct`、`smartTranslate`（智能翻译 Pro）、`filmAudioEnhance`（影视音频增强）、`bilingualSemanticReview`（可返回 `suggestedTarget` 供一键采纳）、`qcSmartFix`（QC 智能修复：断句 / 局部重转写 / 润色 / 可选语义审阅；主窗口可传 `pairPath`/`pairCues`；按内容画像调 CPS/清杂音/重转写强度；兼容 `contextReconstruct`） |
 | 构建   | `npm run build:advanced` → 生成压缩后的 `_advanced/index.js`（gitignore，勿提交）                                                                                                                                                                                                              |
 | 发行   | `electron-builder` `extraFiles` 将 `_advanced` 放到 exe 旁；**asar 不含**算法源码                                                                                                                                                                                                             |
@@ -123,7 +123,8 @@ set TRANSUB_ADVANCED_DEV_UNLOCK=1
 
 ## 影片理解重构（Pro）
 
-1. **影片简要**：按片长自适应抽样全片，**优先依据原字幕**归纳梗概 / 人物 / 专名 / 语气（无原字幕时才用译文；预览可改人物与专名）
+1. **影片简要**：按设置取样全片字幕，**优先依据原字幕**归纳梗概 / 人物 / 专名 / 语气（无原字幕时才用译文；预览可改人物与专名）
+   - 默认「自适应抽样」（本地模型约最多 56 条，省显存）；设置 → 语境和理解重构 → **影片简要取样** 可选「全文理解」送入全部字幕
 2. **场景分块**：时间间隙为主，辅以时长上限 / 称呼切换软切；硬拆重叠区不覆盖前块定稿
 3. **上一场尾句只读**：减轻跨场断裂；缺条时降窗 / 补写重试
 4. **一致性校对**：本地专名统一 + 变更条轻量 LLM 校对

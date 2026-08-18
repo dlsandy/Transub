@@ -1503,6 +1503,101 @@ async function runQcLlmSplitOnCues(cues, issues, input, event) {
     };
 }
 
+async function runQcSilenceSplitPhase(cues, input, event) {
+    const qcSilenceSplit = require('./qc-silence-split');
+    const maxChars = qcSilenceSplit.clampQcSilenceSplitChars(
+        input.qcSilenceSplitChars ?? input.maxChars,
+    );
+    if (!(maxChars > 0)) {
+        return { cues, stats: { skipped: true, reason: 'disabled', splitCount: 0, added: 0 } };
+    }
+    const mediaPath = asString(input.mediaPath || input.videoPath, 4096).trim();
+    if (!mediaPath) {
+        return { cues, stats: { skipped: true, reason: 'no_media', splitCount: 0, added: 0 } };
+    }
+
+    sendQcSmartProgress(event, input, {
+        phase: 'silence-split',
+        message: `超长句静音分割（>${maxChars} 字）…`,
+        pct: 8,
+    });
+
+    const applied = await qcSilenceSplit.runQcSilenceSplitOnCues(cues, {
+        mediaPath,
+        maxChars,
+        ffmpegPath: (() => {
+            const fromInput = asString(input.ffmpegPath, 4096).trim();
+            if (fromInput) return fromInput;
+            try {
+                const { loadSettings } = require('./settings-data');
+                return String(loadSettings()?.options?.ffmpegPath || '').trim();
+            } catch {
+                return '';
+            }
+        })(),
+        silenceDb: input.silenceDb,
+        silenceDur: input.silenceDur,
+        gapMs: input.gapMs,
+        fixOverlap: input.fixOverlap !== false,
+        onProgress: (info) => {
+            sendQcSmartProgress(event, input, {
+                phase: 'silence-split',
+                message: `超长句静音分割 ${info.current}/${info.total}…`,
+                pct: 8 + Math.min(12, Math.round((info.current / Math.max(1, info.total)) * 12)),
+            });
+        },
+        signal: input.signal,
+        isCancelled: input.isCancelled,
+    });
+
+    return {
+        cues: applied.cues,
+        stats: {
+            ...applied.stats,
+            summary: qcSilenceSplit.summarizeQcSilenceSplit(applied.stats),
+        },
+    };
+}
+
+async function loadLowConfidenceIndexesForQc(cues, input = {}) {
+    const list = Array.isArray(cues) ? cues : [];
+    if (!list.length) return [];
+    const explicit = Array.isArray(input.lowConfidenceIndexes)
+        ? input.lowConfidenceIndexes
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n >= 0 && n < list.length)
+        : null;
+    if (explicit) return [...new Set(explicit)].sort((a, b) => a - b);
+    if (input.retranscribeLowConfidence === false) return [];
+
+    const metaPath = asString(
+        input.sourceSubtitlePath
+            || input.pairPath
+            || input.subtitlePath
+            || input.path
+            || input.subPath
+            || '',
+        4096,
+    ).trim();
+    if (!metaPath) return [];
+    try {
+        const { readSubtitleMeta } = require('./subtitle-meta');
+        const metaCore = require('../src/js/subtitle-meta-core');
+        const read = readSubtitleMeta(metaPath);
+        if (!read?.ok || !read.meta) return [];
+        const anns = typeof metaCore.mergeConfidenceAnnotations === 'function'
+            ? metaCore.mergeConfidenceAnnotations(list, read.meta, {
+                lowThreshold: input.lowConfidenceThreshold,
+            })
+            : [];
+        return anns
+            .map((a, i) => (a?.low ? i : -1))
+            .filter((i) => i >= 0);
+    } catch (_) {
+        return [];
+    }
+}
+
 async function runQcRetranscribeOnCues(cues, issues, input, event) {
     const smartCore = require('../src/js/subtitle-qc-smart-core');
     const meta = require('../src/js/subtitle-meta-core');
@@ -1512,16 +1607,37 @@ async function runQcRetranscribeOnCues(cues, issues, input, event) {
         return { cues, stats: { skipped: true, reason: mediaPath ? 'disabled' : 'no_media' } };
     }
 
-    const targets = smartCore.selectQcRetranscribeTargets(issues, {
-        maxTargets: Number(input.maxRetranscribeTargets) || 24,
-    });
-    const ranges = smartCore.buildQcRetranscribeRanges(cues, targets.map((t) => t.index), {
-        maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
-        maxDurationSec: Number(input.maxRetranscribeSec) || smartCore.DEFAULT_MAX_RANGE_SEC,
-        mergeAdjacentGapMs: Number(input.mergeAdjacentGapMs) || smartCore.DEFAULT_MERGE_GAP_MS,
-    });
+    const lowConfidenceIndexes = await loadLowConfidenceIndexesForQc(cues, input);
+    const merged = typeof smartCore.planMergedQcRetranscribeRanges === 'function'
+        ? smartCore.planMergedQcRetranscribeRanges(cues, issues, lowConfidenceIndexes, {
+            maxTargets: Number(input.maxRetranscribeTargets) || 24,
+            maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
+            maxDurationSec: Number(input.maxRetranscribeSec) || smartCore.DEFAULT_MAX_RANGE_SEC,
+            mergeAdjacentGapMs: Number(input.mergeAdjacentGapMs) || smartCore.DEFAULT_MERGE_GAP_MS,
+        })
+        : null;
+    const ranges = merged?.ranges || (() => {
+        const targets = smartCore.selectQcRetranscribeTargets(issues, {
+            maxTargets: Number(input.maxRetranscribeTargets) || 24,
+        });
+        return smartCore.buildQcRetranscribeRanges(cues, targets.map((t) => t.index), {
+            maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
+            maxDurationSec: Number(input.maxRetranscribeSec) || smartCore.DEFAULT_MAX_RANGE_SEC,
+            mergeAdjacentGapMs: Number(input.mergeAdjacentGapMs) || smartCore.DEFAULT_MERGE_GAP_MS,
+        });
+    })();
+    const planText = merged?.plan
+        || smartCore.summarizeQcRetranscribePlan(ranges);
     if (!ranges.length) {
-        return { cues, stats: { skipped: true, reason: 'no_ranges', plan: smartCore.summarizeQcRetranscribePlan(ranges) } };
+        return {
+            cues,
+            stats: {
+                skipped: true,
+                reason: 'no_ranges',
+                plan: planText,
+                lowConfidenceCueCount: lowConfidenceIndexes.length,
+            },
+        };
     }
 
     let working = cues;
@@ -1546,7 +1662,7 @@ async function runQcRetranscribeOnCues(cues, issues, input, event) {
                 endMs: range.endMs,
                 padMs: Number(input.padMs) >= 0 ? Number(input.padMs) : smartCore.DEFAULT_PAD_MS,
                 subtitlePath: asString(
-                    input.subtitlePath || input.sourceSubtitlePath || input.subPath || '',
+                    input.subtitlePath || input.sourceSubtitlePath || input.subPath || input.path || '',
                     4096,
                 ).trim(),
                 options: { task: 'transcribe', mergeSegments: false, subFormats: 'srt' },
@@ -1604,9 +1720,10 @@ async function runQcRetranscribeOnCues(cues, issues, input, event) {
             failCount,
             replaced,
             rangeCount: ranges.length,
-            plan: smartCore.summarizeQcRetranscribePlan(ranges, {
-                maxRanges: Number(input.maxRetranscribeRanges) || smartCore.DEFAULT_MAX_RETRANSCRIBE_RANGES,
-            }),
+            plan: planText,
+            connectedCueCount: merged?.connectedIndexes?.length || 0,
+            lowConfidenceCueCount: merged?.lowConfidenceIndexes?.length || lowConfidenceIndexes.length,
+            indexes: merged?.indexes || ranges.flatMap((r) => r.indexes || []),
         },
     };
 }
@@ -1635,29 +1752,47 @@ async function runQcSemanticReviewOnCues(cues, issues, input, event, extra = {})
     const pairCues = Array.isArray(input.pairCues) ? input.pairCues : [];
     if (!pairCues.length) return { ok: true, skipped: true, reason: 'no_pair' };
 
-    const indexes = smartCore.selectQcSemanticIndexes(issues, {
-        maxPairs: input.maxSemanticPairs || 40,
-        preferIndexes: extra.preferIndexes,
-    });
-    if (!indexes.length) return { ok: true, skipped: true, reason: 'no_targets' };
-
     let dualApi = null;
     try {
         dualApi = require('../src/js/dual-subtitle-core');
     } catch (_) { /* optional */ }
 
+    const blankPrefer = smartCore.collectBlankEllipsisIndexes(cues, pairCues, {
+        findBestOverlapCue: dualApi?.findBestOverlapCue || null,
+        maxIndexes: input.maxSemanticPairs || 40,
+    });
+    const mergedIssues = smartCore.mergeBlankEllipsisIssues(cues, issues, {
+        blankIndexes: blankPrefer,
+        pairCues,
+        findBestOverlapCue: dualApi?.findBestOverlapCue || null,
+    });
+    const indexes = smartCore.selectQcSemanticIndexes(mergedIssues, {
+        maxPairs: input.maxSemanticPairs || 40,
+        preferIndexes: extra.preferIndexes,
+        blankPreferIndexes: blankPrefer,
+    });
+    if (!indexes.length) return { ok: true, skipped: true, reason: 'no_targets' };
+
     const pairs = smartCore.buildQcSemanticPairs(cues, pairCues, indexes, dualApi);
     if (!pairs.length) return { ok: true, skipped: true, reason: 'empty_pairs' };
 
+    const blankInBatch = indexes.filter((i) => blankPrefer.includes(i)).length;
     sendQcSmartProgress(event, input, {
         phase: 'semantic',
-        message: `语义审阅 ${pairs.length} 条…`,
+        message: blankInBatch
+            ? `语义审阅 ${pairs.length} 条（含空/省略补译 ${blankInBatch}）…`
+            : `语义审阅 ${pairs.length} 条…`,
         pct: 88,
     });
 
     const review = await runBilingualSemanticReviewBody({
         pairs,
-        note: input.semanticNote || smartCore.QC_SEMANTIC_NOTE || '',
+        note: [
+            input.semanticNote || smartCore.QC_SEMANTIC_NOTE || '',
+            blankInBatch
+                ? '其中含空/省略号译文：请根据原文给出可直接替换的 suggestedTarget，勿留「…」。'
+                : '',
+        ].filter(Boolean).join(''),
         suggestFixes: input.suggestSemanticFixes !== false,
         dryRun: input.dryRun,
         signal: input.signal,
@@ -1696,6 +1831,8 @@ async function runQcSemanticReviewOnCues(cues, issues, input, event, extra = {})
         changedIndexes,
         issueCount: issueList.length,
         suggestions: issueList.filter((it) => it.suggestedTarget).length,
+        blankPreferCount: blankPrefer.length,
+        blankFilled: changedIndexes.filter((i) => blankPrefer.includes(i)).length,
         issues: issueList,
         summary: review.summary,
         via: review.via,
@@ -1844,6 +1981,26 @@ async function prepareQcSmartFixState(input, event) {
         scanIsFull = true;
     }
 
+    let silenceSplit = { stats: { skipped: true } };
+    if (input.silenceSplit !== false) {
+        // Resolve threshold from input or saved options (default 15)
+        if (input.qcSilenceSplitChars == null && input.maxChars == null) {
+            try {
+                const { loadSettings } = require('./settings-data');
+                const saved = loadSettings()?.options || {};
+                if (saved.qcSilenceSplitChars != null) {
+                    input.qcSilenceSplitChars = saved.qcSilenceSplitChars;
+                }
+            } catch (_) { /* keep default via clamp */ }
+        }
+        silenceSplit = await runQcSilenceSplitPhase(cues, input, event);
+        cues = silenceSplit.cues;
+        if (silenceSplit?.stats && !silenceSplit.stats.skipped && silenceSplit.stats.splitCount > 0) {
+            workingScan = qc.scanCueIssues(cues, structuralScanOpts);
+            scanIsFull = false;
+        }
+    }
+
     let llmSplit = { stats: { skipped: true } };
     let retranscribe = { stats: { skipped: true } };
     if (input.llmSplit !== false) {
@@ -1879,6 +2036,7 @@ async function prepareQcSmartFixState(input, event) {
     });
 
     const changedByRule = !!(ruleResult?.stats?.affected);
+    const changedBySilenceSplit = !!(silenceSplit?.stats && !silenceSplit.stats.skipped && silenceSplit.stats.splitCount > 0);
     const changedByLlmSplit = !!(llmSplit?.stats && !llmSplit.stats.skipped && llmSplit.stats.splitCount > 0);
     const changedByRetranscribe = !!(retranscribe?.stats && !retranscribe.stats.skipped && retranscribe.stats.okCount > 0);
 
@@ -1890,6 +2048,14 @@ async function prepareQcSmartFixState(input, event) {
             : '';
         const parts = [];
         if (ruleResult?.summary) parts.push(ruleResult.summary);
+        {
+            const ss = silenceSplit?.stats;
+            if (ss?.summary && (!ss.skipped || ss.reason === 'no_media' || (ss.skipNoSilence > 0))) {
+                parts.push(ss.summary);
+            } else if (ss?.splitCount) {
+                parts.push(`超长句静音分割 ${ss.splitCount} 条(+${ss.added || 0})`);
+            }
+        }
         if (llmSplit?.stats?.splitCount) {
             parts.push(`智能断句 ${llmSplit.stats.splitCount} 条(+${llmSplit.stats.added || 0})`);
         }
@@ -1906,7 +2072,7 @@ async function prepareQcSmartFixState(input, event) {
         parts.push('无需智能润色');
         if (remainingText) parts.push(remainingText);
 
-        if (changedByRule || changedByLlmSplit || changedByRetranscribe || cues.length !== doc.cues.length) {
+        if (changedByRule || changedBySilenceSplit || changedByLlmSplit || changedByRetranscribe || cues.length !== doc.cues.length) {
             const written = writeSubtitleDocument(filePath, {
                 cues,
                 format: doc.format,
@@ -1924,6 +2090,7 @@ async function prepareQcSmartFixState(input, event) {
                     smartSkipped: true,
                     profile,
                     rule: ruleResult,
+                    silenceSplit: silenceSplit.stats,
                     llmSplit: llmSplit.stats,
                     retranscribe: retranscribe.stats,
                     remaining: beforeSmartScan.summary,
@@ -1941,6 +2108,7 @@ async function prepareQcSmartFixState(input, event) {
                 smartSkipped: true,
                 profile,
                 rule: ruleResult,
+                silenceSplit: silenceSplit.stats,
                 llmSplit: llmSplit.stats,
                 retranscribe: retranscribe.stats,
                 remaining: beforeSmartScan.summary,
@@ -1957,6 +2125,7 @@ async function prepareQcSmartFixState(input, event) {
         cues,
         ruleOpts,
         ruleResult,
+        silenceSplit: silenceSplit.stats,
         llmSplit: llmSplit.stats,
         retranscribe: retranscribe.stats,
         beforeSmartScan,
@@ -1964,6 +2133,7 @@ async function prepareQcSmartFixState(input, event) {
         profile,
         skipPolish: !targets.length,
         changedByRule,
+        changedBySilenceSplit,
         changedByLlmSplit,
         changedByRetranscribe,
     };
@@ -2016,7 +2186,8 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
         }, event);
 
         if (!recon?.ok) {
-            if (prepared.changedByRule || prepared.changedByLlmSplit || prepared.changedByRetranscribe) {
+            if (prepared.changedByRule || prepared.changedBySilenceSplit
+                || prepared.changedByLlmSplit || prepared.changedByRetranscribe) {
                 const written = writeSubtitleDocument(filePath, {
                     cues,
                     format: doc.format,
@@ -2030,6 +2201,7 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
                     path: filePath,
                     ruleWritten: !!written?.ok,
                     rule: ruleResult,
+                    silenceSplit: prepared.silenceSplit,
                     llmSplit: prepared.llmSplit,
                     retranscribe: prepared.retranscribe,
                 };
@@ -2123,6 +2295,7 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
         : '';
     const shouldWrite = applied.changed > 0
         || prepared.changedByRule
+        || prepared.changedBySilenceSplit
         || prepared.changedByLlmSplit
         || prepared.changedByRetranscribe
         || semanticChanged
@@ -2130,6 +2303,14 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
 
     const parts = [];
     if (ruleResult?.summary) parts.push(ruleResult.summary);
+    {
+        const ss = prepared.silenceSplit;
+        if (ss?.summary && (!ss.skipped || ss.reason === 'no_media' || (ss.skipNoSilence > 0))) {
+            parts.push(ss.summary);
+        } else if (ss?.splitCount) {
+            parts.push(`超长句静音分割 ${ss.splitCount} 条(+${ss.added || 0})`);
+        }
+    }
     if (prepared.llmSplit?.splitCount) {
         parts.push(`智能断句 ${prepared.llmSplit.splitCount} 条(+${prepared.llmSplit.added || 0})`);
     }
@@ -2154,6 +2335,9 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
     }
     if (semanticChanged) {
         parts.push(`语义采纳 ${semantic.changed}/${semantic.suggestions || semantic.changed} 条`);
+        if (Number(semantic.blankFilled) > 0) {
+            parts.push(`空/省略补译 ${semantic.blankFilled}`);
+        }
     } else if (semantic?.ok && semantic.issueCount) {
         parts.push(`语义审阅 ${semantic.issueCount} 处`);
     } else if (semantic && !semantic.ok && !semantic.skipped) {
@@ -2170,6 +2354,7 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
             targets: targets.length,
             profile: prepared.profile,
             rule: ruleResult,
+            silenceSplit: prepared.silenceSplit,
             llmSplit: prepared.llmSplit,
             retranscribe: prepared.retranscribe,
             semantic,
@@ -2205,6 +2390,7 @@ async function finishQcSmartFixWithLlm(prepared, input, event) {
         targetIndexes,
         profile: prepared.profile,
         rule: ruleResult,
+        silenceSplit: prepared.silenceSplit,
         llmSplit: prepared.llmSplit,
         retranscribe: prepared.retranscribe,
         semantic,
@@ -2322,6 +2508,14 @@ async function runFilmContextReconstructBody(payload = {}, event = null) {
     if (!gateFilm.ok && !gateBasic.ok) return gateFilm;
 
     const input = asPlainObject(payload);
+    // Disk setting is source of truth when editor omitted briefSampleMode (separate BrowserWindow).
+    if (!input.briefSampleMode && !input.briefUseFullText && !input.useFullText) {
+        try {
+            const { loadSettings } = require('./settings-data');
+            const mode = String(loadSettings()?.options?.filmBriefSampleMode || '').trim().toLowerCase();
+            if (mode === 'full' || mode === 'auto') input.briefSampleMode = mode;
+        } catch (_) { /* ignore */ }
+    }
     const doc = readAdvancedDoc().doc;
     const dryRun = !!input.dryRun
         || !!doc.reconstructMock
@@ -2440,12 +2634,24 @@ async function runSmartTranslateBody(payload = {}, event = null) {
             if (input.smartTranslatePlotPolish == null) {
                 input.smartTranslatePlotPolish = opts.smartTranslatePlotPolish !== false;
             }
+            if (input.smartTranslateFaithfulVerify == null) {
+                input.smartTranslateFaithfulVerify = opts.smartTranslateFaithfulVerify !== false;
+            }
+            if (input.smartTranslateAddressConsistency == null) {
+                input.smartTranslateAddressConsistency = opts.smartTranslateAddressConsistency !== false;
+            }
         } catch (_) {
             input.smartTranslateHybridMt = true;
         }
     }
     if (input.smartTranslatePlotPolish == null) {
         input.smartTranslatePlotPolish = true;
+    }
+    if (input.smartTranslateFaithfulVerify == null) {
+        input.smartTranslateFaithfulVerify = true;
+    }
+    if (input.smartTranslateAddressConsistency == null) {
+        input.smartTranslateAddressConsistency = true;
     }
     if (!input.contentProfile && !input.senseProfile) {
         const name = String(input.fileName || input.sourcePath || input.path || '').trim();
@@ -2756,6 +2962,9 @@ async function smartTranslateSubtitleFile(options = {}) {
         ),
         smartTranslateHybridMt: opts.smartTranslateHybridMt ?? nested.smartTranslateHybridMt,
         smartTranslatePlotPolish: opts.smartTranslatePlotPolish ?? nested.smartTranslatePlotPolish,
+        smartTranslateFaithfulVerify: opts.smartTranslateFaithfulVerify ?? nested.smartTranslateFaithfulVerify,
+        smartTranslateAddressConsistency: opts.smartTranslateAddressConsistency
+            ?? nested.smartTranslateAddressConsistency,
         engineLlmMtModel: opts.engineLlmMtModel ?? nested.engineLlmMtModel,
         hybridMtModelId: opts.hybridMtModelId ?? nested.hybridMtModelId
             ?? opts.engineLlmMtModel ?? nested.engineLlmMtModel,
@@ -2927,6 +3136,7 @@ async function runBatchContextReconstructJobLocked(event, payload = {}) {
                 intensity: input.intensity,
                 filmBrief: input.filmBrief || null,
                 skipConsistency: input.skipConsistency === true,
+                briefSampleMode: input.briefSampleMode,
             },
             signal,
             reconstructCues: (cuePayload) => runOne({

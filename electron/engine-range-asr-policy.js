@@ -85,6 +85,38 @@ function _dedupeAsrIds(ids) {
 }
 
 /**
+ * Keep failover / second-opinion candidates that are already on disk.
+ * Always keeps `primaryAsr` (or chain[0]) so the user's chosen model is still tried once.
+ * Pass `installedIds: null/undefined` to skip filtering (tests / unknown install root).
+ *
+ * @param {string[]} candidates
+ * @param {string[]|null|undefined} installedIds
+ * @param {{ primaryAsr?: string, keepPrimary?: boolean }} [options]
+ * @returns {string[]}
+ */
+function filterAsrCandidatesByInstalled(candidates, installedIds, options = {}) {
+    const list = _dedupeAsrIds(Array.isArray(candidates) ? candidates : []);
+    if (!Array.isArray(installedIds)) return list;
+    const installed = new Set(
+        installedIds.map((id) => String(id || '').trim().toLowerCase()).filter(Boolean),
+    );
+    const keepPrimary = options.keepPrimary !== false;
+    const primary = String(options.primaryAsr || list[0] || '').trim();
+    const primaryLow = primary.toLowerCase();
+    const out = [];
+    for (const id of list) {
+        const low = id.toLowerCase();
+        if (keepPrimary && primary && low === primaryLow) {
+            out.push(id);
+            continue;
+        }
+        if (installed.has(low)) out.push(id);
+    }
+    if (!out.length && keepPrimary && primary) return [primary];
+    return _dedupeAsrIds(out);
+}
+
+/**
  * Full-file batch + range ASR failover chain (content-aware).
  * JA/anime specialists try sibling specialists before generic SenseVoice/tiny.
  */
@@ -197,6 +229,7 @@ module.exports = {
     normalizeOpusTextCues,
     resolveNativeOpusMtModel,
     resolveRangeAsrMtModel,
+    filterAsrCandidatesByInstalled,
     buildBatchAsrCandidates,
     buildRangeAsrCandidates,
     isEmptyAsrFail,

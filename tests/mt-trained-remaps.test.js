@@ -135,8 +135,17 @@ describe('trained remaps (console train loop)', () => {
     });
 
     it('addZhRemap merges same ja+zhFrom key', () => {
-        const packPath = train.TRAINED_PATH;
-        const prev = train.readPack();
+        const prevTarget = process.env.MT_TRAIN_TARGET;
+        const prevRoot = process.env.TRANSUB_MT_SANDBOX_ROOT;
+        const prevRemaps = process.env.TRANSUB_MT_USER_REMAPS;
+        const os = require('os');
+        const path = require('path');
+        const fs = require('fs');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mt-merge-'));
+        process.env.TRANSUB_MT_SANDBOX_ROOT = tmp;
+        process.env.TRANSUB_MT_USER_REMAPS = path.join(tmp, 'mt-user-remaps.json');
+        process.env.MT_TRAIN_TARGET = 'sandbox';
+        train.sandbox.setWriteTarget('sandbox');
         try {
             train.writePack({ version: 1, zhRemaps: [], asrPairs: [] });
             const a = train.addZhRemap({
@@ -154,15 +163,17 @@ describe('trained remaps (console train loop)', () => {
                 pinFinal: true,
             });
             assert.strictEqual(a.id, b.id);
-            const listed = train.listRules().zhRemaps.filter((r) => r.zhFrom === '错词');
+            const listed = train.listRules().zhRemaps.filter((r) => r.zhFrom === '错词' && r.source === 'sandbox');
             assert.strictEqual(listed.length, 1);
             assert.strictEqual(listed[0].zhTo, '对词B');
         } finally {
-            train.writePack(prev);
-            if (!prev.zhRemaps.length && !prev.asrPairs.length) {
-                // keep empty pack tidy
-            }
-            void packPath;
+            if (prevTarget == null) delete process.env.MT_TRAIN_TARGET;
+            else process.env.MT_TRAIN_TARGET = prevTarget;
+            if (prevRoot == null) delete process.env.TRANSUB_MT_SANDBOX_ROOT;
+            else process.env.TRANSUB_MT_SANDBOX_ROOT = prevRoot;
+            if (prevRemaps == null) delete process.env.TRANSUB_MT_USER_REMAPS;
+            else process.env.TRANSUB_MT_USER_REMAPS = prevRemaps;
+            try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* ignore */ }
         }
     });
 

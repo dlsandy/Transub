@@ -42,6 +42,80 @@ describe('subtitle-library-core', () => {
         assert.ok(core.formatRecipeSummary(recipe).includes('预设'));
     });
 
+    it('records LLM inference as sakura, not opus', () => {
+        const llm = core.buildRecipeFromOptions({
+            task: 'translate',
+            engineAsrModel: 'anime-whisper',
+            translateMode: 'llm',
+            engineMtModel: 'sakura-7b',
+            engineLlmMtModel: 'sakura-7b',
+        });
+        assert.strictEqual(llm.mt.provider, 'sakura');
+        assert.strictEqual(llm.mt.model, 'sakura-7b');
+        assert.strictEqual(llm.mt.sakuraMt, true);
+        assert.strictEqual(llm.mt.translateMode, 'llm');
+        assert.strictEqual(core.recipeToRetranslateHints(llm).mode, 'llm');
+
+        const inferred = core.buildRecipeFromOptions({
+            task: 'translate',
+            engineAsrModel: 'anime-whisper',
+            engineMtModel: 'sakura-7b',
+        });
+        assert.strictEqual(inferred.mt.provider, 'sakura');
+        assert.notStrictEqual(inferred.mt.provider, 'opus');
+
+        const opus = core.buildRecipeFromOptions({
+            task: 'translate',
+            engineOpusMtModel: 'opus-ja-zh',
+            translateMode: 'engine',
+            engineLlmMtModel: 'sakura-7b',
+        });
+        assert.strictEqual(opus.mt.provider, 'opus');
+        assert.strictEqual(opus.mt.model, 'opus-ja-zh');
+    });
+
+    it('labels Pro vs inference vs engine recipes for the library', () => {
+        const smart = core.buildRecipeFromOptions({
+            task: 'translate',
+            engineAsrModel: 'anime-whisper',
+            translateMode: 'smart',
+            smartTranslate: true,
+            smartTranslateModelId: 'qwen25-7b',
+            presetId: 'ja-av-anime-whisper-firered',
+        }, { presetName: 'Anime Whisper' });
+        assert.deepStrictEqual(core.recipeLayerLabels(smart), ['Pro译', '已润色', '人名已锁']);
+        const smartSummary = core.formatRecipeSummary(smart);
+        assert.ok(smartSummary.startsWith('Pro译 · 已润色 · 人名已锁'));
+        assert.ok(smartSummary.includes('anime-whisper'));
+        assert.ok(smartSummary.includes('预设'));
+
+        const polishOff = core.buildRecipeFromOptions({
+            task: 'translate',
+            translateMode: 'smart',
+            smartTranslate: true,
+            smartTranslatePlotPolish: false,
+        });
+        assert.deepStrictEqual(core.recipeLayerLabels(polishOff), ['Pro译', '人名已锁']);
+
+        const llm = core.buildRecipeFromOptions({
+            task: 'translate',
+            engineAsrModel: 'anime-whisper',
+            translateMode: 'llm',
+            engineMtModel: 'sakura-7b',
+            engineLlmMtModel: 'sakura-7b',
+        });
+        assert.ok(core.formatRecipeSummary(llm).startsWith('推理译'));
+        assert.ok(core.formatRecipeSummary(llm).includes('sakura-7b'));
+        assert.ok(!core.formatRecipeSummary(llm).includes('opus:'));
+
+        const opusLabeled = core.buildRecipeFromOptions({
+            task: 'translate',
+            translateMode: 'engine',
+            engineOpusMtModel: 'opus-ja-zh',
+        });
+        assert.ok(core.formatRecipeSummary(opusLabeled).startsWith('机器译'));
+    });
+
     it('prunes oldest versions while protecting active', () => {
         const versions = [
             { id: 'a', createdAt: '2026-01-01T00:00:00.000Z', status: 'raw' },

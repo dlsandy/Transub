@@ -32,13 +32,14 @@ function parseJsonObject(text) {
  * @param {import('electron').IpcMainInvokeEvent} event
  */
 async function runMtTrainInferSuggest(payload = {}, event = null) {
-    const { isDevBuild, isMtTrainWindowSender } = require('./mt-train-window');
+    const { canOpenMtTrain, isMtTrainWindowSender } = require('./mt-train-window');
     const { app } = require('electron');
-    if (!isDevBuild(app)) {
-        return { ok: false, error: '仅开发模式可用', code: 'dev_only' };
+    const access = canOpenMtTrain(app);
+    if (!access.ok) {
+        return { ok: false, error: access.error || '无法使用学习向导', code: access.code || 'forbidden' };
     }
     if (event?.sender && !isMtTrainWindowSender(event.sender)) {
-        return { ok: false, error: '仅训练台窗口可调用', code: 'forbidden' };
+        return { ok: false, error: '仅学习向导窗口可调用', code: 'forbidden' };
     }
 
     const input = asPlainObject(payload);
@@ -177,13 +178,14 @@ async function runMtTrainInferSuggest(payload = {}, event = null) {
 }
 
 function assertMtTrainSender(event) {
-    const { isDevBuild, isMtTrainWindowSender } = require('./mt-train-window');
+    const { canOpenMtTrain, isMtTrainWindowSender } = require('./mt-train-window');
     const { app } = require('electron');
-    if (!isDevBuild(app)) {
-        return { ok: false, error: '仅开发模式可用', code: 'dev_only' };
+    const access = canOpenMtTrain(app);
+    if (!access.ok) {
+        return { ok: false, error: access.error || '无法使用学习向导', code: access.code || 'forbidden' };
     }
     if (event?.sender && !isMtTrainWindowSender(event.sender)) {
-        return { ok: false, error: '仅训练台窗口可调用', code: 'forbidden' };
+        return { ok: false, error: '仅学习向导窗口可调用', code: 'forbidden' };
     }
     return { ok: true };
 }
@@ -191,67 +193,11 @@ function assertMtTrainSender(event) {
 /**
  * Flatten task-history outputs into JA/ZH subtitle pairs for the learning wizard.
  * JA often lives in transcript-keep as `{stem}.src.srt` when sourceSubtitlePath is empty.
- *
- * @param {object[]} entries
- * @param {{
- *   resolveJaPath?: (output: object, zhPath: string) => string,
- *   fileExists?: (p: string) => boolean,
- *   maxPairs?: number,
- * }} [opts]
  */
+const historyPairsLib = require('../tools/mt-train/lib/history-pairs');
+
 function collectHistorySubtitlePairs(entries, opts = {}) {
-    const path = require('path');
-    const maxPairs = Math.min(80, Math.max(1, Number(opts.maxPairs) || 40));
-    const fileExists = typeof opts.fileExists === 'function'
-        ? opts.fileExists
-        : () => true;
-    const resolveJaPath = typeof opts.resolveJaPath === 'function'
-        ? opts.resolveJaPath
-        : (output) => String(output?.sourceSubtitlePath || '').trim();
-
-    const pairs = [];
-    const list = Array.isArray(entries) ? entries : [];
-    for (const entry of list) {
-        if (pairs.length >= maxPairs) break;
-        const outputs = Array.isArray(entry?.outputs) ? entry.outputs : [];
-        outputs.forEach((output, outputIndex) => {
-            if (pairs.length >= maxPairs) return;
-            const status = String(output?.status || 'done').trim().toLowerCase();
-            if (status && status !== 'done' && status !== 'skipped') return;
-
-            const zhPath = String(
-                output?.targetSubtitlePath
-                || output?.subtitlePath
-                || '',
-            ).trim();
-            if (!zhPath) return;
-
-            const jaPath = String(resolveJaPath(output, zhPath) || '').trim();
-            if (!jaPath) return;
-
-            const videoPath = String(output?.videoPath || '').trim();
-            const title = path.basename(videoPath || zhPath, path.extname(videoPath || zhPath))
-                .replace(/\.src$/i, '')
-                .replace(/\.(ja|zh|chs|cht|cn|jpn|jp)$/i, '');
-            const jaExists = fileExists(jaPath);
-            const zhExists = fileExists(zhPath);
-            if (!jaExists || !zhExists) return;
-
-            pairs.push({
-                id: `${String(entry.id || 'job')}::${outputIndex}`,
-                jobId: String(entry.id || ''),
-                finishedAt: entry.finishedAt || entry.startedAt || '',
-                task: String(entry.task || entry.options?.task || ''),
-                title: title || path.basename(zhPath),
-                videoPath,
-                jaPath,
-                zhPath,
-                jaExists,
-                zhExists,
-            });
-        });
-    }
-    return pairs;
+    return historyPairsLib.collectHistorySubtitlePairs(entries, opts);
 }
 
 function loadSettingsOptionsSafe() {
@@ -275,7 +221,7 @@ function resolveJaFromKeep(output, zhPath) {
         options: loadSettingsOptionsSafe(),
     });
     if (kept?.found && kept.path) return kept.path;
-    return '';
+    return historyPairsLib.resolveJaPathWithFallbacks(output, zhPath, {});
 }
 
 function listRecentSubtitlePairs(payload = {}) {
@@ -410,6 +356,43 @@ function registerMtTrainBridge(register, _app) {
             if (!gate.ok) return gate;
             const { consumePendingLibraryPair } = require('./mt-train-window');
             return consumePendingLibraryPair();
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-mt-train-idle-status', async (event) => {
+        try {
+            const gate = assertMtTrainSender(event);
+            if (!gate.ok) return gate;
+            const idle = require('./mt-train-idle');
+            return idle.getIdleStatus(_app);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-mt-train-idle-prefs', async (event, payload = {}) => {
+        try {
+            const gate = assertMtTrainSender(event);
+            if (!gate.ok) return gate;
+            const idle = require('./mt-train-idle');
+            return idle.setIdlePrefs(asPlainObject(payload), _app);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-mt-train-idle-run', async (event, payload = {}) => {
+        try {
+            const gate = assertMtTrainSender(event);
+            if (!gate.ok) return gate;
+            const idle = require('./mt-train-idle');
+            const input = asPlainObject(payload);
+            return await idle.runIdlePassNow(_app, {
+                force: input.force !== false,
+                label: input.label || 'manual-from-train',
+            });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }

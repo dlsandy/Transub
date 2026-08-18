@@ -30,6 +30,8 @@
             intensity: 'balanced',
             preserveTiming: true,
             skipConsistency: false,
+            /** auto = adaptive sample (local ~56); full = send all cues for Brief */
+            briefSampleMode: 'auto',
         };
     }
 
@@ -43,12 +45,14 @@
         const base = defaultReconstructPrefs();
         const src = raw && typeof raw === 'object' ? raw : {};
         const intensity = String(src.intensity || '').trim().toLowerCase();
+        const briefMode = String(src.briefSampleMode || '').trim().toLowerCase();
         return {
             windowCues: clampInt(src.windowCues, 5, 80, base.windowCues),
             overlapCues: clampInt(src.overlapCues, 0, 12, base.overlapCues),
             intensity: ['light', 'balanced', 'strong'].includes(intensity) ? intensity : base.intensity,
             preserveTiming: src.preserveTiming !== false,
             skipConsistency: !!src.skipConsistency,
+            briefSampleMode: briefMode === 'full' ? 'full' : 'auto',
         };
     }
 
@@ -198,6 +202,8 @@
         setReconNum('reconstructOverlapCuesInput', recon.overlapCues);
         const intensity = document.getElementById('reconstructIntensitySelect');
         if (intensity) intensity.value = recon.intensity;
+        const briefMode = document.getElementById('reconstructBriefSampleModeSelect');
+        if (briefMode) briefMode.value = recon.briefSampleMode === 'full' ? 'full' : 'auto';
         const preserve = document.getElementById('reconstructPreserveTimingCheck');
         if (preserve) preserve.checked = recon.preserveTiming !== false;
         const skipCons = document.getElementById('reconstructSkipConsistencyCheck');
@@ -288,6 +294,7 @@
             intensity: document.getElementById('reconstructIntensitySelect')?.value,
             preserveTiming: document.getElementById('reconstructPreserveTimingCheck')?.checked !== false,
             skipConsistency: !!document.getElementById('reconstructSkipConsistencyCheck')?.checked,
+            briefSampleMode: document.getElementById('reconstructBriefSampleModeSelect')?.value,
         });
         lsSet(KEYS.reconstructPrefs, JSON.stringify(recon));
 

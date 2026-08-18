@@ -111,7 +111,7 @@
         if (hybrid && polish) dialogLabel = '对话模型（剧情贴合润色）';
         else if (!hybrid) dialogLabel = '智能翻译模型（按行翻译）';
 
-        let schemeHint = '日语默认：专训模型做句级翻译，对话模型只做语意不变的贴合润色。';
+        let schemeHint = '日语默认：专训模型做句级翻译，对话模型做贴合润色（补欠译、锁人名、纠错译）。';
         if (hybrid && !polish) {
             schemeHint = '仅句级专训翻译，不做对话润色。';
         } else if (!hybrid && polish) {

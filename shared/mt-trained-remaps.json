@@ -1725,6 +1725,57 @@
       "zhFromB64": "YnVtcA==",
       "zhToB64": "",
       "createdAt": "2026-08-11T05:45:07.435Z"
+    },
+    {
+      "id": "tr_msx1k2y6_361a0e",
+      "enabled": true,
+      "title": "MIDA-741.src",
+      "note": "iku_shoot",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44OA44Oh44Kk44OD"
+      ],
+      "zhFromB64": "5ZOI",
+      "zhToB64": "5ZWKIA==",
+      "createdAt": "2026-08-17T09:38:35.886Z",
+      "hitCount": 0,
+      "lastHitAt": null
+    },
+    {
+      "id": "tr_msx1k721_9b5527",
+      "enabled": true,
+      "title": "MIDA-741.src",
+      "note": "iku_shoot",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "44GC44Gg44KB44Gg44KB44Kk44OD44Gh44KD44GG"
+      ],
+      "zhFromB64": "5Y67",
+      "zhToB64": "5bCE",
+      "createdAt": "2026-08-17T09:38:41.209Z",
+      "hitCount": 0,
+      "lastHitAt": null
+    },
+    {
+      "id": "tr_msx2tild_4f8b46",
+      "enabled": true,
+      "title": "MIDA-752.src",
+      "note": "under_stub",
+      "mode": "replace",
+      "pinFinal": true,
+      "flag": "trained_remap",
+      "jaIncludesB64": [
+        "5Lit5Ye644GX44GV44KM"
+      ],
+      "zhFromB64": "5LiN6L+H",
+      "zhToB64": "5bCE5Zyo5oiR5L2T5YaF",
+      "createdAt": "2026-08-17T10:13:55.681Z",
+      "hitCount": 0,
+      "lastHitAt": null
     }
   ],
   "asrPairs": []

@@ -83,7 +83,8 @@ flowchart LR
 | 设置选项归一化 | `src/js/settings-options-normalize-core.js` |
 | 完成后操作 / QC 横幅 | `src/js/post-task-qc-ui-core.js` |
 | 智能翻译混合句级 | `src/js/smart-translate-hybrid-core.js`、`electron/smart-translate-hybrid.js` |
-| 智能翻译剧情贴合润色 | `src/js/smart-translate-polish-core.js`、`electron/advanced-smart-translate.js` |
+| 智能翻译剧情贴合润色 | `src/js/smart-translate-polish-core.js`（抽样/启发式，开源）、闭源 `electron/advanced-smart-translate.js` |
+| 智能翻译忠实复核 / 称呼一致性 | 闭源 `src/js/smart-translate-verify-core.js`、`smart-translate-address-core.js`（仅 `_advanced` 打包） |
 | 主窗口翻译芯片文案 | `src/js/translate-mode-chip-core.js` |
 | 主窗口引擎模型 UI | `src/js/engine-models-ui-core.js`（含 pick-catalog 归一化 / 合并） |
 | 主窗口手动下载文案 | `src/js/engine-manual-download-core.js` |

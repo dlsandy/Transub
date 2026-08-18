@@ -9,11 +9,13 @@
 | 做 | 不做 |
 |----|------|
 | 按 JA 锚点、临床 ZH 形态、幻觉形状写条件 | `if (title === 'ADN-798')` 或等价片门控 |
-| 最短可复用片段 + 日文锚点（训练台已拒整句润色） | 整句润色、只对某一集成立的替换 |
+| 最短可复用片段 + 日文锚点（学习向导已拒整句润色） | 整句润色、只对某一集成立的替换 |
 | fixture / `smokeTitles` / remap.`title` 标注**发现来源** | 把片名写进运行时分支 |
 | 新规则能解释「下一片同类 cue 也该如此」 | 只为过当前片 grep 而删旧 guard |
 
-训练台文案与 `auto-quality` 的「可复用片段 / 整句复用性差」与此一致；agent 训练同样遵守 `.cursor/rules/mt-sanitize-anti-regression.mdc`。
+学习向导与 `auto-quality` 的「可复用片段 / 整句复用性差」与此一致；agent 训练同样遵守 `.cursor/rules/mt-sanitize-anti-regression.mdc`。
+
+`tools/mt-train` 为**学习向导**入口：默认 **放字幕 → 自动学习 → 自动应用 → 完成页**（仅本机，可撤销）。**Transub Pro** 与开发模式可打开；Pro 强制本机沙箱，隐藏发库/TDP/官方包。打包版需包含 `tools/mt-train`（已列入 electron-builder `files`）。
 
 ## 管线顺序
 

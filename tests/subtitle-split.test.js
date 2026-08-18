@@ -14,6 +14,7 @@ const {
     getBreakWordBreakIndices,
     getSilenceTextBreakIndices,
     buildCuesFromSilenceSplits,
+    stripLeadingCuePunctuation,
 } = require('../src/js/subtitle-split-core');
 
 function testConnectedTextNotSplit() {
@@ -145,6 +146,123 @@ function testBuildCuesFromSilenceSplitsWithBreakWords() {
     assert.ok(cues[1].text.startsWith('我们'), cues[1].text);
 }
 
+function testStripLeadingCuePunctuation() {
+    assert.strictEqual(stripLeadingCuePunctuation('，你好'), '你好');
+    assert.strictEqual(stripLeadingCuePunctuation('。！下一句'), '下一句');
+    assert.strictEqual(stripLeadingCuePunctuation('正常开头'), '正常开头');
+    assert.strictEqual(stripLeadingCuePunctuation('...hello'), 'hello');
+}
+
+function testSilenceSplitStripsLeadingPunct() {
+    // Force a mid-cue cut so the second segment would start with ，
+    const text = '前面一段话，后面继续说下去啊';
+    const cues = buildCuesFromSilenceSplits(
+        text,
+        0,
+        6000,
+        [3000],
+        0, // snapRadius 0 → keep ratio index near mid (on/after ，)
+        null,
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.ok(cues && cues.length >= 2, `expected split cues, got ${cues && cues.length}`);
+    for (const cue of cues) {
+        assert.ok(cue.text, 'cue text present');
+        assert.ok(!/^[。！？!?…．，、；：,;:]/.test(cue.text), `should not start with punct: ${cue.text}`);
+    }
+}
+
+function testSilenceSplitDoesNotCutCompleteSentence() {
+    // One complete sentence ending with 。 — silence mid-cue must not split it
+    const single = buildCuesFromSilenceSplits(
+        '今天天气很好我们一起去公园玩吧。',
+        0,
+        8000,
+        [4000],
+        16,
+        [{ startMs: 3800, endMs: 4200 }],
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.strictEqual(single, null, 'single complete sentence should not be silence-split');
+
+    // Two sentences — only allow a cut near the sentence boundary
+    const multi = buildCuesFromSilenceSplits(
+        '今天天气很好。我们一起去公园玩吧。',
+        0,
+        8000,
+        [4000],
+        16,
+        [{ startMs: 3800, endMs: 4200 }],
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.ok(multi && multi.length === 2, `expected 2 sentence cues, got ${multi && multi.length}`);
+    assert.ok(multi[0].text.includes('天气'), multi[0].text);
+    assert.ok(multi[1].text.includes('公园'), multi[1].text);
+}
+
+function testSilenceSplitAllowsWhitespaceBreak() {
+    // Complete sentence but with a mid space — may split at the space
+    const cues = buildCuesFromSilenceSplits(
+        '结婚了四年 生完孩子之后就开始做这些事。',
+        0,
+        10000,
+        [3200],
+        16,
+        [{ startMs: 3000, endMs: 3400 }],
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.ok(cues && cues.length === 2, `expected 2 cues at space, got ${cues && cues.length}`);
+    assert.ok(cues[0].text.includes('四年'), cues[0].text);
+    assert.ok(cues[1].text.includes('生完'), cues[1].text);
+}
+
+function testSilenceSplitWhitespaceEvenWithoutSilence() {
+    // No silence → do not split even when text has spaces
+    const text = '不 毕竟我也是黑岩嘛 都是处男嘛 啊 没有啦 怎么可能知道嘛';
+    const cues = buildCuesFromSilenceSplits(
+        text,
+        0,
+        12000,
+        [],
+        16,
+        null,
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.strictEqual(cues, null, 'without silence, spaced text must not split');
+}
+
+function testSilenceSplitWhitespaceWhenSilenceDetected() {
+    // One silence + many spaces → only one cut (nearest space that keeps both sides usable)
+    const text = '不 毕竟我也是黑岩嘛 都是处男嘛 啊 没有啦 怎么可能知道嘛';
+    const one = buildCuesFromSilenceSplits(
+        text,
+        0,
+        12000,
+        [2000],
+        16,
+        [{ startMs: 1900, endMs: 2100 }],
+        { includePunctuation: true, minDurMs: 200, maxSplits: 1 },
+    );
+    assert.ok(one && one.length === 2, `expected 2 cues from one silence, got ${one && one.length}`);
+    assert.ok(one.every((c) => textCharCount(c.text) >= 2), JSON.stringify(one.map((c) => c.text)));
+
+    // Two silences → at most three cues (not one per space)
+    const cues = buildCuesFromSilenceSplits(
+        text,
+        0,
+        12000,
+        [2000, 7000],
+        16,
+        [
+            { startMs: 1900, endMs: 2100 },
+            { startMs: 6900, endMs: 7100 },
+        ],
+        { includePunctuation: true, minDurMs: 200, maxSplits: 2 },
+    );
+    assert.ok(cues && cues.length === 3, `expected 3 cues from 2 silences, got ${cues && cues.length}`);
+    assert.ok(cues.length < 6, 'must not shred into every space token');
+}
+
 describe("subtitle-split", () => {
     it("connected text not split", () => {
         testConnectedTextNotSplit();
@@ -175,5 +293,23 @@ describe("subtitle-split", () => {
     });
     it("build cues from silence splits with break words", () => {
         testBuildCuesFromSilenceSplitsWithBreakWords();
+    });
+    it("strip leading cue punctuation", () => {
+        testStripLeadingCuePunctuation();
+    });
+    it("silence split strips leading punctuation", () => {
+        testSilenceSplitStripsLeadingPunct();
+    });
+    it("silence split does not cut complete sentence", () => {
+        testSilenceSplitDoesNotCutCompleteSentence();
+    });
+    it("silence split allows whitespace break", () => {
+        testSilenceSplitAllowsWhitespaceBreak();
+    });
+    it("silence split whitespace even without silence", () => {
+        testSilenceSplitWhitespaceEvenWithoutSilence();
+    });
+    it("silence split whitespace when silence detected", () => {
+        testSilenceSplitWhitespaceWhenSilenceDetected();
     });
 });

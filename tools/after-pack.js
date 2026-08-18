@@ -51,6 +51,20 @@ function createEditorShortcut(appOutDir, productFilename, buildResourcesDir) {
     }
 }
 
+/** Dev docs stay in the git tree; never ship them next to the exe. */
+function purgeShippedDocs(appOutDir) {
+    const dirs = [
+        path.join(appOutDir, 'docs'),
+        path.join(appOutDir, 'resources', 'docs'),
+        path.join(appOutDir, 'transub-engine', 'docs'),
+    ];
+    for (const dir of dirs) {
+        if (!fs.existsSync(dir)) continue;
+        fs.rmSync(dir, { recursive: true, force: true });
+        console.log(`[after-pack] removed shipped docs: ${path.relative(appOutDir, dir)}`);
+    }
+}
+
 /** Slim-pack hygiene: drop edition wheel cache + pip rename leftovers + on-demand heavies. */
 function purgeSlimEngineBloat(appOutDir) {
     const engineRoot = path.join(appOutDir, 'transub-engine');
@@ -136,6 +150,11 @@ module.exports = async function afterPack(context) {
     const iconPath = path.join(buildResourcesDir, 'app.ico');
 
     createEditorShortcut(appOutDir, productFilename, buildResourcesDir);
+    try {
+        purgeShippedDocs(appOutDir);
+    } catch (err) {
+        console.warn('[after-pack] docs purge failed:', err.message || err);
+    }
     try {
         purgeSlimEngineBloat(appOutDir);
     } catch (err) {

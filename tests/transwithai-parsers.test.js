@@ -69,7 +69,8 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.uiLocale, 'zh-Hans');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchCpsSplit, true);
-        assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
+    assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
+    assert.strictEqual(defaults.qcSilenceSplitChars, 15);
     assert.strictEqual(defaults.sakuraNsfwPrompt, null);
     // Engine fields must be present so settings save/load does not drop them
     assert.strictEqual(defaults.engineBackend, 'transub');

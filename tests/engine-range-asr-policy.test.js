@@ -60,6 +60,27 @@ describe('engine-range-asr-policy', () => {
         assert.strictEqual(policy.isRetryableAsrFail({ error: 'cuda oom' }), false);
     });
 
+    it('filters failover candidates to installed ids (keeps primary)', () => {
+        const full = policy.buildBatchAsrCandidates('anime-whisper');
+        const filtered = policy.filterAsrCandidatesByInstalled(
+            full,
+            ['anime-whisper', 'sensevoice-small', 'whisper-tiny'],
+            { primaryAsr: 'anime-whisper' },
+        );
+        assert.deepStrictEqual(filtered, ['anime-whisper', 'sensevoice-small', 'whisper-tiny']);
+        assert.ok(!filtered.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        const noFilter = policy.filterAsrCandidatesByInstalled(full, null, {
+            primaryAsr: 'anime-whisper',
+        });
+        assert.deepStrictEqual(noFilter, full);
+        const onlyPrimary = policy.filterAsrCandidatesByInstalled(
+            full,
+            [],
+            { primaryAsr: 'anime-whisper' },
+        );
+        assert.deepStrictEqual(onlyPrimary, ['anime-whisper']);
+    });
+
     it('remaps clip cues to timeline', () => {
         const cues = policy.remapClipCuesToTimeline([
             { startMs: 100, endMs: 500, text: 'a' },
