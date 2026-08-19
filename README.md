@@ -1,12 +1,26 @@
-# Transub
+<p align="center">
+  <img src="docs/screenshots/logo.png" width="96" alt="Transub">
+</p>
 
-**把视频拖进去，出能上片的字幕。**  
-Windows 桌面 · 本地运行 · 转写 / 翻译 / 双语 · SRT · VTT · ASS
-
-[下载](https://github.com/dlsandy/Transub/releases) · [变更记录](CHANGELOG.md) · [爱发电 / Pro](https://afdian.com/a/transub) · [问题反馈](https://github.com/dlsandy/Transub/issues)
+<h1 align="center">Transub</h1>
 
 <p align="center">
-  <img src="intro.jpg" width="920" alt="批量生成、字幕编辑器与质量检查">
+  <b>把视频拖进去，出能上片的字幕。</b><br>
+  Windows 桌面 · 本地运行 · 转写 / 翻译 / 双语 · SRT · VTT · ASS
+</p>
+
+<p align="center">
+  <a href="https://github.com/dlsandy/Transub/releases">下载</a>
+  ·
+  <a href="CHANGELOG.md">变更记录</a>
+  ·
+  <a href="https://afdian.com/a/transub">爱发电 / Pro</a>
+  ·
+  <a href="https://github.com/dlsandy/Transub/issues">问题反馈</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/01-overview.png" width="920" alt="批量生成与字幕编辑器总览">
 </p>
 
 ---
@@ -15,6 +29,7 @@ Windows 桌面 · 本地运行 · 转写 / 翻译 / 双语 · SRT · VTT · ASS
 
 - [适合谁](#适合谁)
 - [怎么用](#怎么用)
+- [界面一览](#界面一览)
 - [选哪种翻译](#选哪种翻译)
 - [下载安装](#下载安装)
 - [Pro 要不要买](#pro-要不要买)
@@ -45,13 +60,57 @@ Windows 桌面 · 本地运行 · 转写 / 翻译 / 双语 · SRT · VTT · ASS
 
 界面可切简体 / 繁体。任务进行中能增删队列；中途停了可以断点继续。
 
-![批量生成](docs/screenshots/02-batch-generate.jpg)
+---
 
-![字幕编辑器](docs/screenshots/03-editor-list.jpg)
+## 界面一览
 
-![质量检查](docs/screenshots/04-qc-panel.jpg)
+### 拖进去就开跑
 
-![波形时间轴](docs/screenshots/06-timeline-waveform.jpg)
+支持视频与音频，可一次拖多个文件；进度、引擎日志和本机占用一目了然。
+
+<p align="center">
+  <img src="docs/screenshots/02-batch-generate.png" width="720" alt="批量生成：拖入文件">
+</p>
+
+### 列表精修 + Pro 工具条
+
+按低置信、质检、书签筛选；时间、读速（CPS）、样式一栏看清。Pro 可做语境重构、影片理解重构、语义审阅和 ASS 样式。
+
+<p align="center">
+  <img src="docs/screenshots/03-editor-list.png" width="920" alt="字幕编辑器列表与详情">
+</p>
+
+### 质量检查，一键修
+
+扫描重叠、读速、时长、通顺度；勾选要修的项后一键修复。Pro 还可对残留问题做智能断句、局部重转写和语义审阅。
+
+<p align="center">
+  <img src="docs/screenshots/04-qc-panel.png" width="560" alt="质量检查与一键修复">
+</p>
+
+### 对着画面改时间轴
+
+预览 + 波形 + 字幕块联动；可插入、局部重转写，空格播放、Ctrl+S 保存。
+
+<p align="center">
+  <img src="docs/screenshots/06-timeline-waveform.png" width="920" alt="视频预览与波形时间轴">
+</p>
+
+### 详情：时长、样式、智能分割
+
+读速提示、智能时长、静音分割、叠词压缩；ASS 还可调特效与落点。
+
+<p align="center">
+  <img src="docs/screenshots/05-split-tools.png" width="720" alt="详情编辑与分割工具">
+</p>
+
+### 跑完自动收拾一遍
+
+批次结束后可自动质检、清杂音 / 幻觉短句、精简标点与语气词；低置信句可开二意见。
+
+<p align="center">
+  <img src="docs/screenshots/07-auto.png" width="720" alt="任务处理后自动优化设置">
+</p>
 
 ---
 
