@@ -15,6 +15,7 @@ const PROPRIETARY_SOURCES = [
     'electron/advanced-bilingual-semantic.js',
     'electron/advanced-reconstruct-runtime.js',
     'electron/advanced-smart-translate.js',
+    'src/js/advanced-context-reconstruct-core.js',
     'src/js/advanced-film-reconstruct-core.js',
     'src/js/advanced-smart-translate-core.js',
     'src/js/smart-translate-verify-core.js',
@@ -109,6 +110,20 @@ for (const rel of PROPRIETARY_SOURCES) {
     if (files.includes(neg) || files.some((f) => f === neg)) ok(`asar excludes ${rel}`);
     else if (rel.startsWith('tools/')) ok(`${rel} not in asar files globs`);
     else warn(`package.json build.files may still include ${rel} (add ${neg})`);
+}
+
+try {
+    const trackedProprietary = execSync(
+        `git ls-files -- ${PROPRIETARY_SOURCES.map((p) => `"${p}"`).join(' ')}`,
+        { cwd: root, encoding: 'utf8' },
+    ).trim().split(/\r?\n/).filter(Boolean);
+    if (trackedProprietary.length) {
+        fail(`proprietary sources still tracked by git: ${trackedProprietary.join(', ')}`);
+    } else {
+        ok('no proprietary algorithm sources tracked by git');
+    }
+} catch {
+    warn('could not verify proprietary sources are untracked (git ls-files failed)');
 }
 
 const extra = pkg.build?.extraFiles || [];

@@ -91,11 +91,13 @@ electron/advanced-film-reconstruct.js
 electron/advanced-bilingual-semantic.js
 electron/advanced-reconstruct-runtime.js
 electron/advanced-smart-translate.js
+src/js/advanced-context-reconstruct-core.js
 src/js/advanced-film-reconstruct-core.js
 src/js/advanced-smart-translate-core.js
 src/js/smart-translate-verify-core.js
 src/js/smart-translate-address-core.js
 tools/advanced-module-entry.js
+tests/advanced-context-reconstruct.test.js
 tests/advanced-film-reconstruct.test.js
 tests/advanced-smart-translate.test.js
 tests/smart-translate-verify-core.test.js

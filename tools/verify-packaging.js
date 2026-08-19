@@ -259,6 +259,7 @@ const PROPRIETARY_ASAR_FORBIDDEN = [
     'electron/advanced-bilingual-semantic.js',
     'electron/advanced-reconstruct-runtime.js',
     'electron/advanced-smart-translate.js',
+    'src/js/advanced-context-reconstruct-core.js',
     'src/js/advanced-film-reconstruct-core.js',
     'src/js/advanced-smart-translate-core.js',
     'src/js/smart-translate-verify-core.js',
@@ -267,6 +268,7 @@ const PROPRIETARY_ASAR_FORBIDDEN = [
 
 /** Same closed cores must not leak through renderer-dist/** → asar */
 const PROPRIETARY_RENDERER_DIST_FORBIDDEN = [
+    'renderer-dist/js/advanced-context-reconstruct-core.js',
     'renderer-dist/js/advanced-film-reconstruct-core.js',
     'renderer-dist/js/advanced-smart-translate-core.js',
     'renderer-dist/js/smart-translate-verify-core.js',

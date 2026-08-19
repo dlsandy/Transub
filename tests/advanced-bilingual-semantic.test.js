@@ -1,10 +1,20 @@
 const assert = require('assert');
-const {
-    parseIssues,
-    buildMessages,
-} = require('../electron/advanced-bilingual-semantic');
+
+let parseIssues;
+let buildMessages;
+try {
+    ({ parseIssues, buildMessages } = require('../electron/advanced-bilingual-semantic'));
+} catch (_) {
+    // Public checkout without proprietary sources
+}
 
 describe('advanced-bilingual-semantic', () => {
+    before(function () {
+        if (typeof parseIssues !== 'function' || typeof buildMessages !== 'function') {
+            this.skip();
+        }
+    });
+
     it('parses suggestedTarget from model JSON', () => {
         const issues = parseIssues(JSON.stringify({
             issues: [

@@ -2,7 +2,12 @@ const assert = require('assert');
 const meta = require('../src/js/subtitle-meta-core');
 const findCore = require('../src/js/find-replace-core');
 const { serializeAss } = require('../electron/subtitle-format');
-const { parseIssues } = require('../electron/advanced-bilingual-semantic');
+let parseIssues;
+try {
+    ({ parseIssues } = require('../electron/advanced-bilingual-semantic'));
+} catch (_) {
+    // Public checkout without proprietary bilingual-semantic module
+}
 const { seedAsrConfidenceMeta, pickEngineCuesForConfidence } = require('../electron/asr-confidence-seed');
 const entitlement = require('../src/js/advanced-entitlement-core');
 const fs = require('fs');
@@ -128,6 +133,10 @@ describe('serializeDualAss', () => {
 });
 
 describe('bilingual semantic parse', () => {
+    before(function () {
+        if (typeof parseIssues !== 'function') this.skip();
+    });
+
     it('parses fenced JSON issues', () => {
         const issues = parseIssues('```json\n{"issues":[{"index":2,"type":"omission","message":"漏译姓名","severity":"warn"}]}\n```');
         assert.strictEqual(issues.length, 1);

@@ -78,6 +78,7 @@ copyRecursive(path.join(src, 'vendor'), path.join(outDir, 'vendor'));
 
 // Closed-source Pro algorithms ship via `_advanced` only — strip from renderer asar copy.
 const proprietaryRendererJs = [
+    'advanced-context-reconstruct-core.js',
     'advanced-film-reconstruct-core.js',
     'advanced-smart-translate-core.js',
     'smart-translate-verify-core.js',
