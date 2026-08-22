@@ -80,6 +80,43 @@ function collectPairs(focus) {
     return [...byCode.values()].sort((a, b) => b.mtime - a.mtime);
 }
 
+/** When task-history has not flushed yet, pair JA keep + engine job ZH next to the video. */
+function collectPairsFromEngineJobs(focus) {
+    const jobsDir = path.join(process.env.LOCALAPPDATA || '', 'TransubEngine', 'jobs');
+    const jaRoot = path.join(root, 'subtitles');
+    const byCode = new Map();
+    if (!jobsDir || !fs.existsSync(jobsDir)) return [];
+    let names = [];
+    try { names = fs.readdirSync(jobsDir); } catch (_) { return []; }
+    for (const name of names) {
+        if (!/\.json$/i.test(name)) continue;
+        let job;
+        try { job = JSON.parse(fs.readFileSync(path.join(jobsDir, name), 'utf8')); }
+        catch (_) { continue; }
+        const media = String(job.request?.mediaPath || job.mediaPath || '');
+        if (!media) continue;
+        const stem = path.basename(media).replace(/\.[^.]+$/, '');
+        const short = String(extractTitleCode(stem) || stem).match(/[A-Z]{2,6}-\d+/i)?.[0]?.toUpperCase();
+        if (!short) continue;
+        if (focus.size && !focus.has(short)) continue;
+        const outDir = String(job.request?.outputDir || path.dirname(media));
+        const zhPath = path.join(outDir, `${stem}.srt`);
+        const jaCandidates = [
+            path.join(jaRoot, `${short}.src.srt`),
+            path.join(jaRoot, `${stem}.src.srt`),
+            String(job.request?.sourceSubtitlePath || ''),
+        ];
+        const jaPath = jaCandidates.find((p) => p && fs.existsSync(p)) || '';
+        if (!jaPath || !fs.existsSync(zhPath)) continue;
+        const mtime = Math.max(fs.statSync(jaPath).mtimeMs, fs.statSync(zhPath).mtimeMs);
+        const prev = byCode.get(short);
+        if (!prev || mtime >= prev.mtime) {
+            byCode.set(short, { code: short, jaPath, zhPath, mtime });
+        }
+    }
+    return [...byCode.values()].sort((a, b) => b.mtime - a.mtime);
+}
+
 function main() {
     const stems = readLogStems();
     const focus = latestBatchFocus(stems);
@@ -90,6 +127,10 @@ function main() {
     console.log('logBatch', [...focus].join(', ') || '(none)');
 
     let pairs = collectPairs(focus);
+    if (!pairs.length) {
+        pairs = collectPairsFromEngineJobs(focus);
+        if (pairs.length) console.log('pairs source: engine jobs');
+    }
     if (sinceArg) {
         const cut = Date.parse(sinceArg.slice('--since='.length));
         pairs = pairs.filter((p) => p.mtime >= cut);
@@ -226,4 +267,4 @@ if (require.main === module) {
     main();
 }
 
-module.exports = { main, latestBatchFocus, readLogStems };
+module.exports = { main, latestBatchFocus, readLogStems, collectPairsFromEngineJobs };
