@@ -12,7 +12,8 @@
 <p align="center">
   <a href="https://github.com/dlsandy/Transub/releases">下载</a>
   ·
-  <a href="CHANGELOG.md">变更记录</a>
+- [变更记录](CHANGELOG.md)
+- [贡献指南](CONTRIBUTING.md)（公开仓边界与检查命令）
   ·
   <a href="https://afdian.com/a/transub">爱发电 / Pro</a>
   ·
