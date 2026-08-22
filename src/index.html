@@ -2131,7 +2131,7 @@
                                 <span>添加</span>
                                 <i class="fa fa-caret-down text-xs opacity-90" aria-hidden="true"></i>
                             </button>
-                            <div id="addMenu" class="post-task-menu post-task-menu--left hidden w-36" role="menu" aria-label="添加媒体">
+                            <div id="addMenu" class="post-task-menu post-task-menu--left hidden w-40" role="menu" aria-label="添加媒体">
                                 <button type="button" class="post-task-menu-item" data-add-action="videos" role="menuitem">
                                     <i class="fa fa-file-video-o w-3 text-center text-gray-400" aria-hidden="true"></i>
                                     <span>添加媒体</span>
@@ -2139,6 +2139,10 @@
                                 <button type="button" class="post-task-menu-item" data-add-action="folder" role="menuitem">
                                     <i class="fa fa-folder-open w-3 text-center text-gray-400" aria-hidden="true"></i>
                                     <span>添加文件夹</span>
+                                </button>
+                                <button type="button" class="post-task-menu-item" data-add-action="auto-scan" role="menuitem">
+                                    <i class="fa fa-search w-3 text-center text-gray-400" aria-hidden="true"></i>
+                                    <span>自动添加</span>
                                 </button>
                             </div>
                         </div>
@@ -2478,6 +2482,9 @@
                         <button type="button" id="emptyAddFolderBtn" class="px-3.5 py-2 border border-gray-200 hover:bg-white rounded-lg text-sm text-gray-700">
                             <i class="fa fa-folder-open mr-1"></i>添加文件夹
                         </button>
+                        <button type="button" id="emptyAutoScanBtn" class="px-3.5 py-2 border border-gray-200 hover:bg-white rounded-lg text-sm text-gray-700">
+                            <i class="fa fa-search mr-1"></i>自动添加
+                        </button>
                     </div>
                     <p class="text-[11px] text-gray-400">快捷键 A 添加 · Enter 开始 · ? 帮助</p>
                     <p id="emptyStateEnvHint" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 max-w-md leading-relaxed">
@@ -2602,6 +2609,7 @@
                             <button type="button" class="params-tab-btn" data-tab="params" data-settings-tier="common" role="tab" aria-selected="false" title="智能感知场景、参数预设与识别细参">识别参数</button>
                             <button type="button" class="params-tab-btn" data-tab="process" data-settings-tier="common" role="tab" aria-selected="false" title="深度感知、降噪与批量后处理">任务处理</button>
                             <button type="button" class="params-tab-btn" data-tab="output" data-settings-tier="common" role="tab" aria-selected="false" title="格式、位置与合并">字幕输出</button>
+                            <button type="button" class="params-tab-btn" data-tab="auto-scan" data-settings-tier="common" role="tab" aria-selected="false" title="自定义目录，自动添加无字幕媒体">扫描目录</button>
                             <button type="button" class="params-tab-btn" data-tab="performance" data-settings-tier="common" role="tab" aria-selected="false" title="设备、档位与显存">硬件</button>
                             <button type="button" class="params-tab-btn" data-tab="install" data-settings-tier="common" role="tab" aria-selected="false" title="引擎安装、检测与 llama-server 运行时">运行环境</button>
                             <button type="button" class="params-tab-btn" data-tab="editor" data-settings-tier="common" role="tab" aria-selected="false" title="编辑器外观与习惯">字幕编辑器</button>
@@ -2810,6 +2818,7 @@
                                         自动启动引擎
                                     </label>
                                     <button type="button" id="engineEnsureGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm text-sky-700 hover:bg-sky-50">下载 GPU 支持</button>
+                                    <button type="button" id="engineScanCudaBtn" class="px-3 py-1.5 border rounded-lg text-sm text-sky-700 hover:bg-sky-50" title="白名单探测本机 Toolkit / CUDA_PATH，校验后复制到引擎">扫描复用本机 CUDA</button>
                                     <button type="button" id="engineManualGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm text-gray-700 hover:bg-gray-50" title="网络不佳时，浏览器下载 .whl 后本地安装">手动安装 GPU</button>
                                     <button type="button" id="engineOpenLogBtn" class="px-3 py-1.5 text-xs text-emerald-700 hover:underline">打开引擎日志</button>
                                 </div>
@@ -2824,7 +2833,7 @@
                             <label id="advancedManagedRuntimeBackendWrap" class="block text-sm mt-2 hidden">
                                 <span class="settings-label font-medium text-gray-700">
                                     llama-server 后端
-                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有 NVIDIA 时按驱动 CUDA 主版本默认：13+ → CUDA 13，12+ → CUDA 12（通常更快，含运行库约数百 MB）；否则默认 Vulkan（兼容面广、体积小）。切换时会弹窗确认并自动安装；失败可用「手动下载运行时」。</span></span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有 NVIDIA 时按驱动 CUDA 主版本默认：13+ → CUDA 13，12+ → CUDA 12（通常更快，含运行库约数百 MB）；否则默认 Vulkan（兼容面广、体积小）。切换时会弹窗确认并自动安装；失败可用「手动下载运行时」。可用「扫描本机 CUDA」查找可复用的 cudart/cublas。</span></span>
                                 </span>
                                 <select id="advancedManagedRuntimeBackendSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
                                     <option value="win-cuda13-x64">CUDA 13（NVIDIA显卡驱动580或更高版本）</option>
@@ -2836,6 +2845,7 @@
                             <div class="flex flex-wrap gap-2 mt-3">
                                 <button type="button" id="advancedManagedInstallRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">安装 / 更新运行时</button>
                                 <button type="button" id="advancedManagedManualRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="浏览器下载 zip 后选择文件安装">手动下载运行时</button>
+                                <button type="button" id="advancedManagedScanCudaBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="白名单探测本机 NVIDIA Toolkit / CUDA_PATH / 引擎 nvidia 包，校验后可复用">扫描本机 CUDA</button>
                                 <button type="button" id="advancedManagedRuntimeRefreshBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">刷新状态</button>
                                 <button type="button" id="advancedManagedPerfTestBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="启动本地服务并测生成速度（tok/s）">性能测试</button>
                                 <button type="button" id="advancedManagedStopServerBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">停止本地服务</button>
@@ -3198,6 +3208,27 @@
                                 <input type="checkbox" id="overwriteCheck" class="rounded" checked>
                                 <span class="settings-label font-medium text-gray-700">覆盖已有字幕文件<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">目标位置已有同名字幕时直接覆盖，而不是跳过。</span></span></span>
                             </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="auto-scan" data-settings-search="扫描目录 自动扫描 自动添加 无字幕 监视 文件夹 子目录 递归">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">扫描目录</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed">
+                                在主窗口「添加 → 自动添加」时，会扫描以下目录中<strong>尚无外挂字幕</strong>的音视频并加入任务列表。目录数量不限。
+                            </p>
+                            <div id="autoScanFoldersList" class="mt-3 space-y-2" aria-live="polite"></div>
+                            <div class="flex flex-wrap items-center gap-2 mt-3">
+                                <button type="button" id="autoScanAddFolderBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">
+                                    <i class="fa fa-folder-open w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>添加目录
+                                </button>
+                            </div>
+                            <div class="settings-checks-grid mt-3">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="autoScanRecursiveCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">同时扫描子目录<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">勾选后递归扫描各监视目录下的子文件夹；取消则只扫顶层。</span></span></span>
+                                </label>
                             </div>
                         </fieldset>
                     </div>
@@ -4624,6 +4655,7 @@
     <script src="js/selection-toolbar-core.js"></script>
     <script src="js/live-batch-queue-core.js"></script>
     <script src="js/settings-saved-options-core.js"></script>
+    <script src="js/auto-scan-folders-core.js"></script>
     <script src="js/smart-translate-hybrid-core.js"></script>
     <script src="js/smart-translate-polish-core.js"></script>
     <script src="js/subtitle-qc-smart-core.js"></script>

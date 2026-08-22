@@ -222,6 +222,12 @@
             outputDir: String(fields.outputDir || ''),
             audioSuffixes: String(fields.audioSuffixes || ''),
             ffmpegPath: String(fields.ffmpegPath || ''),
+            autoScanFolders: norm.normalizeAutoScanFolders
+                ? norm.normalizeAutoScanFolders(fields.autoScanFolders)
+                : (Array.isArray(fields.autoScanFolders)
+                    ? fields.autoScanFolders.map((p) => String(p || '').trim()).filter(Boolean)
+                    : []),
+            autoScanRecursive: fields.autoScanRecursive !== false,
         };
         const mutex = resolveAudioMutexApi();
         if (typeof mutex?.normalizeAudioOptionBundle === 'function') {

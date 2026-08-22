@@ -1008,6 +1008,7 @@
         } catch (_) { /* ignore */ }
     }
 
+    let autoScanFoldersDraft = [];
     const state = {
         items: [],
         running: false,
@@ -1409,7 +1410,7 @@
             'engineVadModelSelect',
             'engineAutoStartCheck', 'engineTestBtn',
             'engineCancelDownloadBtn',
-            'engineEnsureGpuBtn', 'engineManualGpuBtn', 'engineGpuStatus',
+            'engineEnsureGpuBtn', 'engineScanCudaBtn', 'engineManualGpuBtn', 'engineGpuStatus',
             'engineRefreshModelsBtn', 'engineRefreshModelsSummaryBtn',
             'openEngineModelsLibraryBtn', 'closeEngineModelsLibraryBtn', 'engineModelsLibraryModal',
             'engineModelsLibraryTabSummary', 'engineModelsLibraryDlStrip', 'engineModelsLibraryDlStripText',
@@ -1470,7 +1471,8 @@
             'ffmpegPathInput', 'ffmpegBrowseBtn', 'ffmpegFolderBtn', 'ffmpegTestBtn', 'ffmpegStatus',
             'addMenuBtn', 'addMenu', 'addMenuWrap',
             'pendingQueueBadge',
-            'emptyState', 'listScroll', 'emptyAddVideosBtn', 'emptyAddFolderBtn',
+            'emptyState', 'listScroll', 'emptyAddVideosBtn', 'emptyAddFolderBtn', 'emptyAutoScanBtn',
+            'autoScanFoldersList', 'autoScanAddFolderBtn', 'autoScanRecursiveCheck',
             'logCollapseBtn', 'logSectionBody', 'logSection', 'clearLogBtn', 'copyLogBtn', 'progressEta',
             'saveParamsBtn', 'saveParamsStatus',
             'jobStatusBadge', 'progressLabel', 'progressCount', 'progressBar', 'resourceUsageLabel',
@@ -1589,6 +1591,42 @@
         setAddMenuOpen(!state.addMenuOpen);
     }
 
+    function getAutoScanApi() {
+        return (typeof globalThis !== 'undefined' && globalThis.TransubAutoScanFolders)
+            || (typeof window !== 'undefined' && window.TransubAutoScanFolders)
+            || {};
+    }
+
+    function refreshAutoScanFoldersListUi() {
+        const api = getAutoScanApi();
+        const folders = api.normalizeAutoScanFolders
+            ? api.normalizeAutoScanFolders(autoScanFoldersDraft)
+            : (Array.isArray(autoScanFoldersDraft) ? autoScanFoldersDraft : []);
+        autoScanFoldersDraft = folders;
+        if (typeof api.renderAutoScanFoldersList === 'function') {
+            api.renderAutoScanFoldersList(els.autoScanFoldersList, folders, {
+                onRemove: (index) => {
+                    autoScanFoldersDraft = folders.filter((_, i) => i !== index);
+                    refreshAutoScanFoldersListUi();
+                },
+            });
+        }
+    }
+
+    function bindAutoScanSettingsUi() {
+        els.autoScanAddFolderBtn?.addEventListener('click', async () => {
+            const res = await electron?.selectFolder?.({
+                title: '选择要自动扫描的目录',
+                useLastOpenDir: true,
+            });
+            if (!res?.ok || res.canceled || !res.path) return;
+            const api = getAutoScanApi();
+            autoScanFoldersDraft = api.normalizeAutoScanFolders
+                ? api.normalizeAutoScanFolders([...(autoScanFoldersDraft || []), res.path])
+                : [...(autoScanFoldersDraft || []), res.path];
+            refreshAutoScanFoldersListUi();
+        });
+    }
     function bindAddMenu() {
         els.addMenuBtn?.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -1601,6 +1639,7 @@
                 const action = item.dataset.addAction;
                 if (action === 'videos') await addVideos();
                 else if (action === 'folder') await addFolder();
+                else if (action === 'auto-scan') await autoAddMissingSubtitles();
             });
         });
         els.addMenu?.addEventListener('click', (event) => event.stopPropagation());
@@ -1995,6 +2034,7 @@
         });
         els.emptyAddVideosBtn?.addEventListener('click', () => addVideos());
         els.emptyAddFolderBtn?.addEventListener('click', () => addFolder());
+        els.emptyAutoScanBtn?.addEventListener('click', () => { void autoAddMissingSubtitles(); });
         els.qcBannerDismissBtn?.addEventListener('click', () => {
             state.qcBannerDismissed = true;
             updateQcBanner();
@@ -5412,6 +5452,16 @@
         if (els.rememberLastOpenDirCheck) {
             els.rememberLastOpenDirCheck.checked = options.rememberLastOpenDir !== false;
         }
+        {
+            const api = getAutoScanApi();
+            autoScanFoldersDraft = api.normalizeAutoScanFolders
+                ? api.normalizeAutoScanFolders(options.autoScanFolders)
+                : (Array.isArray(options.autoScanFolders) ? options.autoScanFolders.slice() : []);
+            refreshAutoScanFoldersListUi();
+            if (els.autoScanRecursiveCheck) {
+                els.autoScanRecursiveCheck.checked = options.autoScanRecursive !== false;
+            }
+        }
         if (els.minimizeToTrayCheck) {
             els.minimizeToTrayCheck.checked = options.minimizeToTrayEnabled !== false;
         }
@@ -5656,6 +5706,10 @@
                 ffmpegPath: els.ffmpegPathInput
                     ? (els.ffmpegPathInput.value.trim() || '')
                     : (savedOptionsSnapshot?.ffmpegPath || ''),
+                autoScanFolders: autoScanFoldersDraft,
+                autoScanRecursive: els.autoScanRecursiveCheck
+                    ? !!els.autoScanRecursiveCheck.checked
+                    : true,
             }, settingsNormApi);
         stashTwaiLegacyFromOptions(built);
         return built;
@@ -7671,6 +7725,74 @@
             return { ok: false, error: msg };
         } finally {
             if (!assumeBusy) setEngineDownloadBusy(false);
+        }
+    }
+
+    async function scanAndReuseEngineCuda() {
+        if (!electron?.transubEngineScanCuda || !electron?.transubEngineAdoptCuda) {
+            appendLog('当前环境不支持扫描本机 CUDA', 'err');
+            setEngineStatusText('当前环境不支持扫描本机 CUDA', 'err');
+            return { ok: false, error: 'unsupported' };
+        }
+        if (engineModelsBusy) return { ok: false, error: 'busy' };
+        setEngineGpuStatusText('正在扫描本机 CUDA…', 'busy');
+        setEngineStatusText('正在扫描本机 CUDA…', 'busy');
+        try {
+            const scan = await electron.transubEngineScanCuda({
+                ...engineFormPayload(),
+                major: 12,
+            });
+            if (!scan?.ok) {
+                const err = scan?.error || '扫描失败';
+                setEngineGpuStatusText(err, 'err');
+                setEngineStatusText(err, 'err');
+                appendLog(err, 'err');
+                return scan || { ok: false, error: err };
+            }
+            if (!scan.found) {
+                await appConfirm({
+                    title: '未找到可复用 CUDA',
+                    message: `${scan.message || '未找到齐全的本机 CUDA 运行库。'}\n\n仍可点「下载 GPU 支持」从镜像安装；若本机之后安装了 NVIDIA Toolkit，可再扫一次。`,
+                    primaryLabel: '知道了',
+                });
+                setEngineGpuStatusText(scan.message || '未找到可复用 CUDA', 'warn');
+                return { ok: true, found: false, message: scan.message };
+            }
+            const reused = (scan.cuda12?.reusable || []).join('、') || scan.message;
+            const choice = await appConfirmChoice({
+                title: '找到可复用本机 CUDA',
+                message: `${scan.message || '已找到可复用组件。'}\n\n可复用：${reused}\n\n将复制到引擎目录（跳过 nvidia-* 大包下载）。仍缺的组件可随后用「下载 GPU 支持」补齐（含 onnxruntime-gpu）。`,
+                primaryLabel: '复用到引擎',
+                secondaryLabel: '仅查看',
+            });
+            setEngineGpuStatusText(scan.message || '已扫描', 'ok');
+            if (choice !== 'primary') {
+                return { ok: true, found: true, adopted: false, ...(scan || {}) };
+            }
+            setEngineStatusText('正在复用本机 CUDA 到引擎…', 'busy');
+            const adopt = await electron.transubEngineAdoptCuda({
+                ...engineFormPayload(),
+                major: 12,
+            });
+            if (!adopt?.ok) {
+                const err = adopt?.error || '复用失败';
+                setEngineGpuStatusText(err, 'err');
+                setEngineStatusText(err, 'err');
+                appendLog(err, 'err');
+                return adopt || { ok: false, error: err };
+            }
+            const msg = adopt.message || '已复用本机 CUDA 到引擎';
+            appendLog(msg, 'ok');
+            setEngineGpuStatusText(msg, 'ok');
+            setEngineStatusText(msg, 'ok');
+            await refreshEngineGpuStatus({ silent: true });
+            return { ok: true, found: true, adopted: true, ...(adopt || {}) };
+        } catch (err) {
+            const msg = err?.message || String(err);
+            setEngineGpuStatusText(msg, 'err');
+            setEngineStatusText(msg, 'err');
+            appendLog(msg, 'err');
+            return { ok: false, error: msg };
         }
     }
 
@@ -9966,6 +10088,70 @@
         appendLog(`从文件夹添加 ${scan.files?.length || 0} 个媒体文件`, 'info');
     }
 
+    async function autoAddMissingSubtitles() {
+        const api = getAutoScanApi();
+        let folders = api.normalizeAutoScanFolders
+            ? api.normalizeAutoScanFolders(autoScanFoldersDraft)
+            : (Array.isArray(autoScanFoldersDraft) ? autoScanFoldersDraft : []);
+        if (!folders.length) {
+            const saved = api.normalizeAutoScanFolders
+                ? api.normalizeAutoScanFolders(savedOptionsSnapshot?.autoScanFolders)
+                : (Array.isArray(savedOptionsSnapshot?.autoScanFolders)
+                    ? savedOptionsSnapshot.autoScanFolders : []);
+            if (saved.length) {
+                folders = saved;
+                autoScanFoldersDraft = saved;
+                refreshAutoScanFoldersListUi();
+            }
+        }
+        if (!folders.length) {
+            appendLog('自动添加：请先在设置 → 扫描目录 中添加至少一个目录', 'warn');
+            showToast('请先在设置中配置扫描目录', 'warn');
+            openAppSettings('auto-scan');
+            return;
+        }
+        const recursive = els.autoScanRecursiveCheck
+            ? !!els.autoScanRecursiveCheck.checked
+            : (savedOptionsSnapshot?.autoScanRecursive !== false);
+        const outputDir = resolveOutputDirFromForm();
+        setLoading(true, '正在扫描无字幕媒体…');
+        let scan;
+        try {
+            scan = await electron?.transWithAiAutoScanFolders?.({
+                folders,
+                recursive,
+                outputDir,
+            });
+        } finally {
+            setLoading(false);
+        }
+        if (!scan?.ok) {
+            appendLog(scan?.error || '自动扫描失败', 'err');
+            return;
+        }
+        const paths = Array.isArray(scan.files) ? scan.files : [];
+        const before = state.items.length;
+        if (paths.length) await addFiles(paths);
+        const added = state.items.length - before;
+        const skippedDup = Math.max(0, paths.length - added);
+        const logLine = typeof api.formatAutoScanLog === 'function'
+            ? api.formatAutoScanLog({
+                added,
+                skippedHasSub: scan.skippedHasSub || 0,
+                skippedDup,
+                skippedMissingFolder: scan.skippedMissingFolder || 0,
+                scanned: scan.scanned || 0,
+                folderCount: scan.folderCount || folders.length,
+                folderErrors: scan.folderErrors || [],
+            })
+            : `自动添加：加入 ${added} 个，跳过已有字幕 ${scan.skippedHasSub || 0} 个，列表已有 ${skippedDup} 个`;
+        appendLog(logLine, added > 0 ? 'info' : 'warn');
+        if (Array.isArray(scan.folderErrors) && scan.folderErrors.length) {
+            for (const err of scan.folderErrors.slice(0, 5)) {
+                appendLog(`扫描目录无效：${err.folder}（${err.error || '未知错误'}）`, 'warn');
+            }
+        }
+    }
     function removeSelected() {
         if (state.retranslateBusy) return;
         const partition = liveBatchQueueApi.partitionSelectedForRemove
@@ -12706,6 +12892,7 @@
     function bindEvents() {
         if (!electron) return;
 
+        bindAutoScanSettingsUi();
         if (!isStandaloneSettings) {
             bindListActions();
             setupDragDrop();
@@ -13055,6 +13242,9 @@
         });
         els.engineEnsureGpuBtn?.addEventListener('click', () => {
             void ensureEngineGpuSupport({ force: false });
+        });
+        els.engineScanCudaBtn?.addEventListener('click', () => {
+            void scanAndReuseEngineCuda();
         });
         els.engineManualGpuBtn?.addEventListener('click', () => {
             void manualEngineDownloadInstall({ kinds: ['gpu'] });

@@ -1451,6 +1451,22 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transwithai-auto-scan-folders', async (_event, payload = {}) => {
+        try {
+            const { scanFoldersForMissingSubtitles } = require('./media-auto-scan');
+            const folders = Array.isArray(payload.folders) ? payload.folders : [];
+            const outputDir = asString(payload.outputDir, 4096).trim();
+            return scanFoldersForMissingSubtitles({
+                folders,
+                recursive: payload.recursive !== false,
+                outputDir,
+                scanVideosInDirectory,
+            });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transwithai-check-subtitles', async (_event, payload = {}) => {
         try {
             const paths = Array.isArray(payload.paths) ? payload.paths : [];

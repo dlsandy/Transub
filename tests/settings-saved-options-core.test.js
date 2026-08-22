@@ -42,6 +42,17 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(out.asrSecondOpinion, 'auto');
         assert.strictEqual(out.filmBriefSampleMode, 'auto');
         assert.strictEqual(out.activePresetId, '');
+        assert.deepStrictEqual(out.autoScanFolders, []);
+        assert.strictEqual(out.autoScanRecursive, true);
+    });
+
+    it('persists autoScanFolders and recursive flag', () => {
+        const out = saved.assembleSavedOptionsFromFields({
+            autoScanFolders: ['D:\\Media', 'D:/Media', 'E:\\More'],
+            autoScanRecursive: false,
+        }, norm);
+        assert.deepStrictEqual(out.autoScanFolders, ['D:\\Media', 'E:\\More']);
+        assert.strictEqual(out.autoScanRecursive, false);
     });
 
     it('persists filmBriefSampleMode full', () => {

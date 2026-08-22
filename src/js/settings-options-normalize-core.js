@@ -177,6 +177,21 @@
         };
     }
 
+    function normalizeAutoScanFolders(raw) {
+        const list = Array.isArray(raw) ? raw : [];
+        const out = [];
+        const seen = new Set();
+        for (const entry of list) {
+            const folder = String(entry || '').trim();
+            if (!folder) continue;
+            const key = folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(folder);
+        }
+        return out;
+    }
+
     return {
         POST_BATCH_QC_FIX_MODES,
         VIEWING_CLEAN_MODES,
@@ -204,5 +219,6 @@
         normalizeAutoUpdateCheckInterval,
         resolveEngineMtModelForPersist,
         viewingCleanModesToLegacyFlags,
+        normalizeAutoScanFolders,
     };
 }));
