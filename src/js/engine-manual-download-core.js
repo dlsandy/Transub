@@ -83,6 +83,11 @@
                 hubIds.push(id);
                 continue;
             }
+            if (/qwen3-asr|qwen3-forced-aligner/i.test(id)) {
+                kinds.push('torch-cuda');
+                hubIds.push(id);
+                continue;
+            }
             if (/^whisper/i.test(id)) {
                 kinds.push('whisper');
                 hubIds.push(id);

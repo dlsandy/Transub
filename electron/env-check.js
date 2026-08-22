@@ -37,7 +37,11 @@ const ASR_MODEL_MARKERS = {
 };
 
 function hasNonAscii(text) {
-    return /[^\x00-\x7F]/.test(String(text || ''));
+    const s = String(text || '');
+    for (let i = 0; i < s.length; i += 1) {
+        if (s.charCodeAt(i) > 127) return true;
+    }
+    return false;
 }
 
 function resolveEnginePython(engineRoot) {
@@ -99,6 +103,12 @@ function prefersWhisper(engineAsrModel) {
     const id = String(engineAsrModel || '').trim().toLowerCase();
     if (!id) return false;
     return id.includes('whisper') && !id.includes('whisperseg');
+}
+
+function prefersQwenAsr(engineAsrModel) {
+    const id = String(engineAsrModel || '').trim().toLowerCase();
+    if (!id) return false;
+    return id.includes('qwen3-asr') || id.includes('qwen3-forced-aligner');
 }
 
 function listInstalledAsrIds(engineRoot) {
@@ -467,6 +477,99 @@ async function checkSensevoiceRuntime(engineRoot, engineAsrModel = '') {
         status: 'fail',
         detail,
         blocking: true,
+    };
+}
+
+async function checkQwen3Runtime(engineRoot, engineAsrModel = '') {
+    const needQwen = prefersQwenAsr(engineAsrModel);
+    const probe = await runEnginePython(
+        engineRoot,
+        [
+            'import json,sys',
+            'from importlib.metadata import PackageNotFoundError, version',
+            'from transub_engine.device import detect_device, torch_cuda_libs_present, read_torch_version',
+            'out={"qwen_asr":"","transformers":"","torch":"","tokenizers":"","numba":"","missing":[],"error":"","hasCuda":False,"torchCudaLibs":False,"torchVersion":""}',
+            'dev=detect_device()',
+            'out["hasCuda"]=bool(dev.get("hasCuda"))',
+            'out["torchCudaLibs"]=bool(torch_cuda_libs_present())',
+            'out["torchVersion"]=str(read_torch_version() or "")',
+            'for dist,key in (("qwen-asr","qwen_asr"),("transformers","transformers"),("torch","torch"),("tokenizers","tokenizers"),("numba","numba")):',
+            ' try:',
+            '  out[key]=str(version(dist) or "ok")',
+            ' except PackageNotFoundError as e:',
+            '  out["missing"].append(key)',
+            '  if not out["error"]: out["error"]=str(e)',
+            ' except Exception as e:',
+            '  out["missing"].append(key)',
+            '  if not out["error"]: out["error"]=str(e)',
+            'print(json.dumps(out,ensure_ascii=False))',
+            'sys.exit(3 if out["missing"] else 0)',
+        ].join('\n'),
+        20000,
+    );
+    let data = null;
+    try {
+        data = JSON.parse(String(probe.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
+    } catch {
+        data = null;
+    }
+    const missingList = Array.isArray(data?.missing) ? data.missing.map(String) : [];
+    const hasCuda = !!data?.hasCuda;
+    const torchCudaLibs = !!data?.torchCudaLibs;
+    const needCudaTorch = hasCuda && data?.torch && !torchCudaLibs;
+
+    if (data?.qwen_asr && data?.transformers && data?.torch && missingList.length === 0 && !needCudaTorch) {
+        const bits = [
+            `torch ${data.torch}`,
+            `qwen-asr ${data.qwen_asr}`,
+            `transformers ${data.transformers}`,
+        ];
+        if (data.numba) bits.push(`numba ${data.numba}`);
+        return {
+            id: 'qwenRuntime',
+            label: 'Qwen3-ASR 运行库',
+            status: 'ok',
+            detail: bits.join(' · ') + (hasCuda && torchCudaLibs ? ' · CUDA PyTorch' : ''),
+            blocking: false,
+        };
+    }
+
+    const stderrClean = sanitizeEngineProbeStderr(probe.stderr);
+    const err = String(data?.error || stderrClean || '').trim();
+    const missingLabel = missingList.length ? missingList.join(', ') : '';
+
+    let detail;
+    if (needCudaTorch) {
+        detail = '已装 CPU 版 PyTorch，但检测到 NVIDIA GPU。下载 Qwen 模型或一键修复时会自动改装 CUDA 版（约 2.5GB，10–30 分钟）';
+    } else if (/winerror 4551|智能应用控制|应用程序控制策略|smart.?app/i.test(err)) {
+        detail = 'Windows 智能应用控制/应用程序控制策略拦截了 torch DLL，请关闭该策略或将引擎目录加入排除项';
+    } else if (/winerror 126|找不到指定的模块|dll load failed/i.test(err)) {
+        detail = '无法加载 torch DLL。请先安装 Visual C++ 运行库；若仍失败请关闭「智能应用控制」后重试';
+    } else if (missingLabel) {
+        detail = `缺少运行库 ${missingLabel}（qwen-asr / transformers / torch / numba 等）；下载 Qwen 模型时会自动安装`;
+        if (hasCuda) {
+            detail += '（有 GPU 时需额外改装 CUDA 版 PyTorch，约 2.5GB）';
+        }
+    } else {
+        detail = err || '无法加载 Qwen3-ASR 运行库（qwen-asr / transformers / torch）';
+    }
+
+    if (!needQwen) {
+        return {
+            id: 'qwenRuntime',
+            label: 'Qwen3-ASR 运行库',
+            status: 'warn',
+            detail: `${detail}（当前 ASR 非 Qwen，不影响现有转写）`,
+            blocking: false,
+        };
+    }
+    return {
+        id: 'qwenRuntime',
+        label: 'Qwen3-ASR 运行库',
+        status: needCudaTorch ? 'warn' : 'fail',
+        detail,
+        blocking: !needCudaTorch,
+        needsTorchCuda: needCudaTorch,
     };
 }
 
@@ -1041,6 +1144,7 @@ const ENV_CHECK_RUNTIME_IDS = Object.freeze([
     'vadModel',
     'lidModel',
     'sensevoiceRuntime',
+    'qwenRuntime',
     'whisperRuntime',
 ]);
 
@@ -1109,9 +1213,11 @@ async function runEnvCheck(options = {}) {
             items.push(checkVadModel(engineRoot, asrModel));
             items.push(checkLidModel(engineRoot));
             items.push(await checkSensevoiceRuntime(engineRoot, asrModel));
+            items.push(await checkQwen3Runtime(engineRoot, asrModel));
             items.push(await checkWhisperRuntime(engineRoot, asrModel));
         } else {
             const needSv = prefersSensevoice(asrModel);
+            const needQwen = prefersQwenAsr(asrModel);
             const needWhisper = prefersWhisper(asrModel) || !prefersSensevoice(asrModel);
             items.push({
                 id: 'asrModel',
@@ -1140,6 +1246,13 @@ async function runEnvCheck(options = {}) {
                 status: needSv ? 'fail' : 'warn',
                 detail: '引擎不可用，无法检测 torch / funasr',
                 blocking: needSv,
+            });
+            items.push({
+                id: 'qwenRuntime',
+                label: 'Qwen3-ASR 运行库',
+                status: needQwen ? 'fail' : 'warn',
+                detail: '引擎不可用，无法检测 qwen-asr / torch',
+                blocking: needQwen,
             });
             items.push({
                 id: 'whisperRuntime',
@@ -1219,6 +1332,20 @@ function planEnvFixes(items, opts = {}) {
         modelIds.add('sensevoice-small');
         forceIds.add('sensevoice-small');
         steps.push({ id: 'sensevoiceRuntime', label: '补齐 SenseVoice 运行库（torch / funasr / numba / scipy）' });
+    }
+
+    if (statusOf('qwenRuntime') === 'fail' || statusOf('qwenRuntime') === 'warn') {
+        const qwenId = prefersQwenAsr(asrModel) ? asrModel : 'qwen3-asr-0.6b';
+        modelIds.add(qwenId);
+        forceIds.add(qwenId);
+        const qr = byId.qwenRuntime || {};
+        const cudaNote = qr.needsTorchCuda
+            ? '（含 CUDA 版 PyTorch，约 2.5GB）'
+            : '';
+        steps.push({
+            id: 'qwenRuntime',
+            label: `补齐 Qwen3-ASR 运行库（qwen-asr / transformers / torch）${cudaNote}`,
+        });
     }
 
     if (statusOf('whisperRuntime') === 'fail' || statusOf('whisperRuntime') === 'warn') {
@@ -1354,6 +1481,7 @@ module.exports = {
     listInstalledAsrIds,
     prefersSensevoice,
     prefersWhisper,
+    prefersQwenAsr,
     findCublasInEngine,
     hasNonAscii,
     resolveEnginePython,

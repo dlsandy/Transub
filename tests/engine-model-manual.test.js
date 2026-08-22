@@ -56,6 +56,7 @@ describe('engine Hub model manual install helpers', () => {
         assert.strictEqual(normalizeEngineDownloadKind('gpu'), 'gpu');
         assert.strictEqual(normalizeEngineDownloadKind('audio-separate'), 'demucs');
         assert.strictEqual(normalizeEngineDownloadKind('runtime-whisper'), 'whisper');
+        assert.strictEqual(normalizeEngineDownloadKind('torch-cuda'), 'torch-cuda');
         assert.strictEqual(normalizeEngineDownloadKind(''), 'models');
     });
 

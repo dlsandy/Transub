@@ -34,6 +34,16 @@ describe('asr settings UI wiring', () => {
         assert.ok(shown.label.includes('whisper-large-v3-turbo'));
     });
 
+    it('describeQwenAsrRuntimeTip shows for qwen3-asr models', () => {
+        const hidden = asrSettings.describeQwenAsrRuntimeTip('whisper-tiny');
+        assert.strictEqual(hidden.visible, false);
+        const shown = asrSettings.describeQwenAsrRuntimeTip('qwen3-asr-1.7b-ja');
+        assert.strictEqual(shown.visible, true);
+        assert.ok(/2\.5GB|CUDA PyTorch/i.test(shown.text));
+        assert.ok(asrSettings.isQwenAsrModel('qwen3-asr-0.6b'));
+        assert.ok(!asrSettings.isQwenAsrModel('sensevoice-small'));
+    });
+
     it('persist path keeps perfProfile', () => {
         const assembled = saved.assembleSavedOptionsFromFields({
             task: 'transcribe',

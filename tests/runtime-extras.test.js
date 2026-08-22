@@ -156,7 +156,8 @@ print(json.dumps({
         const payload = JSON.parse(out);
         assert.strictEqual(payload.hasOrtGpu, false);
         assert.strictEqual(payload.hasOrt, true);
-        assert.strictEqual(payload.hasNumpyUpper, false);
+        // NUMPY_NUMBA_PIN keeps WhisperSeg refresh from floating numpy past numba.
+        assert.strictEqual(payload.hasNumpyUpper, true);
         assert.strictEqual(payload.tfKnown, true);
         assert.strictEqual(payload.tokKnown, true);
         assert.strictEqual(payload.skipPygments, true);
@@ -243,40 +244,38 @@ print(json.dumps({
         assert.ok(payload.elapsedMs < 5000, `probe too slow (${payload.elapsedMs}ms)`);
     });
 
-    it('skips vad-whisperseg pip when requirements already satisfied', { timeout: 60000 }, function () {
+    it('skips vad-whisperseg pip when probe reports ready', function () {
         if (process.platform !== 'win32') {
             this.skip();
         }
         const out = runExtras(`
 import json
-from transub_engine.runtime_extras import (
-    EXTRA_PACKAGES,
-    _requirement_satisfied,
-    _unsatisfied_packages,
-    ensure_vad_whisperseg,
-    probe_vad_whisperseg,
-)
-probe = probe_vad_whisperseg()
-unsat = _unsatisfied_packages(EXTRA_PACKAGES["vad-whisperseg"])
-res = ensure_vad_whisperseg(force=False)
+from unittest.mock import patch
+from transub_engine.runtime_extras import ensure_vad_whisperseg
+
+fake_probe = {
+    "ok": True,
+    "ready": True,
+    "status": "ready",
+    "missing": [],
+    "errors": [],
+    "versions": {"onnxruntime": "1.21.1", "transformers": "4.57.3"},
+}
+with patch("transub_engine.runtime_extras.probe_vad_whisperseg", return_value=fake_probe):
+    res = ensure_vad_whisperseg(force=False)
 print(json.dumps({
-    "probeOk": probe.get("ok"),
-    "probeReady": probe.get("ready"),
-    "allSatisfied": all(_requirement_satisfied(p) for p in EXTRA_PACKAGES["vad-whisperseg"]),
-    "unsatisfied": unsat,
     "ensureOk": res.get("ok"),
     "ensureSkipped": bool(res.get("skipped")),
+    "reason": res.get("reason"),
 }))
 `);
         const payload = JSON.parse(out);
-        assert.strictEqual(payload.probeOk, true);
-        // Import-based readiness: if the stack imports, ensure must skip pip.
-        // Metadata helpers can disagree slightly on pin edges (e.g. tokenizers);
-        // do not require allSatisfied ↔ unsatisfied[] identity here.
-        if (payload.probeReady) {
-            assert.strictEqual(payload.ensureOk, true);
-            assert.strictEqual(payload.ensureSkipped, true);
-        }
+        assert.strictEqual(payload.ensureOk, true);
+        assert.strictEqual(payload.ensureSkipped, true);
+        assert.ok(
+            payload.reason === 'already_satisfied' || payload.reason === 'already_ready',
+            `unexpected skip reason: ${payload.reason}`,
+        );
     });
 
     it('order_pip_mirrors prefers higher throughput over lower latency', function () {

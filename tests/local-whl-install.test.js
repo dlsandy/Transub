@@ -130,5 +130,11 @@ describe('local-whl-install', () => {
             /scipy-1\.1[0-9]\.[0-9]+-cp312-cp312-win_amd64\.whl/.test(src),
             'scipy manual wheel should be cp312 win_amd64',
         );
+        assert.ok(src.includes('TORCH_CUDA_MANUAL_PACKAGES'), 'missing TORCH_CUDA_MANUAL_PACKAGES');
+        assert.ok(src.includes("kind === 'torch-cuda'"), 'missing torch-cuda download kind');
+        assert.ok(
+            /torch-2\.9\.1\+cu126-cp312-cp312-win_amd64\.whl/.test(src),
+            'missing cu126 torch manual wheel',
+        );
     });
 });

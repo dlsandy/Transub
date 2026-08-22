@@ -320,6 +320,7 @@ describe('env-check', () => {
         assert.ok(!ENV_CHECK_BASE_IDS.includes('whisperRuntime'));
         assert.ok(ENV_CHECK_RUNTIME_IDS.includes('whisperRuntime'));
         assert.ok(ENV_CHECK_RUNTIME_IDS.includes('sensevoiceRuntime'));
+        assert.ok(ENV_CHECK_RUNTIME_IDS.includes('qwenRuntime'));
         assert.ok(!ENV_CHECK_RUNTIME_IDS.includes('ffmpeg'));
     });
 });

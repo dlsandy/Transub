@@ -54,10 +54,14 @@ describe('engine-manual-download-core', () => {
         const kinds = manual.classifyManualKindsForModelIds([
             'demucs',
             'sensevoice-small',
+            'qwen3-asr-0.6b',
             'whisper-tiny',
             'opus-mt-ja-zh',
         ]);
-        assert.deepStrictEqual(kinds.kinds.sort(), ['demucs', 'sensevoice', 'whisper'].sort());
+        assert.deepStrictEqual(
+            kinds.kinds.sort(),
+            ['demucs', 'sensevoice', 'torch-cuda', 'whisper'].sort(),
+        );
         assert.ok(kinds.hubIds.includes('opus-mt-ja-zh'));
     });
 });

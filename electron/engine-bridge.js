@@ -28,9 +28,11 @@ const {
 const {
     modelIdsNeedWhisperExtras,
     modelIdsNeedSensevoiceExtras,
+    modelIdsNeedQwenExtras,
     ensureRuntimeExtrasOffline,
     ensureAsrWhisperOffline,
     ensureAsrSensevoiceOffline,
+    ensureAsrQwen3Offline,
 } = require('./engine-runtime-extras');
 const downloadInfo = require('./engine-download-info');
 const {
@@ -2049,8 +2051,40 @@ function setupEngineBridge(api, {
                 : [];
             const needWhisperExtras = !!payload.force || modelIdsNeedWhisperExtras(earlyModelIds);
             const needSensevoiceExtras = !!payload.force || modelIdsNeedSensevoiceExtras(earlyModelIds);
+            const needQwenExtras = !!payload.force || modelIdsNeedQwenExtras(earlyModelIds);
             const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
             const pythonPath = resolveEngineRuntimePython(installPath);
+
+            const emitOfflineExtrasProgress = (ev, label, pctBase, retry = false) => {
+                const pct = Number(ev.percent);
+                const downloadedBytes = Number(
+                    ev.downloadedBytes ?? ev.received ?? ev.downloaded,
+                );
+                const totalBytes = Number(ev.totalBytes ?? ev.totalSize);
+                const bytesPerSecond = Number(ev.bytesPerSecond ?? ev.speed);
+                const mappedPct = Number.isFinite(pct)
+                    ? Math.min(
+                        pctBase + (retry ? 14 : 12),
+                        pctBase + (retry ? 2 : 0) + Math.round(pct * 0.12),
+                    )
+                    : pctBase + (retry ? 4 : 2);
+                emit({
+                    phase: 'progress',
+                    message: ev.detail || ev.message || `正在${retry ? '重试' : ''}安装 ${label}…`,
+                    pct: mappedPct,
+                    downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
+                        ? downloadedBytes
+                        : undefined,
+                    totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
+                    bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
+                        ? bytesPerSecond
+                        : undefined,
+                    suggestManual: !!ev.suggestManual
+                        || ev.stage === 'torch_cuda'
+                        || /改装 cuda|cuda pytorch|直链下载 cuda/i.test(String(ev.detail || '')),
+                    raw: ev,
+                });
+            };
 
             const runOfflineExtras = async ({ need, ensureFn, label, pctBase }) => {
                 if (!need || !pythonPath) return { ok: true, skipped: true };
@@ -2064,17 +2098,7 @@ function setupEngineBridge(api, {
                     cwd: installPath,
                     force: false,
                     signal,
-                    onProgress: (ev) => {
-                        const pct = Number(ev.percent);
-                        emit({
-                            phase: 'progress',
-                            message: ev.detail || ev.message || `正在安装 ${label}…`,
-                            pct: Number.isFinite(pct)
-                                ? Math.min(pctBase + 12, pctBase + Math.round(pct * 0.12))
-                                : pctBase + 2,
-                            raw: ev,
-                        });
-                    },
+                    onProgress: (ev) => emitOfflineExtrasProgress(ev, label, pctBase, false),
                 });
                 if (
                     !pre.ok
@@ -2098,23 +2122,21 @@ function setupEngineBridge(api, {
                         cwd: installPath,
                         force: false,
                         signal,
-                        onProgress: (ev) => {
-                            const pct = Number(ev.percent);
-                            emit({
-                                phase: 'progress',
-                                message: ev.detail || ev.message || `正在重试安装 ${label}…`,
-                                pct: Number.isFinite(pct)
-                                    ? Math.min(pctBase + 14, pctBase + 2 + Math.round(pct * 0.12))
-                                    : pctBase + 4,
-                                raw: ev,
-                            });
-                        },
+                        onProgress: (ev) => emitOfflineExtrasProgress(ev, label, pctBase, true),
                     });
+                }
+                if (
+                    !pre.ok
+                    && (pre.code === 'TORCH_CUDA_INSTALL_FAILED' || pre.code === 'TORCH_CUDA_REQUIRED')
+                ) {
+                    pre.suggestManual = true;
+                    pre.manualKind = 'torch-cuda';
+                    if (!pre.error && pre.message) pre.error = pre.message;
                 }
                 return pre;
             };
 
-            if (kind === 'models' && (needWhisperExtras || needSensevoiceExtras)) {
+            if (kind === 'models' && (needWhisperExtras || needSensevoiceExtras || needQwenExtras)) {
                 if (needWhisperExtras) {
                     const pre = await runOfflineExtras({
                         need: true,
@@ -2160,14 +2182,66 @@ function setupEngineBridge(api, {
                     }
                     if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
                         const err = pre.error || pre.message || 'SenseVoice 运行库安装失败';
-                        emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                        return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
+                        emit({
+                            phase: 'error',
+                            ok: false,
+                            message: err,
+                            pct: 0,
+                            suggestManual: !!pre.suggestManual,
+                        });
+                        return {
+                            ok: false,
+                            error: err,
+                            code: pre.code || '',
+                            logTail: pre.logTail,
+                            suggestManual: !!pre.suggestManual,
+                            manualKind: pre.manualKind || '',
+                        };
                     }
                     if (pre.code === 'SMART_APP_CONTROL') {
                         emit({
                             phase: 'progress',
                             message: pre.message || pre.error || 'SenseVoice 运行库受系统策略拦截，将继续尝试其它项…',
                             pct: 14,
+                        });
+                    }
+                }
+                if (needQwenExtras) {
+                    const qwenPctBase = (needWhisperExtras ? 10 : 3)
+                        + (needSensevoiceExtras ? 8 : 0);
+                    const pre = await runOfflineExtras({
+                        need: true,
+                        ensureFn: ensureAsrQwen3Offline,
+                        label: 'Qwen3-ASR 运行库',
+                        pctBase: qwenPctBase,
+                    });
+                    if (pre.cancelled || signal.aborted) {
+                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
+                        return { ok: false, cancelled: true, error: 'cancelled' };
+                    }
+                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
+                        const err = pre.error || pre.message || 'Qwen3-ASR 运行库安装失败';
+                        emit({
+                            phase: 'error',
+                            ok: false,
+                            message: err,
+                            pct: 0,
+                            suggestManual: !!pre.suggestManual,
+                        });
+                        return {
+                            ok: false,
+                            error: err,
+                            code: pre.code || '',
+                            logTail: pre.logTail,
+                            suggestManual: !!pre.suggestManual,
+                            manualKind: pre.manualKind || 'torch-cuda',
+                        };
+                    }
+                    if (pre.code === 'SMART_APP_CONTROL') {
+                        emit({
+                            phase: 'progress',
+                            message: pre.message || pre.error || 'Qwen3-ASR 运行库受系统策略拦截，将继续尝试其它项…',
+                            pct: qwenPctBase + 4,
                         });
                     }
                 }

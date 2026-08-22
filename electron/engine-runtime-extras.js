@@ -18,9 +18,17 @@ function modelIdsNeedSensevoiceExtras(modelIds) {
     return list.some((id) => String(id || '').toLowerCase().includes('sensevoice'));
 }
 
+function modelIdsNeedQwenExtras(modelIds) {
+    const list = Array.isArray(modelIds) ? modelIds : [];
+    return list.some((id) => {
+        const s = String(id || '').toLowerCase();
+        return s.includes('qwen3-asr') || s.includes('qwen3-forced-aligner');
+    });
+}
+
 /**
  * @param {object} opts
- * @param {'ensure-asr-whisper'|'ensure-asr-sensevoice'} opts.command
+ * @param {'ensure-asr-whisper'|'ensure-asr-sensevoice'|'ensure-asr-qwen3'} opts.command
  * @param {string} [opts.label]
  */
 function ensureRuntimeExtrasOffline(opts = {}) {
@@ -167,10 +175,21 @@ function ensureAsrSensevoiceOffline(opts = {}) {
     });
 }
 
+function ensureAsrQwen3Offline(opts = {}) {
+    return ensureRuntimeExtrasOffline({
+        ...opts,
+        command: 'ensure-asr-qwen3',
+        label: 'Qwen3-ASR 运行库',
+        timeoutMs: Math.max(Number(opts.timeoutMs) || 0, 2_700_000),
+    });
+}
+
 module.exports = {
     modelIdsNeedWhisperExtras,
     modelIdsNeedSensevoiceExtras,
+    modelIdsNeedQwenExtras,
     ensureRuntimeExtrasOffline,
     ensureAsrWhisperOffline,
     ensureAsrSensevoiceOffline,
+    ensureAsrQwen3Offline,
 };

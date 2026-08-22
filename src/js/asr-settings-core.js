@@ -62,6 +62,24 @@
         return /anime-whisper|kotoba-whisper/i.test(String(asrModelId || ''));
     }
 
+    function isQwenAsrModel(asrModelId) {
+        return /qwen3-asr|qwen3-forced-aligner/i.test(String(asrModelId || ''));
+    }
+
+    function describeQwenAsrRuntimeTip(asrModelId) {
+        if (!isQwenAsrModel(asrModelId)) {
+            return { visible: false, text: '' };
+        }
+        return {
+            visible: true,
+            text: (
+                'Qwen3-ASR 依赖 PyTorch（qwen-asr / transformers）。'
+                + '有 NVIDIA 显卡时，首次下载模型或转写会自动安装 CUDA 版 PyTorch（约 2.5GB，通常需 10–30 分钟）。'
+                + '建议先在「系统检查」一键修复或下载模型时预装运行库；卡住可用「手动下载」→ CUDA PyTorch。'
+            ),
+        };
+    }
+
     function describeWindowedAsrTip(_asrModelId) {
         // UI tip removed: windowing still happens in the engine when needed.
         return { visible: false, text: '' };
@@ -118,6 +136,8 @@
         normalizeAsrExtraOptions,
         describeAsrRecommendChip,
         needsWindowedAsrTip,
+        isQwenAsrModel,
+        describeQwenAsrRuntimeTip,
         describeWindowedAsrTip,
         applyHardwareAsrRecommend,
     };

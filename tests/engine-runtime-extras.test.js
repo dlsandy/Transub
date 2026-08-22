@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
     modelIdsNeedWhisperExtras,
     modelIdsNeedSensevoiceExtras,
+    modelIdsNeedQwenExtras,
     ensureRuntimeExtrasOffline,
 } = require('../electron/engine-runtime-extras');
 const {
@@ -23,6 +24,12 @@ describe('engine-runtime-extras', () => {
     it('modelIdsNeedSensevoiceExtras', () => {
         assert.strictEqual(modelIdsNeedSensevoiceExtras(['sensevoice-small']), true);
         assert.strictEqual(modelIdsNeedSensevoiceExtras(['whisper-tiny']), false);
+    });
+
+    it('modelIdsNeedQwenExtras', () => {
+        assert.strictEqual(modelIdsNeedQwenExtras(['qwen3-asr-0.6b']), true);
+        assert.strictEqual(modelIdsNeedQwenExtras(['qwen3-forced-aligner-0.6b']), true);
+        assert.strictEqual(modelIdsNeedQwenExtras(['whisper-tiny']), false);
     });
 
     it('ensureRuntimeExtrasOffline validates python path', async () => {

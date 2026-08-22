@@ -6131,12 +6131,16 @@
     function updateAsrWindowTip() {
         if (!els.asrWindowTip) return;
         const asrId = String(els.engineAsrModelSelect?.value || '').trim();
-        const tip = (global.TransubAsrSettings?.describeWindowedAsrTip
+        const parts = [];
+        const windowTip = (global.TransubAsrSettings?.describeWindowedAsrTip
             || computeBusyUiApi.describeWindowedAsrTip
             || (() => ({ visible: false, text: '' })))(asrId);
-        const visible = !!tip?.visible && !!tip?.text;
+        if (windowTip?.visible && windowTip?.text) parts.push(windowTip.text);
+        const qwenTip = global.TransubAsrSettings?.describeQwenAsrRuntimeTip?.(asrId);
+        if (qwenTip?.visible && qwenTip?.text) parts.push(qwenTip.text);
+        const visible = parts.length > 0;
         els.asrWindowTip.classList.toggle('hidden', !visible);
-        els.asrWindowTip.textContent = visible ? tip.text : '';
+        els.asrWindowTip.textContent = visible ? parts.join(' ') : '';
     }
 
     async function cancelComputeBusyTask() {

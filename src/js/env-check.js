@@ -17,13 +17,14 @@
         { id: 'vadModel', label: 'VAD 模型（FSMN）' },
         { id: 'lidModel', label: '语种探测模型' },
         { id: 'sensevoiceRuntime', label: 'SenseVoice 运行库' },
+        { id: 'qwenRuntime', label: 'Qwen3-ASR 运行库' },
         { id: 'whisperRuntime', label: 'Whisper 运行库' },
     ];
     const BASE_ITEM_IDS = [
         'installPath', 'ffmpeg', 'vcRedist', 'gpu', 'gpuDriver', 'gpuRuntime', 'engine', 'llamaServerRuntime',
     ];
     const RUNTIME_ITEM_IDS = [
-        'asrModel', 'vadModel', 'lidModel', 'sensevoiceRuntime', 'whisperRuntime',
+        'asrModel', 'vadModel', 'lidModel', 'sensevoiceRuntime', 'qwenRuntime', 'whisperRuntime',
     ];
 
     function itemsForScope(scope) {
@@ -360,6 +361,20 @@
         return hasNvidiaGpuInResult(state.result);
     }
 
+    function isTorchCudaInstallError(text) {
+        const s = String(text || '');
+        return /TORCH_CUDA|改装\s*CUDA|CUDA\s*版\s*PyTorch|CPU\s*版\s*PyTorch/i.test(s);
+    }
+
+    function manualKindsForFailure(errText, result) {
+        const kinds = listNeededManualKindsFromResult(result)
+            .filter((k) => k !== 'gpu' || hasNvidiaGpuInResult(result));
+        if (isTorchCudaInstallError(errText) && hasNvidiaGpuInResult(result)) {
+            return ['torch-cuda', ...kinds.filter((k) => k !== 'torch-cuda')];
+        }
+        return kinds;
+    }
+
     function listNeededManualKindsFromResult(result) {
         const plan = result?.fix || {};
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
@@ -377,6 +392,17 @@
             || (Array.isArray(plan.modelIds) && plan.modelIds.some((id) => /sensevoice/i.test(String(id))))
         ) {
             kinds.push('sensevoice');
+            if (hasNvidiaGpuInResult(result)) {
+                kinds.push('torch-cuda');
+            }
+        }
+        if (
+            steps.some((s) => s?.id === 'qwenRuntime')
+            || statusOf('qwenRuntime') === 'fail'
+            || statusOf('qwenRuntime') === 'warn'
+            || (Array.isArray(plan.modelIds) && plan.modelIds.some((id) => /qwen3-asr/i.test(String(id))))
+        ) {
+            kinds.push('torch-cuda');
         }
         if (
             steps.some((s) => s?.id === 'whisperRuntime')
@@ -709,13 +735,15 @@
                     if (p?.suggestManual) {
                         setFixHintFn(true);
                         enableManualButton(manualBtn);
+                        const cudaHint = /改装\s*CUDA|CUDA\s*PyTorch|torch_cuda/i.test(String(p?.message || ''));
+                        const hintText = cudaHint
+                            ? 'CUDA PyTorch 下载较慢（约 2.5GB）；若长时间无进度请点「手动下载」用浏览器直链下载 torch / torchaudio（cu126）。'
+                            : '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装。';
                         if (ui.fixHintEl) {
-                            ui.fixHintEl.textContent = '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装。';
+                            ui.fixHintEl.textContent = hintText;
                         } else {
                             const hint = $('envCheckFixHint');
-                            if (hint) {
-                                hint.textContent = '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装（支持断点续传）。';
-                            }
+                            if (hint) hint.textContent = hintText;
                         }
                     }
                 });
@@ -773,9 +801,11 @@
                                 break;
                             }
                             const errText = res?.error || res?.message || '模型/运行库下载失败';
-                            const kinds = listNeededManualKindsFromResult(getResult())
-                                .filter((k) => k !== 'gpu' || hasNvidiaGpuInResult(getResult()));
-                            if (kinds.length && global.TransubManualWhlInstall?.openModal) {
+                            const kinds = res?.manualKind
+                                ? [String(res.manualKind), ...manualKindsForFailure(errText, getResult())]
+                                : manualKindsForFailure(errText, getResult());
+                            const uniqueKinds = [...new Set(kinds.filter(Boolean))];
+                            if (uniqueKinds.length && global.TransubManualWhlInstall?.openModal) {
                                 const useManual = global.TransubAppConfirm
                                     ? await global.TransubAppConfirm({
                                         title: '自动下载失败',
@@ -787,8 +817,8 @@
                                 if (switchToManual) break;
                                 if (useManual) {
                                     const manualRes = await global.TransubManualWhlInstall.openModal({
-                                        kind: kinds[0],
-                                        kinds,
+                                        kind: uniqueKinds[0],
+                                        kinds: uniqueKinds,
                                         errorText: errText,
                                     });
                                     if (manualRes?.cancelled) {

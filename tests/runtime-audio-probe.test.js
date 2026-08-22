@@ -82,4 +82,22 @@ print(json.dumps({
         assert.doesNotMatch(body, /['"] import av['"]/);
         assert.doesNotMatch(body, /['"] import ctranslate2/);
     });
+
+    it('torch CUDA direct-download URLs encode pytorch.org plus signs', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from transub_engine.pip_mirror_util import torch_cuda_wheel_url, TORCH_CUDA_WHEEL_FILES
+name = TORCH_CUDA_WHEEL_FILES[0]
+print(json.dumps({
+    "aliyun": torch_cuda_wheel_url("https://mirrors.aliyun.com/pytorch-wheels/cu126/", name),
+    "official": torch_cuda_wheel_url("https://download.pytorch.org/whl/cu126/", name),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.ok(payload.aliyun.includes('+cu126'));
+        assert.ok(payload.official.includes('%2Bcu126'));
+    });
 });

@@ -358,25 +358,49 @@ const SENSEVOICE_MANUAL_PACKAGES = [
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/eb/3bf6ea8ab7f1503dca3a10df2e4b9c3f6b3316df07f6c0ded94b281c7101/scipy-1.15.3-cp312-cp312-win_amd64.whl',
     },
     {
+        id: 'funasr',
+        name: 'FunASR',
+        fileName: 'funasr-1.3.30-py3-none-any.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
+    },
+];
+
+/** CUDA torch wheels (cu126) — keep in sync with pip_mirror_util.TORCH_CUDA_WHEEL_FILES */
+const TORCH_CUDA_MANUAL_PACKAGES = [
+    {
+        id: 'torch-cuda',
+        name: 'PyTorch CUDA（cu126）',
+        fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl · 约 2.5GB',
+    },
+    {
+        id: 'torchaudio-cuda',
+        name: 'TorchAudio CUDA（cu126）',
+        fileName: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+    },
+];
+
+/** CPU torch for SenseVoice manual list (no NVIDIA GPU). */
+const SENSEVOICE_CPU_TORCH_PACKAGES = [
+    {
         id: 'torch',
-        name: 'PyTorch（torch）',
+        name: 'PyTorch（torch，仅 CPU 机）',
         fileName: 'torch-2.9.1-cp312-cp312-win_amd64.whl',
         officialUrl: 'https://files.pythonhosted.org/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio',
-        name: 'TorchAudio',
+        name: 'TorchAudio（仅 CPU 机）',
         fileName: 'torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
         officialUrl: 'https://files.pythonhosted.org/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
         mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-    },
-    {
-        id: 'funasr',
-        name: 'FunASR',
-        fileName: 'funasr-1.3.30-py3-none-any.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/e6/bb/af40f8eac8163ff59194ed289f3802b1ae8b3abdbec50f381ce8b3798353/funasr-1.3.30-py3-none-any.whl',
     },
 ];
 
@@ -492,10 +516,13 @@ function manualPlaceHintForModel(spec = {}) {
     };
 }
 
-/** @param {string} value @returns {'models'|'gpu'|'demucs'|'sensevoice'|'whisper'} */
+/** @param {string} value @returns {'models'|'gpu'|'demucs'|'sensevoice'|'whisper'|'torch-cuda'} */
 function normalizeEngineDownloadKind(value) {
     const k = String(value || 'models').trim().toLowerCase();
     if (k === 'gpu') return 'gpu';
+    if (k === 'torch-cuda' || k === 'torchcuda' || k === 'cuda-torch' || k === 'pytorch-cuda') {
+        return 'torch-cuda';
+    }
     if (k === 'demucs' || k === 'audio-separate' || k === 'audioseparate' || k === 'separate') {
         return 'demucs';
     }
@@ -656,25 +683,74 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         const pipPrefix = runtimePy
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
+        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+        const sensevoiceBase = [
+            ...SENSEVOICE_MANUAL_PACKAGES.slice(0, 4),
+            ...TORCH_CUDA_MANUAL_PACKAGES,
+            ...SENSEVOICE_CPU_TORCH_PACKAGES,
+            SENSEVOICE_MANUAL_PACKAGES[4],
+        ];
         return {
             ok: true,
             info: {
                 kind: 'sensevoice',
                 title: '手动安装 SenseVoice 运行库',
                 folder,
-                pipCommand: `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba torch torchaudio funasr`,
-                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。请用下方直链下载 .whl（勿装 numpy 2.5+，否则 numba 会源码编译失败）。',
-                wheelHint: '请先装 numpy 2.4.x 与 numba/llvmlite/scipy，再装 torch / torchaudio / funasr。可多选后一次安装。',
-                items: SENSEVOICE_MANUAL_PACKAGES.map((pkg) => ({
+                pipCommand: [
+                    `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba funasr`,
+                    `# 有 NVIDIA GPU 时改装 CUDA 版 PyTorch（约 2.5GB，替换 CPU torch）：`,
+                    torchCudaPip,
+                ].join('\n'),
+                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。有 NVIDIA GPU 时请下载下方「CUDA PyTorch」两项（勿装 CPU 版 torch）；无独显再用 CPU torch。自动改装失败时可浏览器直链下载后本地安装。',
+                wheelHint: '先装 numpy 2.4.x 与 numba/llvmlite/scipy/funasr；有 GPU 时装 cu126 的 torch + torchaudio（约 2.5GB）。',
+                items: sensevoiceBase.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
                     kind: 'sensevoice',
-                    group: 'SenseVoice 运行库',
+                    group: pkg.id.includes('cuda')
+                        ? 'SenseVoice · GPU（CUDA PyTorch）'
+                        : (pkg.id === 'torch' || pkg.id === 'torchaudio')
+                            ? 'SenseVoice · CPU（无独显）'
+                            : 'SenseVoice 运行库',
                     fileName: pkg.fileName,
                     officialUrl: pkg.officialUrl,
                     mirrorUrl: pkg.mirrorUrl,
                     defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
-                    note: pkg.fileName || 'pip 包（whl）· SenseVoice',
+                    note: pkg.note || pkg.fileName || 'pip 包（whl）· SenseVoice',
+                })),
+            },
+        };
+    }
+
+    if (kind === 'torch-cuda') {
+        const installPath = String(merged.engineInstallPath || '').trim();
+        const runtimePy = resolveEngineRuntimePython(installPath);
+        const runtimeDir = path.join(installPath, 'runtime');
+        const venv = path.join(installPath, '.venv');
+        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
+        const pipPrefix = runtimePy
+            ? `"${runtimePy}" -m pip`
+            : 'python -m pip';
+        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+        return {
+            ok: true,
+            info: {
+                kind: 'torch-cuda',
+                title: '手动安装 CUDA 版 PyTorch（cu126）',
+                folder,
+                pipCommand: torchCudaPip,
+                hint: '自动「改装 CUDA」失败或长时间无进度时使用。请用浏览器下载下方两个 .whl（torch 约 2.5GB，支持断点续传），下载完成后点「选择已下载文件」本地安装。安装前请完全退出引擎。',
+                wheelHint: '务必同时安装 torch 与 torchaudio（cu126、cp312、win_amd64）。会替换已装的 CPU 版 torch。',
+                items: TORCH_CUDA_MANUAL_PACKAGES.map((pkg) => ({
+                    id: pkg.id,
+                    name: pkg.name,
+                    kind: 'torch-cuda',
+                    group: 'CUDA PyTorch（cu126）',
+                    fileName: pkg.fileName,
+                    officialUrl: pkg.officialUrl,
+                    mirrorUrl: pkg.mirrorUrl,
+                    defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
+                    note: pkg.note || pkg.fileName,
                 })),
             },
         };
@@ -888,6 +964,8 @@ module.exports = {
     GPU_MANUAL_PACKAGES,
     ORT_GPU_MANUAL_PACKAGES,
     SENSEVOICE_MANUAL_PACKAGES,
+    SENSEVOICE_CPU_TORCH_PACKAGES,
+    TORCH_CUDA_MANUAL_PACKAGES,
     WHISPER_MANUAL_PACKAGES,
     detectDriverCudaMajorQuick,
     resolveOrtGpuManualPackage,

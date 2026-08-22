@@ -39,6 +39,9 @@
     function normalizeKind(kind) {
         const k = String(kind || 'gpu').trim().toLowerCase();
         if (k === 'demucs') return 'demucs';
+        if (k === 'torch-cuda' || k === 'torchcuda' || k === 'cuda-torch' || k === 'pytorch-cuda') {
+            return 'torch-cuda';
+        }
         if (k === 'sensevoice' || k === 'sensevoice-runtime' || k === 'runtime') return 'sensevoice';
         if (k === 'whisper' || k === 'whisper-runtime') return 'whisper';
         return 'gpu';
@@ -51,6 +54,7 @@
         if (list.length > 1) return '手动下载运行库 / GPU 组件';
         const k = list[0];
         if (k === 'demucs') return '手动安装 Demucs / PyTorch';
+        if (k === 'torch-cuda') return '手动安装 CUDA 版 PyTorch';
         if (k === 'sensevoice') return '手动安装 SenseVoice 运行库';
         if (k === 'whisper') return '手动安装 Whisper 运行库';
         return '手动安装 GPU 组件';
@@ -58,6 +62,7 @@
 
     function kindLabel(kind) {
         if (kind === 'demucs') return 'Demucs';
+        if (kind === 'torch-cuda') return 'CUDA PyTorch';
         if (kind === 'sensevoice') return 'SenseVoice 运行库';
         if (kind === 'whisper') return 'Whisper 运行库';
         return 'GPU 支持';
@@ -68,6 +73,7 @@
         if (list.length > 1) return '选择已下载的 .whl（可多选）';
         const k = normalizeKind(kind);
         if (k === 'demucs') return '选择 Demucs / torch 的 .whl（可多选）';
+        if (k === 'torch-cuda') return '选择 CUDA 版 torch / torchaudio 的 .whl（可多选）';
         if (k === 'sensevoice') return '选择 torch / funasr 等 .whl（可多选）';
         if (k === 'whisper') return '选择 numpy / ctranslate2 / onnxruntime / faster-whisper 的 .whl（可多选）';
         return '选择 GPU 组件 .whl（可多选）';
