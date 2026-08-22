@@ -7,7 +7,7 @@
  * 2) FIX key-name heuristics — catch undeclared opposing OkZh / strip* keys
  *
  * Exit 0 = no high-severity conflicts; 1 = conflicts found; 2 = tool error.
- * See docs/mt-sanitize.md and .cursor/rules/mt-sanitize-anti-regression.mdc
+ * See docs/mt-sanitize.md and .cursor/rules/mt-sanitize-training.mdc
  */
 const fs = require('fs');
 const path = require('path');

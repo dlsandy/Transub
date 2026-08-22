@@ -1,6 +1,6 @@
 {
   "name": "transub",
-  "version": "3.1.2",
+  "version": "3.1.3",
   "description": "Windows 桌面字幕工具：基于 TransWithAI 的批量转写/翻译，以及 SRT/VTT/LRC 结构化字幕编辑与音视频同步预览",
   "main": "electron/main.js",
   "author": "Transub",
@@ -26,6 +26,8 @@
     "build:renderer": "node tools/build-renderer.js",
     "build:advanced": "node tools/build-advanced-module.js",
     "check:release": "node tools/check-release-ready.js",
+    "check:proprietary": "node tools/check-proprietary-boundary.js",
+    "check:agent-rules": "node tools/check-agent-rules-consistency.js",
     "verify:packaging": "node tools/verify-packaging.js",
     "smoke:preflight": "node tools/smoke-preflight.js",
     "ensure:bundled-models": "node tools/ensure-bundled-models.js",

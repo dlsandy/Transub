@@ -147,6 +147,9 @@ window-state-subtitle-library.json
 docs/
 transub-engine/docs/
 .cursor/
+AGENTS.md
 tmp/
+tools/tmp-*
+tools/_tmp-*
 tests/fixtures/mt-train-drafts/
 node_modules/.vite/

@@ -52,6 +52,7 @@ const LOCAL_DEV_NEVER_PUBLISH = [
     'docs/',
     'transub-engine/docs/',
     '.cursor/',
+    'AGENTS.md',
     'tmp/',
     'tests/fixtures/mt-train-drafts/',
     'node_modules/.vite/',

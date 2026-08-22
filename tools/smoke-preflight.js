@@ -39,6 +39,8 @@ if (fs.existsSync(checklist)) {
 }
 
 const node = process.execPath;
+run('check:proprietary', node, [path.join(root, 'tools', 'check-proprietary-boundary.js')]);
+run('check:agent-rules', node, [path.join(root, 'tools', 'check-agent-rules-consistency.js')]);
 run('build:renderer', node, [path.join(root, 'tools', 'build-renderer.js')]);
 run('verify:packaging', node, [path.join(root, 'tools', 'verify-packaging.js')]);
 run('check:release', node, [path.join(root, 'tools', 'check-release-ready.js')]);
