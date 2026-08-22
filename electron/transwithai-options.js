@@ -167,6 +167,8 @@ function mergeTransWithAiOptions(input = {}) {
         trayNotifyEnabled: false,
         rememberLastOpenDir: true,
         lastOpenDir: '',
+        autoScanFolders: [],
+        autoScanRecursive: true,
         startupWindow: 'generator',
         uiLocale: 'zh-Hans',
         autoUpdateCheckInterval: 'weekly',
@@ -299,6 +301,23 @@ function mergeTransWithAiOptions(input = {}) {
     merged.lastAutoUpdateCheckAt = String(merged.lastAutoUpdateCheckAt || '').trim();
     merged.rememberLastOpenDir = merged.rememberLastOpenDir !== false;
     merged.lastOpenDir = String(merged.lastOpenDir || '').trim();
+    {
+        const list = Array.isArray(merged.autoScanFolders) ? merged.autoScanFolders : [];
+        const out = [];
+        const seen = new Set();
+        for (const entry of list) {
+            const folder = String(entry || '').trim();
+            if (!folder) continue;
+            const key = process.platform === 'win32'
+                ? folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+                : folder.replace(/\\/g, '/').replace(/\/+$/, '');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(folder);
+        }
+        merged.autoScanFolders = out;
+    }
+    merged.autoScanRecursive = merged.autoScanRecursive !== false;
 
     merged.smartTranslateHybridMt = merged.smartTranslateHybridMt !== false;
     merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;

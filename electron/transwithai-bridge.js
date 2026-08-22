@@ -549,6 +549,23 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         trayNotifyEnabled: !!merged.trayNotifyEnabled,
         rememberLastOpenDir: merged.rememberLastOpenDir !== false,
         lastOpenDir: String(merged.lastOpenDir || '').trim(),
+        autoScanFolders: (() => {
+            const list = Array.isArray(merged.autoScanFolders) ? merged.autoScanFolders : [];
+            const out = [];
+            const seen = new Set();
+            for (const entry of list) {
+                const folder = String(entry || '').trim();
+                if (!folder) continue;
+                const key = process.platform === 'win32'
+                    ? folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+                    : folder.replace(/\\/g, '/').replace(/\/+$/, '');
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(folder);
+            }
+            return out;
+        })(),
+        autoScanRecursive: merged.autoScanRecursive !== false,
         startupWindow: (() => {
             const raw = String(merged.startupWindow || '').trim().toLowerCase();
             return (raw === 'editor' || raw === 'subtitle-editor') ? 'editor' : 'generator';
@@ -2792,6 +2809,7 @@ function setupTransWithAiBridge(api, deps) {
                 'trayProgressEnabled', 'showTaskResourceUsage', 'minimizeToTrayEnabled', 'minimizeToTrayOnStart', 'trayNotifyEnabled', 'startupWindow',
                 'uiLocale',
                 'rememberLastOpenDir',
+                'autoScanFolders', 'autoScanRecursive',
                 'autoUpdateCheckInterval', 'lastAutoUpdateCheckAt',
                 'postBatchQc',
                 'postBatchQcFixMode',
