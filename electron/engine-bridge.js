@@ -93,6 +93,8 @@ const {
     getAsrWhisperRuntime,
     ensureGpuRuntime,
     ensureGpuRuntimeStream,
+    scanSystemCuda,
+    adoptSystemCuda,
     releaseGpuMemory,
     getAudioSeparateRuntime,
     ensureAudioSeparateRuntime,
@@ -1824,6 +1826,54 @@ function setupEngineBridge(api, {
                     status: res.status,
                     raw: res.data,
                 };
+            }
+            return { ok: true, ...(res.data || {}), status: res.status };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-scan-cuda', async (_event, payload = {}) => {
+        try {
+            const options = await readMergedOptions(payload);
+            const ensure = await ensureEngineRunning(options);
+            if (!ensure.ok) return ensure;
+            const major = Number(payload?.major) || 12;
+            const res = await scanSystemCuda(ensure.baseUrl, { major, timeoutMs: 45000 });
+            if (!res.ok) {
+                return {
+                    ok: false,
+                    error: res.data?.message || res.data?.error || `扫描失败 (HTTP ${res.status})`,
+                    status: res.status,
+                    raw: res.data,
+                };
+            }
+            return { ok: true, ...(res.data || {}), status: res.status };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-adopt-cuda', async (_event, payload = {}) => {
+        try {
+            const options = await readMergedOptions(payload);
+            const ensure = await ensureEngineRunning(options);
+            if (!ensure.ok) return ensure;
+            const major = Number(payload?.major) || 12;
+            const res = await adoptSystemCuda(ensure.baseUrl, { major, timeoutMs: 180000 });
+            if (!res.ok) {
+                return {
+                    ok: false,
+                    error: res.data?.message || res.data?.error || `复用失败 (HTTP ${res.status})`,
+                    status: res.status,
+                    raw: res.data,
+                };
+            }
+            // Restart so PATH / LoadLibrary picks up adopted bins.
+            if (engineProc) {
+                stopEngineProcess();
+                await sleep(600);
+                await ensureEngineRunning({ ...options, forceRestart: true });
             }
             return { ok: true, ...(res.data || {}), status: res.status };
         } catch (err) {

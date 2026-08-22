@@ -760,87 +760,114 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             blocking: false,
         };
     }
-    const cublas = findCublasInEngine(engineRoot);
-    if (cublas) {
-        // ASR/CT2 cuBLAS ≠ WhisperSeg onnxruntime-gpu; probe both when possible.
-        let probe = null;
-        try {
-            const res = await runEnginePython(
-                engineRoot,
-                [
-                    'import json',
-                    'from transub_engine.runtime_gpu import probe_gpu_runtime',
-                    'p = probe_gpu_runtime()',
-                    'print(json.dumps({',
-                    ' "status": p.get("status") or "",',
-                    ' "asrGpuReady": bool(p.get("asrGpuReady")),',
-                    ' "ortGpuCuda": bool(p.get("ortGpuCuda")),',
-                    ' "ortGpuRequirement": p.get("ortGpuRequirement") or "",',
-                    ' "ctranslate2Cuda": bool(p.get("ctranslate2Cuda")),',
-                    ' "ctranslate2CudaReason": p.get("ctranslate2CudaReason") or "",',
-                    ' "hint": p.get("hint") or "",',
-                    '}, ensure_ascii=False))',
-                ].join('\n'),
-                20000,
-            );
-            if (res.ok) {
-                probe = JSON.parse(String(res.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
-            }
-        } catch {
-            probe = null;
+
+    // Always probe via engine Python when possible — finds Toolkit / PATH CUDA,
+    // not only wheels already inside the engine tree.
+    let probe = null;
+    try {
+        const res = await runEnginePython(
+            engineRoot,
+            [
+                'import json',
+                'from transub_engine.runtime_gpu import probe_gpu_runtime, system_cuda_package_coverage, CUDA12_PIP_PACKAGES',
+                'p = probe_gpu_runtime()',
+                'cov = system_cuda_package_coverage(list(CUDA12_PIP_PACKAGES), major=12)',
+                'print(json.dumps({',
+                ' "status": p.get("status") or "",',
+                ' "asrGpuReady": bool(p.get("asrGpuReady")),',
+                ' "ortGpuCuda": bool(p.get("ortGpuCuda")),',
+                ' "ortGpuRequirement": p.get("ortGpuRequirement") or "",',
+                ' "ctranslate2Cuda": bool(p.get("ctranslate2Cuda")),',
+                ' "ctranslate2CudaReason": p.get("ctranslate2CudaReason") or "",',
+                ' "cublas12": bool(p.get("cublas12")),',
+                ' "cublasPath": p.get("cublasPath") or "",',
+                ' "hint": p.get("hint") or "",',
+                ' "systemReusable": list(cov.get("reusable") or []),',
+                '}, ensure_ascii=False))',
+            ].join('\n'),
+            25000,
+        );
+        if (res.ok) {
+            probe = JSON.parse(String(res.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
         }
-        if (probe && probe.asrGpuReady && !probe.ortGpuCuda && probe.ortGpuRequirement) {
-            return {
-                id: 'gpuRuntime',
-                label: 'GPU 运行时',
-                status: 'warn',
-                detail: probe.hint
-                    || 'ASR/CTranslate2 GPU 已就绪；WhisperSeg（onnxruntime-gpu）未就绪，灵敏检出将回退 CPU',
-                blocking: false,
-                asrGpuReady: true,
-                ortGpuCuda: false,
-                ortGpuRequirement: probe.ortGpuRequirement || '',
-                ctranslate2Cuda: !!probe.ctranslate2Cuda,
-                ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
-            };
-        }
-        if (probe && probe.status === 'partial') {
-            return {
-                id: 'gpuRuntime',
-                label: 'GPU 运行时',
-                status: 'warn',
-                detail: probe.hint || 'GPU 组件部分就绪；可再次下载 GPU 支持后重新检测',
-                blocking: false,
-                asrGpuReady: !!probe.asrGpuReady,
-                ortGpuCuda: !!probe.ortGpuCuda,
-                ortGpuRequirement: probe.ortGpuRequirement || '',
-                ctranslate2Cuda: !!probe.ctranslate2Cuda,
-                ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
-            };
-        }
-        const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
+    } catch {
+        probe = null;
+    }
+
+    const cublasInEngine = findCublasInEngine(engineRoot);
+    const systemReusable = Array.isArray(probe?.systemReusable) ? probe.systemReusable : [];
+
+    if (probe && probe.asrGpuReady && !probe.ortGpuCuda && probe.ortGpuRequirement) {
         return {
             id: 'gpuRuntime',
             label: 'GPU 运行时',
-            status: 'ok',
+            status: 'warn',
+            detail: probe.hint
+                || 'ASR/CTranslate2 GPU 已就绪；WhisperSeg（onnxruntime-gpu）未就绪，灵敏检出将回退 CPU',
+            blocking: false,
+            asrGpuReady: true,
+            ortGpuCuda: false,
+            ortGpuRequirement: probe.ortGpuRequirement || '',
+            ctranslate2Cuda: !!probe.ctranslate2Cuda,
+            ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
+            systemReusable,
+        };
+    }
+    if (probe && probe.status === 'partial') {
+        return {
+            id: 'gpuRuntime',
+            label: 'GPU 运行时',
+            status: 'warn',
+            detail: probe.hint || 'GPU 组件部分就绪；可再次下载 GPU 支持后重新检测',
+            blocking: false,
+            asrGpuReady: !!probe.asrGpuReady,
+            ortGpuCuda: !!probe.ortGpuCuda,
+            ortGpuRequirement: probe.ortGpuRequirement || '',
+            ctranslate2Cuda: !!probe.ctranslate2Cuda,
+            ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
+            systemReusable,
+        };
+    }
+    const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
+    if (probe && (probe.status === 'ready' || probe.cublas12 || cublasInEngine)) {
+        const reuseHint = (!cublasInEngine && systemReusable.length)
+            ? `；本机可复用 ${systemReusable.length} 个 CUDA 组件`
+            : '';
+        return {
+            id: 'gpuRuntime',
+            label: 'GPU 运行时',
+            status: bothOk || probe.status === 'ready' ? 'ok' : 'warn',
             detail: bothOk
                 ? (probe.hint || 'ASR/CTranslate2 + WhisperSeg ONNX GPU 已就绪')
-                : '已找到 cublas64_12.dll（CUDA 12）',
+                : ((probe.hint || '已找到 cublas64_12.dll（CUDA 12）') + reuseHint),
             blocking: false,
             asrGpuReady: probe ? !!probe.asrGpuReady : true,
             ortGpuCuda: probe ? !!probe.ortGpuCuda : undefined,
             ortGpuRequirement: probe ? (probe.ortGpuRequirement || '') : '',
             ctranslate2Cuda: probe ? !!probe.ctranslate2Cuda : undefined,
             ctranslate2CudaReason: probe ? (probe.ctranslate2CudaReason || '') : '',
+            systemReusable,
         };
     }
+
     const cudaMajor = Number(String(gpuInfo.cudaVersion || '').split('.')[0]);
+    if (systemReusable.length) {
+        return {
+            id: 'gpuRuntime',
+            label: 'GPU 运行时',
+            status: 'warn',
+            detail: `本机已有可复用 CUDA（${systemReusable.slice(0, 3).join('、')}${systemReusable.length > 3 ? '…' : ''}）；点「下载 GPU 支持」或「扫描复用本机 CUDA」即可跳过大包下载`,
+            blocking: false,
+            systemReusable,
+            recommendReuse: true,
+        };
+    }
     if (Number.isFinite(cudaMajor) && cudaMajor >= 12) {
         return {
             id: 'gpuRuntime',
             label: 'GPU 运行时',
             status: 'warn',
-            detail: '驱动支持 CUDA 12+；首次使用 Whisper GPU 时可在「运行环境」下载 GPU 支持组件',
+            detail: '驱动支持 CUDA 12+；首次使用 Whisper GPU 时可在「运行环境」下载 GPU 支持组件（会自动尝试复用本机 Toolkit）',
             blocking: false,
         };
     }
@@ -916,16 +943,20 @@ function checkLlamaServerRuntime() {
 
         if (!st.installed) {
             if (hints.preferCuda && recommendedId) {
+                const reuseHint = st.systemCompanion?.found
+                    ? `；可复用本机「${st.systemCompanion.label || 'CUDA 运行库'}」，安装时跳过 cudart 下载`
+                    : '';
                 return {
                     id: 'llamaServerRuntime',
                     label: 'llama-server 运行时',
                     status: 'warn',
-                    detail: `未安装 · 已检测 ${cudaLabel || 'NVIDIA CUDA'}，建议安装 ${recommendedPkg?.label || recommendedId}（llama.cpp ${catalogTag || '—'}）`,
+                    detail: `未安装 · 已检测 ${cudaLabel || 'NVIDIA CUDA'}，建议安装 ${recommendedPkg?.label || recommendedId}（llama.cpp ${catalogTag || '—'}）${reuseHint}`,
                     blocking: false,
                     catalogTag,
                     preferredPackageId: recommendedId,
                     recommendInstall: true,
                     recommendRuntimeId: recommendedId,
+                    systemCompanion: st.systemCompanion || null,
                 };
             }
             return {

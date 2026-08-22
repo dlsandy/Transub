@@ -351,6 +351,27 @@ async function ensureGpuRuntimeStream(baseUrl, body = {}, options = {}) {
     });
 }
 
+async function scanSystemCuda(baseUrl, options = {}) {
+    const major = Number(options.major) || 12;
+    const q = major >= 13 ? '?major=13' : '?major=12';
+    return engineFetch(baseUrl, `/v1/runtime/scan-system-cuda${q}`, {
+        ...options,
+        method: 'GET',
+        timeoutMs: options.timeoutMs || 30000,
+    });
+}
+
+async function adoptSystemCuda(baseUrl, options = {}) {
+    const major = Number(options.major) || 12;
+    const q = major >= 13 ? '?major=13' : '?major=12';
+    return engineFetch(baseUrl, `/v1/runtime/adopt-system-cuda${q}`, {
+        ...options,
+        method: 'POST',
+        body: {},
+        timeoutMs: options.timeoutMs || 120000,
+    });
+}
+
 async function releaseGpuMemory(baseUrl, options = {}) {
     return engineFetch(baseUrl, '/v1/runtime/release-gpu', {
         ...options,
@@ -711,6 +732,8 @@ module.exports = {
     getAsrWhisperRuntime,
     ensureGpuRuntime,
     ensureGpuRuntimeStream,
+    scanSystemCuda,
+    adoptSystemCuda,
     releaseGpuMemory,
     getAudioSeparateRuntime,
     ensureAudioSeparateRuntime,

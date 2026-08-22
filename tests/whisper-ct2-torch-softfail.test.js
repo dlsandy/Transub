@@ -81,6 +81,81 @@ print(json.dumps({
         assert.ok(payload.cuda >= 0);
     }, 90000);
 
+    it('skip_torch does not tear down an already-loaded torch', () => {
+        const out = runPy(`
+import json
+import sys
+import types
+from transub_engine.device import (
+    clear_partial_torch_modules,
+    is_torch_c_extension_loaded,
+    soften_torch_cuda_import_failure,
+)
+from transub_engine.runtime_release import release_gpu_memory
+
+torch = types.ModuleType("torch")
+torch._C = types.ModuleType("torch._C")
+sys.modules["torch"] = torch
+sys.modules["torch._C"] = torch._C
+ct2 = types.ModuleType("ctranslate2")
+ct2.clear_cache = lambda: None
+sys.modules["ctranslate2"] = ct2
+assert is_torch_c_extension_loaded()
+
+clear_partial_torch_modules()
+assert sys.modules.get("torch") is torch
+
+with soften_torch_cuda_import_failure(skip_torch=True):
+    import torch as t2
+assert t2 is torch
+assert sys.modules.get("torch") is torch
+
+release_gpu_memory(reason="test_keep_torch", unload_models=False)
+assert sys.modules.get("torch") is torch
+print(json.dumps({"kept": True}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.kept, true);
+    });
+
+    it('skip_torch still blocks a fresh torch import', () => {
+        const out = runPy(`
+import json
+from transub_engine.device import soften_torch_cuda_import_failure
+err = ""
+with soften_torch_cuda_import_failure(skip_torch=True):
+    try:
+        import torch
+    except ImportError as e:
+        err = str(e)
+print(json.dumps({"skipped": "skipped during CTranslate2" in err}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.skipped, true);
+    });
+
+    it('clear_partial_torch_modules drops incomplete torch stubs', () => {
+        const out = runPy(`
+import json
+import sys
+import types
+from transub_engine.device import clear_partial_torch_modules, is_torch_c_extension_loaded
+
+partial = types.ModuleType("torch")
+sys.modules["torch"] = partial
+sys.modules["torch.foo"] = types.ModuleType("torch.foo")
+assert not is_torch_c_extension_loaded()
+clear_partial_torch_modules()
+print(json.dumps({
+    "torchGone": "torch" not in sys.modules,
+    "fooGone": "torch.foo" not in sys.modules,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.torchGone, true);
+        assert.strictEqual(payload.fooGone, true);
+    });
+
     it.skipIf(winOnly)('inject_nvidia_lib_path prefers nvidia cublas over torch\\\\lib', () => {
         const out = runPy(`
 import json

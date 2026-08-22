@@ -168,6 +168,106 @@
         return Math.max(0, exp - now);
     }
 
+    function loadLicenseCrypto() {
+        try {
+            if (typeof require === 'function') {
+                return require('./advanced-license-crypto-core');
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            return globalThis.TransubAdvancedLicenseCrypto || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** Best-effort read of signed payload JSON (no verify). */
+    function peekTsub1Payload(licenseKey) {
+        const key = String(licenseKey || '').trim();
+        const parts = key.split('.');
+        if (parts.length !== 3 || parts[0] !== 'TSUB1' || !parts[1]) return null;
+        try {
+            const cryptoApi = loadLicenseCrypto();
+            let json;
+            if (cryptoApi?.b64urlDecode) {
+                json = cryptoApi.b64urlDecode(parts[1]).toString('utf8');
+            } else if (typeof Buffer !== 'undefined') {
+                const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+                json = Buffer.from(b64 + pad, 'base64').toString('utf8');
+            } else {
+                return null;
+            }
+            const payload = JSON.parse(json);
+            return payload && typeof payload === 'object' ? payload : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /**
+     * Reconcile local license fields with the TSUB1 key payload.
+     * Closes the gap where disk expiresAt was missing/null but the key is timed/expired —
+     * daily Pro gates used to trust disk only and never re-verify the key.
+     */
+    function reconcileLicenseWithKey(license, now = Date.now()) {
+        const lic = normalizeLicenseState(license);
+        const key = String(lic.key || '').trim();
+        if (!key.startsWith('TSUB1.')) {
+            return { ok: true, license: lic };
+        }
+        const cryptoApi = loadLicenseCrypto();
+        if (!cryptoApi?.verifyLicenseKey) {
+            const peeked = peekTsub1Payload(key);
+            if (peeked?.expiresAt) {
+                const merged = normalizeLicenseState({ ...lic, expiresAt: peeked.expiresAt });
+                if (isLicenseExpired(merged, now)) {
+                    return {
+                        ok: false,
+                        reason: 'expired',
+                        message: 'Pro 体验已到期，已回免费功能；可购买大版本内买断继续使用',
+                        license: merged,
+                    };
+                }
+                return { ok: true, license: merged };
+            }
+            return { ok: true, license: lic };
+        }
+        const verified = cryptoApi.verifyLicenseKey(key, { now });
+        if (verified.ok) {
+            return {
+                ok: true,
+                license: normalizeLicenseState({
+                    ...lic,
+                    licenseId: verified.payload.licenseId || lic.licenseId,
+                    features: verified.payload.features || lic.features,
+                    expiresAt: verified.payload.expiresAt || null,
+                    product: verified.payload.product || lic.product,
+                }),
+            };
+        }
+        if (/过期/.test(String(verified.error || ''))) {
+            const peeked = peekTsub1Payload(key);
+            const merged = normalizeLicenseState({
+                ...lic,
+                expiresAt: peeked?.expiresAt || lic.expiresAt,
+                licenseId: peeked?.licenseId || lic.licenseId,
+            });
+            return {
+                ok: false,
+                reason: 'expired',
+                message: 'Pro 体验已到期，已回免费功能；可购买大版本内买断继续使用',
+                license: merged,
+            };
+        }
+        return {
+            ok: false,
+            reason: 'invalid',
+            message: verified.error || '许可无效',
+            license: lic,
+        };
+    }
+
     function normalizeByok(raw) {
         const o = raw && typeof raw === 'object' ? raw : {};
         return {
@@ -257,9 +357,19 @@
      * 当前设备是否具备 Advanced 使用资格（不含具体功能开关之外的模块加载）。
      */
     function evaluateEntitlement(license, deviceId, { now = Date.now(), requireOnlineFresh = true } = {}) {
-        const lic = normalizeLicenseState(license);
+        let lic = normalizeLicenseState(license);
         if (!lic.key || !lic.licenseId) {
             return { entitled: false, reason: 'inactive', message: '未激活 Pro 许可' };
+        }
+        const reconciled = reconcileLicenseWithKey(lic, now);
+        lic = reconciled.license;
+        if (!reconciled.ok) {
+            return {
+                entitled: false,
+                reason: reconciled.reason || 'invalid',
+                message: reconciled.message || '许可无效',
+                expiresAt: lic.expiresAt,
+            };
         }
         if (isLicenseExpired(lic, now)) {
             return {
@@ -448,7 +558,8 @@
     }
 
     function buildStatusView(license, deviceId, { now = Date.now() } = {}) {
-        const lic = normalizeLicenseState(license);
+        const reconciled = reconcileLicenseWithKey(normalizeLicenseState(license), now);
+        const lic = reconciled.license;
         const ev = evaluateEntitlement(lic, deviceId, { now });
         const transfer = canTransfer(lic, now);
         const timed = isTimedLicense(lic);
@@ -513,6 +624,7 @@
         isTimedLicense,
         isLicenseExpired,
         msUntilExpiry,
+        reconcileLicenseWithKey,
         needsRevalidation,
         msUntilRevalidation,
         canTransfer,

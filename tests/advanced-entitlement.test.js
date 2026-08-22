@@ -179,6 +179,31 @@ describe('advanced-entitlement-core', () => {
         assert.strictEqual(expiredView.entitled, false);
     });
 
+    it('rejects expired TSUB1 even when local expiresAt was cleared', () => {
+        // Real expired trial key (payload expiresAt 2026-08-14); local field intentionally wiped.
+        const key = 'TSUB1.eyJ2IjoxLCJsaWNlbnNlSWQiOiJhZmRfdHJpYWxfMjAyNjA4MDcxNzAxMDA5OTUyNTY5ODE1MDIiLCJmZWF0dXJlcyI6WyIqIl0sInByb2R1Y3QiOiJ0cmFuc3ViLWFkdmFuY2VkIiwiaXNzdWVkQXQiOiIyMDI2LTA4LTA3VDA5OjAxOjI3LjYzMloiLCJleHBpcmVzQXQiOiIyMDI2LTA4LTE0VDA5OjAxOjI3LjYzMloifQ.UmUBbqqI1DQnbEQISk0ZWHOLbHNLwuM33MyZgGcVqTVqEX6iq60TADDXzvwBLhfcUXZC7Sn0qfvcp6jNilgkBQ';
+        let lic = entitlement.emptyLicenseState();
+        lic.key = key;
+        lic.licenseId = 'afd_trial_20260807170100995256981502';
+        lic.features = ['*'];
+        lic.expiresAt = null;
+        const t0 = Date.parse('2026-08-07T09:21:37.449Z');
+        lic = entitlement.bindDevice(lic, 'dev-trial', { now: t0 }).license;
+        lic = entitlement.markValidated(lic, t0);
+
+        const stillOkBeforeExpiry = entitlement.evaluateEntitlement(lic, 'dev-trial', {
+            now: Date.parse('2026-08-10T00:00:00.000Z'),
+        });
+        assert.strictEqual(stillOkBeforeExpiry.entitled, true);
+        assert.strictEqual(stillOkBeforeExpiry.expiresAt, '2026-08-14T09:01:27.632Z');
+
+        const after = entitlement.evaluateEntitlement(lic, 'dev-trial', {
+            now: Date.parse('2026-08-15T00:00:00.000Z'),
+        });
+        assert.strictEqual(after.entitled, false);
+        assert.strictEqual(after.reason, 'expired');
+    });
+
     it('buyout without expiresAt stays entitled until revalidation', () => {
         let lic = entitlement.emptyLicenseState();
         lic.key = 'k';

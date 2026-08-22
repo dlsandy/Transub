@@ -706,10 +706,16 @@ async function installManagedRuntimeJob(event, payload = {}) {
         } else {
             message = '运行时已就绪，无需重复下载';
         }
+    } else if (result.companionFromSystem) {
+        message = '运行时安装完成（已复用本机 CUDA 运行库，跳过 cudart 下载）';
+    } else if (result.companionReused) {
+        message = '运行时安装完成（已复用已有 CUDA 运行库）';
     }
     return {
         ok: true,
         already: !!result.already,
+        companionReused: !!result.companionReused,
+        companionFromSystem: !!result.companionFromSystem,
         message,
         status: publicStatus((saved.ok ? saved.doc : doc), deviceId),
         managed: managedStatusForDoc(saved.ok ? saved.doc : doc),
@@ -3279,6 +3285,14 @@ function setupAdvancedBridge(api, deps = {}) {
 
     register('transub-advanced-managed-llm-install-runtime', async (event, payload = {}) => (
         installManagedRuntimeJob(event, payload)
+    ));
+
+    register('transub-advanced-managed-llm-scan-cuda', async (_event, payload = {}) => (
+        managedLlm.scanSystemCudaCompanion(payload)
+    ));
+
+    register('transub-advanced-managed-llm-adopt-cuda', async (_event, payload = {}) => (
+        managedLlm.adoptSystemCudaCompanion(payload)
     ));
 
     register('transub-advanced-managed-llm-set-runtime', async (_event, payload = {}) => (

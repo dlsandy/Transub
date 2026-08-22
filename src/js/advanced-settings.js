@@ -1387,6 +1387,57 @@
                 return res || { ok: false, error: '手动下载失败' };
             });
         });
+        document.getElementById('advancedManagedScanCudaBtn')?.addEventListener('click', () => {
+            void withAction(runtimeStatusEl(), async () => {
+                const runtimeId = String(els.managedRuntimeBackendSelect()?.value || '').trim();
+                const scan = await electron.transubAdvancedManagedLlmScanCuda?.({
+                    runtimeId: runtimeId || undefined,
+                });
+                if (!scan?.ok) {
+                    return scan || { ok: false, error: '扫描失败' };
+                }
+                if (!scan.found) {
+                    await askConfirm({
+                        title: '未找到可复用 CUDA',
+                        message: `${scan.message || '未找到齐全的 CUDA 运行库。'}\n\n将在安装 CUDA 版运行时时报官方 cudart；也可改用「手动下载运行时」。`,
+                        primaryLabel: '知道了',
+                        secondaryLabel: '',
+                    });
+                    setText(
+                        els.managedRuntime(),
+                        scan.message || '未找到可复用的本机 CUDA 运行库',
+                    );
+                    return { ok: true, message: scan.message || '未找到可复用 CUDA' };
+                }
+
+                const dirs = (scan.best?.dirs || []).slice(0, 3).join('\n') || '（见详情）';
+                const extra = (scan.candidates || []).length > 1
+                    ? `\n另有 ${scan.candidates.length - 1} 处候选。`
+                    : '';
+                const choice = await askConfirmChoice({
+                    title: '找到可复用 CUDA 运行库',
+                    message: `${scan.message}\n\n来源目录：\n${dirs}${extra}\n\n可立即复制到 llama-server 运行时目录（跳过后续 cudart 下载），或仅记录结果。`,
+                    primaryLabel: '复用到运行时',
+                    secondaryLabel: '仅查看',
+                    tertiaryLabel: '',
+                });
+                setText(els.managedRuntime(), scan.message);
+
+                if (choice !== 'primary') {
+                    return { ok: true, message: scan.message };
+                }
+
+                const adopt = await electron.transubAdvancedManagedLlmAdoptCuda?.({
+                    runtimeId: runtimeId || scan.runtimeId || undefined,
+                });
+                if (!adopt?.ok) {
+                    return adopt || { ok: false, error: '复用失败' };
+                }
+                await refreshManaged();
+                if (adopt.message) setText(els.managedRuntime(), adopt.message);
+                return { ok: true, message: adopt.message || '已复用本机 CUDA 运行库' };
+            });
+        });
         els.managedRuntimeBackendSelect()?.addEventListener('change', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const select = els.managedRuntimeBackendSelect();

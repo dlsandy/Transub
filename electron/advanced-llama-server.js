@@ -7,7 +7,64 @@ const { spawn, spawnSync } = require('child_process');
 const catalog = require('../src/js/advanced-managed-llm-catalog-core');
 const llmFs = require('./advanced-llm-fs');
 const downloader = require('./advanced-llm-download');
+const cudaScan = require('./cuda-runtime-scan');
 const { asPlainObject } = require('./ipc-validate');
+
+/**
+ * Optional engine site-packages roots so pip nvidia-* wheels can supply cudart.
+ * @returns {string[]}
+ */
+function resolveCudaScanExtraRoots() {
+    /** @type {string[]} */
+    const roots = [];
+    try {
+        const { getBundledEnginePath, getBundledEnginePathIfPresent } = require('./app-paths');
+        const bundled = (typeof getBundledEnginePathIfPresent === 'function'
+            ? getBundledEnginePathIfPresent()
+            : '') || (typeof getBundledEnginePath === 'function' ? getBundledEnginePath() : '');
+        if (bundled) roots.push(...cudaScan.engineNvidiaExtraRoots(bundled));
+    } catch (_) { /* ignore */ }
+    return roots;
+}
+
+/**
+ * Prefer Transub-owned companion; else whitelist-scan the machine and copy into keepDir.
+ * @returns {{ reused: boolean, fromSystem: boolean, sourceLabel: string }}
+ */
+function tryPreserveOrScanCompanion(pkg, meta, runtimeDir, keepDir, opts = {}) {
+    let reuseCompanion = canReuseInstalledCompanion(pkg, meta, runtimeDir, opts);
+    if (reuseCompanion) {
+        const kept = preserveCompanionArtifacts(runtimeDir, keepDir);
+        reuseCompanion = !!(kept.ok && kept.files.length);
+        if (reuseCompanion) {
+            return { reused: true, fromSystem: false, sourceLabel: '本机已装运行时' };
+        }
+    }
+
+    if (opts.reinstall || opts.forceCompanion) {
+        return { reused: false, fromSystem: false, sourceLabel: '' };
+    }
+    if (!pkg?.companionUrl) {
+        return { reused: false, fromSystem: false, sourceLabel: '' };
+    }
+
+    const major = resolveCompanionCudaMajor(resolveCompanionId(pkg), pkg.id);
+    if (!major) return { reused: false, fromSystem: false, sourceLabel: '' };
+
+    const result = cudaScan.tryReuseSystemCudaCompanion({
+        major,
+        destDir: keepDir,
+        extraRoots: resolveCudaScanExtraRoots(),
+    });
+    if (result.ok && result.files?.length) {
+        return {
+            reused: true,
+            fromSystem: true,
+            sourceLabel: result.best?.label || '本机 CUDA 运行库',
+        };
+    }
+    return { reused: false, fromSystem: false, sourceLabel: '' };
+}
 
 /** @type {import('child_process').ChildProcess | null} */
 let serverProc = null;
@@ -278,6 +335,37 @@ function getRuntimeStatus(options = {}) {
         const installedLabel = meta?.label || installedId;
         message = `${message} · 偏好「${preferLabel}」，当前为「${installedLabel}」，请重新安装运行时`;
     }
+
+    /** @type {object|null} */
+    let systemCompanion = null;
+    if (pkg?.companionUrl && process.platform === 'win32') {
+        const major = resolveCompanionCudaMajor(resolveCompanionId(pkg), pkg.id);
+        if (major) {
+            try {
+                const scan = cudaScan.scanReusableCudaRuntimes({
+                    major,
+                    extraRoots: resolveCudaScanExtraRoots(),
+                });
+                if (scan.best) {
+                    systemCompanion = {
+                        found: true,
+                        major: scan.major,
+                        label: scan.best.label,
+                        source: scan.best.source,
+                        fileCount: scan.best.fileCount,
+                    };
+                    if (!installed) {
+                        message = `${message} · 可复用本机「${scan.best.label}」，安装时将跳过 cudart 下载`;
+                    }
+                } else {
+                    systemCompanion = { found: false, major: scan.major };
+                }
+            } catch (_) {
+                systemCompanion = null;
+            }
+        }
+    }
+
     return {
         kind: 'llama-server',
         supported: !!pkg,
@@ -293,6 +381,7 @@ function getRuntimeStatus(options = {}) {
         tag: catalogTag,
         installedTag: installedTag || '',
         message,
+        systemCompanion,
     };
 }
 
@@ -505,13 +594,6 @@ async function installRuntimeFromLocalArchives(options = {}) {
     const companionPath = String(opts.companionPath || '').trim()
         ? path.resolve(String(opts.companionPath).trim())
         : '';
-    if (pkg.companionUrl && !companionPath) {
-        return {
-            ok: false,
-            error: `「${pkg.label}」还需选择 CUDA 运行库压缩包（cudart-*.zip）`,
-            code: 'companion_missing',
-        };
-    }
     if (companionPath && !fs.existsSync(companionPath)) {
         return { ok: false, error: '未找到 CUDA 运行库压缩包', code: 'companion_missing' };
     }
@@ -522,6 +604,31 @@ async function installRuntimeFromLocalArchives(options = {}) {
     const stamp = `${Date.now()}-${process.pid}`;
     const staging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-staging-${stamp}`);
     const companionStaging = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-${stamp}`);
+    const companionKeep = path.join(llmFs.getAdvancedLlmRoot(), `_runtime-cudart-keep-${stamp}`);
+    const companionId = resolveCompanionId(pkg);
+    let systemCompanionLabel = '';
+    let reuseSystemCompanion = false;
+
+    if (pkg.companionUrl && !companionPath) {
+        const major = resolveCompanionCudaMajor(companionId, pkg.id);
+        const scanned = major
+            ? cudaScan.tryReuseSystemCudaCompanion({
+                major,
+                destDir: companionKeep,
+                extraRoots: resolveCudaScanExtraRoots(),
+            })
+            : { ok: false };
+        if (scanned.ok && scanned.files?.length) {
+            reuseSystemCompanion = true;
+            systemCompanionLabel = scanned.best?.label || '本机 CUDA 运行库';
+        } else {
+            return {
+                ok: false,
+                error: `「${pkg.label}」还需选择 CUDA 运行库压缩包（cudart-*.zip），或先安装 NVIDIA CUDA Toolkit / 引擎 GPU 组件以便自动复用`,
+                code: 'companion_missing',
+            };
+        }
+    }
 
     try {
         sendProgress(opts.onProgress, {
@@ -548,6 +655,14 @@ async function installRuntimeFromLocalArchives(options = {}) {
             fs.mkdirSync(companionStaging, { recursive: true });
             await downloader.extractArchiveAsync(companionPath, companionStaging, pkg.archive);
             await copyDirRecursiveAsync(flattenStagingRoot(companionStaging), runtimeDir);
+        } else if (reuseSystemCompanion) {
+            sendProgress(opts.onProgress, {
+                phase: 'extracting',
+                kind: 'runtime',
+                message: `正在复用本机 CUDA 运行库（${systemCompanionLabel}）…`,
+                pct: 70,
+            });
+            await copyDirRecursiveAsync(companionKeep, runtimeDir);
         }
 
         const exe = llmFs.findFileRecursive(runtimeDir, pkg.exeName, 5);
@@ -565,20 +680,33 @@ async function installRuntimeFromLocalArchives(options = {}) {
             if (!cudaDll) {
                 return {
                     ok: false,
-                    error: '解压后未找到 CUDA 组件（ggml-cuda.dll / cudart）。请确认同时选择了主程序 zip 与 cudart zip。',
+                    error: '解压后未找到 CUDA 组件（ggml-cuda.dll / cudart）。请确认同时选择了主程序 zip 与 cudart zip，或本机 CUDA 运行库齐全。',
                     code: 'cuda_dll_missing',
                 };
             }
         }
 
-        const meta = writeInstalledRuntimeMeta(pkg, exe, { source: 'manual-zip' });
+        const meta = writeInstalledRuntimeMeta(pkg, exe, {
+            source: reuseSystemCompanion ? 'manual-zip+system-cudart' : 'manual-zip',
+            companionId: companionId || undefined,
+            companionReused: reuseSystemCompanion || undefined,
+            companionSource: systemCompanionLabel || undefined,
+        });
         sendProgress(opts.onProgress, {
             phase: 'done',
             kind: 'runtime',
-            message: `运行时安装完成（${pkg.label}）`,
+            message: reuseSystemCompanion
+                ? `运行时安装完成（${pkg.label}，已复用 ${systemCompanionLabel}）`
+                : `运行时安装完成（${pkg.label}）`,
             pct: 100,
         });
-        return { ok: true, exePath: exe, meta };
+        return {
+            ok: true,
+            exePath: exe,
+            meta,
+            companionReused: !!reuseSystemCompanion,
+            companionFromSystem: !!reuseSystemCompanion,
+        };
     } catch (err) {
         return {
             ok: false,
@@ -588,12 +716,14 @@ async function installRuntimeFromLocalArchives(options = {}) {
     } finally {
         await downloader.rimrafSafeAsync(staging);
         await downloader.rimrafSafeAsync(companionStaging);
+        await downloader.rimrafSafeAsync(companionKeep);
     }
 }
 
 /**
  * 下载并解压 llama-server 运行时。
- * 更新 llama.cpp 时：若本机已有同 CUDA 版本的 cudart 且文件齐全，则跳过 CUDA 运行库下载。
+ * 更新 llama.cpp 时：若本机已有同 CUDA 版本的 cudart 且文件齐全，则跳过 CUDA 运行库下载；
+ * 否则白名单扫描 NVIDIA Toolkit / pip nvidia 包并复制到运行时目录。
  * @param {{ force?: boolean, reinstall?: boolean, forceCompanion?: boolean, runtimeId?: string, packageId?: string, signal?: AbortSignal, onProgress?: Function }} [options]
  */
 async function ensureRuntimeInstalled(options = {}) {
@@ -663,14 +793,10 @@ async function ensureRuntimeInstalled(options = {}) {
     );
     const companionUrl = String(pkg.companionUrl || '').trim();
     const companionId = resolveCompanionId(pkg);
-    let reuseCompanion = canReuseInstalledCompanion(pkg, meta, runtimeDir, opts);
-    if (reuseCompanion) {
-        const kept = preserveCompanionArtifacts(runtimeDir, companionKeep);
-        reuseCompanion = !!(kept.ok && kept.files.length);
-        if (!reuseCompanion) {
-            try { await downloader.rimrafSafeAsync(companionKeep); } catch (_) { /* ignore */ }
-        }
-    }
+    const preserve = tryPreserveOrScanCompanion(pkg, meta, runtimeDir, companionKeep, opts);
+    const reuseCompanion = !!preserve.reused;
+    const companionFromSystem = !!preserve.fromSystem;
+    const companionSourceLabel = String(preserve.sourceLabel || '').trim();
     const needCompanionDownload = !!(companionUrl && !reuseCompanion);
     const companionPath = needCompanionDownload
         ? path.join(llmFs.getAdvancedLlmRoot(), `_runtime-${pkg.id}-cudart-${stamp}.${archiveExt}`)
@@ -729,7 +855,9 @@ async function ensureRuntimeInstalled(options = {}) {
             sendProgress(opts.onProgress, {
                 phase: 'start',
                 kind: 'runtime',
-                message: '复用已有 CUDA 运行库，跳过 cudart 下载',
+                message: companionFromSystem
+                    ? `复用本机 CUDA 运行库（${companionSourceLabel || '已校验'}），跳过 cudart 下载`
+                    : '复用已有 CUDA 运行库，跳过 cudart 下载',
                 pct: Math.min(98, mainWeight),
             });
         }
@@ -751,7 +879,9 @@ async function ensureRuntimeInstalled(options = {}) {
             sendProgress(opts.onProgress, {
                 phase: 'extracting',
                 kind: 'runtime',
-                message: '正在还原 CUDA 运行库…',
+                message: companionFromSystem
+                    ? `正在复制本机 CUDA 运行库（${companionSourceLabel || '已校验'}）…`
+                    : '正在还原 CUDA 运行库…',
                 pct: 99,
             });
             await copyDirRecursiveAsync(companionKeep, runtimeDir);
@@ -783,20 +913,30 @@ async function ensureRuntimeInstalled(options = {}) {
         }
 
         const written = writeInstalledRuntimeMeta(pkg, exe, {
-            source: 'download',
+            source: companionFromSystem ? 'download+system-cudart' : 'download',
             companionId: companionId || undefined,
             companionReused: reuseCompanion || undefined,
+            companionFromSystem: companionFromSystem || undefined,
+            companionSource: companionSourceLabel || undefined,
         });
 
         sendProgress(opts.onProgress, {
             phase: 'done',
             kind: 'runtime',
             message: reuseCompanion
-                ? `运行时安装完成（${pkg.label}，已复用 CUDA 运行库）`
+                ? (companionFromSystem
+                    ? `运行时安装完成（${pkg.label}，已复用 ${companionSourceLabel || '本机 CUDA'}）`
+                    : `运行时安装完成（${pkg.label}，已复用 CUDA 运行库）`)
                 : `运行时安装完成（${pkg.label}）`,
             pct: 100,
         });
-        return { ok: true, exePath: exe, meta: written, companionReused: !!reuseCompanion };
+        return {
+            ok: true,
+            exePath: exe,
+            meta: written,
+            companionReused: !!reuseCompanion,
+            companionFromSystem: !!companionFromSystem,
+        };
     } catch (err) {
         if (err?.name === 'AbortError' || err?.code === 'cancelled') {
             return { ok: false, error: '已取消', code: 'cancelled' };
@@ -935,11 +1075,16 @@ async function waitForHealthy(port, {
                 code: 'gpu_load_failed',
             };
         }
-        // GPU load can hang at 503 when Whisper still holds the CUDA context.
+        // GPU load can hang at HTTP 503 (still "Loading model") when CUDA init
+        // stalls — residual ASR context, broken cudart, or WDAC blocking ggml-cuda.
+        // VRAM may stay near empty the whole time; do not assume OOM.
         if (stallAfterMs > 0 && Date.now() - started >= stallAfterMs) {
+            const hint = /cuda|ggml|cublas|driver|device/i.test(tail)
+                ? '（见 llama-server 日志）'
+                : '（显存可能仍空闲：多为 CUDA 初始化卡住，而非显存不足）';
             return {
                 ok: false,
-                error: 'GPU 模型加载停滞（可能被 ASR 占用显存）',
+                error: `GPU 模型加载停滞${hint}`,
                 code: 'gpu_load_stalled',
             };
         }
@@ -1127,9 +1272,11 @@ async function ensureLlamaServer(options = {}) {
             // GPU attempts: fail faster so we can drop ngl / fall back to CPU when
             // Whisper residual VRAM leaves llama-server hung at HTTP 503.
             timeoutMs: nGpuLayers > 0
-                ? Math.min(Number(opts.timeoutMs) || 180000, 90000)
+                ? Math.min(Number(opts.timeoutMs) || 180000, 120000)
                 : (Number(opts.timeoutMs) || 180000),
-            stallAfterMs: nGpuLayers > 0 ? 55000 : 0,
+            // 7B Q6 cold-load can exceed 55s on slow disks; still fail before full timeout
+            // so ngl/CPU fallback can run. True CUDA hangs usually never leave 503.
+            stallAfterMs: nGpuLayers > 0 ? 90000 : 0,
             signal: opts.signal,
             onProgress: opts.onProgress,
             getLogTail: () => logTail,
@@ -1173,12 +1320,16 @@ async function ensureLlamaServer(options = {}) {
         stopLlamaServer();
         // Only retry lower ngl when process exited or GPU-related failure
         if (i < nglAttempts.length - 1) {
+            const stallHint = healthy.code === 'gpu_load_stalled'
+                ? '（加载超时，显存未必不足）'
+                : '';
             sendProgress(opts.onProgress, {
                 phase: 'starting',
                 kind: 'server',
-                message: `${modeLabel} 失败，尝试降低 GPU 负载…`,
+                message: `${modeLabel} 失败${stallHint}，尝试降低 GPU 负载…`,
             });
-            await downloader.sleep(800);
+            // After Torch ASR, give the driver a beat before the next CUDA client.
+            await downloader.sleep(nGpuLayers > 0 ? 1500 : 800);
         }
     }
 
@@ -1210,4 +1361,11 @@ module.exports = {
     getServerBaseUrl,
     getLastServerLogTail,
     getServerState: () => (serverState ? { ...serverState } : null),
+    scanReusableCudaRuntimes: (opts) => cudaScan.scanReusableCudaRuntimes({
+        ...opts,
+        extraRoots: [
+            ...(Array.isArray(opts?.extraRoots) ? opts.extraRoots : []),
+            ...resolveCudaScanExtraRoots(),
+        ],
+    }),
 };

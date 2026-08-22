@@ -476,12 +476,194 @@ async function runManagedPerfBenchmark(doc, options = {}) {
     };
 }
 
+function runtimePreferHints() {
+    try {
+        return require('./advanced-runtime-prefer').getHints();
+    } catch (_) {
+        return {};
+    }
+}
+
+/**
+ * Resolve CUDA major for companion scan from payload / preference / driver.
+ * @param {object} [opts]
+ * @returns {{ major: number, runtimeId: string, pkg: object|null }}
+ */
+function resolveCudaCompanionScanTarget(opts = {}) {
+    const patch = asPlainObject(opts);
+    const hints = runtimePreferHints();
+    const runtimeId = catalog.normalizeRuntimeId(
+        asString(patch.runtimeId || patch.packageId, 64),
+        process.platform,
+        process.arch,
+        hints,
+    ) || catalog.getDefaultRuntimeId(process.platform, process.arch, hints) || '';
+    const pkg = catalog.getRuntimePackage(process.platform, process.arch, runtimeId, hints);
+    let major = llamaServer.resolveCompanionCudaMajor(
+        llamaServer.resolveCompanionId(pkg),
+        pkg?.id || runtimeId,
+    );
+    if (!major) {
+        const fromDriver = Number(String(hints.cudaVersion || '').split('.')[0]);
+        if (Number.isFinite(fromDriver) && fromDriver >= 12) major = fromDriver;
+    }
+    if (!major) {
+        const m = /^win-cuda(\d+)/i.exec(runtimeId);
+        if (m) major = Number(m[1]) || 0;
+    }
+    return { major: major || 0, runtimeId, pkg };
+}
+
+/**
+ * Manual whitelist scan for reusable cudart/cublas on this machine.
+ * @param {object} [options]
+ */
+function scanSystemCudaCompanion(options = {}) {
+    if (process.platform !== 'win32') {
+        return {
+            ok: false,
+            error: '本机 CUDA 运行库扫描仅支持 Windows',
+            code: 'platform_unsupported',
+        };
+    }
+    const { major, runtimeId, pkg } = resolveCudaCompanionScanTarget(options);
+    if (!major) {
+        return {
+            ok: false,
+            error: '无法确定 CUDA 主版本。请先选择 CUDA 12 / 13 后端，或确认已安装 NVIDIA 驱动。',
+            code: 'major_unknown',
+            runtimeId,
+        };
+    }
+    const scan = llamaServer.scanReusableCudaRuntimes({
+        major,
+        extraRoots: Array.isArray(options.extraRoots) ? options.extraRoots : undefined,
+        env: options.env,
+        includePath: options.includePath,
+    });
+    const best = scan.best
+        ? {
+            id: scan.best.id,
+            label: scan.best.label,
+            source: scan.best.source,
+            dirs: scan.best.dirs,
+            fileCount: scan.best.fileCount,
+            files: (scan.best.files || []).map((f) => String(f)),
+            score: scan.best.score,
+        }
+        : null;
+    return {
+        ok: true,
+        found: !!best,
+        major: scan.major,
+        required: scan.required,
+        runtimeId,
+        backend: pkg?.backend || '',
+        packageLabel: pkg?.label || runtimeId,
+        best,
+        candidates: (scan.candidates || []).slice(0, 8).map((c) => ({
+            id: c.id,
+            label: c.label,
+            source: c.source,
+            fileCount: c.fileCount,
+            dirs: c.dirs,
+            score: c.score,
+        })),
+        message: best
+            ? `找到可复用 CUDA ${major} 运行库：${best.label}（${best.fileCount} 个文件）`
+            : `未找到齐全的 CUDA ${major} 运行库（需要 ${scan.required.join('、')}）`,
+    };
+}
+
+/**
+ * Copy scanned companion DLLs into llama-server runtime dir.
+ * @param {object} [options]
+ */
+function adoptSystemCudaCompanion(options = {}) {
+    if (process.platform !== 'win32') {
+        return {
+            ok: false,
+            error: '本机 CUDA 运行库复用仅支持 Windows',
+            code: 'platform_unsupported',
+        };
+    }
+    const patch = asPlainObject(options);
+    const { major, runtimeId, pkg } = resolveCudaCompanionScanTarget(patch);
+    if (!major) {
+        return {
+            ok: false,
+            error: '无法确定 CUDA 主版本',
+            code: 'major_unknown',
+        };
+    }
+    if (pkg && pkg.backend && pkg.backend !== 'cuda') {
+        return {
+            ok: false,
+            error: `当前偏好为「${pkg.label || runtimeId}」，不是 CUDA 后端。请先切换到 CUDA 12 / 13 再复用。`,
+            code: 'backend_not_cuda',
+            runtimeId,
+        };
+    }
+
+    llmFs.ensureDirs();
+    const destDir = llmFs.getRuntimeDir();
+    const result = require('./cuda-runtime-scan').tryReuseSystemCudaCompanion({
+        major,
+        destDir,
+        extraRoots: Array.isArray(patch.extraRoots) ? patch.extraRoots : undefined,
+        env: patch.env,
+        includePath: patch.includePath,
+    });
+    if (!result.ok) {
+        return {
+            ok: false,
+            error: result.error
+                || (result.code === 'not_found'
+                    ? `未找到可复用的 CUDA ${major} 运行库`
+                    : '复制 CUDA 运行库失败'),
+            code: result.code || 'adopt_failed',
+            major,
+            runtimeId,
+        };
+    }
+
+    const companionId = llamaServer.resolveCompanionId(pkg) || undefined;
+    const prev = llmFs.readRuntimeMeta() || {};
+    const meta = {
+        ...prev,
+        companionId: companionId || prev.companionId,
+        companionReused: true,
+        companionFromSystem: true,
+        companionSource: result.best?.label || prev.companionSource,
+        companionAdoptedAt: new Date().toISOString(),
+    };
+    if (pkg?.id && !meta.packageId) meta.packageId = pkg.id;
+    if (pkg?.label && !meta.label) meta.label = pkg.label;
+    if (pkg?.backend && !meta.backend) meta.backend = pkg.backend;
+    llmFs.writeRuntimeMeta(meta);
+
+    const runtime = llamaServer.getRuntimeStatus({ runtimeId });
+    return {
+        ok: true,
+        major,
+        runtimeId,
+        best: result.best,
+        files: result.files,
+        linked: result.linked,
+        copied: result.copied,
+        runtime,
+        message: `已将「${result.best?.label || '本机 CUDA'}」复用到运行时目录（CUDA ${major}）`,
+    };
+}
+
 module.exports = {
     buildManagedStatus,
     pullManagedModel,
     cancelManagedPull,
     resolveManagedEndpoint,
     runManagedPerfBenchmark,
+    scanSystemCudaCompanion,
+    adoptSystemCudaCompanion,
     ensureRuntimeInstalled: (...args) => llamaServer.ensureRuntimeInstalled(...args),
     installRuntimeFromLocalArchives: (...args) => llamaServer.installRuntimeFromLocalArchives(...args),
     stopLlamaServer: (...args) => llamaServer.stopLlamaServer(...args),

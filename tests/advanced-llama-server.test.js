@@ -174,4 +174,21 @@ describe('advanced-llama-server companion reuse', () => {
         assert.strictEqual(fs.readFileSync(path.join(keep, 'cudart64_13.dll'), 'utf8'), 'keep-me');
         assert.ok(!fs.existsSync(path.join(keep, 'ggml-cuda.dll')));
     });
+
+    it('exposes system cuda scan helper', () => {
+        assert.strictEqual(typeof llamaServer.scanReusableCudaRuntimes, 'function');
+        const scan = llamaServer.scanReusableCudaRuntimes({
+            major: 12,
+            env: { PATH: '' },
+            includePath: false,
+            extraRoots: [],
+        });
+        assert.ok(scan);
+        assert.strictEqual(typeof scan.ok, 'boolean');
+        assert.deepStrictEqual(scan.required, [
+            'cudart64_12.dll',
+            'cublas64_12.dll',
+            'cublasLt64_12.dll',
+        ]);
+    });
 });
