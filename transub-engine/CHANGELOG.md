@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Batch jobs after Qwen3/SenseVoice**: do not strip a live `torch` from `sys.modules` when releasing GPU / importing CTranslate2. That left the next job failing with `_has_torch_function already has a docstring` or SenseVoice「无法原地重装」.
 - **Opus MT Hub downloads**: skip unused Flax/Rust/TF dumps so `opus-mt-*` pulls finish more reliably; treat Hub `.cache`-only dirs as not installed (not「不完整」).
 - **SenseVoice progress mojibake on Chinese Windows**: warm-worker stdout is now UTF-8 bytes (plus `PYTHONUTF8` / `PYTHONIOENCODING`), so details like `转写中（ja）…` no longer appear as `תд У ja` in engine logs.
 - **Missing Opus MT after long ASR**: fail fast when language/MT model is known but not installed; on mid-job MT failure, promote `*.src.partial.*` → `*.src.*` so ASR work is kept.
