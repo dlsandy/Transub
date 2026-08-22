@@ -8,20 +8,7 @@ const { execSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-
-const PROPRIETARY_SOURCES = [
-    'electron/advanced-context-reconstruct.js',
-    'electron/advanced-film-reconstruct.js',
-    'electron/advanced-bilingual-semantic.js',
-    'electron/advanced-reconstruct-runtime.js',
-    'electron/advanced-smart-translate.js',
-    'src/js/advanced-context-reconstruct-core.js',
-    'src/js/advanced-film-reconstruct-core.js',
-    'src/js/advanced-smart-translate-core.js',
-    'src/js/smart-translate-verify-core.js',
-    'src/js/smart-translate-address-core.js',
-    'tools/advanced-module-entry.js',
-];
+const { PROPRIETARY_ALGORITHM_SOURCES: PROPRIETARY_SOURCES } = require('./proprietary-paths');
 
 const MUST_GITIGNORE = [
     '.advanced-license-private.b64',
@@ -67,8 +54,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.1.2') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.1.2 for this cut)`);
+if (pkg.version === '3.1.3') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.1.3 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');
@@ -113,17 +100,13 @@ for (const rel of PROPRIETARY_SOURCES) {
 }
 
 try {
-    const trackedProprietary = execSync(
-        `git ls-files -- ${PROPRIETARY_SOURCES.map((p) => `"${p}"`).join(' ')}`,
-        { cwd: root, encoding: 'utf8' },
-    ).trim().split(/\r?\n/).filter(Boolean);
-    if (trackedProprietary.length) {
-        fail(`proprietary sources still tracked by git: ${trackedProprietary.join(', ')}`);
-    } else {
-        ok('no proprietary algorithm sources tracked by git');
-    }
+    execSync('node tools/check-proprietary-boundary.js', {
+        cwd: root,
+        stdio: 'inherit',
+    });
+    ok('proprietary boundary check passed');
 } catch {
-    warn('could not verify proprietary sources are untracked (git ls-files failed)');
+    fail('proprietary boundary check failed — see tools/check-proprietary-boundary.js');
 }
 
 const extra = pkg.build?.extraFiles || [];
@@ -196,7 +179,7 @@ try {
 } catch {
     warn('git status unavailable');
 }
-warn('Do not git push / gh release until proprietary sources are stripped or kept private');
+warn('Before push: npm run check:proprietary must PASS (Pro algorithms / secrets stay local)');
 warn('Before shipping: npm run smoke:preflight + docs/smoke-checklist.md hand tests');
 
 console.log('\n---');

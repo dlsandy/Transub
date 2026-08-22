@@ -252,28 +252,10 @@ function packageFilesCover(relPosix) {
     return false;
 }
 
-/** Pro algorithm sources: shipped only via minified `_advanced`, not app.asar */
-const PROPRIETARY_ASAR_FORBIDDEN = [
-    'electron/advanced-context-reconstruct.js',
-    'electron/advanced-film-reconstruct.js',
-    'electron/advanced-bilingual-semantic.js',
-    'electron/advanced-reconstruct-runtime.js',
-    'electron/advanced-smart-translate.js',
-    'src/js/advanced-context-reconstruct-core.js',
-    'src/js/advanced-film-reconstruct-core.js',
-    'src/js/advanced-smart-translate-core.js',
-    'src/js/smart-translate-verify-core.js',
-    'src/js/smart-translate-address-core.js',
-];
-
-/** Same closed cores must not leak through renderer-dist/** → asar */
-const PROPRIETARY_RENDERER_DIST_FORBIDDEN = [
-    'renderer-dist/js/advanced-context-reconstruct-core.js',
-    'renderer-dist/js/advanced-film-reconstruct-core.js',
-    'renderer-dist/js/advanced-smart-translate-core.js',
-    'renderer-dist/js/smart-translate-verify-core.js',
-    'renderer-dist/js/smart-translate-address-core.js',
-];
+const {
+    ASAR_EXCLUDE: PROPRIETARY_ASAR_FORBIDDEN,
+    RENDERER_DIST_FORBIDDEN: PROPRIETARY_RENDERER_DIST_FORBIDDEN,
+} = require('./proprietary-paths');
 
 function isProprietaryAsarPath(rel) {
     const norm = String(rel || '').replace(/\\/g, '/');

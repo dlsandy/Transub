@@ -77,13 +77,10 @@ copyRecursive(path.join(src, 'js'), path.join(outDir, 'js'));
 copyRecursive(path.join(src, 'vendor'), path.join(outDir, 'vendor'));
 
 // Closed-source Pro algorithms ship via `_advanced` only — strip from renderer asar copy.
-const proprietaryRendererJs = [
-    'advanced-context-reconstruct-core.js',
-    'advanced-film-reconstruct-core.js',
-    'advanced-smart-translate-core.js',
-    'smart-translate-verify-core.js',
-    'smart-translate-address-core.js',
-];
+const { ASAR_EXCLUDE } = require('./proprietary-paths');
+const proprietaryRendererJs = ASAR_EXCLUDE
+    .filter((p) => p.startsWith('src/js/'))
+    .map((p) => path.basename(p));
 for (const name of proprietaryRendererJs) {
     const full = path.join(outDir, 'js', name);
     if (fs.existsSync(full)) fs.unlinkSync(full);
