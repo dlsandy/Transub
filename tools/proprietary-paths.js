@@ -54,6 +54,7 @@ const LOCAL_DEV_NEVER_PUBLISH = [
     '.cursor/',
     'AGENTS.md',
     'tmp/',
+    'tools/tmp-opencc-js/',
     'tests/fixtures/mt-train-drafts/',
     'node_modules/.vite/',
 ];

@@ -6,6 +6,7 @@ data/
 temp/
 coverage/
 tools/tmp-opencc/
+tools/tmp-opencc-js/
 tools/tmp-release/
 
 # Generated JASSUB/libass preview assets (npm run sync:jassub / postinstall)
