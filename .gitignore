@@ -142,3 +142,11 @@ mt-train-idle-state.json
 # Subtitle library local store / window state
 subtitle-library/
 window-state-subtitle-library.json
+
+# Local-only: never publish to public GitHub (see tools/proprietary-paths.js LOCAL_DEV_NEVER_PUBLISH)
+docs/
+transub-engine/docs/
+.cursor/
+tmp/
+tests/fixtures/mt-train-drafts/
+node_modules/.vite/

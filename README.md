@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/screenshots/logo.png" width="96" alt="Transub">
+  <img src="assets/readme/logo.png" width="96" alt="Transub">
 </p>
 
 <h1 align="center">Transub</h1>
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/01-overview.png" width="920" alt="批量生成与字幕编辑器总览">
+  <img src="assets/readme/01-overview.png" width="920" alt="批量生成与字幕编辑器总览">
 </p>
 
 ---
@@ -69,7 +69,7 @@
 支持视频与音频，可一次拖多个文件；进度、引擎日志和本机占用一目了然。
 
 <p align="center">
-  <img src="docs/screenshots/02-batch-generate.png" width="720" alt="批量生成：拖入文件">
+  <img src="assets/readme/02-batch-generate.png" width="720" alt="批量生成：拖入文件">
 </p>
 
 ### 列表精修 + Pro 工具条
@@ -77,7 +77,7 @@
 按低置信、质检、书签筛选；时间、读速（CPS）、样式一栏看清。Pro 可做语境重构、影片理解重构、语义审阅和 ASS 样式。
 
 <p align="center">
-  <img src="docs/screenshots/03-editor-list.png" width="920" alt="字幕编辑器列表与详情">
+  <img src="assets/readme/03-editor-list.png" width="920" alt="字幕编辑器列表与详情">
 </p>
 
 ### 质量检查，一键修
@@ -85,7 +85,7 @@
 扫描重叠、读速、时长、通顺度；勾选要修的项后一键修复。Pro 还可对残留问题做智能断句、局部重转写和语义审阅。
 
 <p align="center">
-  <img src="docs/screenshots/04-qc-panel.png" width="560" alt="质量检查与一键修复">
+  <img src="assets/readme/04-qc-panel.png" width="560" alt="质量检查与一键修复">
 </p>
 
 ### 对着画面改时间轴
@@ -93,7 +93,7 @@
 预览 + 波形 + 字幕块联动；可插入、局部重转写，空格播放、Ctrl+S 保存。
 
 <p align="center">
-  <img src="docs/screenshots/06-timeline-waveform.png" width="920" alt="视频预览与波形时间轴">
+  <img src="assets/readme/06-timeline-waveform.png" width="920" alt="视频预览与波形时间轴">
 </p>
 
 ### 详情：时长、样式、智能分割
@@ -101,7 +101,7 @@
 读速提示、智能时长、静音分割、叠词压缩；ASS 还可调特效与落点。
 
 <p align="center">
-  <img src="docs/screenshots/05-split-tools.png" width="720" alt="详情编辑与分割工具">
+  <img src="assets/readme/05-split-tools.png" width="720" alt="详情编辑与分割工具">
 </p>
 
 ### 跑完自动收拾一遍
@@ -109,7 +109,7 @@
 批次结束后可自动质检、清杂音 / 幻觉短句、精简标点与语气词；低置信句可开二意见。
 
 <p align="center">
-  <img src="docs/screenshots/07-auto.png" width="720" alt="任务处理后自动优化设置">
+  <img src="assets/readme/07-auto.png" width="720" alt="任务处理后自动优化设置">
 </p>
 
 ---
@@ -185,7 +185,7 @@ Pro 多出来的那一遍可以关（设置 → Pro → 智能翻译）。关掉
 购买：[爱发电](https://afdian.com/a/transub) → 软件里 **设置 → Pro** → 填订单号。  
 买断覆盖当前大版本（例如 3.x）；出 4.0 需另购（有升级优惠）。开通后不退款。
 
-本机跑大模型比较吃配置，大约 **内存 16 GB + 独立显卡 8 GB 显存** 更从容；也可以只用云端 API，不占本机显卡。详见 [Pro 说明](docs/advanced-boundary.md)。
+本机跑大模型比较吃配置，大约 **内存 16 GB + 独立显卡 8 GB 显存** 更从容；也可以只用云端 API，不占本机显卡。Pro 细则见 [LICENSE-PRO](LICENSE-PRO) 与 [NOTICE](NOTICE)。
 
 ---
 
@@ -206,7 +206,7 @@ npm start
 
 只开编辑器：`npm run start:editor`。打包：`npm run dist` 或 `build-win.bat`。
 
-开发文档：[架构](docs/architecture.md) · [引擎边界](docs/engine-boundary.md) · [ASR](docs/asr.md) · [变更记录](CHANGELOG.md)
+发版前：`npm run smoke:preflight`。变更记录：[CHANGELOG.md](CHANGELOG.md)。架构 / 引擎 / Agent 规则等开发文档仅保留在本机 `docs/` 与 `.cursor/rules/`（不随公开仓发布）。
 
 ---
 
