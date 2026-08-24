@@ -6,7 +6,7 @@ describe('advanced-managed-llm-catalog-core', () => {
     it('lists curated GGUF models', () => {
         const list = catalog.listCatalog();
         assert.ok(list.length >= 8);
-        assert.ok(list.every((m) => m.id && m.fileName && m.ggufUrl && m.name && m.family));
+        assert.ok(list.every((m) => m.id && m.fileName && m.name && m.family && (m.ggufUrl || m.localOnly)));
         assert.ok(list.some((m) => m.recommended));
         assert.ok(catalog.findCatalogEntry('qwen25-7b'));
         assert.ok(catalog.findCatalogEntry('Qwen2.5-7B-Instruct-Q4_K_M.gguf'));

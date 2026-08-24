@@ -44,5 +44,17 @@ describe('post-task-qc-ui-core', () => {
         });
         assert.ok(fixing.text.includes('智能'));
         assert.strictEqual(fixing.smartLabel, '智能修复中…');
+        const mtTrain = ui.buildQcBannerViewModel({
+            issueCount: 2,
+            mtTrainCanOpen: true,
+            mtTrainSuggested: true,
+        });
+        assert.strictEqual(mtTrain.mtTrainVisible, true);
+        assert.strictEqual(mtTrain.mtTrainLabel, '打开学习向导');
+        assert.ok(mtTrain.text.includes('学习向导'));
+        assert.strictEqual(ui.buildQcBannerViewModel({
+            issueCount: 2,
+            mtTrainCanOpen: false,
+        }).mtTrainVisible, false);
     });
 });

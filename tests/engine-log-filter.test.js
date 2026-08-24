@@ -79,4 +79,15 @@ describe('engine-log-filter', () => {
         assert.ok(out.includes('WinError 999'));
         assert.ok(!out.includes('缺少 CUDA 12 运行库'));
     });
+
+    it('friendly Qwen window OOM points at VRAM / smaller model', () => {
+        const raw = (
+            'Qwen3-ASR failed 1/90 windows (clip.mp4): CUDA out of memory。'
+            + '显存不足：请关闭占用显卡的本地大模型后重试，或改用 Qwen3-ASR 0.6B / Anime Whisper。'
+        );
+        const out = friendlyEngineError(raw);
+        assert.ok(out.includes('Qwen3-ASR 显存不足'));
+        assert.ok(out.includes('0.6B'));
+        assert.ok(out.includes('原始错误'));
+    });
 });

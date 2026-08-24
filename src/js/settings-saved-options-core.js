@@ -99,6 +99,9 @@
             asrSecondOpinion: norm.normalizeAsrSecondOpinion
                 ? norm.normalizeAsrSecondOpinion(fields.asrSecondOpinion)
                 : 'auto',
+            asrSemanticRepair: entitled && norm.normalizeAsrSemanticRepair
+                ? norm.normalizeAsrSemanticRepair(fields.asrSemanticRepair)
+                : 'off',
             filmBriefSampleMode: String(fields.filmBriefSampleMode || '').trim().toLowerCase() === 'full'
                 ? 'full'
                 : 'auto',
@@ -218,6 +221,9 @@
             postBatchInterjectionMode: viewingInterj,
             postBatchOnomatopoeiaMode: viewingOnomato,
             ...viewingLegacyFn(viewingPunct, viewingInterj, viewingOnomato),
+            postBatchTextPresetGroupId: entitled
+                ? String(fields.postBatchTextPresetGroupId || '').trim()
+                : '',
             outputMode: fields.outputMode === 'custom' ? 'custom' : 'same',
             outputDir: String(fields.outputDir || ''),
             audioSuffixes: String(fields.audioSuffixes || ''),

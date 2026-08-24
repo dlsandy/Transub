@@ -142,6 +142,17 @@
         return 'auto';
     }
 
+    /** Pro ASR semantic repair: off | auto | thorough */
+    function normalizeAsrSemanticRepair(value) {
+        if (value === false || value === 0) return 'off';
+        const s = String(value == null ? 'auto' : value).trim().toLowerCase();
+        if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
+        if (s === 'thorough' || s === 'full' || s === 'all' || s === 'on' || s === 'true' || s === '1') {
+            return 'thorough';
+        }
+        return 'auto';
+    }
+
     /** Empty / invalid → null (caller uses film built-in defaults). */
     function optionalFiniteNumber(raw, { min, max } = {}) {
         if (raw == null || String(raw).trim() === '') return null;
@@ -212,6 +223,7 @@
         clampQcSilenceSplitChars,
         normalizeQcSmartIntensity,
         normalizeAsrSecondOpinion,
+        normalizeAsrSemanticRepair,
         optionalFiniteNumber,
         normalizeSubtitleBakMode,
         normalizeStartupWindow,

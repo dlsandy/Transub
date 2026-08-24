@@ -24,6 +24,8 @@
     const FEATURE_ASS_STYLE_EXPORT = 'assStyleExport';
     /** QC 一键智能处理（规则修复后对剩余通顺度等做 LLM 润色） */
     const FEATURE_QC_SMART_FIX = 'qcSmartFix';
+    /** 转录语义校正：ASR 后 MT 前 LLM 修 JA 听写（非重转写） */
+    const FEATURE_ASR_SEMANTIC_REPAIR = 'asrSemanticRepair';
     /** 字幕库 Pro：多配方 A/B、高保留、diff、发布包、语料导出等 */
     const FEATURE_SUBTITLE_LIBRARY_PRO = 'subtitleLibraryPro';
     const FEATURE_ALL = '*';
@@ -605,6 +607,7 @@
         FEATURE_BILINGUAL_SEMANTIC_REVIEW,
         FEATURE_ASS_STYLE_EXPORT,
         FEATURE_QC_SMART_FIX,
+        FEATURE_ASR_SEMANTIC_REPAIR,
         FEATURE_SUBTITLE_LIBRARY_PRO,
         FEATURE_ALL,
         MAX_DEVICES,

@@ -3,6 +3,7 @@
  */
 (function (global, factory) {
     let nsfwLex = null;
+    let avGlossary = null;
     try {
         nsfwLex = (typeof module !== 'undefined' && module.exports)
             ? require('./tone-adapt-lexicon-core')
@@ -10,14 +11,21 @@
     } catch (_) {
         nsfwLex = null;
     }
-    const api = factory(nsfwLex);
+    try {
+        avGlossary = (typeof module !== 'undefined' && module.exports)
+            ? require('./av-glossary-core')
+            : (global && global.TransubAvGlossary);
+    } catch (_) {
+        avGlossary = null;
+    }
+    const api = factory(nsfwLex, avGlossary);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSakuraTranslate = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function sakuraTranslateFactory(nsfwLex) {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function sakuraTranslateFactory(nsfwLex, avGlossary) {
     const DEFAULT_WINDOW_LINES = 8;
 
     /** Default: short, anti-hallucination, line-safe. */
@@ -170,8 +178,27 @@
         return `出场人物（沿用这些写法，禁止发明人名）：${list.join('、')}`;
     }
 
+    function shouldMergeAvGlossary(options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        if (opts.avGlossary === false || opts.avActorGlossary === false) return false;
+        if (opts.avGlossary === true || opts.avActorGlossary === true) return true;
+        if (shouldUseNsfwPrompt(opts)) return true;
+        const profile = String(opts.contentProfile || opts.senseProfile || '').trim().toLowerCase();
+        if (profile === 'av_soft') return true;
+        const preset = String(opts.presetId || opts.activePresetId || '').trim().toLowerCase();
+        return /^ja-av|av-soft|av_soft/.test(preset);
+    }
+
     function resolveGlossaryTermsForPrompt(options = {}, sourceText = '') {
-        const user = Array.isArray(options.glossaryTerms) ? options.glossaryTerms : [];
+        let user = Array.isArray(options.glossaryTerms) ? options.glossaryTerms : [];
+        if (shouldMergeAvGlossary(options) && avGlossary?.mergeAvGlossaryTerms) {
+            user = avGlossary.mergeAvGlossaryTerms(user, sourceText, {
+                maxActorTerms: Number(options.avActorGlossaryLimit) || 20,
+                maxDomainTerms: Number(options.avDomainGlossaryLimit) || 12,
+                avGlossary: true,
+                avDomainGlossary: options.avDomainGlossary,
+            });
+        }
         if (!shouldUseNsfwPrompt(options) || !nsfwLex?.mergeNsfwGlossaryTerms) {
             return user;
         }

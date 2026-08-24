@@ -13,6 +13,14 @@
         global.TransubJaPersonNames = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function jaPersonNamesFactory() {
+    let avGlossary = null;
+    try {
+        avGlossary = (typeof module !== 'undefined' && module.exports)
+            ? require('./av-glossary-core')
+            : (global && global.TransubAvGlossary);
+    } catch (_) {
+        avGlossary = null;
+    }
     /**
      * @typedef {{ kana: string[], kanji?: string[], zh: string[] }} JaNameEntry
      */
@@ -767,6 +775,8 @@
         const s = String(stem || '').trim();
         if (!s) return '';
         if (CAST_CANONICAL_ZH[s]) return CAST_CANONICAL_ZH[s];
+        const actorZh = avGlossary?.resolveActorZhName?.(s);
+        if (actorZh) return actorZh;
         const fromKana = LEXICON.byKana.get(s);
         if (fromKana?.length) return String(fromKana[0]);
         if (LEXICON.kanji.has(s)) {

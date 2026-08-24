@@ -136,5 +136,14 @@ describe('local-whl-install', () => {
             /torch-2\.9\.1\+cu126-cp312-cp312-win_amd64\.whl/.test(src),
             'missing cu126 torch manual wheel',
         );
+        assert.ok(
+            /torch-2\.9\.1\+cu128-cp312-cp312-win_amd64\.whl/.test(src),
+            'missing cu128 torch manual wheel for Blackwell',
+        );
+        assert.ok(
+            /torch-2\.9\.1\+cu130-cp312-cp312-win_amd64\.whl/.test(src),
+            'missing cu130 torch manual wheel for Blackwell + CUDA 13',
+        );
+        assert.ok(src.includes('resolveTorchCudaManualPackages'), 'missing torch variant resolver');
     });
 });

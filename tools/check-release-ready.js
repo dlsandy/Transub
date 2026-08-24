@@ -54,8 +54,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.1.3') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.1.3 for this cut)`);
+if (pkg.version === '3.1.4') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.1.4 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');

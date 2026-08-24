@@ -6,6 +6,7 @@ function mapEngineStageToItemStage(stage) {
     if (!s || s === 'queued' || s === 'starting' || s === 'status') return 'starting';
     if (s === 'model' || s === 'vad' || s === 'denoise' || s === 'separate') return s;
     if (s === 'scene' || s === 'vad_failover' || s === 'cleanup') return s;
+    if (s === 'asr_semantic_repair' || s === 'semantic_repair') return 'semantic_repair';
     if (s === 'translate' || s === 'mt') return 'translate';
     if (s === 'done' || s === 'batch_done') return 'done';
     if (s === 'cancelled') return 'cancelled';
@@ -23,6 +24,7 @@ const ENGINE_STAGE_ZH = Object.freeze({
     vad: '语音检测',
     vad_failover: 'VAD 回退',
     cleanup: '字幕清理',
+    semantic_repair: '转录语义校正',
     model: '加载模型',
     transcribe: '转写',
     translate: '翻译',
@@ -38,6 +40,88 @@ const ENGINE_STAGE_ZH = Object.freeze({
 function engineStageZh(stage) {
     const s = String(stage || '').toLowerCase();
     return ENGINE_STAGE_ZH[s] || '处理中';
+}
+
+function clampPct(value, lo = 0, hi = 100) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return lo;
+    return Math.max(lo, Math.min(hi, n));
+}
+
+function scaleBand(localPct, lo, hi) {
+    const ratio = clampPct(localPct) / 100;
+    return Math.round(lo + (hi - lo) * ratio);
+}
+
+function taskHasMt(task) {
+    const t = String(task || '').trim().toLowerCase();
+    return t === 'translate_mt' || t === 'dual' || t === 'translate';
+}
+
+/**
+ * Mirror transub_engine.progress.remap_job_progress — map stage-local percent to job-wide.
+ * Engine SSE events are already remapped; call this only for bridge-originated ticks.
+ */
+function remapJobProgress(task, event = {}) {
+    const ev = { ...event };
+    const stage = String(ev.stage || '').trim().toLowerCase();
+    const raw = clampPct(ev.percent);
+    const hasMt = taskHasMt(task);
+
+    let overall;
+    if (stage === 'done' || stage === 'batch_done') {
+        overall = 100;
+    } else if (stage === 'error' || stage === 'failed' || stage === 'cancelled') {
+        overall = raw > 0 ? Math.round(raw) : Math.round(clampPct(ev.percent));
+    } else if (stage === 'starting' || stage === 'queued') {
+        overall = 1;
+    } else if (['preprocess', 'denoise', 'separate', 'audio', 'scene'].includes(stage)) {
+        overall = scaleBand(raw, 1, hasMt ? 8 : 10);
+    } else if (['model', 'vad', 'vad_failover'].includes(stage)) {
+        const local = Math.max(raw, 5);
+        overall = scaleBand(local, 8, hasMt ? 12 : 14);
+    } else if (stage === 'cleanup') {
+        overall = scaleBand(raw, hasMt ? 64 : 92, hasMt ? 67 : 96);
+    } else if (['asr_semantic_repair', 'semantic_repair'].includes(stage)) {
+        overall = scaleBand(raw, hasMt ? 64 : 92, hasMt ? 67 : 96);
+    } else if (stage === 'translate' || stage === 'mt') {
+        overall = scaleBand(raw, hasMt ? 68 : 90, hasMt ? 96 : 98);
+    } else if (stage === 'save' || stage === 'write') {
+        overall = scaleBand(raw, 96, 99);
+    } else if (['transcribe', 'asr', 'running'].includes(stage)) {
+        overall = scaleBand(raw, hasMt ? 12 : 10, hasMt ? 64 : 92);
+    } else {
+        overall = Math.round(raw);
+    }
+
+    if (stage !== 'done' && stage !== 'batch_done' && overall >= 100) {
+        overall = 99;
+    }
+    if (overall < 1 && !['error', 'failed', 'cancelled'].includes(stage)) {
+        overall = 1;
+    }
+
+    return {
+        ...ev,
+        stage: stage || ev.stage,
+        percent: overall,
+    };
+}
+
+/**
+ * @param {string} engineTask
+ * @param {object} payload bridge onProgress / sendProgress fields
+ */
+function remapBridgeProgress(engineTask, payload = {}) {
+    const remapped = remapJobProgress(engineTask, {
+        stage: payload.stage || payload.itemStage,
+        percent: payload.percent ?? payload.itemProgress,
+    });
+    return {
+        ...payload,
+        stage: remapped.stage,
+        percent: remapped.percent,
+    };
 }
 
 function buildUiProgress({
@@ -143,6 +227,11 @@ module.exports = {
     mapEngineStageToItemStage,
     ENGINE_STAGE_ZH,
     engineStageZh,
+    clampPct,
+    scaleBand,
+    taskHasMt,
+    remapJobProgress,
+    remapBridgeProgress,
     buildUiProgress,
     extractOutputPaths,
     mapEngineResultsToHistoryOutputs,

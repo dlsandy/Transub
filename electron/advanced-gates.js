@@ -116,6 +116,13 @@ function requireFilmAudioEnhance() {
     };
 }
 
+/** 转录语义校正：asrSemanticRepair，或兼容 contextReconstruct / * */
+function requireAsrSemanticRepair() {
+    const gate = requireFeature(entitlement.FEATURE_ASR_SEMANTIC_REPAIR);
+    if (gate.ok) return gate;
+    return requireFeature(entitlement.FEATURE_CONTEXT_RECONSTRUCT);
+}
+
 /** 字幕库 Pro 深度能力（A/B、diff、发布等）；任意 Pro 买断亦视为解锁 */
 function requireSubtitleLibraryPro() {
     const gateLib = requireFeature(entitlement.FEATURE_SUBTITLE_LIBRARY_PRO);
@@ -142,6 +149,7 @@ module.exports = {
     requireFeature,
     requireSmartTranslate,
     requireFilmAudioEnhance,
+    requireAsrSemanticRepair,
     requireSubtitleLibraryPro,
     evaluateFreeWithInstall,
 };

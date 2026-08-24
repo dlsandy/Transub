@@ -40,10 +40,11 @@
             return source.map((e) => ({
                 id: e.id,
                 name: e.name,
-                family: 'sakura',
-                familyLabel: 'SakuraLLM',
+                family: e.family || 'sakura',
+                familyLabel: e.familyLabel || 'SakuraLLM',
                 fileName: e.fileName,
                 ggufUrl: e.ggufUrl,
+                localOnly: e.localOnly === true,
                 sizeHint: e.sizeHint,
                 sizeBytes: e.sizeBytes,
                 ramHint: e.ramHint,
@@ -972,6 +973,7 @@
         if (entry) {
             if (entry.translateOnly === true) return true;
             if (String(entry.family || '').toLowerCase() === 'sakura') return true;
+            if (String(entry.family || '').toLowerCase() === 'transub-ja') return true;
         }
         const raw = String(
             (entry && entry.id)

@@ -15,7 +15,55 @@ const {
     getSilenceTextBreakIndices,
     buildCuesFromSilenceSplits,
     stripLeadingCuePunctuation,
+    splitTextAtBreakIndices,
+    collapseOrphanParticleSegments,
 } = require('../src/js/subtitle-split-core');
+
+function testSplitRejectsOrphanToneParticleTail() {
+    const game = '反正肯定是在玩些无聊透顶的游戏吧';
+    const parts = splitTextAtBreakIndices(game, [game.length - 1]);
+    assert.strictEqual(parts.length, 1, 'orphan 吧 tail should collapse to unsplit cue');
+    assert.strictEqual(parts[0], game);
+
+    const collapsed = collapseOrphanParticleSegments([
+        '反正肯定是在玩些无聊透顶的游戏',
+        '吧',
+    ]);
+    assert.strictEqual(collapsed.length, 1);
+    assert.strictEqual(collapsed[0], game);
+}
+
+function testSplitRejectsSingleCharPronounHead() {
+    const text = '我已经记不清最后一次是什么时候了';
+    const parts = splitTextAtBreakIndices(text, [1]);
+    assert.strictEqual(parts.length, 1, 'single-char 我 head should collapse to unsplit cue');
+    assert.strictEqual(parts[0], text);
+
+    const breaks = getBreakWordBreakIndices(text, ['我']);
+    assert.ok(!breaks.includes(1), 'break word 我 must not cut before 已经');
+
+    const smartParts = splitTextSmart(text, {
+        maxChars: 8,
+        maxLineChars: 8,
+        breakWords: ['我'],
+    });
+    assert.strictEqual(smartParts.length, 1);
+    assert.strictEqual(smartParts[0], text);
+
+    const silence = buildCuesFromSilenceSplits(
+        text,
+        0,
+        5000,
+        [2500],
+        16,
+        [{ startMs: 2400, endMs: 2600 }],
+        { breakWords: ['我'], includePunctuation: true, minDurMs: 200 },
+    );
+    assert.ok(
+        !silence || silence.every((c) => c.text !== '我' && textCharCount(c.text) >= 2),
+        'silence split must not leave orphan 我',
+    );
+}
 
 function testConnectedTextNotSplit() {
     assert.strictEqual(isConnectedText('今天天气很好我们去公园玩'), true);
@@ -266,6 +314,12 @@ function testSilenceSplitWhitespaceWhenSilenceDetected() {
 describe("subtitle-split", () => {
     it("connected text not split", () => {
         testConnectedTextNotSplit();
+    });
+    it("split rejects orphan tone particle tail", () => {
+        testSplitRejectsOrphanToneParticleTail();
+    });
+    it("split rejects single-char pronoun head", () => {
+        testSplitRejectsSingleCharPronounHead();
     });
     it("split text smart on punctuation", () => {
         testSplitTextSmartOnPunctuation();

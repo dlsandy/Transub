@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Qwen3-ASR all-window abort**: surface the first inference exception (CUDA OOM, etc.) instead of only `failed N/N windows`; fail fast on systemic errors and do not fall back to 90s windows after island inference already failed.
 - **Batch jobs after Qwen3/SenseVoice**: do not strip a live `torch` from `sys.modules` when releasing GPU / importing CTranslate2. That left the next job failing with `_has_torch_function already has a docstring` or SenseVoice「无法原地重装」.
 - **Opus MT Hub downloads**: skip unused Flax/Rust/TF dumps so `opus-mt-*` pulls finish more reliably; treat Hub `.cache`-only dirs as not installed (not「不完整」).
 - **SenseVoice progress mojibake on Chinese Windows**: warm-worker stdout is now UTF-8 bytes (plus `PYTHONUTF8` / `PYTHONIOENCODING`), so details like `转写中（ja）…` no longer appear as `תд У ja` in engine logs.
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Film-brief sample progress**: when using external MT, emit `影片简要取样 N/M 句` so the desktop engine log shows sampling before sentence batches.
 - **`translate_mt` output naming**: write `{stem}.{fmt}` (same basename as the media file) instead of `{stem}.zh.{fmt}`, so players can auto-load the subtitle.
 
 ## [0.1.0] — 2026-07-27

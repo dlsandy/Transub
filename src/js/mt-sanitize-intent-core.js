@@ -75,6 +75,7 @@
                 'batch-engine-0821eve: rod nigitte/shaburi + iku skip itchan + rame 玲香 + manko shaburi',
                 'batch-engine-0821night: rod nioi/dekachi + skip 気負い出/開き出 + sensei penis ejac + nip hasamu',
                 'batch-engine-0821late: rod pikupiku/dashichatta + skip サイクル/抜け出して + lick while + irete dame',
+                'batch-engine-0824am: rod oniisan/gachigachi + skip ベロ/金/シャイク + irete hajimete + touch hora',
             ]),
             flags: Object.freeze(['domain_term']),
             note: 'Clinical / euphemism ZH → colloquial T.meatRodZh must survive strip (any title)',

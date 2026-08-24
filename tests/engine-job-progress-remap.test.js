@@ -26,14 +26,15 @@ assert pct("translate_mt", "translate", 0) >= 68
 assert pct("translate_mt", "translate", 100) >= 95
 assert pct("translate_mt", "translate", 100) <= 96
 
-# Monotonic: ASR end → cleanup → MT mid → MT end → save
+# Monotonic: ASR end → cleanup → semantic repair → MT mid → MT end → save
 asr = pct("translate_mt", "transcribe", 100)
 cleanup = pct("translate_mt", "cleanup", 100)
+repair = pct("translate_mt", "asr_semantic_repair", 50)
 mt0 = pct("translate_mt", "translate", 1)
 mt50 = pct("translate_mt", "translate", 50)
 mt100 = pct("translate_mt", "translate", 100)
 save = pct("translate_mt", "save", 50)
-assert asr <= cleanup < mt0 < mt50 < mt100 <= 96
+assert asr <= repair <= cleanup < mt0 < mt50 < mt100 <= 96
 assert save >= 96
 # MT band width ≈ 25–30 points
 assert 25 <= (mt100 - mt0) <= 30, (mt0, mt100)

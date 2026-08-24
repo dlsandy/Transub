@@ -176,6 +176,19 @@ describe('env-check', () => {
         assert.equal(ct2Missing.ensureGpu, false);
         assert.ok(ct2Missing.modelIds.includes('whisper-tiny'));
         assert.ok(ct2Missing.steps.some((s) => s.id === 'whisperRuntime'));
+
+        const torchMismatch = planEnvFixes([
+            {
+                id: 'gpuRuntime',
+                status: 'warn',
+                detail: 'GPU 运行库已就绪 · PyTorch cu126 与本机 Blackwell GPU 不兼容',
+                torchCudaMismatch: true,
+                torchCudaVariant: 'cu130',
+                needsTorchCuda128: true,
+            },
+        ]);
+        assert.equal(torchMismatch.ensureTorchCuda, true);
+        assert.ok(torchMismatch.steps.some((s) => s.id === 'audioSeparate'));
     });
 
     it('planEnvFixes skips whisper reinstall when probe only timed out', () => {

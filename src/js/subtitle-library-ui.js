@@ -1141,6 +1141,7 @@
             <div class="lib-hero-actions">
                 <button type="button" class="lib-btn lib-btn-primary" data-library-open-preferred="${escHtml(preferredOpenVersionId)}" ${canOpenPreferred ? '' : 'disabled title="没有可打开的当前字幕"'}>打开</button>
                 ${preferredOpenVersionId ? `<button type="button" class="lib-btn lib-btn-soft" data-library-play="${escHtml(preferredOpenVersionId)}">试看当前</button>` : ''}
+                <button type="button" class="lib-btn${caps?.multiAb ? '' : ' opacity-50'}" data-library-mt-train="${escHtml(media.id)}"${proLockAttr(caps, 'multiAb')} title="对照字幕学习本机改写规则">学习向导</button>
                 <details class="lib-more">
                     <summary class="lib-btn lib-btn-icon" title="更多" aria-label="更多"><i class="fa fa-ellipsis-h"></i></summary>
                     <div class="lib-more-panel">

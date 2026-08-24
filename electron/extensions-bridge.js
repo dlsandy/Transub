@@ -2091,6 +2091,20 @@ function setupExtensionsBridge(api, deps) {
         }
     });
 
+    register('transub-insert-text-preset-group', async (_event, payload = {}) => {
+        try {
+            const filePath = assertEditableSubtitlePath(payload.path);
+            const { applyTextPresetGroupToSubtitle } = require('./post-batch-text-preset');
+            return applyTextPresetGroupToSubtitle(
+                filePath,
+                payload.groupId || payload.textPresetGroupId,
+                payload.options || {},
+            );
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-qc-silence-split', async (_event, payload = {}) => {
         try {
             const filePath = assertEditableSubtitlePath(payload.path);

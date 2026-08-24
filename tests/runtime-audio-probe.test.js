@@ -89,15 +89,49 @@ print(json.dumps({
         }
         const out = runPy(`
 import json
-from transub_engine.pip_mirror_util import torch_cuda_wheel_url, TORCH_CUDA_WHEEL_FILES
+from transub_engine.pip_mirror_util import (
+    torch_cuda_wheel_url,
+    TORCH_CUDA_WHEEL_FILES,
+    TORCH_CUDA_VARIANT_CONFIG,
+)
 name = TORCH_CUDA_WHEEL_FILES[0]
+cu128 = TORCH_CUDA_VARIANT_CONFIG["cu128"]["wheel_files"][0]
 print(json.dumps({
     "aliyun": torch_cuda_wheel_url("https://mirrors.aliyun.com/pytorch-wheels/cu126/", name),
     "official": torch_cuda_wheel_url("https://download.pytorch.org/whl/cu126/", name),
+    "cu128": torch_cuda_wheel_url("https://download.pytorch.org/whl/cu128/", cu128),
 }))
 `);
         const payload = JSON.parse(out);
         assert.ok(payload.aliyun.includes('+cu126'));
         assert.ok(payload.official.includes('%2Bcu126'));
+        assert.ok(payload.cu128.includes('%2Bcu128'));
+    });
+
+    it('needs_torch_cuda128 detects Blackwell compute capability', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from transub_engine.device import needs_torch_cuda128, resolve_torch_cuda_variant
+print(json.dumps({
+    "rtx50": needs_torch_cuda128("NVIDIA GeForce RTX 5080"),
+    "rtx40": needs_torch_cuda128("NVIDIA GeForce RTX 4090"),
+    "variant128": resolve_torch_cuda_variant(
+        gpu_name="NVIDIA GeForce RTX 5080",
+        driver_cuda_major=12,
+    ),
+    "variant130": resolve_torch_cuda_variant(
+        gpu_name="NVIDIA GeForce RTX 5080",
+        driver_cuda_major=13,
+    ),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.rtx50, true);
+        assert.strictEqual(payload.rtx40, false);
+        assert.strictEqual(payload.variant128, 'cu128');
+        assert.strictEqual(payload.variant130, 'cu130');
     });
 });

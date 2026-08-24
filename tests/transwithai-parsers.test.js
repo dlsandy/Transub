@@ -68,6 +68,7 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.chineseSubtitleVariant, 'simplified');
     assert.strictEqual(defaults.uiLocale, 'zh-Hans');
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
+    assert.strictEqual(defaults.postBatchTextPresetGroupId, '');
     assert.strictEqual(defaults.postBatchCpsSplit, true);
     assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
     assert.strictEqual(defaults.qcSilenceSplitChars, 15);
@@ -130,6 +131,17 @@ function testNormalizeHallucinationOptions() {
 
     const invalidVariant = normalizeTransWithAiRuntimeOptions({ chineseSubtitleVariant: 'nope' });
     assert.strictEqual(invalidVariant.chineseSubtitleVariant, 'simplified');
+
+    const briefDefaults = normalizeTransWithAiRuntimeOptions({});
+    assert.strictEqual(briefDefaults.filmBriefSampleMode, 'auto');
+
+    const briefFull = normalizeTransWithAiRuntimeOptions({ filmBriefSampleMode: 'full' });
+    assert.strictEqual(briefFull.filmBriefSampleMode, 'full');
+
+    const briefGarbage = normalizeTransWithAiRuntimeOptions({ filmBriefSampleMode: 'nope' });
+    const textPreset = normalizeTransWithAiRuntimeOptions({ postBatchTextPresetGroupId: ' tg_abc ' });
+    assert.strictEqual(textPreset.postBatchTextPresetGroupId, 'tg_abc');
+    assert.strictEqual(briefGarbage.filmBriefSampleMode, 'auto');
 }
 
 async function testDetectVersionFromLog() {

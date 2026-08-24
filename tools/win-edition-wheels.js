@@ -91,7 +91,7 @@ const NVIDIA_CU12_WHEELS = [
 ];
 
 /** @type {WheelSpec[]} */
-const TORCH_CUDA_WHEELS = [
+const TORCH_CUDA126_WHEELS = [
     {
         id: 'torch-cuda',
         fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
@@ -105,6 +105,40 @@ const TORCH_CUDA_WHEELS = [
         mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
     },
 ];
+
+/** Blackwell RTX 50xx — cu128 (CUDA 12.x driver) / cu130 (CUDA 13+ driver) */
+const TORCH_CUDA128_WHEELS = [
+    {
+        id: 'torch-cuda',
+        fileName: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+    },
+    {
+        id: 'torchaudio-cuda',
+        fileName: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+    },
+];
+
+const TORCH_CUDA130_WHEELS = [
+    {
+        id: 'torch-cuda',
+        fileName: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+    },
+    {
+        id: 'torchaudio-cuda',
+        fileName: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+    },
+];
+
+/** @deprecated alias */
+const TORCH_CUDA_WHEELS = TORCH_CUDA126_WHEELS;
 
 /** onnxruntime-gpu 1.21.x (CUDA 12). Resolved via pip when direct pin missing. */
 const ONNXRUNTIME_GPU_PIP = 'onnxruntime-gpu==1.21.1';
@@ -142,7 +176,9 @@ function wheelsForEdition(edition) {
         return [
             ...WHISPER_CPU_WHEELS.filter((w) => w.id !== 'onnxruntime'),
             ...NVIDIA_CU12_WHEELS,
-            ...TORCH_CUDA_WHEELS,
+            ...TORCH_CUDA126_WHEELS,
+            ...TORCH_CUDA128_WHEELS,
+            ...TORCH_CUDA130_WHEELS,
             {
                 id: 'numba',
                 fileName: SENSEVOICE_CPU_WHEELS.find((w) => w.id === 'numba').fileName,
@@ -165,6 +201,9 @@ module.exports = {
     SENSEVOICE_CPU_WHEELS,
     NVIDIA_CU12_WHEELS,
     TORCH_CUDA_WHEELS,
+    TORCH_CUDA126_WHEELS,
+    TORCH_CUDA128_WHEELS,
+    TORCH_CUDA130_WHEELS,
     ONNXRUNTIME_GPU_PIP,
     CUDA_LOCAL_COPY_PREFIXES,
     EDITION_NAMES,

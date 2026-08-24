@@ -18,6 +18,7 @@
         vad: '语音检测',
         vad_failover: 'VAD 回退',
         cleanup: '字幕清理',
+        semantic_repair: '转录语义校正',
         model: '加载模型',
         transcribe: '转写中',
         translate: '翻译中',
@@ -35,6 +36,7 @@
         model: 3,
         transcribe: 4,
         cleanup: 5,
+        semantic_repair: 5,
         translate: 6,
         save: 7,
         done: 8,
@@ -62,6 +64,9 @@
             case 'vad':
             case 'model':
                 return 0;
+            case 'cleanup':
+            case 'semantic_repair':
+                return Math.min(67, 64 + Math.round((local / 100) * 3));
             case 'transcribe': {
                 const timelinePct = mediaSec >= 60
                     ? Math.min(100, Math.round((currentSec / mediaSec) * 100))

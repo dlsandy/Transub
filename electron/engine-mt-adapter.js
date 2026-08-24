@@ -223,6 +223,33 @@ function partitionMtCuesForLlm(cues) {
     return { llmCues: Array.isArray(cues) ? cues : [], prefilled: [], skipped: 0 };
 }
 
+function rememberBriefSample(session, parsed) {
+    if (parsed?.briefCues?.length && !session.briefSourceCues) {
+        session.briefSourceCues = preprocessSourceCuesForMt(parsed.briefCues);
+    }
+    const total = Number(parsed?.briefCueTotal);
+    if (Number.isFinite(total) && total > 0 && !session.briefCueTotal) {
+        session.briefCueTotal = total;
+    }
+}
+
+function noteSessionFilmBrief(session, onProgress, result = {}) {
+    const { emitFilmBriefToProgress } = require('./film-brief-engine-log');
+    if (result.filmBrief && !session.filmBrief) session.filmBrief = result.filmBrief;
+    const skipped = !!(result.briefMode === 'skipped' || result.hybridSkipLlmBrief);
+    if (skipped && !session.filmBrief) {
+        session.skipFilmBrief = true;
+        emitFilmBriefToProgress(onProgress, session, null, {
+            skipped: true,
+            skipReason: '混合翻译',
+        });
+        return;
+    }
+    if (session.filmBrief) {
+        emitFilmBriefToProgress(onProgress, session, session.filmBrief);
+    }
+}
+
 function mergePrefillWithTranslated(allSourceCues, prefilled, translatedCues) {
     const map = new Map();
     for (const u of prefilled || []) {
@@ -362,9 +389,7 @@ async function translateExternalBatch(parsed, session) {
         });
         // Skip LLM for deterministic moans / discourse / wet-SFX — biggest batch speedup.
         const { llmCues, prefilled, skipped } = partitionMtCuesForLlm(sourceCues);
-        if (parsed.briefCues?.length && !session.briefSourceCues) {
-            session.briefSourceCues = preprocessSourceCuesForMt(parsed.briefCues);
-        }
+        rememberBriefSample(session, parsed);
         const briefSourceCues = session.briefSourceCues || [];
         if (skipped > 0) {
             onProgress?.({
@@ -410,10 +435,7 @@ async function translateExternalBatch(parsed, session) {
                     briefOnly: true,
                     skipFilmBrief: false,
                 });
-                if (briefResult?.filmBrief) session.filmBrief = briefResult.filmBrief;
-                if (briefResult?.briefMode === 'skipped' || briefResult?.hybridSkipLlmBrief) {
-                    session.skipFilmBrief = true;
-                }
+                noteSessionFilmBrief(session, onProgress, briefResult || {});
             }
             return {
                 ok: true,
@@ -434,12 +456,8 @@ async function translateExternalBatch(parsed, session) {
             };
         }
         // Cache Brief across engine POSTs so later batches share the same film understanding.
-        if (result.filmBrief && !session.filmBrief) {
-            session.filmBrief = result.filmBrief;
-        }
-        if (result.briefMode === 'skipped' || result.hybridSkipLlmBrief || options.skipFilmBrief) {
-            session.skipFilmBrief = true;
-        }
+        noteSessionFilmBrief(session, onProgress, result);
+        if (options.skipFilmBrief) session.skipFilmBrief = true;
         return {
             ok: true,
             cues: mergePrefillWithTranslated(sourceCues, prefilled, result.cues || []),

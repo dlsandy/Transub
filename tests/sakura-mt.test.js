@@ -25,6 +25,14 @@ describe('sakura-mt-catalog-core', () => {
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('sakura-galtransl-v4-4b'), 'galtransl');
         assert.strictEqual(sakuraCatalog.findCatalogEntry('sakura-galtransl-7b-q6k').fileName, 'Sakura-Galtransl-7B-v3.7.gguf');
         assert.strictEqual(sakuraCatalog.findCatalogEntry('sakura-galtransl-v4-4b').fileName, 'Galtransl-v4-4B-2601.gguf');
+        assert.ok(sakuraCatalog.findCatalogEntry('transub-ja-1.5b-q4km'));
+        assert.ok(sakuraCatalog.findCatalogEntry('transub-ja-1.5b-f16'));
+        assert.ok(sakuraCatalog.isSakuraMtModel('transub-ja-1.5b-q4km'));
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('transub-ja-1.5b-q4km').fileName,
+            'transub-ja-1.5b.Q4_K_M.gguf',
+        );
+        assert.strictEqual(sakuraCatalog.resolvePromptFamily('transub-ja-1.5b-q4km'), 'sakura');
     });
 
     it('resolves translate mode like settings (empty MT = Opus auto, not LLM)', () => {

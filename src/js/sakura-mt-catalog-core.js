@@ -112,6 +112,48 @@
             promptFamily: 'galtransl',
             paramBillion: 4,
         },
+        {
+            id: 'transub-ja-1.5b-q4km',
+            name: 'Transub-JA 1.5B Q4_K_M（测试）',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'transub-ja',
+            familyLabel: 'Transub-JA',
+            fileName: 'transub-ja-1.5b.Q4_K_M.gguf',
+            ggufUrl: '',
+            localOnly: true,
+            sizeHint: '约 0.94 GB',
+            sizeBytes: 986048064,
+            size_hint_mb: 940,
+            ramHint: '建议 ≥4 GB 内存',
+            languages: ['ja', 'zh'],
+            note: '日→简中 · 自训 LoRA 合并导出；本地测试版，请手动放入 advanced-llm/models',
+            recommended: false,
+            promptFamily: 'sakura',
+            translateOnly: true,
+            paramBillion: 1.5,
+        },
+        {
+            id: 'transub-ja-1.5b-f16',
+            name: 'Transub-JA 1.5B F16（测试）',
+            kind: 'mt',
+            backend: 'sakura-gguf',
+            family: 'transub-ja',
+            familyLabel: 'Transub-JA',
+            fileName: 'transub-ja-1.5b-f16.gguf',
+            ggufUrl: '',
+            localOnly: true,
+            sizeHint: '约 2.9 GB',
+            sizeBytes: 3093668928,
+            size_hint_mb: 2950,
+            ramHint: '建议 ≥6 GB 内存 / 显存',
+            languages: ['ja', 'zh'],
+            note: '日→简中 · 自训 LoRA 合并导出（F16 参考）；本地测试版',
+            recommended: false,
+            promptFamily: 'sakura',
+            translateOnly: true,
+            paramBillion: 1.5,
+        },
     ]);
 
     function resolvePromptFamily(modelIdOrEntry) {
@@ -166,7 +208,7 @@
         if (isEngineOpusMtModel(id)) return false;
         if (isSakuraMtModel(id)) return true;
         // Managed GGUF catalog ids (qwen25-7b, llama32-3b, …) + future backends
-        if (/^(sakura|qwen|llama|mistral|gemma|chatglm|yi-|deepseek|phi)/i.test(id)) return true;
+        if (/^(sakura|transub-ja|qwen|llama|mistral|gemma|chatglm|yi-|deepseek|phi)/i.test(id)) return true;
         if (/gguf|llm|instruct/i.test(id)) return true;
         return false;
     }

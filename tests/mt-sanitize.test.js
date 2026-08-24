@@ -5017,5 +5017,42 @@ describe('mt-sanitize-core', () => {
         const real = sanitize.sanitizeMtCueText('要射了', 'あっイッちゃう', av);
         assert.ok(/要射了|要去了/.test(real.text), real.text);
     });
+
+    it('batch-engine-0824am: rod oniisan/gachigachi + skip ベロ/金/シャイク + irete hajimete + touch hora', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const onii = sanitize.sanitizeMtCueText('哥哥的', 'お兄さんのちんちん', av);
+        assert.ok(RX.meatRod().test(onii.text), onii.text);
+
+        const gachi = sanitize.sanitizeMtCueText(
+            '是希望我停下来吗 都这么硬了？',
+            'やめてほしいのかな でもこんなにおちんちんガチガチなのに?',
+            av,
+        );
+        assert.ok(RX.meatRod().test(gachi.text) && /停|别|不要/.test(gachi.text), gachi.text);
+
+        const bero = sanitize.sanitizeMtCueText(
+            '把舌头伸出来 下流地舔吧',
+            'ベロを出して いやらしくなめろ',
+            av,
+        );
+        assert.ok(!/射/.test(bero.text), bero.text);
+
+        const shake = sanitize.sanitizeMtCueText(
+            '稍微摇晃一下吧 啊啊 嗯嗯 哈',
+            'ちょっとシャイクしてやる あああっんんっ はぁ',
+            av,
+        );
+        assert.ok(!/要射了|要去了/.test(shake.text), shake.text);
+
+        const haji = sanitize.sanitizeMtCueText('这还是第一次呢 哈哈', '入れるの初めてだね はぁはぁ', av);
+        assert.ok(/插|进/.test(haji.text), haji.text);
+
+        const hora = sanitize.sanitizeMtCueText('想让你舔', 'ほら触って', av);
+        assert.ok(/摸|触/.test(hora.text) && !/舔/.test(hora.text), hora.text);
+
+        const iku = sanitize.sanitizeMtCueText('摸我', 'あらめ すぐイっちゃうそれ', av);
+        assert.ok(/要射了|要去了/.test(iku.text), iku.text);
+    });
 });
 

@@ -62,6 +62,7 @@ const {
     mapEngineStageToItemStage,
     engineStageZh,
     buildUiProgress,
+    remapBridgeProgress,
     extractOutputPaths,
     mapEngineResultsToHistoryOutputs,
 } = require('./engine-job-progress');
@@ -1006,81 +1007,114 @@ async function runEngineBatchLocked({
                 asrModel,
             });
 
-            const runOutcome = await runEngineJobWithAsrFailover({
-                baseUrl: ensure.baseUrl,
-                buildJobBody,
-                primaryAsr,
-                candidates: asrCandidates,
-                createJob,
-                waitJob,
-                shouldStop: () => batchCancelled,
-                pingHealth: async (url) => {
-                    const health = await getHealth(url || ensure.baseUrl, { timeoutMs: 2000 });
-                    return {
-                        ok: !!(health?.ok && health.data?.ok),
-                        code: health?.code || '',
-                        baseUrl: ensure.baseUrl,
-                    };
+            const { runEngineJobWithSemanticRepair } = require('./engine-asr-semantic-handoff');
+
+            const runOutcome = await runEngineJobWithSemanticRepair({
+                jobBody,
+                engineTask,
+                fileMerged,
+                options: fileMerged,
+                repairMeta: {
+                    glossary: glossaryPairs,
+                    primaryAsr,
+                    mediaPath,
+                    onLog: (line) => {
+                        appendEngineLogLine(`[engine] ${line}`, invokeSender);
+                    },
                 },
-                restartEngine: async () => {
-                    appendEngineLogLine(
-                        '[engine] 引擎连接失败，正在重启后重试本条…',
-                        invokeSender,
-                    );
-                    sendProgress(invokeSender, {
-                        stage: 'starting',
-                        index1,
-                        total: list.length,
-                        file: mediaPath,
-                        detail: '引擎连接失败，正在重启后重试本条…',
-                        percent: 2,
-                    });
-                    const again = await ensureEngineRunning({
-                        ...merged,
-                        forceRestart: true,
-                        shouldStop: () => batchCancelled,
-                    });
-                    if (again?.ok) ensure = again;
-                    return again;
-                },
-                onCandidate: ({ asrModel, index: candIdx }) => {
-                    if (batchCancelled) return;
-                    if (candIdx > 0) {
+                runSingleJob: (body, progressMeta = {}) => runEngineJobWithAsrFailover({
+                    baseUrl: ensure.baseUrl,
+                    buildJobBody: (asrModel) => ({
+                        ...body,
+                        asrModel,
+                    }),
+                    primaryAsr,
+                    candidates: asrCandidates,
+                    createJob,
+                    waitJob,
+                    shouldStop: () => batchCancelled,
+                    pingHealth: async (url) => {
+                        const health = await getHealth(url || ensure.baseUrl, { timeoutMs: 2000 });
+                        return {
+                            ok: !!(health?.ok && health.data?.ok),
+                            code: health?.code || '',
+                            baseUrl: ensure.baseUrl,
+                        };
+                    },
+                    restartEngine: async () => {
                         appendEngineLogLine(
-                            `[engine] ASR 回退：${primaryAsr} → ${asrModel}`,
+                            '[engine] 引擎连接失败，正在重启后重试本条…',
                             invokeSender,
                         );
-                    }
+                        sendProgress(invokeSender, {
+                            stage: 'starting',
+                            index1,
+                            total: list.length,
+                            file: mediaPath,
+                            detail: '引擎连接失败，正在重启后重试本条…',
+                            percent: 2,
+                        });
+                        const again = await ensureEngineRunning({
+                            ...merged,
+                            forceRestart: true,
+                            shouldStop: () => batchCancelled,
+                        });
+                        if (again?.ok) ensure = again;
+                        return again;
+                    },
+                    onCandidate: ({ asrModel, index: candIdx }) => {
+                        if (batchCancelled) return;
+                        if (candIdx > 0) {
+                            appendEngineLogLine(
+                                `[engine] ASR 回退：${primaryAsr} → ${asrModel}`,
+                                invokeSender,
+                            );
+                        }
+                        sendProgress(invokeSender, {
+                            stage: 'transcribe',
+                            index1,
+                            total: list.length,
+                            file: mediaPath,
+                            detail: candIdx === 0
+                                ? `引擎转写中（${asrModel}）…`
+                                : `${primaryAsr} 无结果，改用 ${asrModel}…`,
+                            percent: 8,
+                        });
+                    },
+                    onJobCreated: (jobId) => {
+                        currentJobId = String(jobId || '');
+                    },
+                    onEvent: (ev) => {
+                        if (batchCancelled) return;
+                        const fields = progressFieldsFromWaitEvent(ev);
+                        const jid = ev?.data?.id || currentJobId;
+                        if (jid) currentJobId = String(jid);
+                        if (String(fields.stage || '').toLowerCase() === 'translate'
+                            || String(fields.stage || '').toLowerCase() === 'mt') {
+                            noteEngineTranslatePercent(mtUiProgress, fields.percent);
+                        }
+                        sendProgress(invokeSender, {
+                            ...fields,
+                            index1,
+                            total: list.length,
+                            file: mediaPath,
+                            jobId: currentJobId,
+                            itemDualPhase: progressMeta.itemDualPhase || fields.itemDualPhase,
+                        });
+                    },
+                }),
+                onProgress: (info) => {
+                    const mapped = remapBridgeProgress(engineTask, info);
                     sendProgress(invokeSender, {
-                        stage: 'transcribe',
+                        ...mapped,
                         index1,
                         total: list.length,
                         file: mediaPath,
-                        detail: candIdx === 0
-                            ? `引擎转写中（${asrModel}）…`
-                            : `${primaryAsr} 无结果，改用 ${asrModel}…`,
-                        percent: 8,
+                        itemDualPhase: mapped.itemDualPhase,
                     });
                 },
-                onJobCreated: (jobId) => {
-                    currentJobId = String(jobId || '');
-                },
-                onEvent: (ev) => {
-                    if (batchCancelled) return;
-                    const fields = progressFieldsFromWaitEvent(ev);
-                    const jid = ev?.data?.id || currentJobId;
-                    if (jid) currentJobId = String(jid);
-                    if (String(fields.stage || '').toLowerCase() === 'translate'
-                        || String(fields.stage || '').toLowerCase() === 'mt') {
-                        noteEngineTranslatePercent(mtUiProgress, fields.percent);
-                    }
-                    sendProgress(invokeSender, {
-                        ...fields,
-                        index1,
-                        total: list.length,
-                        file: mediaPath,
-                        jobId: currentJobId,
-                    });
+                onLog: (line) => {
+                    appendEngineLogLine(`[engine] ${line}`, invokeSender);
                 },
             });
             // Keep last job id for cancel / checkpoint probe
@@ -1244,13 +1278,16 @@ async function runEngineBatchLocked({
                 sourceCues: jobResult?.cues?.source,
             }, {
                 onProgress: (info) => {
+                    const mapped = remapBridgeProgress(engineTask, {
+                        stage: 'cleanup',
+                        percent: Number(info?.percent) || 50,
+                        detail: info?.detail || '后处理字幕…',
+                    });
                     sendProgress(invokeSender, {
-                        stage: 'transcribe',
+                        ...mapped,
                         index1,
                         total: list.length,
                         file: mediaPath,
-                        detail: info?.detail || '后处理字幕…',
-                        percent: 96,
                     });
                 },
                 onLog: (line) => {
@@ -1269,13 +1306,16 @@ async function runEngineBatchLocked({
                         existsSync: (p) => fs.existsSync(p),
                     });
                     for (const zhPath of uniqueZh) {
-                        sendProgress(invokeSender, {
+                        const mapped = remapBridgeProgress(engineTask, {
                             stage: 'translate',
+                            percent: 85,
+                            detail: '后处理：译后清洗…',
+                        });
+                        sendProgress(invokeSender, {
+                            ...mapped,
                             index1,
                             total: list.length,
                             file: mediaPath,
-                            detail: '后处理：译后清洗…',
-                            percent: 97,
                         });
                         const sm = sanitizeMtSubtitlePair(zhPath, outPaths.sourceSubtitlePath, {
                             sourceCues: jobResult?.cues?.source,
@@ -1328,13 +1368,16 @@ async function runEngineBatchLocked({
                         existsSync: (p) => fs.existsSync(p),
                     });
                     for (const zhPath of uniqueZh) {
-                        sendProgress(invokeSender, {
+                        const mapped = remapBridgeProgress(engineTask, {
                             stage: 'translate',
+                            percent: 95,
+                            detail: '后处理：清除语气/拟声…',
+                        });
+                        sendProgress(invokeSender, {
+                            ...mapped,
                             index1,
                             total: list.length,
                             file: mediaPath,
-                            detail: '后处理：清除语气/拟声…',
-                            percent: 97.5,
                         });
                         const cm = compactPureInterjectionSubtitlePair(
                             zhPath,

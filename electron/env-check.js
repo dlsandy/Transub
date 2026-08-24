@@ -852,6 +852,35 @@ async function checkGpu() {
     return { gpu: gpuItem, driver: driverItem, info };
 }
 
+function gpuRuntimeTorchFields(probe, gpuInfo) {
+    const fromProbe = probe && typeof probe === 'object' ? probe : {};
+    const cudaVer = String(
+        fromProbe.driverCudaVersion || gpuInfo?.cudaVersion || '',
+    ).trim();
+    let driverCudaMajor = Number(fromProbe.driverCudaMajor);
+    if (!Number.isFinite(driverCudaMajor) || driverCudaMajor <= 0) {
+        const m = cudaVer.match(/^(\d+)/);
+        driverCudaMajor = m ? Number(m[1]) : 0;
+    }
+    const computeCap = Number(fromProbe.computeCap);
+    return {
+        gpuName: String(fromProbe.gpuName || gpuInfo?.gpuName || '').trim(),
+        driverCudaVersion: cudaVer,
+        driverCudaMajor: driverCudaMajor > 0 ? driverCudaMajor : undefined,
+        computeCap: Number.isFinite(computeCap) && computeCap > 0 ? computeCap : undefined,
+        needsTorchCuda128: !!fromProbe.needsTorchCuda128,
+        torchCudaVariant: String(fromProbe.torchCudaVariant || '').trim(),
+        torchCudaMismatch: !!fromProbe.torchCudaMismatch,
+        installedTorchCudaTag: String(fromProbe.installedTorchCudaTag || '').trim(),
+    };
+}
+
+function gpuRuntimeShowsReady(probe, bothOk) {
+    if (!probe) return false;
+    if (probe.torchCudaMismatch) return false;
+    return bothOk || probe.status === 'ready';
+}
+
 async function checkGpuRuntime(gpuInfo, engineRoot) {
     const nvidia = gpuInfo?.vendor === 'nvidia' && gpuInfo?.detected;
     if (!nvidia) {
@@ -885,6 +914,14 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
                 ' "cublas12": bool(p.get("cublas12")),',
                 ' "cublasPath": p.get("cublasPath") or "",',
                 ' "hint": p.get("hint") or "",',
+                ' "gpuName": p.get("gpuName") or "",',
+                ' "driverCudaVersion": p.get("driverCudaVersion") or "",',
+                ' "driverCudaMajor": int(p.get("driverCudaMajor") or 0),',
+                ' "computeCap": float(p.get("computeCap") or 0),',
+                ' "needsTorchCuda128": bool(p.get("needsTorchCuda128")),',
+                ' "torchCudaVariant": p.get("torchCudaVariant") or "",',
+                ' "torchCudaMismatch": bool(p.get("torchCudaMismatch")),',
+                ' "installedTorchCudaTag": p.get("installedTorchCudaTag") or "",',
                 ' "systemReusable": list(cov.get("reusable") or []),',
                 '}, ensure_ascii=False))',
             ].join('\n'),
@@ -899,6 +936,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
 
     const cublasInEngine = findCublasInEngine(engineRoot);
     const systemReusable = Array.isArray(probe?.systemReusable) ? probe.systemReusable : [];
+    const torchFields = gpuRuntimeTorchFields(probe, gpuInfo);
 
     if (probe && probe.asrGpuReady && !probe.ortGpuCuda && probe.ortGpuRequirement) {
         return {
@@ -914,6 +952,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             ctranslate2Cuda: !!probe.ctranslate2Cuda,
             ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
             systemReusable,
+            ...torchFields,
         };
     }
     if (probe && probe.status === 'partial') {
@@ -929,6 +968,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             ctranslate2Cuda: !!probe.ctranslate2Cuda,
             ctranslate2CudaReason: probe.ctranslate2CudaReason || '',
             systemReusable,
+            ...torchFields,
         };
     }
     const bothOk = probe && probe.asrGpuReady && (probe.ortGpuCuda || !probe.ortGpuRequirement);
@@ -939,7 +979,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
         return {
             id: 'gpuRuntime',
             label: 'GPU 运行时',
-            status: bothOk || probe.status === 'ready' ? 'ok' : 'warn',
+            status: gpuRuntimeShowsReady(probe, bothOk) ? 'ok' : 'warn',
             detail: bothOk
                 ? (probe.hint || 'ASR/CTranslate2 + WhisperSeg ONNX GPU 已就绪')
                 : ((probe.hint || '已找到 cublas64_12.dll（CUDA 12）') + reuseHint),
@@ -950,6 +990,7 @@ async function checkGpuRuntime(gpuInfo, engineRoot) {
             ctranslate2Cuda: probe ? !!probe.ctranslate2Cuda : undefined,
             ctranslate2CudaReason: probe ? (probe.ctranslate2CudaReason || '') : '',
             systemReusable,
+            ...torchFields,
         };
     }
 
@@ -1298,6 +1339,7 @@ function planEnvFixes(items, opts = {}) {
     const steps = [];
     let openVcRedist = false;
     let ensureGpu = false;
+    let ensureTorchCuda = false;
     let ensureLlamaRuntime = false;
 
     const statusOf = (id) => String(byId[id]?.status || '');
@@ -1382,8 +1424,20 @@ function planEnvFixes(items, opts = {}) {
         }
     }
 
+    const gpuRtItem = byId.gpuRuntime || {};
+    if (gpuRtItem.torchCudaMismatch) {
+        ensureTorchCuda = true;
+        const variant = String(gpuRtItem.torchCudaVariant || 'cu128/cu130').trim();
+        if (!steps.some((s) => s.id === 'audioSeparate')) {
+            steps.push({
+                id: 'audioSeparate',
+                label: `补齐 CUDA PyTorch（${variant}，约 2.5GB）`,
+            });
+        }
+    }
+
     if (statusOf('gpuRuntime') === 'warn') {
-        const gpuItem = byId.gpuRuntime || {};
+        const gpuItem = gpuRtItem;
         const gpuDetail = detailOf('gpuRuntime');
         const ct2Missing = String(gpuItem.ctranslate2CudaReason || '') === 'ctranslate2_not_installed'
             || /未安装 CTranslate2|ctranslate2_not_installed/i.test(gpuDetail);
@@ -1438,7 +1492,7 @@ function planEnvFixes(items, opts = {}) {
     // installPath / ffmpeg / engine / gpu hardware: not auto-fixable here
     const models = [...modelIds];
     const force = forceIds.size > 0;
-    const fixable = openVcRedist || ensureGpu || ensureLlamaRuntime || models.length > 0;
+    const fixable = openVcRedist || ensureGpu || ensureTorchCuda || ensureLlamaRuntime || models.length > 0;
     const manualHints = list
         .filter((it) => {
             if (it.status !== 'fail' && it.status !== 'warn') return false;
@@ -1454,6 +1508,7 @@ function planEnvFixes(items, opts = {}) {
         fixable,
         openVcRedist,
         ensureGpu,
+        ensureTorchCuda,
         ensureLlamaRuntime,
         llamaRuntimeId: recommendRuntimeId || '',
         modelIds: models,

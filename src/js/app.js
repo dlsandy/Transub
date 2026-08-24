@@ -369,6 +369,7 @@
         智能翻译模型: 'pro-llm',
         智能翻译: 'pro-smart-translate',
         影视音频增强: 'pro-film-audio',
+        智能修复: 'pro-qc-smart',
         QC智能修复: 'pro-qc-smart',
         语境和理解重构: 'pro-reconstruct',
     };
@@ -517,7 +518,7 @@
         'pro-llm': '智能翻译模型',
         'pro-smart-translate': '智能翻译',
         'pro-film-audio': '影视音频增强',
-        'pro-qc-smart': 'QC 智能修复',
+        'pro-qc-smart': '智能修复',
         'pro-reconstruct': '语境和理解重构',
     };
 
@@ -1040,6 +1041,8 @@
         qcBannerDismissed: false,
         qcFixing: false,
         qcSmartFixing: false,
+        qcMtTrainSuggested: false,
+        mtTrainCanOpen: false,
         postBatchBusy: false,
         /** Main-window retranslate-from-kept-transcript batch. */
         retranslateBusy: false,
@@ -1389,7 +1392,7 @@
             'moreMenuWrap', 'moreMenuBtn', 'moreMenu', 'openLibraryToolbarBtn', 'toggleDensityBtn', 'toggleDensityLabel',
             'openAboutBtn', 'openMtTrainMenuBtn',
             'envBanner', 'envBannerText', 'envBannerBtn', 'envBannerWizardBtn',
-            'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerSmartFixBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
+            'qcBanner', 'qcBannerText', 'qcBannerFixBtn', 'qcBannerSmartFixBtn', 'qcBannerMtTrainBtn', 'qcBannerViewBtn', 'qcBannerDismissBtn',
             'emptyStateEnvHint', 'emptyStateWizardBtn', 'emptyStateEnvBtn',
             'toggleMainThemeBtn', 'toggleMainThemeLabel', 'openShortcutsMenuBtn',
             'paramsModal', 'closeParamsBtn', 'cancelParamsBtn', 'saveAndCloseParamsBtn', 'settingsDirtyBadge',
@@ -1433,6 +1436,7 @@
             'smartTranslateAddressCheck', 'smartTranslateAddressWrap',
             'smartTranslatePolishLimitInput', 'smartTranslatePolishLimitWrap',
             'asrSecondOpinionSelect',
+            'asrSemanticRepairSelect',
             'filmAudioEnhanceCheck', 'filmAudioEnhanceWrap',
             'filmVadPresetCheck', 'filmVadPresetWrap',
             'filmVadThresholdInput', 'filmVadMinSpeechInput', 'filmVadMinSilenceInput',
@@ -1460,6 +1464,7 @@
             'startupWindowSelect', 'uiLocaleSelect', 'autoUpdateCheckIntervalSelect',
             'postBatchQcCheck', 'postBatchQcFixModeSelect', 'postBatchCpsSplitCheck', 'postBatchRemoveNoiseCheck', 'postBatchCompressRepCheck',
             'postBatchViewingPunctModeSelect', 'postBatchInterjectionModeSelect', 'postBatchOnomatopoeiaModeSelect',
+            'postBatchTextPresetGroupSelect',
             'qcSilenceSplitCharsInput',
             'autoDeepSenseCheck',
             'trialCompareBtn', 'trialCompareModal', 'closeTrialCompareBtn', 'closeTrialCompareBtn2',
@@ -2015,6 +2020,8 @@
                     hideTrainMenu();
                     return;
                 }
+                state.mtTrainCanOpen = true;
+                updateQcBanner();
                 btn.classList.remove('hidden');
                 btn.removeAttribute('hidden');
                 btn.addEventListener('click', () => {
@@ -2044,6 +2051,11 @@
         });
         els.qcBannerSmartFixBtn?.addEventListener('click', () => {
             void runPostBatchQcSmartFix();
+        });
+        els.qcBannerMtTrainBtn?.addEventListener('click', () => {
+            void electron?.transubOpenMtTrain?.().then((res) => {
+                if (res?.ok === false) appendLog?.(res.error || '打开学习向导失败', 'err');
+            });
         });
         els.qcBannerViewBtn?.addEventListener('click', () => {
             openFirstQcIssueItem();
@@ -2447,6 +2459,7 @@
     let cachedEnginePickCatalog = [];
     /** @type {object | null} */
     let cachedDemucsProbe = null;
+    let cachedGpuRuntimeProbe = null;
     const ENGINE_DEMUCS_MODEL_ID = 'demucs';
     let engineModelsBusy = false;
     let engineModelsFilter = 'all';
@@ -2796,6 +2809,32 @@
         try { global.TransubEditorSettingsPrefs?.loadIntoForm?.(); } catch (_) { /* ignore */ }
         try { global.TransubEditorSettingsPrefs?.bind?.(); } catch (_) { /* ignore */ }
         void refreshSenseMemoryStatus();
+        if (settingsFormDirty) {
+            void refreshPostBatchTextPresetSelect();
+        }
+    }
+
+    async function refreshPostBatchTextPresetSelect(selectedId) {
+        if (!els.postBatchTextPresetGroupSelect) return;
+        const want = String(
+            selectedId != null ? selectedId : (els.postBatchTextPresetGroupSelect.value || ''),
+        ).trim();
+        let groups = [];
+        try {
+            const res = await electron?.transubGetTextPresets?.();
+            if (res?.ok && Array.isArray(res.presetsDoc?.groups)) {
+                groups = res.presetsDoc.groups;
+            }
+        } catch { /* ignore */ }
+        const sel = els.postBatchTextPresetGroupSelect;
+        sel.innerHTML = '<option value="">无</option>';
+        groups.forEach((g) => {
+            const opt = document.createElement('option');
+            opt.value = String(g.id || '');
+            opt.textContent = String(g.name || g.id || '未命名');
+            sel.appendChild(opt);
+        });
+        sel.value = want && groups.some((g) => g.id === want) ? want : '';
     }
 
     /**
@@ -5278,6 +5317,13 @@
                     : (String(options.asrSecondOpinion || '').toLowerCase() === 'on' ? 'on' : 'auto'));
             els.asrSecondOpinionSelect.value = mode;
         }
+        if (els.asrSemanticRepairSelect) {
+            const mode = settingsNormApi.normalizeAsrSemanticRepair
+                ? settingsNormApi.normalizeAsrSemanticRepair(options.asrSemanticRepair)
+                : (String(options.asrSemanticRepair || 'auto').toLowerCase() === 'off' ? 'off'
+                    : (String(options.asrSemanticRepair || '').toLowerCase() === 'thorough' ? 'thorough' : 'auto'));
+            els.asrSemanticRepairSelect.value = mode;
+        }
         {
             const briefSel = document.getElementById('reconstructBriefSampleModeSelect')
                 || els.reconstructBriefSampleModeSelect;
@@ -5542,6 +5588,7 @@
                 options.postBatchCompactPureInterjections === false ? 'off' : 'clear',
             );
         }
+        await refreshPostBatchTextPresetSelect(options.postBatchTextPresetGroupId || '');
         syncDeviceOptionsForMode();
         syncBatchSizeUi();
         syncExpertCustomHints();
@@ -5618,6 +5665,7 @@
                     : true,
                 smartTranslatePolishSampleLimitRaw: els.smartTranslatePolishLimitInput?.value,
                 asrSecondOpinion: els.asrSecondOpinionSelect?.value || 'auto',
+                asrSemanticRepair: els.asrSemanticRepairSelect?.value || 'auto',
                 filmBriefSampleMode: document.getElementById('reconstructBriefSampleModeSelect')?.value
                     || els.reconstructBriefSampleModeSelect?.value,
                 advancedEntitled,
@@ -5700,6 +5748,7 @@
                 postBatchViewingPunctMode: viewingPunct,
                 postBatchInterjectionMode: viewingInterj,
                 postBatchOnomatopoeiaMode: viewingOnomato,
+                postBatchTextPresetGroupId: els.postBatchTextPresetGroupSelect?.value || '',
                 outputMode: els.outputModeSelect?.value,
                 outputDir: resolveOutputDirFromForm(),
                 audioSuffixes: els.audioSuffixesInput?.value.trim() || DEFAULT_AUDIO_SUFFIXES,
@@ -6482,6 +6531,8 @@
                 running: !!state.running,
                 advancedEntitled: !!advancedEntitled,
                 smartFixAvailable: !!electron?.transubAdvancedQcSmartFix,
+                mtTrainCanOpen: !!state.mtTrainCanOpen,
+                mtTrainSuggested: !!state.qcMtTrainSuggested,
             })
             : null;
         if (!vm) {
@@ -6501,6 +6552,11 @@
             els.qcBannerSmartFixBtn.classList.toggle('hidden', !vm.smartVisible);
             els.qcBannerSmartFixBtn.disabled = vm.smartDisabled;
             els.qcBannerSmartFixBtn.textContent = vm.smartLabel;
+        }
+        if (els.qcBannerMtTrainBtn) {
+            els.qcBannerMtTrainBtn.classList.toggle('hidden', !vm.mtTrainVisible);
+            els.qcBannerMtTrainBtn.disabled = vm.mtTrainDisabled;
+            els.qcBannerMtTrainBtn.textContent = vm.mtTrainLabel;
         }
         els.qcBanner.classList.remove('hidden');
     }
@@ -6703,12 +6759,33 @@
     }
 
     function engineFormPayload() {
+        const dev = cachedGpuRuntimeProbe?.device || {};
         return {
             engineInstallPath: els.engineInstallPathInput?.value.trim() || cachedBundledEnginePath || '',
             engineUrl: els.engineUrlInput?.value.trim() || '',
             engineHfEndpoint: els.engineHfEndpointInput?.value.trim() || '',
             engineHfToken: els.engineHfTokenInput?.value.trim() || '',
             engineAutoStart: !!els.engineAutoStartCheck?.checked,
+            needsTorchCuda128: cachedGpuRuntimeProbe?.needsTorchCuda128
+                ?? dev.needsTorchCuda128
+                ?? undefined,
+            torchCudaVariant: cachedGpuRuntimeProbe?.torchCudaVariant
+                ?? dev.torchCudaVariant
+                ?? undefined,
+            computeCap: cachedGpuRuntimeProbe?.computeCap
+                ?? dev.computeCap
+                ?? undefined,
+            gpuName: String(
+                cachedGpuRuntimeProbe?.gpuName || dev.gpuName || '',
+            ).trim() || undefined,
+            driverCudaVersion: String(
+                cachedGpuRuntimeProbe?.driverCudaVersion
+                    || dev.driverCudaVersion
+                    || '',
+            ).trim() || undefined,
+            driverCudaMajor: cachedGpuRuntimeProbe?.driverCudaMajor
+                ?? dev.driverCudaMajor
+                ?? undefined,
         };
     }
 
@@ -7523,15 +7600,18 @@
     }
 
     function applyGpuRuntimeProbe(probe = {}) {
+        cachedGpuRuntimeProbe = probe && typeof probe === 'object' ? probe : null;
         const status = String(probe.status || '').trim();
         const hint = String(probe.hint || '').trim();
         if (!status && !hint) {
             setEngineGpuStatusText('');
             return;
         }
-        const kind = status === 'ready'
+        const kind = status === 'ready' && !probe.torchCudaMismatch
             ? 'ok'
-            : (status === 'need_install' || status === 'partial' || status === 'driver_too_old' ? 'warn' : 'busy');
+            : (status === 'need_install' || status === 'partial' || status === 'driver_too_old' || probe.torchCudaMismatch
+                ? 'warn'
+                : 'busy');
         const gpu = probe.gpuName ? `${probe.gpuName}` : '';
         const cuda = probe.driverCudaVersion ? `驱动 CUDA ${probe.driverCudaVersion}` : '';
         const bits = [hint || status, gpu, cuda].filter(Boolean);
@@ -10449,11 +10529,18 @@
         const name = basename(p.fullPath);
         const path = p.fullPath || '';
         if (path) state.activePath = path;
+        const existingItem = path ? findItem(path) : null;
 
         if (p.itemStage === 'starting') {
-            // 双语第二阶段（翻译）开始时不要清零进度
-            if (!(p.itemDualPhase === 'translate' && state.itemDualPhase === 'transcribe')) {
-                if (!p.itemDualPhase || p.itemDualPhase === 'transcribe') {
+            const resumeTranslate = p.itemDualPhase === 'translate'
+                && (state.itemDualPhase === 'transcribe'
+                    || state.itemDualPhase === 'source'
+                    || state.itemStage === 'transcribe'
+                    || state.itemStage === 'semantic_repair');
+            const itemAlreadyStarted = !!existingItem?.startedAt;
+            // 双语第二阶段（翻译）或语义校正后的翻译续跑，以及同一条目内的引擎重启/排队回退：不要清零进度/耗时
+            if (!resumeTranslate && !itemAlreadyStarted) {
+                if (!p.itemDualPhase || p.itemDualPhase === 'transcribe' || p.itemDualPhase === 'source') {
                     resetVideoProgress();
                 }
             }
@@ -10466,17 +10553,28 @@
                 syncVideoProgressFromPayload(p);
                 const existing = findItem(path);
                 const stage = state.itemStage;
+                const resumeTranslate = p.itemDualPhase === 'translate'
+                    && (state.itemDualPhase === 'transcribe'
+                        || state.itemDualPhase === 'source'
+                        || state.itemStage === 'semantic_repair');
                 const keepDualProgress = !!p.itemDualPhase
                     && isPreTranscribeStage(stage)
                     && Number.isFinite(Number(p.itemProgress));
                 const keepEnginePrepProgress = isPreTranscribeStage(stage)
                     && Number.isFinite(Number(p.itemProgress))
                     && Number(p.itemProgress) > 0;
-                const progress = isPreTranscribeStage(stage) && !keepDualProgress && !keepEnginePrepProgress
+                const keepSemanticRepairProgress = stage === 'semantic_repair'
+                    && Number.isFinite(Number(p.itemProgress));
+                const progress = isPreTranscribeStage(stage) && !keepDualProgress && !keepEnginePrepProgress && !resumeTranslate
                     ? (p.itemDualPhase === 'translate'
                         ? bumpProgress(existing?.progress, state.videoProgress)
                         : 0)
-                    : bumpProgress(existing?.progress, state.videoProgress);
+                    : bumpProgress(
+                        existing?.progress,
+                        keepSemanticRepairProgress
+                            ? Number(p.itemProgress)
+                            : state.videoProgress,
+                    );
                 state.videoProgress = progress;
                 // New run replaces subtitle — clear previous QC scan / fix markers
                 clearItemQcFixed(existing, { clearScan: true });
@@ -10486,7 +10584,8 @@
                     detail: formatListRunningDetail(p.itemDetail) || stageLabel(stage),
                     stage,
                 };
-                if (isPreTranscribeStage(stage) && !keepDualProgress && !keepEnginePrepProgress && p.itemDualPhase !== 'translate') {
+                if (isPreTranscribeStage(stage) && !keepDualProgress && !keepEnginePrepProgress
+                    && p.itemDualPhase !== 'translate' && !resumeTranslate && stage !== 'semantic_repair') {
                     itemPatch.processedSec = 0;
                 } else {
                     if (Number(p.videoTotalSec) > 0) {
@@ -10496,7 +10595,7 @@
                         itemPatch.processedSec = Number(p.videoCurrentSec);
                     }
                 }
-                if (!existing?.startedAt || (p.itemStage === 'starting' && p.itemDualPhase !== 'translate')) {
+                if (!existing?.startedAt) {
                     itemPatch.startedAt = Date.now();
                 }
                 updateItem(path, itemPatch);
@@ -10876,6 +10975,7 @@
                         }
                         const harvest = smartApi.planPostBatchResidualHarvest(residualIssues);
                         if (harvest.total > 0) {
+                            state.qcMtTrainSuggested = true;
                             appendLog(`${harvest.summary}（可开学习向导对照训练，勿整句润色入库）`, 'info');
                             if (harvest.blank?.length) {
                                 appendLog(
@@ -10890,6 +10990,7 @@
             els.progressLabel.textContent = withIssues > 0 ? 'QC 智能修复完成（仍有问题）' : 'QC 智能修复完成';
             // 按全表剩余问题数决定横幅，避免单条修复把其它项的 QC 提示一并关掉
             state.qcBannerDismissed = countQcIssues() <= 0;
+            if (countQcIssues() <= 0) state.qcMtTrainSuggested = false;
         } finally {
             if (typeof unsubQcProgress === 'function') {
                 try { unsubQcProgress(); } catch (_) { /* ignore */ }
@@ -11051,6 +11152,7 @@
             els.progressLabel.textContent = withIssues > 0 ? 'QC 修复完成（仍有问题）' : 'QC 修复完成';
             // 按全表剩余问题数决定横幅，避免单条修复把其它项的 QC 提示一并关掉
             state.qcBannerDismissed = countQcIssues() <= 0;
+            if (countQcIssues() <= 0) state.qcMtTrainSuggested = false;
         } finally {
             state.qcFixing = false;
             // 必须在清掉 qcFixing 后再渲染，否则 canQcFix 会把所有行的 QC 操作图标去掉
@@ -11472,6 +11574,60 @@
         els.progressLabel.textContent = `${zhLabel}完成`;
     }
 
+    async function runPostBatchInsertTextPreset() {
+        if (!advancedEntitled || !electron?.transubInsertTextPresetGroup) return;
+        let groupId = '';
+        try {
+            const optsRes = await electron?.transWithAiGetOptions?.();
+            groupId = String(optsRes?.options?.postBatchTextPresetGroupId || '').trim();
+        } catch { /* ignore */ }
+        if (!groupId) {
+            groupId = String(els.postBatchTextPresetGroupSelect?.value || '').trim();
+        }
+        if (!groupId) return;
+
+        const targets = state.items.filter((item) => {
+            if (item.status !== 'done' && item.status !== 'skipped') return false;
+            const subPath = String(getSubtitlePathForItem(item) || '').trim();
+            return !!subPath && /\.(srt|vtt|lrc)$/i.test(subPath);
+        });
+        if (!targets.length) return;
+
+        els.progressLabel.textContent = '插入字幕预设…';
+        appendLog(`开始插入字幕预设组（${targets.length} 条任务）…`, 'info');
+        let written = 0;
+        let skipped = 0;
+        for (let i = 0; i < targets.length; i += 1) {
+            const item = targets[i];
+            const subPath = String(getSubtitlePathForItem(item) || '').trim();
+            els.progressLabel.textContent = `插入字幕预设… ${i + 1}/${targets.length}`;
+            try {
+                const res = await electron.transubInsertTextPresetGroup({
+                    path: subPath,
+                    groupId,
+                });
+                if (res?.ok && res.written) {
+                    written += 1;
+                    appendLog(`${basename(subPath)}：${res.summary || '已插入预设组'}`, 'ok');
+                } else if (res?.ok && res.skipped) {
+                    skipped += 1;
+                    appendLog(`${basename(subPath)}：${res.summary || '跳过预设组插入'}`, 'info');
+                } else {
+                    appendLog(`${basename(subPath)}：${res?.error || '插入预设组失败'}`, 'err');
+                }
+            } catch (err) {
+                appendLog(`${basename(subPath)}：${err?.message || '插入预设组失败'}`, 'err');
+            }
+        }
+        appendLog(
+            written > 0
+                ? `字幕预设插入完成：已写回 ${written}/${targets.length} 个字幕`
+                : `字幕预设插入完成：${skipped ? `${skipped} 个跳过` : '无字幕写回'}`,
+            written > 0 ? 'ok' : 'info',
+        );
+        els.progressLabel.textContent = '字幕预设插入完成';
+    }
+
     async function onJobFinished(payload) {
         const cancelled = !!payload?.cancelled;
         state.jobBackend = '';
@@ -11559,6 +11715,11 @@
                     await runPostBatchChineseConvert();
                 } catch (err) {
                     appendLog(err?.message || '简繁转换失败', 'err');
+                }
+                try {
+                    await runPostBatchInsertTextPreset();
+                } catch (err) {
+                    appendLog(err?.message || '字幕预设插入失败', 'err');
                 }
                 try {
                     // Only suggest reconstruct when the batch fully succeeded.

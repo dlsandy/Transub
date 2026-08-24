@@ -2106,6 +2106,7 @@
             <div class="flex items-center gap-2 shrink-0">
                 <button type="button" id="qcBannerFixBtn" class="qc-banner-fix-btn px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">一键修复QC</button>
                 <button type="button" id="qcBannerSmartFixBtn" class="qc-banner-fix-btn px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" title="Pro：规则修复后对剩余通顺度、怪句/乱码等做大模型整理">智能修复 (Pro)</button>
+                <button type="button" id="qcBannerMtTrainBtn" class="hidden px-2.5 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs hover:bg-amber-50 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" title="Pro：对照字幕学习本机改写规则">学习向导</button>
                 <button type="button" id="qcBannerViewBtn" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-white text-amber-800 text-xs hover:bg-amber-50 shrink-0">查看第一条</button>
                 <button type="button" id="qcBannerDismissBtn" class="toolbar-icon-btn !w-7 !h-7 shrink-0" title="关闭" aria-label="关闭"><i class="fa fa-times text-xs"></i></button>
             </div>
@@ -2624,7 +2625,7 @@
                             <button type="button" class="params-tab-btn" data-tab="pro-llm" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="智能翻译 / 语境重构用的聊天大模型（与上方「模型」页的引擎 ASR·MT 无关）"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能翻译模型</button>
                             <button type="button" class="params-tab-btn" data-tab="pro-smart-translate" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="智能翻译管线选项（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能翻译</button>
                             <button type="button" class="params-tab-btn" data-tab="pro-film-audio" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="影视音频增强与影视 VAD（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>影视音频增强</button>
-                            <button type="button" class="params-tab-btn" data-tab="pro-qc-smart" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="QC 智能修复默认与说明（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>QC智能修复</button>
+                            <button type="button" class="params-tab-btn" data-tab="pro-qc-smart" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="转录语义校正与 QC 智能修复（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能修复</button>
                             <button type="button" class="params-tab-btn" data-tab="pro-reconstruct" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="语境重构与影片理解（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>语境和理解重构</button>
                         </div>
                         </nav>
@@ -2702,11 +2703,11 @@
                                 <button type="button" id="advancedFeaturesGotoProBtn" class="settings-guide-link">去购买 / 激活</button>
                             </p>
                             <p class="text-xs text-gray-600 leading-relaxed">
-                                影视音频增强、QC 智能修复、语境重构、字幕库深度能力等已归入左侧
+                                影视音频增强、智能修复、语境重构、字幕库深度能力等已归入左侧
                                 <strong>Pro</strong> 分组。
                                 <button type="button" id="runtimeGotoProFilmAudioBtn" class="settings-guide-link">影视音频增强</button>
                                 ·
-                                <button type="button" id="runtimeGotoProQcBtn" class="settings-guide-link">QC智能修复</button>
+                                <button type="button" id="runtimeGotoProQcBtn" class="settings-guide-link">智能修复</button>
                             </p>
                             <!-- Legacy id kept for JS that looked up smartTranslateWrap -->
                             <div id="smartTranslateWrap" class="hidden" aria-hidden="true"></div>
@@ -2996,7 +2997,7 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 降噪 QC CPS 拆句 杂音 叠词 语气词 拟声词 精简 标点 观影 清除 轻度 素材 智能感知 深度感知 修复QC 一键修复 静音分割 字数 低置信 二意见 ASR">
+                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 降噪 QC CPS 拆句 杂音 叠词 语气词 拟声词 精简 标点 观影 清除 轻度 素材 智能感知 深度感知 修复QC 一键修复 静音分割 字数 低置信 二意见 ASR 字幕预设 预设组">
                         <fieldset class="settings-section">
                             <legend class="settings-section-title">
                                 智能感知
@@ -3070,9 +3071,18 @@
                                 </span>
                             </label>
                             </div>
+                            <label class="block text-sm mb-3" data-pro-setting>
+                                <span class="settings-label text-gray-700 font-medium">
+                                    <span class="settings-adv-mark" aria-hidden="true">◆</span>完成后添加字幕预设
+                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">批量生成结束后，向每条成功任务的译文字幕插入所选预设组（片名/演员等）。时间轴：绝对锚点按视频起点；相对播放位置在批量中同样按视频起点。在字幕编辑器「预设组」中管理。</span></span>
+                                </span>
+                                <select id="postBatchTextPresetGroupSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="完成后添加字幕预设">
+                                    <option value="">无</option>
+                                </select>
+                            </label>
                             <p class="text-xs text-gray-500 leading-relaxed mb-2">
-                                完成后自动修复 QC（含 ◆ 智能修复）在
-                                <button type="button" id="processGotoProQcBtn" class="settings-guide-link">Pro → QC智能修复</button>。
+                                完成后自动修复 QC（含 ◆ 智能修复）与转录语义校正在
+                                <button type="button" id="processGotoProQcBtn" class="settings-guide-link">Pro → 智能修复</button>。
                             </p>
                             <label class="block text-sm mb-3">
                                 <span class="settings-label text-gray-700 font-medium">
@@ -3858,7 +3868,25 @@
                         </fieldset>
                     </div>
 
-                    <div class="params-tab-panel" data-tab-panel="pro-qc-smart" data-settings-search="Pro QC 智能修复 一键修复 断句 重转写 润色 语义审阅 怪句 通顺度 强度 低置信 二意见 ASR">
+                    <div class="params-tab-panel" data-tab-panel="pro-qc-smart" data-settings-search="Pro 智能修复 转录语义校正 QC 一键修复 断句 重转写 润色 语义审阅 怪句 通顺度 强度 低置信 二意见 ASR">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>转录语义校正</legend>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    转录语义校正
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">Pro。转写规则清洗后、翻译前，用大模型理解语境修正明显听写误听（非二次转录），适用于各类片源与语言。自动：仅可疑句；加强：全片对白逐句校正（更慢）。与 ASR 二意见互补：本功能在翻译前修源文，二意见在完成后对低置信窗重听。</span></span>
+                                </span>
+                                <select id="asrSemanticRepairSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="转录语义校正">
+                                    <option value="auto" selected>自动（仅可疑句）</option>
+                                    <option value="thorough">加强（全片对白）</option>
+                                    <option value="off">关闭</option>
+                                </select>
+                            </label>
+                            <p class="text-xs text-gray-500 mt-3 leading-relaxed">
+                                ASR 低置信二意见（全版本）在
+                                <button type="button" id="proQcGotoProcessAsrBtn" class="settings-guide-link">任务处理</button>。
+                            </p>
+                        </fieldset>
                         <fieldset class="settings-section">
                             <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>批量完成后</legend>
                             <label class="block text-sm">
@@ -3872,10 +3900,6 @@
                                     <option value="smart" selected>智能修复 QC (Pro)</option>
                                 </select>
                             </label>
-                            <p class="text-xs text-gray-500 mt-3 leading-relaxed">
-                                ASR 低置信二意见（全版本）在
-                                <button type="button" id="proQcGotoProcessAsrBtn" class="settings-guide-link">任务处理</button>。
-                            </p>
                         </fieldset>
                         <fieldset class="settings-section">
                             <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能修复步骤</legend>

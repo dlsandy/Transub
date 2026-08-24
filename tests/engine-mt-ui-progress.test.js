@@ -43,4 +43,14 @@ describe('engine-mt-ui-progress', () => {
         const t = createMtUiProgressTracker();
         assert.strictEqual(mapAdapterMtProgress({ pct: 50 }, t), null);
     });
+
+    it('skips log-only film-brief dump lines from the status badge', () => {
+        const t = createMtUiProgressTracker();
+        setMtUiCurrent(t, { file: 'D:/a.mp4', index1: 1, total: 1 });
+        const mapped = mapAdapterMtProgress({
+            logOnly: true,
+            message: '简要 · 概要：高中生围绕学园祭展开日常对话。',
+        }, t);
+        assert.strictEqual(mapped, null);
+    });
 });

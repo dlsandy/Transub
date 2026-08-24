@@ -14,6 +14,7 @@
     const WEAK_PUNCT_RE = /[，、；：,;:]/;
     /** Leading punct to strip after a split (next cue must not start with ，。！ etc.). */
     const LEADING_CUE_PUNCT_RE = /^[。！？!?…⋯．，、；：,;:\.·•—–\-─～~「」『』""''“”‘’（）()【】\[\]《》<>〈〉]+/;
+    const ORPHAN_TONE_PARTICLE_RE = /^[吧呢啊呀嘛哦哈哟哪罢么嗯哼唉诶喂]+$/;
     const DEFAULT_BREAK_WORDS = [
         '而且', '但是', '因为', '所以', '然后', '不过', '然而', '并且', '同时', '另外',
         '因此', '于是', '可是', '虽然', '如果', '那么', '或者', '以及',
@@ -55,9 +56,53 @@
         return String(text || '').replace(/\s/g, '').length;
     }
 
+    function isOrphanShortSegment(text) {
+        return textCharCount(text) < 2;
+    }
+
+    /** Break index must leave at least minPartChars on both sides (no 「我|已经…」 crumbs). */
+    function isValidTextBreakIndex(text, index, minPartChars = 2) {
+        const raw = String(text || '');
+        const at = Math.round(Number(index) || 0);
+        const min = Math.max(1, Math.floor(Number(minPartChars) || 2));
+        if (at <= 0 || at >= raw.length) return false;
+        return textCharCount(raw.slice(0, at)) >= min
+            && textCharCount(raw.slice(at)) >= min;
+    }
+
     /**
      * After silence/smart split: drop leading punctuation so a cue does not start with ，。！
      */
+    function isOrphanToneParticleOnly(text) {
+        const s = String(text || '').trim();
+        if (!s) return true;
+        if (s.length <= 2 && ORPHAN_TONE_PARTICLE_RE.test(s)) return true;
+        if (s.length === 1 && /[吧呢啊呀嘛哦哈哟]/.test(s)) return true;
+        return false;
+    }
+
+    function shouldCollapseOrphanSegment(segment) {
+        const s = String(segment || '').trim();
+        return isOrphanToneParticleOnly(s) || isOrphanShortSegment(s);
+    }
+
+    function collapseOrphanParticleSegments(parts) {
+        const out = (parts || []).map((p) => String(p || '')).filter(Boolean);
+        while (out.length >= 2) {
+            const tail = out[out.length - 1].trim();
+            if (!shouldCollapseOrphanSegment(tail)) break;
+            out[out.length - 2] = out[out.length - 2] + out[out.length - 1];
+            out.pop();
+        }
+        while (out.length >= 2) {
+            const head = out[0].trim();
+            if (!shouldCollapseOrphanSegment(head)) break;
+            out[1] = out[0] + out[1];
+            out.shift();
+        }
+        return out;
+    }
+
     function stripLeadingCuePunctuation(text) {
         const raw = String(text || '').trim();
         if (!raw) return '';
@@ -277,7 +322,9 @@
                 if (idx < 0) break;
                 let breakAt = idx + needle.length;
                 while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
-                if (breakAt > 0 && breakAt < raw.length) breaks.add(breakAt);
+                if (breakAt > 0 && breakAt < raw.length && isValidTextBreakIndex(raw, breakAt)) {
+                    breaks.add(breakAt);
+                }
                 from = idx + Math.max(1, needle.length);
             }
         }
@@ -336,6 +383,7 @@
         const sorted = [...merged].sort((a, b) => a - b);
         const out = [];
         for (const idx of sorted) {
+            if (!isValidTextBreakIndex(raw, idx)) continue;
             if (!out.length || idx - out[out.length - 1] >= 2) out.push(idx);
         }
         return out;
@@ -479,8 +527,6 @@
                     break;
                 }
             }
-            // Fall back to nearest break even if one side is short (better than skipping the silence cut)
-            if (chosen == null && ranked.length) chosen = ranked[0].b;
             if (chosen == null) continue;
             used.add(chosen);
             out.push(chosen);
@@ -506,7 +552,8 @@
         }
         const tail = stripLeadingCuePunctuation(raw.slice(prev).trim());
         if (tail) parts.push(tail);
-        return parts;
+        const collapsed = collapseOrphanParticleSegments(parts);
+        return collapsed.length >= 2 ? collapsed : collapsed.filter(Boolean);
     }
 
     function alignSilenceSplitPointsToText(text, startMs, endMs, splitPointsMs, intervals = null, options = {}) {
@@ -843,6 +890,7 @@
             const left = raw.slice(0, i).trim();
             const right = raw.slice(i).trim();
             if (!left || !right) continue;
+            if (!isValidTextBreakIndex(raw, i)) continue;
 
             const prev = raw[i - 1] || '';
             const ch = raw[i] || '';
@@ -910,7 +958,8 @@
             changed = false;
             for (let i = 0; i < mergedTexts.length; i += 1) {
                 const chars = textCharCount(mergedTexts[i]);
-                if (chars >= minChars) continue;
+                const orphanParticle = isOrphanToneParticleOnly(mergedTexts[i]);
+                if (chars >= minChars && !orphanParticle) continue;
                 if (i > 0) {
                     mergedTexts[i - 1] = `${mergedTexts[i - 1]} ${mergedTexts[i]}`.replace(/\s+/g, ' ').trim();
                     mergedTexts.splice(i, 1);
@@ -1336,9 +1385,7 @@
             if (!boundaries) return null;
         }
 
-        // Prefer not to keep 1-char crumbs; mergeTiny may collapse intentional space cuts —
-        // only merge empty leftovers when sides already passed minPartChars snap.
-        const minMergeChars = 1;
+        const minMergeChars = 2;
         const merged = mergeTinyTextSegments(texts, boundaries, minMergeChars);
         texts = merged.texts;
         boundaries = merged.boundaries;
@@ -1423,6 +1470,8 @@
         textCharCount,
         lineCharCount,
         stripLeadingCuePunctuation,
+        isOrphanToneParticleOnly,
+        collapseOrphanParticleSegments,
         normalizeBreakWords,
         resolveBreakWords,
         findConnectorBreak,

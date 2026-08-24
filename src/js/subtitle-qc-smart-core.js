@@ -696,7 +696,155 @@
                 maxChars,
                 targetParts,
             };
-        }).filter((row) => Number.isInteger(row.index) && row.text);
+        }).filter((row) => Number.isInteger(row.index) && row.text && canSafelyLlmSplit(row.text, options));
+    }
+
+    const LLM_SPLIT_PUNCT_RE = /[。！？!?…，、；：,;:]/;
+    const ORPHAN_TONE_PARTICLE_RE = /^[吧呢啊呀嘛哦哈哟哪罢么嗯哼唉诶喂]+$/;
+
+    function getLlmSplitAllowedIndices(text, options = {}) {
+        const raw = String(text || '');
+        if (!raw || !splitCore) return [];
+        const breakWords = splitCore.resolveBreakWords
+            ? splitCore.resolveBreakWords(options)
+            : (options.breakWords || []);
+        const allowed = new Set();
+        if (typeof splitCore.getWhitespaceBreakIndices === 'function') {
+            for (const i of splitCore.getWhitespaceBreakIndices(raw)) allowed.add(i);
+        }
+        if (typeof splitCore.getBreakWordBreakIndices === 'function') {
+            for (const i of splitCore.getBreakWordBreakIndices(raw, breakWords)) allowed.add(i);
+        }
+        if (typeof splitCore.getSilenceTextBreakIndices === 'function') {
+            for (const i of splitCore.getSilenceTextBreakIndices(raw, {
+                breakWords,
+                includePunctuation: true,
+            })) {
+                allowed.add(i);
+            }
+        }
+        return [...allowed].sort((a, b) => a - b);
+    }
+
+    function canSafelyLlmSplit(text, options = {}) {
+        const raw = String(text || '').trim();
+        if (!raw) return false;
+        if (!splitCore?.isConnectedText?.(raw)) return true;
+        return getLlmSplitAllowedIndices(raw, options).length > 0;
+    }
+
+    function isOrphanToneParticleSegment(segment) {
+        if (splitCore?.isOrphanToneParticleOnly) {
+            return splitCore.isOrphanToneParticleOnly(segment);
+        }
+        const s = String(segment || '').trim();
+        if (!s) return true;
+        if (s.length <= 2 && ORPHAN_TONE_PARTICLE_RE.test(s)) return true;
+        if (s.length === 1 && /[吧呢啊呀嘛哦哈哟]/.test(s)) return true;
+        return false;
+    }
+
+    function finalizeLlmSplitParts(parts) {
+        let out = (parts || []).map((p) => String(p || '')).filter(Boolean);
+        if (splitCore?.collapseOrphanParticleSegments) {
+            out = splitCore.collapseOrphanParticleSegments(out);
+        }
+        if (out.length < 2) return null;
+        for (const part of out) {
+            if (!validateLlmSplitSegment(part)) return null;
+        }
+        return out;
+    }
+
+    function buildLlmSplitTextsFromBreaks(raw, breaks) {
+        let parts = null;
+        if (splitCore?.splitTextAtBreakIndices) {
+            parts = splitCore.splitTextAtBreakIndices(raw, breaks);
+        } else {
+            parts = [];
+            let prev = 0;
+            for (const at of breaks) {
+                parts.push(raw.slice(prev, at));
+                prev = at;
+            }
+            parts.push(raw.slice(prev));
+        }
+        return finalizeLlmSplitParts(parts);
+    }
+
+    function textsMatchOriginalCue(raw, texts) {
+        const parts = (Array.isArray(texts) ? texts : []).map((t) => String(t || ''));
+        if (parts.length < 2) return null;
+        if (parts.some((t) => !t)) return null;
+        if (parts.join('') !== raw) return null;
+        return parts;
+    }
+
+    function segmentCharCount(segment) {
+        const s = String(segment || '');
+        if (splitCore?.textCharCount) return splitCore.textCharCount(s);
+        return s.replace(/\s/g, '').length;
+    }
+
+    function validateLlmSplitSegment(segment) {
+        const trimmed = String(segment || '').trim();
+        if (segmentCharCount(trimmed) < 2) return false;
+        if (isOrphanToneParticleSegment(trimmed)) return false;
+        return true;
+    }
+
+    function validateLlmSplitBreakIndices(text, breakIndices, options = {}) {
+        const raw = String(text ?? '');
+        if (!raw) return null;
+        const breaks = [...new Set((Array.isArray(breakIndices) ? breakIndices : [])
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n > 0 && n < raw.length))]
+            .sort((a, b) => a - b);
+        if (!breaks.length) return null;
+
+        const connected = splitCore?.isConnectedText?.(raw);
+        const allowed = connected ? new Set(getLlmSplitAllowedIndices(raw, options)) : null;
+        if (connected && !LLM_SPLIT_PUNCT_RE.test(raw) && !allowed.size) return null;
+        if (connected && allowed.size) {
+            for (const at of breaks) {
+                if (!allowed.has(at)) return null;
+            }
+        }
+
+        return buildLlmSplitTextsFromBreaks(raw, breaks);
+    }
+
+    function validateLlmSplitTexts(text, texts, options = {}) {
+        const raw = String(text ?? '');
+        if (!raw) return null;
+        const matched = textsMatchOriginalCue(raw, texts);
+        if (!matched || matched.length < 2) return null;
+
+        let pos = 0;
+        const breaks = [];
+        for (let i = 0; i < matched.length - 1; i += 1) {
+            const part = matched[i];
+            const idx = raw.indexOf(part, pos);
+            if (idx < 0 || idx !== pos) return null;
+            const breakAt = idx + part.length;
+            if (breakAt <= 0 || breakAt >= raw.length) return null;
+            breaks.push(breakAt);
+            pos = breakAt;
+        }
+        if (raw.slice(pos) !== matched[matched.length - 1]) return null;
+
+        const connected = splitCore?.isConnectedText?.(raw);
+        if (connected) {
+            const allowed = new Set(getLlmSplitAllowedIndices(raw, options));
+            if (!LLM_SPLIT_PUNCT_RE.test(raw) && !allowed.size) return null;
+            if (allowed.size) {
+                for (const at of breaks) {
+                    if (!allowed.has(at)) return null;
+                }
+            }
+        }
+
+        return finalizeLlmSplitParts(matched);
     }
 
     function buildLlmSplitChatMessages(items) {
@@ -704,7 +852,9 @@
             '你是字幕断句助手。根据语义把过长/过快的字幕切成多条短字幕。',
             '不要改写措辞，不要增删字词，只决定切分位置。',
             'breakIndices 为 JavaScript 字符串下标（String.slice），严格递增，且落在 (0, text.length) 内。',
-            '每段至少 2 个字符；优先在标点、语气停顿、连词后切开。',
+            '每段至少 2 个字符；优先在标点、连词/断句词后切开。',
+            '无标点、无空格、无断句词的完整句子不要切开；不要把语气词（吧、呢、啊等）单独切成一条；不要在词语中间切开（如「我以前」不能在「我」与「以前」之间切）。',
+            '保留原文中的空格与换行，不要删除词间空格。',
             '只输出 JSON：{"splits":[{"index":0,"breakIndices":[12,28]}]}',
             '不必覆盖全部输入；无法安全切分的条目可省略。',
         ].join('\n');
@@ -721,26 +871,8 @@
         ];
     }
 
-    function textsFromBreakIndices(text, breakIndices) {
-        const raw = String(text ?? '');
-        if (!raw) return null;
-        const breaks = [...new Set((Array.isArray(breakIndices) ? breakIndices : [])
-            .map((n) => Number(n))
-            .filter((n) => Number.isInteger(n) && n > 0 && n < raw.length))]
-            .sort((a, b) => a - b);
-        if (!breaks.length) return null;
-        const parts = [];
-        let prev = 0;
-        for (const at of breaks) {
-            const chunk = raw.slice(prev, at).trim();
-            if (chunk.length < 2) return null;
-            parts.push(chunk);
-            prev = at;
-        }
-        const last = raw.slice(prev).trim();
-        if (last.length < 2) return null;
-        parts.push(last);
-        return parts.length >= 2 ? parts : null;
+    function textsFromBreakIndices(text, breakIndices, options = {}) {
+        return validateLlmSplitBreakIndices(text, breakIndices, options);
     }
 
     function parseLlmSplitResponse(content, expectedIndexes) {
@@ -773,8 +905,10 @@
                 ? row.breakIndices
                 : (Array.isArray(row?.breaks) ? row.breaks : []);
             if (!breakIndices.length && Array.isArray(row?.texts) && row.texts.length >= 2) {
-                // 允许模型直接返回 texts：回推 breakIndices（尽力）
-                splits.push({ index, texts: row.texts.map((t) => String(t || '').trim()).filter(Boolean) });
+                splits.push({
+                    index,
+                    texts: row.texts.map((t) => String(t || '')).filter((t) => t.length > 0),
+                });
                 continue;
             }
             splits.push({ index, breakIndices });
@@ -792,28 +926,28 @@
             const text = String(it?.text || '');
             const maxChars = clampInt(it?.maxChars, 4, 80, 20);
             if (text.replace(/\s/g, '').length <= maxChars) continue;
+            if (!canSafelyLlmSplit(text)) continue;
+            const allowed = getLlmSplitAllowedIndices(text);
+            if (!allowed.length) continue;
             const targetParts = clampInt(it?.targetParts, 2, 6, 2);
             const breakIndices = [];
             for (let p = 1; p < targetParts; p += 1) {
                 const ideal = Math.round((text.length * p) / targetParts);
-                let at = Math.max(2, Math.min(text.length - 2, ideal));
-                // 向左右找标点/空白
-                let best = at;
-                for (let d = 0; d < 8; d += 1) {
-                    for (const pos of [at + d, at - d]) {
-                        if (pos <= 1 || pos >= text.length - 1) continue;
-                        const ch = text[pos - 1];
-                        if (/[。！？!?…，、；;:\s]/.test(ch)) {
-                            best = pos;
-                            d = 99;
-                            break;
-                        }
+                let best = null;
+                let bestDist = Infinity;
+                for (const pos of allowed) {
+                    if (pos <= 1 || pos >= text.length - 1) continue;
+                    const dist = Math.abs(pos - ideal);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = pos;
                     }
                 }
-                if (!breakIndices.includes(best)) breakIndices.push(best);
+                if (best != null && !breakIndices.includes(best)) breakIndices.push(best);
             }
             breakIndices.sort((a, b) => a - b);
-            if (breakIndices.length) splits.push({ index: it.index, breakIndices });
+            const validated = validateLlmSplitBreakIndices(text, breakIndices);
+            if (validated) splits.push({ index: it.index, breakIndices });
         }
         return { ok: true, splits, mock: true };
     }
@@ -847,8 +981,8 @@
             const cue = list[idx];
             const text = String(cue?.text ?? '');
             let texts = Array.isArray(spec?.texts) && spec.texts.length >= 2
-                ? spec.texts.map((t) => String(t || '').trim()).filter(Boolean)
-                : textsFromBreakIndices(text, spec?.breakIndices);
+                ? validateLlmSplitTexts(text, spec.texts, options)
+                : textsFromBreakIndices(text, spec?.breakIndices, options);
             if (!texts || texts.length < 2) continue;
             if (!splitCore?.buildCuesFromTexts) continue;
             const built = splitCore.buildCuesFromTexts(
@@ -1044,6 +1178,10 @@
         buildQcSmartCuePayload,
         buildQcLlmSplitPayload,
         buildLlmSplitChatMessages,
+        getLlmSplitAllowedIndices,
+        canSafelyLlmSplit,
+        validateLlmSplitBreakIndices,
+        validateLlmSplitTexts,
         textsFromBreakIndices,
         parseLlmSplitResponse,
         mockLlmSplitCues,

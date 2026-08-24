@@ -136,6 +136,10 @@ function mergeTransWithAiOptions(input = {}) {
         smartTranslatePolishSampleLimit: 36,
         /** auto: av_soft / JA specialist only; on/off force */
         asrSecondOpinion: 'auto',
+        /** Pro: off | auto (suspicious cues) | thorough (all dialogue cues); all media types */
+        asrSemanticRepair: 'auto',
+        /** Film Brief sampling: auto = adaptive (~56 cues); full = all cues */
+        filmBriefSampleMode: 'auto',
         sakuraNsfwPrompt: null,
         filmAudioEnhance: false,
         filmVadPreset: false,
@@ -187,6 +191,7 @@ function mergeTransWithAiOptions(input = {}) {
         qcSmartIntensity: 'light',
         qcSmartMaxRetranscribeRanges: 8,
         libraryOpenAfterBatch: false,
+        postBatchTextPresetGroupId: '',
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
@@ -335,10 +340,25 @@ function mergeTransWithAiOptions(input = {}) {
         }
     }
     {
+        const raw = merged.asrSemanticRepair;
+        if (raw === false || raw === 0) merged.asrSemanticRepair = 'off';
+        else {
+            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
+            if (s === 'false' || s === '0' || s === 'off' || s === 'no') merged.asrSemanticRepair = 'off';
+            else if (s === 'thorough' || s === 'full' || s === 'all' || s === 'on' || s === 'true' || s === '1') {
+                merged.asrSemanticRepair = 'thorough';
+            } else merged.asrSemanticRepair = 'auto';
+        }
+    }
+    {
         const n = Number(merged.smartTranslatePolishSampleLimit);
         merged.smartTranslatePolishSampleLimit = Number.isFinite(n)
             ? Math.max(4, Math.min(36, Math.round(n)))
             : 36;
+    }
+    {
+        const s = String(merged.filmBriefSampleMode || 'auto').trim().toLowerCase();
+        merged.filmBriefSampleMode = s === 'full' ? 'full' : 'auto';
     }
     const optFilmNum = (raw, min, max) => {
         if (raw == null || String(raw).trim() === '') return null;
@@ -375,6 +395,7 @@ function mergeTransWithAiOptions(input = {}) {
             : 8;
     }
     merged.libraryOpenAfterBatch = !!merged.libraryOpenAfterBatch;
+    merged.postBatchTextPresetGroupId = String(merged.postBatchTextPresetGroupId || '').trim();
 
     return {
         ...merged,

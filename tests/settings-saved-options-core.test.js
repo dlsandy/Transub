@@ -40,6 +40,7 @@ describe('settings-saved-options-core', () => {
         assert.strictEqual(out.smartTranslateFaithfulVerify, true);
         assert.strictEqual(out.smartTranslateAddressConsistency, true);
         assert.strictEqual(out.asrSecondOpinion, 'auto');
+        assert.strictEqual(out.asrSemanticRepair, 'auto');
         assert.strictEqual(out.filmBriefSampleMode, 'auto');
         assert.strictEqual(out.activePresetId, '');
         assert.deepStrictEqual(out.autoScanFolders, []);
@@ -113,5 +114,18 @@ describe('settings-saved-options-core', () => {
             qcSilenceSplitCharsRaw: '20',
         }, norm);
         assert.strictEqual(custom.qcSilenceSplitChars, 20);
+    });
+
+    it('persists postBatchTextPresetGroupId only when Pro entitled', () => {
+        const locked = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: false,
+            postBatchTextPresetGroupId: 'tg_abc',
+        }, norm);
+        assert.strictEqual(locked.postBatchTextPresetGroupId, '');
+        const pro = saved.assembleSavedOptionsFromFields({
+            advancedEntitled: true,
+            postBatchTextPresetGroupId: 'tg_abc',
+        }, norm);
+        assert.strictEqual(pro.postBatchTextPresetGroupId, 'tg_abc');
     });
 });

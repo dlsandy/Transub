@@ -27,6 +27,7 @@ const KIND_LABELS = {
     advanced_smart_translate: '智能翻译',
     advanced_semantic_review: '双语语义审阅',
     advanced_batch_reconstruct: '批量语境重构',
+    advanced_asr_semantic_repair: '转录语义校正',
     sakura_translate: 'Sakura 翻译',
     managed_llm_perf: '模型性能测试',
 };

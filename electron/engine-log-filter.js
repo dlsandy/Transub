@@ -67,10 +67,26 @@ function friendlyEngineError(raw) {
         && lower.includes('torch')
         && lower.includes('cublas')
     ) {
+        if (lower.includes('qwen3-asr') || lower.includes('qwen3_asr')) {
+            return (
+                'Qwen3-ASR 加载 PyTorch CUDA 失败（WinError 999 / cuBLAS 冲突）。'
+                + '请完全退出并重启 Transub 后重试；'
+                + '若仍失败，将设置 → 推理设备改为 CPU（较慢）。'
+                + ` 原始错误：${msg}`
+            );
+        }
         return (
             'Torch CUDA 库与引擎 cuBLAS 冲突（WinError 999）。'
             + 'Whisper/CTranslate2 不依赖 torch；请完全退出并重启 Transub 后重试。'
             + '若仍失败，将设置 → 推理设备改为 CPU。'
+            + ` 原始错误：${msg}`
+        );
+    }
+    if (/qwen3-asr failed \d+\/\d+ (windows|frames)/i.test(msg)
+        && /out of memory|cuda oom|显存不足/i.test(msg)) {
+        return (
+            'Qwen3-ASR 显存不足。请完全退出 Transub 后重试（释放本地大模型显存），'
+            + '或改用 Qwen3-ASR 0.6B / Anime Whisper。'
             + ` 原始错误：${msg}`
         );
     }

@@ -395,6 +395,7 @@ deferredBridges.installLazyRoutes({
     'transub-delete-subtitle-files': 'extensions',
     'transub-scan-subtitle-qc': 'extensions',
     'transub-apply-subtitle-postprocess': 'extensions',
+    'transub-insert-text-preset-group': 'extensions',
     'transub-qc-silence-split': 'extensions',
     'transub-compact-pure-interjections': 'extensions',
     'transub-merge-bilingual-subtitles': 'extensions',

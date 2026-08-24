@@ -9,6 +9,8 @@ const {
     planPostBatchResidualHarvest,
     buildQcLlmSplitPayload,
     textsFromBreakIndices,
+    canSafelyLlmSplit,
+    validateLlmSplitTexts,
     parseLlmSplitResponse,
     mockLlmSplitCues,
     applyQcLlmSplitResults,
@@ -270,12 +272,14 @@ describe('subtitle-qc-smart', () => {
     });
 
     it('parses llm split response and applies break indices', () => {
-        const text = '今天天气很好我们去公园玩然后回家吃饭';
-        const texts = textsFromBreakIndices(text, [8, 16]);
-        assert.ok(texts && texts.length === 3);
+        const text = '今天天气很好然后我们去公园玩再回家吃饭';
+        const texts = textsFromBreakIndices(text, [8]);
+        assert.ok(texts && texts.length === 2);
+        assert.strictEqual(texts[0], '今天天气很好然后');
+        assert.strictEqual(texts[1], '我们去公园玩再回家吃饭');
 
         const parsed = parseLlmSplitResponse(
-            JSON.stringify({ splits: [{ index: 0, breakIndices: [8, 16] }] }),
+            JSON.stringify({ splits: [{ index: 0, breakIndices: [8] }] }),
             [0],
         );
         assert.strictEqual(parsed.ok, true);
@@ -291,9 +295,66 @@ describe('subtitle-qc-smart', () => {
         assert.ok(applied.added >= 1);
     });
 
+    it('preserves spaces in llm split texts', () => {
+        const text = 'hello world again';
+        assert.strictEqual(
+            validateLlmSplitTexts(text, ['hello', 'world', 'again']),
+            null,
+            'space-stripped LLM texts must be rejected',
+        );
+        const kept = validateLlmSplitTexts(text, ['hello ', 'world again']);
+        assert.ok(kept);
+        assert.strictEqual(kept.join(''), text);
+
+        const cues = [{ startMs: 0, endMs: 3000, text }];
+        const applied = applyQcLlmSplitResults(cues, [{
+            index: 0,
+            texts: ['hello ', 'world again'],
+        }], { targetCps: 8, minSec: 0.3 });
+        assert.strictEqual(applied.splitCount, 1);
+        assert.strictEqual(applied.cues[0].text, 'hello');
+        assert.strictEqual(applied.cues[1].text, 'world again');
+        assert.ok(applied.cues[1].text.includes(' '));
+    });
+
+    it('rejects bad llm splits on unpunctuated complete sentences', () => {
+        const game = '反正肯定是在玩些无聊透顶的游戏吧';
+        assert.strictEqual(canSafelyLlmSplit(game), false);
+        assert.strictEqual(textsFromBreakIndices(game, [game.length - 1]), null);
+        assert.strictEqual(
+            validateLlmSplitTexts(game, ['反正肯定是在玩些无聊透顶的游戏', '吧']),
+            null,
+        );
+        assert.strictEqual(
+            textsFromBreakIndices(game, [game.length - 1]),
+            null,
+            'break before 吧 must not produce orphan particle cue',
+        );
+
+        const hometown = '我以前在老家的时候也什么都没做呢';
+        assert.strictEqual(canSafelyLlmSplit(hometown), false);
+        assert.strictEqual(textsFromBreakIndices(hometown, [2]), null);
+        assert.strictEqual(
+            validateLlmSplitTexts(hometown, ['我以', '前在老家的时候也什么都没做呢']),
+            null,
+        );
+
+        const memory = '我已经记不清最后一次是什么时候了';
+        assert.strictEqual(textsFromBreakIndices(memory, [1]), null);
+        assert.strictEqual(
+            validateLlmSplitTexts(memory, ['我', '已经记不清最后一次是什么时候了']),
+            null,
+        );
+        const allowed = require('../src/js/subtitle-qc-smart-core').getLlmSplitAllowedIndices(
+            memory,
+            { breakWords: ['我'] },
+        );
+        assert.ok(!allowed.includes(1), 'break word 我 must not allow orphan head split');
+    });
+
     it('selects llm split targets and mocks break points', () => {
         const issues = [
-            { index: 0, types: ['connected', 'high_cps'], textPreview: '今天天气很好出去散步看看风景' },
+            { index: 0, types: ['connected', 'high_cps'], textPreview: '今天天气很好然后出去散步看看风景' },
             { index: 1, types: ['fluency'], textPreview: '他走向了' },
         ];
         const targets = selectQcLlmSplitTargets(issues);
@@ -302,9 +363,10 @@ describe('subtitle-qc-smart', () => {
         assert.ok(summarizeQcLlmSplitPlan(targets).includes('智能断句'));
 
         const cues = [
-            { startMs: 0, endMs: 2000, text: '今天天气很好出去散步看看风景喝杯热茶休息一会继续聊天' },
+            { startMs: 0, endMs: 2000, text: '今天天气很好然后出去散步看看风景喝杯热茶休息一会继续聊天' },
         ];
         const payload = buildQcLlmSplitPayload(cues, targets, { smartMaxChars: 12 });
+        assert.ok(payload.length >= 1);
         const mocked = mockLlmSplitCues(payload);
         assert.ok(mocked.ok);
         assert.ok(mocked.splits.length >= 1);

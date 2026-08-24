@@ -238,6 +238,44 @@
         return parts.join(' · ');
     }
 
+    /**
+     * Append preset-group cues to an existing cue list (editor / batch post-process).
+     * @param {object[]} cues
+     * @param {object} group
+     * @param {{ baseMs?: number }} opts batch uses 0 when anchor=playhead (no playhead context)
+     */
+    function insertGroupIntoCues(cues, group, opts = {}) {
+        const g = normalizeGroup(group);
+        if (!g.items.length) {
+            return { cues: Array.isArray(cues) ? cues.slice() : [], inserted: 0, groupName: g.name || '' };
+        }
+        const baseMs = g.anchor === 'absolute'
+            ? 0
+            : Math.max(0, Number(opts.baseMs) || 0);
+        const built = buildCuesFromGroup(g, { baseMs });
+        if (!built.length) {
+            return { cues: Array.isArray(cues) ? cues.slice() : [], inserted: 0, groupName: g.name || '' };
+        }
+        const existing = Array.isArray(cues) ? cues.slice() : [];
+        const appended = built.map((it) => ({
+            startMs: it.startMs,
+            endMs: it.endMs,
+            text: it.text,
+        }));
+        const merged = [...existing, ...appended].sort(
+            (a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs),
+        );
+        merged.forEach((cue, idx) => {
+            cue.index = idx + 1;
+        });
+        return {
+            cues: merged,
+            inserted: appended.length,
+            groupName: g.name,
+            anchor: g.anchor,
+        };
+    }
+
     return {
         PRESETS_VERSION,
         ANCHOR_LABELS,
@@ -255,6 +293,7 @@
         findGroup,
         filterGroups,
         buildCuesFromGroup,
+        insertGroupIntoCues,
         formatItemTiming,
         summarizeGroup,
         normalizeAnchor,

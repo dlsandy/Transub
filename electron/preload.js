@@ -187,6 +187,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubDeleteSubtitleFiles: (payload) => ipcRenderer.invoke('transub-delete-subtitle-files', payload || {}),
     transubScanSubtitleQc: (payload) => ipcRenderer.invoke('transub-scan-subtitle-qc', payload || {}),
     transubApplySubtitlePostprocess: (payload) => ipcRenderer.invoke('transub-apply-subtitle-postprocess', payload || {}),
+    transubInsertTextPresetGroup: (payload) => ipcRenderer.invoke('transub-insert-text-preset-group', payload || {}),
     transubQcSilenceSplit: (payload) => ipcRenderer.invoke('transub-qc-silence-split', payload || {}),
     transubCompactPureInterjections: (payload) => ipcRenderer.invoke('transub-compact-pure-interjections', payload || {}),
     transubMergeBilingualSubtitles: (payload) => ipcRenderer.invoke('transub-merge-bilingual-subtitles', payload || {}),

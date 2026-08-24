@@ -240,6 +240,100 @@ print(json.dumps({'sizes': m.sizes, 'n': len(out), 'oom': qwen3_asr._is_cuda_oom
         assert.ok(j.sizes.slice(1).every((n) => n <= 2), JSON.stringify(j.sizes));
     });
 
+    it('Qwen windowed path fail-fasts on CUDA OOM and includes the cause', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from unittest.mock import patch
+from transub_engine.asr import qwen3_asr
+
+class Boom:
+    def __init__(self):
+        self.n = 0
+    def transcribe(self, audio=None, language=None, return_time_stamps=False):
+        self.n += 1
+        raise RuntimeError('CUDA out of memory')
+
+model = Boom()
+err = ''
+try:
+    with patch('transub_engine.audio.preprocess.stage_media_for_long_asr', return_value='staged.wav'):
+        with patch('transub_engine.audio.preprocess.trim_media_window', return_value='w.wav'):
+            with patch('transub_engine.audio.preprocess.touch_path'):
+                qwen3_asr._qwen_windowed_transcribe(
+                    media_path='clip.mp4',
+                    model=model,
+                    lang='Japanese',
+                    duration_s=8000.0,
+                    want_ts=False,
+                    on_progress=None,
+                    on_cue=None,
+                    should_cancel=None,
+                )
+except Exception as e:
+    err = str(e)
+print(json.dumps({
+    'calls': model.n,
+    'windows': len(qwen3_asr._windows(8000.0)),
+    'err': err,
+    'systemic': qwen3_asr._is_systemic_qwen_error(RuntimeError('CUDA out of memory')),
+}))
+`);
+        const j = JSON.parse(out);
+        assert.ok(j.windows >= 80, `windows ${j.windows}`);
+        assert.ok(j.calls <= 2, `should abort on first OOM, calls=${j.calls}`);
+        assert.ok(/failed \d+\/\d+ windows/i.test(j.err), j.err);
+        assert.ok(/out of memory|显存不足/i.test(j.err), j.err);
+        assert.strictEqual(j.systemic, true);
+    });
+
+    it('Qwen island path raises instead of windowed fallback when inference fails', function () {
+        if (process.platform !== 'win32') this.skip();
+        const out = runPy(`
+import json
+from unittest.mock import patch
+import numpy as np
+from transub_engine.asr import qwen3_asr
+from transub_engine.vad import ten_vad_seg
+
+class Boom:
+    def __init__(self):
+        self.n = 0
+        self.max_inference_batch_size = 32
+        self.max_new_tokens = 512
+    def transcribe(self, audio=None, language=None, return_time_stamps=False):
+        self.n += 1
+        raise RuntimeError('CUDA out of memory')
+
+audio = np.zeros(16000 * 20, dtype=np.float32)
+intervals = [(0.0, 4.0), (5.0, 9.0), (10.0, 14.0), (15.0, 19.0)]
+model = Boom()
+err = ''
+cues = 'not-run'
+try:
+    with patch.object(ten_vad_seg, 'ten_vad_available', return_value=True):
+        with patch.object(ten_vad_seg, 'collect_ten_vad_intervals_with_audio', return_value=(intervals, audio)):
+            cues = qwen3_asr._qwen_island_vad_transcribe(
+                media_path='clip.mp4',
+                model=model,
+                lang='Japanese',
+                duration_s=20.0,
+                vad_backend='ten',
+                asr_model='qwen3-asr-1.7b-ja-anime-galgame',
+                on_progress=None,
+                on_cue=None,
+                should_cancel=None,
+            )
+except Exception as e:
+    err = str(e)
+print(json.dumps({'calls': model.n, 'err': err, 'cues': cues if isinstance(cues, str) else None}))
+`);
+        const j = JSON.parse(out);
+        assert.ok(j.calls >= 1 && j.calls <= 8, `calls=${j.calls}`);
+        assert.ok(/failed \d+\/\d+ frames/i.test(j.err), j.err);
+        assert.ok(/out of memory|显存不足/i.test(j.err), j.err);
+    });
+
     it('pip extras keep numpy numba constraint helper', function () {
         if (process.platform !== 'win32') this.skip();
         const out = runPy(`

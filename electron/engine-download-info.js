@@ -366,8 +366,8 @@ const SENSEVOICE_MANUAL_PACKAGES = [
     },
 ];
 
-/** CUDA torch wheels (cu126) — keep in sync with pip_mirror_util.TORCH_CUDA_WHEEL_FILES */
-const TORCH_CUDA_MANUAL_PACKAGES = [
+/** CUDA torch wheels (cu126) — pre-Blackwell NVIDIA GPUs */
+const TORCH_CUDA126_MANUAL_PACKAGES = [
     {
         id: 'torch-cuda',
         name: 'PyTorch CUDA（cu126）',
@@ -385,6 +385,117 @@ const TORCH_CUDA_MANUAL_PACKAGES = [
         note: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
     },
 ];
+
+/** CUDA torch wheels (cu128) — Blackwell RTX 50xx (sm_120) */
+const TORCH_CUDA128_MANUAL_PACKAGES = [
+    {
+        id: 'torch-cuda',
+        name: 'PyTorch CUDA（cu128）',
+        fileName: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl · RTX 50 系 · 约 2.5GB',
+    },
+    {
+        id: 'torchaudio-cuda',
+        name: 'TorchAudio CUDA（cu128）',
+        fileName: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+    },
+];
+
+/** CUDA torch wheels (cu130) — Blackwell + driver CUDA 13+ */
+const TORCH_CUDA130_MANUAL_PACKAGES = [
+    {
+        id: 'torch-cuda',
+        name: 'PyTorch CUDA（cu130）',
+        fileName: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl · RTX 50 系 + CUDA 13 驱动 · 约 2.5GB',
+    },
+    {
+        id: 'torchaudio-cuda',
+        name: 'TorchAudio CUDA（cu130）',
+        fileName: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+    },
+];
+
+/** @deprecated alias — use resolveTorchCudaManualPackages */
+const TORCH_CUDA_MANUAL_PACKAGES = TORCH_CUDA126_MANUAL_PACKAGES;
+
+function isBlackwellTorchPayload(payload = {}) {
+    if (payload.needsTorchCuda128 === true) return true;
+    const cap = Number(payload.computeCap ?? payload.device?.computeCap ?? 0);
+    if (Number.isFinite(cap) && cap >= 12) return true;
+    const gpuName = String(
+        payload.gpuName
+            || payload.device?.gpuName
+            || '',
+    ).toUpperCase();
+    return /RTX\s*50\d{2}|BLACKWELL/.test(gpuName);
+}
+
+function driverCudaMajorFromPayload(payload = {}) {
+    const rawMajor = payload.driverCudaMajor
+        ?? payload.device?.driverCudaMajor;
+    if (typeof rawMajor === 'number' && Number.isFinite(rawMajor)) {
+        return Math.floor(rawMajor);
+    }
+    const ver = String(
+        payload.driverCudaVersion
+            || payload.device?.driverCudaVersion
+            || '',
+    ).trim();
+    const m = ver.match(/^(\d+)/);
+    return m ? Number(m[1]) : 0;
+}
+
+/**
+ * @param {Record<string, unknown>} [payload]
+ * @returns {typeof TORCH_CUDA126_MANUAL_PACKAGES}
+ */
+function resolveTorchCudaManualPackages(payload = {}) {
+    const variant = String(payload.torchCudaVariant || '').trim().toLowerCase();
+    if (variant.startsWith('cu13')) {
+        return TORCH_CUDA130_MANUAL_PACKAGES;
+    }
+    if (variant === 'cu128') {
+        return TORCH_CUDA128_MANUAL_PACKAGES;
+    }
+    if (isBlackwellTorchPayload(payload)) {
+        return driverCudaMajorFromPayload(payload) >= 13
+            ? TORCH_CUDA130_MANUAL_PACKAGES
+            : TORCH_CUDA128_MANUAL_PACKAGES;
+    }
+    return TORCH_CUDA126_MANUAL_PACKAGES;
+}
+
+function resolveTorchCudaVariantLabel(payload = {}) {
+    const variant = String(payload.torchCudaVariant || '').trim().toLowerCase();
+    if (variant.startsWith('cu13')) return 'cu130';
+    if (variant === 'cu128') return 'cu128';
+    if (isBlackwellTorchPayload(payload)) {
+        return driverCudaMajorFromPayload(payload) >= 13 ? 'cu130' : 'cu128';
+    }
+    return 'cu126';
+}
+
+function torchCudaPipCommand(pipPrefix, payload = {}) {
+    const variant = resolveTorchCudaVariantLabel(payload);
+    if (variant.startsWith('cu13')) {
+        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu130`;
+    }
+    if (variant === 'cu128') {
+        return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128`;
+    }
+    return `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+}
 
 /** CPU torch for SenseVoice manual list (no NVIDIA GPU). */
 const SENSEVOICE_CPU_TORCH_PACKAGES = [
@@ -625,7 +736,9 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
         const demucsPip = `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com demucs`;
-        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+        const torchCudaPip = torchCudaPipCommand(pipPrefix, payload);
+        const torchVariant = resolveTorchCudaVariantLabel(payload);
+        const torchManual = resolveTorchCudaManualPackages(payload);
         return {
             ok: true,
             info: {
@@ -633,8 +746,8 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                 title: '下载 Demucs（人声分离）',
                 folder,
                 pipCommand: `${demucsPip}\n${torchCudaPip}`,
-                hint: '自动安装 Demucs；有 NVIDIA GPU 时会强制重装 CUDA 版 PyTorch（优先阿里云 cu126 直链 whl，约 2.5GB），替换 CPU torch。与「下载 GPU 支持」（ASR）互补。失败时可浏览器下载 .whl 后手动安装。',
-                wheelHint: '至少选择 demucs；若需 GPU 加速请一并下载下方 torch / torchaudio（cu126、cp312、win_amd64）',
+                hint: `自动安装 Demucs；有 NVIDIA GPU 时会强制重装 CUDA 版 PyTorch（${torchVariant}，约 2.5GB），替换 CPU torch。RTX 50 系：CUDA 13 驱动用 cu130，否则 cu128。与「下载 GPU 支持」互补。失败时可浏览器下载 .whl 后手动安装。`,
+                wheelHint: `至少选择 demucs；若需 GPU 加速请一并下载下方 torch / torchaudio（${torchVariant}、cp312、win_amd64）`,
                 items: [
                     {
                         id: 'demucs',
@@ -647,28 +760,17 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                         defaultUrl: 'https://mirrors.aliyun.com/pypi/packages/68/93/6f338f3f5c53522406dc32cd3b8a59abde20ac80d33604aa9dc8c82450e5/demucs-4.1.0-py3-none-any.whl',
                         note: 'demucs-4.1.0-py3-none-any.whl',
                     },
-                    {
-                        id: 'torch-cuda',
-                        name: 'PyTorch CUDA（cu126）',
+                    ...torchManual.map((pkg) => ({
+                        id: pkg.id,
+                        name: pkg.name,
                         kind: 'demucs',
-                        group: '人声分离 · GPU',
-                        fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        note: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl · 约 2.5GB',
-                    },
-                    {
-                        id: 'torchaudio-cuda',
-                        name: 'TorchAudio CUDA（cu126）',
-                        kind: 'demucs',
-                        group: '人声分离 · GPU',
-                        fileName: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-                        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        defaultUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                        note: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-                    },
+                        group: `人声分离 · GPU（${torchVariant}）`,
+                        fileName: pkg.fileName,
+                        officialUrl: pkg.officialUrl,
+                        mirrorUrl: pkg.mirrorUrl,
+                        defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
+                        note: pkg.note || pkg.fileName,
+                    })),
                 ],
             },
         };
@@ -683,10 +785,11 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         const pipPrefix = runtimePy
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
-        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+        const torchCudaPip = torchCudaPipCommand(pipPrefix, payload);
+        const torchVariant = resolveTorchCudaVariantLabel(payload);
         const sensevoiceBase = [
             ...SENSEVOICE_MANUAL_PACKAGES.slice(0, 4),
-            ...TORCH_CUDA_MANUAL_PACKAGES,
+            ...resolveTorchCudaManualPackages(payload),
             ...SENSEVOICE_CPU_TORCH_PACKAGES,
             SENSEVOICE_MANUAL_PACKAGES[4],
         ];
@@ -698,11 +801,11 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                 folder,
                 pipCommand: [
                     `${pipPrefix} install --upgrade --prefer-binary --only-binary=numba,llvmlite,scipy -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com "numpy>=1.24.0,<2.5" numba llvmlite scipy librosa soundfile jieba funasr`,
-                    `# 有 NVIDIA GPU 时改装 CUDA 版 PyTorch（约 2.5GB，替换 CPU torch）：`,
+                    `# 有 NVIDIA GPU 时改装 CUDA 版 PyTorch（${torchVariant}，约 2.5GB，替换 CPU torch）：`,
                     torchCudaPip,
                 ].join('\n'),
-                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。有 NVIDIA GPU 时请下载下方「CUDA PyTorch」两项（勿装 CPU 版 torch）；无独显再用 CPU torch。自动改装失败时可浏览器直链下载后本地安装。',
-                wheelHint: '先装 numpy 2.4.x 与 numba/llvmlite/scipy/funasr；有 GPU 时装 cu126 的 torch + torchaudio（约 2.5GB）。',
+                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。有 NVIDIA GPU 时请下载下方「CUDA PyTorch」两项（勿装 CPU 版 torch）；无独显再用 CPU torch。RTX 50 系：CUDA 13 驱动用 cu130。',
+                wheelHint: `先装 numpy 2.4.x 与 numba/llvmlite/scipy/funasr；有 GPU 时装 ${torchVariant} 的 torch + torchaudio（约 2.5GB）。`,
                 items: sensevoiceBase.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
@@ -731,21 +834,23 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         const pipPrefix = runtimePy
             ? `"${runtimePy}" -m pip`
             : 'python -m pip';
-        const torchCudaPip = `${pipPrefix} install --upgrade --force-reinstall torch torchaudio --find-links https://mirrors.aliyun.com/pytorch-wheels/cu126/ --no-index`;
+        const torchVariant = resolveTorchCudaVariantLabel(payload);
+        const torchCudaPip = torchCudaPipCommand(pipPrefix, payload);
+        const torchManual = resolveTorchCudaManualPackages(payload);
         return {
             ok: true,
             info: {
                 kind: 'torch-cuda',
-                title: '手动安装 CUDA 版 PyTorch（cu126）',
+                title: `手动安装 CUDA 版 PyTorch（${torchVariant}）`,
                 folder,
                 pipCommand: torchCudaPip,
-                hint: '自动「改装 CUDA」失败或长时间无进度时使用。请用浏览器下载下方两个 .whl（torch 约 2.5GB，支持断点续传），下载完成后点「选择已下载文件」本地安装。安装前请完全退出引擎。',
-                wheelHint: '务必同时安装 torch 与 torchaudio（cu126、cp312、win_amd64）。会替换已装的 CPU 版 torch。',
-                items: TORCH_CUDA_MANUAL_PACKAGES.map((pkg) => ({
+                hint: '自动「改装 CUDA」失败或长时间无进度时使用。请用浏览器下载下方两个 .whl（torch 约 2.5GB，支持断点续传），下载完成后点「选择已下载文件」本地安装。安装前请完全退出引擎。RTX 50 系：CUDA 13 驱动选 cu130，否则 cu128。',
+                wheelHint: `务必同时安装 torch 与 torchaudio（${torchVariant}、cp312、win_amd64）。会替换已装的 CPU 版 torch。`,
+                items: torchManual.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
                     kind: 'torch-cuda',
-                    group: 'CUDA PyTorch（cu126）',
+                    group: `CUDA PyTorch（${torchVariant}）`,
                     fileName: pkg.fileName,
                     officialUrl: pkg.officialUrl,
                     mirrorUrl: pkg.mirrorUrl,
@@ -966,6 +1071,12 @@ module.exports = {
     SENSEVOICE_MANUAL_PACKAGES,
     SENSEVOICE_CPU_TORCH_PACKAGES,
     TORCH_CUDA_MANUAL_PACKAGES,
+    TORCH_CUDA126_MANUAL_PACKAGES,
+    TORCH_CUDA128_MANUAL_PACKAGES,
+    TORCH_CUDA130_MANUAL_PACKAGES,
+    resolveTorchCudaManualPackages,
+    resolveTorchCudaVariantLabel,
+    torchCudaPipCommand,
     WHISPER_MANUAL_PACKAGES,
     detectDriverCudaMajorQuick,
     resolveOrtGpuManualPackage,

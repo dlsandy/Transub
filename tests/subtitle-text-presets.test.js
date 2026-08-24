@@ -87,6 +87,25 @@ function testDurationSecInputAndTiming() {
     assert.strictEqual(api.formatItemTiming(item), '1.2+0.8s');
 }
 
+function testInsertGroupIntoCues() {
+    const group = api.normalizeGroup({
+        name: '片头',
+        anchor: 'absolute',
+        items: [
+            { label: '片名', text: '《测试》', startSec: 0, endSec: 0.5 },
+            { label: '演员', text: '甲', startSec: 0.6, endSec: 1.5 },
+        ],
+    });
+    const base = [{ startMs: 5000, endMs: 6000, text: '对白', index: 1 }];
+    const out = api.insertGroupIntoCues(base, group, { baseMs: 0 });
+    assert.strictEqual(out.inserted, 2);
+    assert.strictEqual(out.cues.length, 3);
+    assert.strictEqual(out.cues[0].text, '《测试》');
+    assert.strictEqual(out.cues[0].startMs, 0);
+    assert.strictEqual(out.cues[2].text, '对白');
+    assert.strictEqual(out.cues[2].index, 3);
+}
+
 describe('subtitle-text-presets groups', () => {
     it('normalize and upsert group', () => {
         testNormalizeGroup();
@@ -105,5 +124,8 @@ describe('subtitle-text-presets groups', () => {
     });
     it('accept durationSec and format start+duration', () => {
         testDurationSecInputAndTiming();
+    });
+    it('insert group into existing cues', () => {
+        testInsertGroupIntoCues();
     });
 });

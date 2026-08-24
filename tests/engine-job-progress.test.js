@@ -4,6 +4,8 @@ const {
     mapEngineStageToItemStage,
     engineStageZh,
     buildUiProgress,
+    remapJobProgress,
+    remapBridgeProgress,
     extractOutputPaths,
     mapEngineResultsToHistoryOutputs,
 } = require('../electron/engine-job-progress');
@@ -20,7 +22,38 @@ describe('engine-job-progress', () => {
         assert.strictEqual(mapEngineStageToItemStage('mt'), 'translate');
         assert.strictEqual(mapEngineStageToItemStage('running'), 'transcribe');
         assert.strictEqual(mapEngineStageToItemStage('error'), 'failed');
-        assert.strictEqual(engineStageZh('vad'), '语音检测');
+        assert.strictEqual(mapEngineStageToItemStage('asr_semantic_repair'), 'semantic_repair');
+        assert.strictEqual(engineStageZh('semantic_repair'), '转录语义校正');
+    });
+
+    it('remapJobProgress keeps semantic repair and MT in separate bands', () => {
+        const asrEnd = remapJobProgress('translate_mt', { stage: 'transcribe', percent: 100 }).percent;
+        const repair = remapJobProgress('translate_mt', { stage: 'asr_semantic_repair', percent: 50 }).percent;
+        const mt0 = remapJobProgress('translate_mt', { stage: 'translate', percent: 0 }).percent;
+        const mtMid = remapJobProgress('translate_mt', { stage: 'translate', percent: 50 }).percent;
+        const save = remapJobProgress('translate_mt', { stage: 'save', percent: 50 }).percent;
+        assert.ok(asrEnd <= 64, `asr end ${asrEnd}`);
+        assert.ok(repair > asrEnd && repair < mt0, `repair ${repair}`);
+        assert.strictEqual(mt0, 68);
+        assert.ok(mtMid > mt0 && mtMid < 96);
+        assert.ok(save >= 96 && save < 100);
+    });
+
+    it('remapBridgeProgress maps bridge handoff ticks', () => {
+        const mapped = remapBridgeProgress('dual', {
+            stage: 'asr_semantic_repair',
+            percent: 50,
+            detail: '转录语义校正…',
+            itemDualPhase: 'source',
+        });
+        assert.ok(mapped.percent >= 64 && mapped.percent <= 67);
+        assert.strictEqual(mapped.itemDualPhase, 'source');
+        const mt = remapBridgeProgress('dual', {
+            stage: 'translate',
+            percent: 0,
+            itemDualPhase: 'translate',
+        });
+        assert.strictEqual(mt.percent, 68);
     });
 
     it('buildUiProgress sets phase and dualPhase', () => {

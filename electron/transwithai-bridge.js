@@ -464,6 +464,7 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
         postBatchSimplifyViewingPunctuation: merged.postBatchViewingPunctMode !== 'off',
         postBatchCompactPureInterjections: merged.postBatchInterjectionMode === 'clear'
             || merged.postBatchOnomatopoeiaMode === 'clear',
+        postBatchTextPresetGroupId: String(merged.postBatchTextPresetGroupId || '').trim(),
         postBatchContextReconstruct: !!merged.postBatchContextReconstruct,
         smartTranslate: !!merged.smartTranslate,
         // Faithful tone applies to all translate modes (engine / sakura / smart); only needs translate|dual.
@@ -483,6 +484,19 @@ function normalizeTransWithAiRuntimeOptions(options = {}) {
             if (s === 'true' || s === '1' || s === 'on' || s === 'always') return 'on';
             return 'auto';
         })(),
+        asrSemanticRepair: (() => {
+            const raw = merged.asrSemanticRepair;
+            if (raw === false || raw === 0) return 'off';
+            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
+            if (s === 'false' || s === '0' || s === 'off' || s === 'no') return 'off';
+            if (s === 'thorough' || s === 'full' || s === 'all' || s === 'on' || s === 'true' || s === '1') {
+                return 'thorough';
+            }
+            return 'auto';
+        })(),
+        filmBriefSampleMode: String(merged.filmBriefSampleMode || 'auto').trim().toLowerCase() === 'full'
+            ? 'full'
+            : 'auto',
         smartTranslatePolishSampleLimit: (() => {
             const n = Number(merged.smartTranslatePolishSampleLimit);
             return Number.isFinite(n) ? Math.max(4, Math.min(36, Math.round(n))) : 36;
@@ -2781,6 +2795,7 @@ function setupTransWithAiBridge(api, deps) {
                 'includeWords', 'karaokeVtt', 'releaseGpuAfter',
                 'postBatchCpsSplit', 'postBatchRemoveNoise', 'postBatchCompressRepetition',
                 'postBatchViewingPunctMode', 'postBatchInterjectionMode', 'postBatchOnomatopoeiaMode',
+                'postBatchTextPresetGroupId',
                 'postBatchSimplifyViewingPunctuation',
                 'postBatchCompactPureInterjections',
                 'postBatchContextReconstruct',
@@ -2791,6 +2806,8 @@ function setupTransWithAiBridge(api, deps) {
                 'smartTranslateFaithfulVerify',
                 'smartTranslateAddressConsistency',
                 'asrSecondOpinion',
+                'asrSemanticRepair',
+                'filmBriefSampleMode',
                 'smartTranslatePolishSampleLimit',
                 'sakuraNsfwPrompt',
                 'filmAudioEnhance', 'filmVadPreset',

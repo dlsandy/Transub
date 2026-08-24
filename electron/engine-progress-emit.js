@@ -74,8 +74,15 @@ function createProgressEmitter(deps) {
             asrAttempts: payload.asrAttempts,
             asrFailedOver: payload.asrFailedOver,
         });
-        emitToSubtitleUi('transub-engine-progress', { ...payload, ...ui }, invokeSender);
-        emitToSubtitleUi('transwithai-progress', ui, invokeSender);
+        emitToSubtitleUi('transub-engine-progress', {
+            ...ui,
+            ...payload,
+            itemDualPhase: payload.itemDualPhase ?? ui.itemDualPhase,
+        }, invokeSender);
+        emitToSubtitleUi('transwithai-progress', {
+            ...ui,
+            itemDualPhase: payload.itemDualPhase ?? ui.itemDualPhase,
+        }, invokeSender);
         const detail = String(ui.itemDetail || payload.detail || '').trim();
         if (!detail) return ui;
         const name = ui.fullPath ? path.basename(ui.fullPath) : '';

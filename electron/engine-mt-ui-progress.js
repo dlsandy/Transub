@@ -41,6 +41,8 @@ function setMtUiCurrent(tracker, { file, index1, total } = {}) {
  */
 function mapAdapterMtProgress(info, tracker) {
     if (!tracker || !tracker.file) return null;
+    // Film-brief dump lines belong in the engine log, not the status badge.
+    if (info?.logOnly) return null;
     const detail = String(info?.message || info?.detail || info?.phase || '').trim() || '翻译中';
     const local = Number(info?.pct ?? info?.percent);
     let overall = Math.max(MT_BAND_LO, Number(tracker.lastOverall) || MT_BAND_LO);

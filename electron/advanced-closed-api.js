@@ -18,6 +18,29 @@ function loadClosedSmartTranslateCore() {
     return null;
 }
 
+/**
+ * Resolve closed Pro context-reconstruct helpers (chunking + JSON parse).
+ * Unpackaged: gitignored `advanced-context-reconstruct-core.js`.
+ * Packaged: `_advanced` blob `helpers` / `contextReconstructCore`.
+ */
+function loadClosedContextReconstructCore() {
+    try {
+        return require('../src/js/advanced-context-reconstruct-core');
+    } catch (_) { /* packaged / missing closed sources */ }
+    try {
+        const { loadAdvancedModule } = require('./advanced-module-loader');
+        const res = loadAdvancedModule();
+        const mod = res?.module;
+        const dedicated = mod?.contextReconstructCore;
+        if (dedicated && typeof dedicated.chunkCues === 'function') return dedicated;
+        const helpers = mod?.helpers;
+        if (helpers && typeof helpers.chunkCues === 'function') return helpers;
+        if (mod && typeof mod.chunkCues === 'function') return mod;
+    } catch (_) { /* optional */ }
+    return null;
+}
+
 module.exports = {
     loadClosedSmartTranslateCore,
+    loadClosedContextReconstructCore,
 };

@@ -363,7 +363,36 @@
 
     function isTorchCudaInstallError(text) {
         const s = String(text || '');
-        return /TORCH_CUDA|改装\s*CUDA|CUDA\s*版\s*PyTorch|CPU\s*版\s*PyTorch/i.test(s);
+        return /TORCH_CUDA|no kernel image|cudaerrornokernelimagefordevice|改装\s*CUDA|CUDA\s*版\s*PyTorch|CPU\s*版\s*PyTorch/i.test(s);
+    }
+
+    function torchCudaFormPayload(result = state.result) {
+        const items = result?.items || [];
+        const gpuRt = items.find((it) => it.id === 'gpuRuntime') || {};
+        const gpuHw = items.find((it) => it.id === 'gpu') || {};
+        const gpuDriver = items.find((it) => it.id === 'gpuDriver') || {};
+        const cudaFromDriver = String(gpuDriver.detail || '').match(/CUDA\s+([\d.]+)/i);
+        const driverCudaVersion = String(
+            gpuRt.driverCudaVersion
+                || (cudaFromDriver ? cudaFromDriver[1] : ''),
+        ).trim();
+        let driverCudaMajor = gpuRt.driverCudaMajor;
+        if (!driverCudaMajor && driverCudaVersion) {
+            driverCudaMajor = Number(String(driverCudaVersion).split('.')[0]);
+        }
+        const gpuName = String(gpuRt.gpuName || gpuHw.detail || '').trim();
+        return {
+            needsTorchCuda128: gpuRt.needsTorchCuda128 ?? undefined,
+            torchCudaVariant: gpuRt.torchCudaVariant || undefined,
+            computeCap: gpuRt.computeCap ?? undefined,
+            gpuName: gpuName || undefined,
+            driverCudaVersion: driverCudaVersion || undefined,
+            driverCudaMajor: driverCudaMajor ?? undefined,
+        };
+    }
+
+    function manualFormPayload(result, extras = {}) {
+        return { ...torchCudaFormPayload(result), ...extras };
     }
 
     function manualKindsForFailure(errText, result) {
@@ -402,6 +431,10 @@
             || statusOf('qwenRuntime') === 'warn'
             || (Array.isArray(plan.modelIds) && plan.modelIds.some((id) => /qwen3-asr/i.test(String(id))))
         ) {
+            kinds.push('torch-cuda');
+        }
+        const gpuRt = items.find((it) => it.id === 'gpuRuntime') || {};
+        if (gpuRt.torchCudaMismatch && hasNvidiaGpuInResult(result)) {
             kinds.push('torch-cuda');
         }
         if (
@@ -509,7 +542,7 @@
             const res = await global.TransubManualWhlInstall.openModal({
                 kind: whlKinds[0],
                 kinds: whlKinds,
-                formPayload: gpuExtras,
+                formPayload: manualFormPayload(result, gpuExtras),
             });
             if (res?.ok) {
                 setSubtitleFn(res.message || '手动安装完成，正在重新检测…');
@@ -603,6 +636,7 @@
             fixable: false,
             openVcRedist: false,
             ensureGpu: false,
+            ensureTorchCuda: false,
             ensureLlamaRuntime: false,
             force: false,
             modelIds: [],
@@ -737,7 +771,7 @@
                         enableManualButton(manualBtn);
                         const cudaHint = /改装\s*CUDA|CUDA\s*PyTorch|torch_cuda/i.test(String(p?.message || ''));
                         const hintText = cudaHint
-                            ? 'CUDA PyTorch 下载较慢（约 2.5GB）；若长时间无进度请点「手动下载」用浏览器直链下载 torch / torchaudio（cu126）。'
+                            ? 'CUDA PyTorch 下载较慢（约 2.5GB）；若长时间无进度请点「手动下载」用浏览器直链下载 torch / torchaudio（RTX 50 系：CUDA 13 驱动选 cu130，否则 cu128）。'
                             : '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装。';
                         if (ui.fixHintEl) {
                             ui.fixHintEl.textContent = hintText;
@@ -820,6 +854,7 @@
                                         kind: uniqueKinds[0],
                                         kinds: uniqueKinds,
                                         errorText: errText,
+                                        formPayload: torchCudaFormPayload(getResult()),
                                     });
                                     if (manualRes?.cancelled) {
                                         manualCancelled = true;
@@ -865,6 +900,40 @@
                             const manualRes = await global.TransubManualWhlInstall?.offerAfterFailure?.({
                                 kind: 'gpu',
                                 errorText: errText,
+                            });
+                            if (manualRes?.cancelled) {
+                                manualCancelled = true;
+                                errors.push(errText);
+                            } else if (!manualRes?.ok) {
+                                errors.push(errText);
+                            }
+                        }
+                    }
+                }
+
+                if (!manualCancelled && !switchToManual && plan.ensureTorchCuda && hasNvidiaGpuInResult(getResult())) {
+                    setProgress('正在补齐 CUDA PyTorch…', 0, {});
+                    if (!electron?.transubEngineRunDownload) {
+                        errors.push('当前环境不支持 CUDA PyTorch 安装');
+                    } else {
+                        const res = await electron.transubEngineRunDownload({
+                            kind: 'demucs',
+                            force: true,
+                            engineAutoStart: true,
+                            ...downloadExtra,
+                        });
+                        if (switchToManual) break;
+                        if (!res?.ok) {
+                            if (res?.cancelled) {
+                                manualCancelled = true;
+                                errors.push(res?.error || '已取消下载');
+                                break;
+                            }
+                            const errText = res?.error || res?.message || 'CUDA PyTorch 安装失败';
+                            const manualRes = await global.TransubManualWhlInstall?.offerAfterFailure?.({
+                                kind: 'torch-cuda',
+                                errorText: errText,
+                                formPayload: torchCudaFormPayload(getResult()),
                             });
                             if (manualRes?.cancelled) {
                                 manualCancelled = true;
@@ -1098,6 +1167,7 @@
                 fixable: !!plan.fixable,
                 openVcRedist: !!plan.openVcRedist,
                 ensureGpu: !!plan.ensureGpu,
+                ensureTorchCuda: !!plan.ensureTorchCuda,
                 ensureLlamaRuntime: !!plan.ensureLlamaRuntime,
                 force: !!plan.force,
                 modelIds: Array.isArray(plan.modelIds) ? plan.modelIds.slice() : [],
@@ -1113,6 +1183,7 @@
         const models = Array.isArray(plan.modelIds) ? plan.modelIds.filter(Boolean) : [];
         return !!plan.openVcRedist
             || !!plan.ensureGpu
+            || !!plan.ensureTorchCuda
             || !!plan.ensureLlamaRuntime
             || models.length > 0;
     }

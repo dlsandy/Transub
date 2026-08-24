@@ -148,6 +148,16 @@ const REQUIRED_RENDERER_FILES = [
     'vendor/font-awesome/fonts/fontawesome-webfont.ttf',
 ];
 
+const MT_TRAIN_MUST_EXIST = [
+    'tools/mt-train/server.js',
+    'tools/mt-train/public/index.html',
+    'tools/mt-train/public/wizard.js',
+    'tools/mt-train/lib/sandbox.js',
+    'tools/mt-train/lib/train.js',
+    'electron/mt-train-window.js',
+    'electron/mt-train-bridge.js',
+];
+
 const ELECTRON_MUST_EXIST = [
     'electron/main.js',
     'electron/preload.js',
@@ -246,6 +256,14 @@ function packageFilesCover(relPosix) {
             if (f === normalized) return true;
             if (f === 'shared/**/*') return true;
             if (typeof f === 'string' && f.startsWith('shared/') && !f.startsWith('!')) return true;
+            return false;
+        });
+    }
+    if (normalized.startsWith('tools/mt-train/')) {
+        return files.some((f) => {
+            if (f === normalized) return true;
+            if (f === 'tools/mt-train/**/*') return true;
+            if (typeof f === 'string' && f.startsWith('tools/mt-train/') && !f.startsWith('!')) return true;
             return false;
         });
     }
@@ -486,6 +504,13 @@ function main() {
             errors.push(`缺少主进程/打包文件: ${rel}`);
         }
     }
+    for (const rel of MT_TRAIN_MUST_EXIST) {
+        if (!fs.existsSync(path.join(root, rel))) {
+            errors.push(`缺少学习向导打包文件: ${rel}`);
+        } else if (!packageFilesCover(rel)) {
+            errors.push(`package.json build.files 可能未打包学习向导: ${rel}`);
+        }
+    }
 
     // Vendored Engine standalone dist (extraFiles → next to exe; no ffmpeg copy)
     const engineMarkers = [
@@ -557,6 +582,13 @@ function main() {
         errors.push(`缺少 ASR 领域纠错 SSOT: ${jaAsrFixesRel}`);
     } else if (!packageFilesCover(jaAsrFixesRel)) {
         errors.push(`package.json build.files 可能未打包: ${jaAsrFixesRel}`);
+    }
+    for (const rel of ['shared/av-actor-glossary.json', 'shared/av-domain-glossary.json']) {
+        if (!fs.existsSync(path.join(root, rel))) {
+            errors.push(`缺少 AV 词库: ${rel}（运行 npm run build:av-glossary）`);
+        } else if (!packageFilesCover(rel)) {
+            errors.push(`package.json build.files 可能未打包: ${rel}`);
+        }
     }
     const sharedExtra = extraFiles.find((entry) => {
         if (!entry || typeof entry !== 'object') return false;
@@ -798,9 +830,14 @@ function main() {
                     errors.push(`asar 误含闭源源码: ${rel}`);
                 }
             }
-            if (!set.has('shared/ja-asr-domain-fixes.json')
-                && ![...set].some((x) => x === 'shared/ja-asr-domain-fixes.json' || x.endsWith('/shared/ja-asr-domain-fixes.json'))) {
-                errors.push('asar 缺少: shared/ja-asr-domain-fixes.json');
+            for (const rel of [
+                'shared/ja-asr-domain-fixes.json',
+                'shared/av-actor-glossary.json',
+                'shared/av-domain-glossary.json',
+            ]) {
+                if (!set.has(rel) && ![...set].some((x) => x === rel || x.endsWith(`/${rel}`))) {
+                    errors.push(`asar 缺少: ${rel}`);
+                }
             }
             const leakedDocs = [...set].find((x) => x === 'docs' || x.startsWith('docs/'));
             if (leakedDocs) {
@@ -822,8 +859,14 @@ function main() {
                     errors.push(`解包 asar 目录误含闭源源码: ${rel}`);
                 }
             }
-            if (!fs.existsSync(path.join(asarRoot, 'shared', 'ja-asr-domain-fixes.json'))) {
-                errors.push('解包目录缺少: shared/ja-asr-domain-fixes.json');
+            for (const rel of [
+                'ja-asr-domain-fixes.json',
+                'av-actor-glossary.json',
+                'av-domain-glossary.json',
+            ]) {
+                if (!fs.existsSync(path.join(asarRoot, 'shared', rel))) {
+                    errors.push(`解包目录缺少: shared/${rel}`);
+                }
             }
         } else {
             warnings.push(`无法校验 asar: ${asarRoot}`);
