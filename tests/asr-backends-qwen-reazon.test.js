@@ -119,7 +119,7 @@ pkgs = list(EXTRA_PACKAGES.get('asr-cohere') or ())
 print(json.dumps({'pkgs': pkgs}))
 `);
         const j = JSON.parse(out);
-        assert.ok(j.pkgs.some((p) => /tokenizers>=0\.22\.0,<=0\.23\.0/.test(p)), j.pkgs.join(','));
+        assert.ok(j.pkgs.some((p) => /tokenizers>=0\.22\.0,<=0\.23\.1/.test(p)), j.pkgs.join(','));
         assert.ok(j.pkgs.some((p) => /transformers>=5\.6\.0,<6/.test(p)), j.pkgs.join(','));
         assert.ok(j.pkgs.some((p) => /huggingface-hub>=1\.5\.0,<2\.0/.test(p)), j.pkgs.join(','));
     });
@@ -133,7 +133,7 @@ pkgs = list(EXTRA_PACKAGES.get('asr-qwen3') or ())
 print(json.dumps({'pkgs': pkgs}))
 `);
         const j = JSON.parse(out);
-        assert.ok(j.pkgs.some((p) => /tokenizers>=0\.22\.0,<=0\.23\.0/.test(p)), j.pkgs.join(','));
+        assert.ok(j.pkgs.some((p) => /tokenizers>=0\.22\.0,<=0\.23\.1/.test(p)), j.pkgs.join(','));
         assert.ok(j.pkgs.some((p) => /transformers>=4\.51\.0,<5\.0/.test(p)), j.pkgs.join(','));
         assert.ok(j.pkgs.some((p) => /huggingface-hub>=0\.34\.0,<1\.0/.test(p)), j.pkgs.join(','));
         assert.ok(j.pkgs.some((p) => /numpy>=1\.24\.0,<2\.5/.test(p)), j.pkgs.join(','));
@@ -338,17 +338,24 @@ print(json.dumps({'calls': model.n, 'err': err, 'cues': cues if isinstance(cues,
         if (process.platform !== 'win32') this.skip();
         const out = runPy(`
 import json
-from transub_engine.runtime_extras import NUMPY_NUMBA_PIN, _with_numpy_numba_constraint
+from transub_engine.runtime_extras import NUMPY_NUMBA_PIN, _with_numpy_numba_constraint, _requirement_satisfied
+numpy_ok = _requirement_satisfied(NUMPY_NUMBA_PIN)
+with_tf = _with_numpy_numba_constraint(['transformers>=4.51.0,<5.0'])
 print(json.dumps({
     'pin': NUMPY_NUMBA_PIN,
-    'with': _with_numpy_numba_constraint(['transformers>=4.51.0,<5.0']),
+    'numpyOk': numpy_ok,
+    'with': with_tf,
     'keep': _with_numpy_numba_constraint(['numpy>=1.24.0,<2.5', 'torch']),
 }))
 `);
         const j = JSON.parse(out);
         assert.strictEqual(j.pin, 'numpy>=1.24.0,<2.5');
-        assert.ok(j.with.includes('numpy>=1.24.0,<2.5'));
-        assert.strictEqual(j.with.filter((p) => p.startsWith('numpy')).length, 1);
+        if (j.numpyOk) {
+            assert.deepStrictEqual(j.with, ['transformers>=4.51.0,<5.0']);
+        } else {
+            assert.ok(j.with.includes('numpy>=1.24.0,<2.5'));
+            assert.strictEqual(j.with.filter((p) => p.startsWith('numpy')).length, 1);
+        }
         assert.deepStrictEqual(j.keep, ['numpy>=1.24.0,<2.5', 'torch']);
     });
 });

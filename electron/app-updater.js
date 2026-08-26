@@ -1,9 +1,9 @@
 /**
- * Windows app update via GitHub + Codeberg Releases (zip-only),
+ * Windows app update via GitHub + Codeberg + GitCode Releases (zip-only),
  * with official-site mirrors under https://www.transub.cc/updates/{version}/.
  * - Manifest is block digests only (shell / app / engine / other) — no file list
  * - Prefer delta zip when present; else dirty block zips; else full Transub-*-win.zip
- * - Download probes GitHub / Codeberg / 官网 and picks the fastest reachable URL
+ * - Download probes GitHub / Codeberg / GitCode / 官网; domestic networks prefer GitCode first
  * - Legacy NSIS installs are guided to switch to zip (Setup is no longer published)
  * Code signing is not used (no free Authenticode cert); archives are sha256-verified.
  * Failure objects may include: code, preferredSource, triedSources, expectedSha, gotSha.
@@ -90,12 +90,12 @@ function formatUpdateFailureMeta(fail = {}) {
     const tipByCode = {
         checksum: '校验失败：换线路重试，或从发布页手动下载同版本 zip',
         extract: '解压失败：确认磁盘空间充足且安装目录可写',
-        probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / 官网',
+        probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / GitCode / 官网',
         download: '下载失败：可改用其它镜像，或从发布页手动下载',
         cancelled: '已取消',
     };
     const tip = tipByCode[String(fail.code || '')]
-        || '可改从 GitHub / Codeberg / 官网 Releases 手动下载';
+        || '可改从 GitHub / Codeberg / GitCode / 官网 Releases 手动下载';
     parts.push(tip);
     return parts.join(' · ');
 }
@@ -104,10 +104,14 @@ const GITHUB_OWNER = 'dlsandy';
 const GITHUB_REPO = 'Transub';
 const CODEBERG_OWNER = 'flyforyou';
 const CODEBERG_REPO = 'Transub';
+const GITCODE_OWNER = 'AndyDai';
+const GITCODE_REPO = 'Transub';
 const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 const CODEBERG_RELEASES_URL = `https://codeberg.org/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases`;
+const GITCODE_RELEASES_URL = `https://gitcode.com/${GITCODE_OWNER}/${GITCODE_REPO}/releases`;
 const LATEST_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 const CODEBERG_LATEST_API = `https://codeberg.org/api/v1/repos/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases/latest`;
+const GITCODE_LATEST_API = `https://api.gitcode.com/api/v5/repos/${GITCODE_OWNER}/${GITCODE_REPO}/releases/latest`;
 const WEBSITE_ORIGIN = 'https://www.transub.cc';
 const WEBSITE_UPDATES_BASE = `${WEBSITE_ORIGIN}/updates`;
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
@@ -318,6 +322,18 @@ async function fetchCodebergLatestRelease() {
     return fetchLatestReleaseJson(CODEBERG_LATEST_API);
 }
 
+async function fetchGitcodeLatestRelease() {
+    const release = await fetchLatestReleaseJson(GITCODE_LATEST_API);
+    // GitCode sometimes omits html_url on public latest payloads.
+    if (release && !release.html_url) {
+        const tag = String(release.tag_name || '').trim();
+        release.html_url = tag
+            ? `${GITCODE_RELEASES_URL}/${encodeURIComponent(tag)}`
+            : GITCODE_RELEASES_URL;
+    }
+    return release;
+}
+
 /**
  * Official-site update asset URL: /updates/{version}/{fileName}
  * @param {string} version
@@ -376,37 +392,42 @@ function appendWebsiteUpdateUrls(state) {
 }
 
 /**
- * Collect zip / manifest / component asset URLs from GitHub + Codeberg for the same latest version,
- * then append official-site mirrors for download speed probes.
+ * Collect zip / manifest / component asset URLs from GitHub + Codeberg + GitCode
+ * for the same latest version, then append official-site mirrors for download speed probes.
  */
 async function fetchDualHostLatestReleases() {
     const settled = await Promise.allSettled([
         fetchGithubLatestRelease(),
         fetchCodebergLatestRelease(),
+        fetchGitcodeLatestRelease(),
     ]);
     const github = settled[0].status === 'fulfilled' ? settled[0].value : null;
     const codeberg = settled[1].status === 'fulfilled' ? settled[1].value : null;
-    if (!github && !codeberg) {
+    const gitcode = settled[2].status === 'fulfilled' ? settled[2].value : null;
+    if (!github && !codeberg && !gitcode) {
         const err = settled.find((r) => r.status === 'rejected')?.reason;
-        throw new Error(err?.message || '无法连接 GitHub / Codeberg 发布接口');
+        throw new Error(err?.message || '无法连接 GitHub / Codeberg / GitCode 发布接口');
     }
 
-    const ghVer = github ? releaseVersion(github) : '';
-    const cbVer = codeberg ? releaseVersion(codeberg) : '';
-    let latestVersion = ghVer || cbVer;
-    let primaryRelease = github || codeberg;
-    if (ghVer && cbVer) {
-        const cmp = compareVersions(cbVer, ghVer);
-        if (cmp > 0) {
-            latestVersion = cbVer;
-            primaryRelease = codeberg;
-        } else if (cmp < 0) {
-            latestVersion = ghVer;
-            primaryRelease = github;
-        } else {
-            latestVersion = ghVer;
-            primaryRelease = github;
+    const hosts = [
+        { key: 'github', release: github, ver: github ? releaseVersion(github) : '' },
+        { key: 'codeberg', release: codeberg, ver: codeberg ? releaseVersion(codeberg) : '' },
+        { key: 'gitcode', release: gitcode, ver: gitcode ? releaseVersion(gitcode) : '' },
+    ];
+    let latestVersion = '';
+    let primaryRelease = null;
+    for (const host of hosts) {
+        if (!host.release || !host.ver) continue;
+        if (!latestVersion || compareVersions(host.ver, latestVersion) > 0) {
+            latestVersion = host.ver;
+            primaryRelease = host.release;
+        } else if (compareVersions(host.ver, latestVersion) === 0 && !primaryRelease) {
+            primaryRelease = host.release;
         }
+    }
+    // Prefer GitHub when several hosts share the same latest version.
+    if (github && releaseVersion(github) === latestVersion) {
+        primaryRelease = github;
     }
 
     const zipUrls = [];
@@ -417,10 +438,6 @@ async function fetchDualHostLatestReleases() {
     let zipName = '';
     let manifestName = '';
     let deltaName = '';
-    const hosts = [
-        { release: github, ver: ghVer },
-        { release: codeberg, ver: cbVer },
-    ];
     for (const { release, ver } of hosts) {
         if (!release || !ver || compareVersions(ver, latestVersion) !== 0) continue;
         const zip = pickZipAsset(release);
@@ -453,6 +470,7 @@ async function fetchDualHostLatestReleases() {
     const dual = {
         github,
         codeberg,
+        gitcode,
         latestVersion,
         primaryRelease,
         zipUrls: [...new Set(zipUrls)],
@@ -469,8 +487,27 @@ async function fetchDualHostLatestReleases() {
         codebergError: settled[1].status === 'rejected'
             ? String(settled[1].reason?.message || settled[1].reason || '')
             : '',
+        gitcodeError: settled[2].status === 'rejected'
+            ? String(settled[2].reason?.message || settled[2].reason || '')
+            : '',
     };
     dual.website = appendWebsiteUpdateUrls(dual);
+    try {
+        const {
+            likelyDomesticNetwork,
+            prioritizeDomesticDownloadUrls,
+        } = require('./advanced-llm-download');
+        if (likelyDomesticNetwork()) {
+            dual.zipUrls = prioritizeDomesticDownloadUrls(dual.zipUrls);
+            dual.manifestUrls = prioritizeDomesticDownloadUrls(dual.manifestUrls);
+            dual.deltaUrls = prioritizeDomesticDownloadUrls(dual.deltaUrls);
+            for (const block of BLOCK_NAMES) {
+                dual.componentUrls[block] = prioritizeDomesticDownloadUrls(
+                    dual.componentUrls[block] || [],
+                );
+            }
+        }
+    } catch (_) { /* ignore — keep discovered order */ }
     return dual;
 }
 
@@ -527,6 +564,7 @@ async function checkViaGithubApi() {
             installKind: getInstallKind(),
             releasesUrl: RELEASES_URL,
             codebergReleasesUrl: CODEBERG_RELEASES_URL,
+            gitcodeReleasesUrl: GITCODE_RELEASES_URL,
             transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
             message: '无法解析最新版本号',
         };
@@ -552,6 +590,7 @@ async function checkViaGithubApi() {
     const sources = [];
     if (dual.github) sources.push('GitHub');
     if (dual.codeberg) sources.push('Codeberg');
+    if (dual.gitcode) sources.push('GitCode');
     if (dual.website) sources.push('官网');
 
     if (zipAuto) {
@@ -573,6 +612,7 @@ async function checkViaGithubApi() {
     const pageUrl = release.html_url
         || (dual.github?.html_url)
         || (dual.codeberg?.html_url)
+        || (dual.gitcode?.html_url)
         || RELEASES_URL;
 
     return {
@@ -586,6 +626,7 @@ async function checkViaGithubApi() {
         releaseNotes,
         releasesUrl: dual.github?.html_url || RELEASES_URL,
         codebergReleasesUrl: dual.codeberg?.html_url || CODEBERG_RELEASES_URL,
+        gitcodeReleasesUrl: dual.gitcode?.html_url || GITCODE_RELEASES_URL,
         websiteUpdatesUrl: `${WEBSITE_UPDATES_BASE}/${encodeURIComponent(latestVersion)}/`,
         downloadUrl: preferredZip || pageUrl,
         downloadUrls: zipUrls,
@@ -601,11 +642,12 @@ async function checkViaGithubApi() {
         transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
         githubError: dual.githubError || '',
         codebergError: dual.codebergError || '',
+        gitcodeError: dual.gitcodeError || '',
         message: updateAvailable
             ? (zipAuto
                 ? (incrementalReady
                     ? `发现新版本 v${latestVersion}（将按区块摘要增量更新；已下载的模型、支持库与 Advanced LLM 会保留）`
-                    : `发现新版本 v${latestVersion}（将测速 GitHub / Codeberg / 官网后下载；已下载的模型、支持库与 Advanced LLM 会保留）`)
+                    : `发现新版本 v${latestVersion}（国内优先 GitCode，并测速其它线路后下载；已下载的模型、支持库与 Advanced LLM 会保留）`)
                 : `发现新版本 v${latestVersion}`)
             : `已是最新版本 v${currentVersion}`,
     };
@@ -780,7 +822,7 @@ async function downloadFullZipUpdate({
         bytesPerSecond: 0,
         phase: 'probe',
         message: extraUrls.length
-            ? '正在测速 GitHub / Codeberg / 官网下载源…'
+            ? '正在测速下载源（国内优先 GitCode）…'
             : '正在准备下载全量更新包…',
     });
 
@@ -1338,8 +1380,11 @@ module.exports = {
     GITHUB_REPO,
     CODEBERG_OWNER,
     CODEBERG_REPO,
+    GITCODE_OWNER,
+    GITCODE_REPO,
     RELEASES_URL,
     CODEBERG_RELEASES_URL,
+    GITCODE_RELEASES_URL,
     WEBSITE_ORIGIN,
     WEBSITE_UPDATES_BASE,
     websiteUpdateAssetUrl,

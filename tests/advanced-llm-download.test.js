@@ -3,6 +3,8 @@ const {
     expandDownloadUrls,
     orderDownloadUrlsByProbe,
     downloadSourceLabel,
+    prioritizeDomesticDownloadUrls,
+    isGitcodeDownloadUrl,
 } = require('../electron/advanced-llm-download');
 
 describe('advanced-llm-download mirrors', () => {
@@ -46,6 +48,29 @@ describe('advanced-llm-download mirrors', () => {
         assert.strictEqual(ordered[1], urls[0]);
     });
 
+    it('prioritizeDomesticDownloadUrls puts GitCode first', () => {
+        const github = 'https://github.com/dlsandy/Transub/releases/download/v1/a.zip';
+        const codeberg = 'https://codeberg.org/flyforyou/Transub/releases/download/v1/a.zip';
+        const gitcode = 'https://gitcode.com/AndyDai/Transub/releases/download/v1/a.zip';
+        const site = 'https://www.transub.cc/updates/1.0.0/a.zip';
+        const ordered = prioritizeDomesticDownloadUrls([github, codeberg, site, gitcode]);
+        assert.strictEqual(ordered[0], gitcode);
+        assert.strictEqual(ordered[1], site);
+        assert.ok(isGitcodeDownloadUrl(gitcode));
+        assert.ok(!isGitcodeDownloadUrl(github));
+    });
+
+    it('orderDownloadUrlsByProbe soft-prefers GitCode when domestic and speeds are close', () => {
+        const github = 'https://github.com/dlsandy/Transub/releases/download/v1/a.zip';
+        const gitcode = 'https://gitcode.com/AndyDai/Transub/releases/download/v1/a.zip';
+        const ordered = orderDownloadUrlsByProbe([
+            { url: github, ok: true, latencyMs: 80, bytesPerSec: 520_000 },
+            { url: gitcode, ok: true, latencyMs: 90, bytesPerSec: 500_000 },
+        ], [github, gitcode], { preferDomestic: true });
+        assert.strictEqual(ordered[0], gitcode);
+        assert.strictEqual(ordered[1], github);
+    });
+
     it('labels known mirror hosts', () => {
         const official = 'https://huggingface.co/x';
         assert.strictEqual(downloadSourceLabel('https://hf-mirror.com/x', official), 'HF 镜像');
@@ -54,6 +79,14 @@ describe('advanced-llm-download mirrors', () => {
         assert.strictEqual(
             downloadSourceLabel('https://codeberg.org/flyforyou/Transub/releases/download/v1/a.zip'),
             'Codeberg',
+        );
+        assert.strictEqual(
+            downloadSourceLabel('https://gitcode.com/AndyDai/Transub/releases/download/v1/a.zip'),
+            'GitCode',
+        );
+        assert.strictEqual(
+            downloadSourceLabel('https://raw.gitcode.com/AndyDai/Transub/archive/refs/heads/v1.zip'),
+            'GitCode',
         );
         assert.strictEqual(
             downloadSourceLabel('https://github.com/dlsandy/Transub/releases/download/v1/a.zip'),

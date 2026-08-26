@@ -6,6 +6,7 @@
     const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
     const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
     const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
+    const GITCODE_RELEASES_URL = 'https://gitcode.com/AndyDai/Transub/releases';
     const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     async function fillVersion() {
@@ -66,6 +67,9 @@
         });
         document.getElementById('aboutCodebergBtn')?.addEventListener('click', () => {
             void openUrl(CODEBERG_RELEASES_URL);
+        });
+        document.getElementById('aboutGitcodeBtn')?.addEventListener('click', () => {
+            void openUrl(GITCODE_RELEASES_URL);
         });
         document.getElementById('aboutAfdianBtn')?.addEventListener('click', () => {
             void openUrl(AFDIAN_PURCHASE_URL);

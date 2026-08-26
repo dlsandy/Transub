@@ -153,6 +153,13 @@ describe('advanced-managed-llm-catalog-core', () => {
         });
         assert.strictEqual(m.activeModelId, 'qwen25-7b');
         assert.strictEqual(m.smartTranslateModelId, 'sakura-1.5b');
+        assert.strictEqual(m.llamaParallelMode, 'auto');
+        assert.strictEqual(m.llamaSmartTranslateParallel, false);
+        assert.strictEqual(m.llamaSpeculativeEnabled, false);
+        assert.strictEqual(
+            catalog.resolveDraftModelEntry('qwen25-7b')?.id,
+            'qwen25-1.5b',
+        );
         if (process.platform === 'win32' && process.arch === 'x64') {
             assert.strictEqual(m.runtimeId, 'win-cuda12-x64');
         }

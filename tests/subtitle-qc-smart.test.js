@@ -350,6 +350,13 @@ describe('subtitle-qc-smart', () => {
             { breakWords: ['我'] },
         );
         assert.ok(!allowed.includes(1), 'break word 我 must not allow orphan head split');
+
+        const command = '能进这公司光是上司的命令就得感谢了啊';
+        assert.strictEqual(textsFromBreakIndices(command, [11]), null);
+        assert.strictEqual(
+            validateLlmSplitTexts(command, ['能进这公司光是上司的命', '令就得感谢了啊']),
+            null,
+        );
     });
 
     it('selects llm split targets and mocks break points', () => {

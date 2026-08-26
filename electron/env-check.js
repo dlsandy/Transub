@@ -1306,9 +1306,28 @@ async function runEnvCheck(options = {}) {
     }
 
     const blocking = items.filter((it) => it.blocking && it.status === 'fail');
+    const gpuRtIdx = items.findIndex((it) => it.id === 'gpuRuntime');
+    if (gpuRtIdx >= 0) {
+        const gpuRt = items[gpuRtIdx];
+        const needsTorchAsr = prefersQwenAsr(asrModel) || prefersSensevoice(asrModel);
+        if (gpuRt.torchCudaMismatch && needsTorchAsr) {
+            const variant = String(gpuRt.torchCudaVariant || 'cu128/cu130').trim();
+            const have = String(gpuRt.installedTorchCudaTag || 'cu126').trim();
+            items[gpuRtIdx] = {
+                ...gpuRt,
+                status: 'fail',
+                blocking: true,
+                detail: (
+                    `PyTorch ${have} 与本机 Blackwell GPU 不兼容，转写需要 ${variant}（约 2.5GB）。`
+                    + ' 与 llama-server CUDA 无关，请点「补齐 CUDA PyTorch」。'
+                ),
+            };
+        }
+    }
+    const blockingAfterTorch = items.filter((it) => it.blocking && it.status === 'fail');
     const result = {
-        ok: blocking.length === 0,
-        blockingCount: blocking.length,
+        ok: blockingAfterTorch.length === 0,
+        blockingCount: blockingAfterTorch.length,
         warnCount: items.filter((it) => it.status === 'warn').length,
         failCount: items.filter((it) => it.status === 'fail').length,
         items,

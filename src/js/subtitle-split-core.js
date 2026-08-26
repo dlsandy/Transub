@@ -10,7 +10,7 @@
         global.TransubSubtitleSplit = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleSplitCoreFactory() {
-    const STRONG_PUNCT_RE = /[。！？!?…]/;
+    const STRONG_PUNCT_RE = /[。！？!?….]/;
     const WEAK_PUNCT_RE = /[，、；：,;:]/;
     /** Leading punct to strip after a split (next cue must not start with ，。！ etc.). */
     const LEADING_CUE_PUNCT_RE = /^[。！？!?…⋯．，、；：,;:\.·•—–\-─～~「」『』""''“”‘’（）()【】\[\]《》<>〈〉]+/;
@@ -22,6 +22,29 @@
     ];
     /** @deprecated use DEFAULT_BREAK_WORDS */
     const CONNECTOR_WORDS = DEFAULT_BREAK_WORDS;
+    /** Common 2-char compounds — do not split between the two chars (e.g. 命|令). */
+    const ZH_NO_SPLIT_PAIRS = new Set([
+        '命令', '公司', '上司', '经理', '老板', '同事', '客户', '工作', '公司',
+        '已经', '以前', '以后', '之前', '之后', '现在', '今天', '明天', '昨天',
+        '最后', '开始', '结束', '继续', '停止', '完成', '成功', '失败', '可能',
+        '应该', '需要', '想要', '觉得', '认为', '知道', '明白', '清楚', '记得',
+        '忘记', '感谢', '抱歉', '对不起', '什么', '怎么', '为什么', '哪里', '哪个',
+        '这样', '那样', '这个', '那个', '这些', '那些', '非常', '特别', '真的',
+        '确实', '当然', '其实', '还是', '就是', '不是', '没有', '可以', '不能',
+        '不会', '是不是', '有没有', '能不能', '我们', '你们', '他们', '她们', '它们',
+        '自己', '大家', '个人', '事情', '问题', '地方', '时间', '时候', '电话',
+        '手机', '电脑', '视频', '照片', '房间', '家里', '学校', '医院', '因为',
+        '所以', '但是', '然后', '不过', '如果', '虽然', '或者', '以及', '同时',
+        '另外', '因此', '于是', '可是', '那么', '而且', '然而', '并且', '进入',
+        '进去', '进来', '出去', '出来', '回去', '回来', '下来', '上去', '过来',
+        '过去', '看起来', '听起来', '精神', '身体', '意思', '办法', '方法', '结果',
+        '原因', '情况', '状态', '关系', '活动', '运动', '游戏', '电影', '音乐',
+        '新闻', '信息', '数据', '系统', '程序', '软件', '硬件', '网络', '安全',
+        '重要', '必要', '完全', '全部', '部分', '全部', '一定', '一样', '一般',
+        '一点', '一些', '一下', '一起', '一直', '一定', '当然', '自然', '突然',
+        '忽然', '终于', '立刻', '马上', '刚才', '刚刚', '马上', '直接', '简单',
+        '复杂', '困难', '容易', '方便', '麻烦', '正常', '奇怪', '有趣', '无聊',
+    ]);
 
     function isConnectedText(text) {
         const raw = String(text || '').trim();
@@ -56,18 +79,116 @@
         return String(text || '').replace(/\s/g, '').length;
     }
 
+    function hasSubtitlePunctuation(text) {
+        const raw = String(text || '');
+        return STRONG_PUNCT_RE.test(raw) || WEAK_PUNCT_RE.test(raw);
+    }
+
+    /** Continuous text with no whitespace and no ，。！？等标点. */
+    function isUnpunctuatedConnectedText(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return false;
+        return isConnectedText(raw) && !hasSubtitlePunctuation(raw);
+    }
+
+    /**
+     * Latin-heavy subtitle line with word spaces — smart/silence split must not
+     * treat spaces as breakpoints (only punctuation / break words).
+     */
+    function isEnglishLikeText(text) {
+        const raw = String(text || '').trim();
+        if (!raw || !/\s/.test(raw)) return false;
+        const latin = (raw.match(/[A-Za-z]/g) || []).length;
+        const cjk = (raw.match(/[\u4e00-\u9fff]/g) || []).length;
+        return latin >= 4 && latin > cjk;
+    }
+
+    function allowsWhitespaceBreak(text) {
+        return !isEnglishLikeText(text);
+    }
+
     function isOrphanShortSegment(text) {
         return textCharCount(text) < 2;
     }
 
-    /** Break index must leave at least minPartChars on both sides (no 「我|已经…」 crumbs). */
-    function isValidTextBreakIndex(text, index, minPartChars = 2) {
+    function isMidWordZhBreakIndex(text, index) {
+        const raw = String(text || '');
+        const at = Math.round(Number(index) || 0);
+        if (at <= 0 || at >= raw.length) return false;
+        const left = raw[at - 1];
+        const right = raw[at];
+        if (!/[\u4e00-\u9fff]/.test(left) || !/[\u4e00-\u9fff]/.test(right)) return false;
+        return ZH_NO_SPLIT_PAIRS.has(left + right);
+    }
+
+    function passesBasicBreakChecks(text, index, minPartChars = 2) {
         const raw = String(text || '');
         const at = Math.round(Number(index) || 0);
         const min = Math.max(1, Math.floor(Number(minPartChars) || 2));
         if (at <= 0 || at >= raw.length) return false;
+        if (isMidWordZhBreakIndex(raw, at)) return false;
         return textCharCount(raw.slice(0, at)) >= min
             && textCharCount(raw.slice(at)) >= min;
+    }
+
+    function isBreakWordBreakIndex(text, index, breakWords = DEFAULT_BREAK_WORDS) {
+        const raw = String(text || '');
+        const at = Math.round(Number(index) || 0);
+        if (!passesBasicBreakChecks(raw, at)) return false;
+        const lower = raw.toLowerCase();
+        for (const word of normalizeBreakWords(breakWords)) {
+            const needle = word.toLowerCase();
+            if (!needle) continue;
+            let from = 0;
+            while (from < lower.length) {
+                const idx = lower.indexOf(needle, from);
+                if (idx < 0) break;
+                let breakAt = idx + needle.length;
+                while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
+                if (breakAt === at) return true;
+                from = idx + Math.max(1, needle.length);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Valid split point: min segment length, not mid-compound, and only at
+     * whitespace / punctuation / break-word — never arbitrary mid-sentence on
+     * unpunctuated continuous text.
+     */
+    function isValidTextBreakIndex(text, index, minPartChars = 2, breakWords = DEFAULT_BREAK_WORDS) {
+        const raw = String(text || '');
+        const at = Math.round(Number(index) || 0);
+        if (!passesBasicBreakChecks(raw, at, minPartChars)) return false;
+
+        const prev = raw[at - 1] || '';
+        const ch = raw[at] || '';
+        if (allowsWhitespaceBreak(raw) && (/\s/.test(prev) || /\s/.test(ch))) return true;
+        if (STRONG_PUNCT_RE.test(prev) || WEAK_PUNCT_RE.test(prev)) return true;
+        if (isBreakWordBreakIndex(raw, at, breakWords)) return true;
+
+        if (isUnpunctuatedConnectedText(raw)) return false;
+        if (isConnectedText(raw)) return false;
+        if (isEnglishLikeText(raw)) return false;
+        return true;
+    }
+
+    function findNearestSafeBreakIndex(text, pos, radius = 16, breakWords = DEFAULT_BREAK_WORDS) {
+        const raw = String(text || '');
+        const center = Math.min(raw.length - 1, Math.max(1, Math.round(Number(pos) || 0)));
+        const span = Math.max(1, Math.floor(Number(radius) || 16));
+        let best = null;
+        let bestDist = Infinity;
+        for (let i = Math.max(1, center - span); i <= Math.min(raw.length - 1, center + span); i += 1) {
+            if (!isValidTextBreakIndex(raw, i, 2, breakWords)) continue;
+            const dist = Math.abs(i - center);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = i;
+            }
+        }
+        return best;
     }
 
     /**
@@ -122,7 +243,7 @@
         return String(text || '').trim().split(/\s+/).filter(Boolean);
     }
 
-    function findBestBreakInSlice(slice, minPos) {
+    function findBestBreakInSlice(slice, minPos, allowWhitespace = true) {
         let best = -1;
         let bestScore = -1;
         for (let i = slice.length - 1; i >= minPos; i -= 1) {
@@ -130,7 +251,7 @@
             let score = 0;
             if (STRONG_PUNCT_RE.test(ch)) score = 4;
             else if (WEAK_PUNCT_RE.test(ch)) score = 3;
-            else if (/\s/.test(ch)) score = 2;
+            else if (allowWhitespace && /\s/.test(ch)) score = 2;
             if (score > bestScore) {
                 bestScore = score;
                 best = i;
@@ -188,6 +309,9 @@
         let remaining = String(text || '').trim();
         if (!remaining) return [];
         const connected = isConnectedText(remaining);
+        const englishLike = isEnglishLikeText(remaining);
+        const noHardSplit = connected || englishLike;
+        const allowWhitespace = allowsWhitespaceBreak(remaining);
 
         const parts = [];
         while (remaining.length > 0) {
@@ -204,7 +328,7 @@
             const slice = remaining.slice(0, limit);
             let breakAt = -1;
 
-            const punctBreak = findBestBreakInSlice(slice, Math.floor(limit * 0.35));
+            const punctBreak = findBestBreakInSlice(slice, Math.floor(limit * 0.35), allowWhitespace);
             if (punctBreak > 0) breakAt = punctBreak;
 
             if (breakAt < 0) {
@@ -213,8 +337,7 @@
             }
 
             if (breakAt < 0 && remaining.length > maxChars) {
-                if (connected) {
-                    // 连续文本可向后扩大寻找标点/断句词，避免硬切汉字
+                if (noHardSplit) {
                     const extended = Math.min(
                         remaining.length,
                         Math.max(maxChars * 3, maxChars + 24),
@@ -222,6 +345,7 @@
                     const extPunct = findBestBreakInSlice(
                         remaining.slice(0, extended),
                         Math.floor(maxChars * 0.35),
+                        allowWhitespace,
                     );
                     if (extPunct > minChars) breakAt = extPunct;
                     if (breakAt < 0) {
@@ -233,13 +357,17 @@
                         break;
                     }
                 } else {
-                    breakAt = findBestBreakInSlice(remaining.slice(0, maxChars), Math.floor(maxChars * 0.35));
+                    breakAt = findBestBreakInSlice(
+                        remaining.slice(0, maxChars),
+                        Math.floor(maxChars * 0.35),
+                        allowWhitespace,
+                    );
                     if (breakAt < 0) breakAt = maxChars;
                 }
             }
 
             if (breakAt < 0) {
-                if (connected) {
+                if (noHardSplit) {
                     parts.push(remaining);
                     break;
                 }
@@ -248,7 +376,7 @@
 
             let chunk = remaining.slice(0, breakAt).trim();
             if (!chunk && remaining.length) {
-                if (connected) {
+                if (noHardSplit) {
                     parts.push(remaining);
                     break;
                 }
@@ -285,8 +413,11 @@
     }
 
     function splitTextAtIndex(text, index) {
-        const before = String(text || '').slice(0, index).trim();
-        const after = String(text || '').slice(index).trim();
+        const raw = String(text || '');
+        const at = Math.round(Number(index) || 0);
+        if (isConnectedText(raw) && !isValidTextBreakIndex(raw, at, 2, DEFAULT_BREAK_WORDS)) return null;
+        const before = raw.slice(0, at).trim();
+        const after = raw.slice(at).trim();
         if (!before || !after) return null;
         return [before, after];
     }
@@ -322,7 +453,7 @@
                 if (idx < 0) break;
                 let breakAt = idx + needle.length;
                 while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
-                if (breakAt > 0 && breakAt < raw.length && isValidTextBreakIndex(raw, breakAt)) {
+                if (breakAt > 0 && breakAt < raw.length && passesBasicBreakChecks(raw, breakAt)) {
                     breaks.add(breakAt);
                 }
                 from = idx + Math.max(1, needle.length);
@@ -367,7 +498,10 @@
         const raw = String(text || '');
         if (!raw) return [];
         const breakWords = resolveBreakWords(opts);
-        const merged = new Set(getWhitespaceBreakIndices(raw));
+        const merged = new Set();
+        if (allowsWhitespaceBreak(raw)) {
+            for (const idx of getWhitespaceBreakIndices(raw)) merged.add(idx);
+        }
         for (const idx of getBreakWordBreakIndices(raw, breakWords)) merged.add(idx);
 
         if (opts.includePunctuation !== false) {
@@ -383,7 +517,7 @@
         const sorted = [...merged].sort((a, b) => a - b);
         const out = [];
         for (const idx of sorted) {
-            if (!isValidTextBreakIndex(raw, idx)) continue;
+            if (!isValidTextBreakIndex(raw, idx, 2, breakWords)) continue;
             if (!out.length || idx - out[out.length - 1] >= 2) out.push(idx);
         }
         return out;
@@ -534,13 +668,13 @@
         return out.sort((a, b) => a - b);
     }
 
-    function splitTextAtBreakIndices(text, breakIndices) {
+    function splitTextAtBreakIndices(text, breakIndices, breakWords = DEFAULT_BREAK_WORDS) {
         const raw = String(text || '');
         if (!raw) return [];
         const cuts = [...new Set(
             (breakIndices || [])
                 .map((i) => Math.round(Number(i) || 0))
-                .filter((i) => i > 0 && i < raw.length),
+                .filter((i) => i > 0 && i < raw.length && isValidTextBreakIndex(raw, i, 2, breakWords)),
         )].sort((a, b) => a - b);
         if (!cuts.length) return [raw.trim()].filter(Boolean);
         const parts = [];
@@ -570,7 +704,9 @@
         // Only cut where silence was detected (snap to nearest space / sentence break).
         if (options.respectSentenceBoundaries !== false) {
             const sentenceBreaks = getSentenceBreakIndices(text);
-            const spaceBreaks = getWhitespaceBreakIndices(text);
+            const spaceBreaks = allowsWhitespaceBreak(text)
+                ? getWhitespaceBreakIndices(text)
+                : [];
             const safeBreaks = [...new Set([...sentenceBreaks, ...spaceBreaks])]
                 .sort((a, b) => a - b);
             const hasSilence = sorted.length > 0 || silences.length > 0;
@@ -890,13 +1026,13 @@
             const left = raw.slice(0, i).trim();
             const right = raw.slice(i).trim();
             if (!left || !right) continue;
-            if (!isValidTextBreakIndex(raw, i)) continue;
+            if (!isValidTextBreakIndex(raw, i, 2, breakWords)) continue;
 
             const prev = raw[i - 1] || '';
             const ch = raw[i] || '';
             let score = 0;
             if (breakWordSet && breakWordSet.has(i)) score = 6;
-            else if (/\s/.test(prev) || /\s/.test(ch)) score = 5;
+            else if (allowsWhitespaceBreak(raw) && (/\s/.test(prev) || /\s/.test(ch))) score = 5;
             else if (STRONG_PUNCT_RE.test(prev) || STRONG_PUNCT_RE.test(ch)) score = 4;
             else if (WEAK_PUNCT_RE.test(prev) || WEAK_PUNCT_RE.test(ch)) score = 3;
             if (score <= 0) continue;
@@ -910,15 +1046,22 @@
         }
 
         if (bestScore < 0) {
-            return snapSplitIndexAtWhitespace(text, pos, Math.max(radius, 16));
+            const wsIdx = snapSplitIndexAtWhitespace(text, pos, Math.max(radius, 16), breakWords || DEFAULT_BREAK_WORDS);
+            if (wsIdx !== pos && isValidTextBreakIndex(raw, wsIdx, 2, breakWords)) return wsIdx;
+            const safe = findNearestSafeBreakIndex(raw, pos, Math.max(radius, 16), breakWords || DEFAULT_BREAK_WORDS);
+            return safe != null ? safe : -1;
+        }
+        if (!isValidTextBreakIndex(raw, best, 2, breakWords)) {
+            const safe = findNearestSafeBreakIndex(raw, pos, Math.max(radius, 16), breakWords || DEFAULT_BREAK_WORDS);
+            return safe != null ? safe : -1;
         }
         return best;
     }
 
-    function snapSplitIndexAtWhitespace(text, index, radius = 16) {
+    function snapSplitIndexAtWhitespace(text, index, radius = 16, breakWords = DEFAULT_BREAK_WORDS) {
         const raw = String(text || '');
         const pos = Math.min(raw.length - 1, Math.max(1, Math.round(Number(index) || 0)));
-        let best = pos;
+        let best = -1;
         let bestDist = Infinity;
         for (let i = 1; i < raw.length; i += 1) {
             const prev = raw[i - 1] || '';
@@ -927,6 +1070,7 @@
             const left = raw.slice(0, i).trim();
             const right = raw.slice(i).trim();
             if (!left || !right) continue;
+            if (!isValidTextBreakIndex(raw, i, 2, breakWords)) continue;
             const dist = Math.abs(i - pos);
             if (dist > radius) continue;
             if (dist < bestDist) {
@@ -934,7 +1078,7 @@
                 best = i;
             }
         }
-        return best;
+        return best >= 0 ? best : pos;
     }
 
     function mergeTinyTextSegments(texts, boundaries, minChars = 2) {
@@ -1350,7 +1494,9 @@
             respectSentenceBoundaries: timingOptions.respectSentenceBoundaries !== false,
         };
 
-        const spaceBreaks = getWhitespaceBreakIndices(raw);
+        const spaceBreaks = allowsWhitespaceBreak(raw)
+            ? getWhitespaceBreakIndices(raw)
+            : [];
         const sentenceBreaks = getSentenceBreakIndices(raw);
         const safeBreaks = [...new Set([...sentenceBreaks, ...spaceBreaks])].sort((a, b) => a - b);
 
@@ -1367,7 +1513,7 @@
             const cutBreaks = snapTimesToNearestBreakIndices(raw, start, end, sorted, safeBreaks, {
                 minPartChars: 2,
             });
-            texts = splitTextAtBreakIndices(raw, cutBreaks);
+            texts = splitTextAtBreakIndices(raw, cutBreaks, breakOpts.breakWords);
             if (!texts || texts.length < 2) return null;
             if (sorted.length !== texts.length - 1) {
                 const redistributed = redistributeBoundariesForTexts(start, end, texts);
@@ -1439,7 +1585,8 @@
             if (i === 0) return 0;
             if (i === boundaries.length - 1) return len;
             if (textBreaks.length === 1 && boundaries.length === 3) {
-                return textBreaks[0];
+                const only = textBreaks[0];
+                return isValidTextBreakIndex(raw, only, 2, breakWords) ? only : -1;
             }
             const ratio = (ms - start) / totalDur;
             return snapSplitIndexNearPunctuation(
@@ -1451,6 +1598,11 @@
         });
 
         for (let i = 1; i < indices.length; i += 1) {
+            if (i < indices.length - 1) {
+                if (indices[i] < 0 || !isValidTextBreakIndex(raw, indices[i], 2, breakWords)) {
+                    return null;
+                }
+            }
             indices[i] = Math.max(indices[i], indices[i - 1] + 1);
         }
         indices[indices.length - 1] = len;
@@ -1472,6 +1624,13 @@
         stripLeadingCuePunctuation,
         isOrphanToneParticleOnly,
         collapseOrphanParticleSegments,
+        isMidWordZhBreakIndex,
+        isValidTextBreakIndex,
+        hasSubtitlePunctuation,
+        isUnpunctuatedConnectedText,
+        isEnglishLikeText,
+        allowsWhitespaceBreak,
+        findNearestSafeBreakIndex,
         normalizeBreakWords,
         resolveBreakWords,
         findConnectorBreak,

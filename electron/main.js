@@ -470,6 +470,7 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-managed-llm-scan-cuda': 'advanced',
     'transub-advanced-managed-llm-adopt-cuda': 'advanced',
     'transub-advanced-managed-llm-set-runtime': 'advanced',
+    'transub-advanced-managed-llm-set-server-tuning': 'advanced',
     'transub-advanced-managed-llm-import-runtime': 'advanced',
     'transub-advanced-managed-llm-cancel-pull': 'advanced',
     'transub-advanced-managed-llm-stop-server': 'advanced',

@@ -126,6 +126,8 @@ async function resolveSakuraEndpoint(options = {}) {
         nGpuLayers: opts.nGpuLayers,
         contextSize: opts.contextSize || (sakuraEntry ? 4096 : 8192),
         runtimeId,
+        afterAsr: opts.afterAsr === true,
+        parallelPurpose: 'mt',
         onProgress: opts.onProgress,
         signal: opts.signal,
     });
@@ -141,6 +143,9 @@ async function resolveSakuraEndpoint(options = {}) {
         model: started.model || entry.id,
         modelId: entry.id,
         modelName: entry.name,
+        parallelSlots: Number(started.parallelSlots) > 1 ? Number(started.parallelSlots) : 1,
+        speculative: !!started.speculative,
+        draftModelId: started.draftModelId || '',
     };
 }
 

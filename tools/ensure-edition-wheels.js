@@ -130,7 +130,9 @@ function hasMatchingWheel(dir, prefix) {
 async function ensureEdition(edition) {
     const dir = path.join(CACHE, edition);
     fs.mkdirSync(dir, { recursive: true });
-    const wheels = wheelsForEdition(edition);
+    const wheels = wheelsForEdition(edition, {
+        torchCacheAll: edition === 'cuda',
+    });
     for (const spec of wheels) {
         await downloadWheel(spec, path.join(dir, spec.fileName));
     }

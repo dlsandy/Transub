@@ -82,9 +82,56 @@ function expandDownloadUrls(url) {
 
 function isMirrorCandidateUrl(url, originalUrl = '') {
     const u = String(url || '');
-    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org|transub\.cc/i.test(u)) return true;
+    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org|gitcode\.com|transub\.cc/i.test(u)) return true;
     const orig = String(originalUrl || '').trim();
     return Boolean(orig) && u !== orig && u.includes(orig);
+}
+
+function isGitcodeDownloadUrl(url) {
+    return /(?:^https?:\/\/)?(?:[\w.-]+\.)?gitcode\.com\b/i.test(String(url || ''));
+}
+
+/**
+ * Heuristic: Chinese mainland / nearby locales usually benefit from GitCode first.
+ * Override with TRANSUB_PREFER_DOMESTIC_MIRRORS=0|1 when needed.
+ */
+function likelyDomesticNetwork() {
+    const env = String(process.env.TRANSUB_PREFER_DOMESTIC_MIRRORS || '').trim().toLowerCase();
+    if (env === '0' || env === 'false' || env === 'no' || env === 'off') return false;
+    if (env === '1' || env === 'true' || env === 'yes' || env === 'on') return true;
+    try {
+        const tz = String(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+        if (/^Asia\/(Shanghai|Chongqing|Harbin|Urumqi|Kashgar|Hong_Kong|Macau|Taipei)$/i.test(tz)) {
+            return true;
+        }
+    } catch (_) { /* ignore */ }
+    const envLang = String(
+        process.env.LANG || process.env.LC_ALL || process.env.LC_MESSAGES || '',
+    ).toLowerCase();
+    if (/zh[_-]?(cn|hans|sg)/i.test(envLang)) return true;
+    try {
+        const locale = String(Intl.DateTimeFormat().resolvedOptions().locale || '');
+        if (/^zh(-Hans)?(-CN|-SG)?$/i.test(locale) || /^zh-CN/i.test(locale)) return true;
+    } catch (_) { /* ignore */ }
+    return false;
+}
+
+/**
+ * Domestic-friendly candidate order: GitCode → CN mirrors / 官网 → Codeberg → GitHub.
+ * @param {string[]} urls
+ * @returns {string[]}
+ */
+function prioritizeDomesticDownloadUrls(urls) {
+    const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
+    if (list.length <= 1) return list;
+    const rank = (u) => {
+        if (isGitcodeDownloadUrl(u)) return 0;
+        if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
+        if (/codeberg\.org/i.test(u)) return 2;
+        if (/github\.com|githubusercontent\.com/i.test(u)) return 3;
+        return 4;
+    };
+    return [...list].sort((a, b) => rank(a) - rank(b) || list.indexOf(a) - list.indexOf(b));
 }
 
 function downloadSourceLabel(url, originalUrl = '') {
@@ -94,6 +141,7 @@ function downloadSourceLabel(url, originalUrl = '') {
     if (/ghproxy\.com/i.test(u)) return 'ghproxy';
     if (/transub\.cc/i.test(u)) return '官网';
     if (/codeberg\.org/i.test(u)) return 'Codeberg';
+    if (isGitcodeDownloadUrl(u)) return 'GitCode';
     if (/github\.com|githubusercontent\.com/i.test(u)) return 'GitHub';
     if (originalUrl && u === String(originalUrl).trim()) return '官方源';
     try {
@@ -243,15 +291,18 @@ async function probeDownloadUrl(url, options = {}) {
 /**
  * Sort URLs by probe results: reachable first, then higher throughput, then lower latency.
  * Unreachable hosts keep relative order at the end so download can still fall back.
+ * When preferDomestic, GitCode (and other CN mirrors) win soft ties within ~25% throughput.
  * @param {Array<object>} probeResults
  * @param {string[]} [urls]
+ * @param {{ preferDomestic?: boolean }} [options]
  */
-function orderDownloadUrlsByProbe(probeResults, urls) {
+function orderDownloadUrlsByProbe(probeResults, urls, options = {}) {
     const list = Array.isArray(urls) && urls.length
         ? urls.map((u) => String(u || '').trim()).filter(Boolean)
         : [...new Set((probeResults || []).map((r) => String(r?.url || '').trim()).filter(Boolean))];
     if (list.length <= 1) return list;
 
+    const preferDomestic = Boolean(options.preferDomestic);
     const byUrl = new Map();
     for (const row of probeResults || []) {
         const key = String(row?.url || '').trim();
@@ -261,6 +312,14 @@ function orderDownloadUrlsByProbe(probeResults, urls) {
     const indexOf = (u) => {
         const i = list.indexOf(u);
         return i >= 0 ? i : 1e9;
+    };
+    const domesticRank = (u) => {
+        if (!preferDomestic) return 0;
+        if (isGitcodeDownloadUrl(u)) return 0;
+        if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
+        if (/codeberg\.org/i.test(u)) return 2;
+        if (/github\.com|githubusercontent\.com/i.test(u)) return 3;
+        return 4;
     };
 
     return [...list].sort((a, b) => {
@@ -272,30 +331,120 @@ function orderDownloadUrlsByProbe(probeResults, urls) {
 
         const sa = Number(ra.bytesPerSec) || 0;
         const sb = Number(rb.bytesPerSec) || 0;
+        if (preferDomestic && aOk && bOk) {
+            const da = domesticRank(a);
+            const db = domesticRank(b);
+            if (da !== db) {
+                if (sa <= 0 && sb <= 0) return da - db;
+                const hi = Math.max(sa, sb);
+                const lo = Math.min(sa, sb);
+                // Soft prefer GitCode / CN mirrors when within ~25% of the faster host.
+                if (hi > 0 && lo / hi >= 0.75) return da - db;
+            }
+        }
         if (sa !== sb && (sa > 0 || sb > 0)) return sb - sa;
 
         const la = ra.latencyMs != null ? Number(ra.latencyMs) : 1e12;
         const lb = rb.latencyMs != null ? Number(rb.latencyMs) : 1e12;
         if (la !== lb) return la - lb;
 
+        if (preferDomestic) {
+            const da = domesticRank(a);
+            const db = domesticRank(b);
+            if (da !== db) return da - db;
+        }
         return indexOf(a) - indexOf(b);
     });
 }
 
+function emitProbePreferredProgress(options, ordered, results, originalUrl) {
+    if (typeof options.onProgress !== 'function' || !ordered?.length) return;
+    try {
+        const best = (results || []).find((r) => r.url === ordered[0]) || results?.[0];
+        const label = downloadSourceLabel(ordered[0], originalUrl || ordered[0]);
+        const detail = best?.ok
+            ? (best.bytesPerSec > 0
+                ? `${label}（约 ${formatBytes(best.bytesPerSec)}/s）`
+                : `${label}（${Math.round(best.latencyMs)} ms）`)
+            : label;
+        options.onProgress({
+            phase: 'probe',
+            message: `测速完成，优先使用 ${detail}`,
+            pct: 0,
+            probeResults: results || [],
+            preferredUrl: ordered[0],
+        });
+    } catch (_) { /* ignore */ }
+}
+
 /**
- * Probe all candidates in parallel, then return preferred download order.
+ * Probe candidates, then return preferred download order.
+ * Domestic networks: probe GitCode first; if usable, skip waiting on overseas timeouts.
  * @param {string[]} urls
- * @param {{ signal?: AbortSignal, onProgress?: Function, timeoutMs?: number, skipProbe?: boolean }} [options]
+ * @param {{ signal?: AbortSignal, onProgress?: Function, timeoutMs?: number, skipProbe?: boolean, preferDomestic?: boolean }} [options]
  */
 async function orderDownloadUrls(urls, options = {}) {
-    const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
+    let list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
     if (list.length <= 1 || options.skipProbe) return list;
+
+    const preferDomestic = options.preferDomestic != null
+        ? Boolean(options.preferDomestic)
+        : likelyDomesticNetwork();
+    if (preferDomestic) {
+        list = prioritizeDomesticDownloadUrls(list);
+    }
+
+    const timeoutMs = options.timeoutMs || PROBE_TIMEOUT_MS;
+    const originalUrl = options.originalUrl || list[list.length - 1];
+
+    if (preferDomestic) {
+        const preferred = list.filter((u) => isGitcodeDownloadUrl(u));
+        if (preferred.length) {
+            if (typeof options.onProgress === 'function') {
+                try {
+                    options.onProgress({
+                        phase: 'probe',
+                        message: '国内网络优先测速 GitCode…',
+                        pct: 0,
+                        probeTotal: preferred.length,
+                    });
+                } catch (_) { /* ignore */ }
+            }
+            const preferredResults = await Promise.all(
+                preferred.map((u) => probeDownloadUrl(u, {
+                    signal: options.signal,
+                    timeoutMs,
+                })),
+            );
+            const orderedPreferred = orderDownloadUrlsByProbe(
+                preferredResults,
+                preferred,
+                { preferDomestic: true },
+            );
+            const best = preferredResults.find((r) => r.url === orderedPreferred[0]);
+            const goodEnough = Boolean(
+                best?.ok
+                && (
+                    (Number(best.bytesPerSec) || 0) >= 40_000
+                    || (Number(best.latencyMs) || 1e9) <= 3000
+                ),
+            );
+            if (goodEnough) {
+                const rest = list.filter((u) => !preferred.includes(u));
+                const ordered = [...orderedPreferred, ...rest];
+                emitProbePreferredProgress(options, ordered, preferredResults, originalUrl);
+                return ordered;
+            }
+        }
+    }
 
     if (typeof options.onProgress === 'function') {
         try {
             options.onProgress({
                 phase: 'probe',
-                message: `正在测速 ${list.length} 个下载源…`,
+                message: preferDomestic
+                    ? `正在测速 ${list.length} 个下载源（国内优先 GitCode）…`
+                    : `正在测速 ${list.length} 个下载源…`,
                 pct: 0,
                 probeTotal: list.length,
             });
@@ -305,30 +454,11 @@ async function orderDownloadUrls(urls, options = {}) {
     const results = await Promise.all(
         list.map((u) => probeDownloadUrl(u, {
             signal: options.signal,
-            timeoutMs: options.timeoutMs || PROBE_TIMEOUT_MS,
+            timeoutMs,
         })),
     );
-    const ordered = orderDownloadUrlsByProbe(results, list);
-    const best = results.find((r) => r.url === ordered[0]) || results[0];
-
-    if (typeof options.onProgress === 'function') {
-        try {
-            const label = downloadSourceLabel(ordered[0], options.originalUrl || list[list.length - 1]);
-            const detail = best?.ok
-                ? (best.bytesPerSec > 0
-                    ? `${label}（约 ${formatBytes(best.bytesPerSec)}/s）`
-                    : `${label}（${Math.round(best.latencyMs)} ms）`)
-                : label;
-            options.onProgress({
-                phase: 'probe',
-                message: `测速完成，优先使用 ${detail}`,
-                pct: 0,
-                probeResults: results,
-                preferredUrl: ordered[0],
-            });
-        } catch (_) { /* ignore */ }
-    }
-
+    const ordered = orderDownloadUrlsByProbe(results, list, { preferDomestic });
+    emitProbePreferredProgress(options, ordered, results, originalUrl);
     return ordered;
 }
 
@@ -870,6 +1000,9 @@ module.exports = {
     orderDownloadUrls,
     orderDownloadUrlsByProbe,
     downloadSourceLabel,
+    isGitcodeDownloadUrl,
+    likelyDomesticNetwork,
+    prioritizeDomesticDownloadUrls,
     rimrafSafe,
     rimrafSafeAsync,
     sleep,

@@ -709,7 +709,8 @@
             ? splitCore.resolveBreakWords(options)
             : (options.breakWords || []);
         const allowed = new Set();
-        if (typeof splitCore.getWhitespaceBreakIndices === 'function') {
+        if (typeof splitCore.getWhitespaceBreakIndices === 'function'
+            && !(splitCore.isEnglishLikeText && splitCore.isEnglishLikeText(raw))) {
             for (const i of splitCore.getWhitespaceBreakIndices(raw)) allowed.add(i);
         }
         if (typeof splitCore.getBreakWordBreakIndices === 'function') {
@@ -808,6 +809,14 @@
         if (connected && allowed.size) {
             for (const at of breaks) {
                 if (!allowed.has(at)) return null;
+            }
+        }
+        if (splitCore?.isValidTextBreakIndex) {
+            const words = splitCore.resolveBreakWords
+                ? splitCore.resolveBreakWords(options)
+                : (options.breakWords || []);
+            for (const at of breaks) {
+                if (!splitCore.isValidTextBreakIndex(raw, at, 2, words)) return null;
             }
         }
 

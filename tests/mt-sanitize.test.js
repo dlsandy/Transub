@@ -5054,5 +5054,77 @@ describe('mt-sanitize-core', () => {
         const iku = sanitize.sanitizeMtCueText('摸我', 'あらめ すぐイっちゃうそれ', av);
         assert.ok(/要射了|要去了/.test(iku.text), iku.text);
     });
+
+    it('batch-engine-0824pm: rod insult/skip 会社 + lick sasen + manko nama + touch achi', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const kaisha = sanitize.sanitizeMtCueText(
+            '居然辞掉了爸爸介绍的公司',
+            'お父さんの紹介で入れた会社を辞めるってどういうことがわかっっての?',
+            av,
+        );
+        assert.ok(!/插|进/.test(kaisha.text), kaisha.text);
+
+        const sasen = sanitize.sanitizeMtCueText(
+            '才没有',
+            'こんなくっさいちんぽ舐めさせんの?',
+            av,
+        );
+        assert.ok(/舔/.test(sasen.text) && RX.meatRod().test(sasen.text), sasen.text);
+
+        const nama = sanitize.sanitizeMtCueText(
+            '啊 快把那根 插进我的小穴里吧',
+            'あ私のまんこに 生ちんぽはめて',
+            av,
+        );
+        assert.ok(/小穴/.test(nama.text) && RX.meatRod().test(nama.text), nama.text);
+
+        const touch = sanitize.sanitizeMtCueText('要射了', 'はぁはぁ あちぃ触って', av);
+        assert.ok(/摸|触/.test(touch.text) && !/^要射了$/.test(touch.text.trim()), touch.text);
+
+        const dash = sanitize.sanitizeMtCueText('比刚才更臭了', 'いいからとっとと出してくれー', av);
+        assert.ok(/射/.test(dash.text), dash.text);
+    });
+
+    it('batch-engine-0826am: skip クイック/マッサージ iku + 一緒に入れ irete + massage touch', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const quick = sanitize.sanitizeMtCueText(
+            '你知道快速按摩吗？',
+            'クイックマッサージを知ってます?',
+            av,
+        );
+        assert.ok(!/要射了|要去了/.test(quick.text), quick.text);
+
+        const bath = sanitize.sanitizeMtCueText(
+            '啊 不能一起洗吗？',
+            'あ 一緒に入れない?',
+            av,
+        );
+        assert.ok(!/插|进/.test(bath.text), bath.text);
+
+        const massage = sanitize.sanitizeMtCueText(
+            '毕竟按摩时间很长',
+            'サムギョウさも長いんでやっぱある程度触ってここ悪いんだなとかわかるでそれに合わせて',
+            av,
+        );
+        assert.ok(!/摸我|想让你舔/.test(massage.text), massage.text);
+
+        const real = sanitize.sanitizeMtCueText('要射了', 'あっイッちゃう', av);
+        assert.ok(/要射了|要去了/.test(real.text), real.text);
+    });
+
+    it('batch-engine-0826pm: oppai 出して kinship orphan + expose stub', () => {
+        const av = { contentProfile: 'av_soft' };
+
+        const oppai = sanitize.sanitizeMtCueText(
+            '嗯 啊啦哥哥',
+            'んっ あら兄ちゃん あらおっちゃん おっぱい出して',
+            av,
+        );
+        assert.ok(/哥哥/.test(oppai.text), oppai.text);
+        assert.ok(/奶|胸|乳/.test(oppai.text) && /露/.test(oppai.text), oppai.text);
+        assert.ok(!/^嗯$/.test(oppai.text.trim()), oppai.text);
+    });
 });
 

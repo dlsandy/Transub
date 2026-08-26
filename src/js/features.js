@@ -383,6 +383,7 @@
     const OFFICIAL_SITE_URL = 'https://www.transub.cc/';
     const GITHUB_RELEASES_URL = 'https://github.com/dlsandy/Transub/releases';
     const CODEBERG_RELEASES_URL = 'https://codeberg.org/flyforyou/Transub/releases';
+    const GITCODE_RELEASES_URL = 'https://gitcode.com/AndyDai/Transub/releases';
     const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     function moreStatusEl() {
@@ -615,6 +616,9 @@
         });
         document.getElementById('openCodebergReleasesBtn')?.addEventListener('click', () => {
             void openExternalLink(CODEBERG_RELEASES_URL, '已在浏览器中打开 Codeberg Releases');
+        });
+        document.getElementById('openGitcodeReleasesBtn')?.addEventListener('click', () => {
+            void openExternalLink(GITCODE_RELEASES_URL, '已在浏览器中打开 GitCode Releases');
         });
         document.getElementById('openAfdianFromSettingsBtn')?.addEventListener('click', () => {
             void openExternalLink(AFDIAN_PURCHASE_URL, '已在浏览器中打开赞助页面');

@@ -163,8 +163,8 @@ print(json.dumps({
         assert.strictEqual(payload.skipPygments, true);
         assert.strictEqual(payload.skipTyper, true);
         assert.ok(
-            payload.pkgs.some((p) => /^tokenizers/.test(p) && /<=0\.23\.0/.test(p)),
-            `expected tokenizers<=0.23.0 in ${payload.pkgs}`,
+            payload.pkgs.some((p) => /^tokenizers/.test(p) && /<=0\.23\.1/.test(p)),
+            `expected tokenizers<=0.23.1 in ${payload.pkgs}`,
         );
         assert.ok(
             payload.pkgs.some((p) => /^huggingface-hub/.test(p) && /<1\.0/.test(p)),

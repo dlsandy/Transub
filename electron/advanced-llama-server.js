@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+const llamaTuning = require('../src/js/llama-server-tuning-core');
 const llmFs = require('./advanced-llm-fs');
 const downloader = require('./advanced-llm-download');
 const cudaScan = require('./cuda-runtime-scan');
@@ -91,6 +92,9 @@ function getLastServerLogTail(maxLen = 800) {
  */
 function parseLlamaCppTag(text) {
     const s = String(text || '');
+    // v0.3.0+ semver output: "version: 0.3.0 (build 10621, commit …)"
+    const buildTagged = s.match(/\bbuild\s+(\d{4,})\b/i);
+    if (buildTagged) return `b${buildTagged[1]}`;
     const numbered = s.match(/\bversion:\s*(\d+)\b/i);
     // Reject truncated/garbage probes (e.g. "version: 0") — real llama.cpp builds are 4+ digits.
     if (numbered && /^\d{4,}$/.test(numbered[1])) return `b${numbered[1]}`;
@@ -1104,6 +1108,107 @@ async function waitForHealthy(port, {
 }
 
 /**
+ * Resolve speculative decoding (-md) draft model when enabled in settings.
+ * Fine-tuned Sakura / GalTransl MT weights must not use generic Qwen drafts — quality regressions.
+ * @param {object} entry catalog row
+ * @returns {{ enabled: boolean, reason?: string, draftModelId?: string, draftModelName?: string, draftModelPath?: string }}
+ */
+function isSpeculativeSafeForEntry(entry) {
+    const id = String(entry?.id || '').trim();
+    if (!id) return false;
+    try {
+        const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
+        if (sakuraCatalog.findCatalogEntry(id)) return false;
+    } catch (_) { /* ignore */ }
+    if (catalog.isTranslateOnlyModel(entry)) return false;
+    return true;
+}
+
+function resolveSpeculativePlan(entry) {
+    let managed = {};
+    try {
+        const { readAdvancedDoc } = require('./advanced-license-data');
+        managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm);
+    } catch (_) { /* ignore */ }
+    if (!llamaTuning.normalizeSpeculativeEnabled(managed.llamaSpeculativeEnabled)) {
+        return { enabled: false, reason: 'disabled' };
+    }
+    if (!isSpeculativeSafeForEntry(entry)) {
+        return { enabled: false, reason: 'mt_model_unsafe' };
+    }
+    const draftEntry = catalog.resolveDraftModelEntry(entry);
+    if (!draftEntry) {
+        return { enabled: false, reason: 'no_draft_catalog' };
+    }
+    if (!llmFs.isModelInstalled(draftEntry)) {
+        return {
+            enabled: false,
+            reason: 'draft_missing',
+            draftModelId: draftEntry.id,
+            draftModelName: draftEntry.name,
+        };
+    }
+    const validated = llmFs.validateModelFile(draftEntry);
+    if (!validated.ok) {
+        return {
+            enabled: false,
+            reason: 'draft_invalid',
+            draftModelId: draftEntry.id,
+            draftModelName: draftEntry.name,
+        };
+    }
+    return {
+        enabled: true,
+        draftModelId: draftEntry.id,
+        draftModelName: draftEntry.name,
+        draftModelPath: llmFs.getModelPath(draftEntry),
+    };
+}
+
+/**
+ * Resolve llama-server -np / client concurrency from managed settings + hardware hints.
+ * @param {object} entry catalog row
+ * @param {object} opts ensureLlamaServer options
+ * @param {number} nGpuLayers
+ * @returns {Promise<{ mode: string, smartTranslateParallel: boolean, slots: number, clientConcurrency: number }>}
+ */
+async function resolveParallelPlanForModel(entry, opts, nGpuLayers) {
+    let managed = {};
+    try {
+        const { readAdvancedDoc } = require('./advanced-license-data');
+        managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm);
+    } catch (_) { /* ignore */ }
+    let gpuFreeMiB = null;
+    let gpuTotalMiB = null;
+    try {
+        const gpu = await require('./system-resources').sampleGpu();
+        if (gpu && Number(gpu.memTotalMiB) > 0) {
+            gpuTotalMiB = gpu.memTotalMiB;
+            gpuFreeMiB = Math.max(0, Number(gpu.memTotalMiB) - Number(gpu.memUsedMiB || 0));
+        }
+    } catch (_) { /* ignore */ }
+    const contextSize = Number.isFinite(Number(opts.contextSize))
+        ? Number(opts.contextSize)
+        : 8192;
+    const plan = llamaTuning.resolveLlamaParallelPlan(managed, {
+        purpose: opts.parallelPurpose || 'mt',
+        afterAsr: opts.afterAsr === true,
+        paramBillion: entry?.paramBillion,
+        contextSize,
+        nGpuLayers,
+        gpuFreeMiB,
+        gpuTotalMiB,
+    });
+    try {
+        const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
+        if (sakuraCatalog.findCatalogEntry(entry?.id)) {
+            return { ...plan, slots: 1, clientConcurrency: 1 };
+        }
+    } catch (_) { /* ignore */ }
+    return plan;
+}
+
+/**
  * 确保指定 GGUF 模型对应的 llama-server 已在监听。
  * GPU 启动失败时自动降层 / 回退 CPU（Whisper 占满显存时常见）。
  */
@@ -1177,6 +1282,20 @@ async function ensureLlamaServer(options = {}) {
     ].filter((n) => Number.isFinite(n) && n >= 0))];
 
     let lastFail = { ok: false, error: 'llama-server 启动失败', code: 'spawn_failed' };
+    const specPlan = resolveSpeculativePlan(entry);
+    if (specPlan.reason === 'draft_missing' && specPlan.draftModelName) {
+        sendProgress(opts.onProgress, {
+            phase: 'starting',
+            kind: 'server',
+            message: `推测解码已启用，但草稿模型「${specPlan.draftModelName}」尚未安装，将不使用`,
+        });
+    }
+    const specAttempts = (specPlan.enabled && specPlan.draftModelPath)
+        ? [
+            { draftModelPath: specPlan.draftModelPath, draftModelId: specPlan.draftModelId },
+            { draftModelPath: '', draftModelId: '' },
+        ]
+        : [{ draftModelPath: '', draftModelId: '' }];
 
     for (let i = 0; i < nglAttempts.length; i += 1) {
         if (opts.signal?.aborted) {
@@ -1193,134 +1312,183 @@ async function ensureLlamaServer(options = {}) {
             pct: Math.round((i / Math.max(1, nglAttempts.length)) * 40),
         });
 
-        const args = [
-            '-m', modelPath,
-            '--host', '127.0.0.1',
-            '--port', String(port),
-            '-c', String(contextSize),
-            '-ngl', String(nGpuLayers),
-            '-a', entry.id,
-        ];
+        const parallelPlan = await resolveParallelPlanForModel(entry, opts, nGpuLayers);
+        const npAttempts = [...new Set([
+            parallelPlan.slots,
+            1,
+        ].filter((n) => Number.isFinite(n) && n >= 1 && n <= 4))];
 
-        let logTail = '';
-        const appendLog = (buf) => {
-            logTail = `${logTail}${buf.toString('utf8')}`.slice(-6000);
-            lastServerLogTail = logTail;
-        };
-
-        let spawnError = null;
-        try {
-            serverProc = spawn(exe, args, {
-                cwd: path.dirname(exe),
-                windowsHide: true,
-                env: process.env,
-                stdio: ['ignore', 'pipe', 'pipe'],
-            });
-        } catch (err) {
-            serverProc = null;
-            lastFail = formatSpawnFailure(err, exe);
-            continue;
-        }
-
-        serverProc.stdout?.on('data', appendLog);
-        serverProc.stderr?.on('data', appendLog);
-        const spawnedProc = serverProc;
-        spawnedProc.on('error', (err) => {
-            spawnError = err;
-            if (serverProc === spawnedProc) {
-                serverProc = null;
-                serverState = null;
+        let lastHealthy = null;
+        for (let j = 0; j < npAttempts.length; j += 1) {
+            const parallelSlots = npAttempts[j];
+            if (opts.signal?.aborted) {
+                return { ok: false, error: '已取消', code: 'cancelled' };
             }
-        });
-        spawnedProc.on('exit', (code, signal) => {
-            lastServerLogTail = logTail;
-            if (serverProc === spawnedProc) {
-                serverProc = null;
-                serverState = null;
-            }
-            if (code != null && code !== 0) {
-                console.warn(
-                    `[llama-server] exited code=${code} signal=${signal || ''} tail=${logTail.slice(-400)}`,
-                );
-            }
-        });
 
-        // Windows SAC/WDAC may fail CreateProcess asynchronously as spawn UNKNOWN.
-        await new Promise((resolve) => {
-            if (spawnError || spawnedProc.pid) {
-                resolve();
-                return;
+            for (let s = 0; s < specAttempts.length; s += 1) {
+                const specAttempt = specAttempts[s];
+                if (j > 0 || s > 0) {
+                    stopLlamaServer();
+                }
+
+                const args = llamaTuning.buildLlamaServerSpawnArgs({
+                    modelPath,
+                    host: '127.0.0.1',
+                    port,
+                    contextSize,
+                    nGpuLayers,
+                    alias: entry.id,
+                    parallelSlots,
+                    draftModelPath: specAttempt.draftModelPath || undefined,
+                    speculativeEnabled: !!specAttempt.draftModelPath,
+                });
+
+                let logTail = '';
+                const appendLog = (buf) => {
+                    logTail = `${logTail}${buf.toString('utf8')}`.slice(-6000);
+                    lastServerLogTail = logTail;
+                };
+
+                let spawnError = null;
+                try {
+                    serverProc = spawn(exe, args, {
+                        cwd: path.dirname(exe),
+                        windowsHide: true,
+                        env: process.env,
+                        stdio: ['ignore', 'pipe', 'pipe'],
+                    });
+                } catch (err) {
+                    serverProc = null;
+                    lastFail = formatSpawnFailure(err, exe);
+                    continue;
+                }
+
+                serverProc.stdout?.on('data', appendLog);
+                serverProc.stderr?.on('data', appendLog);
+                const spawnedProc = serverProc;
+                spawnedProc.on('error', (err) => {
+                    spawnError = err;
+                    if (serverProc === spawnedProc) {
+                        serverProc = null;
+                        serverState = null;
+                    }
+                });
+                spawnedProc.on('exit', (code, signal) => {
+                    lastServerLogTail = logTail;
+                    if (serverProc === spawnedProc) {
+                        serverProc = null;
+                        serverState = null;
+                    }
+                    if (code != null && code !== 0) {
+                        console.warn(
+                            `[llama-server] exited code=${code} signal=${signal || ''} tail=${logTail.slice(-400)}`,
+                        );
+                    }
+                });
+
+                // Windows SAC/WDAC may fail CreateProcess asynchronously as spawn UNKNOWN.
+                await new Promise((resolve) => {
+                    if (spawnError || spawnedProc.pid) {
+                        resolve();
+                        return;
+                    }
+                    const timer = setTimeout(resolve, 100);
+                    spawnedProc.once('spawn', () => {
+                        clearTimeout(timer);
+                        resolve();
+                    });
+                    spawnedProc.once('error', (err) => {
+                        spawnError = err;
+                        clearTimeout(timer);
+                        resolve();
+                    });
+                });
+                if (spawnError) {
+                    lastFail = formatSpawnFailure(spawnError, exe);
+                    stopLlamaServer();
+                    continue;
+                }
+
+                const healthy = await waitForHealthy(port, {
+                    // GPU attempts: fail faster so we can drop ngl / fall back to CPU when
+                    // Whisper residual VRAM leaves llama-server hung at HTTP 503.
+                    timeoutMs: nGpuLayers > 0
+                        ? Math.min(Number(opts.timeoutMs) || 180000, 120000)
+                        : (Number(opts.timeoutMs) || 180000),
+                    // 7B Q6 cold-load can exceed 55s on slow disks; still fail before full timeout
+                    // so ngl/CPU fallback can run. True CUDA hangs usually never leave 503.
+                    stallAfterMs: nGpuLayers > 0 ? 90000 : 0,
+                    signal: opts.signal,
+                    onProgress: opts.onProgress,
+                    getLogTail: () => logTail,
+                });
+                lastHealthy = healthy;
+                if (healthy.ok) {
+                    const speculative = !!specAttempt.draftModelPath;
+                    serverState = {
+                        modelId: entry.id,
+                        port,
+                        baseUrl,
+                        nGpuLayers,
+                        parallelSlots,
+                        parallelMode: parallelPlan.mode,
+                        speculative,
+                        draftModelId: speculative ? specAttempt.draftModelId : '',
+                    };
+                    const parallelNote = parallelSlots > 1 ? ` · 并行×${parallelSlots}` : '';
+                    const specNote = speculative ? ' · 推测解码' : '';
+                    sendProgress(opts.onProgress, {
+                        phase: 'ready',
+                        kind: 'server',
+                        message: nGpuLayers <= 0
+                            ? `本地模型服务已就绪（CPU${parallelNote}${specNote}）`
+                            : `本地模型服务已就绪（${modeLabel}${parallelNote}${specNote}）`,
+                        pct: 100,
+                    });
+                    return {
+                        ok: true,
+                        modelId: entry.id,
+                        model: entry.id,
+                        modelName: entry.name,
+                        baseUrl,
+                        apiKey: 'local',
+                        port,
+                        nGpuLayers,
+                        parallelSlots,
+                        speculative,
+                        draftModelId: speculative ? specAttempt.draftModelId : undefined,
+                    };
+                }
+
+                const exitCode = serverProc?.exitCode;
+                const detail = [healthy.error, logTail.trim().split(/\r?\n/).slice(-8).join(' | ')]
+                    .filter(Boolean)
+                    .join(' · ')
+                    .slice(0, 800);
+                lastFail = {
+                    ok: false,
+                    error: exitCode != null
+                        ? `llama-server 异常退出（code ${exitCode}${nGpuLayers > 0 ? ` · ${modeLabel}` : ''}）${detail ? `：${detail}` : ''}`
+                        : (detail || healthy.error || 'llama-server 启动失败'),
+                    code: healthy.code || 'server_exited',
+                    logTail: logTail.slice(-1500),
+                    nGpuLayers,
+                    parallelSlots,
+                    speculative: !!specAttempt.draftModelPath,
+                };
+                stopLlamaServer();
+                if (specAttempt.draftModelPath && s + 1 < specAttempts.length) {
+                    sendProgress(opts.onProgress, {
+                        phase: 'starting',
+                        kind: 'server',
+                        message: '推测解码启动失败，回退为常规模式…',
+                    });
+                }
             }
-            const timer = setTimeout(resolve, 100);
-            spawnedProc.once('spawn', () => {
-                clearTimeout(timer);
-                resolve();
-            });
-            spawnedProc.once('error', (err) => {
-                spawnError = err;
-                clearTimeout(timer);
-                resolve();
-            });
-        });
-        if (spawnError) {
-            lastFail = formatSpawnFailure(spawnError, exe);
-            stopLlamaServer();
-            continue;
-        }
-
-        const healthy = await waitForHealthy(port, {
-            // GPU attempts: fail faster so we can drop ngl / fall back to CPU when
-            // Whisper residual VRAM leaves llama-server hung at HTTP 503.
-            timeoutMs: nGpuLayers > 0
-                ? Math.min(Number(opts.timeoutMs) || 180000, 120000)
-                : (Number(opts.timeoutMs) || 180000),
-            // 7B Q6 cold-load can exceed 55s on slow disks; still fail before full timeout
-            // so ngl/CPU fallback can run. True CUDA hangs usually never leave 503.
-            stallAfterMs: nGpuLayers > 0 ? 90000 : 0,
-            signal: opts.signal,
-            onProgress: opts.onProgress,
-            getLogTail: () => logTail,
-        });
-        if (healthy.ok) {
-            serverState = { modelId: entry.id, port, baseUrl };
-            sendProgress(opts.onProgress, {
-                phase: 'ready',
-                kind: 'server',
-                message: nGpuLayers <= 0
-                    ? '本地模型服务已就绪（CPU）'
-                    : `本地模型服务已就绪（${modeLabel}）`,
-                pct: 100,
-            });
-            return {
-                ok: true,
-                modelId: entry.id,
-                model: entry.id,
-                modelName: entry.name,
-                baseUrl,
-                apiKey: 'local',
-                port,
-                nGpuLayers,
-            };
-        }
-
-        const exitCode = serverProc?.exitCode;
-        const detail = [healthy.error, logTail.trim().split(/\r?\n/).slice(-8).join(' | ')]
-            .filter(Boolean)
-            .join(' · ')
-            .slice(0, 800);
-        lastFail = {
-            ok: false,
-            error: exitCode != null
-                ? `llama-server 异常退出（code ${exitCode}${nGpuLayers > 0 ? ` · ${modeLabel}` : ''}）${detail ? `：${detail}` : ''}`
-                : (detail || healthy.error || 'llama-server 启动失败'),
-            code: healthy.code || 'server_exited',
-            logTail: logTail.slice(-1500),
-            nGpuLayers,
-        };
-        stopLlamaServer();
+        } // npAttempts
         // Only retry lower ngl when process exited or GPU-related failure
         if (i < nglAttempts.length - 1) {
-            const stallHint = healthy.code === 'gpu_load_stalled'
+            const stallHint = lastHealthy?.code === 'gpu_load_stalled'
                 ? '（加载超时，显存未必不足）'
                 : '';
             sendProgress(opts.onProgress, {
@@ -1339,6 +1507,9 @@ async function ensureLlamaServer(options = {}) {
 module.exports = {
     resolvePreferredRuntimeId,
     syncRuntimePreferenceToHardware,
+    resolveParallelPlanForModel,
+    buildLlamaServerSpawnArgs: llamaTuning.buildLlamaServerSpawnArgs,
+    resolveParallelSlots: llamaTuning.resolveParallelSlots,
     parseLlamaCppTag,
     probeLlamaServerTag,
     resolveInstalledRuntimeTag,

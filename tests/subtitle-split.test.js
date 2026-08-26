@@ -17,6 +17,13 @@ const {
     stripLeadingCuePunctuation,
     splitTextAtBreakIndices,
     collapseOrphanParticleSegments,
+    isMidWordZhBreakIndex,
+    isValidTextBreakIndex,
+    findNearestSafeBreakIndex,
+    isUnpunctuatedConnectedText,
+    isEnglishLikeText,
+    buildTextsFromTimeBoundaries,
+    splitTextAtIndex,
 } = require('../src/js/subtitle-split-core');
 
 function testSplitRejectsOrphanToneParticleTail() {
@@ -31,6 +38,82 @@ function testSplitRejectsOrphanToneParticleTail() {
     ]);
     assert.strictEqual(collapsed.length, 1);
     assert.strictEqual(collapsed[0], game);
+}
+
+function testSplitRejectsMidWordCompound() {
+    const text = '能进这公司光是上司的命令就得感谢了啊';
+    const parts = splitTextAtBreakIndices(text, [11]);
+    assert.strictEqual(parts.length, 1, 'must not split 命令 into 命|令');
+    assert.strictEqual(parts[0], text);
+
+    assert.strictEqual(splitTextAtIndex(text, 11), null);
+    assert.ok(isMidWordZhBreakIndex(text, 11));
+    assert.ok(!isValidTextBreakIndex(text, 11));
+    assert.ok(isUnpunctuatedConnectedText(text));
+    assert.strictEqual(findNearestSafeBreakIndex(text, 11, 16), null);
+
+    const fromTime = buildTextsFromTimeBoundaries(text, 0, 6000, [3500], 16, {
+        includePunctuation: true,
+    });
+    assert.strictEqual(fromTime, null, 'unpunctuated connected text must not be hard-split by time ratio');
+
+    const silence = buildCuesFromSilenceSplits(
+        text,
+        0,
+        6000,
+        [3500],
+        16,
+        [{ startMs: 3400, endMs: 3600 }],
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.strictEqual(silence, null, 'unpunctuated connected text must not silence-split mid-sentence');
+}
+
+function testEnglishDoesNotSplitAtWhitespace() {
+    const text = 'Thank you very much for your help today';
+    assert.ok(isEnglishLikeText(text));
+    for (let i = 1; i < text.length; i += 1) {
+        if (/\s/.test(text[i - 1]) || /\s/.test(text[i])) {
+            assert.ok(!isValidTextBreakIndex(text, i), `must not split at space index ${i}`);
+        }
+    }
+    assert.strictEqual(
+        splitTextSmart(text, { maxChars: 12, maxLineChars: 12, breakWords: [] }).length,
+        1,
+        'English without punct/break words stays unsplit',
+    );
+    const silence = buildCuesFromSilenceSplits(
+        text,
+        0,
+        5000,
+        [2500],
+        16,
+        [{ startMs: 2400, endMs: 2600 }],
+        { includePunctuation: true, minDurMs: 200 },
+    );
+    assert.strictEqual(silence, null, 'English silence split must not cut at spaces');
+
+    const punct = 'Thank you very much. For your help today';
+    const smartPunct = splitTextSmart(punct, { maxChars: 20, maxLineChars: 18, breakWords: [] });
+    assert.ok(smartPunct.length >= 2, 'English may split after punctuation');
+    assert.ok(smartPunct[0].endsWith('.') || smartPunct[0].includes('.'));
+}
+
+function testUnpunctuatedConnectedOnlySplitsOnBreakWords() {
+    const text = '今天天气很好然后我们去公园玩';
+    assert.ok(isUnpunctuatedConnectedText(text));
+    assert.strictEqual(
+        splitTextSmart(text, { maxChars: 8, maxLineChars: 8, breakWords: [] }).length,
+        1,
+        'no break words → no split',
+    );
+    const withBreak = splitTextSmart(text, {
+        maxChars: 8,
+        maxLineChars: 8,
+        breakWords: ['然后'],
+    });
+    assert.strictEqual(withBreak.length, 2);
+    assert.ok(withBreak[0].endsWith('然后'));
 }
 
 function testSplitRejectsSingleCharPronounHead() {
@@ -317,6 +400,15 @@ describe("subtitle-split", () => {
     });
     it("split rejects orphan tone particle tail", () => {
         testSplitRejectsOrphanToneParticleTail();
+    });
+    it("split rejects mid-word compound", () => {
+        testSplitRejectsMidWordCompound();
+    });
+    it("english does not split at whitespace", () => {
+        testEnglishDoesNotSplitAtWhitespace();
+    });
+    it("unpunctuated connected only splits on break words", () => {
+        testUnpunctuatedConnectedOnlySplitsOnBreakWords();
     });
     it("split rejects single-char pronoun head", () => {
         testSplitRejectsSingleCharPronounHead();

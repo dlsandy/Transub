@@ -421,11 +421,38 @@
     }
 
     /**
+     * Latin-only media filenames (Western TV/film) → English prior.
+     * @returns {{ language: string, confidence: number, reason: string } | null}
+     */
+    function guessLanguageFromLatinFilename(stem, sample) {
+        const s = String(stem || '').trim();
+        if (!s || /[\u0080-\uffff]/.test(s)) return null;
+        if (!/[a-zA-Z]{2,}/.test(s)) return null;
+        const letters = (s.match(/[a-zA-Z]+/g) || []).join('');
+        if (letters.length < 4) return null;
+        const compact = s.replace(/[\s._-]+/g, '');
+        if (/^(?:video|movie|clip|test|sample|untitled)\d*$/i.test(compact)) return null;
+
+        const filmEpisodeRe = new RegExp(`${TB}(s\\d{1,2}e\\d{1,3}|season\\s*\\d+|第\\d+季|ep\\.?\\s*\\d+)${TE}`, 'i');
+        const filmReleaseRe = new RegExp(
+            `${TB}(bluray|bdrip|remux|web[-_]?dl|webrip|hdtv|uhd|truehd|dts[-_]?hd|atmos|criterion)${TE}`,
+            'i',
+        );
+        if (filmEpisodeRe.test(s) || filmReleaseRe.test(s) || filmReleaseRe.test(sample)) {
+            return { language: 'en', confidence: 0.65, reason: '文件名影视片名' };
+        }
+        if (/[a-zA-Z]{2,}[\s._-]+[a-zA-Z]{2,}/.test(s)) {
+            return { language: 'en', confidence: 0.55, reason: '文件名拉丁片名' };
+        }
+        return null;
+    }
+
+    /**
      * Guess ISO language from filename / path script cues (no ASR).
      * @returns {{ language: string, confidence: number, reason: string } | null}
      */
     function guessLanguageFromName(filePathOrName) {
-        const { text, full } = buildScoreText(filePathOrName);
+        const { stem, text, full } = buildScoreText(filePathOrName);
         const sample = `${text} ${full}`;
         if (/[\u3040-\u30ff]/.test(sample)) {
             return { language: 'ja', confidence: 0.72, reason: '文件名含假名' };
@@ -433,6 +460,20 @@
         if (/[\uac00-\ud7af]/.test(sample)) {
             return { language: 'ko', confidence: 0.7, reason: '文件名含韩文' };
         }
+        if (/[\u4e00-\u9fff]/.test(stem) && !/[\u3040-\u30ff]/.test(stem)) {
+            return { language: 'zh', confidence: 0.58, reason: '文件名含中文' };
+        }
+        // 番号 / 软声路径先验 — 必须在拉丁片名推断之前（避免 SSIS-001 等被 English 标题误判）
+        const codes = extractAvCodesFromPath(filePathOrName);
+        if (
+            codes.some((c) => c.known || isLikelyStandaloneAvCode(c, filePathOrName))
+            || AV_STRONG_RE.test(sample)
+            || AV_FOLDER_RE.test(full)
+        ) {
+            return { language: 'ja', confidence: 0.7, reason: '软声语境先验' };
+        }
+        const latinGuess = guessLanguageFromLatinFilename(stem, sample);
+        if (latinGuess) return latinGuess;
         if (/\b(japanese|nihongo|日语|日本語|日文)\b/i.test(sample)) {
             return { language: 'ja', confidence: 0.65, reason: '文件名语种标记' };
         }
@@ -445,17 +486,27 @@
         if (/\b(chinese|mandarin|中文|汉语|漢語|普通话)\b/i.test(sample)) {
             return { language: 'zh', confidence: 0.55, reason: '文件名语种标记' };
         }
-        // Known / standalone-looking AV codes imply Japanese dialogue
-        // (opening BGM short-window LID often false-positives as English)
-        const codes = extractAvCodesFromPath(filePathOrName);
-        if (
-            codes.some((c) => c.known || isLikelyStandaloneAvCode(c, filePathOrName))
-            || AV_STRONG_RE.test(sample)
-            || AV_FOLDER_RE.test(full)
-        ) {
-            return { language: 'ja', confidence: 0.7, reason: '软声语境先验' };
-        }
         return null;
+    }
+
+    /** True when filename/path heuristics already imply soft-AV 番号 content. */
+    function isAvFilenameLanguagePrior(nameGuess = null) {
+        if (!nameGuess?.language) return false;
+        if (!isJaLanguage(nameGuess.language)) return false;
+        return /软声|番号|编号|假名/.test(String(nameGuess.reason || ''));
+    }
+
+    /**
+     * Path-level 番号 evidence for deep promote / sniff gates.
+     * @returns {boolean}
+     */
+    function pathHasStrongAvEvidence(filePathOrName = '') {
+        const raw = String(filePathOrName || '').trim();
+        if (!raw) return false;
+        const { full } = buildScoreText(raw);
+        if (AV_STRONG_RE.test(full) || AV_FOLDER_RE.test(full)) return true;
+        const codes = extractAvCodesFromPath(raw);
+        return codes.some((c) => c.known || isLikelyStandaloneAvCode(c, raw));
     }
 
     /**
@@ -606,11 +657,24 @@
         if (!sniffLang || sniffLang === 'auto' || sniffConf < minBare) return false;
         // Reject exotic ISO codes (nn/de/…) — Whisper LID occasionally hallucinates them.
         if (!isSupportedSenseLanguage(sniffLang)) return false;
-        if (!nameGuess?.language) return true;
+        const sniffNorm = normalizeSenseLang(sniffLang);
+        const avNamePrior = isAvFilenameLanguagePrior(nameGuess) || opts.avLikely === true;
+        if (!nameGuess?.language) {
+            // Bare JA sniff without filename prior — frequent false positive on English dialogue.
+            if (sniffNorm === 'ja' && !avNamePrior && sniffConf < 0.78) return false;
+            return true;
+        }
 
         const nameConf = Number(nameGuess.confidence) || 0;
-        const nameLang = String(nameGuess.language || '').trim().toLowerCase();
-        if (sniffLang === nameLang) return sniffConf >= nameConf;
+        const nameLang = normalizeSenseLang(nameGuess.language);
+        // JA LID false-positives on Western / CJK filenames are common — require a higher bar.
+        if (!avNamePrior
+            && sniffNorm === 'ja'
+            && (nameLang === 'en' || nameLang === 'zh' || nameLang === 'ko')) {
+            const jaMin = nameLang === 'en' ? 0.82 : 0.78;
+            if (sniffConf < jaMin) return false;
+        }
+        if (sniffNorm === nameLang) return sniffConf >= nameConf;
 
         // AV 番号 / folder priors: do not let opening BGM "English" override Japanese
         const avPrior = /软声/.test(String(nameGuess.reason || ''))
@@ -817,9 +881,11 @@
         const language = String(evidence.language || '').trim().toLowerCase();
         const langConf = Number(evidence.languageConfidence) || 0;
         const durationSec = Math.max(0, Number(evidence.durationSec) || 0);
+        const pathAv = pathHasStrongAvEvidence(evidence.path || '');
         const avLikely = evidence.avLikely === true
             || evidence.strongAv === true
             || !!base.strongAv
+            || pathAv
             || (Array.isArray(evidence.codes) && evidence.codes.some((c) => (
                 c?.known || isLikelyStandaloneAvCode(c, evidence.path || '')
             )));
@@ -850,14 +916,30 @@
             promotedConf = APPLY_CONFIDENCE;
             reason = '声学偏配乐';
         } else if (hint === 'soft' || acoustic.softSparse) {
-            // Soft sparse: JA / unknown LID → AV soft recipe; clear non-JA → talk
             const clearNonJa = language
                 && language !== 'auto'
                 && !isJaLanguage(language)
                 && langConf >= 0.55;
-            promotedProfile = clearNonJa ? PROFILES.talk : PROFILES.av_soft;
-            promotedConf = APPLY_CONFIDENCE;
-            reason = clearNonJa ? '声学偏软声稀疏 → 对白' : '声学偏软声稀疏';
+            const clearJa = isJaLanguage(language) && langConf >= 0.55;
+            if (clearNonJa) {
+                promotedProfile = durationSec >= 45 * 60 ? PROFILES.film : PROFILES.talk;
+                promotedConf = APPLY_CONFIDENCE;
+                reason = durationSec >= 45 * 60
+                    ? '声学偏软声稀疏 → 影视'
+                    : '声学偏软声稀疏 → 对白';
+            } else if (clearJa) {
+                promotedProfile = PROFILES.av_soft;
+                promotedConf = APPLY_CONFIDENCE;
+                reason = '声学偏软声稀疏';
+            } else if (durationSec >= 45 * 60) {
+                promotedProfile = PROFILES.film;
+                promotedConf = Math.max(0.45, APPLY_CONFIDENCE - 0.12);
+                reason = '长片 + 声学偏软声稀疏';
+            } else {
+                promotedProfile = PROFILES.talk;
+                promotedConf = Math.max(0.42, APPLY_CONFIDENCE - 0.15);
+                reason = '声学偏软声稀疏 → 对白';
+            }
         } else if (hint === 'noisy' || acoustic.noisyFloor) {
             if (durationSec >= 70 * 60) {
                 promotedProfile = PROFILES.film;
@@ -2481,6 +2563,7 @@
         resolveItemSense,
         resolveContentProfileForJob,
         guessLanguageFromName,
+        pathHasStrongAvEvidence,
         isFilenameSenseConfident,
         isInstantAvSenseCandidate,
         shouldSniffSpokenLanguage,

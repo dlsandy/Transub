@@ -194,6 +194,7 @@ async function releaseChatLlmForHybridChunk(payload = {}) {
 async function runHybridChunkTranslate(payload = {}) {
     const p = asPlainObject(payload);
     const { runSakuraTranslate } = require('./sakura-translate');
+    const router = require('../src/js/mt-short-cue-router-core');
     const modelId = asString(p.modelId, 128).trim();
     if (!modelId) {
         return { ok: false, error: '缺少推理翻译模型', code: 'no_model' };
@@ -205,9 +206,18 @@ async function runHybridChunkTranslate(payload = {}) {
     const castNames = Array.isArray(p.castNames)
         ? p.castNames
         : core.extractCastNames(glossary.entries);
-    return runSakuraTranslate({
-        cues: p.cues,
-        modelId,
+    const cues = Array.isArray(p.cues) ? p.cues : [];
+    // After ASR, swapping Sakura 1.5B → GalTransl 7B regularly OOMs / resets llama-server.
+    const partition = router.partitionHybridMtCues(cues, {
+        mainModelId: modelId,
+        installedIds: listInstalledTranslateOnlyIds(),
+        enabled: p.hybridShortCueRouting,
+        engineExternalMt: !!p._engineExternalMt,
+        allowModelSwap: !p._engineExternalMt,
+        minRouted: 8,
+    });
+
+    const sakuraCommon = {
         glossary,
         castNames,
         nameMap: p.nameMap,
@@ -225,24 +235,100 @@ async function runHybridChunkTranslate(payload = {}) {
         fileName: p.fileName,
         sourcePath: p.sourcePath,
         path: p.path,
-        onProgress: onProgress
-            ? (info) => {
-                const detail = String(info?.detail || info?.message || '').trim();
-                onProgress({
-                    ...info,
-                    phase: info?.phase === 'translate' ? 'chunk' : (info?.phase || 'chunk'),
-                    message: detail
-                        ? `混合句级（${modelLabel(modelId)}）：${detail}`
-                        : `混合句级（${modelLabel(modelId)}）…`,
-                    hybridMt: true,
-                    hybridMtModelId: modelId,
-                });
-            }
-            : null,
         _batchMode: true,
         _skipComputeLock: true,
         _engineExternalMt: !!p._engineExternalMt,
+    };
+
+    const wrapHybridProgress = (modelLabelText, info) => {
+        if (!onProgress) return;
+        const detail = String(info?.detail || info?.message || '').trim();
+        onProgress({
+            ...info,
+            phase: info?.phase === 'translate' ? 'chunk' : (info?.phase || 'chunk'),
+            message: detail
+                ? `混合句级（${modelLabelText}）：${detail}`
+                : `混合句级（${modelLabelText}）…`,
+            hybridMt: true,
+            hybridMtModelId: modelId,
+            hybridShortCueRouting: partition.routed > 0,
+        });
+    };
+
+    let smallUpdates = [];
+    let smallRouted = 0;
+    let llmCuesToRun = cues;
+    if (partition.routed > 0 && partition.smallModelId) {
+        const smallName = modelLabel(partition.smallModelId);
+        onProgress?.({
+            phase: 'chunk',
+            message: `混合句级：${partition.routed} 条超短句改用 ${smallName}…`,
+            hybridMt: true,
+            hybridShortCueRouting: true,
+            hybridShortCueCount: partition.routed,
+        });
+        const smallRes = await runSakuraTranslate({
+            ...sakuraCommon,
+            cues: partition.smallModelCues,
+            modelId: partition.smallModelId,
+            onProgress: (info) => wrapHybridProgress(smallName, info),
+        });
+        if (smallRes.ok) {
+            smallUpdates = smallRes.cues || [];
+            smallRouted = partition.routed;
+            llmCuesToRun = partition.llmCues;
+            // Free small-model VRAM before loading GalTransl / main MT.
+            try {
+                require('./advanced-llama-server').stopLlamaServer();
+            } catch (_) { /* ignore */ }
+            if (!p.signal?.aborted) {
+                await new Promise((resolve) => setTimeout(resolve, 800));
+            }
+        } else {
+            onProgress?.({
+                phase: 'chunk',
+                message: `混合句级：超短句小模型失败，改由 ${modelLabel(modelId)} 处理…`,
+                hybridMt: true,
+            });
+            llmCuesToRun = cues;
+        }
+    }
+
+    if (!llmCuesToRun.length) {
+        return {
+            ok: true,
+            cues: router.mergeTranslatedCues(cues, smallUpdates),
+            modelId,
+            summary: smallRouted
+                ? `混合句级 · 超短句 ${smallRouted} 条（${modelLabel(partition.smallModelId)}）`
+                : '混合句级 · 无句级条目',
+            stats: { hybridShortRouted: smallRouted },
+        };
+    }
+
+    const mainName = modelLabel(modelId);
+    const mainRes = await runSakuraTranslate({
+        ...sakuraCommon,
+        cues: llmCuesToRun,
+        modelId,
+        onProgress: (info) => wrapHybridProgress(mainName, info),
     });
+    if (!mainRes.ok) return mainRes;
+
+    const merged = router.mergeTranslatedCues(cues, smallUpdates, mainRes.cues || []);
+    const summaryParts = [mainRes.summary || `混合句级 ${modelId}`];
+    if (smallRouted > 0) {
+        summaryParts.unshift(`超短句 ${smallRouted} 条→${modelLabel(partition.smallModelId)}`);
+    }
+    return {
+        ...mainRes,
+        cues: merged,
+        summary: summaryParts.join(' · '),
+        stats: {
+            ...(mainRes.stats || {}),
+            hybridShortRouted: smallRouted,
+        },
+    };
 }
 
 module.exports = {

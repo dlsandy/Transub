@@ -1676,6 +1676,11 @@
         if (COMMON_KEEP_TOKENS.has(t)) return false;
         // Adult dialogue fragments (把插进来 / 含住肉棒) — never treat as cast-name orphans
         if (/插|舔|摸|射|含|肉棒|鸡巴|鸡鸡|小穴|乳头|自慰|口活/.test(t)) return false;
+        // Sakura kinship gloss (啊啦哥哥 / 哥哥) when JA addresses 兄ちゃん/おっちゃん — not cast-tag strip
+        if (/哥哥|弟弟|姐姐|叔叔|阿姨|舅舅/.test(t)
+            && /兄ちゃん|お兄ちゃん|おにいちゃん|おっちゃん|伯父|叔/.test(sourceText)) {
+            return false;
+        }
         if (head.includes(t)) return false;
 
         const allowed = options.allowedNames;

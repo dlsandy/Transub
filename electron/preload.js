@@ -339,6 +339,7 @@ contextBridge.exposeInMainWorld('__ELECTRON__', {
     transubAdvancedManagedLlmScanCuda: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-scan-cuda', payload || {}),
     transubAdvancedManagedLlmAdoptCuda: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-adopt-cuda', payload || {}),
     transubAdvancedManagedLlmSetRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-set-runtime', payload || {}),
+    transubAdvancedManagedLlmSetServerTuning: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-set-server-tuning', payload || {}),
     transubAdvancedManagedLlmImportRuntime: (payload) => ipcRenderer.invoke('transub-advanced-managed-llm-import-runtime', payload || {}),
     transubAdvancedManagedLlmCancelPull: () => ipcRenderer.invoke('transub-advanced-managed-llm-cancel-pull'),
     transubAdvancedManagedLlmStopServer: () => ipcRenderer.invoke('transub-advanced-managed-llm-stop-server'),

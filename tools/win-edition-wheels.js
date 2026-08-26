@@ -140,6 +140,24 @@ const TORCH_CUDA130_WHEELS = [
 /** @deprecated alias */
 const TORCH_CUDA_WHEELS = TORCH_CUDA126_WHEELS;
 
+/**
+ * Pick a single torch+torchaudio wheel pair for install (not cache download).
+ * @param {{ needsTorchCuda128?: boolean, driverCudaMajor?: number }} [opts]
+ */
+function pickTorchCudaWheelsForGpu(opts = {}) {
+    if (opts.needsTorchCuda128) {
+        return Number(opts.driverCudaMajor) >= 13
+            ? [...TORCH_CUDA130_WHEELS]
+            : [...TORCH_CUDA128_WHEELS];
+    }
+    return [...TORCH_CUDA126_WHEELS];
+}
+
+/** All torch CUDA wheel pairs for offline cache / manual pick. */
+function allTorchCudaWheelSets() {
+    return [...TORCH_CUDA126_WHEELS, ...TORCH_CUDA128_WHEELS, ...TORCH_CUDA130_WHEELS];
+}
+
 /** onnxruntime-gpu 1.21.x (CUDA 12). Resolved via pip when direct pin missing. */
 const ONNXRUNTIME_GPU_PIP = 'onnxruntime-gpu==1.21.1';
 
@@ -167,18 +185,19 @@ const {
     editionLabel,
 } = require('../electron/release-artifact-names');
 
-/** @param {'cpu'|'cuda'} edition */
-function wheelsForEdition(edition) {
+/** @param {'cpu'|'cuda'} edition @param {{ needsTorchCuda128?: boolean, driverCudaMajor?: number, torchCacheAll?: boolean }} [opts] */
+function wheelsForEdition(edition, opts = {}) {
     if (edition === 'cpu') {
         return [...WHISPER_CPU_WHEELS, ...SENSEVOICE_CPU_WHEELS];
     }
     if (edition === 'cuda') {
+        const torchWheels = opts.torchCacheAll
+            ? allTorchCudaWheelSets()
+            : pickTorchCudaWheelsForGpu(opts);
         return [
             ...WHISPER_CPU_WHEELS.filter((w) => w.id !== 'onnxruntime'),
             ...NVIDIA_CU12_WHEELS,
-            ...TORCH_CUDA126_WHEELS,
-            ...TORCH_CUDA128_WHEELS,
-            ...TORCH_CUDA130_WHEELS,
+            ...torchWheels,
             {
                 id: 'numba',
                 fileName: SENSEVOICE_CPU_WHEELS.find((w) => w.id === 'numba').fileName,
@@ -204,6 +223,8 @@ module.exports = {
     TORCH_CUDA126_WHEELS,
     TORCH_CUDA128_WHEELS,
     TORCH_CUDA130_WHEELS,
+    pickTorchCudaWheelsForGpu,
+    allTorchCudaWheelSets,
     ONNXRUNTIME_GPU_PIP,
     CUDA_LOCAL_COPY_PREFIXES,
     EDITION_NAMES,

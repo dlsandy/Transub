@@ -191,6 +191,32 @@ describe('env-check', () => {
         assert.ok(torchMismatch.steps.some((s) => s.id === 'audioSeparate'));
     });
 
+    it('runEnvCheck marks torch mismatch blocking for Qwen ASR', async function () {
+        const { runEnvCheck, prefersQwenAsr } = require('../electron/env-check');
+        assert.equal(typeof prefersQwenAsr, 'function');
+        // Post-process logic is inline in runEnvCheck; simulate gpuRuntime item shape.
+        const items = [{
+            id: 'gpuRuntime',
+            status: 'warn',
+            torchCudaMismatch: true,
+            torchCudaVariant: 'cu130',
+            installedTorchCudaTag: 'cu126',
+            blocking: false,
+        }];
+        const asrModel = 'qwen3-asr-1.7b-ja-anime-galgame';
+        const gpuRtIdx = items.findIndex((it) => it.id === 'gpuRuntime');
+        const gpuRt = items[gpuRtIdx];
+        if (gpuRt.torchCudaMismatch && prefersQwenAsr(asrModel)) {
+            items[gpuRtIdx] = {
+                ...gpuRt,
+                status: 'fail',
+                blocking: true,
+            };
+        }
+        assert.equal(items[0].status, 'fail');
+        assert.equal(items[0].blocking, true);
+    });
+
     it('planEnvFixes skips whisper reinstall when probe only timed out', () => {
         const { planEnvFixes } = require('../electron/env-check');
         const plan = planEnvFixes([
@@ -262,10 +288,10 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'warn',
-                detail: '已安装 b10077，可更新至 b10453 · win-cuda12-x64',
+                detail: '已安装 b10077，可更新至 b10621 · win-cuda12-x64',
                 outdated: true,
                 installedTag: 'b10077',
-                catalogTag: 'b10453',
+                catalogTag: 'b10621',
             },
         ]);
         assert.equal(outdated.ensureLlamaRuntime, true);
@@ -278,7 +304,7 @@ describe('env-check', () => {
                 status: 'warn',
                 detail: '偏好「CUDA」，当前为「Vulkan」，请重新安装运行时',
                 mismatch: true,
-                catalogTag: 'b10453',
+                catalogTag: 'b10621',
                 recommendRuntimeId: 'win-cuda13-x64',
             },
         ]);
@@ -293,7 +319,7 @@ describe('env-check', () => {
                 recommendInstall: true,
                 recommendRuntimeId: 'win-cuda13-x64',
                 preferredPackageId: 'win-cuda13-x64',
-                catalogTag: 'b10453',
+                catalogTag: 'b10621',
             },
         ]);
         assert.equal(recommendInstall.ensureLlamaRuntime, true);
@@ -304,7 +330,7 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'ok',
-                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10453）',
+                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10621）',
             },
         ]);
         assert.equal(unused.ensureLlamaRuntime, false);

@@ -20,6 +20,7 @@ const {
     CUDA_LOCAL_COPY_PREFIXES,
     editionZipName,
     wheelsForEdition,
+    pickTorchCudaWheelsForGpu,
 } = require('./win-edition-wheels');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -49,6 +50,29 @@ function parseArgs(argv) {
 
 function log(msg) {
     console.log(`[win-editions] ${msg}`);
+}
+
+/** Best-effort: pick Blackwell torch wheels when building CUDA edition on RTX 50 build machine. */
+function detectBuildMachineTorchOpts() {
+    try {
+        const r = spawnSync('nvidia-smi', ['--query-gpu=name,driver_version', '--format=csv,noheader'], {
+            encoding: 'utf8',
+            windowsHide: true,
+        });
+        const line = String(r.stdout || '').split(/\r?\n/).find(Boolean) || '';
+        const gpuName = line.split(',')[0]?.trim() || '';
+        const driver = line.split(',')[1]?.trim() || '';
+        const needs128 = /rtx\s*5\d{2,3}|geforce\s*rtx\s*5/i.test(gpuName);
+        const driverMajor = Number(String(driver).split('.')[0]);
+        if (needs128) {
+            log(`detected Blackwell GPU (${gpuName}); torch install variant cu${driverMajor >= 13 ? '130' : '128'}`);
+            return {
+                needsTorchCuda128: true,
+                driverCudaMajor: Number.isFinite(driverMajor) ? driverMajor : 12,
+            };
+        }
+    } catch { /* ignore */ }
+    return { needsTorchCuda128: false, driverCudaMajor: 0 };
 }
 
 function ensureTar() {
@@ -280,12 +304,26 @@ function listCachedWheels(editionDir) {
         .sort((a, b) => a.localeCompare(b));
 }
 
-async function ensurePinnedWheels(edition, cacheDir) {
-    const wheels = wheelsForEdition(edition);
+async function ensurePinnedWheels(edition, cacheDir, wheelOpts = {}) {
+    const wheels = wheelsForEdition(edition, {
+        ...wheelOpts,
+        torchCacheAll: edition === 'cuda' ? true : undefined,
+    });
     for (const spec of wheels) {
         await downloadWheel(spec, path.join(cacheDir, spec.fileName));
     }
     return listCachedWheels(cacheDir);
+}
+
+function filterCudaInstallWheelPaths(allPaths, torchOpts = {}) {
+    const wantedTorch = new Set(
+        pickTorchCudaWheelsForGpu(torchOpts).map((w) => w.fileName.toLowerCase()),
+    );
+    return allPaths.filter((p) => {
+        const base = path.basename(p).toLowerCase();
+        if (!/^torch-/.test(base) && !/^torchaudio-/.test(base)) return true;
+        return wantedTorch.has(base);
+    });
 }
 
 async function buildCpuEdition(workDir, args) {
@@ -335,7 +373,9 @@ async function buildCudaEdition(workDir, args) {
             paths = listCachedWheels(cacheDir);
         }
         pipUninstall(python, ['onnxruntime', 'torch', 'torchaudio']);
-        pipInstallWheels(python, paths);
+        const torchOpts = detectBuildMachineTorchOpts();
+        const installPaths = filterCudaInstallWheelPaths(paths, torchOpts);
+        pipInstallWheels(python, installPaths);
     } else {
         // Local copy covers nvidia/torch/ort/ct2; still ensure light Whisper deps.
         const whisperOnly = wheelsForEdition('cpu').filter((w) => (

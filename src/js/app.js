@@ -28,6 +28,7 @@
     const translateChipApi = global.TransubTranslateModeChip || {};
     const audioMutexApi = global.TransubAudioOptionMutex || {};
     const computeBusyUiApi = global.TransubComputeBusyUi || {};
+    const gpuTorchApi = global.TransubEngineGpuTorch || {};
     const MEDIA_EXTENSIONS = new Set(
         mediaExt.MEDIA_EXTENSIONS
         || [
@@ -1413,7 +1414,7 @@
             'engineVadModelSelect',
             'engineAutoStartCheck', 'engineTestBtn',
             'engineCancelDownloadBtn',
-            'engineEnsureGpuBtn', 'engineScanCudaBtn', 'engineManualGpuBtn', 'engineGpuStatus',
+            'engineEnsureGpuBtn', 'engineEnsureTorchCudaBtn', 'engineScanCudaBtn', 'engineManualGpuBtn', 'engineGpuStatus',
             'engineRefreshModelsBtn', 'engineRefreshModelsSummaryBtn',
             'openEngineModelsLibraryBtn', 'closeEngineModelsLibraryBtn', 'engineModelsLibraryModal',
             'engineModelsLibraryTabSummary', 'engineModelsLibraryDlStrip', 'engineModelsLibraryDlStripText',
@@ -4920,6 +4921,7 @@
                         path: item.path,
                         strongAv: !!resolved.classification?.strongAv,
                         avLikely: !!resolved.classification?.strongAv
+                            || profileApi.pathHasStrongAvEvidence?.(item.path)
                             || /编号|软声/.test(String(resolved.classification?.reasons?.join(' ') || ''))
                             || /软声/.test(String(langPrior?.reason || '')),
                     },
@@ -7621,6 +7623,165 @@
             els.engineEnsureGpuBtn.classList.toggle('ring-1', need);
             els.engineEnsureGpuBtn.classList.toggle('ring-sky-300', need);
         }
+        if (els.engineEnsureTorchCudaBtn) {
+            const needTorch = !!probe.torchCudaMismatch;
+            els.engineEnsureTorchCudaBtn.classList.toggle('ring-1', needTorch);
+            els.engineEnsureTorchCudaBtn.classList.toggle('ring-amber-300', needTorch);
+            els.engineEnsureTorchCudaBtn.classList.toggle('hidden', !needTorch && status === 'ready');
+        }
+    }
+
+    async function ensureEngineTorchCuda({ force = true, silent = false, assumeBusy = false } = {}) {
+        if (!electron?.transubEngineRunDownload) {
+            if (!silent) {
+                appendLog('当前环境不支持 CUDA PyTorch 安装', 'err');
+                setEngineStatusText('当前环境不支持 CUDA PyTorch 安装', 'err');
+            }
+            return { ok: false, error: 'unsupported' };
+        }
+        if (!assumeBusy && engineModelsBusy) return { ok: false, error: 'busy' };
+        const variant = String(
+            cachedGpuRuntimeProbe?.torchCudaVariant
+            || engineFormPayload()?.torchCudaVariant
+            || 'cu128/cu130',
+        ).trim();
+        appendLog(`开始补齐 CUDA PyTorch（${variant}）…`, 'info');
+        setEngineGpuStatusText(`正在补齐 CUDA PyTorch（${variant}）…`, 'busy');
+        setEngineStatusText(`正在补齐 CUDA PyTorch（${variant}）…`, 'busy');
+        if (!assumeBusy) {
+            setEngineDownloadBusy(true);
+            setEngineDownloadProgressPct(0);
+            setEngineDownloadProgressVisible(true, `正在补齐 CUDA PyTorch（${variant}，约 2.5GB）…`);
+            appendEngineDownloadLog(`开始补齐 CUDA PyTorch（${variant}）`);
+        }
+        try {
+            const res = await electron.transubEngineRunDownload({
+                ...engineFormPayload(),
+                kind: 'demucs',
+                force: !!force,
+            });
+            if (res?.ok && !res?.partial) {
+                const msg = res.message || `CUDA PyTorch（${variant}）安装完成`;
+                setEngineDownloadProgressPct(100);
+                setEngineDownloadProgressVisible(true, msg);
+                appendEngineDownloadLog(msg);
+                if (!silent) {
+                    appendLog(msg, 'ok');
+                    setEngineStatusText(msg, 'ok');
+                }
+                await refreshEngineGpuStatus({ silent: true });
+                return res;
+            }
+            if (res?.ok && res?.partial) {
+                const msg = res.message || 'Demucs 已可用，CUDA PyTorch 未完全就绪';
+                if (!silent) {
+                    appendLog(msg, 'warn');
+                    setEngineStatusText(msg, 'warn');
+                }
+                await refreshEngineGpuStatus({ silent: true });
+                return res;
+            }
+            if (res?.cancelled) {
+                const msg = res.error || '已取消安装';
+                if (!silent) {
+                    appendLog(msg, 'warn');
+                    setEngineStatusText(msg, 'warn');
+                }
+                return res;
+            }
+            const err = formatEngineDownloadError(res?.error || res?.message || 'CUDA PyTorch 安装失败');
+            if (!silent) {
+                appendLog(err, 'err');
+                setEngineStatusText(err, 'err');
+            }
+            if (!silent && !res?.cancelled) {
+                if (!assumeBusy) setEngineDownloadBusy(false);
+                const manual = await global.TransubManualWhlInstall?.offerAfterFailure?.({
+                    kind: 'torch-cuda',
+                    errorText: err,
+                    formPayload: engineFormPayload(),
+                });
+                if (manual?.ok) {
+                    const okMsg = manual.message || 'CUDA PyTorch 本地安装完成';
+                    appendLog(okMsg, 'ok');
+                    setEngineStatusText(okMsg, 'ok');
+                    await refreshEngineGpuStatus({ silent: true });
+                    return { ok: true, message: okMsg, manual: true, ...(manual || {}) };
+                }
+            }
+            return res || { ok: false, error: err };
+        } catch (err) {
+            const msg = formatEngineDownloadError(err?.message || String(err));
+            if (!silent) {
+                appendLog(msg, 'err');
+                setEngineStatusText(msg, 'err');
+            }
+            return { ok: false, error: msg };
+        } finally {
+            if (!assumeBusy) setEngineDownloadBusy(false);
+        }
+    }
+
+    async function promptTorchCudaMismatchBeforeBatch(asrModelId) {
+        if (!gpuTorchApi.shouldBlockBatchOnTorchMismatch?.(cachedGpuRuntimeProbe, asrModelId)) {
+            return true;
+        }
+        if (!cachedGpuRuntimeProbe) {
+            await refreshEngineGpuStatus({ silent: true });
+        }
+        if (!gpuTorchApi.shouldBlockBatchOnTorchMismatch?.(cachedGpuRuntimeProbe, asrModelId)) {
+            return true;
+        }
+        const message = gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
+            || '本机 GPU 需要升级 CUDA PyTorch 才能 GPU 转写。';
+        const choice = await appConfirmChoice({
+            title: '需要补齐 CUDA PyTorch',
+            message,
+            primaryLabel: '一键补齐',
+            secondaryLabel: '仍用 CPU 继续',
+            tertiaryLabel: '取消',
+        });
+        if (choice === 'primary') {
+            setBadge('待安装', 'warn');
+            appendLog('正在补齐 CUDA PyTorch…', 'info');
+            const res = await ensureEngineTorchCuda({ force: true, silent: false });
+            if (res?.ok && !cachedGpuRuntimeProbe?.torchCudaMismatch) {
+                appendLog('CUDA PyTorch 已就绪，请再次开始生成', 'ok');
+            } else {
+                appendLog('CUDA PyTorch 未就绪；完成后请再次开始生成', 'warn');
+                openAppSettings('install');
+            }
+            return false;
+        }
+        if (choice === 'secondary') {
+            appendLog('已选择 CPU 转写（Blackwell GPU 无匹配 PyTorch，将极慢）', 'warn');
+            return true;
+        }
+        appendLog('已取消开始生成（需补齐 CUDA PyTorch 才能 GPU 转写）', 'warn');
+        return false;
+    }
+
+    async function maybePromptTorchCudaOnAsrSelect(asrModelId) {
+        if (!gpuTorchApi.shouldPromptOnAsrSelect?.(cachedGpuRuntimeProbe, asrModelId)) {
+            return;
+        }
+        const key = `transub.torchCudaPrompt.${String(asrModelId || '').trim()}`;
+        try {
+            if (sessionStorage.getItem(key) === '1') return;
+        } catch (_) { /* ignore */ }
+        const message = gpuTorchApi.buildTorchMismatchMessage?.(cachedGpuRuntimeProbe, asrModelId)
+            || '本机 RTX 50 系需要 cu128/cu130 版 PyTorch 才能 GPU 转写。';
+        const choice = await appConfirmChoice({
+            title: 'Qwen3-ASR 需要 CUDA PyTorch',
+            message,
+            primaryLabel: '去补齐',
+            secondaryLabel: '稍后',
+        });
+        try { sessionStorage.setItem(key, '1'); } catch (_) { /* ignore */ }
+        if (choice === 'primary') {
+            openAppSettings('install');
+            void ensureEngineTorchCuda({ force: true, silent: false });
+        }
     }
 
     async function refreshHardwareRecommend({ silent = true } = {}) {
@@ -7912,6 +8073,25 @@
                     setEngineStatusText(msg, 'ok');
                 }
                 await refreshEngineGpuStatus({ silent: true });
+                if (cachedGpuRuntimeProbe?.torchCudaMismatch) {
+                    appendLog('GPU 组件已就绪；检测到 PyTorch 与本机 GPU 不兼容，继续补齐 CUDA PyTorch…', 'info');
+                    const torchRes = await ensureEngineTorchCuda({
+                        force: true,
+                        silent: true,
+                        assumeBusy: true,
+                    });
+                    if (torchRes?.ok && !cachedGpuRuntimeProbe?.torchCudaMismatch) {
+                        const torchMsg = torchRes.message || 'CUDA PyTorch 安装完成';
+                        setEngineDownloadProgressPct(100);
+                        setEngineDownloadProgressVisible(true, torchMsg);
+                        appendEngineDownloadLog(torchMsg);
+                        if (!silent) {
+                            appendLog(torchMsg, 'ok');
+                            setEngineStatusText(torchMsg, 'ok');
+                        }
+                        return torchRes;
+                    }
+                }
                 return res;
             }
             if (res?.cancelled) {
@@ -12078,6 +12258,17 @@
             await refreshEngineModels({ silent: true });
         }
 
+        if (useEngine) {
+            const asrForTorch = els.engineAsrModelSelect?.value || opts.engineAsrModel || '';
+            if (!cachedGpuRuntimeProbe) {
+                await refreshEngineGpuStatus({ silent: true });
+            }
+            const canStart = await promptTorchCudaMismatchBeforeBatch(asrForTorch);
+            if (!canStart) {
+                return;
+            }
+        }
+
         appendLog(`开始生成字幕 ${selected.length} 个文件…`, 'info');
         ensureLogExpanded();
         if (opts.task === 'dual' && !useEngine) {
@@ -13408,6 +13599,13 @@
         els.engineEnsureGpuBtn?.addEventListener('click', () => {
             void ensureEngineGpuSupport({ force: false });
         });
+        els.engineEnsureTorchCudaBtn?.addEventListener('click', () => {
+            void ensureEngineTorchCuda({ force: true, silent: false });
+        });
+        window.addEventListener('transub:ensure-torch-cuda', () => {
+            openAppSettings('install');
+            void ensureEngineTorchCuda({ force: true, silent: false });
+        });
         els.engineScanCudaBtn?.addEventListener('click', () => {
             void scanAndReuseEngineCuda();
         });
@@ -13759,6 +13957,7 @@
             syncExpertExtraChipsUi();
             // Settings / recommend / quick-ASR may change the model while a preset chip is shown.
             adoptManualAsrFromUserChange({ persist: false });
+            void maybePromptTorchCudaOnAsrSelect(String(els.engineAsrModelSelect?.value || '').trim());
         });
         els.vadAggressiveCheck?.addEventListener('change', () => {
             if (els.vadAggressiveCheck?.checked && els.vadSensitiveCheck) {

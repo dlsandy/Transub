@@ -142,6 +142,56 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * @param {number} total
+ * @param {number} concurrency
+ * @param {(index: number) => Promise<*>} fn
+ * @param {AbortSignal} [signal]
+ */
+async function mapChunkIndicesWithConcurrency(total, concurrency, fn, signal) {
+    const count = Math.max(0, Math.round(Number(total) || 0));
+    if (!count) return [];
+    const limit = Math.max(1, Math.min(4, Math.round(Number(concurrency) || 1)));
+    if (limit <= 1) {
+        const out = [];
+        for (let i = 0; i < count; i += 1) {
+            if (signal?.aborted) {
+                throw Object.assign(new Error('已取消'), { code: 'cancelled' });
+            }
+            out.push(await fn(i));
+        }
+        return out;
+    }
+    const results = new Array(count);
+    let next = 0;
+    async function worker() {
+        while (next < count) {
+            if (signal?.aborted) {
+                throw Object.assign(new Error('已取消'), { code: 'cancelled' });
+            }
+            const i = next;
+            next += 1;
+            results[i] = await fn(i);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, count) }, () => worker()));
+    return results;
+}
+
+function resolveSakuraClientConcurrency(endpoint) {
+    const fromEndpoint = Number(endpoint?.parallelSlots);
+    if (Number.isFinite(fromEndpoint) && fromEndpoint > 1) {
+        return Math.max(1, Math.min(4, Math.round(fromEndpoint)));
+    }
+    try {
+        const state = llamaServer.getServerState?.();
+        if (state?.parallelSlots > 1) {
+            return Math.max(1, Math.min(4, Math.round(state.parallelSlots)));
+        }
+    } catch (_) { /* ignore */ }
+    return 1;
+}
+
 /** Best-effort free stuck llama-server slots after client abort/timeout. */
 async function tryReleaseLlamaSlots(baseUrl) {
     const root = String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/i, '');
@@ -244,6 +294,7 @@ async function runSakuraTranslateBody(payload = {}) {
                 modelId,
                 onProgress: send,
                 signal: p.signal,
+                afterAsr: !!(p.afterAsr || p._engineExternalMt),
             });
             if (!endpoint.ok) return endpoint;
         }
@@ -289,18 +340,19 @@ async function runSakuraTranslateBody(payload = {}) {
         const updates = [];
         let blankRetried = 0;
         let blankLeft = 0;
-        let consecutiveTimeouts = 0;
         const startedAt = Date.now();
+        const clientConcurrency = resolveSakuraClientConcurrency(endpoint);
+        let completedChunks = 0;
 
-        for (let i = 0; i < chunks.length; i += 1) {
+        const processChunkIndex = async (i) => {
             if (p.signal?.aborted) {
-                return { ok: false, error: '已取消', code: 'cancelled' };
+                return { ok: false, error: '已取消', code: 'cancelled', modelId };
             }
             const chunkCues = chunks[i];
             const rangeLabel = cueRangeOf(chunkCues);
             const rangeSuffix = rangeLabel ? ` · ${rangeLabel}` : '';
             const rangeParen = rangeLabel ? `（${rangeLabel}）` : '';
-            const pctStart = Math.round((i / Math.max(1, chunks.length)) * 100);
+            const pctStart = Math.round((completedChunks / Math.max(1, chunks.length)) * 100);
             send({
                 phase: 'translate',
                 detail: `Sakura 翻译 ${i + 1}/${chunks.length}${rangeSuffix}（推理中…）`,
@@ -329,13 +381,19 @@ async function runSakuraTranslateBody(payload = {}) {
                 || /超时/.test(batchErr)
                 || batch?.code === 'aborted'
             );
-            if (!batch.ok && isTimeout) {
-                consecutiveTimeouts += 1;
+            const isLoadTransient = !!(
+                /Loading model/i.test(batchErr)
+                || /连接被重置|ECONNRESET|socket hang up|ECONNREFUSED/i.test(batchErr)
+                || batch?.code === 'connection_reset'
+                || batch?.code === 'server_unavailable'
+            );
+            if (!batch.ok && (isTimeout || isLoadTransient)) {
                 await tryReleaseLlamaSlots(endpoint.baseUrl);
-                await sleep(200);
                 send({
                     phase: 'chunk-retry',
-                    detail: `第 ${i + 1} 块${rangeParen}超时，释放槽位后重试…`,
+                    detail: isTimeout
+                        ? `第 ${i + 1} 块${rangeParen}超时，释放槽位后重试…`
+                        : `第 ${i + 1} 块${rangeParen}失败（${batch.error || '服务未就绪'}），等待本地模型就绪后重试…`,
                     percent: pctStart,
                     pct: pctStart,
                     chunk: i + 1,
@@ -344,12 +402,30 @@ async function runSakuraTranslateBody(payload = {}) {
                 if (p.signal?.aborted) {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
+                // Cold-load / OOM restart: re-ensure endpoint before retrying the chunk.
+                if (isLoadTransient && !dryRun) {
+                    const restarted = await sakuraMt.resolveSakuraEndpoint({
+                        modelId,
+                        onProgress: send,
+                        signal: p.signal,
+                        afterAsr: !!(p.afterAsr || p._engineExternalMt),
+                    });
+                    if (restarted?.ok) {
+                        endpoint = restarted;
+                        batchCtx.apiKey = restarted.apiKey;
+                        batchCtx.baseUrl = restarted.baseUrl;
+                        batchCtx.model = restarted.model;
+                    } else {
+                        await sleep(800);
+                    }
+                } else {
+                    await sleep(200);
+                }
                 batch = await translateCueBatch(chunkCues, batchCtx);
                 if (p.signal?.aborted || batch?.code === 'cancelled') {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
             } else if (!batch.ok) {
-                consecutiveTimeouts = 0;
                 send({
                     phase: 'chunk-retry',
                     detail: `第 ${i + 1} 块${rangeParen}失败（${batch.error || '空结果'}），自动重试…`,
@@ -365,41 +441,6 @@ async function runSakuraTranslateBody(payload = {}) {
                 if (p.signal?.aborted || batch?.code === 'cancelled') {
                     return { ok: false, error: '已取消', code: 'cancelled', modelId };
                 }
-            } else {
-                consecutiveTimeouts = 0;
-            }
-
-            // If still timing out and slot may be wedged, bounce local server once.
-            if (
-                !batch.ok
-                && consecutiveTimeouts >= 2
-                && endpoint.source === 'sakura'
-                && !p.signal?.aborted
-                && batch?.code !== 'cancelled'
-            ) {
-                send({
-                    phase: 'chunk-retry',
-                    detail: `本地推理槽位可能卡住，正在重启 Sakura 服务…`,
-                    percent: pctStart,
-                    pct: pctStart,
-                });
-                try {
-                    llamaServer.stopLlamaServer();
-                    await sleep(400);
-                    const restarted = await sakuraMt.resolveSakuraEndpoint({
-                        modelId,
-                        onProgress: send,
-                        signal: p.signal,
-                    });
-                    if (restarted.ok) {
-                        endpoint = restarted;
-                        batchCtx.apiKey = restarted.apiKey;
-                        batchCtx.baseUrl = restarted.baseUrl;
-                        batchCtx.model = restarted.model;
-                        batch = await translateCueBatch(chunkCues, batchCtx);
-                        consecutiveTimeouts = 0;
-                    }
-                } catch (_) { /* ignore */ }
             }
 
             if (!batch.ok) {
@@ -412,6 +453,8 @@ async function runSakuraTranslateBody(payload = {}) {
             }
 
             let chunkUpdates = Array.isArray(batch.cues) ? batch.cues : [];
+            let localBlankRetried = 0;
+            let localBlankLeft = 0;
             const blankIndexes = core.collectBlankTranslationIndexes(chunkCues, chunkUpdates);
             if (blankIndexes.length && !p.signal?.aborted) {
                 const blankSet = new Set(blankIndexes);
@@ -424,7 +467,6 @@ async function runSakuraTranslateBody(payload = {}) {
                     chunk: i + 1,
                     total: chunks.length,
                 });
-                // One-by-one blank retry: avoids another large runaway generation.
                 const map = new Map(
                     chunkUpdates.map((u) => [Number(u.index), String(u.text ?? '')]),
                 );
@@ -449,18 +491,17 @@ async function runSakuraTranslateBody(payload = {}) {
                     const text = String(retry.cues?.[0]?.text ?? '').trim();
                     if (!text) continue;
                     map.set(cue.index, text);
-                    blankRetried += 1;
+                    localBlankRetried += 1;
                 }
                 chunkUpdates = chunkCues.map((c) => ({
                     index: c.index,
                     text: map.has(c.index) ? map.get(c.index) : '',
                 }));
-                const stillBlank = core.collectBlankTranslationIndexes(chunkCues, chunkUpdates);
-                blankLeft += stillBlank.length;
+                localBlankLeft = core.collectBlankTranslationIndexes(chunkCues, chunkUpdates).length;
             }
-            updates.push(...chunkUpdates);
 
-            const pctDone = Math.round(((i + 1) / Math.max(1, chunks.length)) * 100);
+            completedChunks += 1;
+            const pctDone = Math.round((completedChunks / Math.max(1, chunks.length)) * 100);
             send({
                 phase: 'chunk-done',
                 detail: `Sakura 翻译 ${i + 1}/${chunks.length}${rangeSuffix} 完成`,
@@ -473,8 +514,35 @@ async function runSakuraTranslateBody(payload = {}) {
                 cueCount: chunkCues.length,
                 elapsedMs: Date.now() - startedAt,
             });
-            // Yield so UI progress / cancel can run between chunks.
-            await sleep(0);
+
+            return {
+                ok: true,
+                chunkUpdates,
+                blankRetried: localBlankRetried,
+                blankLeft: localBlankLeft,
+            };
+        };
+
+        let chunkResults;
+        try {
+            chunkResults = await mapChunkIndicesWithConcurrency(
+                chunks.length,
+                clientConcurrency,
+                processChunkIndex,
+                p.signal,
+            );
+        } catch (err) {
+            if (p.signal?.aborted || err?.code === 'cancelled') {
+                return { ok: false, error: '已取消', code: 'cancelled', modelId };
+            }
+            return { ok: false, error: err?.message || 'Sakura 翻译失败', modelId };
+        }
+
+        for (const res of chunkResults) {
+            if (!res?.ok) return res;
+            updates.push(...(res.chunkUpdates || []));
+            blankRetried += Number(res.blankRetried) || 0;
+            blankLeft += Number(res.blankLeft) || 0;
         }
 
         const map = new Map(updates.map((u) => [Number(u.index), String(u.text ?? '')]));

@@ -181,6 +181,23 @@
         )) || null;
     }
 
+    /** 推测解码草稿（draftModelId 通常指向 managed catalog 中的小模型）。 */
+    function resolveDraftModelEntry(modelIdOrEntry) {
+        const entry = (modelIdOrEntry && typeof modelIdOrEntry === 'object')
+            ? modelIdOrEntry
+            : findCatalogEntry(modelIdOrEntry);
+        const draftId = String(entry?.draftModelId || '').trim();
+        if (!draftId) return null;
+        const local = findCatalogEntry(draftId);
+        if (local) return local;
+        try {
+            const managed = require('./advanced-managed-llm-catalog-core');
+            return managed.findCatalogEntry(draftId);
+        } catch (_) {
+            return null;
+        }
+    }
+
     function isSakuraMtModel(modelId) {
         return !!findCatalogEntry(modelId);
     }
@@ -283,6 +300,7 @@
         CATALOG,
         listCatalog,
         findCatalogEntry,
+        resolveDraftModelEntry,
         resolvePromptFamily,
         isSakuraMtModel,
         isEngineOpusMtModel,

@@ -750,6 +750,41 @@ function setManagedRuntimePreference(payload = {}) {
     };
 }
 
+function setManagedServerTuning(payload = {}) {
+    const patch = asPlainObject(payload);
+    const deviceId = getAdvancedDeviceId();
+    const hints = runtimePreferHints();
+    const doc = readAdvancedDoc().doc;
+    const managed = entitlement.normalizeManagedLlm(doc.managedLlm, hints);
+    const llamaTuning = require('../src/js/llama-server-tuning-core');
+    const nextManaged = entitlement.normalizeManagedLlm({
+        ...managed,
+        ...(patch.llamaParallelMode != null
+            ? { llamaParallelMode: llamaTuning.normalizeLlamaParallelMode(patch.llamaParallelMode) }
+            : {}),
+        ...(patch.llamaSmartTranslateParallel != null
+            ? { llamaSmartTranslateParallel: llamaTuning.normalizeSmartTranslateParallel(patch.llamaSmartTranslateParallel) }
+            : {}),
+        ...(patch.llamaSpeculativeEnabled != null
+            ? { llamaSpeculativeEnabled: llamaTuning.normalizeSpeculativeEnabled(patch.llamaSpeculativeEnabled) }
+            : {}),
+    }, hints);
+    const saved = writeAdvancedDoc({
+        ...doc,
+        managedLlm: nextManaged,
+    });
+    if (!saved.ok) return { ok: false, error: saved.error };
+    try {
+        require('./advanced-llama-server').stopLlamaServer();
+    } catch (_) { /* ignore — apply -np on next start */ }
+    return {
+        ok: true,
+        message: '已保存 llama-server 推理加速设置（下次启动服务时生效）',
+        status: publicStatus(saved.doc, deviceId),
+        managed: managedStatusForDoc(saved.doc),
+    };
+}
+
 function classifyRuntimeZipPaths(filePaths, pkg) {
     const list = (Array.isArray(filePaths) ? filePaths : [])
         .map((p) => String(p || '').trim())
@@ -2789,11 +2824,13 @@ async function runSmartTranslateBody(payload = {}, event = null) {
                 llm = await resolveAdvancedLlmConfig(doc, {
                     activeModelId: smartModelId || undefined,
                     requireSmartTranslateCapable: true,
+                    parallelPurpose: 'smart',
                 });
                 if (!llm.ok && llm.code === 'byok_missing' && smartModelId) {
                     llm = await resolveAdvancedLlmConfig({ ...doc, llmSource: 'managed' }, {
                         activeModelId: smartModelId,
                         requireSmartTranslateCapable: true,
+                        parallelPurpose: 'smart',
                     });
                     if (llm.ok && !smartChoice.missingFallbackFrom) {
                         smartChoice.missingFallbackFrom = 'byok';
@@ -3297,6 +3334,10 @@ function setupAdvancedBridge(api, deps = {}) {
 
     register('transub-advanced-managed-llm-set-runtime', async (_event, payload = {}) => (
         setManagedRuntimePreference(payload)
+    ));
+
+    register('transub-advanced-managed-llm-set-server-tuning', async (_event, payload = {}) => (
+        setManagedServerTuning(payload)
     ));
 
     register('transub-advanced-managed-llm-import-runtime', async (event, payload = {}) => (

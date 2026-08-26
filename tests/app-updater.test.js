@@ -5,6 +5,8 @@ const {
     releaseVersion,
     CODEBERG_OWNER,
     CODEBERG_REPO,
+    GITCODE_OWNER,
+    GITCODE_REPO,
     WEBSITE_UPDATES_BASE,
     websiteUpdateAssetUrl,
     appendWebsiteUpdateUrls,
@@ -35,11 +37,13 @@ describe('app-updater', () => {
         assert.strictEqual(normalizeReleaseNotes(''), '');
     });
 
-    it('parses release version tags and exposes Codeberg mirror constants', () => {
+    it('parses release version tags and exposes mirror host constants', () => {
         assert.strictEqual(releaseVersion({ tag_name: 'v3.0.1' }), '3.0.1');
         assert.strictEqual(releaseVersion({ name: '3.0.0' }), '3.0.0');
         assert.strictEqual(CODEBERG_OWNER, 'flyforyou');
         assert.strictEqual(CODEBERG_REPO, 'Transub');
+        assert.strictEqual(GITCODE_OWNER, 'AndyDai');
+        assert.strictEqual(GITCODE_REPO, 'Transub');
     });
 
     it('builds official-site update asset URLs under /updates/{version}/', () => {
@@ -74,6 +78,12 @@ describe('app-updater', () => {
         assert.ok(state.componentUrls.shell.some((u) => u.includes('win-shell.zip') && u.includes('transub.cc')));
         assert.strictEqual(state.deltaUrls.length, 0);
         assert.strictEqual(state.componentUrls.app.length, 0);
+    });
+
+    it('exposes GitCode release constants for the domestic mirror channel', () => {
+        assert.strictEqual(GITCODE_OWNER, 'AndyDai');
+        assert.strictEqual(GITCODE_REPO, 'Transub');
+        assert.ok(String(require('../electron/app-updater').GITCODE_RELEASES_URL).includes('gitcode.com'));
     });
 
     it('reads a current version string', () => {

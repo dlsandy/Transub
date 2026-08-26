@@ -807,6 +807,7 @@ function main() {
             ...REQUIRED_RENDERER_FILES.map((f) => `renderer-dist/${f}`),
             ...requiredSrc.map((f) => f.replace(/\\/g, '/')),
             ...asarElectronMust,
+            ...MT_TRAIN_MUST_EXIST,
         ];
         if (list) {
             const set = new Set(

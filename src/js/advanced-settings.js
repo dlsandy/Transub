@@ -28,6 +28,9 @@
         managedRuntime: () => document.getElementById('advancedManagedRuntimeStatus'),
         managedRuntimeBackendWrap: () => document.getElementById('advancedManagedRuntimeBackendWrap'),
         managedRuntimeBackendSelect: () => document.getElementById('advancedManagedRuntimeBackendSelect'),
+        llamaParallelModeSelect: () => document.getElementById('advancedLlamaParallelModeSelect'),
+        llamaSmartParallelCheck: () => document.getElementById('advancedLlamaSmartParallelCheck'),
+        llamaSpeculativeCheck: () => document.getElementById('advancedLlamaSpeculativeCheck'),
         llamaServerActionStatus: () => document.getElementById('advancedLlamaServerActionStatus'),
         llamaServerProgressWrap: () => document.getElementById('advancedLlamaServerProgressWrap'),
         llamaServerProgressBar: () => document.getElementById('advancedLlamaServerProgressBar'),
@@ -424,6 +427,42 @@
         select.classList.toggle('border-amber-400', !!runtime.mismatch);
     }
 
+    function applyLlamaServerTuning(managed) {
+        const parallel = els.llamaParallelModeSelect();
+        const smart = els.llamaSmartParallelCheck();
+        const speculative = els.llamaSpeculativeCheck();
+        const m = managed?.managedLlm || managed || {};
+        if (parallel) {
+            const mode = String(m.llamaParallelMode || 'auto').trim() || 'auto';
+            if ([...parallel.options].some((o) => o.value === mode)) {
+                parallel.value = mode;
+            } else {
+                parallel.value = 'auto';
+            }
+        }
+        if (smart) {
+            smart.checked = m.llamaSmartTranslateParallel === true;
+        }
+        if (speculative) {
+            speculative.checked = m.llamaSpeculativeEnabled === true;
+        }
+    }
+
+    async function saveLlamaServerTuning() {
+        if (!electron.transubAdvancedManagedLlmSetServerTuning) return;
+        const parallel = String(els.llamaParallelModeSelect()?.value || 'auto').trim() || 'auto';
+        const smart = !!els.llamaSmartParallelCheck()?.checked;
+        const speculative = !!els.llamaSpeculativeCheck()?.checked;
+        await withAction(
+            els.llamaServerActionStatus() || els.managedRuntime(),
+            () => electron.transubAdvancedManagedLlmSetServerTuning({
+                llamaParallelMode: parallel,
+                llamaSmartTranslateParallel: smart,
+                llamaSpeculativeEnabled: speculative,
+            }),
+        );
+    }
+
     function applyManagedStatus(managed) {
         if (!managed) return;
         managedSnapshot = enrichManagedCatalog(managed);
@@ -435,8 +474,38 @@
                 : (runtime.message || '尚未安装运行时。请先点击「安装 / 更新运行时」。'),
         );
         applyRuntimeBackendSelect(managedSnapshot);
+        applyLlamaServerTuning(managedSnapshot);
         renderModelSelects(managedSnapshot);
         renderCatalog();
+    }
+
+    async function maybePromptTorchCudaAfterLlamaRuntime(installRes = {}) {
+        if (!installRes?.ok || !electron?.transubEngineGpuStatus) return;
+        const enginePath = String(document.getElementById('engineInstallPathInput')?.value || '').trim();
+        let probe = null;
+        try {
+            const gpuRes = await electron.transubEngineGpuStatus({
+                engineInstallPath: enginePath || undefined,
+            });
+            if (gpuRes?.ok) probe = gpuRes;
+        } catch (_) { /* ignore */ }
+        if (!probe?.torchCudaMismatch) return;
+        const gpuTorch = globalThis.TransubEngineGpuTorch || {};
+        const message = gpuTorch.buildLlamaFollowUpMessage?.(probe)
+            || (
+                'llama-server 已就绪，但 Qwen3-ASR 转写还需补齐 CUDA PyTorch（约 2.5GB）。'
+                + ' 是否现在前往运行环境安装？'
+            );
+        const choice = await askConfirmChoice({
+            title: '翻译运行时已就绪',
+            message,
+            primaryLabel: '去补齐 PyTorch',
+            secondaryLabel: '稍后',
+        });
+        if (choice !== 'primary') return;
+        window.dispatchEvent(new CustomEvent('transub:ensure-torch-cuda', {
+            detail: { source: 'llama-runtime' },
+        }));
     }
 
     function askConfirm(options) {
@@ -1374,6 +1443,7 @@
                 });
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
+                    await maybePromptTorchCudaAfterLlamaRuntime(res);
                     return { ok: true, message: res.message || '运行时安装完成' };
                 }
                 await offerManualRuntimeAfterFailure(res?.error || '运行时安装失败');
@@ -1438,6 +1508,15 @@
                 return { ok: true, message: adopt.message || '已复用本机 CUDA 运行库' };
             });
         });
+        els.llamaParallelModeSelect()?.addEventListener('change', () => {
+            void saveLlamaServerTuning();
+        });
+        els.llamaSmartParallelCheck()?.addEventListener('change', () => {
+            void saveLlamaServerTuning();
+        });
+        els.llamaSpeculativeCheck()?.addEventListener('change', () => {
+            void saveLlamaServerTuning();
+        });
         els.managedRuntimeBackendSelect()?.addEventListener('change', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const select = els.managedRuntimeBackendSelect();
@@ -1499,6 +1578,7 @@
                 });
                 if (installed?.ok) {
                     if (installed.managed) applyManagedStatus(installed.managed);
+                    await maybePromptTorchCudaAfterLlamaRuntime(installed);
                     return {
                         ok: true,
                         message: installed.message || (installed.already

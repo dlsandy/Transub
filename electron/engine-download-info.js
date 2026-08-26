@@ -715,7 +715,7 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                 pipCommand: `${pipPrefix} install --upgrade -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com ${pipPkgs}`,
                 hint: ortOnly
                     ? `ASR/CTranslate2 已就绪；请安装 ${ortPip}（与 CPU 版 onnxruntime 互斥）。优先点下方「下载文件」，或复制 pip 命令。`
-                    : '优先阿里云 PyPI（失败自动回退华为云 / 清华）。WhisperSeg 灵敏检出还需 onnxruntime-gpu（见清单首项）。也可点下方「下载文件」获取 win_amd64 .whl。',
+                    : '优先阿里云 PyPI（失败自动回退华为云 / 清华）。WhisperSeg 灵敏检出还需 onnxruntime-gpu（见清单首项）。不含 PyTorch；RTX 50 系转写请点「补齐 CUDA PyTorch」。也可点下方「下载文件」获取 win_amd64 .whl。',
                 wheelHint: ortOnly
                     ? `请下载 ${ortPkg.fileName} 后本地安装。若已装 CPU 版 onnxruntime，请先卸载再装 GPU 版。`
                     : '请先装 WhisperSeg / onnxruntime-gpu，再按需补齐下方 NVIDIA CUDA 12 组件。',

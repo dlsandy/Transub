@@ -134,4 +134,39 @@ print(json.dumps({
         assert.strictEqual(payload.variant128, 'cu128');
         assert.strictEqual(payload.variant130, 'cu130');
     });
+
+    it('probe_gpu_runtime downgrades ready to partial on torch mismatch', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json
+from unittest.mock import patch
+import transub_engine.runtime_gpu as rg
+device = {
+    "hasCuda": True,
+    "gpuName": "NVIDIA GeForce RTX 5080",
+    "needsTorchCuda128": True,
+    "torchCudaVariant": "cu130",
+    "driverCudaMajor": 13,
+    "vramMb": 16000,
+}
+with patch.object(rg, "detect_device", return_value=device), \\
+     patch.object(rg, "_parse_driver_cuda_version", return_value="13.3"), \\
+     patch.object(rg, "find_cublas64_12", return_value=r"C:\\\\cublas64_12.dll"), \\
+     patch.object(rg, "find_cublas64_13", return_value=""), \\
+     patch.object(rg, "ctranslate2_cuda_status", return_value={"ok": True, "reason": "", "deviceCount": 1}), \\
+     patch.object(rg, "resolve_ort_gpu_readiness", return_value={
+         "ok": True, "target": "cuda12", "desiredTarget": "cuda13",
+         "requirement": "onnxruntime-gpu>=1.21", "desiredRequirement": "onnxruntime-gpu>=1.27",
+     }), \\
+     patch("transub_engine.device.torch_cuda_variant_mismatch", return_value=True), \\
+     patch("transub_engine.device.installed_torch_cuda_tag", return_value="cu126"):
+    p = rg.probe_gpu_runtime()
+print(json.dumps({"status": p.get("status"), "mismatch": p.get("torchCudaMismatch")}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.mismatch, true);
+        assert.strictEqual(payload.status, 'partial');
+    });
 });

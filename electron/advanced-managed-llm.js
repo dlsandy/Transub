@@ -341,6 +341,8 @@ async function resolveManagedEndpoint(doc, options = {}) {
         nGpuLayers: managed.nGpuLayers,
         contextSize: managed.contextSize,
         runtimeId: managed.runtimeId,
+        afterAsr: options.afterAsr === true,
+        parallelPurpose: options.parallelPurpose || 'mt',
         onProgress: options.onProgress,
         signal: options.signal,
     });

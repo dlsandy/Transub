@@ -394,6 +394,14 @@ describe('content-profile-core', () => {
         assert.strictEqual(ko.language, 'ko');
         const av = guessLanguageFromName('SSIS-001.mp4');
         assert.strictEqual(av.language, 'ja');
+        const zh = guessLanguageFromName('权力的游戏.mkv');
+        assert.strictEqual(zh.language, 'zh');
+        const en = guessLanguageFromName('Game of Thrones.mkv');
+        assert.strictEqual(en.language, 'en');
+        assert.ok(en.reason.includes('拉丁'));
+        const avMixed = guessLanguageFromName('Hot Scene SSIS-001.mp4');
+        assert.strictEqual(avMixed.language, 'ja');
+        assert.ok(avMixed.reason.includes('软声'));
     });
 
     it('recognizes numbered amateur series codes (200GANA, 300MIUM)', () => {
@@ -472,6 +480,26 @@ describe('content-profile-core', () => {
         );
         assert.strictEqual(
             shouldPreferSniffLanguage({ language: 'en', confidence: 0.65 }, null, { skippedIntro: false }),
+            true,
+        );
+        assert.strictEqual(
+            shouldPreferSniffLanguage({ language: 'ja', confidence: 0.75 }, null, { skippedIntro: true }),
+            false,
+        );
+        assert.strictEqual(
+            shouldPreferSniffLanguage(
+                { language: 'ja', confidence: 0.75 },
+                { language: 'en', confidence: 0.55, reason: '文件名拉丁片名' },
+                { skippedIntro: true },
+            ),
+            false,
+        );
+        assert.strictEqual(
+            shouldPreferSniffLanguage(
+                { language: 'ja', confidence: 0.85 },
+                { language: 'en', confidence: 0.55, reason: '文件名拉丁片名' },
+                { skippedIntro: true },
+            ),
             true,
         );
     });
@@ -592,6 +620,16 @@ describe('content-profile-core', () => {
         });
         assert.ok(softEn.promoted);
         assert.strictEqual(softEn.classification.profile, 'talk');
+
+        const softAuto = promoteClassificationFromEvidence(unknown, {
+            acoustic: { softSparse: true },
+            language: 'auto',
+            languageConfidence: 0,
+            durationSec: 3600,
+        });
+        assert.ok(softAuto.promoted);
+        assert.notStrictEqual(softAuto.classification.profile, 'av_soft');
+        assert.strictEqual(softAuto.classification.profile, 'film');
 
         const longLang = promoteClassificationFromEvidence(unknown, {
             language: 'en',

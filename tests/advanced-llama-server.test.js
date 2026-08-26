@@ -15,6 +15,10 @@ describe('advanced-llama-server version probe', () => {
             'b10453',
         );
         assert.strictEqual(
+            llamaServer.parseLlamaCppTag('version: 0.3.0 (build 10621, commit c1d0e7a00)\nbuilt with Clang'),
+            'b10621',
+        );
+        assert.strictEqual(
             llamaServer.parseLlamaCppTag('llama.cpp b9912 release'),
             'b9912',
         );
@@ -27,9 +31,9 @@ describe('advanced-llama-server version probe', () => {
     it('resolveInstalledRuntimeTag prefers runtime.json over live --version', () => {
         const tag = llamaServer.resolveInstalledRuntimeTag(
             path.join(__dirname, 'does-not-exist-llama-server.exe'),
-            { tag: 'b10453', probedTag: 'b10453' },
+            { tag: 'b10621', probedTag: 'b10621' },
         );
-        assert.strictEqual(tag, 'b10453');
+        assert.strictEqual(tag, 'b10621');
     });
 
     it('resolveInstalledRuntimeTag skips live --version when meta has no tag', () => {

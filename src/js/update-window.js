@@ -38,28 +38,40 @@
         }
         if (fail.githubError) parts.push(`GitHub: ${String(fail.githubError).slice(0, 80)}`);
         if (fail.codebergError) parts.push(`Codeberg: ${String(fail.codebergError).slice(0, 80)}`);
+        if (fail.gitcodeError) parts.push(`GitCode: ${String(fail.gitcodeError).slice(0, 80)}`);
         const tipByCode = {
             checksum: '校验失败：换线路重试，或从发布页手动下载同版本 zip',
             extract: '解压失败：确认磁盘空间充足且安装目录可写',
-            probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / 官网',
+            probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / GitCode / 官网',
             download: '下载失败：可改用其它镜像，或从发布页手动下载',
             cancelled: '已取消',
         };
         parts.push(tipByCode[String(fail.code || '')]
-            || '可改从 GitHub / Codeberg / 官网 Releases 手动下载');
+            || '可改从 GitHub / Codeberg / GitCode / 官网 Releases 手动下载');
         return parts.join(' · ');
     }
 
-    function setChangelog(notes, { force = false } = {}) {
+    function changelogTitleForResult(res, { upToDate = false } = {}) {
+        const latest = String(res?.latestVersion || '').trim();
+        if (upToDate) {
+            return latest ? `最新版本 v${latest} 更新说明` : '最新版本更新说明';
+        }
+        return latest ? `v${latest} 更新说明` : '更新说明';
+    }
+
+    function setChangelog(notes, { force = false, title } = {}) {
         const host = document.getElementById('updateChangelog');
         const body = document.getElementById('updateChangelogBody');
+        const titleEl = document.getElementById('updateChangelogTitle');
         if (!host || !body) return;
         const text = String(notes || '').trim();
         if (!text && !force) {
             host.classList.remove('is-visible');
             body.textContent = '';
+            if (titleEl) titleEl.textContent = '更新说明';
             return;
         }
+        if (titleEl) titleEl.textContent = title || '更新说明';
         body.textContent = text || '暂无更新说明';
         host.classList.add('is-visible');
     }
@@ -141,7 +153,7 @@
             if (message) {
                 label.textContent = message;
             } else if (phase === 'probe') {
-                label.textContent = '正在测速 GitHub / Codeberg / 官网…';
+                label.textContent = '正在测速下载源（国内优先 GitCode）…';
             } else if (phase === 'extracting') {
                 label.textContent = version ? `正在解压 v${version}…` : '正在解压更新包…';
             } else if (phase === 'preparing' || phase === 'ready') {
@@ -165,7 +177,7 @@
             ) {
                 detail.textContent = message
                     || (phase === 'probe'
-                        ? '比较 GitHub、Codeberg 与官网速度，自动选择较快线路'
+                        ? '国内网络优先 GitCode；其余线路测速后自动回退'
                         : '请稍候，此阶段可能需要一段时间…');
             } else {
                 const parts = [];
@@ -211,12 +223,18 @@
         setMeta(res.message || '');
         if (!res.updateAvailable) {
             setStatus(res.message || `已是最新版本 v${res.currentVersion}`, 'ok');
-            setChangelog('');
+            setChangelog(res.releaseNotes, {
+                force: true,
+                title: changelogTitleForResult(res, { upToDate: true }),
+            });
             return;
         }
 
         setStatus(`发现新版本 v${res.latestVersion}`, 'info');
-        setChangelog(res.releaseNotes, { force: true });
+        setChangelog(res.releaseNotes, {
+            force: true,
+            title: changelogTitleForResult(res),
+        });
         const sources = Array.isArray(res.updateSources) ? res.updateSources.filter(Boolean) : [];
         const sourceHint = sources.length
             ? `可用更新源：${sources.join(' / ')}。`

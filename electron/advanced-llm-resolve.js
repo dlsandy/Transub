@@ -23,6 +23,8 @@ async function resolveAdvancedLlmConfig(doc, overrides = {}) {
     if (source === 'managed') {
         resolved = await managed.resolveManagedEndpoint(doc, {
             activeModelId: patch.activeModelId,
+            afterAsr: patch.afterAsr === true,
+            parallelPurpose: patch.parallelPurpose || 'mt',
             onProgress: typeof patch.onProgress === 'function' ? patch.onProgress : undefined,
             signal: patch.signal,
         });

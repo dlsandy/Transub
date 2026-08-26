@@ -35,6 +35,17 @@ describe('sakura-mt-catalog-core', () => {
         assert.strictEqual(sakuraCatalog.resolvePromptFamily('transub-ja-1.5b-q4km'), 'sakura');
     });
 
+    it('does not assign speculative draft ids to GalTransl MT models', () => {
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('sakura-galtransl-7b-q6k')?.draftModelId,
+            undefined,
+        );
+        assert.strictEqual(
+            sakuraCatalog.findCatalogEntry('sakura-galtransl-v4-4b')?.draftModelId,
+            undefined,
+        );
+    });
+
     it('resolves translate mode like settings (empty MT = Opus auto, not LLM)', () => {
         assert.strictEqual(sakuraCatalog.resolveTranslateModeFromOptions({ smartTranslate: true }), 'smart');
         assert.strictEqual(sakuraCatalog.resolveTranslateModeFromOptions({

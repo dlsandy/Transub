@@ -12,8 +12,13 @@
 <p align="center">
   <a href="https://github.com/dlsandy/Transub/releases">下载</a>
   ·
-- [变更记录](CHANGELOG.md)
-- [贡献指南](CONTRIBUTING.md)（公开仓边界与检查命令）
+  <a href="https://gitcode.com/AndyDai/Transub/releases">GitCode</a>
+  ·
+  <a href="https://codeberg.org/flyforyou/Transub/releases">Codeberg</a>
+  ·
+  <a href="CHANGELOG.md">变更记录</a>
+  ·
+  <a href="CONTRIBUTING.md">贡献指南</a>
   ·
   <a href="https://afdian.com/a/transub">爱发电 / Pro</a>
   ·
@@ -158,10 +163,10 @@ Pro 多出来的那一遍可以关（设置 → Pro → 智能翻译）。关掉
 | 安装 | 解压即用，没有安装程序 |
 | 依赖 | 识别、翻译、FFmpeg 都已带上，不必另装 Python |
 
-1. 打开 [Releases](https://github.com/dlsandy/Transub/releases)，下载 **zip**
+1. 打开 [Releases](https://github.com/dlsandy/Transub/releases)（国内也可从 [GitCode](https://gitcode.com/AndyDai/Transub/releases)），下载 **zip**
 2. 解压后运行 `Transub.exe`（同目录有编辑器快捷方式）
 3. 走完设置向导，再开始第一批任务
-4. 以后用软件里的「检查更新」即可；已经下载的模型会保留
+4. 以后用软件里的「检查更新」即可（国内网络优先 GitCode）；已经下载的模型会保留
 
 > [!NOTE]
 > 安装包目前没有代码签名。Windows 可能提示「未知发布者」，选仍要运行即可。可选把「用 Transub 生成字幕」加到右键菜单：`tools/register-context-menu.ps1`

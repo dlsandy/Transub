@@ -12,7 +12,7 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function advancedManagedLlmCatalogFactory() {
     const DEFAULT_SERVER_PORT = 39281;
-    const LLAMA_CPP_TAG = 'b10453';
+    const LLAMA_CPP_TAG = 'b10621';
     const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1';
     const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download';
     /** 未解锁 Pro 时目录可见的轻量模型上限（十亿）；智能翻译仍需 Pro */
@@ -244,6 +244,7 @@
             paramBillion: 7,
             freePipelineTranslate: true,
             recommended: true,
+            draftModelId: 'qwen25-1.5b',
             ollamaTag: 'qwen2.5:7b',
         },
         {
@@ -258,6 +259,7 @@
             ramHint: '建议 ≥16 GB 内存',
             note: '质量更好，适合影片理解重构（需 Pro）',
             paramBillion: 14,
+            draftModelId: 'qwen25-1.5b',
             ollamaTag: 'qwen2.5:14b',
         },
         {
@@ -272,6 +274,7 @@
             ramHint: '建议 ≥32 GB 内存 / 大显存',
             note: '高质量中文；需较强硬件与 Pro',
             paramBillion: 32,
+            draftModelId: 'qwen25-3b',
             ollamaTag: 'qwen2.5:32b',
         },
         {
@@ -331,6 +334,7 @@
             ramHint: '建议 ≥10 GB 内存',
             note: 'Qwen3 中文与推理更强；适合翻译与影片理解（需 Pro）',
             paramBillion: 8,
+            draftModelId: 'qwen3-1.7b',
             ollamaTag: 'qwen3:8b',
         },
         {
@@ -346,6 +350,7 @@
             note: 'Pro 推荐；约 10GB 显存甜点；智能翻译 / 训练台 / 语境重构高质量首选',
             paramBillion: 14,
             recommended: true,
+            draftModelId: 'qwen3-1.7b',
             ollamaTag: 'qwen3:14b',
         },
         {
@@ -360,6 +365,7 @@
             ramHint: '建议 ≥24 GB 内存；10GB 显存需部分卸内存',
             note: 'MoE：总参 30B、激活约 3B；比稠密 32B 更适中端显存抬高质量（需 Pro）',
             paramBillion: 30,
+            draftModelId: 'qwen3-1.7b',
             ollamaTag: 'qwen3:30b-a3b',
         },
         {
@@ -625,6 +631,7 @@
             note: 'Pro 大型；Qwen3 高质量中文与推理；适合复杂重构',
             paramBillion: 32,
             freePipelineTranslate: false,
+            draftModelId: 'qwen3-4b',
             ollamaTag: 'qwen3:32b',
         },
         {
@@ -640,6 +647,7 @@
             note: 'Pro 旗舰体量；中文质量顶尖；仅高配机器',
             paramBillion: 72,
             freePipelineTranslate: false,
+            draftModelId: 'qwen25-3b',
             ollamaTag: 'qwen2.5:72b',
         },
         {
@@ -855,7 +863,23 @@
             runtimeId: '',
             nGpuLayers: 99,
             contextSize: 8192,
+            /** off | auto | 2 | 3 | 4 — llama-server -np 与推理翻译客户端并发 */
+            llamaParallelMode: 'auto',
+            /** 实验：智能翻译 / 多轮 LLM 也启用并行（默认关，更占显存） */
+            llamaSmartTranslateParallel: false,
+            /** 实验：llama-server 推测解码（-md 小模型草稿，需同系列 draft 已安装） */
+            llamaSpeculativeEnabled: false,
         };
+    }
+
+    /** 主模型对应的推测解码草稿目录项（同系列小模型）。 */
+    function resolveDraftModelEntry(modelIdOrEntry) {
+        const entry = (modelIdOrEntry && typeof modelIdOrEntry === 'object')
+            ? modelIdOrEntry
+            : findCatalogEntry(modelIdOrEntry);
+        const draftId = String(entry?.draftModelId || '').trim();
+        if (!draftId) return null;
+        return findCatalogEntry(draftId);
     }
 
     /** 智能翻译实际使用的模型 id（未单独配置或配置为翻译专用时回退推理模型） */
@@ -910,6 +934,16 @@
         const port = Number(raw.serverPort);
         const nGpu = Number(raw.nGpuLayers);
         const ctx = Number(raw.contextSize);
+        let llamaTuning = null;
+        try {
+            llamaTuning = require('./llama-server-tuning-core');
+        } catch (_) { /* renderer may load before tuning core */ }
+        const normalizeParallelMode = llamaTuning?.normalizeLlamaParallelMode
+            || ((v) => (String(v || '').trim().toLowerCase() === 'off' ? 'off' : 'auto'));
+        const normalizeSmartParallel = llamaTuning?.normalizeSmartTranslateParallel
+            || ((v) => v === true || v === 1 || v === '1');
+        const normalizeSpeculative = llamaTuning?.normalizeSpeculativeEnabled
+            || ((v) => v === true || v === 1 || v === '1');
         return {
             activeModelId: String(raw.activeModelId || '').trim().slice(0, 64),
             smartTranslateModelId: String(raw.smartTranslateModelId || '').trim().slice(0, 64),
@@ -926,6 +960,9 @@
             ),
             nGpuLayers: Number.isFinite(nGpu) ? Math.max(0, Math.min(999, Math.round(nGpu))) : 99,
             contextSize: Number.isFinite(ctx) ? Math.max(512, Math.min(131072, Math.round(ctx))) : 8192,
+            llamaParallelMode: normalizeParallelMode(raw.llamaParallelMode),
+            llamaSmartTranslateParallel: normalizeSmartParallel(raw.llamaSmartTranslateParallel),
+            llamaSpeculativeEnabled: normalizeSpeculative(raw.llamaSpeculativeEnabled),
         };
     }
 
@@ -1098,6 +1135,7 @@
         listCatalogVisible,
         listFamilies,
         findCatalogEntry,
+        resolveDraftModelEntry,
         emptyManagedLlm,
         normalizeManagedLlm,
         resolveSmartTranslateModelId,
