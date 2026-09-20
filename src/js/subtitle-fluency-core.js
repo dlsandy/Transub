@@ -78,17 +78,91 @@
         return false;
     }
 
+    /**
+     * Whisper-debris loops only (玲奈×3 / ああああ). Keep framed lexical
+     * emphasis like「ああ、いるいるいる」(PRED-898) — not hallucination.
+     */
+    function isHallucinationHeavyRepetition(text) {
+        const raw = String(text || '').trim();
+        if (!hasHeavyRepetition(raw) || textCharCount(raw) > 24) return false;
+        const bare = raw.replace(/[。．.!！?？…、，,\s　~～ー〜・]+/g, '');
+        if (!bare) return false;
+        // Entire cue is one token repeated ≥3 (イキイキイキ / 玲奈玲奈玲奈)
+        if (/^(.{1,6})\1{2,}$/u.test(bare)) return true;
+        // Long same-char run with little else
+        if (/(.)\1{4,}/.test(bare) && textCharCount(bare) <= 12) return true;
+        return false;
+    }
+
+    /** Common 1–2 mora JA dialogue that must not die as "short hallucination". */
+    const SHORT_JA_DIALOGUE_KEEP = new Set([
+        'ほら', 'でも', 'ここ', 'そこ', 'あれ', 'これ', 'それ', 'なに', '何',
+        'まだ', 'もう', 'いや', 'ダメ', 'だめ', 'やめ', '見て', 'みて', '誰', 'どこ',
+        'そう', 'ねぇ', 'ねえ', '今', '綺麗', 'きれい', 'キレイ', '好き', '嫌い',
+        'ほんと', '本当',
+    ]);
+
+    function isKeepableShortJaDialogue(text) {
+        const bare = String(text || '')
+            .trim()
+            .replace(/[。．.!！?？…、，,\s　♪♫]+/g, '');
+        if (!bare) return false;
+        if (SHORT_JA_DIALOGUE_KEEP.has(bare)) return true;
+        const n = textCharCount(bare);
+        // 2-char with kanji → real word (綺麗/今日); crumbs like すご stay deletable
+        if (n === 2 && /[\u4e00-\u9fff]/.test(bare)) return true;
+        return false;
+    }
+
     function isCompressiblePhrase(phrase) {
         const s = String(phrase || '');
         if (!s || /^\s+$/.test(s)) return false;
         // 纯标点/省略号不压
         if (/^[。！？!?…·.•,，、；;:：\-—_~～"'「」『』【】[\]()（）\s]+$/.test(s)) return false;
-        return /[\u4e00-\u9fffA-Za-z0-9]/.test(s);
+        // Never compress a single Latin letter (www → ww！ wrecks URLs / software credit)
+        if (/^[A-Za-z]$/.test(s)) return false;
+        return /[\u4e00-\u9fffA-Za-z0-9\uac00-\ud7af]/.test(s);
+    }
+
+    function isAlphabeticCompressPhrase(phrase) {
+        const s = String(phrase || '').trim();
+        if (!s) return false;
+        if (/^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ'’\-]*$/u.test(s)) return true;
+        if (/^[\uac00-\ud7af]+$/u.test(s)) return true;
+        return false;
+    }
+
+    /** Spaced phrase made only of alphabetic tokens (e.g. "r o") — not for consecutive runs. */
+    function looksLikeSpacedAlphaPhrase(phrase) {
+        const s = String(phrase || '').trim();
+        if (!s || !/\s/.test(s)) return false;
+        return s.split(/\s+/).every((tok) => isAlphabeticCompressPhrase(tok));
+    }
+
+    function isAlphaTokenContinueChar(ch) {
+        return /[A-Za-zÀ-ɏ\uac00-\ud7af'’\-]/u.test(String(ch || ''));
+    }
+
+    function getSoftwareCreditCore() {
+        try {
+            return (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-software-credit-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function isSoftwareCreditProtectedText(text) {
+        const api = getSoftwareCreditCore();
+        return !!(api && typeof api.isSoftwareCreditText === 'function' && api.isSoftwareCreditText(text));
     }
 
     function absorbTrailingPartial(chars, end, phrase) {
         const phraseChars = Array.from(phrase);
         if (phraseChars.length < 2 || end >= chars.length) return end;
+        // Never eat the tail of a longer Latin/Hangul word (so + rry, but + ter).
+        if (isAlphabeticCompressPhrase(phrase)) return end;
         const minPrefix = Math.max(2, Math.ceil(phraseChars.length / 2));
         for (let prefixLen = phraseChars.length - 1; prefixLen >= minPrefix; prefixLen -= 1) {
             const prefix = phraseChars.slice(0, prefixLen);
@@ -146,23 +220,36 @@
             const phraseArr = chars.slice(i, i + plen);
             const phrase = phraseArr.join('');
             if (!isCompressiblePhrase(phrase)) continue;
+            // Alphabetic: only start a run at a token boundary (not mid "color"/"butter").
+            if (
+                (isAlphabeticCompressPhrase(phrase) || looksLikeSpacedAlphaPhrase(phrase))
+                && i > 0
+                && isAlphaTokenContinueChar(chars[i - 1])
+            ) {
+                continue;
+            }
 
-            // 无间隔连续重复
+            // 无间隔连续重复（短语本身不可含空白，否则 "r o"+"r o" 会切开 order）
             let count = 1;
             let pos = i + plen;
-            while (pos + plen <= chars.length) {
-                let same = true;
-                for (let k = 0; k < plen; k += 1) {
-                    if (chars[pos + k] !== phraseArr[k]) {
-                        same = false;
-                        break;
+            if (!/\s/.test(phrase)) {
+                while (pos + plen <= chars.length) {
+                    let same = true;
+                    for (let k = 0; k < plen; k += 1) {
+                        if (chars[pos + k] !== phraseArr[k]) {
+                            same = false;
+                            break;
+                        }
                     }
+                    if (!same) break;
+                    count += 1;
+                    pos += plen;
                 }
-                if (!same) break;
-                count += 1;
-                pos += plen;
+                // Latin/Hangul consecutive: need ≥3 copies (hahaha OK; couscous / needed ≠ cut)
+                if (!(isAlphabeticCompressPhrase(phrase) && plen >= 2 && count < 3)) {
+                    consider(phrase, count, pos);
+                }
             }
-            consider(phrase, count, pos);
 
             // 空白分隔重复：词 + 空白 + 词…
             count = 1;
@@ -179,6 +266,12 @@
                     }
                 }
                 if (!same) break;
+                // Alphabetic tokens: second hit must be a whole word, not "so"+"sorry".
+                // Also reject spaced phrases whose next hit lands mid-token.
+                if (isAlphabeticCompressPhrase(phrase) || looksLikeSpacedAlphaPhrase(phrase)) {
+                    const after = pos + ws + plen;
+                    if (after < chars.length && isAlphaTokenContinueChar(chars[after])) break;
+                }
                 count += 1;
                 pos = pos + ws + plen;
             }
@@ -193,6 +286,43 @@
         let out = `${phrase}${phrase}`;
         if (addExclaim && !/[。！？!?…]$/.test(out)) out += '！';
         return out;
+    }
+
+    /**
+     * Soft double-phrase echo (exactly 2 copies) with optional mid punct/space.
+     * e.g. 「会融化的，会融化的」→「会融化的」；「亏了光理亏了光理」→「亏了光理」.
+     * Does not touch intentional 3+ viewing compress (好的好的好的 → 好的好的！).
+     */
+    function collapseSoftDoublePhrase(text) {
+        const raw = String(text ?? '');
+        if (!raw.trim()) return { text: raw, changed: false };
+        let cur = raw;
+        // Whole cue: phrase + light sep + same phrase
+        cur = cur.replace(
+            /^([\u4e00-\u9fffA-Za-z0-9]{2,24})([\s，、,。．.…~～]{1,8})\1([。．.!！?？…~～]*)$/u,
+            '$1$3',
+        );
+        // Whole cue: no separator AABB (min 3 chars — keep 好的好的 for viewing compress)
+        cur = cur.replace(
+            /^([\u4e00-\u9fff]{3,16})\1([。．.!！?？…~～]*)$/u,
+            '$1$2',
+        );
+        // Mid / with spaces: 「真方面 真方面」
+        cur = cur.replace(
+            /^([\u4e00-\u9fff]{3,16})([\s，、,]{1,4})\1([。．.!！?？…~～]*)$/u,
+            '$1$3',
+        );
+        // Embedded AABB / soft doubles (亏了光理亏了光理是 / 风户濑吉风户濑吉酱)
+        let prev = '';
+        while (prev !== cur) {
+            prev = cur;
+            cur = cur.replace(/([\u4e00-\u9fff]{3,8})\1/gu, '$1');
+            cur = cur.replace(
+                /([\u4e00-\u9fff]{3,10})([\s，、,]{1,4})\1/gu,
+                '$1',
+            );
+        }
+        return { text: cur, changed: cur !== raw };
     }
 
     /** 旧版「词…词！」→「词词！」；顺带收掉叠词省略号形态。 */
@@ -217,6 +347,9 @@
      */
     function compressRepetitionInText(text, options = {}) {
         const raw = String(text ?? '');
+        if (isSoftwareCreditProtectedText(raw)) {
+            return { text: raw, changed: false, runs: 0 };
+        }
         const legacy = normalizeLegacyEllipsisRepetition(raw);
         const chars = Array.from(legacy);
         if (chars.length < 3) {
@@ -284,11 +417,26 @@
      * light：标点改空格（句号/顿号逗号/破折号/装饰省略号），保留问号与感叹号（多感叹压成一个）。
      * clear：在 light 基础上再把感叹号改空格，仅保留问号。
      */
+    /** MT blank stub / ellipsis-only cue — must survive viewing-punct strip. */
+    function isBlankMtPlaceholderText(text) {
+        const t = String(text ?? '').trim();
+        if (!t) return true;
+        return /^(?:\.\.\.|……|…|[。．.、，,\s…·•\-—_~～]+)$/.test(t);
+    }
+
     function simplifyViewingPunctuationInText(text, options = {}) {
         const raw = String(text ?? '');
         if (!raw) return { text: raw, changed: false };
         const level = normalizeViewingCleanLevel(options.level, 'light');
         if (level === 'off') return { text: raw, changed: false };
+        // Software credit URLs must keep dots (www.transub.cc → www transub cc)
+        if (isSoftwareCreditProtectedText(raw)) return { text: raw, changed: false };
+        // Pure «…» / punct stubs are MT blank slots — never erase them to empty
+        // (empty SRT bodies are dropped on the next parse → massive cue loss).
+        if (isBlankMtPlaceholderText(raw)) {
+            const normalized = /^(?:\.\.\.|……|…)$/.test(raw.trim()) ? '…' : raw.trim() || '…';
+            return { text: normalized, changed: normalized !== raw };
+        }
         let out = raw;
         // 破折号 / 波浪作停顿装饰 → 空格
         out = out.replace(/[—―–﹣－]+/g, ' ');
@@ -347,7 +495,16 @@
         for (let i = 0; i < next.length; i += 1) {
             if (indexSet && !indexSet.has(i)) continue;
             const before = String(next[i].text ?? '');
-            const { text, changed } = simplifyViewingPunctuationInText(before, { level });
+            let { text, changed } = simplifyViewingPunctuationInText(before, { level });
+            // Safety: never leave an empty body where a blank/punct stub was.
+            if (!String(text || '').trim() && isBlankMtPlaceholderText(before)) {
+                text = '…';
+                changed = text !== before;
+            } else if (!String(text || '').trim() && String(before || '').trim()) {
+                // Punct-only dialogue collapsed to empty — keep a slot marker.
+                text = '…';
+                changed = true;
+            }
             if (!changed) continue;
             next[i] = { ...next[i], text };
             changedIndexes.push(i);
@@ -578,6 +735,8 @@
     function isSoundEffectCue(text) {
         const raw = String(text || '').trim();
         if (!raw) return false;
+        // Sanitize / failed-MT blank stub — not an SFX tag.
+        if (/^(?:\.\.\.|……|…)$/.test(raw)) return false;
         if (SOUND_EFFECT_RE.test(raw)) return true;
         // ♪…♫ / ◆… 纯乐符、章节标记行
         if (/^[♪♫♩♬◆◇■□★☆●○◎※\s·.•…\-—_]+$/.test(raw)) return true;
@@ -673,10 +832,76 @@
         return Math.max(0, end - start);
     }
 
+    /** Long slots with lexical content should not be dropped as pure filler/noise. */
+    const SUBSTANTIVE_DIALOGUE_MIN_DUR_MS = 1200;
+
+    function substantiveTextLength(text) {
+        return String(text || '').replace(/[\s。．.!！?？…·.•\-—_~～ー、，,・♡♥❤♪☆★]+/g, '').length;
+    }
+
+    function isPureKanaMoanRun(text) {
+        const t = stripInterjectionDecor(text).replace(/[。．.!！?？…、，,\s]+/g, '');
+        if (t.length < 2) return false;
+        return /^[あぁアァいぃイィうぅウゥえぇエェおぉオォはハひヒふフへヘほホんンー〜～っッ]+$/.test(t);
+    }
+
+    function hasSubstantiveDialogueMarkers(text) {
+        const raw = stripInterjectionDecor(text);
+        if (!raw) return false;
+        if (isPureOnomatopoeiaZh(raw) || isPureOnomatopoeiaJa(raw)
+            || isPureOnomatopoeiaEn(raw) || isPureOnomatopoeiaKo(raw)) {
+            return false;
+        }
+        if (isPureDiscourseZh(raw) || isPureDiscourseJa(raw)
+            || isPureDiscourseEn(raw) || isPureDiscourseKo(raw)) {
+            return false;
+        }
+        if (/(?:です|ます|ない|ません|てる|って|から|ので|けど|なの|だよ|でしょ|ちゃん|くん|さん|君|私|僕|俺|彼女|これ|それ|あれ|どう|何|なに|なん|どこ|誰|いつ|待って|やめ|だめ)/i.test(raw)) {
+            return true;
+        }
+        const bare = raw.replace(/[。．.!！?？…、，,\s]+/g, '');
+        if (bare.length >= 2 && /[\u4e00-\u9fff]/.test(bare)) {
+            const lower = raw.toLowerCase();
+            if (HALLUCINATION_EXACT.has(raw) || HALLUCINATION_EXACT.has(lower)) return false;
+            if (isShortSfxGlossZh(raw)) return false;
+            if (isPureDiscourseZh(raw) || isPureOnomatopoeiaZh(raw)) return false;
+            if (isPureDiscourseJa(raw) || isPureOnomatopoeiaJa(raw)) return false;
+            return true;
+        }
+        if (/\b[A-Za-z]{4,}\b/.test(raw)) {
+            // Latin length alone must not protect pure EN fillers (Okay / haha / bang).
+            if (isPureInterjectionEn(raw)) return false;
+            return true;
+        }
+        if (/[\uac00-\ud7af]{2,}/.test(raw) && isPureInterjectionKo(raw)) return false;
+        return false;
+    }
+
+    function shouldPreserveSubstantiveDialogueCue(cue, text) {
+        const raw = String(text || '').trim();
+        if (!raw || isBlankOrPunctOnly(raw)) return false;
+        if (isSoundEffectCue(raw)) return false;
+        if (isPureInterjectionEn(raw) || isPureInterjectionKo(raw)
+            || isPureInterjectionJa(raw) || isPureInterjectionZh(raw)) {
+            return false;
+        }
+        if (hasSubstantiveDialogueMarkers(raw)) return true;
+        const dur = cue ? cueDurationMs(cue) : 0;
+        const chars = substantiveTextLength(raw);
+        if (dur >= SUBSTANTIVE_DIALOGUE_MIN_DUR_MS && chars >= 4 && !isPureKanaMoanRun(raw)) {
+            return true;
+        }
+        return false;
+    }
+
     function isHallucinationCue(cueOrText, options = {}) {
         const cue = cueOrText && typeof cueOrText === 'object' ? cueOrText : null;
         const raw = String(cue ? cue.text : cueOrText || '').trim();
         if (!raw) return false;
+        // MT sanitize blank placeholder — keep for blank retranslate, not ASR hallucination.
+        if (/^(?:\.\.\.|……|…)$/.test(raw)) return false;
+        // Never treat Transub software-credit watermarks as URL hallucinations.
+        if (isSoftwareCreditProtectedText(raw)) return false;
         const maxChars = Math.max(1, Number(options.maxChars) || 12);
         const maxDurMs = Math.max(100, Number(options.maxDurMs) || 1200);
         const lower = raw.toLowerCase();
@@ -684,14 +909,25 @@
         if (HALLUCINATION_RE.test(raw)) return true;
         if (PROMPT_LEAK_RE.test(raw)) return true;
         if (raw.length <= 24 && LATIN_CJK_JAM_RE.test(raw)) return true;
-        if (hasHeavyRepetition(raw) && textCharCount(raw) <= 24) return true;
+        if (isHallucinationHeavyRepetition(raw)) return true;
         if (/https?:\/\/|www\./i.test(raw) && textCharCount(raw) <= 40) return true;
         // Keep soft-AV moan / short stock fills (嗯嗯 / 哈…) on translate tracks.
         if (SOFT_INTERJECTION_KEEP_RE.test(raw)) return false;
+        // Keep real name-call cues (理沙 / 玲奈…) — not Whisper short garbage (MFYD-185).
+        if (jaNames?.isKeepablePersonNameVocative?.(raw)) return false;
+        // Keep short JA dialogue (綺麗/ほら/でも/ここ) — EBWH/FNS short-halluc false positives.
+        if (isKeepableShortJaDialogue(raw)) return false;
+        if (cue && shouldPreserveSubstantiveDialogueCue(cue, raw)) return false;
         if (cue) {
-            const chars = textCharCount(raw);
+            const bare = raw.replace(/[。．.!！?？…、，,\s　♪♫]+/g, '');
+            const chars = textCharCount(bare || raw);
             const dur = cueDurationMs(cue);
-            if (chars <= 2 && dur > 0 && dur <= maxDurMs) return true;
+            // 1-mora / lone crumb only. 2-char JA words handled above or kept.
+            if (chars <= 1 && dur > 0 && dur <= maxDurMs) return true;
+            // 2-char kana crumbs (すご/しよ) without keep-list / kanji
+            if (chars === 2 && dur > 0 && dur <= maxDurMs && !/[\u4e00-\u9fff]/.test(bare)) {
+                return true;
+            }
             if (chars <= maxChars && dur > 0 && dur <= Math.min(maxDurMs, 800) && /^(完毕|结束|完了|okay|ok|はい|うん)$/i.test(raw)) {
                 return true;
             }
@@ -792,6 +1028,12 @@
                 reason = 'duplicate';
             }
             if (reason) {
+                if (reason !== 'duplicate' && shouldPreserveSubstantiveDialogueCue(cue, text)) {
+                    kept.push(cue);
+                    prevKeptText = text;
+                    stats.kept += 1;
+                    continue;
+                }
                 if (opts.blankInsteadOfRemove) {
                     // Keep timing slot; avoid re-flagging the placeholder as symbol-only noise
                     const alreadyBlank = text === placeholder || text === '...' || text === '……';
@@ -825,9 +1067,13 @@
      * Drop a JA↔ZH pair only when JA is junk, or both sides are filler.
      * Do not delete real JA dialogue just because ZH collapsed to 嗯/哈哈.
      */
-    function shouldDropAlignedNoisePair(zhReason, jaReason, zhText, jaText) {
+    function shouldDropAlignedNoisePair(zhReason, jaReason, zhText, jaText, zhCue = null, jaCue = null) {
         const zh = String(zhText || '').trim();
         const ja = String(jaText || '').trim();
+        if (shouldPreserveSubstantiveDialogueCue(zhCue, zh)
+            || shouldPreserveSubstantiveDialogueCue(jaCue, ja)) {
+            return false;
+        }
         const zhBlank = !zh || zhReason === 'empty' || isBlankOrPunctOnly(zh);
         if (HARD_JA_NOISE.has(jaReason)) return true;
         const jaFiller = !!jaReason || isPureInterjectionJa(ja);
@@ -941,7 +1187,14 @@
             const jaReason = classifyNoiseCue(jaWork[i], jaOpts, prevJaKept);
             const zhText = String(zhWork[i]?.text || '').trim();
             const jaText = String(jaWork[i]?.text || '').trim();
-            const shouldDrop = shouldDropAlignedNoisePair(zhReason, jaReason, zhText, jaText);
+            const shouldDrop = shouldDropAlignedNoisePair(
+                zhReason,
+                jaReason,
+                zhText,
+                jaText,
+                zhWork[i],
+                jaWork[i],
+            );
             if (shouldDrop) {
                 drop.add(i);
                 reasonAt[i] = jaReason || zhReason;
@@ -999,8 +1252,11 @@
                 if (cuesOverlap(zhRanges[i], jaRanges[j])) overs.push(j);
             }
             if (!overs.length) {
-                zhDrop.add(i);
-                reasonAtZh[i] = zhReason;
+                // Mismatched timelines: only drop hard junk, not orphan dialogue slots.
+                if (HARD_JA_NOISE.has(zhReason) || zhReason === 'empty') {
+                    zhDrop.add(i);
+                    reasonAtZh[i] = zhReason;
+                }
                 continue;
             }
             const jaReasons = overs.map((j) => classifyNoiseCue(jaList[j], jaOpts, ''));
@@ -1037,8 +1293,10 @@
                 if (cuesOverlap(jaRanges[j], zhRanges[i])) overs.push(i);
             }
             if (!overs.length) {
-                jaDrop.add(j);
-                reasonAtJa[j] = jaReason;
+                if (HARD_JA_NOISE.has(jaReason) || jaReason === 'empty') {
+                    jaDrop.add(j);
+                    reasonAtJa[j] = jaReason;
+                }
                 continue;
             }
             const allZhNoiseOrDrop = overs.every((i) => (
@@ -1055,6 +1313,13 @@
                     }
                 }
             }
+        }
+
+        for (const i of [...zhDrop]) {
+            if (shouldPreserveSubstantiveDialogueCue(zhList[i], zhList[i]?.text)) zhDrop.delete(i);
+        }
+        for (const j of [...jaDrop]) {
+            if (shouldPreserveSubstantiveDialogueCue(jaList[j], jaList[j]?.text)) jaDrop.delete(j);
         }
 
         const zhOut = [];
@@ -1138,7 +1403,7 @@
             return false;
         }
         if (isSemanticIiJaToken(t)) return false;
-        return /^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|(?:よし)+|ん+|んん+|あら|おや|えっと+|えーと+|えー+|あのー+)$/i.test(t);
+        return /^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|そっか|そうか|そうね|そうだね|まあ+|ふむ|ふん|(?:よし)+|ん+|んん+|あら|おや|えっと+|えーと+|えー+|あのー+|そっかぁ?)$/i.test(t);
     }
 
     /** JA onomatopoeia / breath / laugh (拟声). */
@@ -1149,17 +1414,17 @@
         if (!t) return true;
         if (isSemanticIiJaToken(t)) return false;
         if (/いい|良い/.test(t)) return false;
-        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|うぅ+|やっ|ひゃっ?)$/i.test(t)) {
+        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|へえ+|へー+|ほう+|ほぅ+|うぅ+|やっ|ひゃっ?|きゃっ?|ぎゃっ?|どきっ?|びくっ?|んっ+|くっ+)$/i.test(t)) {
             return true;
         }
-        if (/^(?:[うウ]?ふふ+[うっゥッ]*|[えエ]?へへ+[えっェッ]*|[あア]?はは+[あっァッ]*|んふ[ぅうゥウっッ]*|くぅ+[っッ]?|くっ|むぅ+|んむ+|もぐ+|むにゃ[ぁア]*|もぐもぐ+|ぽりぽり+|ずずず+|ちゅば[っつ]*|ガルル+|ぐぬぬ*)$/i.test(t)) {
+        if (/^(?:[うウ]?ふふ+[うっゥッ]*|[えエ]?へへ+[えっェッ]*|[あア]?はは+[あっァッ]*|んふ[ぅうゥウっッ]*|くぅ+[っッ]?|くっ|むぅ+|んむ+|もぐ+|むにゃ[ぁア]*|もぐもぐ+|ぽりぽり+|ずずず+|ちゅば[っつ]*|ガルル+|ぐぬぬ*|どきどき+|ずん+|どん+|がっ+|ばっ+|ぱっ+)$/i.test(t)) {
             return true;
         }
         // Short wet/muffled oral scraps often left as standalone cues
         if (/^(?:んぶ+[ぅうっゥッ]*|んむ+[ぅうっゥッ]*|むぐ+|ぐすっ?|ちゅ[っプぷぼば]+|じゅ[っるりゅ]*|ず[ずっ]+|ぽり+|もぐ+|ぐぬ+|ガル[ルる]*)$/i.test(t)) {
             return true;
         }
-        if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+|ヒャッ?|ヤッ)$/i.test(t)) {
+        if (/^(?:ア+|ウ+|ン+|ハッ+|ハァ+|フウ+|クン+|ヒャッ?|ヤッ|キャッ?|ギャッ?|ドキッ?|ビクッ?)$/i.test(t)) {
             return true;
         }
         if (/^[あぁアァいぃイィうぅウゥえぇエェおぉオオはハひヒふフへヘほホッッんンくクむムー〜～ー]+$/i.test(t)) {
@@ -1198,7 +1463,7 @@
         const t = stripInterjectionDecor(text);
         if (!t) return false;
         if (isBlankOrPunctOnly(t)) return false;
-        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|(?:よし)+|ん+|んん+|あら|おや|えっと+|えーと+|えー+|あのー+)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+        if (/^(?:うん+|ううん+|ええ+|えぇ+|えっ|え|はい+|ねえ+|ねぇ+|そう|そっか|そうか|そうね|そうだね|まあ+|ふむ|ふん|(?:よし)+|ん+|んん+|あら|おや|えっと+|えーと+|えー+|あのー+)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
             return true;
         }
         return everySplitToken(t, isPureDiscourseJaToken)
@@ -1209,7 +1474,7 @@
         const t = stripInterjectionDecor(text);
         if (!t) return false;
         if (isBlankOrPunctOnly(t)) return false;
-        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
+        if (/^(?:ああ+|あぁ+|あっ+|あん+|ああん+|はぁ+|はあ+|ハァ+|ふぅ+|ふう+|きゃっ?|ぎゃっ?|どきっ?|びくっ?)[。．!！?？\s…ー〜～っッ]*$/i.test(t)) {
             return true;
         }
         if (/^[はハひヒふフへヘほホあぁアァいぃイィうぅウゥえぇエェおぉオォんンー〜～っッ!！?？…。．.\s♡♥❤くクむム]+$/i.test(t)) {
@@ -1259,7 +1524,7 @@
         if (!raw) return true;
         const t = raw.replace(/[。．.!！?？]+$/g, '').trim();
         if (!t) return true;
-        return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯+|嗯好|好[哦喔]|没错|哎呀|喂)$/u.test(t);
+        return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|嗯+|嗯好|嗯哼|嗯嗯|好[哦喔]|没错|哎呀|喂|唉|欸|呃|额|喏|哦哟)$/u.test(t);
     }
 
     function isPureOnomatopoeiaZhToken(token) {
@@ -1267,14 +1532,15 @@
         if (!raw) return true;
         const t = raw.replace(/[。．.!！?？]+$/g, '').trim();
         if (!t) return true;
-        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯好|好[哦喔]|没错)$/u.test(t)) {
+        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|嗯好|好[哦喔]|没错)$/u.test(t)) {
             return false;
         }
         if (/^(?:bump|boeh|yuk|hamu|hinin|huh|aki|mun|breath|hic|chu|urg|hya|ank|yoshun)[~～\-—_!.]*$/i.test(t)) {
             return true;
         }
-        if (/^(?:咯吱|咔嚓|咕啾|啪嗒){1,3}$/u.test(t)) return true;
-        return /^(?:哈啊?|啊+|呜+|呼+|诶+|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|啧|嗯+|唔嗯|嗯唔|嗯啊|咕+)$/u.test(t);
+        if (/^(?:咯吱|咔嚓|咕啾|啪嗒|嘿嘿|嘻嘻|咯咯|呜呜){1,3}$/u.test(t)) return true;
+        if (/^(?:砰+|嘭+|咚+|叮+|嗡+|咔+|嚓+|啪+|哗+)$/u.test(t)) return true;
+        return /^(?:哈啊?|啊+|呜+|呼+|诶+|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|啧|嗯+|唔嗯|嗯唔|嗯啊|咕+|唉+|欸+)$/u.test(t);
     }
 
     function isPureInterjectionZhToken(token) {
@@ -1285,7 +1551,7 @@
         const t = stripInterjectionDecor(text);
         if (!t) return true;
         if (isBlankOrPunctOnly(t)) return true;
-        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯好|好[哦喔]|没错|哎呀)[。．.!！?？\s…·.•]*$/u.test(t)) {
+        if (/^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|嗯好|嗯哼|好[哦喔]|没错|哎呀|唉|欸|呃|额|喏|哦哟)[。．.!！?？\s…·.•]*$/u.test(t)) {
             return true;
         }
         if (/^(?:嗯+)[。．.!！?？\s…·.•]*$/u.test(t)) return true;
@@ -1296,29 +1562,29 @@
             .filter(Boolean);
         if (parts.length >= 1 && parts.every((p) => isPureDiscourseZhToken(p))) {
             // Reject if all tokens are also pure onomatopoeia-only (e.g. 呵呵)
-            if (parts.every((p) => isPureOnomatopoeiaZhToken(p) && !/^(?:好的?|是|对|行|嗯|哎呀|喂)/u.test(p))) {
+            if (parts.every((p) => isPureOnomatopoeiaZhToken(p) && !/^(?:好的?|是|对|行|嗯|哎呀|喂|唉|欸|呃|额|喏)/u.test(p))) {
                 return false;
             }
             return true;
         }
         const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
-        return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|嗯+|嗯好|好哦|好喔|没错|哎呀)$/u.test(bare);
+        return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|嗯+|嗯好|嗯哼|好哦|好喔|没错|哎呀|唉|欸|呃|额|喏|哦哟)$/u.test(bare);
     }
 
     function isPureOnomatopoeiaZh(text) {
         const t = stripInterjectionDecor(text);
         if (!t) return true;
         if (isBlankOrPunctOnly(t)) return true;
-        if (/^(?:(?:哈啊?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|嗯+|唔嗯|嗯唔|嗯啊)[…·.•。．.!！?？\s]*)+$/u.test(t)) {
+        if (/^(?:(?:哈啊?|啊啊?|呜+|呼+|诶诶?|呵呵+|唔+|哦+|噢+|嘿+|嗨+|呵+|哼+|呀+|哟+|哇+|嘶|嘻+|嗯+|唔嗯|嗯唔|嗯啊|嘿嘿+|嘻嘻+|咯咯+|呜呜+)[…·.•。．.!！?？\s]*)+$/u.test(t)) {
             return true;
         }
-        if (/^(?:啊[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?)$/.test(t)) {
+        if (/^(?:啊[，,。．.]?|哦[，,。．.]?|噢[，,。．.]?|哈[哈呵]?[。．.!！]?|呵呵[，,。．.]?|嗨[，,。．.]?|嘿[，,。．.]?|啧[，,。．.]?|砰+|嘭+|咚+|叮+|嗡+|啪+)$/.test(t)) {
             return true;
         }
         // Mixed moan stacks: 嗯嗯哈啊 / 嗯唔嗯嗯 / 唔嗯唔嗯
         {
             const bare = t.replace(/[。．.、，,\s…·.•\-—_~～！!？?♡♥❤♪☆★]+/g, '');
-            if (bare && /^(?:嗯|唔|哈|啊|呜|呼|哦|噢|嘿|呵|哼|呀|哟|哇|嘶|嘻|诶|欸|嗨|咕|咯|吱|咔|嚓|啪|砰|嘭|咚)+$/.test(bare)) {
+            if (bare && /^(?:嗯|唔|哈|啊|呜|呼|哦|噢|嘿|呵|哼|呀|哟|哇|嘶|嘻|诶|欸|嗨|咕|咯|吱|咔|嚓|啪|砰|嘭|咚|叮|嗡|哗|唉)+$/.test(bare)) {
                 return true;
             }
             // Repeated 1–2 CJK SFX glosses: 咯吱咯吱 / 咔咔
@@ -1358,6 +1624,407 @@
         return everySplitToken(t, isPureInterjectionZhToken);
     }
 
+    // ── English 语气 / 拟声（成片 en）─────────────────────────────────
+    const EN_DISCOURSE_TOKEN_RE = /^(?:ok|okay|yes|yeah|yep|yup|nope|no|right|sure|fine|uh-?huh|mm-?hmm|mhm|hmm+|mm+|oh|ah|eh|hey|well|huh|uh+|um+|erm?|aye)(?:[.!?…~]*)?$/i;
+    const EN_ONO_TOKEN_RE = /^(?:ha(?:ha)+|he(?:he)+|hi(?:hi)+|ho(?:ho)+|ahaha+|lol|lmao|ouch|ow+|ahh*|ohh*|ugh+|eww+|argh+|grr+|bang|boom|crash|thud|whoosh|splash|drip|beep|ding|pow|smack|gasp|sigh|hic|chu+|yum+|meow|woof|bump|boeh|yuk|hamu|hinin|aki|mun|breath|urg|hya|ank|yoshun)(?:[.!?…~]*)?$/i;
+    const EN_KEEP_DIALOGUE_RE = /^(?:sorry|thanks?|please|stop|wait|help|love|come|go|look|listen|what|why|who|how|when|where|really|maybe|never|always|hello|bye|goodbye|good\s*night|good\s*morning)$/i;
+
+    function isPureDiscourseEnToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[.!?…]+$/g, '').trim();
+        if (!t) return true;
+        if (EN_KEEP_DIALOGUE_RE.test(t)) return false;
+        return EN_DISCOURSE_TOKEN_RE.test(t);
+    }
+
+    function isPureOnomatopoeiaEnToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[.!?…]+$/g, '').trim();
+        if (!t) return true;
+        if (EN_KEEP_DIALOGUE_RE.test(t)) return false;
+        if (EN_DISCOURSE_TOKEN_RE.test(t) && !/^(?:oh|ah|uh+|um+|hmm+|mm+)$/i.test(t)) {
+            return false;
+        }
+        if (EN_ONO_TOKEN_RE.test(t)) return true;
+        // Short vowel / nasal moan runs only
+        return /^(?:[aeiou]h*|[mn]{2,}|ngh+)(?:\s+(?:[aeiou]h*|[mn]{2,}|ngh+)){0,3}$/i.test(t)
+            && t.length <= 16;
+    }
+
+    function isPureDiscourseEn(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return false;
+        const one = t.replace(/[.!?…\s]+$/g, '').trim();
+        if (EN_KEEP_DIALOGUE_RE.test(one)) return false;
+        if (EN_DISCOURSE_TOKEN_RE.test(one)) return true;
+        return everySplitToken(t, isPureDiscourseEnToken)
+            && !everySplitToken(t, (p) => isPureOnomatopoeiaEnToken(p) && !isPureDiscourseEnToken(p));
+    }
+
+    function isPureOnomatopoeiaEn(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return false;
+        const one = t.replace(/[.!?…\s]+$/g, '').trim();
+        if (EN_KEEP_DIALOGUE_RE.test(one)) return false;
+        if (EN_ONO_TOKEN_RE.test(one)) return true;
+        if (/^(?:(?:ha|he|hi|ho){2,}|\b(?:bang|boom|crash|thud|whoosh|ouch|ow|ugh|eww|argh|grr)\b)(?:[\s.!?…,~]*)+$/i.test(t)) {
+            return true;
+        }
+        // Latin-letter moan soup without real words
+        if (/^[A-Za-z\s.!?\-~…]+$/.test(t)
+            && !/\b(?:i|you|we|he|she|they|the|a|an|to|of|and|is|are|was|my|me|it)\b/i.test(t)
+            && everySplitToken(t, isPureOnomatopoeiaEnToken)) {
+            return true;
+        }
+        return everySplitToken(t, isPureOnomatopoeiaEnToken) && !isPureDiscourseEn(t);
+    }
+
+    function isPureInterjectionEn(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return true;
+        if (isPureDiscourseEn(t) || isPureOnomatopoeiaEn(t)) return true;
+        return everySplitToken(t, (p) => isPureDiscourseEnToken(p) || isPureOnomatopoeiaEnToken(p));
+    }
+
+    // ── Korean 语气 / 拟声（成片 ko）─────────────────────────────────
+    const KO_DISCOURSE_TOKEN_RE = /^(?:응+|네+|예+|어+|음+|아(?!니)|오+|그래|맞아|헐|에+|엥+|흠+|네네|응응|알겠어|알았어|아니|아니요|아냐|좋아)$/u;
+    const KO_ONO_TOKEN_RE = /^(?:하(?:하)+|헤(?:헤)+|호(?:호)+|히(?:히)+|흐(?:흐)+|흑+|엉+|으악|아야+|아아+|오오+|우와+|헉+|읍+|풉+|킥+|껄껄+|두근+|콩콩+|쿵+|쾅+|빵+|톡+|찌릿+|윙윙+|달그락+|엉엉+)$/u;
+    const KO_KEEP_DIALOGUE_RE = /^(?:미안|죄송|부탁|제발|멈춰|기다려|사랑|안녕|고마워|감사합니다)$/u;
+
+    function isPureDiscourseKoToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[.!?…。．！？]+$/g, '').trim();
+        if (!t) return true;
+        if (KO_KEEP_DIALOGUE_RE.test(t)) return false;
+        return KO_DISCOURSE_TOKEN_RE.test(t);
+    }
+
+    function isPureOnomatopoeiaKoToken(token) {
+        const raw = stripInterjectionDecor(token);
+        if (!raw) return true;
+        const t = raw.replace(/[.!?…。．！？]+$/g, '').trim();
+        if (!t) return true;
+        if (KO_KEEP_DIALOGUE_RE.test(t)) return false;
+        if (KO_DISCOURSE_TOKEN_RE.test(t) && !/^(?:아|오|어|음|흠)/u.test(t)) return false;
+        if (KO_ONO_TOKEN_RE.test(t)) return true;
+        // Short hangul moan / breath runs (no lexical Hangul syllables of dialogue)
+        return /^[ㅏ-ㅣㄱ-ㅎ아어오우으음흡흑ㅋㅎ푸읍]+$/u.test(t) && t.length <= 8;
+    }
+
+    function isPureDiscourseKo(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return false;
+        const one = t.replace(/[.!?…。．！？\s]+$/g, '').trim();
+        if (KO_KEEP_DIALOGUE_RE.test(one)) return false;
+        if (KO_DISCOURSE_TOKEN_RE.test(one)) return true;
+        return everySplitToken(t, isPureDiscourseKoToken)
+            && !everySplitToken(t, (p) => isPureOnomatopoeiaKoToken(p) && !isPureDiscourseKoToken(p));
+    }
+
+    function isPureOnomatopoeiaKo(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return false;
+        const one = t.replace(/[.!?…。．！？\s]+$/g, '').trim();
+        if (KO_KEEP_DIALOGUE_RE.test(one)) return false;
+        if (KO_ONO_TOKEN_RE.test(one)) return true;
+        {
+            const bare = t.replace(/[.!?…。．！？、，,\s·.•\-—_~～♡♥❤♪☆★]+/g, '');
+            if (bare && /^(?:하|헤|호|히|흐|흑|엉|아|오|우|헉|읍|풉|킥|콩|쿵|쾅|빵|톡)+$/u.test(bare)) {
+                return true;
+            }
+        }
+        return everySplitToken(t, isPureOnomatopoeiaKoToken) && !isPureDiscourseKo(t);
+    }
+
+    function isPureInterjectionKo(text) {
+        const t = stripInterjectionDecor(text);
+        if (!t) return false;
+        if (isBlankOrPunctOnly(t)) return true;
+        if (isPureDiscourseKo(t) || isPureOnomatopoeiaKo(t)) return true;
+        return everySplitToken(t, (p) => isPureDiscourseKoToken(p) || isPureOnomatopoeiaKoToken(p));
+    }
+
+    /** Normalize filler-detection language: zh | ja | en | ko */
+    function normalizeFillerLang(lang = '') {
+        const raw = String(lang || '').trim().toLowerCase();
+        if (!raw || raw === 'zh' || raw.startsWith('zh') || /hans|hant|chinese|中文/.test(raw)) return 'zh';
+        if (raw === 'ja' || raw.startsWith('ja') || /日本語|japanese/.test(raw)) return 'ja';
+        if (raw === 'ko' || raw.startsWith('ko') || /한국어|korean/.test(raw)) return 'ko';
+        if (raw === 'en' || raw.startsWith('en') || /english/.test(raw)) return 'en';
+        try {
+            const tgt = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-target-lang-core')
+                : null;
+            if (tgt?.resolveSubtitleTargetLang) {
+                const n = tgt.resolveSubtitleTargetLang({
+                    subtitleTargetLang: lang,
+                    targetLang: lang,
+                });
+                if (n === 'en' || n === 'ko' || n === 'ja') return n;
+                if (tgt.isZhSubtitleTarget?.(n)) return 'zh';
+            }
+        } catch { /* optional */ }
+        return 'zh';
+    }
+
+    function isPureDiscourseForLang(text, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'en') return isPureDiscourseEn(text);
+        if (bucket === 'ko') return isPureDiscourseKo(text);
+        if (bucket === 'ja') return isPureDiscourseJa(text);
+        return isPureDiscourseZh(text);
+    }
+
+    function isPureOnomatopoeiaForLang(text, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'en') return isPureOnomatopoeiaEn(text);
+        if (bucket === 'ko') return isPureOnomatopoeiaKo(text);
+        if (bucket === 'ja') return isPureOnomatopoeiaJa(text);
+        return isPureOnomatopoeiaZh(text);
+    }
+
+    function isPureInterjectionForLang(text, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'en') return isPureInterjectionEn(text);
+        if (bucket === 'ko') return isPureInterjectionKo(text);
+        if (bucket === 'ja') return isPureInterjectionJa(text);
+        return isPureInterjectionZh(text);
+    }
+
+    function isPureDiscourseTokenForLang(token, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'en') return isPureDiscourseEnToken(token);
+        if (bucket === 'ko') return isPureDiscourseKoToken(token);
+        if (bucket === 'ja') return isPureDiscourseJaToken(token);
+        return isPureDiscourseZhToken(token);
+    }
+
+    function isPureOnomatopoeiaTokenForLang(token, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'en') return isPureOnomatopoeiaEnToken(token);
+        if (bucket === 'ko') return isPureOnomatopoeiaKoToken(token);
+        if (bucket === 'ja') return isPureOnomatopoeiaJaToken(token);
+        return isPureOnomatopoeiaZhToken(token);
+    }
+
+    function isPureInterjectionTokenForLang(token, lang = 'zh') {
+        return isPureDiscourseTokenForLang(token, lang)
+            || isPureOnomatopoeiaTokenForLang(token, lang);
+    }
+
+    function buildInlineFillerTokenPred(options = {}) {
+        const checkDiscourse = options.checkDiscourse !== false;
+        const checkOnomatopoeia = options.checkOnomatopoeia !== false;
+        const langHint = options.lang || options.targetLang || '';
+        return (token) => {
+            const detected = detectFillerLineLang(token) || normalizeFillerLang(langHint || 'zh');
+            const langs = detected
+                ? [detected, ...['ja', 'zh', 'en', 'ko'].filter((l) => l !== detected)]
+                : ['ja', 'zh', 'en', 'ko'];
+            for (const lang of langs) {
+                if (checkDiscourse && checkOnomatopoeia) {
+                    if (isPureInterjectionTokenForLang(token, lang)) return { kind: isPureOnomatopoeiaTokenForLang(token, lang) && !isPureDiscourseTokenForLang(token, lang) ? 'onomatopoeia' : 'discourse', lang };
+                } else if (checkDiscourse && isPureDiscourseTokenForLang(token, lang)) {
+                    return { kind: 'discourse', lang };
+                } else if (checkOnomatopoeia && isPureOnomatopoeiaTokenForLang(token, lang)) {
+                    return { kind: 'onomatopoeia', lang };
+                }
+            }
+            return null;
+        };
+    }
+
+    function tidyAfterFillerStrip(text) {
+        return String(text || '')
+            .replace(/[ \t\u3000]+/g, ' ')
+            .replace(/^[、，,・·.•…\s]+|[、，,・·.•…\s]+$/g, '')
+            .replace(/([、，,])\1+/g, '$1')
+            .replace(/\s*([、，,])\s*/g, '$1')
+            .replace(/^[、，,]+|[、，,]+$/g, '')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trim();
+    }
+
+    /**
+     * Peel a leading/trailing filler token glued without separators (e.g. 「嗯我知道了」).
+     * Ambiguous short acks (好/是/对/ok…) are only removed when split by punctuation, not glued.
+     */
+    function isAmbiguousGluedFillerToken(token) {
+        const t = String(token || '').replace(/[。．.!！?？…~～]+$/g, '').trim();
+        if (!t) return true;
+        return /^(?:好的?|是的?|是啊|对的?|对啊|对|行|行吧|好吧|好[哦喔]|没错|ok|okay|yes|yeah|yep|yup|no|nope|right|sure|fine|well|hey|네|예|그래|맞아|좋아|そう|はい|ええ)$/i.test(t);
+    }
+
+    function peelEdgeFillerToken(text, tokenPred, edge) {
+        const raw = String(text || '');
+        if (!raw.trim()) return { text: raw, removed: null };
+        const maxLen = Math.min(12, Math.max(0, raw.length - 1));
+        for (let len = maxLen; len >= 1; len -= 1) {
+            const head = edge === 'leading' ? raw.slice(0, len) : raw.slice(-len);
+            const restRaw = edge === 'leading' ? raw.slice(len) : raw.slice(0, -len);
+            const hit = tokenPred(head);
+            if (!hit) continue;
+            if (isAmbiguousGluedFillerToken(head)) continue;
+            const rest = tidyAfterFillerStrip(restRaw);
+            if (!rest) continue;
+            // Remainder must not itself be only filler of the same token class.
+            if (tokenPred(rest)) continue;
+            if (isBlankOrPunctOnly(rest)) continue;
+            return { text: rest, removed: { token: head.trim(), kind: hit.kind, lang: hit.lang } };
+        }
+        return { text: raw, removed: null };
+    }
+
+    /**
+     * Strip discourse/onomatopoeia tokens from mixed cue text; keep dialogue.
+     * @returns {{
+     *   text: string,
+     *   changed: boolean,
+     *   pure: boolean,
+     *   removedTokens: string[],
+     *   kind: 'discourse'|'onomatopoeia'|'mixed'|null,
+     *   lang: string
+     * }}
+     */
+    function stripInlineFillersInText(text, options = {}) {
+        const original = String(text ?? '');
+        const trimmed = original.trim();
+        if (!trimmed) {
+            return {
+                text: original,
+                changed: false,
+                pure: false,
+                removedTokens: [],
+                kind: null,
+                lang: '',
+            };
+        }
+        const langHint = options.lang
+            || detectFillerLineLang(trimmed)
+            || normalizeFillerLang(options.targetLang || options.preferredLang || 'zh');
+        const tokenPred = buildInlineFillerTokenPred({
+            checkDiscourse: options.checkDiscourse !== false,
+            checkOnomatopoeia: options.checkOnomatopoeia !== false,
+            lang: langHint,
+        });
+
+        // Whole cue already pure → caller should delete, not rewrite.
+        const checkDiscourse = options.checkDiscourse !== false;
+        const checkOnomatopoeia = options.checkOnomatopoeia !== false;
+        const isPureWhole = (() => {
+            if (checkDiscourse && checkOnomatopoeia) return isPureInterjectionForLang(trimmed, langHint);
+            if (checkDiscourse) return isPureDiscourseForLang(trimmed, langHint);
+            if (checkOnomatopoeia) return isPureOnomatopoeiaForLang(trimmed, langHint);
+            return false;
+        })();
+        if (isPureWhole) {
+            return {
+                text: '',
+                changed: true,
+                pure: true,
+                removedTokens: [trimmed],
+                kind: checkOnomatopoeia && !checkDiscourse
+                    ? 'onomatopoeia'
+                    : (checkDiscourse && isPureDiscourseForLang(trimmed, langHint) ? 'discourse' : 'onomatopoeia'),
+                lang: langHint,
+            };
+        }
+
+        const removedTokens = [];
+        let kindHits = { discourse: 0, onomatopoeia: 0 };
+        let lang = langHint;
+
+        const pieces = trimmed.split(/([、，,・·.•…\s]+)/);
+        const kept = [];
+        for (let i = 0; i < pieces.length; i += 1) {
+            const part = pieces[i];
+            if (!part) continue;
+            if (/^[、，,・·.•…\s]+$/.test(part)) {
+                kept.push(part);
+                continue;
+            }
+            const hit = tokenPred(part.replace(/[。．.!！?？]+$/g, '').trim() || part);
+            if (hit) {
+                removedTokens.push(part.trim());
+                kindHits[hit.kind] = (kindHits[hit.kind] || 0) + 1;
+                lang = hit.lang || lang;
+                continue;
+            }
+            kept.push(part);
+        }
+        let next = tidyAfterFillerStrip(kept.join(''));
+
+        // Peel glued leading/trailing fillers if separators did not catch them.
+        for (let guard = 0; guard < 4; guard += 1) {
+            const lead = peelEdgeFillerToken(next, tokenPred, 'leading');
+            if (lead.removed) {
+                removedTokens.push(lead.removed.token);
+                kindHits[lead.removed.kind] = (kindHits[lead.removed.kind] || 0) + 1;
+                lang = lead.removed.lang || lang;
+                next = lead.text;
+                continue;
+            }
+            const trail = peelEdgeFillerToken(next, tokenPred, 'trailing');
+            if (trail.removed) {
+                removedTokens.push(trail.removed.token);
+                kindHits[trail.removed.kind] = (kindHits[trail.removed.kind] || 0) + 1;
+                lang = trail.removed.lang || lang;
+                next = trail.text;
+                continue;
+            }
+            break;
+        }
+
+        if (!removedTokens.length) {
+            return {
+                text: original,
+                changed: false,
+                pure: false,
+                removedTokens: [],
+                kind: null,
+                lang: langHint,
+            };
+        }
+
+        const kind = kindHits.discourse && kindHits.onomatopoeia
+            ? 'mixed'
+            : (kindHits.onomatopoeia ? 'onomatopoeia' : 'discourse');
+        const pure = !next || isBlankOrPunctOnly(next);
+        return {
+            text: pure ? '' : next,
+            changed: pure || next !== trimmed,
+            pure,
+            removedTokens,
+            kind,
+            lang,
+        };
+    }
+
+    /** Guess script of a bilingual line for filler pairing. */
+    function detectFillerLineLang(text) {
+        const t = String(text || '').trim();
+        if (!t) return '';
+        const hangul = (t.match(/[\uac00-\ud7af]/g) || []).length;
+        const kana = (t.match(/[\u3040-\u30ff]/g) || []).length;
+        const han = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+        const latin = (t.match(/[A-Za-z]/g) || []).length;
+        if (hangul >= 1 && hangul >= kana && hangul >= han) return 'ko';
+        if (kana >= 1 && kana >= han && !/[\u4e00-\u9fff]{3,}/.test(t)) return 'ja';
+        if (latin >= 2 && han === 0 && kana === 0 && hangul === 0) return 'en';
+        if (han >= 1) return 'zh';
+        if (kana >= 1) return 'ja';
+        if (latin >= 2) return 'en';
+        return '';
+    }
+
     function cueTimeRange(c) {
         const start = Number(c?.startMs ?? c?.start ?? 0);
         const end = Number(c?.endMs ?? c?.end ?? start);
@@ -1378,109 +2045,145 @@
     }
 
     /**
-     * When JA/ZH cue counts differ, pair by time overlap and drop pure fillers.
+     * When target/source cue counts differ, pair by time overlap and drop pure fillers.
+     * First list = translation target; second = typically JA ASR source.
      */
-    function dropPureInterjectionPairsByTime(zhList, jaList, options = {}) {
+    function dropPureInterjectionPairsByTime(targetList, sourceList, options = {}) {
         const dropDiscourse = options.dropDiscourse !== false;
         const dropOnomatopoeia = options.dropOnomatopoeia !== false;
-        const zhPred = (t) => {
-            if (dropDiscourse && dropOnomatopoeia) return isPureInterjectionZh(t);
-            if (dropDiscourse) return isPureDiscourseZh(t);
-            if (dropOnomatopoeia) return isPureOnomatopoeiaZh(t);
+        const targetLang = normalizeFillerLang(options.targetLang || options.lang || 'zh');
+        const sourceLang = normalizeFillerLang(options.sourceLang || 'ja');
+        const targetPred = (t) => {
+            if (dropDiscourse && dropOnomatopoeia) return isPureInterjectionForLang(t, targetLang);
+            if (dropDiscourse) return isPureDiscourseForLang(t, targetLang);
+            if (dropOnomatopoeia) return isPureOnomatopoeiaForLang(t, targetLang);
             return false;
         };
-        const jaPred = (t) => {
-            if (dropDiscourse && dropOnomatopoeia) return isPureInterjectionJa(t);
-            if (dropDiscourse) return isPureDiscourseJa(t);
-            if (dropOnomatopoeia) return isPureOnomatopoeiaJa(t);
+        const sourcePred = (t) => {
+            if (dropDiscourse && dropOnomatopoeia) return isPureInterjectionForLang(t, sourceLang);
+            if (dropDiscourse) return isPureDiscourseForLang(t, sourceLang);
+            if (dropOnomatopoeia) return isPureOnomatopoeiaForLang(t, sourceLang);
             return false;
         };
 
-        const zhDrop = new Set();
-        const jaDrop = new Set();
-        const zhRanges = zhList.map(cueTimeRange);
-        const jaRanges = jaList.map(cueTimeRange);
+        const targetDrop = new Set();
+        const sourceDrop = new Set();
+        const targetRanges = targetList.map(cueTimeRange);
+        const sourceRanges = sourceList.map(cueTimeRange);
 
-        for (let i = 0; i < zhList.length; i += 1) {
-            const zhText = String(zhList[i]?.text || '');
-            if (!isFillerOrBlankText(zhText, zhPred)) continue;
+        for (let i = 0; i < targetList.length; i += 1) {
+            const targetText = String(targetList[i]?.text || '');
+            if (!isFillerOrBlankText(targetText, targetPred)) continue;
             const overs = [];
-            for (let j = 0; j < jaList.length; j += 1) {
-                if (cuesOverlap(zhRanges[i], jaRanges[j])) overs.push(j);
+            for (let j = 0; j < sourceList.length; j += 1) {
+                if (cuesOverlap(targetRanges[i], sourceRanges[j])) overs.push(j);
             }
             if (!overs.length) {
-                // Orphan pure ZH moan (no overlapping JA) → clear ZH
-                if (zhPred(zhText) || isBlankOrPunctOnly(zhText) || !zhText.trim()) {
-                    zhDrop.add(i);
+                // Orphan pure target moan (no overlapping source) → clear target
+                if (targetPred(targetText) || isBlankOrPunctOnly(targetText) || !targetText.trim()) {
+                    targetDrop.add(i);
                 }
                 continue;
             }
-            const allJaFiller = overs.every((j) => isFillerOrBlankText(jaList[j]?.text, jaPred));
-            if (!allJaFiller) continue;
-            zhDrop.add(i);
+            const allSourceFiller = overs.every((j) => isFillerOrBlankText(sourceList[j]?.text, sourcePred));
+            if (!allSourceFiller) continue;
+            targetDrop.add(i);
             for (const j of overs) {
-                if (isFillerOrBlankText(jaList[j]?.text, jaPred)) jaDrop.add(j);
+                if (isFillerOrBlankText(sourceList[j]?.text, sourcePred)) sourceDrop.add(j);
             }
         }
 
-        for (let j = 0; j < jaList.length; j += 1) {
-            if (jaDrop.has(j)) continue;
-            const jaText = String(jaList[j]?.text || '');
-            if (!isFillerOrBlankText(jaText, jaPred)) continue;
+        for (let j = 0; j < sourceList.length; j += 1) {
+            if (sourceDrop.has(j)) continue;
+            const sourceText = String(sourceList[j]?.text || '');
+            if (!isFillerOrBlankText(sourceText, sourcePred)) continue;
             const overs = [];
-            for (let i = 0; i < zhList.length; i += 1) {
-                if (cuesOverlap(jaRanges[j], zhRanges[i])) overs.push(i);
+            for (let i = 0; i < targetList.length; i += 1) {
+                if (cuesOverlap(sourceRanges[j], targetRanges[i])) overs.push(i);
             }
             if (!overs.length) {
-                jaDrop.add(j);
+                sourceDrop.add(j);
                 continue;
             }
-            const allZhFillerOrDrop = overs.every((i) => (
-                zhDrop.has(i) || isFillerOrBlankText(zhList[i]?.text, zhPred)
+            const allTargetFillerOrDrop = overs.every((i) => (
+                targetDrop.has(i) || isFillerOrBlankText(targetList[i]?.text, targetPred)
             ));
-            if (!allZhFillerOrDrop) continue;
-            jaDrop.add(j);
+            if (!allTargetFillerOrDrop) continue;
+            sourceDrop.add(j);
             for (const i of overs) {
-                if (isFillerOrBlankText(zhList[i]?.text, zhPred)) zhDrop.add(i);
+                if (isFillerOrBlankText(targetList[i]?.text, targetPred)) targetDrop.add(i);
             }
         }
 
-        const zhOut = [];
-        const jaOut = [];
-        const droppedIndexes = [...zhDrop].sort((a, b) => a - b);
-        for (let i = 0; i < zhList.length; i += 1) {
-            if (!zhDrop.has(i)) zhOut.push(zhList[i]);
+        for (const i of [...targetDrop]) {
+            if (shouldPreserveSubstantiveDialogueCue(targetList[i], targetList[i]?.text)) targetDrop.delete(i);
         }
-        for (let j = 0; j < jaList.length; j += 1) {
-            if (!jaDrop.has(j)) jaOut.push(jaList[j]);
+        for (const j of [...sourceDrop]) {
+            if (shouldPreserveSubstantiveDialogueCue(sourceList[j], sourceList[j]?.text)) sourceDrop.delete(j);
+        }
+
+        const targetOut = [];
+        const sourceOut = [];
+        const droppedIndexes = [...targetDrop].sort((a, b) => a - b);
+        for (let i = 0; i < targetList.length; i += 1) {
+            if (!targetDrop.has(i)) targetOut.push(targetList[i]);
+        }
+        for (let j = 0; j < sourceList.length; j += 1) {
+            if (!sourceDrop.has(j)) sourceOut.push(sourceList[j]);
         }
         return {
-            zhCues: zhOut,
-            jaCues: jaOut,
-            dropped: Math.max(zhDrop.size, jaDrop.size),
+            zhCues: targetOut,
+            jaCues: sourceOut,
+            targetCues: targetOut,
+            sourceCues: sourceOut,
+            dropped: Math.max(targetDrop.size, sourceDrop.size),
             droppedIndexes,
-            droppedZh: zhDrop.size,
-            droppedJa: jaDrop.size,
+            droppedZh: targetDrop.size,
+            droppedJa: sourceDrop.size,
             alignedBy: 'time',
         };
     }
 
+    function isShortSfxGlossForLang(text, lang = 'zh') {
+        const bucket = normalizeFillerLang(lang);
+        if (bucket === 'zh') return isShortSfxGlossZh(text);
+        if (bucket === 'en') {
+            const bare = String(text || '').replace(/[.!?…\s,~～\-—_]+/g, '').trim();
+            if (!bare || bare.length > 12) return false;
+            return EN_ONO_TOKEN_RE.test(bare)
+                || /^(?:bang|boom|crash|thud|pow|smack|whoosh|splash|beep|ding)$/i.test(bare);
+        }
+        if (bucket === 'ko') {
+            const bare = String(text || '').replace(/[.!?…。．！？\s,~～\-—_]+/g, '').trim();
+            if (!bare || bare.length > 8) return false;
+            return KO_ONO_TOKEN_RE.test(bare)
+                || /^(?:쿵+|쾅+|빵+|톡+|콩콩+)$/u.test(bare);
+        }
+        return false;
+    }
+
     /**
-     * Drop cues where BOTH JA and ZH are pure fillers of the selected kinds.
+     * Drop cues where BOTH source and target are pure fillers of the selected kinds.
      * Equal-length tracks use index pairing; mismatched counts fall back to time overlap.
      * @param {object} [options]
      * @param {boolean} [options.dropDiscourse=true]
      * @param {boolean} [options.dropOnomatopoeia=true]
+     * @param {string} [options.targetLang='zh'] translation / delivery language
+     * @param {string} [options.sourceLang='ja'] typically JA ASR
      */
     function dropPureInterjectionPairs(zhCues, jaCues, options = {}) {
         const dropDiscourse = options.dropDiscourse !== false;
         const dropOnomatopoeia = options.dropOnomatopoeia !== false;
+        const targetLang = normalizeFillerLang(options.targetLang || options.lang || 'zh');
+        const sourceLang = normalizeFillerLang(options.sourceLang || 'ja');
         const zhList = Array.isArray(zhCues) ? zhCues : [];
         const jaList = Array.isArray(jaCues) ? jaCues : [];
         if (!zhList.length || !jaList.length) {
             return {
                 zhCues: zhList,
                 jaCues: jaList,
+                targetCues: zhList,
+                sourceCues: jaList,
                 dropped: 0,
                 droppedIndexes: [],
                 skipped: true,
@@ -1491,6 +2194,8 @@
             return {
                 zhCues: zhList,
                 jaCues: jaList,
+                targetCues: zhList,
+                sourceCues: jaList,
                 dropped: 0,
                 droppedIndexes: [],
             };
@@ -1499,6 +2204,8 @@
             return dropPureInterjectionPairsByTime(zhList, jaList, {
                 dropDiscourse,
                 dropOnomatopoeia,
+                targetLang,
+                sourceLang,
             });
         }
 
@@ -1506,39 +2213,46 @@
             const jaBlank = !String(jaText).trim() || isBlankOrPunctOnly(jaText);
             const zhBlank = !String(zhText).trim() || isBlankOrPunctOnly(zhText);
             if (dropDiscourse) {
-                const jaOk = jaBlank || isPureDiscourseJa(jaText);
-                const zhOk = zhBlank || isPureDiscourseZh(zhText);
+                const jaOk = jaBlank || isPureDiscourseForLang(jaText, sourceLang);
+                const zhOk = zhBlank || isPureDiscourseForLang(zhText, targetLang);
                 // Require at least one side to be real discourse (not both blank-only unless both blank placeholders)
-                if (jaOk && zhOk && (jaBlank || zhBlank || (isPureDiscourseJa(jaText) && isPureDiscourseZh(zhText)))) {
+                if (jaOk && zhOk && (jaBlank || zhBlank || (
+                    isPureDiscourseForLang(jaText, sourceLang)
+                    && isPureDiscourseForLang(zhText, targetLang)
+                ))) {
                     // Avoid dropping onomatopoeia-only pairs under discourse-only mode
                     if (!dropOnomatopoeia) {
                         const bothOno = !jaBlank && !zhBlank
-                            && isPureOnomatopoeiaJa(jaText) && !isPureDiscourseJa(jaText)
-                            && isPureOnomatopoeiaZh(zhText) && !isPureDiscourseZh(zhText);
+                            && isPureOnomatopoeiaForLang(jaText, sourceLang)
+                            && !isPureDiscourseForLang(jaText, sourceLang)
+                            && isPureOnomatopoeiaForLang(zhText, targetLang)
+                            && !isPureDiscourseForLang(zhText, targetLang);
                         if (bothOno) return false;
                     }
                     // If discourse-only and both are ono-classified, skip
-                    if (!isPureDiscourseJa(jaText) && !jaBlank) return false;
-                    if (!isPureDiscourseZh(zhText) && !zhBlank) return false;
+                    if (!isPureDiscourseForLang(jaText, sourceLang) && !jaBlank) return false;
+                    if (!isPureDiscourseForLang(zhText, targetLang) && !zhBlank) return false;
                     return true;
                 }
             }
             if (dropOnomatopoeia) {
-                const jaOk = jaBlank || isPureOnomatopoeiaJa(jaText);
-                const zhOk = zhBlank || isPureOnomatopoeiaZh(zhText);
+                const jaOk = jaBlank || isPureOnomatopoeiaForLang(jaText, sourceLang);
+                const zhOk = zhBlank || isPureOnomatopoeiaForLang(zhText, targetLang);
                 if (jaOk && zhOk) {
                     if (!dropDiscourse) {
-                        if (!isPureOnomatopoeiaJa(jaText) && !jaBlank) return false;
-                        if (!isPureOnomatopoeiaZh(zhText) && !zhBlank) return false;
+                        if (!isPureOnomatopoeiaForLang(jaText, sourceLang) && !jaBlank) return false;
+                        if (!isPureOnomatopoeiaForLang(zhText, targetLang) && !zhBlank) return false;
                         // Don't clear discourse-only pairs when only ono is enabled
                         const bothDisc = !jaBlank && !zhBlank
-                            && isPureDiscourseJa(jaText) && !isPureOnomatopoeiaJa(jaText)
-                            && isPureDiscourseZh(zhText) && !isPureOnomatopoeiaZh(zhText);
+                            && isPureDiscourseForLang(jaText, sourceLang)
+                            && !isPureOnomatopoeiaForLang(jaText, sourceLang)
+                            && isPureDiscourseForLang(zhText, targetLang)
+                            && !isPureOnomatopoeiaForLang(zhText, targetLang);
                         if (bothDisc) return false;
                     } else {
                         // Both kinds enabled: drop any pure filler pair (legacy behavior)
-                        return (jaBlank || isPureInterjectionJa(jaText))
-                            && (zhBlank || isPureInterjectionZh(zhText));
+                        return (jaBlank || isPureInterjectionForLang(jaText, sourceLang))
+                            && (zhBlank || isPureInterjectionForLang(zhText, targetLang));
                     }
                     return true;
                 }
@@ -1557,12 +2271,34 @@
             const jaText = String(jaList[i]?.text || '');
             let drop = false;
             if (useUnion) {
-                const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
-                const zhPure = isPureInterjectionZh(zhText)
-                    || (isKatakanaSfxBurst(jaText) && isShortSfxGlossZh(zhText));
+                const jaPure = !String(jaText).trim() || isPureInterjectionForLang(jaText, sourceLang);
+                const zhPure = isPureInterjectionForLang(zhText, targetLang)
+                    || (isKatakanaSfxBurst(jaText) && isShortSfxGlossForLang(zhText, targetLang));
                 drop = jaPure && zhPure;
             } else {
                 drop = matchKind(zhText, jaText);
+            }
+            if (drop && (
+                shouldPreserveSubstantiveDialogueCue(zhList[i], zhText)
+                || shouldPreserveSubstantiveDialogueCue(jaList[i], jaText)
+            )) {
+                drop = false;
+            }
+            // User rule: keep pure discourse when it bridges substantive neighbors.
+            if (drop && dropDiscourse) {
+                try {
+                    const ellipsisPolicy = require('./hymt-ellipsis-policy-core');
+                    const prevJa = i > 0 ? String(jaList[i - 1]?.text || '') : '';
+                    const nextJa = i + 1 < zhList.length ? String(jaList[i + 1]?.text || '') : '';
+                    if (ellipsisPolicy.shouldKeepDiscourseForContext?.(jaText, prevJa, nextJa)) {
+                        drop = false;
+                    }
+                    // Pure moan/SFX always drop when matched — never keep for "bridge"
+                    if (ellipsisPolicy.isPureMoanOrSfxJa?.(jaText)
+                        && !ellipsisPolicy.hasContextBridgeValue?.(jaText, prevJa, nextJa)) {
+                        drop = true;
+                    }
+                } catch (_) { /* optional */ }
             }
             if (drop) {
                 droppedIndexes.push(i);
@@ -1574,6 +2310,8 @@
         return {
             zhCues: zhOut,
             jaCues: jaOut,
+            targetCues: zhOut,
+            sourceCues: jaOut,
             dropped: droppedIndexes.length,
             droppedIndexes,
         };
@@ -1612,44 +2350,54 @@
         const dropDiscourse = options.dropDiscourse !== false;
         const dropOnomatopoeia = options.dropOnomatopoeia !== false;
         if (!dropDiscourse && !dropOnomatopoeia) return false;
-        const tryPair = (zhText, jaText) => {
+        const fallbackTarget = normalizeFillerLang(options.targetLang || 'zh');
+        const fallbackSource = normalizeFillerLang(options.sourceLang || 'ja');
+        const tryPair = (textA, textB, langA, langB) => {
+            const blankA = !String(textA).trim() || isBlankOrPunctOnly(textA);
+            const blankB = !String(textB).trim() || isBlankOrPunctOnly(textB);
             if (dropDiscourse && dropOnomatopoeia) {
-                const jaPure = !String(jaText).trim() || isPureInterjectionJa(jaText);
-                const zhPure = isPureInterjectionZh(zhText)
-                    || (isKatakanaSfxBurst(jaText) && isShortSfxGlossZh(zhText));
-                return jaPure && zhPure;
+                const pureA = blankA || isPureInterjectionForLang(textA, langA)
+                    || (isKatakanaSfxBurst(textB) && isShortSfxGlossForLang(textA, langA))
+                    || (isKatakanaSfxBurst(textA) && isShortSfxGlossForLang(textB, langB));
+                const pureB = blankB || isPureInterjectionForLang(textB, langB)
+                    || (isKatakanaSfxBurst(textA) && isShortSfxGlossForLang(textB, langB))
+                    || (isKatakanaSfxBurst(textB) && isShortSfxGlossForLang(textA, langA));
+                return pureA && pureB;
             }
             if (dropDiscourse) {
-                const jaBlank = !String(jaText).trim() || isBlankOrPunctOnly(jaText);
-                const zhBlank = !String(zhText).trim() || isBlankOrPunctOnly(zhText);
-                const jaOk = jaBlank || isPureDiscourseJa(jaText);
-                const zhOk = zhBlank || isPureDiscourseZh(zhText);
-                if (!(jaOk && zhOk)) return false;
+                const okA = blankA || isPureDiscourseForLang(textA, langA);
+                const okB = blankB || isPureDiscourseForLang(textB, langB);
+                if (!(okA && okB)) return false;
                 if (!dropOnomatopoeia) {
-                    const bothOno = !jaBlank && !zhBlank
-                        && isPureOnomatopoeiaJa(jaText) && !isPureDiscourseJa(jaText)
-                        && isPureOnomatopoeiaZh(zhText) && !isPureDiscourseZh(zhText);
+                    const bothOno = !blankA && !blankB
+                        && isPureOnomatopoeiaForLang(textA, langA) && !isPureDiscourseForLang(textA, langA)
+                        && isPureOnomatopoeiaForLang(textB, langB) && !isPureDiscourseForLang(textB, langB);
                     if (bothOno) return false;
                 }
-                if (!isPureDiscourseJa(jaText) && !jaBlank) return false;
-                if (!isPureDiscourseZh(zhText) && !zhBlank) return false;
+                if (!isPureDiscourseForLang(textA, langA) && !blankA) return false;
+                if (!isPureDiscourseForLang(textB, langB) && !blankB) return false;
                 return true;
             }
-            const jaBlank = !String(jaText).trim() || isBlankOrPunctOnly(jaText);
-            const zhBlank = !String(zhText).trim() || isBlankOrPunctOnly(zhText);
-            const jaOk = jaBlank || isPureOnomatopoeiaJa(jaText);
-            const zhOk = zhBlank || isPureOnomatopoeiaZh(zhText);
-            if (!(jaOk && zhOk)) return false;
-            if (!isPureOnomatopoeiaJa(jaText) && !jaBlank) return false;
-            if (!isPureOnomatopoeiaZh(zhText) && !zhBlank) return false;
-            const bothDisc = !jaBlank && !zhBlank
-                && isPureDiscourseJa(jaText) && !isPureOnomatopoeiaJa(jaText)
-                && isPureDiscourseZh(zhText) && !isPureOnomatopoeiaZh(zhText);
+            const okA = blankA || isPureOnomatopoeiaForLang(textA, langA);
+            const okB = blankB || isPureOnomatopoeiaForLang(textB, langB);
+            if (!(okA && okB)) return false;
+            if (!isPureOnomatopoeiaForLang(textA, langA) && !blankA) return false;
+            if (!isPureOnomatopoeiaForLang(textB, langB) && !blankB) return false;
+            const bothDisc = !blankA && !blankB
+                && isPureDiscourseForLang(textA, langA) && !isPureOnomatopoeiaForLang(textA, langA)
+                && isPureDiscourseForLang(textB, langB) && !isPureOnomatopoeiaForLang(textB, langB);
             if (bothDisc) return false;
             return true;
         };
+        const detectedA = detectFillerLineLang(lineA);
+        const detectedB = detectFillerLineLang(lineB);
+        const langA = detectedA || fallbackTarget;
+        const langB = detectedB || fallbackSource;
         // Order-agnostic: merged dual may be target-first or source-first.
-        return tryPair(lineA, lineB) || tryPair(lineB, lineA);
+        return tryPair(lineA, lineB, langA, langB)
+            || tryPair(lineA, lineB, langB, langA)
+            || tryPair(lineB, lineA, langA, langB)
+            || tryPair(lineB, lineA, langB, langA);
     }
 
     /**
@@ -1688,7 +2436,11 @@
                 && bilingualLinesArePureFillerPair(lines[0], lines[1], {
                     dropDiscourse,
                     dropOnomatopoeia,
-                })) {
+                    targetLang: options.targetLang || options.subtitleTargetLang,
+                    sourceLang: options.sourceLang,
+                })
+                && !shouldPreserveSubstantiveDialogueCue(cue, lines[0])
+                && !shouldPreserveSubstantiveDialogueCue(cue, lines[1])) {
                 droppedIndexes.push(i);
                 continue;
             }
@@ -1716,22 +2468,23 @@
     function softenPureFillerInCues(cues, options = {}) {
         const list = Array.isArray(cues) ? cues : [];
         const kind = options.kind === 'onomatopoeia' ? 'onomatopoeia' : 'discourse';
-        const lang = options.lang === 'ja' ? 'ja' : 'zh';
+        const lang = normalizeFillerLang(options.lang || options.targetLang || options.subtitleTargetLang || 'zh');
         const indexSet = options.indexes == null
             ? null
             : new Set((Array.isArray(options.indexes) ? options.indexes : [])
                 .map((n) => Number(n))
                 .filter((n) => Number.isInteger(n) && n >= 0));
-        const predMono = lang === 'ja'
-            ? (kind === 'onomatopoeia' ? isPureOnomatopoeiaJa : isPureDiscourseJa)
-            : (kind === 'onomatopoeia' ? isPureOnomatopoeiaZh : isPureDiscourseZh);
+        const predMono = kind === 'onomatopoeia'
+            ? (t) => isPureOnomatopoeiaForLang(t, lang)
+            : (t) => isPureDiscourseForLang(t, lang);
         const predLine = (line) => {
             if (predMono(line)) return true;
-            // Merged bilingual cues: try the other language on each line.
-            if (kind === 'onomatopoeia') {
-                return lang === 'ja' ? isPureOnomatopoeiaZh(line) : isPureOnomatopoeiaJa(line);
-            }
-            return lang === 'ja' ? isPureDiscourseZh(line) : isPureDiscourseJa(line);
+            // Merged bilingual cues: try detected other language on each line.
+            const lineLang = detectFillerLineLang(line);
+            if (!lineLang || lineLang === lang) return false;
+            return kind === 'onomatopoeia'
+                ? isPureOnomatopoeiaForLang(line, lineLang)
+                : isPureDiscourseForLang(line, lineLang);
         };
         const next = list.map((c) => ({
             startMs: c?.startMs,
@@ -1819,6 +2572,8 @@
     function looksLikeWeirdCueText(text) {
         const t = String(text || '').trim();
         if (!t) return false;
+        // Brand watermark mixes CJK + Latin URL — not MT junk.
+        if (isSoftwareCreditProtectedText(t)) return false;
         if (/__GLOSS\d*__|__GLOS\d*__|Gloss#{0,4}\d+_*/i.test(t)) return true;
         if (/GLOS?S?\d{2,8}/i.test(t)) return true;
         if (/__[^_\n]{1,64}__/.test(t)) return true;
@@ -1849,6 +2604,11 @@
 
         if (!raw) {
             return { score: 0.2, flags: ['empty'], messages: ['空文本'] };
+        }
+
+        // Brand watermark (www / Transub repeats) is not ASR stutter or weird text.
+        if (isSoftwareCreditProtectedText(raw)) {
+            return { score: 1, flags: [], messages: [] };
         }
 
         if (hasHeavyRepetition(raw)) {
@@ -1971,6 +2731,8 @@
 
     return {
         hasHeavyRepetition,
+        isHallucinationHeavyRepetition,
+        isKeepableShortJaDialogue,
         hasStutter,
         endsWithDangling,
         isFragmentCue,
@@ -1984,6 +2746,8 @@
         isSymbolOnlyCue,
         isNoiseCue,
         isHallucinationCue,
+        hasSubstantiveDialogueMarkers,
+        shouldPreserveSubstantiveDialogueCue,
         normalizeAsrText,
         normalizeAsrTextInCues,
         stripAsrNameLoopsInCues,
@@ -1993,10 +2757,25 @@
         summarizeNoiseRemoval,
         isPureInterjectionJa,
         isPureInterjectionZh,
+        isPureInterjectionEn,
+        isPureInterjectionKo,
+        isPureInterjectionForLang,
+        isPureDiscourseTokenForLang,
+        isPureOnomatopoeiaTokenForLang,
+        isPureInterjectionTokenForLang,
         isPureDiscourseJa,
         isPureDiscourseZh,
+        isPureDiscourseEn,
+        isPureDiscourseKo,
+        isPureDiscourseForLang,
         isPureOnomatopoeiaJa,
         isPureOnomatopoeiaZh,
+        isPureOnomatopoeiaEn,
+        isPureOnomatopoeiaKo,
+        isPureOnomatopoeiaForLang,
+        normalizeFillerLang,
+        detectFillerLineLang,
+        stripInlineFillersInText,
         dropPureInterjectionPairs,
         dropPureFillerBilingualCues,
         cueLooksBilingual,
@@ -2004,8 +2783,10 @@
         softenPureFillerInCues,
         normalizeViewingCleanLevel,
         compressRepetitionInText,
+        collapseSoftDoublePhrase,
         compressRepetitionInCues,
         summarizeRepetitionCompress,
+        isBlankMtPlaceholderText,
         simplifyViewingPunctuationInText,
         simplifyViewingPunctuationInCues,
         lacksPunctuation,

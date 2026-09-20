@@ -26,15 +26,19 @@ function stemKeyForPairing(filePath, isSourceTrack) {
         .replace(/\.src$/i, '')
         .replace(/_src$/i, '')
         .replace(/\.source$/i, '')
+        .replace(/\.transcribe$/i, '')
+        .replace(/\.original$/i, '')
         .replace(/\.ja$/i, '')
         .replace(/_ja$/i, '')
         .replace(/\.zh$/i, '')
         .replace(/_zh$/i, '')
         .replace(/\.zh-Hans$/i, '')
-        .replace(/\.zh-Hant$/i, '');
+        .replace(/\.zh-Hant$/i, '')
+        .replace(/\.zh-cn$/i, '')
+        .replace(/\.zh-tw$/i, '');
     // Also strip trailing dual-target suffix tokens when not a source track.
     if (!isSourceTrack(filePath)) {
-        stem = stem.replace(/\.(?:zh|chs|cht|cn|tw)$/i, '');
+        stem = stem.replace(/\.(?:zh|chs|cht|cn|tw|zh-cn|zh-tw)$/i, '');
     }
     return String(stem || '').toLowerCase();
 }
@@ -124,15 +128,32 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
         sourcesByStem.set(stem, list);
     }
 
-    const pairNoiseOpts = {
-        removeEmpty: true,
-        removeFragments: true,
-        removeSoundEffects: true,
-        removeSymbolOnly: true,
-        removeDuplicates: true,
-        removeHallucinations: true,
-        backupMode: 'off',
-    };
+    const pairNoiseOpts = (() => {
+        let slotCore;
+        try {
+            slotCore = require('../src/js/mt-subtitle-slot-core');
+        } catch {
+            slotCore = null;
+        }
+        const base = slotCore?.buildSourceTrackNoiseOptions
+            ? slotCore.buildSourceTrackNoiseOptions({
+                removeEmpty: true,
+                removeFragments: true,
+                removeSoundEffects: true,
+                removeSymbolOnly: true,
+                removeDuplicates: true,
+                removeHallucinations: true,
+            })
+            : {
+                removeEmpty: true,
+                removeFragments: true,
+                removeSoundEffects: true,
+                removeSymbolOnly: true,
+                removeDuplicates: true,
+                removeHallucinations: true,
+            };
+        return { ...base, backupMode: 'off' };
+    })();
 
     const memorySourceCues = Array.isArray(options.sourceCues) ? options.sourceCues : null;
 
@@ -182,6 +203,9 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
         }
     }
 
+    // Explicit JA path from engine (e.g. *.transcribe.srt) when stem pairing is thin.
+    const explicitSource = String(options.sourceSubtitlePath || '').trim();
+
     // 2) Per-file CPS / compress / leftover noise (delete, never blank to …).
     for (const subPath of unique) {
         if (done.has(subPath) && !doCps && !doCompressRep && !doViewingPunct
@@ -193,8 +217,21 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
         });
         try {
             const sourceTrack = isSourceTrack(subPath);
+            let pairedSource = '';
+            if (!sourceTrack) {
+                pairedSource = resolveSourceForTarget(sourcesByStem, subPath, isSourceTrack)
+                    || (explicitSource && fs.existsSync(explicitSource) ? path.resolve(explicitSource) : '');
+                if (
+                    pairedSource
+                    && path.resolve(pairedSource) === path.resolve(subPath)
+                ) {
+                    pairedSource = '';
+                }
+            }
+            // Paired ZH must not CPS-split alone — count drift → index 错位 (DLDSS-533).
+            const allowZhCps = doCps && (sourceTrack || !pairedSource);
             const pp = applySubtitlePostprocess(subPath, {
-                cpsSplit: doCps,
+                cpsSplit: allowZhCps,
                 // Skip noise when this file was already handled by paired deletion.
                 removeNoise: doNoise && !alreadyPairedNoise,
                 removeHallucinations: doNoise && !alreadyPairedNoise,
@@ -209,11 +246,33 @@ function applyPostBatchPipeline(subtitlePaths, options = {}, hooks = {}) {
                 removeDuplicates: doNoise && !alreadyPairedNoise && sourceTrack,
                 blankInsteadOfRemove: false,
                 stitchJaFragments: sourceTrack && !alreadyPairedNoise,
-                fixOverlap: true,
+                // Preserve ASR start times; overlap trim-only is safer for dense dialogue.
+                fixOverlap: false,
                 enforceMaxDur: true,
+                minSplitDurMs: 2800,
             });
             processed.push({ path: subPath, result: pp });
-            if (pp?.ok && (pp.noise?.stats || pp.jaStitch?.stats || pp.jaAsrDomain?.changed || pp.written)) {
+
+            if (!sourceTrack && pairedSource) {
+                try {
+                    const { rematerializeSubtitlePairFiles } = require('./mt-pair-rematerialize');
+                    const laid = rematerializeSubtitlePairFiles(subPath, pairedSource, {
+                        backupMode: 'off',
+                        onlyWhenCountDiffers: true,
+                    });
+                    if (laid?.written) {
+                        hooks.onLog?.(
+                            `后处理 ${path.basename(subPath)} · 已按原文时间轴重铺译文 `
+                            + `(${laid.beforeCount}→${laid.afterCount})`,
+                        );
+                        pp.rematerialize = laid;
+                    }
+                } catch (err) {
+                    hooks.onLog?.(`译文重铺跳过：${err.message || err}`);
+                }
+            }
+
+            if (pp?.ok && (pp.noise?.stats || pp.jaStitch?.stats || pp.jaAsrDomain?.changed || pp.written || pp.rematerialize?.written)) {
                 const bits = [];
                 if (pp.jaStitch?.summary) bits.push(pp.jaStitch.summary);
                 if (pp.noise?.summary) bits.push(pp.noise.summary);

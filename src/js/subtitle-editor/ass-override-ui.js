@@ -2,6 +2,16 @@
  * ASS override 工具条 + 近似预览刷新
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installAssOverrideUi(ctx) {
         if (!ctx?.state || !ctx?.els) {
             throw new Error('installAssOverrideUi(ctx): ctx.state, ctx.els required');
@@ -149,7 +159,7 @@
             if (!ta) return;
             const next = core.setLeadingOverride(ta.value, `an${n}`);
             commitText(next, 0);
-            setStatus(`已设置 {\\an${n}}`, 'ok');
+            setStatus(uiTf('已设置 {{\\an{n}}}', { n }), 'ok');
         }
 
         function toggleBold() {
@@ -202,7 +212,7 @@
             }
             const next = core.setLeadingOverride(ta.value, cmd);
             commitText(next, ta.selectionStart);
-            setStatus(`已设置 {\\${cmd}}`, 'ok');
+            setStatus(uiTf('已设置 {{\\{cmd}}}', { cmd }), 'ok');
         }
 
         function applyFontSize(deltaOrValue, absolute = false) {
@@ -219,7 +229,7 @@
             const next = core.setLeadingOverride(ta.value, cmd);
             commitText(next, ta.selectionStart);
             if (els.assOverrideFs) els.assOverrideFs.value = String(nextSize);
-            setStatus(`已设置 {\\${cmd}}`, 'ok');
+            setStatus(uiTf('已设置 {{\\{cmd}}}', { cmd }), 'ok');
         }
 
         function syncOverrideControls() {

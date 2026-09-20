@@ -1,11 +1,11 @@
 /**
  * One-time main-window tip for 3.0.5: try「Anime Whisper」preset.
- * Applying it turns off 智能感知 and persists the full preset options.
+ * Applying it persists the full preset options.
  */
 (function (global) {
     const TIP_VERSION = '3.0.5';
     const STORAGE_KEY = 'transub.tip.anime-whisper-preset.v3.0.5';
-    const PRESET_ID = 'ja-av-anime-whisper-translate';
+    const PRESET_ID = 'ja-av-anime-whisper-firered';
     const PRESET_LABEL = 'Anime Whisper';
 
     function normalizeVersion(raw) {
@@ -62,7 +62,8 @@
     function positionArrow() {
         const tip = $('animeWhisperPresetTip');
         const arrow = tip?.querySelector?.('.feature-tip-bubble-arrow');
-        const chip = $('paramsModeBtn') || $('paramsModeChip') || $('paramsModeMenuWrap');
+        const chip = $('asrChipBtn') || $('modelsChipBtn') || $('paramsModeChip') || $('modelsMenuWrap')
+            || $('paramsModeBtn') || $('paramsModeMenuWrap');
         if (!tip || !arrow || !chip) return;
         try {
             const tipRect = tip.getBoundingClientRect();
@@ -94,7 +95,7 @@
     async function applyAnimeWhisperPreset() {
         const features = global.TransubFeatures;
         if (typeof features?.applyPreset === 'function') {
-            const applied = await features.applyPreset(PRESET_ID, { persist: true, autoSense: false });
+            const applied = await features.applyPreset(PRESET_ID, { persist: true });
             if (applied === false) {
                 return { ok: false, cancelled: true, error: '模型未下载' };
             }
@@ -114,14 +115,11 @@
         await core.applyOptionsToForm({
             ...current,
             ...preset.options,
-            autoSense: false,
             activePresetId: PRESET_ID,
         });
-        core.setAutoSenseEnabled?.(false, { persist: false });
         core.applyActivePresetIdToSelect?.(PRESET_ID);
         const opts = {
             ...core.buildSavedOptionsFromForm(),
-            autoSense: false,
             activePresetId: PRESET_ID,
             contentProfile: preset.options.contentProfile || 'av_soft',
         };
@@ -134,7 +132,7 @@
         core.updateParamsSummary?.();
         core.syncParamsModeChipUi?.();
         core.appendLog?.(
-            `已应用预设「${preset.name || PRESET_LABEL}」并关闭智能感知`,
+            `已应用预设「${preset.name || PRESET_LABEL}」`,
             'ok',
         );
         return { ok: true, preset };
@@ -178,7 +176,7 @@
                     const result = await applyAnimeWhisperPreset();
                     if (result.ok) {
                         global.TransubMainUiUx?.showToast?.(
-                            `已套用「${PRESET_LABEL}」并关闭智能感知`,
+                            `已套用「${PRESET_LABEL}」`,
                             'ok',
                         );
                     } else if (!result.cancelled) {

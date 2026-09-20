@@ -7,18 +7,20 @@ const {
     normalizeTransWithAiRuntimeOptions,
     mapInferStageProgress,
 } = require('../electron/transwithai-bridge');
+const { assembleSavedOptionsFromFields } = require('../src/js/settings-saved-options-core');
+const settingsNormCore = require('../src/js/settings-options-normalize-core');
 
 function testMapInferStageProgress() {
-    assert.strictEqual(mapInferStageProgress('starting'), 0);
-    assert.strictEqual(mapInferStageProgress('vad', 100), 0);
-    assert.strictEqual(mapInferStageProgress('model', 100), 0);
-    assert.strictEqual(mapInferStageProgress('transcribe', 0), 0);
-    assert.strictEqual(mapInferStageProgress('transcribe', 50), 34);
-    assert.strictEqual(mapInferStageProgress('transcribe', 100, 600, 600), 68);
-    assert.strictEqual(mapInferStageProgress('translate', 0), 68);
-    assert.strictEqual(mapInferStageProgress('translate', 50), 82);
-    assert.strictEqual(mapInferStageProgress('translate', 100), 96);
-    assert.strictEqual(mapInferStageProgress('save'), 99);
+    assert.strictEqual(mapInferStageProgress('starting'), 1);
+    assert.strictEqual(mapInferStageProgress('vad', 100), 5);
+    assert.strictEqual(mapInferStageProgress('model', 100), 5);
+    assert.strictEqual(mapInferStageProgress('transcribe', 0), 5);
+    assert.strictEqual(mapInferStageProgress('transcribe', 50), 35);
+    assert.strictEqual(mapInferStageProgress('transcribe', 100, 600, 600), 65);
+    assert.strictEqual(mapInferStageProgress('translate', 0), 65);
+    assert.strictEqual(mapInferStageProgress('translate', 50), 81);
+    assert.strictEqual(mapInferStageProgress('translate', 100), 95);
+    assert.strictEqual(mapInferStageProgress('save'), 97);
     assert.strictEqual(mapInferStageProgress('done'), 100);
 }
 
@@ -70,15 +72,24 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(defaults.postBatchCompressRepetition, true);
     assert.strictEqual(defaults.postBatchTextPresetGroupId, '');
     assert.strictEqual(defaults.postBatchCpsSplit, true);
-    assert.strictEqual(defaults.postBatchQcFixMode, 'smart');
+    assert.strictEqual(defaults.postBatchQcFixMode, 'fix');
     assert.strictEqual(defaults.qcSilenceSplitChars, 15);
     assert.strictEqual(defaults.sakuraNsfwPrompt, null);
     // Engine fields must be present so settings save/load does not drop them
     assert.strictEqual(defaults.engineBackend, 'transub');
     assert.strictEqual(typeof defaults.engineInstallPath, 'string');
     assert.ok(String(defaults.engineUrl || '').includes('127.0.0.1'));
-    assert.strictEqual(defaults.engineAsrModel, 'sensevoice-small');
+    assert.strictEqual(defaults.engineAsrModel, 'qwen3-asr-1.7b-ja-anime-galgame');
     assert.strictEqual(defaults.engineAutoStart, true);
+    assert.strictEqual(defaults.glossaryPromptEnabled, false);
+    assert.strictEqual(
+        normalizeTransWithAiRuntimeOptions({ glossaryPromptEnabled: true }).glossaryPromptEnabled,
+        true,
+    );
+    assert.strictEqual(
+        normalizeTransWithAiRuntimeOptions({ glossaryPromptEnabled: false }).glossaryPromptEnabled,
+        false,
+    );
 
     const engine = normalizeTransWithAiRuntimeOptions({
         engineInstallPath: 'D:\\MyEngine',
@@ -95,7 +106,8 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(engine.engineHfEndpoint, '');
     assert.strictEqual(engine.engineProfile, 'quality');
     assert.strictEqual(engine.engineAsrModel, 'whisper-large-v3-turbo');
-    assert.strictEqual(engine.engineMtModel, 'opus-mt-ja-zh');
+    assert.strictEqual(engine.engineMtModel, '');
+    assert.strictEqual(engine.engineOpusMtModel, '');
     assert.strictEqual(engine.engineVadModel, 'silero-vad');
     assert.strictEqual(engine.engineAutoStart, false);
 
@@ -144,6 +156,37 @@ function testNormalizeHallucinationOptions() {
     assert.strictEqual(briefGarbage.filmBriefSampleMode, 'auto');
 }
 
+function testNormalizePersistsAllSavedOptionKeys() {
+    const form = assembleSavedOptionsFromFields({
+        task: 'translate',
+        translateMode: 'llm',
+        advancedEntitled: true,
+        glossaryPromptEnabled: false,
+        glossaryMtEnabled: false,
+        asrBadPoolDrafts: false,
+        trayProgressEnabled: false,
+        rememberLastOpenDir: false,
+        smartTranslateHybridMt: false,
+    }, settingsNormCore);
+    const normalized = normalizeTransWithAiRuntimeOptions(form);
+    for (const key of Object.keys(form)) {
+        assert.ok(
+            Object.prototype.hasOwnProperty.call(normalized, key),
+            `normalizeTransWithAiRuntimeOptions drops persist key: ${key}`,
+        );
+    }
+    assert.strictEqual(normalized.glossaryPromptEnabled, false);
+    assert.strictEqual(normalized.asrBadPoolDrafts, false);
+    assert.strictEqual(normalized.trayProgressEnabled, false);
+    assert.strictEqual(normalized.rememberLastOpenDir, false);
+
+    const defaults = normalizeTransWithAiRuntimeOptions({});
+    assert.strictEqual(defaults.glossaryPromptEnabled, false);
+    assert.strictEqual(defaults.asrBadPoolDrafts, false);
+    assert.strictEqual(defaults.trayProgressEnabled, false);
+    assert.strictEqual(defaults.autoCpuOnGpuBusy, false);
+}
+
 async function testDetectVersionFromLog() {
     const fs = require('fs');
     const os = require('os');
@@ -170,6 +213,9 @@ describe('transwithai-parsers', () => {
     });
     it('normalize hallucination options', () => {
         testNormalizeHallucinationOptions();
+    });
+    it('normalize keeps all persistable settings keys', () => {
+        testNormalizePersistsAllSavedOptionKeys();
     });
     it('detect version from log', async () => {
         await testDetectVersionFromLog();

@@ -926,7 +926,8 @@ function extractMediaRange(filePath, startMs, endMs, outPath, options = {}) {
 
 /**
  * Extract normalized peak envelope for timeline waveform preview.
- * Returns peaks in 0..1. Uses low sample rate mono PCM via ffmpeg stdout.
+ * Returns peaks in 0..1. Streams mono PCM and reduces peaks online
+ * (no full-media PCM Buffer.concat on the Electron main process).
  */
 function extractWaveformPeaks(filePath, options = {}) {
     const resolved = path.resolve(String(filePath || ''));
@@ -937,6 +938,9 @@ function extractWaveformPeaks(filePath, options = {}) {
     const peaksPerSec = Math.max(5, Math.min(120, Number(options.peaksPerSec) || 20));
     const maxPeaks = Math.max(200, Math.min(48000, Number(options.maxPeaks) || 6000));
     const sampleRate = 8000;
+    // Cap online reduction to ~3h at requested density (same safety as prior byte cap).
+    const hardMaxPeaks = Math.min(maxPeaks, Math.max(1, Math.ceil(60 * 180 * peaksPerSec)));
+    const samplesPerPeak = Math.max(1, Math.round(sampleRate / peaksPerSec));
     const ffmpegResolved = resolveFfmpegForExecution(options.ffmpegPathSetting || options.ffmpegPath);
     if (!ffmpegResolved.ok) {
         return Promise.resolve({ ok: false, error: ffmpegResolved.error });
@@ -975,21 +979,71 @@ function extractWaveformPeaks(filePath, options = {}) {
                 return;
             }
 
-            const chunks = [];
-            let totalBytes = 0;
-            const maxBytes = sampleRate * 2 * 60 * 180; // ~3h safety cap
+            const peaks = [];
+            let carry = Buffer.alloc(0);
+            let sampleCount = 0;
+            let bucketPeak = 0;
+            let bucketSamples = 0;
+            let maxAbs = 1;
+            let capped = false;
             let stderr = '';
 
+            const pushPeak = (peak) => {
+                if (peaks.length >= hardMaxPeaks) {
+                    capped = true;
+                    return false;
+                }
+                const v = peak > 0 ? peak : 0;
+                peaks.push(v);
+                if (v > maxAbs) maxAbs = v;
+                return true;
+            };
+
+            const consumePcm = (buf) => {
+                if (!buf || !buf.length || capped) return;
+                let offset = 0;
+                // Pair leftover odd byte with the next chunk.
+                if (carry.length) {
+                    const need = 2 - carry.length;
+                    if (buf.length < need) {
+                        carry = Buffer.concat([carry, buf]);
+                        return;
+                    }
+                    const paired = Buffer.concat([carry, buf.subarray(0, need)], 2);
+                    carry = Buffer.alloc(0);
+                    offset = need;
+                    const sample = Math.abs(paired.readInt16LE(0));
+                    sampleCount += 1;
+                    if (sample > bucketPeak) bucketPeak = sample;
+                    bucketSamples += 1;
+                    if (bucketSamples >= samplesPerPeak) {
+                        if (!pushPeak(bucketPeak)) return;
+                        bucketPeak = 0;
+                        bucketSamples = 0;
+                    }
+                }
+                while (offset + 1 < buf.length && !capped) {
+                    const sample = Math.abs(buf.readInt16LE(offset));
+                    offset += 2;
+                    sampleCount += 1;
+                    if (sample > bucketPeak) bucketPeak = sample;
+                    bucketSamples += 1;
+                    if (bucketSamples >= samplesPerPeak) {
+                        if (!pushPeak(bucketPeak)) break;
+                        bucketPeak = 0;
+                        bucketSamples = 0;
+                    }
+                }
+                if (offset < buf.length && !capped) {
+                    carry = Buffer.from(buf.subarray(offset));
+                }
+            };
+
             proc.stdout.on('data', (chunk) => {
-                if (totalBytes >= maxBytes) return;
-                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-                const room = maxBytes - totalBytes;
-                if (buf.length <= room) {
-                    chunks.push(buf);
-                    totalBytes += buf.length;
-                } else if (room > 0) {
-                    chunks.push(buf.subarray(0, room));
-                    totalBytes += room;
+                if (capped) return;
+                consumePcm(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                if (capped) {
+                    try { proc.kill('SIGKILL'); } catch { /* ignore */ }
                 }
             });
             proc.stderr.on('data', (chunk) => {
@@ -1004,42 +1058,53 @@ function extractWaveformPeaks(filePath, options = {}) {
             });
             proc.on('close', (code, signal) => {
                 if (signal || code === null) {
-                    finish({ ok: false, cancelled: true, error: '已取消' });
-                    return;
-                }
-                if (code !== 0 && totalBytes < 4) {
+                    // Cap kill is intentional; still return peaks collected so far.
+                    if (!(capped && peaks.length >= 8)) {
+                        finish({ ok: false, cancelled: true, error: '已取消' });
+                        return;
+                    }
+                } else if (code !== 0 && sampleCount < 8 && peaks.length < 8) {
                     finish({ ok: false, error: stderr.trim().slice(-300) || `ffmpeg 退出码 ${code}` });
                     return;
                 }
-                const pcm = Buffer.concat(chunks, totalBytes);
-                const sampleCount = Math.floor(pcm.length / 2);
-                if (sampleCount < 8) {
+                if (!capped && bucketSamples > 0) {
+                    pushPeak(bucketPeak);
+                }
+                if (peaks.length < 8 && sampleCount < 8) {
                     finish({ ok: false, error: '未能提取到音频波形' });
                     return;
                 }
-                const durationSec = sampleCount / sampleRate;
-                let peakCount = Math.max(1, Math.round(durationSec * peaksPerSec));
-                if (peakCount > maxPeaks) peakCount = maxPeaks;
-                const samplesPerPeak = Math.max(1, Math.floor(sampleCount / peakCount));
-                const peaks = new Array(peakCount);
-                let maxAbs = 1;
-                for (let i = 0; i < peakCount; i += 1) {
-                    const start = i * samplesPerPeak;
-                    const end = Math.min(sampleCount, start + samplesPerPeak);
-                    let peak = 0;
-                    for (let s = start; s < end; s += 1) {
-                        const v = Math.abs(pcm.readInt16LE(s * 2));
-                        if (v > peak) peak = v;
-                    }
-                    peaks[i] = peak;
-                    if (peak > maxAbs) maxAbs = peak;
+                if (!peaks.length) {
+                    finish({ ok: false, error: '未能提取到音频波形' });
+                    return;
                 }
-                const normalized = peaks.map((p) => Math.min(1, p / maxAbs));
+                // If density overshot maxPeaks, downsample by max-pooling contiguous bins.
+                let outPeaks = peaks;
+                if (outPeaks.length > maxPeaks) {
+                    const ratio = outPeaks.length / maxPeaks;
+                    const reduced = new Array(maxPeaks);
+                    for (let i = 0; i < maxPeaks; i += 1) {
+                        const start = Math.floor(i * ratio);
+                        const end = Math.min(outPeaks.length, Math.floor((i + 1) * ratio));
+                        let peak = 0;
+                        for (let j = start; j < end; j += 1) {
+                            if (outPeaks[j] > peak) peak = outPeaks[j];
+                        }
+                        reduced[i] = peak;
+                    }
+                    outPeaks = reduced;
+                    maxAbs = 1;
+                    for (let i = 0; i < outPeaks.length; i += 1) {
+                        if (outPeaks[i] > maxAbs) maxAbs = outPeaks[i];
+                    }
+                }
+                const durationSec = sampleCount / sampleRate;
+                const normalized = outPeaks.map((p) => Math.min(1, p / maxAbs));
                 finish({
                     ok: true,
                     peaks: normalized,
                     durationSec,
-                    peaksPerSec: peakCount / Math.max(0.001, durationSec),
+                    peaksPerSec: outPeaks.length / Math.max(0.001, durationSec),
                     sampleRate,
                 });
             });
@@ -1192,6 +1257,9 @@ module.exports = {
     probeAcousticWindow,
     parseAcousticProbeLog,
     cancelActiveFfmpegJobs,
+    trackFfmpegProc,
+    ensureWindowsExecutableReady,
+    formatExecutableSpawnError,
     normalizeMediaLangTag,
     parseMediaMetaFromFfprobeOutput,
 };

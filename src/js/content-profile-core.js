@@ -6,14 +6,38 @@
  * Soft-merge only touches SENSE_OWNED_KEYS; task / device stay under user control.
  */
 (function (global, factory) {
-    const api = factory();
+    const api = factory(global);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubContentProfile = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function contentProfileFactory() {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function contentProfileFactory(global) {
+    function uiTf(template, vars) {
+        try {
+            if (typeof global !== 'undefined' && typeof global.TransubUiTf === 'function') {
+                return global.TransubUiTf(template, vars);
+            }
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tf === 'function') {
+                return global.TransubI18n.tf(template, vars);
+            }
+        } catch { /* ignore */ }
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        try {
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tx === 'function') {
+                return global.TransubI18n.tx(text);
+            }
+        } catch { /* ignore */ }
+        return String(text || '');
+    }
+
     /** Decode base64 UTF-8 (sensitive path/name tokens stay opaque in source). */
     function d(b64) {
         const s = String(b64 || '');
@@ -84,6 +108,10 @@
         'hallucinationSilenceThreshold',
         'glossaryMtEnabled',
         'sakuraNsfwPrompt',
+        // Reach postprocess / Hy-MT / sanitize (was classification-only → mass interjection wipe).
+        'contentProfile',
+        'senseProfile',
+        'strongAv',
     ]);
 
     const SENSE_OWNED_KEYS = Object.freeze([
@@ -97,9 +125,11 @@
     const JA_SOFT_ASR_WANTED = Object.freeze([
         'anime-whisper',
         'qwen3-asr-1.7b-ja-anime-galgame',
-        'whisper-ja-1.5b',
-        'qwen3-asr-1.7b-ja',
+        'qwen3-asr-1.7b-ja-anime-lora-v3',
+        'qwen3-asr-1.7b',
         'qwen3-asr-0.6b',
+        'whisper-ja-1.5b',
+        'kotoba-whisper-v2.0-faster',
         'whisper-large-v3-turbo',
         'whisper-large-v2',
         'whisper-large-v3',
@@ -108,19 +138,37 @@
 
     /**
      * Soft-AV JA MT preference (GalTransl / Sakura).
+     * Hy-MT2 is catalog-available but not auto-preferred — use only when the user picks it.
      * refineSenseModels filters by hardware tier, then picks first installed.
+     * Smart-translate hybrid uses Gal/Sakura order via smart-translate-hybrid-core.
      */
     const JA_SOFT_MT_ORDER = Object.freeze([
+        'sakura-galtransl-14b-q6k',
+        'sakura-galtransl-14b-q4km',
+        'sakura-galtransl-14b',
+        'sakura-14b-q6k',
+        'sakura-14b-q4km',
+        'sakura-14b',
+        'sakura-14b-qwen3',
         'sakura-galtransl-7b-q6k',
         'sakura-galtransl-7b',
+        'sakura-8b-qwen3',
         'sakura-7b',
         'sakura-galtransl-v4-4b',
         'sakura-1.5b',
     ]);
 
     const JA_SOFT_MT_PARAM_B = Object.freeze({
+        'sakura-galtransl-14b-q6k': 14,
+        'sakura-galtransl-14b-q4km': 14,
+        'sakura-galtransl-14b': 14,
+        'sakura-14b-q6k': 14,
+        'sakura-14b-q4km': 14,
+        'sakura-14b': 14,
+        'sakura-14b-qwen3': 14,
         'sakura-galtransl-7b-q6k': 7,
         'sakura-galtransl-7b': 7,
+        'sakura-8b-qwen3': 8,
         'sakura-7b': 7,
         'sakura-galtransl-v4-4b': 4,
         'sakura-1.5b': 1.5,
@@ -200,7 +248,7 @@
     });
 
     const PROFILE_PRESET_IDS = Object.freeze({
-        av_soft: 'ja-av-anime-whisper-translate',
+        av_soft: 'ja-av-anime-whisper-firered',
         // Film sense uses light denoise + film VAD — not the Demucs「影视音频增强」preset.
         film: null,
         talk: null,
@@ -997,7 +1045,12 @@
             overrides,
             options: { ...baseOptions, ...overrides },
             appliedKeys: Object.keys(overrides),
-            message: `深入感知「${classification.label}」置信度 ${confPct}%${reasonText} → ${method.short}`,
+            message: uiTf('深入感知「{label}」置信度 {conf}%{reason} → {method}', {
+                label: classification.label,
+                conf: confPct,
+                reason: reasonText,
+                method: method.short,
+            }),
         };
     }
 
@@ -1360,6 +1413,15 @@
             const { engineMtModel, ...rest } = patch;
             patch = rest;
         }
+        const p = String(profile || '').trim().toLowerCase();
+        if (p && p !== PROFILES.unknown) {
+            patch = {
+                ...patch,
+                contentProfile: p,
+                senseProfile: p,
+                strongAv: p === PROFILES.av_soft,
+            };
+        }
         return patch;
     }
 
@@ -1400,6 +1462,7 @@
         return options;
     }
 
+    /** Kept for detection only — Opus-MT is retired and never recommended. */
     const OPUS_MT_BY_LANG = Object.freeze({
         ja: 'opus-mt-ja-zh',
         en: 'opus-mt-en-zh',
@@ -1519,18 +1582,17 @@
 
     /**
      * Soft-AV JA MT ids for the current hardware tier.
-     * High: full Gal→Sakura chain. Mid: skip Q6_K (VRAM/RAM). Low: ≤4B only.
+     * High: full Gal→Sakura chain. Mid: ≤8B and skip heavy Q6_K. Low: ≤4B only.
      */
     function listJaSoftMtWanted(ctx = {}) {
         const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
-        if (tier === 'high') return [...JA_SOFT_MT_ORDER];
-        if (tier === 'mid') {
-            return JA_SOFT_MT_ORDER.filter((id) => id !== 'sakura-galtransl-7b-q6k');
-        }
-        const maxB = maxParamBillionForTier('low');
+        const maxB = maxParamBillionForTier(tier);
         return JA_SOFT_MT_ORDER.filter((id) => {
             const b = Number(JA_SOFT_MT_PARAM_B[id]);
-            return !Number.isFinite(b) || b <= maxB;
+            if (Number.isFinite(b) && b > maxB) return false;
+            // Mid: skip heavy Q6_K quants (VRAM) even when param ≤ mid cap.
+            if (tier === 'mid' && /q6k$/i.test(id)) return false;
+            return true;
         });
     }
 
@@ -1589,8 +1651,7 @@
 
     /**
      * Recommend a form MT model for「智能选择」chip / empty LLM select.
-     * Engine mode keeps empty id (runtime Opus auto by language).
-     * LLM mode returns a concrete preferred id (installed first, else pending target).
+     * Opus/engine mode is retired → treated as llm.
      *
      * @param {{
      *   translateMode?: string,
@@ -1603,43 +1664,87 @@
      * @returns {{ id: string, preferId: string, reason: string, mode: string }}
      */
     function recommendFormMtModel(ctx = {}) {
-        const rawMode = String(ctx.translateMode || 'engine').trim().toLowerCase();
-        const mode = rawMode === 'sakura' || rawMode === 'llm'
-            ? 'llm'
-            : (rawMode === 'smart' ? 'smart' : 'engine');
+        const rawMode = String(ctx.translateMode || 'llm').trim().toLowerCase();
+        const mode = (rawMode === 'smart' || rawMode === 'hybrid' || rawMode === 'advanced' || rawMode === 'mixed')
+            ? 'smart'
+            : ((rawMode === 'dialog' || rawMode === 'smart_dialog' || rawMode === 'llm_line' || rawMode === 'chat')
+                ? 'dialog'
+                : 'llm');
         const lang = normalizeSenseLang(ctx.language);
         const installed = buildInstalledSet(ctx.installedModels);
         const entitled = !!ctx.advancedEntitled;
         const tier = hardwareMtTier(ctx.device, ctx.vramGb, ctx.hwProfile);
 
-        if (mode === 'smart') {
+        let mtRoute = null;
+        try {
+            mtRoute = (typeof module !== 'undefined' && module.exports)
+                ? require('./mt-target-route-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+        } catch { mtRoute = null; }
+        const route = mtRoute?.resolveMtTargetRoute?.(ctx) || { isZhTarget: true };
+        const cap = mtRoute?.resolveMtCapability?.(ctx) || {
+            ...route,
+            allowSakuraModels: route.isZhTarget === true,
+            allowHybridMt: route.disableHybridMt !== true,
+            defaultAutoFallbackId: route.isZhTarget === true ? 'sakura-1.5b' : 'translategemma-4b',
+        };
+
+        if (mode === 'dialog') {
             return {
                 id: '',
                 preferId: '',
-                reason: '智能翻译由 Pro 大模型完成，无需选择引擎 MT',
+                reason: '智能翻译：对话模型按行（Pro）',
                 mode,
+                allowSakuraModels: !!cap.allowSakuraModels,
+                allowHybridMt: false,
+                defaultAutoFallbackId: 'qwen25-7b',
             };
         }
 
-        if (mode === 'engine') {
-            const preferId = (lang && OPUS_MT_BY_LANG[lang])
-                || OPUS_MT_BY_LANG.en
-                || 'opus-mt-en-zh';
+        if (mode === 'smart') {
+            let hybridPrefer = '';
+            try {
+                const hybridCore = (typeof module !== 'undefined' && module.exports)
+                    ? require('./smart-translate-hybrid-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubSmartTranslateHybrid : null);
+                const ids = (Array.isArray(ctx.installedModels) ? ctx.installedModels : [])
+                    .map((m) => (typeof m === 'string' ? m : m?.id))
+                    .filter(Boolean);
+                if (cap.allowHybridMt && hybridCore?.pickHybridMtModelId) {
+                    hybridPrefer = hybridCore.pickHybridMtModelId({
+                        installedIds: ids,
+                        subtitleTargetLang: route.targetLang || ctx.subtitleTargetLang,
+                        targetLang: route.targetLang || ctx.subtitleTargetLang || ctx.targetLang,
+                        language: lang || ctx.language,
+                    }) || '';
+                }
+            } catch { /* ignore */ }
             return {
                 id: '',
-                preferId,
-                reason: lang
-                    ? `机器翻译 · 按片源语言自动匹配 ${preferId}`
-                    : `机器翻译 · 按片源语言自动匹配 Opus（默认 ${preferId}）`,
+                preferId: hybridPrefer,
+                reason: !cap.allowHybridMt
+                    ? `混合翻译 · 成片 ${cap.targetLanguageLabel || '非中文'}（句级混合不可用，对话模型直译）`
+                    : (hybridPrefer
+                        ? `混合翻译 · 优先 ${hybridPrefer}（可留空自动）`
+                        : (cap.allowSakuraModels
+                            ? '混合翻译由 Pro 翻译 + 剧情贴合润色完成；翻译模型可留空自动选用'
+                            : `混合翻译 · 成片 ${cap.targetLanguageLabel || '非中文'}：请安装 TranslateGemma 等多语专训`)),
                 mode,
+                allowSakuraModels: !!cap.allowSakuraModels,
+                allowHybridMt: !!cap.allowHybridMt,
+                defaultAutoFallbackId: cap.defaultAutoFallbackId || 'qwen25-7b',
             };
         }
 
-        // llm / 推理翻译
-        const allowSakura = !lang || lang === 'ja';
-        const sakuraOrder = (entitled && tier === 'high')
-            ? ['sakura-7b', 'sakura-1.5b']
-            : ['sakura-1.5b', 'sakura-7b'];
+        // llm / 推理翻译 (engine/Opus paths normalize here)
+        const allowSakura = !!cap.allowSakuraModels;
+        const profile = ctx.profile || PROFILES.unknown;
+        const softAv = allowSakura && profile === PROFILES.av_soft;
+        const sakuraOrder = softAv
+            ? listJaSoftMtWanted(ctx)
+            : ((entitled && tier === 'high')
+                ? ['sakura-7b', 'sakura-1.5b']
+                : ['sakura-1.5b', 'sakura-7b']);
         const generalOrder = listRankedGeneralLlmMtIds(ctx);
 
         if (allowSakura) {
@@ -1650,6 +1755,9 @@
                     preferId: sakuraHit,
                     reason: `日语推理 · ${sakuraHit}（语言 + ${tier === 'low' ? '低显存' : (entitled ? 'Pro/硬件' : '硬件')}）`,
                     mode,
+                    allowSakuraModels: true,
+                    allowHybridMt: !!cap.allowHybridMt,
+                    defaultAutoFallbackId: cap.defaultAutoFallbackId || 'sakura-1.5b',
                 };
             }
             const llmHit = firstInstalled(generalOrder, installed);
@@ -1657,8 +1765,11 @@
                 return {
                     id: llmHit,
                     preferId: llmHit,
-                    reason: `Sakura 未装 · 推理 ${llmHit}`,
+                    reason: `专训模型未装 · 推理 ${llmHit}`,
                     mode,
+                    allowSakuraModels: true,
+                    allowHybridMt: !!cap.allowHybridMt,
+                    defaultAutoFallbackId: llmHit,
                 };
             }
             const prefer = sakuraOrder[0] || 'sakura-1.5b';
@@ -1667,6 +1778,9 @@
                 preferId: prefer,
                 reason: `日语推理 · 推荐 ${prefer}（待下载）`,
                 mode,
+                allowSakuraModels: true,
+                allowHybridMt: !!cap.allowHybridMt,
+                defaultAutoFallbackId: prefer,
             };
         }
 
@@ -1675,16 +1789,26 @@
             return {
                 id: llmHit,
                 preferId: llmHit,
-                reason: `非日语推理 · ${llmHit}（${tier} 档${entitled ? ' · Pro' : ''}）`,
+                reason: route.isZhTarget === false
+                    ? `成片 ${route.targetLanguageLabel || '非中文'} · 通用推理 ${llmHit}`
+                    : `非日语推理 · ${llmHit}（${tier} 档${entitled ? ' · Pro' : ''}）`,
                 mode,
+                allowSakuraModels: false,
+                allowHybridMt: false,
+                defaultAutoFallbackId: llmHit,
             };
         }
         const prefer = generalOrder[0] || 'qwen25-7b';
         return {
             id: prefer,
             preferId: prefer,
-            reason: `非日语推理 · 推荐 ${prefer}（待下载）`,
+            reason: route.isZhTarget === false
+                ? `成片 ${route.targetLanguageLabel || '非中文'} · 推荐 ${prefer}（待下载）`
+                : `非日语推理 · 推荐 ${prefer}（待下载）`,
             mode,
+            allowSakuraModels: false,
+            allowHybridMt: false,
+            defaultAutoFallbackId: prefer,
         };
     }
 
@@ -1722,7 +1846,8 @@
                 'kotoba-whisper-v2.0-faster',
                 'anime-whisper',
                 'qwen3-asr-1.7b-ja-anime-galgame',
-                'qwen3-asr-1.7b-ja',
+                'qwen3-asr-1.7b-ja-anime-lora-v3',
+                'qwen3-asr-1.7b',
                 'qwen3-asr-0.6b',
                 'whisper-large-v3-turbo',
                 'whisper-large-v2',
@@ -1800,14 +1925,34 @@
         }
 
         // MT: soft-AV uses GalTransl/Sakura hardware chain; other JA prefers Sakura then LLM.
+        // Pair specialists: JA→ZH, KO→ZH (LN-Korean), KO→JA (LN-ko2ja).
         if (translateLike) {
-            // Sakura / GalTransl is JA→ZH only — never for known non-Japanese.
-            const allowSakura = lang === 'ja'
+            let allowSakura = lang === 'ja'
                 || (profile === PROFILES.av_soft && !lang);
-            const softAvMt = allowSakura && profile === PROFILES.av_soft;
-            const sakuraWanted = softAvMt
-                ? listJaSoftMtWanted(ctx)
-                : (allowSakura ? ['sakura-1.5b', 'sakura-7b'] : []);
+            let cap = null;
+            try {
+                const mtRoute = (typeof module !== 'undefined' && module.exports)
+                    ? require('./mt-target-route-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+                if (mtRoute?.resolveMtCapability) {
+                    cap = mtRoute.resolveMtCapability({
+                        ...out,
+                        ...ctx,
+                        language: lang || out.language || ctx.language,
+                    });
+                    allowSakura = !!cap.allowSakuraModels;
+                }
+            } catch { /* optional */ }
+            const softAvMt = allowSakura && profile === PROFILES.av_soft && lang !== 'ko';
+            const sakuraWanted = (() => {
+                if (!allowSakura) return [];
+                if (cap?.allowKoJaSpecialists) return ['sakura-ln-ko2ja-14b'];
+                if (cap?.allowKoZhSpecialists || lang === 'ko') {
+                    return ['sakura-ln-korean-14b', 'sakura-ln-korean-7b'];
+                }
+                if (softAvMt) return listJaSoftMtWanted(ctx);
+                return ['sakura-1.5b', 'sakura-7b'];
+            })();
             let sakuraHit = firstInstalled(sakuraWanted, installed);
             // Already-installed heavier Gal/Sakura still wins even if tier prefers lighter.
             if (!sakuraHit && softAvMt) {
@@ -1842,8 +1987,8 @@
                     // Prefer any installed 推理翻译 over Opus when Sakura is missing
                     // (non soft-AV JA only — soft sticks to Gal/Sakura chain).
                     setMt(generalLlmHit, out.engineMtModel
-                        ? `Sakura 未装 · 推理 ${out.engineMtModel} → ${generalLlmHit}`
-                        : `Sakura 未装 · 推理 → ${generalLlmHit}`);
+                        ? `专训模型未装 · 推理 ${out.engineMtModel} → ${generalLlmHit}`
+                        : `专训模型未装 · 推理 → ${generalLlmHit}`);
                 } else {
                     const prefer = sakuraWanted[0]
                         || (softAvMt ? JA_SOFT_MT_ORDER[JA_SOFT_MT_ORDER.length - 1] : 'sakura-1.5b');
@@ -1852,24 +1997,35 @@
                         : `MT → ${prefer}（待下载）`);
                 }
             } else {
-                // Non-Japanese: never Sakura. Prefer general LLM; declare pending rather than
-                // clearing so form Opus / defaults cannot silently replace the sense scheme.
+                // Non-matching source/target pair: never wrong-direction Sakura.
                 const preferLlm = generalLlmWanted[0] || '';
+                const intlNote = (() => {
+                    try {
+                        const mtRoute = (typeof module !== 'undefined' && module.exports)
+                            ? require('./mt-target-route-core')
+                            : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+                        const cap = mtRoute?.resolveMtCapability?.({ ...out, ...ctx, language: lang });
+                        if (cap && !cap.isZhTarget) {
+                            return `成片 ${cap.targetLanguageLabel || '非中文'}`;
+                        }
+                    } catch { /* ignore */ }
+                    return lang ? `非日语（${lang}）` : '非日→中';
+                })();
                 if (mtIsSakura || !curMt || mtIsOpus) {
                     if (generalLlmHit) {
                         setMt(generalLlmHit, mtIsSakura
-                            ? `非日语 · 禁用 Sakura · 推理 → ${generalLlmHit}`
+                            ? `${intlNote} · 禁用 Sakura · 推理 → ${generalLlmHit}`
                             : (mtIsOpus
                                 ? `优先推理翻译 · MT ${curMt} → ${generalLlmHit}`
                                 : `优先推理翻译 · MT → ${generalLlmHit}`));
                     } else if (preferLlm) {
                         setMt(preferLlm, mtIsSakura
-                            ? `非日语 · 禁用 Sakura · 推理 → ${preferLlm}（待下载）`
+                            ? `${intlNote} · 禁用 Sakura · 推理 → ${preferLlm}（待下载）`
                             : (mtIsOpus
                                 ? `优先推理翻译 · MT ${curMt} → ${preferLlm}（待下载）`
                                 : `优先推理翻译 · MT → ${preferLlm}（待下载）`));
                     } else if (mtIsSakura) {
-                        clearMt(`非日语（${lang || '?'}）· 禁用 Sakura · 未强制机器翻译`);
+                        clearMt(`${intlNote}· 禁用 Sakura · 未强制机器翻译`);
                     }
                 } else if (curMt && installed.size && !installed.has(curMt)) {
                     if (generalLlmHit) {
@@ -1910,8 +2066,22 @@
         const lang = normalizeSenseLang(ctx.language || overrides.language || '');
         const translateLike = isTranslateLikeTask(ctx.task);
         const jaAv = profile === PROFILES.av_soft || (lang === 'ja' && profile !== PROFILES.film);
-        const allowSakuraMt = lang === 'ja'
-            || (profile === PROFILES.av_soft && !lang);
+        const allowSakuraMt = (() => {
+            let ok = lang === 'ja' || (profile === PROFILES.av_soft && !lang);
+            try {
+                const mtRoute = (typeof module !== 'undefined' && module.exports)
+                    ? require('./mt-target-route-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+                if (mtRoute?.resolveMtCapability) {
+                    ok = !!mtRoute.resolveMtCapability({
+                        ...overrides,
+                        ...ctx,
+                        language: lang || overrides.language || ctx.language,
+                    }).allowSakuraModels;
+                }
+            } catch { /* optional */ }
+            return ok;
+        })();
 
         if (profile === PROFILES.av_soft) {
             push({
@@ -1923,7 +2093,7 @@
                 altIds: [
                     'qwen3-asr-1.7b-ja-anime-galgame',
                     'whisper-ja-1.5b',
-                    'qwen3-asr-1.7b-ja',
+                    'qwen3-asr-1.7b',
                     'qwen3-asr-0.6b',
                 ],
             });
@@ -1938,7 +2108,7 @@
                     'anime-whisper',
                     'reazonspeech-k2',
                     'qwen3-asr-1.7b-ja-anime-galgame',
-                    'qwen3-asr-1.7b-ja',
+                    'qwen3-asr-1.7b',
                     'qwen3-asr-0.6b',
                 ],
             });
@@ -1955,7 +2125,7 @@
                 id: String(overrides.engineAsrModel),
                 kind: 'model',
                 role: 'asr',
-                label: `识别 ${overrides.engineAsrModel}`,
+                label: uiTf('识别 {model}', { model: overrides.engineAsrModel }),
             });
         }
 
@@ -1983,7 +2153,7 @@
                     id: preferMt,
                     kind: 'model',
                     role: 'mt',
-                    label: `软声译中 ${preferMt}`,
+                    label: uiTf('软声译中 {model}', { model: preferMt }),
                     altIds: [
                         ...softWanted.filter((id) => id !== preferMt),
                         ...JA_SOFT_MT_ORDER.filter((id) => id !== preferMt && !softWanted.includes(id)),
@@ -1994,7 +2164,7 @@
                     id: 'sakura-1.5b',
                     kind: 'model',
                     role: 'mt',
-                    label: 'Sakura 译中 sakura-1.5b',
+                    label: '推理译中 sakura-1.5b',
                     altIds: ['sakura-7b', ...listPreferredGeneralLlmMtIds().slice(0, 3)],
                 });
             } else {
@@ -2007,7 +2177,7 @@
                         id,
                         kind: 'model',
                         role: 'mt',
-                        label: `推理翻译 ${id}`,
+                        label: uiTf('推理翻译 {id}', { id }),
                         altIds: llmPrefer.filter((x) => x !== id).slice(0, 4),
                     });
                 }
@@ -2141,7 +2311,11 @@
                 adopted: false,
                 classification,
                 overrides,
-                message: `识别为「${classification.label}」置信度 ${confPct}%${reasonText}${memSuffix}；未自动采纳`,
+                message: uiTf('识别为「{label}」置信度 {conf}%{extra}；未自动采纳', {
+                    label: classification.label,
+                    conf: confPct,
+                    extra: `${reasonText}${memSuffix}`,
+                }),
             };
         }
 
@@ -2178,14 +2352,19 @@
                 ? { ...baseOptions, ...overrides }
                 : options,
             appliedKeys: appliedKeys.length ? appliedKeys : Object.keys(overrides),
-            message: `感知「${classification.label}」置信度 ${confPct}%${reasonText} → ${method.short}${langNote}${manualNote}${softNote}${memSuffix}`,
+            message: uiTf('感知「{label}」置信度 {conf}%{reason} → {method}{extra}', {
+                label: classification.label,
+                conf: confPct,
+                reason: reasonText,
+                method: method.short,
+                extra: `${langNote}${manualNote}${softNote}${memSuffix}`,
+            }),
         };
     }
 
     /**
-     * Hard guard: Sakura is JA→ZH only. When source language is known non-Japanese,
-     * strip Sakura MT. Prefer a general LLM when provided via installedModels; never
-     * force Opus 机器翻译 here (form / engine may still choose it if needed).
+     * Hard guard: Sakura is JA→ZH only. Strip when source is known non-Japanese
+     * or 成片目标语 is non-Chinese. Prefer a general LLM when installed.
      * @param {object} options
      * @param {string} [language]
      * @param {{ installedModels?: Array<{id:string,installed?:boolean}|string> }} [ctx]
@@ -2194,33 +2373,118 @@
     function sanitizeSakuraMtForLanguage(options = {}, language, ctx = {}) {
         const out = { ...(options || {}) };
         const lang = normalizeSenseLang(language || out.language || '');
-        if (!lang || lang === 'ja') {
-            return { options: out, changed: false, note: '' };
-        }
+        let allowSakura = !lang || lang === 'ja' || lang === 'ko';
+        let allowHybrid = true;
+        let reasonTag = lang && lang !== 'ja' && lang !== 'ko' ? `非日语（${lang}）` : '';
+        if (lang === 'ko') reasonTag = '';
+        let mtRoute = null;
+        try {
+            mtRoute = (typeof module !== 'undefined' && module.exports)
+                ? require('./mt-target-route-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+            if (mtRoute?.resolveMtCapability) {
+                const cap = mtRoute.resolveMtCapability({
+                    ...out,
+                    ...(ctx && typeof ctx === 'object' ? ctx : {}),
+                    language: lang || out.language,
+                });
+                allowSakura = !!cap.allowSakuraModels;
+                allowHybrid = !!cap.allowHybridMt;
+                if (!cap.isZhTarget && !(cap.allowKoJaSpecialists)) {
+                    reasonTag = `成片 ${cap.targetLanguageLabel || '非中文'}`;
+                } else if (!reasonTag && !allowSakura) {
+                    reasonTag = '片源/成片与专训不匹配';
+                }
+            }
+        } catch { /* optional */ }
         const mt = String(out.engineMtModel || '').trim();
+        const modelOk = !mt
+            || !isSakuraMtId(mt)
+            || (mtRoute?.isMtModelAllowedForTarget
+                ? mtRoute.isMtModelAllowedForTarget(mt, { ...out, language: lang || out.language }, ctx)
+                : allowSakura);
+        if (modelOk && (allowSakura || !isSakuraMtId(mt))) {
+            if (modelOk && isSakuraMtId(mt) && allowSakura) {
+                return { options: out, changed: false, note: '' };
+            }
+            if (!isSakuraMtId(mt)) {
+                let changed = false;
+                if (Object.prototype.hasOwnProperty.call(out, 'sakuraNsfwPrompt') && out.sakuraNsfwPrompt
+                    && lang && lang !== 'ja') {
+                    out.sakuraNsfwPrompt = false;
+                    changed = true;
+                }
+                if (!allowHybrid && out.smartTranslateHybridMt !== false) {
+                    out.smartTranslateHybridMt = false;
+                    changed = true;
+                }
+                return {
+                    options: out,
+                    changed,
+                    note: changed ? `${reasonTag || '片源'}· 关闭 Sakura 专用选项` : '',
+                };
+            }
+        }
+        if (!reasonTag) reasonTag = '片源/成片与专训不匹配';
+        const intlPrefer = [
+            'sakura-ln-korean-14b',
+            'sakura-ln-korean-7b',
+            'sakura-ln-ko2ja-14b',
+            'translategemma-4-sub-e4b',
+            'translategemma-4b',
+            'translategemma-12b',
+            'translategemma-27b',
+            'hunyuan-mt-chimera-7b-abliterated',
+            'hunyuan-mt-7b-abliterated',
+            'hy-mt15-7b-abliterated',
+            'hy-mt15-1.8b-abliterated',
+            ...listPreferredGeneralLlmMtIds(),
+        ];
         if (!isSakuraMtId(mt)) {
+            let changed = false;
             if (Object.prototype.hasOwnProperty.call(out, 'sakuraNsfwPrompt') && out.sakuraNsfwPrompt) {
                 out.sakuraNsfwPrompt = false;
-                return { options: out, changed: true, note: `非日语（${lang}）· 关闭 Sakura 限制级提示` };
+                changed = true;
             }
-            return { options: out, changed: false, note: '' };
+            if (!allowHybrid && out.smartTranslateHybridMt !== false) {
+                out.smartTranslateHybridMt = false;
+                changed = true;
+            }
+            return {
+                options: out,
+                changed,
+                note: changed ? `${reasonTag}· 关闭 Sakura 专用选项` : '',
+            };
         }
         const installed = buildInstalledSet(ctx.installedModels);
-        const llmHit = firstInstalled(listPreferredGeneralLlmMtIds(), installed);
+        const preferForPair = intlPrefer.filter((id) => (
+            !mtRoute?.isMtModelAllowedForTarget
+            || mtRoute.isMtModelAllowedForTarget(id, { ...out, language: lang || out.language }, ctx)
+        ));
+        const llmHit = firstInstalled(
+            preferForPair.length ? preferForPair : listPreferredGeneralLlmMtIds(),
+            installed,
+        );
         out.sakuraNsfwPrompt = false;
+        if (!allowHybrid) {
+            out.smartTranslateHybridMt = false;
+        }
         if (llmHit) {
             out.engineMtModel = llmHit;
+            if (out.engineLlmMtModel && isSakuraMtId(out.engineLlmMtModel)) {
+                out.engineLlmMtModel = llmHit;
+            }
             return {
                 options: out,
                 changed: true,
-                note: `非日语（${lang}）· 禁用 Sakura · 推理 → ${llmHit}`,
+                note: `${reasonTag}· 禁用不匹配专训 · 推理 → ${llmHit}`,
             };
         }
         delete out.engineMtModel;
         return {
             options: out,
             changed: true,
-            note: `非日语（${lang}）· 禁用 Sakura · 未强制机器翻译`,
+            note: `${reasonTag}· 禁用 Sakura · 未强制机器翻译`,
         };
     }
 
@@ -2412,9 +2676,13 @@
     function describeSenseMtForUi(overrides = {}, ctx = {}) {
         const task = String(ctx.task || '').trim();
         if (task === 'transcribe') return '';
-        const mode = String(ctx.translateMode || '').trim();
-        const smart = ctx.smartTranslate === true || mode === 'smart';
-        if (smart) return '智能翻译';
+        const mode = String(ctx.translateMode || '').trim().toLowerCase();
+        if (mode === 'dialog' || mode === 'smart_dialog' || mode === 'llm_line' || mode === 'chat') {
+            return '智能翻译';
+        }
+        if (ctx.smartTranslate === true || mode === 'smart' || mode === 'hybrid' || mode === 'mixed') {
+            return '混合翻译';
+        }
         return String(overrides?.engineMtModel || '').trim();
     }
 
@@ -2474,25 +2742,27 @@
         if (sensingCount > 0) {
             return {
                 tone: 'apply',
-                chipLabel: `感知中 ${sensingCount}`,
-                detail: `正在分析素材类型与参数（${sensingCount}）`,
-                title: '智能感知进行中；完成前无法开始（避免误用表单参数）',
+                chipLabel: uiTf('感知中 {count}', { count: sensingCount }),
+                detail: uiTf('正在分析素材类型与参数（{count}）', { count: sensingCount }),
+                title: uiTx('智能感知进行中；完成前无法开始（避免误用表单参数）'),
             };
         }
         if (adoptedCount > 0) {
             return {
                 tone: 'apply',
-                chipLabel: `已采纳 ${adoptedCount}`,
+                chipLabel: uiTf('已采纳 {count}', { count: adoptedCount }),
                 detail: '',
-                title: `已采纳 ${adoptedCount} 项：开始时强制按感知方案覆盖参数（缺模型须先安装）`,
+                title: uiTf('已采纳 {count} 项：开始时强制按感知方案覆盖参数（缺模型须先安装）', {
+                    count: adoptedCount,
+                }),
             };
         }
         if (doneCount > 0) {
             return {
                 tone: 'suggest',
-                chipLabel: `已感知 ${doneCount}`,
-                detail: '有感知结果但未采纳（点魔术棒采纳，或不采纳后按表单）',
-                title: '感知完成但未采纳；开启感知时须采纳方案、不采纳或关闭感知后才能开始',
+                chipLabel: uiTf('已感知 {count}', { count: doneCount }),
+                detail: uiTx('有感知结果但未采纳（点魔术棒采纳，或不采纳后按表单）'),
+                title: uiTx('感知完成但未采纳；开启感知时须采纳方案、不采纳或关闭感知后才能开始'),
             };
         }
         if (itemCount > 0) {
@@ -2540,6 +2810,7 @@
         TALK_PATCH,
         JA_SOFT_ASR_WANTED,
         JA_SOFT_MT_ORDER,
+        JA_SOFT_MT_PARAM_B,
         classifyContentProfile,
         classifyBatchContentProfile,
         optionPatchForProfile,

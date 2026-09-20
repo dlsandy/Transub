@@ -18,7 +18,7 @@
         const findManaged = deps.findManagedLlmCatalogEntry || (() => null);
         const id = String(modelId || '').trim();
         if (!id || id === demucsId) return false;
-        if (source === 'managed') return true;
+        if (source === 'managed' || source === 'lab') return true;
         if (isSakura(id)) return false;
         return !!findManaged(id);
     }
@@ -30,7 +30,7 @@
         const id = String(item.id || '').trim();
         if (!id || id === demucsId || /^demucs$/i.test(id)) return false;
         if (item.group === 'separate' || item.group === 'llm') return false;
-        if (item.source === 'managed' || item.source === 'sakura') return false;
+        if (item.source === 'managed' || item.source === 'sakura' || item.source === 'lab') return false;
         if (isManagedLlmDownloadId(id, item.source, deps)) return false;
         if (id === 'silero-vad') return false;
         if (item.shipped && !item.hubId) return false;

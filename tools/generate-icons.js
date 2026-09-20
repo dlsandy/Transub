@@ -50,6 +50,8 @@ async function main() {
         { file: 'icon-16.png', size: 16 },
         { file: 'icon-32.png', size: 32 },
         { file: 'icon-48.png', size: 48 },
+        { file: 'icon-64.png', size: 64 },
+        { file: 'icon-128.png', size: 128 },
         { file: 'icon-256.png', size: 256 },
         { file: 'tray-icon-subtitle-16.png', size: 16 },
         { file: 'tray-icon-subtitle.png', size: 32 },
@@ -57,24 +59,32 @@ async function main() {
 
     await writePngSizes(sharp, source, sizes);
 
+    // Include mid sizes so Windows taskbar / DPI can pick a sharper frame
     const ico = await pngToIco([
         path.join(electronDir, 'icon-16.png'),
         path.join(electronDir, 'icon-32.png'),
         path.join(electronDir, 'icon-48.png'),
+        path.join(electronDir, 'icon-64.png'),
+        path.join(electronDir, 'icon-128.png'),
         path.join(electronDir, 'icon-256.png'),
     ]);
     fs.writeFileSync(path.join(electronDir, 'app.ico'), ico);
     fs.writeFileSync(path.join(root, 'app.ico'), ico);
 
     await sharp(source)
-        .resize(512, 512, { fit: 'cover' })
+        .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
         .png()
         .toFile(path.join(electronDir, 'icon-source.png'));
 
     await sharp(source)
-        .resize(32, 32, { fit: 'cover' })
+        .resize(32, 32, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
         .png()
         .toFile(path.join(root, 'src', 'icon.png'));
+
+    await sharp(source)
+        .resize(64, 64, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png()
+        .toFile(path.join(root, 'src', 'icon-64.png'));
 
     const editorSource = resolveEditorIconSource();
     if (editorSource) {

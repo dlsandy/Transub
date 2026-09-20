@@ -70,5 +70,15 @@ print(json.dumps(cases, ensure_ascii=False))
 
         assert.strictEqual(sanitize.isWetOralSfxOnlyZh('咕咚'), true);
         assert.strictEqual(sanitize.isWetOralSfxOnlyZh('哈啊'), false);
+
+        // Nickname+honorific must not lose the wet-sounding stem
+        const kun = sanitize.stripWetOralSfxFromJa('ちゅぷくん、痛くないか?');
+        assert.strictEqual(kun.changed, false);
+        assert.ok(kun.text.includes('ちゅぷくん'), kun.text);
+
+        // PRED-890: do not peel じゅば off じゅばんだ
+        const jubanda = sanitize.stripWetOralSfxFromJa('じゅばんだ…ああイっちゃう');
+        assert.strictEqual(jubanda.changed, false);
+        assert.ok(jubanda.text.includes('じゅばんだ'), jubanda.text);
     });
 });

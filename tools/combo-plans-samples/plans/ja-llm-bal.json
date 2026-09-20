@@ -1,0 +1,38 @@
+{
+  "id": "ja-llm-bal",
+  "version": 1,
+  "group": "ja",
+  "name": "软对白 · 推理 · 均衡",
+  "description": "软对白：Anime Whisper 听写+ GalTransl 7B 本地推理翻译硬件档：均衡 · 8–12GB 显存。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "anime-whisper",
+    "firered-vad",
+    "sakura-galtransl-7b-q6k"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "anime-whisper",
+    "engineVadModel": "firered-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "llm",
+    "engineLlmMtModel": "sakura-galtransl-7b-q6k",
+    "engineProfile": "balanced",
+    "activePresetId": "ja-av-anime-whisper-firered",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "firered"
+  }
+}

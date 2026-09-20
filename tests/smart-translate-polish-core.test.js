@@ -83,10 +83,16 @@ describe('smart-translate-polish-core', () => {
         });
         assert.strictEqual(msgs.length, 2);
         assert.ok(msgs[0].content.includes('欠译补回'));
-        assert.ok(!msgs[0].content.includes('语意不变'));
+        assert.ok(msgs[0].content.includes('贴近原文'));
+        assert.ok(msgs[0].content.includes('同义整句换写'));
         assert.ok(msgs[0].content.includes('禁止'));
         assert.ok(msgs[1].content.includes('source'));
         assert.ok(msgs[1].content.includes('香水'));
+        const huihuiMsgs = polish.buildPlotPolishMessages({
+            pairs,
+            modelId: 'qwen3-8b-abliterated',
+        });
+        assert.ok(huihuiMsgs[0].content.includes('Huihui') || huihuiMsgs[0].content.includes('消融'));
     });
 
     it('scores filler ZH + lexical JA and invented-fact cues', () => {
@@ -98,6 +104,27 @@ describe('smart-translate-polish-core', () => {
         assert.ok(hang > clean);
         assert.strictEqual(polish.looksLikeInventedFact('もう止まって', '船停了'), true);
         assert.strictEqual(polish.looksLikeInventedFact('船が止まって', '船停了'), false);
+    });
+
+    it('rejects plot-topic invent polish on short spoken JA', () => {
+        assert.strictEqual(
+            polish.looksLikePlotTopicInvent?.(
+                'ここ どこだ?',
+                '请也停止拍照 这里是可以住宿的地方',
+            ),
+            true,
+        );
+        assert.strictEqual(
+            polish.looksLikePlotTopicInvent?.('ここ どこだ?', '这里是哪里？'),
+            false,
+        );
+        const prev = new Map([[0, '这里是哪里？']]);
+        const filtered = polish.filterPlotPolishUpdates(
+            [{ index: 0, text: '为了研究而伪装成猎奇杀人来收集大脑 这种想法未免也太过夸张了吧' }],
+            prev,
+            { sourceByIndex: new Map([[0, 'すいません']]) },
+        );
+        assert.strictEqual(filtered.length, 0);
     });
 
     it('lets polish grow filler-only drafts into real dialogue', () => {
@@ -147,6 +174,19 @@ describe('smart-translate-polish-core', () => {
         assert.strictEqual(filtered[0].index, 0);
         assert.ok(filtered[0].text.includes('香水纯'));
     });
+
+    it('rejects style-only rewrites that barely reuse draft wording', () => {
+        const prev = new Map([
+            [0, '今天天气不错。'],
+            [1, '请稍等一下。'],
+        ]);
+        const filtered = polish.filterPlotPolishUpdates([
+            { index: 0, text: '今日气候甚佳呢' },
+            { index: 1, text: '请稍等一下吧' },
+        ], prev);
+        assert.ok(!filtered.some((u) => u.index === 0));
+        assert.ok(filtered.some((u) => u.index === 1));
+    });
 });
 
 const verify = require('../src/js/smart-translate-verify-core');
@@ -162,10 +202,15 @@ describe('smart-translate-verify-core filler recovery', () => {
             verify.heuristicVerifyAction('今日はいい天気ですね。', '今天天气不错。', '今天天气不错。'),
             'accept',
         );
+        assert.strictEqual(
+            verify.heuristicVerifyAction('今日はいい天気ですね。', '今天天气不错。', '今日气候甚佳呢'),
+            'revert',
+        );
         const msgs = verify.buildFaithfulnessVerifyMessages({
             pairs: [{ index: 0, sourceText: '待って', draft: '嗯', text: '等一下' }],
         });
         assert.ok(msgs[0].content.includes('语气词'));
+        assert.ok(msgs[0].content.includes('改文风'));
     });
 });
 

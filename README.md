@@ -14,8 +14,6 @@
   ·
   <a href="https://gitcode.com/AndyDai/Transub/releases">GitCode</a>
   ·
-  <a href="https://codeberg.org/flyforyou/Transub/releases">Codeberg</a>
-  ·
   <a href="CHANGELOG.md">变更记录</a>
   ·
   <a href="CONTRIBUTING.md">贡献指南</a>
@@ -57,7 +55,7 @@
 
 ## 怎么用
 
-1. [下载 zip](https://github.com/dlsandy/Transub/releases)，解压后打开 `Transub.exe`
+1. [下载 zip](https://github.com/dlsandy/Transub/releases)，解压后打开 `transub.exe`
 2. **第一次请走设置向导**（按电脑勾选并下载模型，体积较大，请留足时间和磁盘）
 3. 把文件或文件夹拖进主窗口，选 **转写 / 翻译 / 双语**，点开始
 4. 跑完后列表会标出问题数；需要改的，点进 **字幕编辑器** 对着画面改
@@ -164,7 +162,7 @@ Pro 多出来的那一遍可以关（设置 → Pro → 智能翻译）。关掉
 | 依赖 | 识别、翻译、FFmpeg 都已带上，不必另装 Python |
 
 1. 打开 [Releases](https://github.com/dlsandy/Transub/releases)（国内也可从 [GitCode](https://gitcode.com/AndyDai/Transub/releases)），下载 **zip**
-2. 解压后运行 `Transub.exe`（同目录有编辑器快捷方式）
+2. 解压后运行 `transub.exe`（同目录有编辑器快捷方式）
 3. 走完设置向导，再开始第一批任务
 4. 以后用软件里的「检查更新」即可（国内网络优先 GitCode）；已经下载的模型会保留
 

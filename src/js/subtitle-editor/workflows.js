@@ -2,6 +2,16 @@
  * 字幕编辑器 — 工作流抽屉与一键跑批
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installWorkflows(ctx) {
         const {
             workflowsCore,
@@ -43,6 +53,8 @@
             openQcModal,
             restoreInitialSnapshot,
             mergeSelectedCues,
+            mergeCueLines,
+            planMergeCueLines,
             confirmBatchSilenceSplit,
             confirmBatchSilenceDurAdjust,
             confirmBatchAudioSnapAdjust,
@@ -103,7 +115,14 @@
             if (!chineseCore?.convertCues || !state.cues?.length) return { changed: false };
             try {
                 const optsRes = await electron?.transWithAiGetOptions?.({});
-                const variant = optsRes?.options?.chineseSubtitleVariant;
+                const opts = optsRes?.options || {};
+                const tgtApi = global.TransubSubtitleTargetLang;
+                if (tgtApi?.isZhSubtitleTarget && !tgtApi.isZhSubtitleTarget(
+                    tgtApi.resolveSubtitleTargetLang?.(opts) || opts.subtitleTargetLang,
+                )) {
+                    return { changed: false };
+                }
+                const variant = opts.chineseSubtitleVariant;
                 const trad = typeof chineseCore.isTraditionalVariant === 'function'
                     ? chineseCore.isTraditionalVariant(variant)
                     : variant === 'traditional'
@@ -369,6 +388,19 @@
                 indexes = indexes.slice(0, maxCues);
             }
             return indexes;
+        }
+
+        function applyMergeLinesToIndexes(indexes) {
+            let mergedCount = 0;
+            for (const idx of indexes) {
+                const cue = state.cues[idx];
+                if (!cue) continue;
+                const result = planMergeCueLines(cue);
+                if (result?.error || !result?.text) continue;
+                cue.text = result.text;
+                mergedCount += 1;
+            }
+            return { mergedCount };
         }
 
         function applySplitModeToIndexes(mode, indexes, splitOpts) {
@@ -850,6 +882,29 @@
             if (!invoke) {
                 return { status: 'failed', summary: '当前环境不支持 Pro' };
             }
+            let settingsOpts = null;
+            try {
+                const res = await electron?.transWithAiGetOptions?.({});
+                settingsOpts = res?.options && typeof res.options === 'object' ? res.options : null;
+            } catch (_) {
+                settingsOpts = null;
+            }
+            const mtSanitize = global.TransubMtSanitize || null;
+            const fluencyApi = global.TransubSubtitleFluency || null;
+            const isBadRewrite = (nextText, prevText, sourceText = '') => {
+                const next = String(nextText ?? '').trim();
+                const prev = String(prevText ?? '').trim();
+                const src = String(sourceText ?? '').trim();
+                if (!next) return true;
+                const ref = src || prev;
+                if (mtSanitize?.isBlankOrPunctTranslation?.(next, ref)) return true;
+                if (mtSanitize?.isPathologicalMtText?.(next, ref)) return true;
+                if (mtSanitize?.looksLikePromptLeak?.(next)) return true;
+                if (fluencyApi?.looksLikeWeirdCueText?.(next)) return true;
+                if (/__[^_\n]{1,64}__/.test(next)) return true;
+                if (/符合原文语气|^改为/.test(next)) return true;
+                return false;
+            };
             if (state.reconstructBusy) {
                 return { status: 'skipped', summary: '语境重构进行中' };
             }
@@ -903,6 +958,9 @@
                     sourceText,
                 };
             });
+            const sourceTextByIndex = new Map(
+                buildCuesPayload(indexes).map((c) => [c.index, String(c.sourceText || '')]),
+            );
 
             const effectiveNote = String(userNote || note || '').trim();
             const effectiveTitle = String(filmTitle || '').trim();
@@ -935,18 +993,25 @@
                 if (ratio < 0.5) {
                     return {
                         total, withSource, ratio, level: 'low',
-                        message: `原字幕覆盖约 ${Math.round(ratio * 100)}%（${withSource}/${total}）：无原文的条目将用译文补齐理解。`,
+                        message: uiTf('原字幕覆盖约 {pct}%（{withSource}/{total}）：无原文的条目将用译文补齐理解。', {
+                            pct: Math.round(ratio * 100),
+                            withSource,
+                            total,
+                        }),
                     };
                 }
                 if (withSource < total) {
                     return {
                         total, withSource, ratio, level: 'partial',
-                        message: `原字幕覆盖 ${withSource}/${total} 条；Brief 优先依据原文，缺原文条用译文补齐。`,
+                        message: uiTf('原字幕覆盖 {withSource}/{total} 条；Brief 优先依据原文，缺原文条用译文补齐。', {
+                            withSource,
+                            total,
+                        }),
                     };
                 }
                 return {
                     total, withSource, ratio, level: 'full',
-                    message: `已挂载原字幕（${total} 条），Brief 将优先依据原文理解。`,
+                    message: uiTf('已挂载原字幕（{total} 条），Brief 将优先依据原文理解。', { total }),
                 };
             };
 
@@ -1055,10 +1120,14 @@
                 return [...out];
             };
 
-            const buildRowsFromUpdates = (updates, failedIndexes = [], alignmentRevertedIndexes = []) => {
+            const buildRowsFromUpdates = (updates, failedIndexes = [], alignmentRevertedIndexes = [], blankRevertedIndexes = []) => {
                 const failedSet = new Set(failedIndexes);
                 const alignmentSet = new Set(
                     (Array.isArray(alignmentRevertedIndexes) ? alignmentRevertedIndexes : [])
+                        .filter((n) => Number.isInteger(n)),
+                );
+                const blankSet = new Set(
+                    (Array.isArray(blankRevertedIndexes) ? blankRevertedIndexes : [])
                         .filter((n) => Number.isInteger(n)),
                 );
                 const rows = [];
@@ -1066,17 +1135,25 @@
                     const idx = Number(u.index);
                     if (!Number.isInteger(idx) || !state.cues[idx]) continue;
                     const before = String(state.cues[idx].text ?? '');
-                    const after = String(u.text ?? '');
+                    const afterRaw = String(u.text ?? '');
+                    const sourceText = sourceTextByIndex.get(idx) || '';
+                    const badRewrite = isBadRewrite(afterRaw, before, sourceText);
+                    const after = badRewrite ? before : afterRaw;
                     const isAlignment = alignmentSet.has(idx);
+                    const isBlank = blankSet.has(idx);
                     const isFailed = failedSet.has(idx);
-                    const fallback = isAlignment || isFailed;
+                    const fallback = isAlignment || isFailed || isBlank || badRewrite;
                     rows.push({
                         index: idx,
                         before,
                         after,
                         changed: before !== after || fallback,
                         fallback,
-                        fallbackReason: isAlignment ? 'alignment' : (isFailed ? 'failed' : ''),
+                        fallbackReason: isAlignment
+                            ? 'alignment'
+                            : (isFailed
+                                ? 'failed'
+                                : (isBlank || badRewrite ? 'blank' : '')),
                     });
                 }
                 // 整块回退时 after===before，仍要把回退 index 补进列表
@@ -1135,6 +1212,21 @@
                 } catch (_) { /* ignore */ }
                 if (brief) payload.filmBrief = brief;
                 if (briefOnly) payload.briefOnly = true;
+                if (settingsOpts?.smartTranslateFaithfulTone) {
+                    payload.faithfulTone = true;
+                    payload.smartTranslateFaithfulTone = true;
+                    payload.sakuraNsfwPrompt = settingsOpts.sakuraNsfwPrompt !== false;
+                } else                 if (settingsOpts?.sakuraNsfwPrompt === true) {
+                    payload.sakuraNsfwPrompt = true;
+                }
+                const attach = global.TransubEditorParts?.targetLangHelpers?.attachTranslateTargetFields;
+                if (typeof attach === 'function') {
+                    attach(payload, settingsOpts, state.playerHandoff || {});
+                } else {
+                    const tgtApi = global.TransubSubtitleTargetLang;
+                    const fields = tgtApi?.buildTargetLangPayloadFields?.(settingsOpts || {});
+                    if (fields) Object.assign(payload, fields);
+                }
                 return invoke(payload);
             };
 
@@ -1180,7 +1272,7 @@
                         }
                         resolvedBrief = confirmedBrief;
                         showProgress({
-                            message: `Brief 已确认，开始场景改写（${indexes.length} 条）…`,
+                            message: uiTf('Brief 已确认，开始场景改写（{count} 条）…', { count: indexes.length }),
                             pct: 12,
                         });
                     }
@@ -1209,7 +1301,15 @@
                 const alignmentRevertedIndexes = Array.isArray(res.stats?.alignmentRevertedIndexes)
                     ? res.stats.alignmentRevertedIndexes
                     : [];
-                let rows = buildRowsFromUpdates(updates, failedIndexes, alignmentRevertedIndexes);
+                const blankRevertedIndexes = Array.isArray(res.stats?.blankRevertedIndexes)
+                    ? res.stats.blankRevertedIndexes
+                    : [];
+                let rows = buildRowsFromUpdates(
+                    updates,
+                    failedIndexes,
+                    alignmentRevertedIndexes,
+                    blankRevertedIndexes,
+                );
                 if (!rows.length) {
                     return { status: 'skipped', summary: '未返回可应用条目' };
                 }
@@ -1221,10 +1321,10 @@
                 // 若只有回退、无真正改写，仍展示对照，方便用户知情
                 if (!changedCount && revertedCount) {
                     hideProgress();
-                    setStatus(`重构未产生可用改写（已回退 ${revertedCount} 条防合并/失败）`, 'warn');
+                    setStatus(uiTf('重构未产生可用改写（已回退 {count} 条防合并/失败）', { count: revertedCount }), 'warn');
                 } else {
                     hideProgress();
-                    setStatus(`重构完成，请对照确认（变更 ${changedCount} 条）…`);
+                    setStatus(uiTf('重构完成，请对照确认（变更 {count} 条）…', { count: changedCount }));
                 }
 
                 const via = res.via === 'mock' ? '模拟'
@@ -1236,6 +1336,9 @@
                 const alignHint = alignmentRevertedIndexes.length
                     ? `，防合并回退 ${alignmentRevertedIndexes.length} 条`
                     : '';
+                const blankHint = blankRevertedIndexes.length
+                    ? `，空白/异常回退 ${blankRevertedIndexes.length} 条`
+                    : '';
 
                 let accepted = null;
                 if (skipReview) {
@@ -1245,12 +1348,12 @@
                 } else {
                     accepted = await promptReconstructReview(rows, {
                         title: filmMode ? '影片理解重构 · 结果对照' : '语境重构 · 结果对照',
-                        lead: `来源：${via}${failHint}${alignHint}。带「已回退原文」的条目因合并/错位已自动保留原译，不会勾选。确认后才会覆盖字幕。`,
+                        lead: `来源：${via}${failHint}${alignHint}${blankHint}。带「已回退原文」的条目因合并/错位/空白或异常输出已自动保留原译，不会勾选。确认后才会覆盖字幕。`,
                         failedIndexes,
                         onRetryFailed: failedIndexes.length
                             ? async () => {
                                 showProgress({
-                                    message: `重试失败块（${failedIndexes.length} 条）…`,
+                                    message: uiTf('重试失败块（{count} 条）…', { count: failedIndexes.length }),
                                     pct: 0,
                                 });
                                 const retryRes = await invokeReconstruct({
@@ -1630,7 +1733,7 @@
         }
 
         /**
-         * 文本翻译（推理翻译：本地 LLM MT / 智能翻译 / 机器翻译 Opus）。
+         * 文本翻译（推理翻译：本地 LLM MT / 智能翻译）。
          * 始终从原文翻译；无原文时提示是否先生成原文。
          * 写入：译文轨 / 自动挂载译文对照轨，不覆盖原文。
          */
@@ -1645,18 +1748,22 @@
             smartTranslatePlotPolish = null,
         } = {}) {
             const useSmart = engine === 'smart' || engine === 'advanced';
-            const useOpus = engine === 'opus' || engine === 'engine';
+            if (engine === 'opus' || engine === 'engine') {
+                return {
+                    status: 'failed',
+                    summary: '机器翻译（Opus）已移除，请改用推理翻译或智能翻译',
+                };
+            }
+            const useOpus = false;
             const invoke = useSmart
                 ? electron?.transubAdvancedSmartTranslate
-                : (useOpus
-                    ? electron?.transubEngineTranslateCues
-                    : electron?.transubSakuraTranslate);
+                : electron?.transubSakuraTranslate;
             if (!invoke) {
                 return {
                     status: 'failed',
                     summary: useSmart
                         ? '当前环境不支持智能翻译'
-                        : (useOpus ? '当前环境不支持机器翻译' : '当前环境不支持推理翻译'),
+                        : '当前环境不支持推理翻译',
                 };
             }
             if (state.reconstructBusy) {
@@ -1891,7 +1998,7 @@
                 return rows;
             };
 
-            showProgress({ message: `${titleText}（${indexes.length} 条）…`, pct: 0 });
+            showProgress({ message: uiTf('{title}（{count} 条）…', { title: titleText, count: indexes.length }), pct: 0 });
             const offSmartProgress = useSmart
                 ? electron.onAdvancedReconstructProgress?.((info) => {
                     if (!info || info.mode === 'batch') return;
@@ -1921,6 +2028,13 @@
                     fileName: state.path || state.videoPath || '',
                     sourcePath: state.path || '',
                 };
+                const handoffMerged = (global.TransubEditorParts?.playerHandoffUi?.mergeOptionsWithPlayerHandoff
+                    ? global.TransubEditorParts.playerHandoffUi.mergeOptionsWithPlayerHandoff(settingsOpts || {}, state)
+                    : settingsOpts) || {};
+                const attach = global.TransubEditorParts?.targetLangHelpers?.attachTranslateTargetFields;
+                if (typeof attach === 'function') {
+                    attach(payload, handoffMerged);
+                }
                 if (useSmart) {
                     payload.smartTranslateFaithfulTone = !!faithfulPreferred;
                     payload.faithfulTone = !!faithfulPreferred;
@@ -1928,25 +2042,23 @@
                     const hybridFromStep = smartTranslateHybridMt;
                     const polishFromStep = smartTranslatePlotPolish;
                     payload.smartTranslateHybridMt = hybridFromStep == null
-                        ? settingsOpts?.smartTranslateHybridMt !== false
+                        ? handoffMerged?.smartTranslateHybridMt !== false
                         : hybridFromStep !== false;
                     payload.smartTranslatePlotPolish = polishFromStep == null
-                        ? settingsOpts?.smartTranslatePlotPolish !== false
+                        ? handoffMerged?.smartTranslatePlotPolish !== false
                         : polishFromStep !== false;
+                    payload.smartTranslateFaithfulVerify = handoffMerged?.smartTranslateFaithfulVerify !== false;
+                    payload.smartTranslateAddressConsistency = handoffMerged?.smartTranslateAddressConsistency !== false;
                     const llmMt = String(
                         modelId
-                        || settingsOpts?.engineLlmMtModel
-                        || settingsOpts?.hybridMtModelId
+                        || handoffMerged?.engineLlmMtModel
+                        || handoffMerged?.hybridMtModelId
                         || '',
                     ).trim();
                     if (llmMt) {
                         payload.engineLlmMtModel = llmMt;
                         payload.hybridMtModelId = llmMt;
                     }
-                    const lang = String(settingsOpts?.language || '').trim();
-                    if (lang) payload.language = lang;
-                    const variant = String(settingsOpts?.chineseSubtitleVariant || '').trim();
-                    if (variant) payload.chineseSubtitleVariant = variant;
                 } else if (!useOpus) {
                     if (modelId) payload.modelId = modelId;
                     // Align Sakura with smart-translate NSFW / faithful postprocess.
@@ -1986,7 +2098,7 @@
                 if (!usableCount && failedCount && skipReview) {
                     return {
                         status: 'failed',
-                        summary: `翻译未产出有效中文（${failedCount} 条仍为原文或被清理）。原文已找到，请重试或更换模型`,
+                        summary: `翻译未产出有效译文（${failedCount} 条仍为原文或被清理）。原文已找到，请重试或更换模型`,
                     };
                 }
 
@@ -2004,8 +2116,8 @@
                 if (useSmart) {
                     if (res.hybridMt || res.stats?.hybridMt) {
                         smartBits.push(res.hybridMtModelId || res.stats?.hybridMtModelId
-                            ? `句级 ${res.hybridMtModelId || res.stats.hybridMtModelId}`
-                            : '专训句级');
+                            ? `翻译 ${res.hybridMtModelId || res.stats.hybridMtModelId}`
+                            : '翻译');
                     }
                     const polishN = Number(res.polishFixed ?? res.stats?.polishFixed);
                     if (Number.isFinite(polishN) && polishN > 0) {
@@ -2015,13 +2127,18 @@
                     }
                 }
                 const viaLabel = smartBits.length ? `${via}（${smartBits.join(' · ')}）` : via;
+                const targetLabel = global.TransubEditorParts?.targetLangHelpers?.labelFromOptions?.(handoffMerged)
+                    || global.TransubSubtitleTargetLang?.subtitleTargetLangLabel?.(
+                        global.TransubSubtitleTargetLang?.resolveSubtitleTargetLang?.(handoffMerged),
+                    )
+                    || '成片目标语';
 
                 let accepted = null;
                 const reviewLead = usableCount
                     ? (writeMode === 'current'
-                        ? `来源：${viaLabel}。左边为原文，右边为译文。确认后写入当前译文轨；标记「回退」的条目默认不覆盖。放弃则不做任何修改。`
-                        : `来源：${viaLabel}。左边为原文，右边为译文。确认后将保留原文并写入译文对照轨；放弃则不做任何修改。`)
-                    : `来源：${viaLabel}。已找到原文，但模型未产出有效中文（可能原样返回日文）。请在右侧手动改成译文后勾选确认，或放弃后重试/换模型。`;
+                        ? `来源：${viaLabel} → ${targetLabel}。左边为原文，右边为译文。确认后写入当前译文轨；标记「回退」的条目默认不覆盖。放弃则不做任何修改。`
+                        : `来源：${viaLabel} → ${targetLabel}。左边为原文，右边为译文。确认后将保留原文并写入译文对照轨；放弃则不做任何修改。`)
+                    : `来源：${viaLabel} → ${targetLabel}。已找到原文，但模型未产出有效译文（可能原样返回源语言）。请在右侧手动改成译文后勾选确认，或放弃后重试/换模型。`;
                 if (skipReview) {
                     accepted = rows
                         .filter((r) => r.changed && !r.fallback && String(r.after || '').trim())
@@ -2384,7 +2501,7 @@
                                     mode: 'range',
                                     writeAs: 'source',
                                     snapAfter: step.params?.snapAfter !== false,
-                                    detail: `QC 连续文本重转写 ${ri + 1}/${ranges.length}`,
+                                    detail: uiTf('QC 连续文本重转写 {i}/{total}', { i: ri + 1, total: ranges.length }),
                                 });
                                 if (res?.ok) {
                                     okCount += 1;
@@ -2983,9 +3100,9 @@
                         padMs,
                         mode: 'duration',
                         snapAfter,
-                        detail: `工作流按时长重转 ${durationSec}s…`,
+                        detail: uiTf('工作流按时长重转 {durationSec}s…', { durationSec }),
                     });
-                    return { status: 'done', summary: `已重转 ${durationSec}s`, changed: true };
+                    return { status: 'done', summary: uiTf('已重转 {durationSec}s', { durationSec }), changed: true };
                 },
                 'ai.retranscribeLowConfidence': async (_c, step, helpers) => {
                     if (!state.videoPath) return { status: 'skipped', summary: '未关联视频' };
@@ -3021,7 +3138,7 @@
                     let done = 0;
                     for (let i = 0; i < ranges.length; i += 1) {
                         if (helpers?.signal?.aborted || state.jobAbortRequested) {
-                            return { status: 'cancelled', summary: `已取消（完成 ${done} 窗）` };
+                            return { status: 'cancelled', summary: uiTf('已取消（完成 {done} 窗）', { done }) };
                         }
                         const range = ranges[i];
                         const firstIdx = Array.isArray(range.indexes) ? range.indexes[0] : -1;
@@ -3033,13 +3150,17 @@
                             padMs,
                             mode: 'range',
                             snapAfter,
-                            detail: `低置信重转 ${i + 1}/${ranges.length}（${planned.cueCount} 条）…`,
+                            detail: uiTf('低置信重转 {i}/{total}（{cueCount} 条）…', {
+                                i: i + 1,
+                                total: ranges.length,
+                                cueCount: planned.cueCount,
+                            }),
                         });
                         done += 1;
                     }
                     return {
                         status: 'done',
-                        summary: `已重转 ${done} 窗（约 ${planned.cueCount} 条）`,
+                        summary: uiTf('已重转 {done} 窗（约 {cueCount} 条）', { done, cueCount: planned.cueCount }),
                         changed: done > 0,
                     };
                 },
@@ -3112,6 +3233,20 @@
                     return {
                         status: 'done',
                         summary: `分割 ${splitCount} 条，新增 ${added}`,
+                        changed: true,
+                    };
+                },
+                'cue.mergeLines': async (_c, step) => {
+                    const indexes = resolveScopeIndexes(step.params?.scope || 'all');
+                    if (!indexes.length) return { status: 'skipped', summary: '无目标条目' };
+                    recordUndoBeforeChange();
+                    const { mergedCount } = applyMergeLinesToIndexes(indexes);
+                    if (!mergedCount) return { status: 'skipped', summary: '无法合并' };
+                    setDirty(true);
+                    renderCueList();
+                    return {
+                        status: 'done',
+                        summary: `多行合并 ${mergedCount} 条`,
                         changed: true,
                     };
                 },
@@ -3304,17 +3439,17 @@
             const ac = { aborted: false };
             state.workflowAbortController = ac;
             renderWorkflowPanel();
-            setWorkflowStatus(`正在运行「${wf.name}」…`);
-            setStatus(`工作流「${wf.name}」开始（${enabledCount} 步）`, '');
+            setWorkflowStatus(uiTf('正在运行「{name}」…', { name: wf.name }));
+            setStatus(uiTf('工作流「{name}」开始（{count} 步）', { name: wf.name, count: enabledCount }), '');
 
             showSilenceSplitProgress({
-                title: `工作流：${wf.name}`,
-                detail: `共 ${enabledCount} 步，准备执行…`,
+                title: uiTf('工作流：{name}', { name: wf.name }),
+                detail: uiTf('共 {count} 步，准备执行…', { count: enabledCount }),
                 current: 0,
                 total: Math.max(enabledCount, 1),
                 indeterminate: enabledCount <= 1,
                 hint: '可随时点击「取消」中止工作流',
-                statusMessage: `工作流「${wf.name}」运行中…`,
+                statusMessage: uiTf('工作流「{name}」运行中…', { name: wf.name }),
             });
             if (typeof flushSilenceProgressPaint === 'function') {
                 await flushSilenceProgressPaint();
@@ -3348,13 +3483,13 @@
                             const isUiStep = String(step.type || '').startsWith('ui.');
                             if (!isUiStep) {
                                 showSilenceSplitProgress({
-                                    title: `工作流：${wf.name}`,
-                                    detail: `步骤 ${index + 1}/${total}：${stepLabel}`,
+                                    title: uiTf('工作流：{name}', { name: wf.name }),
+                                    detail: uiTf('步骤 {i}/{total}：{label}', { i: index + 1, total, label: stepLabel }),
                                     current: index,
                                     total,
                                     indeterminate: false,
                                     hint: '可随时点击「取消」中止工作流',
-                                    statusMessage: `工作流 ${index + 1}/${total}：${stepLabel}`,
+                                    statusMessage: uiTf('工作流 {i}/{total}：{label}', { i: index + 1, total, label: stepLabel }),
                                 });
                                 if (typeof flushSilenceProgressPaint === 'function') {
                                     await flushSilenceProgressPaint();
@@ -3362,25 +3497,25 @@
                             } else {
                                 hideSilenceSplitProgress();
                             }
-                            setWorkflowStatus(`步骤 ${index + 1}/${total}：${stepLabel}`);
-                            setStatus(`工作流 ${index + 1}/${total}：${stepLabel}`, '');
+                            setWorkflowStatus(uiTf('步骤 {i}/{total}：{label}', { i: index + 1, total, label: stepLabel }));
+                            setStatus(uiTf('工作流 {i}/{total}：{label}', { i: index + 1, total, label: stepLabel }), '');
                         } else if (phase === 'end') {
                             const endDetail = `${stepLabel} — ${status}${summary ? `（${summary}）` : ''}`;
                             if (!String(step.type || '').startsWith('ui.')) {
                                 showSilenceSplitProgress({
-                                    title: `工作流：${wf.name}`,
+                                    title: uiTf('工作流：{name}', { name: wf.name }),
                                     detail: endDetail,
                                     current: index + 1,
                                     total,
                                     indeterminate: false,
                                     hint: '可随时点击「取消」中止工作流',
-                                    statusMessage: `工作流 ${index + 1}/${total}：${status}`,
+                                    statusMessage: uiTf('工作流 {i}/{total}：{label}', { i: index + 1, total, label: status }),
                                 });
                                 if (typeof flushSilenceProgressPaint === 'function') {
                                     await flushSilenceProgressPaint();
                                 }
                             }
-                            setWorkflowStatus(`步骤 ${index + 1}/${total}：${endDetail}`);
+                            setWorkflowStatus(uiTf('步骤 {i}/{total}：{label}', { i: index + 1, total, label: endDetail }));
                         }
                     },
                 });
@@ -3393,13 +3528,15 @@
                     const zh = await applyTraditionalAtWorkflowEndIfNeeded();
                     if (zh?.changed && zh.summary) {
                         finalMsg = `${msg}；${zh.summary}`;
-                        setStatus(`${wf.name}：${finalMsg}`, 'ok');
+                        setStatus(uiTf('{name}：{msg}', { name: wf.name, msg: finalMsg }), 'ok');
                     }
                 }
                 const statusType = run?.summary?.failed || run?.summary?.cancelled || run?.summary?.aborted
                     ? (run.summary.failed ? 'err' : 'warn')
                     : 'ok';
-                const doneTitle = ok ? `工作流完成：${wf.name}` : `工作流结束：${wf.name}`;
+                const doneTitle = ok
+                    ? uiTf('工作流完成：{name}', { name: wf.name })
+                    : uiTf('工作流结束：{name}', { name: wf.name });
 
                 state.undoRecording = false;
                 state.workflowBusy = false;
@@ -3414,7 +3551,7 @@
                     total: Math.max(enabledCount, 1),
                     indeterminate: false,
                     hint: ok ? '全部步骤已处理完毕' : '部分步骤未完成，可在工作流面板查看摘要',
-                    statusMessage: `${wf.name}：${finalMsg}`,
+                    statusMessage: uiTf('{name}：{msg}', { name: wf.name, msg: finalMsg }),
                 });
                 setSilenceSplitBusy(false);
                 if (els.silenceProgressCancel) {
@@ -3422,7 +3559,7 @@
                     els.silenceProgressCancel.disabled = false;
                 }
                 setWorkflowStatus(finalMsg);
-                setStatus(`${wf.name}：${finalMsg}`, statusType);
+                setStatus(uiTf('{name}：{msg}', { name: wf.name, msg: finalMsg }), statusType);
                 if (typeof flushSilenceProgressPaint === 'function') {
                     await flushSilenceProgressPaint();
                 }
@@ -3445,7 +3582,7 @@
                         ? 'err'
                         : (run.summary?.cancelled || run.summary?.aborted ? 'warn' : 'ok');
                     setWorkflowStatus(msg);
-                    setStatus(`${wf.name}：${msg}`, statusType);
+                    setStatus(uiTf('{name}：{msg}', { name: wf.name, msg }), statusType);
                     if (els.workflowModal?.classList.contains('hidden')) {
                         openWorkflowModal();
                     } else {
@@ -3510,7 +3647,7 @@
                 renderWorkflowSelect();
                 renderWorkflowPanel();
                 void persistWorkflows();
-                setWorkflowStatus(`已复制为「${res.workflow.name}」`);
+                setWorkflowStatus(uiTf('已复制为「{name}」', { name: res.workflow.name }));
             });
 
             els.workflowNewBtn?.addEventListener('click', () => {

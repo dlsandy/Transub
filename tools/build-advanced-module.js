@@ -34,9 +34,11 @@ const hostHelperRe = new RegExp(
 const HOST_REQUIRE_BANNER = `"use strict";
 var __transubHostReq=(function(){
   var p=require("path"),f=require("fs");
-  var bases=[
+    var bases=[
     p.join(__dirname,"..","resources","app.asar","electron"),
-    p.join(__dirname,"..","electron")
+    p.join(__dirname,"..","electron"),
+    p.join(__dirname,"..","pro-sidecar","host"),
+    p.join(__dirname,"..","pro-sidecar","electron")
   ];
   return function(name){
     var file=String(name||"");

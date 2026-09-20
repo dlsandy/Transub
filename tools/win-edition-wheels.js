@@ -44,15 +44,15 @@ const SENSEVOICE_CPU_WHEELS = [
     },
     {
         id: 'torch',
-        fileName: 'torch-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
+        fileName: 'torch-2.11.0-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/1c/ff/6756f1c7ee302f6d202120e0f4f05b432b839908f9071157302cedfc5232/torch-2.11.0-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/1c/ff/6756f1c7ee302f6d202120e0f4f05b432b839908f9071157302cedfc5232/torch-2.11.0-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio',
-        fileName: 'torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -94,15 +94,15 @@ const NVIDIA_CU12_WHEELS = [
 const TORCH_CUDA126_WHEELS = [
     {
         id: 'torch-cuda',
-        fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        fileName: 'torch-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.11.0%2Bcu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.11.0+cu126-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio-cuda',
-        fileName: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.11.0%2Bcu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -110,30 +110,30 @@ const TORCH_CUDA126_WHEELS = [
 const TORCH_CUDA128_WHEELS = [
     {
         id: 'torch-cuda',
-        fileName: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        fileName: 'torch-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.11.0+cu128-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio-cuda',
-        fileName: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
     },
 ];
 
 const TORCH_CUDA130_WHEELS = [
     {
         id: 'torch-cuda',
-        fileName: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        fileName: 'torch-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.11.0+cu130-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio-cuda',
-        fileName: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
     },
 ];
 

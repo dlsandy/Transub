@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:;">
+    <title>字幕库</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="stylesheet" href="vendor/font-awesome/css/font-awesome.min.css">
+    <link rel="stylesheet" href="vendor/app.css">
+    <style>
+        html, body { height: 100%; margin: 0; }
+        body {
+            background: var(--fx-bg, #f3f5f7);
+            color: var(--fx-text, #15181c);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            --fx-bg: #f3f5f7;
+            --fx-chrome: #e8ecf0;
+            --fx-surface: #ffffff;
+            --fx-surface-2: #e8ecf0;
+            --fx-line: #cfd5dc;
+            --fx-line-soft: #e2e7ec;
+            --fx-text: #15181c;
+            --fx-muted: #5f6670;
+            --fx-faint: #8b939e;
+            --fx-accent: #c30d23;
+            --fx-accent-hover: #a30b1d;
+            --fx-accent-soft: rgba(195, 13, 35, 0.1);
+            --fx-accent-line: rgba(195, 13, 35, 0.28);
+            --fx-accent-mute: #b01022;
+            --fx-radius-sm: 0.375rem;
+        }
+        body.theme-dark {
+            background: #141214;
+            color: #f3efef;
+            --fx-bg: #141214;
+            --fx-chrome: #1c1a1b;
+            --fx-surface: #1c1a1b;
+            --fx-surface-2: #242122;
+            --fx-line: #3a3536;
+            --fx-line-soft: #2a2728;
+            --fx-text: #f3efef;
+            --fx-muted: #9a9294;
+            --fx-faint: #6f686a;
+            --fx-accent: #c30d23;
+            --fx-accent-hover: #e01830;
+            --fx-accent-soft: rgba(195, 13, 35, 0.16);
+            --fx-accent-line: rgba(195, 13, 35, 0.35);
+            --fx-accent-mute: #e85a6a;
+        }
+        #workspaceShelf {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+    </style>
+</head>
+<body>
+    <section id="workspaceShelf" class="factory-shelf-panel" aria-label="字幕库">
+        <div class="shelf-filter-chrome">
+        <div id="shelfFilterTabs" class="factory-task-tabs shelf-filter-tabs" role="tablist" aria-label="字幕库筛选">
+            <button type="button" role="tab" class="factory-task-tab is-active" id="shelfTabAll" data-shelf-filter="all" aria-selected="true">
+                全部<span class="factory-task-tab-count" id="shelfTabAllCount">0</span>
+            </button>
+            <button type="button" role="tab" class="factory-task-tab" id="shelfTabTranslated" data-shelf-filter="translated" aria-selected="false">
+                有译文<span class="factory-task-tab-count" id="shelfTabTranslatedCount">0</span>
+            </button>
+            <button type="button" role="tab" class="factory-task-tab" id="shelfTabMissing" data-shelf-filter="missing" aria-selected="false">
+                视频缺失<span class="factory-task-tab-count" id="shelfTabMissingCount">0</span>
+            </button>
+            <div class="task-view-toggle" role="group" aria-label="列表视图">
+                <button type="button" id="shelfViewCardsBtn" class="task-view-btn is-active" data-shelf-view="cards" title="卡片视图" aria-pressed="true">卡片</button>
+                <button type="button" id="shelfViewTableBtn" class="task-view-btn" data-shelf-view="table" title="表格视图" aria-pressed="false">表格</button>
+            </div>
+            <div class="shelf-tabs-tools">
+                <span id="shelfStatusLine" class="factory-task-summary shelf-status">0 部 · 0 条译文</span>
+                <input type="search" id="shelfSearch" class="shelf-search" placeholder="搜索标题或路径…" autocomplete="off">
+                <button type="button" id="shelfRefreshBtn" class="toolbar-icon-btn shelf-refresh-btn" title="刷新" aria-label="刷新">
+                    <i class="fa fa-refresh" aria-hidden="true"></i><span class="sr-only">刷新</span>
+                </button>
+            </div>
+        </div>
+        <div class="shelf-secondary-row">
+            <div id="shelfSecondaryFilters" class="shelf-secondary-filters" role="group" aria-label="二级筛选">
+                <button type="button" class="shelf-secondary-chip is-on" data-shelf-secondary="all" aria-pressed="true">
+                    全部<span class="shelf-secondary-chip-count" id="shelfSecAllCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="transcript" aria-pressed="false">
+                    转录<span class="shelf-secondary-chip-count" id="shelfSecTranscriptCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="original" aria-pressed="false">
+                    原文<span class="shelf-secondary-chip-count" id="shelfSecOriginalCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="zh-Hans" aria-pressed="false">
+                    简体中文<span class="shelf-secondary-chip-count" id="shelfSecZhHansCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="zh-Hant" aria-pressed="false">
+                    繁体中文<span class="shelf-secondary-chip-count" id="shelfSecZhHantCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="en" aria-pressed="false">
+                    英语<span class="shelf-secondary-chip-count" id="shelfSecEnCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="ko" aria-pressed="false">
+                    韩语<span class="shelf-secondary-chip-count" id="shelfSecKoCount">0</span>
+                </button>
+                <button type="button" class="shelf-secondary-chip" data-shelf-secondary="ja" aria-pressed="false">
+                    日语<span class="shelf-secondary-chip-count" id="shelfSecJaCount">0</span>
+                </button>
+            </div>
+        </div>
+        </div>
+        <div class="shelf-body">
+            <div id="shelfListPane" class="shelf-list-pane">
+                <div id="shelfEmptyState" class="factory-empty-state shelf-empty-state hidden">
+                    <div class="factory-empty-icon" aria-hidden="true"><i class="fa fa-archive"></i></div>
+                    <div>
+                        <p class="text-sm font-medium">暂无字幕库条目</p>
+                        <p class="text-xs mt-1 factory-empty-hint">完成转录/翻译后会自动收录。也可关联视频并扫描旁路字幕。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-center gap-2">
+                        <button type="button" id="shelfEmptyAssociateBtn" class="factory-empty-primary">
+                            <i class="fa fa-link mr-1"></i>关联视频
+                        </button>
+                        <button type="button" id="shelfEmptyRevealBtn" class="factory-empty-secondary">
+                            <i class="fa fa-folder-open mr-1"></i>打开库目录
+                        </button>
+                    </div>
+                </div>
+                <div id="shelfCardList" class="shelf-card-list" aria-label="媒体卡片"></div>
+                <div id="shelfTableScroll" class="shelf-table-scroll hidden">
+                    <aside id="shelfList" class="shelf-list" aria-label="媒体列表"></aside>
+                </div>
+            </div>
+            <div id="shelfDetailSplitter" class="shelf-detail-splitter" role="separator" aria-orientation="vertical" aria-label="调节详情宽度" tabindex="0" hidden></div>
+            <section id="shelfDetail" class="shelf-detail" aria-label="详情" data-empty="true"></section>
+        </div>
+    </section>
+    <script src="js/subtitle-shelf-core.js"></script>
+    <script src="js/subtitle-shelf-ui.js"></script>
+</body>
+</html>

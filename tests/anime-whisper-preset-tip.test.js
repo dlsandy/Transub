@@ -48,9 +48,9 @@ describe('anime-whisper-preset-tip', () => {
         assert.strictEqual(tip.isDismissed(store), true);
     });
 
-    it('targets the builtin Anime Whisper translate preset', () => {
+    it('targets the builtin Anime Whisper FireRed preset', () => {
         const tip = loadTipApi();
-        assert.strictEqual(tip.PRESET_ID, 'ja-av-anime-whisper-translate');
+        assert.strictEqual(tip.PRESET_ID, 'ja-av-anime-whisper-firered');
         assert.strictEqual(tip.TIP_VERSION, '3.0.5');
 
         const { BUILTIN_PRESETS } = require('../electron/presets-data');

@@ -153,8 +153,8 @@ function buildDeltaRelPaths(prevUnpacked, currUnpacked) {
 function main() {
     const args = parseArgs(process.argv.slice(2));
     ensureTar();
-    if (!fs.existsSync(path.join(args.unpacked, 'Transub.exe'))) {
-        throw new Error(`Missing Transub.exe under ${args.unpacked}`);
+    if (!fs.existsSync(path.join(args.unpacked, 'transub.exe'))) {
+        throw new Error(`Missing transub.exe under ${args.unpacked}`);
     }
     fs.mkdirSync(args.outDir, { recursive: true });
 
@@ -214,7 +214,7 @@ function main() {
             prevLabel = String(readJsonFile(args.prevManifest).version || '').trim();
         } catch { /* ignore */ }
     }
-    if (args.prevUnpacked && fs.existsSync(path.join(args.prevUnpacked, 'Transub.exe'))) {
+    if (args.prevUnpacked && fs.existsSync(path.join(args.prevUnpacked, 'transub.exe'))) {
         console.log(`[update-manifest] building delta vs ${args.prevUnpacked}`);
         const deltaRels = buildDeltaRelPaths(args.prevUnpacked, args.unpacked);
         if (!deltaRels.length) {

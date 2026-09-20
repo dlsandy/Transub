@@ -139,6 +139,55 @@ describe('cuda-runtime-scan', () => {
         const roots = cudaScan.engineNvidiaExtraRoots(engine);
         assert.ok(roots.some((r) => pathKey(r) === pathKey(sp)));
     });
+
+    it('discoverNearbyTransubCudaRoots finds parent monorepo from dist-like path', () => {
+        const mono = path.join(tmpDir, 'Transub');
+        const site = path.join(mono, 'transub-engine', 'runtime', 'Lib', 'site-packages');
+        writeFakeDll(path.join(site, 'nvidia', 'cuda_runtime', 'bin', 'cudart64_12.dll'));
+        writeFakeDll(path.join(site, 'nvidia', 'cublas', 'bin', 'cublas64_12.dll'));
+        writeFakeDll(path.join(site, 'nvidia', 'cublas', 'bin', 'cublasLt64_12.dll'));
+        const flat = path.join(mono, 'advanced-llm', 'runtime');
+        writeFakeDll(path.join(flat, 'cudart64_12.dll'));
+        writeFakeDll(path.join(flat, 'cublas64_12.dll'));
+        writeFakeDll(path.join(flat, 'cublasLt64_12.dll'));
+
+        const distLike = path.join(mono, 'dist', 'win-unpacked');
+        fs.mkdirSync(distLike, { recursive: true });
+        const roots = cudaScan.discoverNearbyTransubCudaRoots([distLike], 5);
+        assert.ok(roots.some((r) => pathKey(r) === pathKey(site) || pathKey(r).includes('site-packages')));
+        assert.ok(roots.some((r) => pathKey(r) === pathKey(flat)));
+
+        const scan = cudaScan.scanReusableCudaRuntimes({
+            major: 12,
+            env: { PATH: '' },
+            includePath: false,
+            extraRoots: cudaScan.discoverCudaExtraRoots({
+                startDirs: [distLike],
+                writableRoot: distLike,
+            }),
+        });
+        assert.strictEqual(scan.ok, true);
+        assert.ok(scan.best);
+    });
+
+    it('persists and reloads user-picked CUDA extra roots', () => {
+        const writable = path.join(tmpDir, 'writable');
+        const cudaDir = path.join(tmpDir, 'other-project', 'cuda-bin');
+        writeFakeDll(path.join(cudaDir, 'cudart64_12.dll'));
+        writeFakeDll(path.join(cudaDir, 'cublas64_12.dll'));
+        writeFakeDll(path.join(cudaDir, 'cublasLt64_12.dll'));
+        const saved = cudaScan.addPersistedCudaExtraRoot(writable, cudaDir);
+        assert.strictEqual(saved.ok, true);
+        const loaded = cudaScan.loadPersistedCudaExtraRoots(writable);
+        assert.ok(loaded.some((r) => pathKey(r) === pathKey(cudaDir)));
+        const scan = cudaScan.scanReusableCudaRuntimes({
+            major: 12,
+            env: { PATH: '' },
+            includePath: false,
+            extraRoots: cudaScan.discoverCudaExtraRoots({ writableRoot: writable }),
+        });
+        assert.strictEqual(scan.ok, true);
+    });
 });
 
 function pathKey(p) {

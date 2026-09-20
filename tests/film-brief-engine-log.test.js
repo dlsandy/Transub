@@ -59,8 +59,8 @@ describe('film-brief-engine-log', () => {
     });
 
     it('formats a skip notice', () => {
-        const lines = formatFilmBriefEngineLogLines(null, { skipped: true, skipReason: '混合翻译' });
-        assert.deepStrictEqual(lines, ['影片简要已跳过（混合翻译）']);
+        const lines = formatFilmBriefEngineLogLines(null, { skipped: true, skipReason: '智能翻译' });
+        assert.deepStrictEqual(lines, ['影片简要已跳过（智能翻译）']);
     });
 
     it('emits once per session and marks extra lines logOnly', () => {

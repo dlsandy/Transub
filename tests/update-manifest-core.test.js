@@ -30,20 +30,20 @@ describe('update-manifest-core', () => {
     it('assigns blocks by path', () => {
         assert.strictEqual(assignBlock('resources/app.asar'), 'app');
         assert.strictEqual(assignBlock('_advanced/mod.js'), 'app');
-        assert.strictEqual(assignBlock('Transub.exe'), 'shell');
+        assert.strictEqual(assignBlock('transub.exe'), 'shell');
         assert.strictEqual(assignBlock('locales/en-US.pak'), 'shell');
         assert.strictEqual(assignBlock('transub-engine/runtime/python.exe'), 'engine');
         assert.strictEqual(assignBlock('_internal/bin/ffmpeg.exe'), 'other');
         assert.strictEqual(assignBlock('docs/readme.txt'), 'other');
         // Deprecated alias still maps via assignBlock
-        assert.strictEqual(assignComponent('Transub.exe'), 'shell');
+        assert.strictEqual(assignComponent('transub.exe'), 'shell');
     });
 
     it('builds a block-only manifest, diffs digests, and writes baseline', () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-manifest-'));
         try {
             fs.mkdirSync(path.join(root, 'resources'), { recursive: true });
-            fs.writeFileSync(path.join(root, 'Transub.exe'), 'exe-v1');
+            fs.writeFileSync(path.join(root, 'transub.exe'), 'exe-v1');
             fs.writeFileSync(path.join(root, 'resources', 'app.asar'), 'asar-v1');
             fs.mkdirSync(path.join(root, 'transub-engine'), { recursive: true });
             fs.writeFileSync(path.join(root, 'transub-engine', 'a.py'), 'print(1)\n');
@@ -211,7 +211,7 @@ describe('update-manifest-core', () => {
             const pkg = path.join(root, 'pkg');
             fs.mkdirSync(path.join(install, 'resources'), { recursive: true });
             fs.mkdirSync(path.join(pkg, 'resources'), { recursive: true });
-            fs.writeFileSync(path.join(install, 'Transub.exe'), 'old-exe');
+            fs.writeFileSync(path.join(install, 'transub.exe'), 'old-exe');
             fs.writeFileSync(path.join(install, 'resources', 'app.asar'), 'old-asar');
             fs.writeFileSync(path.join(pkg, 'resources', 'app.asar'), 'new-asar');
 
@@ -231,7 +231,7 @@ describe('update-manifest-core', () => {
                 'new-asar',
             );
             assert.strictEqual(
-                fs.readFileSync(path.join(install, 'Transub.exe'), 'utf8'),
+                fs.readFileSync(path.join(install, 'transub.exe'), 'utf8'),
                 'old-exe',
             );
         } finally {

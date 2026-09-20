@@ -47,6 +47,33 @@ const PRESERVE_SITE_PACKAGE_RE = [
     /^funasr([_.-]|$)/i,
 ];
 
+/** Packaged shell exe (electron-builder `executableName`). */
+const MAIN_EXE_BASENAME = 'transub.exe';
+/** Older zip layouts that still identify a valid package root. */
+const LEGACY_MAIN_EXE_BASENAMES = Object.freeze([
+    'Transub.exe',
+    'Transub 字幕工厂.exe',
+]);
+
+function hasMainExe(dir) {
+    if (!dir) return false;
+    if (fs.existsSync(path.join(dir, MAIN_EXE_BASENAME))) return true;
+    for (const name of LEGACY_MAIN_EXE_BASENAMES) {
+        if (fs.existsSync(path.join(dir, name))) return true;
+    }
+    return false;
+}
+
+function resolveMainExePath(installRoot) {
+    const preferred = path.join(installRoot, MAIN_EXE_BASENAME);
+    if (fs.existsSync(preferred)) return preferred;
+    for (const name of LEGACY_MAIN_EXE_BASENAMES) {
+        const candidate = path.join(installRoot, name);
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return preferred;
+}
+
 const SITE_PACKAGE_REL_ROOTS = [
     path.join('transub-engine', 'runtime', 'Lib', 'site-packages'),
     path.join('transub-engine', 'runtime', 'lib', 'site-packages'),
@@ -136,7 +163,7 @@ function findPackageRoot(extractDir) {
     if (!root || !fs.existsSync(root)) {
         throw new Error('解压目录不存在');
     }
-    if (fs.existsSync(path.join(root, 'Transub.exe'))) return root;
+    if (hasMainExe(root)) return root;
     let entries;
     try {
         entries = fs.readdirSync(root, { withFileTypes: true });
@@ -146,9 +173,9 @@ function findPackageRoot(extractDir) {
     for (const ent of entries) {
         if (!ent.isDirectory()) continue;
         const candidate = path.join(root, ent.name);
-        if (fs.existsSync(path.join(candidate, 'Transub.exe'))) return candidate;
+        if (hasMainExe(candidate)) return candidate;
     }
-    throw new Error('解压后未找到 Transub.exe');
+    throw new Error('解压后未找到 transub.exe');
 }
 
 function sleepSync(ms) {
@@ -321,8 +348,8 @@ function applyZipUpdateMerge(opts = {}) {
     if (!packageRoot || !fs.existsSync(packageRoot)) {
         throw new Error('更新包目录无效');
     }
-    if (!allowPartial && !fs.existsSync(path.join(packageRoot, 'Transub.exe'))) {
-        throw new Error('更新包缺少 Transub.exe');
+    if (!allowPartial && !hasMainExe(packageRoot)) {
+        throw new Error('更新包缺少 transub.exe');
     }
 
     emit('preparing', '正在扫描需保留的模型与支持库…', 8);
@@ -402,9 +429,12 @@ function applyZipUpdateMerge(opts = {}) {
 module.exports = {
     PRESERVE_SUFFIX,
     PRESERVE_TOP_LEVEL_DIRS,
+    MAIN_EXE_BASENAME,
     shouldPreserveSitePackageName,
     collectPreserveRelPaths,
     findPackageRoot,
+    hasMainExe,
+    resolveMainExePath,
     applyZipUpdateMerge,
     copyTreeOverwrite,
     rimrafSafe,

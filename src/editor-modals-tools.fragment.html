@@ -1,0 +1,664 @@
+<div id="editorSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSplitTitle">
+            <div class="editor-modal-backdrop" data-split-dismiss></div>
+            <div class="editor-modal-panel">
+                <h3 id="editorSplitTitle">分割字幕</h3>
+                <p>将当前条目拆分为多条。智能断句会优先在标点与断句词处切分，并按目标读速分配时间。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="smart" checked>
+                        <span>智能断句（标点 + 断句词 + 读速）</span>
+                    </label>
+                    <div class="split-mode-extra split-smart-extra">
+                        <label>每段最多 <input type="number" id="editorSplitSmartMaxChars" min="4" max="120" value="20" class="tabular-nums"> 字</label>
+                        <label class="ml-2">单行 <input type="number" id="editorSplitSmartLineChars" min="4" max="80" value="18" class="tabular-nums"> 字</label>
+                        <button type="button" id="editorSplitOpenBreakWordsBtn" class="ml-2" title="管理智能断句使用的断句词">断句词…</button>
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="lines">
+                        <span>按换行分割（每行一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="spaces">
+                        <span>按空格分割（每词/每段一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="chars">
+                        <span>按字符数分割</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <label>每段最多 <input type="number" id="editorSplitCharCount" min="2" max="120" value="20" disabled> 字</label>
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="count">
+                        <span>均分为 N 段</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <label>段数 <input type="number" id="editorSplitCount" min="2" max="30" value="2" disabled></label>
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="cursor">
+                        <span>在文本光标处分割（前后各一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="playhead">
+                        <span>在播放头处分割（前后各一条）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSplitMode" value="silence">
+                        <span>按静音切分（需关联视频 + FFmpeg）</span>
+                    </label>
+                    <div class="split-mode-extra split-silence-extra">
+                        <label>静音阈值 <input type="number" id="editorSplitSilenceDb" min="-60" max="-10" step="1" value="-35" disabled class="tabular-nums"> dB</label>
+                        <label class="ml-2">最短静音 <input type="number" id="editorSplitSilenceDur" min="0.1" max="3" step="0.05" value="0.25" disabled class="tabular-nums"> 秒</label>
+                    </div>
+                </div>
+                <label class="split-remember-row">
+                    <input type="checkbox" id="editorSplitRemember">
+                    <span>记住分割方式（下次打开默认选中）</span>
+                </label>
+                <label class="find-options">
+                    <input type="checkbox" id="editorSplitUseCps" checked>
+                    <span>按目标读速（CPS）分配时间</span>
+                </label>
+                <label class="find-options">
+                    <input type="checkbox" id="editorSplitFixOverlap" checked>
+                    <span>分割后修复重叠</span>
+                </label>
+                <p id="editorSplitPreview" class="batch-dur-preview">—</p>
+                <p id="editorSplitHint" class="text-[11px] text-amber-700 mb-2 hidden"></p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSplitCancel" data-split-dismiss>取消</button>
+                    <button type="button" id="editorSplitConfirm">分割</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorBatchDurModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorBatchDurTitle">
+            <div class="editor-modal-backdrop" data-batch-dur-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorBatchDurTitle">时长批量调整</h3>
+                <p id="editorBatchDurHint">按条件筛选字幕后批量调整时间轴。</p>
+                <p class="text-[10px] text-gray-500 mb-1">调整方式</p>
+                <div class="split-mode-list mb-2">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurMode" value="fixed" checked>
+                        <span>设为固定时长</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurMode" value="silence">
+                        <span>按静音智能时长（缩短/延长，需关联视频）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurMode" value="audio_snap">
+                        <span>按音频贴边起止（需关联视频）</span>
+                    </label>
+                </div>
+                <div id="editorBatchDurFixedWrap" class="batch-dur-target">
+                    <label for="editorBatchDurTarget">目标时长</label>
+                    <input type="number" id="editorBatchDurTarget" min="0.1" max="600" step="0.01" value="2.00" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <div id="editorBatchDurSilenceWrap" class="batch-dur-target hidden">
+                    <label for="editorBatchDurSilenceDb">静音阈值</label>
+                    <input type="number" id="editorBatchDurSilenceDb" min="-60" max="-10" step="1" value="-35" class="tabular-nums">
+                    <span>dB · 最短静音</span>
+                    <input type="number" id="editorBatchDurSilenceDur" min="0.1" max="3" step="0.05" value="0.25" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <div id="editorBatchDurSnapPadWrap" class="batch-dur-target hidden">
+                    <label for="editorBatchDurSnapPadMs">分析填充</label>
+                    <input type="number" id="editorBatchDurSnapPadMs" min="0" max="2000" step="50" value="400" class="tabular-nums">
+                    <span>毫秒（向两侧扩展）</span>
+                </div>
+                <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="shorter">
+                        <span>时长小于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurShorter" min="0.01" max="600" step="0.01" value="1.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="longer">
+                        <span>时长大于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurLonger" min="0.01" max="600" step="0.01" value="5.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="between">
+                        <span>时长介于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurMin" min="0.01" max="600" step="0.01" value="0.50" disabled class="tabular-nums">
+                        ~
+                        <input type="number" id="editorBatchDurMax" min="0.01" max="600" step="0.01" value="10.00" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="cps_above">
+                        <span>CPS 高于（读速过快）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurCpsAbove" min="0.1" max="100" step="0.1" value="20" disabled class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="cps_below">
+                        <span>CPS 低于（读速过慢）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorBatchDurCpsBelow" min="0.1" max="100" step="0.1" value="8" disabled class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="text_contains">
+                        <span>文本包含</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="text" id="editorBatchDurText" placeholder="关键词" disabled spellcheck="false">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="overlap">
+                        <span>存在时间重叠的字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDurCond" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                </div>
+                <label class="find-options" id="editorBatchDurAvoidOverlapRow">
+                    <input type="checkbox" id="editorBatchDurAvoidOverlap" checked>
+                    <span>避免与下一条重叠（限制结束时间）</span>
+                </label>
+                <p id="editorBatchDurPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorBatchDurCancel" data-batch-dur-dismiss>取消</button>
+                    <button type="button" id="editorBatchDurConfirm">应用</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorSmartSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSmartSplitTitle">
+            <div class="editor-modal-backdrop" data-smart-split-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorSmartSplitTitle">智能分割</h3>
+                <p>按标点与断句词拆分符合条件的字幕，并按目标读速分配各段时间。可在「工具 → 断句词」中管理词表。</p>
+                <div class="batch-dur-target">
+                    <label for="editorSmartSplitMaxChars">每段最多</label>
+                    <input type="number" id="editorSmartSplitMaxChars" min="4" max="120" value="20" class="tabular-nums">
+                    <span>字 · 单行</span>
+                    <input type="number" id="editorSmartSplitLineChars" min="4" max="80" value="18" class="tabular-nums">
+                    <span>字</span>
+                    <button type="button" id="editorSmartSplitOpenBreakWordsBtn" title="管理智能断句使用的断句词">断句词…</button>
+                </div>
+                <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSmartSplitCond" value="cps_above" checked>
+                        <span>CPS 高于（读速过快）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSmartSplitCpsAbove" min="0.1" max="100" step="0.5" value="18" class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSmartSplitCond" value="line_long">
+                        <span>单行长度超过</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSmartSplitLineLen" min="4" max="120" value="18" disabled class="tabular-nums"> 字
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSmartSplitCond" value="dur_long">
+                        <span>时长大于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSmartSplitDurLong" min="0.5" max="600" step="0.1" value="6" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSmartSplitCond" value="chars_long">
+                        <span>总字符数超过</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSmartSplitCharsLong" min="8" max="500" value="24" disabled class="tabular-nums"> 字
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSmartSplitCond" value="selected">
+                        <span>仅当前选中条目</span>
+                    </label>
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorSmartSplitUseCps" checked>
+                    <span>按目标读速（CPS）分配时间</span>
+                </label>
+                <label class="find-options">
+                    <input type="checkbox" id="editorSmartSplitFixOverlap" checked>
+                    <span>分割后修复重叠</span>
+                </label>
+                <p id="editorSmartSplitPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSmartSplitCancel" data-smart-split-dismiss>取消</button>
+                    <button type="button" id="editorSmartSplitConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorSilenceSplitModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSilenceSplitTitle">
+            <div class="editor-modal-backdrop" data-silence-split-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorSilenceSplitTitle">按静音分割</h3>
+                <p>对关联视频的音频逐条分析静音点，在停顿处拆分字幕时间轴与文本（需 FFmpeg）。</p>
+                <div class="batch-dur-target">
+                    <label for="editorSilenceSplitDb">静音阈值</label>
+                    <input type="number" id="editorSilenceSplitDb" min="-60" max="-10" step="1" value="-35" class="tabular-nums">
+                    <span>dB · 最短静音</span>
+                    <input type="number" id="editorSilenceSplitDur" min="0.1" max="3" step="0.05" value="0.25" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <p class="text-[10px] text-gray-500 mb-1">筛选条件</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSilenceSplitCond" value="all" checked>
+                        <span>全片字幕（全部条目）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSilenceSplitCond" value="selected">
+                        <span>仅当前选中条目</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSilenceSplitCond" value="dur_long">
+                        <span>时长大于</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSilenceSplitDurLong" min="0.5" max="600" step="0.1" value="3" disabled class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSilenceSplitCond" value="cps_above">
+                        <span>CPS 高于（读速过快）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSilenceSplitCpsAbove" min="0.1" max="100" step="0.5" value="18" disabled class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorSilenceSplitCond" value="chars_long">
+                        <span>总字符数超过</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        <input type="number" id="editorSilenceSplitCharsLong" min="8" max="500" value="16" disabled class="tabular-nums"> 字
+                    </div>
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorSilenceSplitFixOverlap" checked>
+                    <span>分割后修复重叠</span>
+                </label>
+                <p id="editorSilenceSplitPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSilenceSplitCancel" data-silence-split-dismiss>取消</button>
+                    <button type="button" id="editorSilenceSplitConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorSmartAdjustModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorSmartAdjustTitle">
+            <div class="editor-modal-backdrop" data-smart-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorSmartAdjustTitle">智能调整</h3>
+                <p>根据规则自动优化字幕时间轴，保持起始时间优先、尽量不与下一条重叠。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartFixOverlap" checked>
+                        <span>修复时间重叠（缩短结束或后移起始）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartFixCps" checked>
+                        <span>读速过快时延长时长（CPS 上限）</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        CPS 上限 <input type="number" id="editorSmartMaxCps" min="1" max="100" step="0.5" value="18" class="tabular-nums">
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartEnforceMin" checked>
+                        <span>应用最小时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最短 <input type="number" id="editorSmartMinSec" min="0.1" max="60" step="0.01" value="0.50" class="tabular-nums"> 秒
+                    </div>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorSmartEnforceMax" checked>
+                        <span>应用最大时长</span>
+                    </label>
+                    <div class="split-mode-extra">
+                        最长 <input type="number" id="editorSmartMaxSec" min="0.5" max="600" step="0.01" value="10.00" class="tabular-nums"> 秒
+                    </div>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorSmartGapMs">条目间隔</label>
+                    <input type="number" id="editorSmartGapMs" min="0" max="500" step="1" value="1" class="tabular-nums">
+                    <span>毫秒</span>
+                </div>
+                <p id="editorSmartPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorSmartAdjustCancel" data-smart-dismiss>取消</button>
+                    <button type="button" id="editorSmartAdjustConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorRemoveNoiseModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorRemoveNoiseTitle">
+            <div class="editor-modal-backdrop" data-remove-noise-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorRemoveNoiseTitle">删除杂音</h3>
+                <p>批量删除 ASR 常见杂音条目：空文本、语气碎片、音效标签、纯符号、可选连续重复句，以及可选幻觉短句。不修改保留条目的文本内容。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveEmpty" checked>
+                        <span>删除空文本条目</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveFragments" checked>
+                        <span>删除语气碎片（呃 / 啊 / um / 的…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveSoundEffects" checked>
+                        <span>删除音效/杂音标签（[音乐] / 掌声…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveSymbolOnly" checked>
+                        <span>删除纯符号 / 乐符行</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveDuplicates">
+                        <span>删除与上一条完全相同的连续重复</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorNoiseRemoveHallucinations" checked>
+                        <span>删除幻觉短句（完毕 / ○○○ / 过短占位等）</span>
+                    </label>
+                </div>
+                <p id="editorRemoveNoisePreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorRemoveNoiseCancel" data-remove-noise-dismiss>取消</button>
+                    <button type="button" id="editorRemoveNoiseConfirm" class="btn-danger-confirm">删除</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorFillerCheckModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFillerCheckTitle">
+            <div class="editor-modal-backdrop" data-filler-check-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel" style="max-width:32rem">
+                <h3 id="editorFillerCheckTitle">检查语气/拟声词</h3>
+                <p>检测纯语气词与拟声词条目（支持日/中/英/韩）。可勾选「条目中夹杂」以清理混在对白里的语气/拟声并保留其余内容。检查后可筛选到列表，再应用全部或仅勾选部分。可撤销。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorFillerCheckDiscourse" checked>
+                        <span>语气词（嗯 / うん / um / 네…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorFillerCheckOnomatopoeia" checked>
+                        <span>拟声词（哈啊 / はぁ / haha / ㅋㅋ…）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorFillerCheckIncludeInline">
+                        <span>同时检查条目中夹杂的语气/拟声（清理时保留其余对白）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorFillerCheckLang" id="editorFillerCheckLangAuto" value="auto" checked>
+                        <span>自动识别语种（日/中/英/韩）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorFillerCheckLang" id="editorFillerCheckLangTarget" value="target">
+                        <span>按成片目标语言检测</span>
+                    </label>
+                </div>
+                <p id="editorFillerCheckPreview" class="batch-dur-preview">—</p>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.35rem 0">
+                    <button type="button" id="editorFillerCheckScanBtn" class="text-xs px-2 py-1 border rounded">重新检查</button>
+                    <button type="button" id="editorFillerCheckSelectAllBtn" class="text-xs px-2 py-1 border rounded" disabled>全选</button>
+                    <button type="button" id="editorFillerCheckSelectNoneBtn" class="text-xs px-2 py-1 border rounded" disabled>全不选</button>
+                </div>
+                <div id="editorFillerCheckMatchList" class="split-mode-list" style="max-height:14rem;overflow:auto;margin:.25rem 0 .5rem;border:1px solid var(--ed-border, #3333);border-radius:.4rem;padding:.35rem .5rem"></div>
+                <div class="editor-modal-actions" style="flex-wrap:wrap">
+                    <button type="button" id="editorFillerCheckCancel" data-filler-check-dismiss>取消</button>
+                    <button type="button" id="editorFillerCheckSelectBtn" disabled>筛选到列表</button>
+                    <button type="button" id="editorFillerCheckDeleteCheckedBtn" class="btn-danger-confirm" disabled>删除勾选</button>
+                    <button type="button" id="editorFillerCheckDeleteAllBtn" class="btn-danger-confirm" disabled>删除全部匹配</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorBatchDeleteModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorBatchDeleteTitle">
+            <div class="editor-modal-backdrop" data-batch-delete-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorBatchDeleteTitle">批量删除</h3>
+                <p>按文本条件筛选当前字幕条目后删除。例如条件填「…」或「...」，则删除译文仅为省略号/空白占位的条目。可撤销。</p>
+                <label class="split-mode-item" style="display:block;margin:.5rem 0">
+                    <span style="display:block;margin-bottom:.25rem">删除条件</span>
+                    <input type="text" id="editorBatchDeletePattern" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="例如 … 或 ..." aria-label="删除条件" autocomplete="off">
+                </label>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDeleteMatch" id="editorBatchDeleteMatchEquals" value="equals" checked>
+                        <span>字幕文本等于条件（「只有…」）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDeleteMatch" id="editorBatchDeleteMatchContains" value="contains">
+                        <span>字幕文本包含条件</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDeleteScope" id="editorBatchDeleteScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchDeleteScope" id="editorBatchDeleteScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                </div>
+                <p id="editorBatchDeletePreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorBatchDeleteCancel" data-batch-delete-dismiss>取消</button>
+                    <button type="button" id="editorBatchDeleteConfirm" class="btn-danger-confirm">删除</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorBatchRetranslateModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorBatchRetranslateTitle">
+            <div class="editor-modal-backdrop" data-batch-retranslate-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorBatchRetranslateTitle">批量重译</h3>
+                <p>按补译条件筛选当前字幕文本后重新翻译（从原文轨译到成片目标语）。例如条件填「…」或「...」，则只处理译文仅为省略号/空白占位的条目。</p>
+                <label class="split-mode-item" style="display:block;margin:.5rem 0">
+                    <span style="display:block;margin-bottom:.25rem">补译条件</span>
+                    <input type="text" id="editorBatchRetranslatePattern" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="例如 … 或 ..." aria-label="补译条件" autocomplete="off">
+                </label>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateMatch" id="editorBatchRetranslateMatchEquals" value="equals" checked>
+                        <span>字幕文本等于条件（「只有…」）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateMatch" id="editorBatchRetranslateMatchContains" value="contains">
+                        <span>字幕文本包含条件</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateScope" id="editorBatchRetranslateScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateScope" id="editorBatchRetranslateScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateEngine" id="editorBatchRetranslateEngineLlm" value="llm" checked>
+                        <span>推理翻译</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorBatchRetranslateEngine" id="editorBatchRetranslateEngineSmart" value="smart">
+                        <span>智能翻译 ◆</span>
+                    </label>
+                </div>
+                <p id="editorBatchRetranslatePreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorBatchRetranslateCancel" data-batch-retranslate-dismiss>取消</button>
+                    <button type="button" id="editorBatchRetranslateConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorChineseConvertModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorChineseConvertTitle">
+            <div class="editor-modal-backdrop" data-chinese-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorChineseConvertTitle">简繁转换</h3>
+                <p>基于 OpenCC（opencc-js，含分词与地区词典），不改时间轴。专名请用术语表保护。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseDirection" id="editorChineseDirS2T" value="s2t" checked>
+                        <span>简体 → 繁体</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseDirection" id="editorChineseDirT2S" value="t2s">
+                        <span>繁体 → 简体</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleTwp" value="twp" checked>
+                        <span>台湾（字形 + 常用词，如 软件→軟體）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleTw" value="tw">
+                        <span>台湾（仅字形）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseLocale" id="editorChineseLocaleHk" value="hk">
+                        <span>香港</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseScope" id="editorChineseScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorChineseScope" id="editorChineseScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorChineseProtectGlossary" checked>
+                        <span>保护术语表词条</span>
+                    </label>
+                </div>
+                <p id="editorChineseConvertPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorChineseConvertCancel" data-chinese-dismiss>取消</button>
+                    <button type="button" id="editorChineseConvertConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorCompressRepModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorCompressRepTitle">
+            <div class="editor-modal-backdrop" data-compress-rep-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorCompressRepTitle">压缩叠词</h3>
+                <p>将连续重复 ≥3 次的短语/单字压成两次叠写（如「好的」×8 →「好的好的！」），降低 CPS。不改时间轴；不再插入省略号，请听音校对。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorCompressRepScope" id="editorCompressRepScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorCompressRepScope" id="editorCompressRepScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorCompressRepSingleChar" checked>
+                        <span>压缩单字叠音（啊啊啊 / 哈哈哈）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="checkbox" id="editorCompressRepExclaim" checked>
+                        <span>结尾加感叹号</span>
+                    </label>
+                </div>
+                <p id="editorCompressRepPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorCompressRepCancel" data-compress-rep-dismiss>取消</button>
+                    <button type="button" id="editorCompressRepConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorViewingPunctModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorViewingPunctTitle">
+            <div class="editor-modal-backdrop" data-viewing-punct-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorViewingPunctTitle">观影精简标点</h3>
+                <p>句号、顿号/逗号、破折号与装饰省略号（…）改为空格（多空格收成一个）；保留问号与感叹号（重复收紧为一个）。不改时间轴。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorViewingPunctScope" id="editorViewingPunctScopeAll" value="all" checked>
+                        <span>全部字幕</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorViewingPunctScope" id="editorViewingPunctScopeSelected" value="selected">
+                        <span>仅选中条目（支持多选）</span>
+                    </label>
+                </div>
+                <p id="editorViewingPunctPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorViewingPunctCancel" data-viewing-punct-dismiss>取消</button>
+                    <button type="button" id="editorViewingPunctConfirm">执行</button>
+                </div>
+            </div>
+        </div>
+
+<div id="editorRetranscribeDurModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorRetranscribeDurTitle">
+            <div class="editor-modal-backdrop" data-retranscribe-dur-dismiss></div>
+            <div class="editor-modal-panel batch-dur-panel">
+                <h3 id="editorRetranscribeDurTitle">按时长重转写</h3>
+                <p>从起始点向后截取指定时长，调用本地引擎重转写，并替换该时间窗内重叠的字幕。加速选项可在「设置 → 字幕编辑器」中开启「重转写加速」。</p>
+                <div class="split-mode-list">
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeDurStart" value="selected" checked>
+                        <span>从当前条目起始</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeDurStart" value="playhead">
+                        <span>从播放头位置</span>
+                    </label>
+                </div>
+                <fieldset class="split-mode-list" style="border:0;margin:0.55rem 0 0;padding:0">
+                    <legend style="font-size:0.72rem;font-weight:600;margin-bottom:0.25rem;padding:0">转录目标</legend>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeWriteAs" value="source" checked>
+                        <span>原文（语音识别）</span>
+                    </label>
+                    <label class="split-mode-item">
+                        <input type="radio" name="editorRetranscribeWriteAs" value="target">
+                        <span>译文（→ 成片目标语）</span>
+                    </label>
+                </fieldset>
+                <div class="batch-dur-target">
+                    <label for="editorRetranscribeDurSec">时长</label>
+                    <input type="number" id="editorRetranscribeDurSec" min="0.5" max="180" step="0.5" value="10" class="tabular-nums">
+                    <span>秒</span>
+                </div>
+                <div class="retranscribe-dur-presets" role="group" aria-label="常用时长">
+                    <button type="button" data-retranscribe-dur-preset="5">5s</button>
+                    <button type="button" data-retranscribe-dur-preset="10">10s</button>
+                    <button type="button" data-retranscribe-dur-preset="15">15s</button>
+                    <button type="button" data-retranscribe-dur-preset="30">30s</button>
+                    <button type="button" data-retranscribe-dur-preset="60">60s</button>
+                </div>
+                <div class="batch-dur-target">
+                    <label for="editorRetranscribeDurPadMs">前后填充</label>
+                    <input type="number" id="editorRetranscribeDurPadMs" min="0" max="2000" step="50" value="350" class="tabular-nums">
+                    <span>毫秒</span>
+                </div>
+                <label class="find-options">
+                    <input type="checkbox" id="editorRetranscribeDurSnapAfter" checked>
+                    <span>重转写后按音频贴边（保留新文本，微调时间）</span>
+                </label>
+                <p id="editorRetranscribeDurPreview" class="batch-dur-preview">—</p>
+                <div class="editor-modal-actions">
+                    <button type="button" id="editorRetranscribeDurAll" title="从片头重转写整段视频时长，替换窗内全部重叠字幕">全部重转写</button>
+                    <button type="button" id="editorRetranscribeDurCancel" data-retranscribe-dur-dismiss>取消</button>
+                    <button type="button" id="editorRetranscribeDurConfirm">执行</button>
+                </div>
+            </div>
+        </div>

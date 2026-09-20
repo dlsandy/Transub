@@ -152,7 +152,8 @@ function parseSrt(raw) {
         const endMs = parseSrtTimeMs(arrow[2]);
         if (startMs == null) continue;
         const textLines = lines.slice(idxLine + 1);
-        if (!textLines.length) continue;
+        // Keep empty bodies (MT blank slots / viewing-punct leftovers). Dropping
+        // them silently desyncs JA↔ZH and causes "missing subtitle" cliffs.
         cues.push({
             index,
             startMs,
@@ -185,7 +186,6 @@ function parseVtt(raw) {
             textLines.push(lines[i]);
             i += 1;
         }
-        if (!textLines.length) continue;
         cues.push({
             index: cues.length + 1,
             startMs,
@@ -395,7 +395,9 @@ function serializeSrt(cues) {
         const idx = cue.index != null ? cue.index : i + 1;
         const start = formatSrtTimeMs(cue.startMs);
         const end = formatSrtTimeMs(cue.endMs != null ? cue.endMs : cue.startMs + 2000);
-        return `${idx}\n${start} --> ${end}\n${cue.text || ''}`;
+        // Empty text → «…» so parseSrt / players keep the timing slot.
+        const body = String(cue.text ?? '').trim() ? String(cue.text) : '…';
+        return `${idx}\n${start} --> ${end}\n${body}`;
     }).join('\n\n') + (cues.length ? '\n' : '');
 }
 
@@ -406,7 +408,8 @@ function serializeVtt(cues, header) {
     const body = cues.map((cue) => {
         const start = formatVttTimeMs(cue.startMs);
         const end = formatVttTimeMs(cue.endMs != null ? cue.endMs : cue.startMs + 2000);
-        return `${start} --> ${end}\n${cue.text || ''}`;
+        const text = String(cue.text ?? '').trim() ? String(cue.text) : '…';
+        return `${start} --> ${end}\n${text}`;
     }).join('\n\n');
     return body ? `${head}\n\n${body}\n` : `${head}\n`;
 }

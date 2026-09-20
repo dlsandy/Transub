@@ -10,14 +10,18 @@ describe('transwithai-options', () => {
         const opts = mergeTransWithAiOptions({});
         assert.strictEqual(opts.task, 'translate');
         assert.strictEqual(opts.device, 'cuda');
-        assert.strictEqual(opts.translateMode, 'llm');
+        assert.strictEqual(opts.translateMode, 'smart');
         assert.strictEqual(opts.overwrite, true);
-        assert.strictEqual(opts.mergeBilingualSubtitles, true);
+        assert.strictEqual(opts.mergeBilingualSubtitles, false);
         assert.strictEqual(opts.releaseGpuAfter, true);
+        assert.strictEqual(opts.autoCpuOnGpuBusy, false);
         assert.strictEqual(opts.postTaskAction, 'none');
         assert.strictEqual(opts.startupWindow, 'generator');
         assert.strictEqual(opts.rememberLastOpenDir, true);
         assert.strictEqual(opts.lastOpenDir, '');
+        assert.strictEqual(opts.activePresetId, 'ja-av-qwen3-galgame-ten');
+        assert.strictEqual(opts.mtUseForm, true);
+        assert.strictEqual(opts.smartTranslate, true);
         assert.ok(opts.installPath);
     });
 
@@ -31,10 +35,22 @@ describe('transwithai-options', () => {
         assert.strictEqual(mergeTransWithAiOptions({ startupWindow: 'nope' }).startupWindow, 'generator');
     });
 
+    it('normalizes external import action preferences', () => {
+        assert.strictEqual(mergeTransWithAiOptions({}).externalImportAction, 'list_when_idle');
+        assert.strictEqual(
+            mergeTransWithAiOptions({ externalImportAction: 'list_and_start' }).externalImportAction,
+            'list_and_start',
+        );
+        assert.strictEqual(
+            mergeTransWithAiOptions({ externalImportAction: 'list_when_idle' }).externalImportAction,
+            'list_when_idle',
+        );
+    });
+
     it('normalizes autoUpdateCheckInterval preference', () => {
         assert.strictEqual(
             mergeTransWithAiOptions({}).autoUpdateCheckInterval,
-            'weekly',
+            'off',
         );
         assert.strictEqual(
             mergeTransWithAiOptions({ autoUpdateCheckInterval: 'daily' }).autoUpdateCheckInterval,
@@ -54,7 +70,7 @@ describe('transwithai-options', () => {
         );
         assert.strictEqual(
             mergeTransWithAiOptions({ autoUpdateCheckInterval: 'hourly' }).autoUpdateCheckInterval,
-            'weekly',
+            'off',
         );
     });
 

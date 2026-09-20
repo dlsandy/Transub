@@ -19,14 +19,19 @@ function engineCuesToMs(engineCues) {
     return (Array.isArray(engineCues) ? engineCues : []).map((c, i) => {
         const startSec = Number(c.start ?? c.startSec);
         const endSec = Number(c.end ?? c.endSec);
-        let startMs = Number(c.startMs);
-        let endMs = Number(c.endMs);
-        if (!Number.isFinite(startMs)) {
+        const rawStartMs = c.startMs;
+        const rawEndMs = c.endMs;
+        let startMs = rawStartMs == null || rawStartMs === '' ? NaN : Number(rawStartMs);
+        let endMs = rawEndMs == null || rawEndMs === '' ? NaN : Number(rawEndMs);
+        if (!Number.isFinite(startMs)
+            || (startMs <= 0 && Number.isFinite(startSec) && startSec > 0.05)) {
             startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : i * 1000;
         }
-        if (!Number.isFinite(endMs)) {
+        if (!Number.isFinite(endMs)
+            || (endMs <= startMs && Number.isFinite(endSec) && endSec > (Number.isFinite(startSec) ? startSec : startMs / 1000))) {
             endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : startMs + 1000;
         }
+        if (!(endMs > startMs)) endMs = startMs + 1000;
         return { startMs, endMs, text: String(c.text || '') };
     }).filter((c) => c.text);
 }
@@ -63,10 +68,10 @@ function handoffAsrConfidence(jobResult, outPaths = {}, options = {}) {
 }
 
 /**
- * Run confidence handoff + optional low-confidence ASR second opinion.
- * Returns log lines for the bridge.
+ * Seed confidence and optionally run second opinion (before MT / post-batch).
+ * @returns {{ confidence: object, secondOpinion: object, logs: string[] }}
  */
-async function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
+async function runAsrPostTranscribeHandoff(jobResult, outPaths = {}, options = {}) {
     const logs = [];
     const confidence = handoffAsrConfidence(jobResult, outPaths, options);
     if (confidence.ok && confidence.entryCount) {
@@ -77,41 +82,70 @@ async function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
         logs.push(`ASR 置信度写入跳过: ${confidence.error}`);
     }
 
-    let secondOpinion = { ok: true, skipped: true, reason: 'not_run' };
-    try {
-        const mediaPath = asStringLike(options.mediaPath || outPaths.mediaPath);
-        const subtitlePath = pickSecondOpinionSubtitlePath(outPaths, confidence);
-        if (mediaPath && subtitlePath) {
-            const { runAsrSecondOpinionPass } = require('./engine-asr-second-opinion');
-            secondOpinion = await runAsrSecondOpinionPass({
-                mediaPath,
-                subtitlePath,
-                targetSubtitlePath: pickSecondOpinionTargetPath(outPaths, subtitlePath),
-                primaryAsr: options.primaryAsr || options.engineAsrModel || options.asrModel,
-                options,
-                onLog: (line) => logs.push(line),
-                onProgress: options.onProgress,
-            });
-            if (secondOpinion?.replacedWindows > 0) {
-                logs.push(
-                    `ASR 低置信二意见已采纳 ${secondOpinion.replacedWindows} 窗`
-                    + (secondOpinion.sibling ? `（${secondOpinion.sibling}）` : ''),
-                );
-                if (secondOpinion.targetBlanked > 0) {
-                    logs.push(
-                        `ASR 二意见译文档已对齐清空 ${secondOpinion.targetBlanked} 条（可补译）`,
-                    );
-                }
-            } else if (secondOpinion && !secondOpinion.skipped && secondOpinion.attempted) {
-                logs.push('ASR 低置信二意见已跑，未采纳更优结果');
+    // Quality pipeline: band cues after confidence so SO can prefer yellow/red.
+    let bandByIndex = options.bandByIndex || options.cueRiskBands || null;
+    const bandSeedPath = pickSecondOpinionSubtitlePath(outPaths, confidence)
+        || String(outPaths.sourceSubtitlePath || outPaths.subtitlePath || '').trim();
+    if (bandSeedPath) {
+        try {
+            const { seedCueRiskBandsAfterConfidence } = require('./engine-pre-mt-qc-handoff');
+            const seeded = seedCueRiskBandsAfterConfidence(bandSeedPath, options);
+            if (seeded?.ok && seeded.bandResult?.byIndex) {
+                bandByIndex = seeded.bandResult.byIndex;
+                if (seeded.summaryLine) logs.push(seeded.summaryLine);
             }
-        }
-    } catch (err) {
-        logs.push(`ASR 二意见跳过: ${err.message || err}`);
-        secondOpinion = { ok: false, error: err.message || String(err) };
+        } catch (_) { /* optional */ }
     }
 
-    return { confidence, secondOpinion, logs };
+    let secondOpinion = { ok: true, skipped: true, reason: 'not_run' };
+    const includeSecondOpinion = options.includeSecondOpinion !== false
+        && options.skipSecondOpinion !== true;
+
+    if (includeSecondOpinion) {
+        try {
+            const mediaPath = asStringLike(options.mediaPath || outPaths.mediaPath);
+            const subtitlePath = pickSecondOpinionSubtitlePath(outPaths, confidence);
+            if (mediaPath && subtitlePath) {
+                const { runAsrSecondOpinionPass } = require('./engine-asr-second-opinion');
+                secondOpinion = await runAsrSecondOpinionPass({
+                    mediaPath,
+                    subtitlePath,
+                    targetSubtitlePath: pickSecondOpinionTargetPath(outPaths, subtitlePath),
+                    primaryAsr: options.primaryAsr || options.engineAsrModel || options.asrModel,
+                    options: {
+                        ...options,
+                        bandByIndex: bandByIndex || options.bandByIndex,
+                        cueRiskBands: bandByIndex || options.cueRiskBands,
+                    },
+                    onLog: (line) => logs.push(line),
+                    onProgress: options.onProgress,
+                });
+                if (secondOpinion?.replacedWindows > 0) {
+                    logs.push(
+                        `ASR 低置信二意见已采纳 ${secondOpinion.replacedWindows} 窗`
+                        + (secondOpinion.sibling ? `（${secondOpinion.sibling}）` : ''),
+                    );
+                    if (secondOpinion.targetBlanked > 0) {
+                        logs.push(
+                            `ASR 二意见译文档已对齐清空 ${secondOpinion.targetBlanked} 条（可补译）`,
+                        );
+                    }
+                } else if (secondOpinion && !secondOpinion.skipped && secondOpinion.attempted) {
+                    logs.push('ASR 低置信二意见已跑，未采纳更优结果');
+                }
+            }
+        } catch (err) {
+            logs.push(`ASR 二意见跳过: ${err.message || err}`);
+            secondOpinion = { ok: false, error: err.message || String(err) };
+        }
+    }
+
+    return { confidence, secondOpinion, logs, bandByIndex };
+}
+
+/** @deprecated alias — prefer runAsrPostTranscribeHandoff */
+async function runBatchSuccessHandoff(jobResult, outPaths = {}, options = {}) {
+    return runAsrPostTranscribeHandoff(jobResult, outPaths, options);
 }
 
 function asStringLike(v) {
@@ -148,6 +182,7 @@ module.exports = {
     listSubtitleSeedTargets,
     engineCuesToMs,
     handoffAsrConfidence,
+    runAsrPostTranscribeHandoff,
     runBatchSuccessHandoff,
     pickSecondOpinionSubtitlePath,
     pickSecondOpinionTargetPath,

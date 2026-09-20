@@ -8,6 +8,7 @@ const BRIDGES = [
     'engine-bridge.js',
     'advanced-bridge.js',
     'transwithai-bridge.js',
+    'combo-plans-ipc.js',
 ];
 
 function parseLazyRoutes(mainSrc) {

@@ -11,6 +11,7 @@
     let confirmSecondary = null;
     let confirmTertiary = null;
     let confirmResolve = null;
+    let confirmEscapeResult = 'secondary';
     let batchSummaryEl = null;
     let batchSummaryTitle = null;
     let batchSummaryBody = null;
@@ -23,6 +24,7 @@
     let shortcutsEl = null;
     let undoEntry = null;
     let undoTimer = null;
+    let confirmKeysBound = false;
 
     function ensureHosts() {
         toastHost = document.getElementById('toastHost');
@@ -106,22 +108,26 @@
     }
 
     function bindConfirmOnce() {
-        if (confirmEl?.dataset.bound === '1') return;
-        if (!confirmEl) return;
+        ensureHosts();
+        if (!confirmEl || confirmEl.getAttribute('data-ui-fragment') === 'pending') return;
+        if (confirmEl.dataset.bound === '1') return;
         confirmEl.dataset.bound = '1';
         confirmPrimary?.addEventListener('click', () => closeConfirm('primary'));
         confirmSecondary?.addEventListener('click', () => closeConfirm('secondary'));
         confirmTertiary?.addEventListener('click', () => closeConfirm('tertiary'));
         confirmEl.addEventListener('click', (event) => {
-            if (event.target === confirmEl) closeConfirm('secondary');
+            if (event.target === confirmEl) closeConfirm(confirmEscapeResult);
         });
-        document.addEventListener('keydown', (event) => {
-            if (confirmEl?.classList.contains('hidden')) return;
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                closeConfirm('secondary');
-            }
-        });
+        if (!confirmKeysBound) {
+            confirmKeysBound = true;
+            document.addEventListener('keydown', (event) => {
+                if (confirmEl?.classList.contains('hidden')) return;
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeConfirm(confirmEscapeResult);
+                }
+            });
+        }
     }
 
     /**
@@ -134,7 +140,7 @@
             const fallback = window.confirm(String(options.message || options.title || '确认？'));
             return Promise.resolve(fallback ? 'primary' : 'secondary');
         }
-        if (confirmResolve) closeConfirm('secondary');
+        if (confirmResolve) closeConfirm(confirmEscapeResult);
 
         const title = String(options.title || '确认');
         const message = String(options.message || '');
@@ -158,6 +164,16 @@
             confirmTertiary.classList.remove('hidden');
         } else {
             confirmTertiary.classList.add('hidden');
+        }
+
+        // Escape / backdrop: use explicit escapeResult, else tertiary when it is「取消」, else secondary.
+        const tertiaryText = String(options.tertiaryLabel || '').trim();
+        if (options.escapeResult === 'primary' || options.escapeResult === 'secondary' || options.escapeResult === 'tertiary') {
+            confirmEscapeResult = options.escapeResult;
+        } else if (tertiaryText && /^(取消|Cancel|cancel)$/i.test(tertiaryText)) {
+            confirmEscapeResult = 'tertiary';
+        } else {
+            confirmEscapeResult = 'secondary';
         }
 
         confirmEl.classList.remove('hidden');
@@ -203,8 +219,9 @@
     }
 
     function bindBatchSummaryOnce() {
-        if (batchSummaryEl?.dataset.bound === '1') return;
-        if (!batchSummaryEl) return;
+        ensureHosts();
+        if (!batchSummaryEl || batchSummaryEl.getAttribute('data-ui-fragment') === 'pending') return;
+        if (batchSummaryEl.dataset.bound === '1') return;
         batchSummaryEl.dataset.bound = '1';
         batchSummaryPrimary?.addEventListener('click', () => closeBatchSummary('primary'));
         batchSummarySecondary?.addEventListener('click', () => closeBatchSummary('secondary'));
@@ -237,7 +254,7 @@
         batchSummarySecondary.textContent = options.secondaryLabel || '关闭';
         batchSummaryPrimary.classList.toggle('hidden', !options.onPrimary);
         if (batchSummaryTertiary) {
-            batchSummaryTertiary.textContent = options.tertiaryLabel || '在字幕库查看';
+            batchSummaryTertiary.textContent = options.tertiaryLabel || '';
             batchSummaryTertiary.classList.toggle('hidden', !options.onTertiary);
         }
         batchSummaryEl.classList.remove('hidden');
@@ -249,20 +266,23 @@
 
     function openShortcutsModal() {
         ensureHosts();
+        bindShortcutsOnce();
         if (!shortcutsEl) return;
         shortcutsEl.classList.remove('hidden');
         shortcutsEl.classList.add('flex');
     }
 
     function closeShortcutsModal() {
+        ensureHosts();
         if (!shortcutsEl) return;
         shortcutsEl.classList.add('hidden');
         shortcutsEl.classList.remove('flex');
     }
 
     function bindShortcutsOnce() {
-        if (shortcutsEl?.dataset.bound === '1') return;
-        if (!shortcutsEl) return;
+        ensureHosts();
+        if (!shortcutsEl || shortcutsEl.getAttribute('data-ui-fragment') === 'pending') return;
+        if (shortcutsEl.dataset.bound === '1') return;
         shortcutsEl.dataset.bound = '1';
         document.getElementById('closeShortcutsBtn')?.addEventListener('click', closeShortcutsModal);
         document.getElementById('closeShortcutsBtn2')?.addEventListener('click', closeShortcutsModal);
@@ -299,11 +319,21 @@
         bindShortcutsOnce();
     }
 
+    function onUiFragmentReady(ev) {
+        const key = ev?.detail?.key;
+        if (key !== 'factory-modals') return;
+        ensureHosts();
+        bindConfirmOnce();
+        bindBatchSummaryOnce();
+        bindShortcutsOnce();
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
+    global.addEventListener?.('transub-ui-fragment-ready', onUiFragmentReady);
 
     global.TransubMainUiUx = {
         showToast,

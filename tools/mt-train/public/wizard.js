@@ -1751,7 +1751,7 @@
             await assignZh(loaded.zh);
         } catch (err) {
             console.warn('pending pair', err);
-            setStatus(`片库导入失败：${err.message || err}`);
+            setStatus(`路径导入失败：${err.message || err}`);
         }
     }
 

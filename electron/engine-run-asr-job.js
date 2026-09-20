@@ -124,6 +124,7 @@ async function runSingleEngineJob({
     }
 
     if (!created?.ok || !created?.data?.id) {
+        const status = Number(created?.status);
         return {
             ok: false,
             cancelled: !!created?.cancelled,
@@ -131,7 +132,9 @@ async function runSingleEngineJob({
                 created?.error
                 || created?.data?.message
                 || created?.data?.error
-                || `创建任务失败 (HTTP ${created?.status || '?'})`,
+                || (Number.isFinite(status) && status > 0
+                    ? `创建任务失败 (HTTP ${status})`
+                    : '创建任务失败（引擎未响应）'),
             ),
             code: created?.code || '',
             created,
@@ -186,11 +189,16 @@ async function runEngineJobWithAsrFailover({
     pingHealth = null,
     restartEngine = null,
     createNetworkRetries = 1,
+    emptyStreakStop = null,
 } = {}) {
     const list = Array.isArray(candidates) && candidates.length
         ? candidates.map((c) => String(c || '').trim()).filter(Boolean)
         : rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr);
+    const streakLimit = Number.isFinite(Number(emptyStreakStop)) && Number(emptyStreakStop) > 0
+        ? Math.round(Number(emptyStreakStop))
+        : rangeAsrPolicy.BATCH_ASR_EMPTY_STREAK_STOP;
     let lastFail = null;
+    let emptyFailStreak = 0;
     for (let i = 0; i < list.length; i += 1) {
         const asrModel = list[i];
         if (typeof shouldStop === 'function' && shouldStop()) {
@@ -242,12 +250,21 @@ async function runEngineJobWithAsrFailover({
         if (!rangeAsrPolicy.isRetryableAsrFail(shaped) && outcome.code !== 'idle_timeout') {
             return { ...outcome, asrModel, asrAttempts: i + 1, asrCandidates: list };
         }
+        if (rangeAsrPolicy.isEmptyAsrFail(shaped) || rangeAsrPolicy.isEmptyAsrFail(outcome)) {
+            emptyFailStreak += 1;
+        } else {
+            emptyFailStreak = 0;
+        }
+        if (emptyFailStreak >= streakLimit && i < list.length - 1) {
+            break;
+        }
         if (i >= list.length - 1) break;
     }
     return {
         ...(lastFail || { ok: false, error: '任务失败' }),
         asrAttempts: list.length,
         asrCandidates: list,
+        emptyFailStreak,
     };
 }
 
@@ -289,7 +306,7 @@ async function resumeEngineJobAndWait({
                 resumed?.error
                 || resumed?.data?.message
                 || resumed?.data?.error
-                || '断点恢复失败',
+                || '从原文继续翻译失败',
             ),
             code: resumed?.data?.code || resumed?.code || 'RESUME_FAILED',
             resumed,

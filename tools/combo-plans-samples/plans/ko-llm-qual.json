@@ -1,0 +1,38 @@
+{
+  "id": "ko-llm-qual",
+  "version": 1,
+  "group": "ko",
+  "name": "韩剧 · 推理 · 质量",
+  "description": "韩剧：Whisper turbo 听写+ LN-Korean 14B 本地推理翻译硬件档：质量 · >12GB 显存。",
+  "language": "ko",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "whisper-large-v3-turbo",
+    "silero-vad",
+    "sakura-ln-korean-14b"
+  ],
+  "options": {
+    "language": "ko",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "whisper-large-v3-turbo",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "llm",
+    "engineLlmMtModel": "sakura-ln-korean-14b",
+    "engineProfile": "quality",
+    "activePresetId": "ko-vad-only",
+    "vadEnabled": true,
+    "filmVadPreset": true,
+    "audioLightDenoise": false
+  }
+}

@@ -19,7 +19,16 @@ const OUT_DOMAIN = path.join(ROOT, 'shared', 'av-domain-glossary.json');
 
 const KANA_RE = /[\u3040-\u30ff]/;
 const HAN_RE = /[\u4e00-\u9fff]/;
+const LATIN_ONLY_RE = /^[A-Za-z0-9 .'_\-]+$/;
 const JUNK_SRC_RE = /^@|^\s*$|^(素人|女優|女优|男優|男优)$/;
+const PLACEHOLDER_RE = /^(?:a{3,}|b{3,}|x{3,}|test|foo|bar|bbbb)$/i;
+const MOAN_SRC_RE = /^(?:[あぁうぅおォんンー〜~っッ]{2,}|[あいうえおアイウエオぁぃぅぇぉ]{2,6}|あんあん.*|アンアン.*|へへへ.*|はうぅ.*)$/;
+const NOISE_ZH_RE = /^[啊嗯哦呀哈嘿哎呜唔呼呲啾]+$/;
+/** High false-positive / non-domain rows from SakuraDict. */
+const DOMAIN_COMMON_JUNK = new Set([
+    'じゃ', 'そう', '先生', '彼女', '息子', '姉妹', '親子', '先輩', '兄貴', '姫様', '疑似',
+    'あーし', 'わらひ',
+]);
 
 function parseArgs(argv) {
     const out = {};
@@ -48,12 +57,25 @@ function isJaLike(text) {
     return KANA_RE.test(s) || (HAN_RE.test(s) && /[\u3040-\u9fff]/.test(s));
 }
 
+/** Prefer simplified Chinese surfaces for MT / prompt glossary injection. */
 function isUsableZh(text) {
     const s = String(text || '').trim();
     if (!s || s.length < 2) return false;
     if (KANA_RE.test(s)) return false;
+    if (!HAN_RE.test(s)) return false;
     if (JUNK_SRC_RE.test(s)) return false;
+    if (PLACEHOLDER_RE.test(s) || NOISE_ZH_RE.test(s)) return false;
     return true;
+}
+
+function isShortLatinAlias(src) {
+    const s = String(src || '').trim();
+    if (!LATIN_ONLY_RE.test(s)) return false;
+    const token = s.replace(/\./g, '').trim();
+    if (!token) return true;
+    // Single-token short Latin given names are false-positive magnets in mixed text.
+    if (!/\s/.test(token) && token.length <= 6) return true;
+    return token.length <= 3;
 }
 
 function isJunkSrc(src) {
@@ -61,6 +83,22 @@ function isJunkSrc(src) {
     if (!s || s.length <= 2) return true;
     if (s.startsWith('@')) return true;
     if (JUNK_SRC_RE.test(s)) return true;
+    if (PLACEHOLDER_RE.test(s)) return true;
+    if (isShortLatinAlias(s)) return true;
+    return false;
+}
+
+function isJunkDomainEntry(src, zh) {
+    const s = String(src || '').trim();
+    const z = String(zh || '').trim();
+    if (!s || !z || s === z) return true;
+    if (s.length <= 1 || z.length < 2) return true;
+    if (s.toLowerCase() === z.toLowerCase()) return true;
+    if (PLACEHOLDER_RE.test(s) || PLACEHOLDER_RE.test(z)) return true;
+    if (MOAN_SRC_RE.test(s) || NOISE_ZH_RE.test(z)) return true;
+    if (DOMAIN_COMMON_JUNK.has(s)) return true;
+    // Short hiragana-only particles / moans (keep short katakana slang like エロ).
+    if (s.length <= 2 && KANA_RE.test(s) && !HAN_RE.test(s) && !/[ァ-ヶー]/.test(s)) return true;
     return false;
 }
 
@@ -94,11 +132,23 @@ function buildActorGlossary(rawRows) {
     const lookup = new Map();
     const entries = [];
     const seenEntry = new Set();
+    const dropped = { noZh: 0, junkSrc: 0, caseIdent: 0 };
 
     function addLookup(src, zh, canonical, info) {
         const s = String(src || '').trim();
         const z = String(zh || '').trim();
-        if (!s || !z || s === z || !isUsableZh(z)) return;
+        if (!s || !z || s === z) {
+            dropped.caseIdent += 1;
+            return;
+        }
+        if (s.toLowerCase() === z.toLowerCase()) {
+            dropped.caseIdent += 1;
+            return;
+        }
+        if (!isUsableZh(z)) {
+            dropped.noZh += 1;
+            return;
+        }
         if (!lookup.has(s)) lookup.set(s, z);
         const key = `${s}\0${z}`;
         if (seenEntry.has(key)) return;
@@ -112,18 +162,35 @@ function buildActorGlossary(rawRows) {
     }
 
     for (const [ja, zhRaw] of canonicalJa.entries()) {
-        if (isJunkSrc(ja)) continue;
+        if (ja.startsWith('@') || JUNK_SRC_RE.test(ja) || ja.length <= 2) {
+            dropped.junkSrc += 1;
+            continue;
+        }
+        if (isShortLatinAlias(ja)) {
+            dropped.junkSrc += 1;
+            continue;
+        }
         let zh = zhRaw;
         if (!isUsableZh(zh) && isJaLike(zh)) {
             const resolved = resolveJaChain(zh, aliasMap, canonicalJa);
             if (resolved) zh = canonicalJa.get(resolved) || zh;
         }
-        if (!isUsableZh(zh)) continue;
+        if (!isUsableZh(zh)) {
+            dropped.noZh += 1;
+            continue;
+        }
         addLookup(ja, zh, ja, '女优人名');
     }
 
     for (const [alias, dst] of aliasMap.entries()) {
-        if (isJunkSrc(alias)) continue;
+        if (alias.startsWith('@') || JUNK_SRC_RE.test(alias) || alias.length <= 2) {
+            dropped.junkSrc += 1;
+            continue;
+        }
+        if (isShortLatinAlias(alias)) {
+            dropped.junkSrc += 1;
+            continue;
+        }
         let zh = '';
         let canonical = '';
         if (isUsableZh(dst)) {
@@ -133,7 +200,10 @@ function buildActorGlossary(rawRows) {
             canonical = resolveJaChain(dst, aliasMap, canonicalJa) || resolveJaChain(alias, aliasMap, canonicalJa);
             if (canonical) zh = canonicalJa.get(canonical) || '';
         }
-        if (!isUsableZh(zh)) continue;
+        if (!isUsableZh(zh)) {
+            dropped.noZh += 1;
+            continue;
+        }
         addLookup(alias, zh, canonical || alias, '女优别名');
     }
 
@@ -148,6 +218,7 @@ function buildActorGlossary(rawRows) {
             canonicalJa: canonicalJa.size,
             aliases: aliasMap.size,
             entries: entries.length,
+            dropped,
         },
         entries,
     };
@@ -156,12 +227,15 @@ function buildActorGlossary(rawRows) {
 function buildDomainGlossary(rawRows) {
     const rows = [];
     const seen = new Set();
+    let dropped = 0;
     for (const row of rawRows) {
         const src = String(row?.src || '').trim();
         const zh = String(row?.dst || row?.zh || '').trim();
         const info = String(row?.info || 'SakuraDict').trim();
-        if (!src || !zh || src === zh) continue;
-        if (src.length <= 1) continue;
+        if (isJunkDomainEntry(src, zh)) {
+            dropped += 1;
+            continue;
+        }
         const key = `${src}\0${zh}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -172,7 +246,7 @@ function buildDomainGlossary(rawRows) {
         version: 1,
         source: 'SakuraDict (transub-ja)',
         builtAt: new Date().toISOString(),
-        stats: { entries: rows.length },
+        stats: { raw: rawRows.length, entries: rows.length, dropped },
         entries: rows,
     };
 }
@@ -209,4 +283,15 @@ function main() {
     }
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = {
+    isUsableZh,
+    isJunkSrc,
+    isJunkDomainEntry,
+    isShortLatinAlias,
+    buildActorGlossary,
+    buildDomainGlossary,
+};

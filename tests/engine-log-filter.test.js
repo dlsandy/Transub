@@ -90,4 +90,17 @@ describe('engine-log-filter', () => {
         assert.ok(out.includes('0.6B'));
         assert.ok(out.includes('原始错误'));
     });
+
+    it('friendly torch docstring poison asks for restart (not bare WinError 1114 wrap)', () => {
+        const { isTorchEngineProcessPoisonError } = require('../electron/engine-log-filter');
+        const raw = (
+            "Torch CUDA 库加载失败（WinError 1114 · cublas）。"
+            + "function '_has_torch_function' already has a docstring "
+            + '请完全退出后重试，或在设置中「补齐 CUDA PyTorch」。'
+        );
+        assert.strictEqual(isTorchEngineProcessPoisonError(raw), true);
+        const out = friendlyEngineError(raw);
+        assert.ok(out.includes('损坏') || out.includes('重复加载'));
+        assert.ok(out.includes('重启'));
+    });
 });

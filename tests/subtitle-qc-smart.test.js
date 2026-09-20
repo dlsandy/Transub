@@ -16,6 +16,7 @@ const {
     applyQcLlmSplitResults,
     expandIndexesWithNeighbors,
     applyQcSmartUpdates,
+    collapseArrowEditArtifact,
     selectQcSemanticIndexes,
     collectBlankEllipsisIndexes,
     mergeBlankEllipsisIssues,
@@ -23,6 +24,7 @@ const {
     buildQcSemanticPairs,
     applyQcSemanticSuggestions,
     resolveQcSemanticPairPath,
+    resolveQcRetranscribeWriteTarget,
     summarizeQcSmartPlan,
     summarizeQcRetranscribePlan,
     summarizeQcLlmSplitPlan,
@@ -90,6 +92,26 @@ describe('subtitle-qc-smart', () => {
         assert.strictEqual(next[0].text, 'a');
         assert.strictEqual(next[1].text, 'B');
         assert.strictEqual(next[2].text, 'c');
+    });
+
+    it('collapses arrow edit artifacts from LLM polish', () => {
+        assert.strictEqual(
+            collapseArrowEditArtifact('来了吗？ -> 来了').text,
+            '来了',
+        );
+        assert.strictEqual(
+            collapseArrowEditArtifact('嗯 这次的话 人气确实挺高的 -> 嗯 这次的话 人气确实挺高').text,
+            '嗯 这次的话 人气确实挺高',
+        );
+        assert.strictEqual(collapseArrowEditArtifact('->').text, '…');
+        // Glossary dumps must keep the arrow for prompt-leak strip
+        assert.ok(!collapseArrowEditArtifact('メンエス->男士按摩店').changed);
+        const applied = applyQcSmartUpdates(
+            [{ startMs: 0, endMs: 1000, text: '旧句' }],
+            [{ index: 0, text: '旧句 -> 新句' }],
+        );
+        assert.strictEqual(applied.cues[0].text, '新句');
+        assert.strictEqual(applied.changed, 1);
     });
 
     it('builds light reconstruct options with QC note', () => {
@@ -429,5 +451,26 @@ describe('subtitle-qc-smart', () => {
         assert.strictEqual(resolveQcSemanticPairPath(item, 'C:\\out\\a.src.srt'), '');
         assert.strictEqual(resolveQcSemanticPairPath(item, 'C:\\out\\other.srt'), '');
         assert.strictEqual(resolveQcSemanticPairPath({}, 'C:\\out\\a.zh.srt'), '');
+    });
+
+    it('routes QC retranscribe writes to source when a distinct pair path exists', () => {
+        const toSource = resolveQcRetranscribeWriteTarget({
+            path: 'F:/out/HAWA-386.srt',
+            subtitlePath: 'F:/out/HAWA-386.srt',
+            pairPath: 'F:/out/HAWA-386.transcribe.srt',
+            sourceSubtitlePath: 'F:/out/HAWA-386.transcribe.srt',
+        });
+        assert.strictEqual(toSource.writeKind, 'source');
+        assert.strictEqual(toSource.keepTargetText, true);
+        assert.ok(/transcribe\.srt$/i.test(toSource.writePath));
+        assert.ok(/transcribe\.srt$/i.test(toSource.confidencePath));
+
+        const self = resolveQcRetranscribeWriteTarget({
+            path: 'F:/out/only.srt',
+            subtitlePath: 'F:/out/only.srt',
+        });
+        assert.strictEqual(self.writeKind, 'self');
+        assert.strictEqual(self.keepTargetText, false);
+        assert.ok(/only\.srt$/i.test(self.writePath));
     });
 });

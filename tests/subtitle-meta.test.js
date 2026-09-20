@@ -122,14 +122,16 @@ function testSummarize() {
 }
 
 function testReplaceCuesInTimeRange() {
+    const credit = require('../src/js/subtitle-software-credit-core');
+    const creditText = credit.buildSoftwareCreditText({ isPro: true, lang: 'ja' });
     const cues = [
-        { startMs: 0, endMs: 1000, text: 'a' },
+        { startMs: 0, endMs: 2000, text: creditText },
         { startMs: 1000, endMs: 3000, text: 'b' },
         { startMs: 3000, endMs: 4000, text: 'c' },
         { startMs: 5000, endMs: 6000, text: 'd' },
     ];
     const overlap = collectOverlappingCueIndices(cues, 1500, 3500);
-    assert.deepStrictEqual(overlap, [1, 2]);
+    assert.deepStrictEqual(overlap, [0, 1, 2]);
 
     const replaced = replaceCuesInTimeRange(
         cues,
@@ -142,9 +144,34 @@ function testReplaceCuesInTimeRange() {
     );
     assert.strictEqual(replaced.replaced, 2);
     assert.strictEqual(replaced.cues.length, 4);
+    assert.ok(credit.isSoftwareCreditText(replaced.cues[0].text));
     assert.strictEqual(replaced.cues[1].text, 'new1');
     assert.strictEqual(replaced.cues[2].text, 'new2');
     assert.strictEqual(replaced.cues[3].text, 'd');
+
+    const plain = [
+        { startMs: 0, endMs: 1000, text: 'a' },
+        { startMs: 1000, endMs: 3000, text: 'b' },
+        { startMs: 3000, endMs: 4000, text: 'c' },
+        { startMs: 5000, endMs: 6000, text: 'd' },
+    ];
+    const plainOverlap = collectOverlappingCueIndices(plain, 1500, 3500);
+    assert.deepStrictEqual(plainOverlap, [1, 2]);
+
+    const plainReplaced = replaceCuesInTimeRange(
+        plain,
+        1500,
+        3500,
+        [
+            { startMs: 1500, endMs: 2500, text: 'new1' },
+            { startMs: 2500, endMs: 3500, text: 'new2' },
+        ],
+    );
+    assert.strictEqual(plainReplaced.replaced, 2);
+    assert.strictEqual(plainReplaced.cues.length, 4);
+    assert.strictEqual(plainReplaced.cues[1].text, 'new1');
+    assert.strictEqual(plainReplaced.cues[2].text, 'new2');
+    assert.strictEqual(plainReplaced.cues[3].text, 'd');
 }
 
 describe("subtitle-meta", () => {

@@ -105,9 +105,17 @@
         return normalizeAsrSemanticRepairMode(options.asrSemanticRepair ?? options.enabled);
     }
 
+    function isSpeedPerfProfile(options = {}) {
+        const v = String(options.perfProfile || '').trim().toLowerCase();
+        return v === 'speed' || v === 'fast';
+    }
+
     function shouldRunAsrSemanticRepair(options = {}) {
         const mode = resolveRepairMode(options);
-        return mode !== MODE_OFF;
+        if (mode === MODE_OFF) return false;
+        // Speed profile skips auto extras; explicit thorough still runs.
+        if (isSpeedPerfProfile(options) && mode !== MODE_THOROUGH) return false;
+        return true;
     }
 
     function normalizeLanguageTag(value) {
@@ -646,18 +654,34 @@
         return payload.map((c) => ({ index: c.index, text: c.text }));
     }
 
+    function readOptionalMs(value) {
+        if (value == null || value === '') return NaN;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : NaN;
+    }
+
+    /**
+     * Normalize engine `{start,end}` (seconds) and/or `{startMs,endMs}` into repair cues.
+     * Never treat `index` alone as proof of ms timing — engine ASR rows often ship both
+     * `index` and second-based `start`/`end` (MFYD-185: false hasMs zeroed the timeline).
+     */
     function engineCuesToRepairMs(engineCues) {
         return (Array.isArray(engineCues) ? engineCues : []).map((c, i) => {
             const startSec = Number(c.start ?? c.startSec);
             const endSec = Number(c.end ?? c.endSec);
-            let startMs = Number(c.startMs);
-            let endMs = Number(c.endMs);
-            if (!Number.isFinite(startMs)) {
+            let startMs = readOptionalMs(c.startMs);
+            let endMs = readOptionalMs(c.endMs);
+            // Prefer seconds when ms is absent, or when ms collapsed to ~0 while seconds
+            // still look real (guards index-only / zeroed intake bugs).
+            if (!Number.isFinite(startMs)
+                || (startMs <= 0 && Number.isFinite(startSec) && startSec > 0.05)) {
                 startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : i * 1000;
             }
-            if (!Number.isFinite(endMs)) {
+            if (!Number.isFinite(endMs)
+                || (endMs <= startMs && Number.isFinite(endSec) && endSec > (Number.isFinite(startSec) ? startSec : startMs / 1000))) {
                 endMs = Number.isFinite(endSec) ? Math.round(endSec * 1000) : startMs + 1000;
             }
+            if (!(endMs > startMs)) endMs = startMs + 1000;
             return {
                 index: i,
                 startMs,
@@ -775,6 +799,7 @@
         REPAIR_FAILURE_HINTS,
         normalizeAsrSemanticRepairMode,
         resolveRepairMode,
+        isSpeedPerfProfile,
         shouldRunAsrSemanticRepair,
         normalizeLanguageTag,
         normalizeContentProfile,

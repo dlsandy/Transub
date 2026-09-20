@@ -26,6 +26,9 @@ function formatEngineNetworkError(err) {
     const msg = String(nested.message || cause.message || e.message || err || '').trim();
     if (code === 'ECONNREFUSED') return '引擎未响应（连接被拒绝）';
     if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') return '引擎连接被重置';
+    if (/terminated|socket hang up|other side closed|ECONNABORTED/i.test(msg)) {
+        return '引擎连接被重置';
+    }
     if (/fetch failed|failed to fetch/i.test(msg) || !msg) return '引擎连接失败';
     return msg;
 }
@@ -35,7 +38,7 @@ function isRetryableEngineNetworkResult(res) {
     const code = String(res.code || '').toLowerCase();
     if (code === 'timeout' || code === 'cancelled') return false;
     if (code === 'network') return true;
-    return /引擎连接|fetch failed|failed to fetch|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET/i
+    return /引擎连接|fetch failed|failed to fetch|terminated|socket hang up|other side closed|ECONNRESET|ECONNREFUSED|ECONNABORTED|UND_ERR_SOCKET/i
         .test(String(res.error || ''));
 }
 
@@ -190,6 +193,15 @@ async function downloadModels(baseUrl, body = {}, options = {}) {
         method: 'POST',
         body,
         timeoutMs: options.timeoutMs || 600000,
+    });
+}
+
+async function deleteModels(baseUrl, body = {}, options = {}) {
+    return engineFetch(baseUrl, '/v1/models/delete', {
+        ...options,
+        method: 'POST',
+        body,
+        timeoutMs: options.timeoutMs || 120000,
     });
 }
 
@@ -727,6 +739,7 @@ module.exports = {
     detectLanguage,
     translateCuesMt,
     downloadModels,
+    deleteModels,
     downloadModelsStream,
     getGpuRuntime,
     getAsrWhisperRuntime,

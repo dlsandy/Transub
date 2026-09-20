@@ -1,0 +1,40 @@
+{
+  "id": "ko-smart-qual",
+  "version": 2,
+  "group": "ko",
+  "name": "韩剧 · 混合 · 质量",
+  "description": "韩剧：Whisper turbo 听写+ 混合翻译（LN-Korean 14B 句级翻译，Qwen3 14B 剧情贴合润色）硬件档：质量 · >12GB 显存。需 Pro。",
+  "language": "ko",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "whisper-large-v3-turbo",
+    "silero-vad",
+    "sakura-ln-korean-14b",
+    "qwen3-14b"
+  ],
+  "options": {
+    "language": "ko",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "whisper-large-v3-turbo",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "smart",
+    "engineLlmMtModel": "sakura-ln-korean-14b",
+    "engineProfile": "quality",
+    "activePresetId": "ko-vad-only",
+    "vadEnabled": true,
+    "filmVadPreset": true,
+    "audioLightDenoise": false,
+    "smartTranslateModelId": "qwen3-14b"
+  }
+}

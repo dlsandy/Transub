@@ -16,22 +16,25 @@ describe('asr settings UI wiring', () => {
         assert.strictEqual(n.autoSuggestSpeakers, undefined);
         assert.strictEqual(n.speakerCount, undefined);
         assert.strictEqual(n.perfProfile, 'speed');
+        assert.strictEqual(asrSettings.isSpeedPerfProfile('speed'), true);
+        assert.strictEqual(asrSettings.isSpeedPerfProfile('fast'), true);
+        assert.strictEqual(asrSettings.isSpeedPerfProfile('quality'), false);
     });
 
-    it('describeAsrRecommendChip hides when same model', () => {
-        const hidden = asrSettings.describeAsrRecommendChip({
+    it('describeAsrRecommendChip stays hidden (in-window auto recommend off)', () => {
+        const same = asrSettings.describeAsrRecommendChip({
             currentAsr: 'sensevoice-small',
             recommendedAsr: 'sensevoice-small',
             profile: 'balanced',
         });
-        assert.strictEqual(hidden.visible, false);
-        const shown = asrSettings.describeAsrRecommendChip({
+        assert.strictEqual(same.visible, false);
+        const different = asrSettings.describeAsrRecommendChip({
             currentAsr: 'sensevoice-small',
             recommendedAsr: 'whisper-large-v3-turbo',
             profile: 'quality',
         });
-        assert.ok(shown.visible);
-        assert.ok(shown.label.includes('whisper-large-v3-turbo'));
+        assert.strictEqual(different.visible, false);
+        assert.strictEqual(different.recommendedAsr, 'whisper-large-v3-turbo');
     });
 
     it('describeQwenAsrRuntimeTip shows for qwen3-asr models', () => {
@@ -76,7 +79,7 @@ describe('asr settings UI wiring', () => {
         assert.strictEqual(normalized.perfProfile, 'speed');
     });
 
-    it('applyHardwareAsrRecommend respects specialists and installs', () => {
+    it('applyHardwareAsrRecommend is a no-op (auto recommend off)', () => {
         const keep = asrSettings.applyHardwareAsrRecommend(
             { engineAsrModel: 'whisper-ja-1.5b' },
             { recommendedAsr: 'whisper-large-v3-turbo', installedModels: ['whisper-ja-1.5b', 'whisper-large-v3-turbo'] },
@@ -84,23 +87,7 @@ describe('asr settings UI wiring', () => {
         assert.strictEqual(keep.changed, false);
         assert.strictEqual(keep.overrides.engineAsrModel, 'whisper-ja-1.5b');
 
-        const keepCohere = asrSettings.applyHardwareAsrRecommend(
-            { engineAsrModel: 'cohere-transcribe-03-2026' },
-            {
-                recommendedAsr: 'whisper-large-v3-turbo',
-                installedModels: ['cohere-transcribe-03-2026', 'whisper-large-v3-turbo'],
-            },
-        );
-        assert.strictEqual(keepCohere.changed, false);
-        assert.strictEqual(keepCohere.overrides.engineAsrModel, 'cohere-transcribe-03-2026');
-
-        const skipMissing = asrSettings.applyHardwareAsrRecommend(
-            { engineAsrModel: 'sensevoice-small' },
-            { recommendedAsr: 'whisper-large-v3-turbo', installedModels: ['sensevoice-small'] },
-        );
-        assert.strictEqual(skipMissing.changed, false);
-
-        const applied = asrSettings.applyHardwareAsrRecommend(
+        const generic = asrSettings.applyHardwareAsrRecommend(
             { engineAsrModel: 'sensevoice-small' },
             {
                 recommendedAsr: 'whisper-large-v3-turbo',
@@ -111,7 +98,8 @@ describe('asr settings UI wiring', () => {
                 ],
             },
         );
-        assert.strictEqual(applied.changed, true);
-        assert.strictEqual(applied.overrides.engineAsrModel, 'whisper-large-v3-turbo');
+        assert.strictEqual(generic.changed, false);
+        assert.strictEqual(generic.overrides.engineAsrModel, 'sensevoice-small');
+        assert.deepStrictEqual(generic.notes, []);
     });
 });

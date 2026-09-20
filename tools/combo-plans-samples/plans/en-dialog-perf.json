@@ -1,0 +1,36 @@
+{
+  "id": "en-dialog-perf",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 智能 · 性能",
+  "description": "欧美剧：SenseVoice 听写+ 智能翻译（对话模型按行）硬件档：性能 · <8GB 显存。需 Pro。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "speed",
+    "activePresetId": "film-sensevoice",
+    "vadEnabled": true,
+    "audioLightDenoise": true
+  }
+}

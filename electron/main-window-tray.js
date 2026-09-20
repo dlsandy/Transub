@@ -3,7 +3,7 @@ const { getTrayIcon, applyWindowIcon } = require('./icons');
 const { sendNotification } = require('./notifications');
 const { hasActiveTask, getActiveTaskLabel, stopActiveJobs } = require('./active-task-guard');
 
-const DEFAULT_TRAY_TOOLTIP = 'Transub 字幕生成';
+const DEFAULT_TRAY_TOOLTIP = 'Transub 字幕工厂';
 /** Treat resume / unlock within this window as a GPU-surface stale event. */
 const POWER_RESUME_STALE_MS = 120_000;
 /** Off-screen park position so an opacity-0 window cannot steal clicks. */
@@ -13,6 +13,15 @@ const USE_SOFT_PARK = process.platform === 'win32';
 const SOFT_UNPARK_STEP2_MS = 150;
 /** How often to nudge the parked HWND so Chromium keeps a live frame. */
 const SOFT_PARK_KEEPALIVE_MS = 40_000;
+/**
+ * Defer main minimize classification so Win+D / Ctrl+D (show-desktop) can
+ * finish minimizing siblings before we choose tray vs native vs undo.
+ */
+const MINIMIZE_CLASSIFY_DELAY_MS = 50;
+/** How long a secondary minimize may still explain a main minimize. */
+const SECONDARY_MINIMIZE_RACE_MS = 400;
+/** Soft-park that started within this window is treated as a race undo. */
+const RECENT_SPURIOUS_PARK_MS = 250;
 
 /**
  * Tray hide/show, soft-park (Windows), compositor wake, and secondary-window
@@ -24,6 +33,7 @@ const SOFT_PARK_KEEPALIVE_MS = 40_000;
  *   ensureMainWindow: () => import('electron').BrowserWindow | null,
  *   confirmQuitApp: () => void | Promise<void>,
  *   dialogShowMessageBox: (win: import('electron').BrowserWindow, opts: object) => Promise<{ response: number }>,
+ *   BrowserWindow?: typeof import('electron').BrowserWindow,
  * }} deps
  */
 function createMainWindowTray(deps) {
@@ -34,6 +44,7 @@ function createMainWindowTray(deps) {
         confirmQuitApp,
         dialogShowMessageBox,
     } = deps;
+    const BW = deps.BrowserWindow || BrowserWindow;
 
     let tray = null;
     let trayHintShown = false;
@@ -108,9 +119,85 @@ function createMainWindowTray(deps) {
     let blankReloadArmed = false;
     /** Hidden duration snapshot for blank-recovery heuristics on reveal. */
     let lastRevealHiddenForMs = 0;
+    /**
+     * Timestamp of the last secondary BrowserWindow minimize. Used to treat a
+     * near-simultaneous main `minimize` as Windows sibling noise even when the
+     * suppress window has not been armed yet (handler ordering race).
+     */
+    let lastSecondaryMinimizeAt = 0;
+    /** True while we re-enter minimize() to complete a native show-desktop minimize. */
+    let allowNextNativeMinimize = false;
+    /** Timestamp when main was natively minimized for show-desktop (0 = not). */
+    let mainNativeMinimizeAt = 0;
 
     function mainWindow() {
         return getMainWindow();
+    }
+
+    function listSecondaryWindows() {
+        const out = [];
+        try {
+            const win = mainWindow();
+            if (!win || win.isDestroyed()) return out;
+            for (const other of BW.getAllWindows()) {
+                if (!other || other.isDestroyed() || other.id === win.id) continue;
+                out.push(other);
+            }
+        } catch (_) { /* ignore */ }
+        return out;
+    }
+
+    /** Sibling still on-screen (settings/wizard/editor), not merely alive in memory. */
+    function hasVisibleSecondaryWindow() {
+        for (const other of listSecondaryWindows()) {
+            try {
+                if (other.isVisible() && !other.isMinimized()) return true;
+            } catch (_) { /* ignore */ }
+        }
+        return false;
+    }
+
+    function allSecondariesMinimizedOrHidden() {
+        const others = listSecondaryWindows();
+        if (!others.length) return false;
+        return others.every((other) => {
+            try {
+                return other.isMinimized() || !other.isVisible();
+            } catch (_) {
+                return true;
+            }
+        });
+    }
+
+    function secondaryMinimizeRaceActive() {
+        return lastSecondaryMinimizeAt > 0
+            && (Date.now() - lastSecondaryMinimizeAt) < SECONDARY_MINIMIZE_RACE_MS;
+    }
+
+    /**
+     * Win+D / Ctrl+D / taskbar "Show desktop" minimizes every top-level window.
+     * Soft-park or spurious-undo+reveal on that path leaves the main client blank
+     * after restore, while sibling BrowserWindows (native minimize) paint fine.
+     *
+     * @param {{ userInitiated?: boolean }} [opts]
+     * @returns {boolean}
+     */
+    function looksLikeShowDesktopMinimize(opts = {}) {
+        const others = listSecondaryWindows();
+        if (!others.length) return false;
+        const othersDown = allSecondariesMinimizedOrHidden();
+        const race = secondaryMinimizeRaceActive();
+        if (!othersDown && !race) return false;
+
+        let focused = null;
+        try { focused = BW.getFocusedWindow(); } catch (_) { /* ignore */ }
+        // Show desktop clears focus to the shell; siblings are all down.
+        if (!focused && othersDown) return true;
+        // Focused main + mass sibling minimize — also show-desktop / minimize-all.
+        if (opts.userInitiated && (othersDown || race)) return true;
+        // Focus already nowhere and a sibling minimize race is in flight.
+        if (!focused && race) return true;
+        return false;
     }
 
     function setMainBackgroundThrottling(enabled) {
@@ -476,8 +563,8 @@ function createMainWindowTray(deps) {
      * setSize ±1px) often fails to round-trip frame/DPI, so closing settings
      * grew the main window by a pixel each time.
      *
-     * Do not steal OS focus from secondary windows (subtitle library / editor /
-     * settings). Focusing main webContents while the user is in the library is
+     * Do not steal OS focus from secondary windows (editor /
+     * settings). Focusing main webContents while the user is in a secondary window is
      * what makes the main window “mysteriously pop up”.
      */
     function forceMainWindowRepaint({ strong = false, _retry = 0 } = {}) {
@@ -573,6 +660,7 @@ function createMainWindowTray(deps) {
         const wc = win.webContents;
         if (!wc || wc.isDestroyed()) return;
         const hiddenForMs = lastRevealHiddenForMs;
+        let activeTaskWakeRetries = 0;
 
         const chromeLooksParkedOrInvisible = () => {
             try {
@@ -630,8 +718,31 @@ function createMainWindowTray(deps) {
             } catch (_) { /* ignore */ }
         };
 
+        const wakeWithoutReload = (reason) => {
+            console.warn(
+                `[main-window-tray] blank surface after tray restore (${reason}) — skip reload while task active`,
+            );
+            forceTwoStepNudge();
+            scheduleMainWindowRepaint({ strong: true, extended: true });
+            activeTaskWakeRetries += 1;
+            if (activeTaskWakeRetries >= 2) {
+                blankReloadArmed = false;
+                return;
+            }
+            setTimeout(() => {
+                if (!blankReloadArmed || mainHiddenToTray || win.isDestroyed()) return;
+                checkAndMaybeReload();
+            }, SOFT_UNPARK_STEP2_MS + 400);
+        };
+
         const reloadOnce = (reason) => {
             if (!blankReloadArmed) return;
+            // Reloading the renderer drops in-memory state.items while the main
+            // process batch keeps running — never do that during an active task.
+            if (hasActiveTask()) {
+                wakeWithoutReload(reason);
+                return;
+            }
             blankReloadArmed = false;
             console.warn(`[main-window-tray] blank surface after tray restore (${reason}) — reloading renderer once`);
             try { wc.reload(); } catch (_) { /* ignore */ }
@@ -658,12 +769,23 @@ function createMainWindowTray(deps) {
 
             void wc.executeJavaScript(
                 `(() => {
-                    const el = document.querySelector('.app-header')
-                        || document.querySelector('#filePanel')
-                        || document.body?.firstElementChild;
-                    if (!el) return false;
-                    const r = el.getBoundingClientRect();
-                    if (r.width <= 10 || r.height <= 10) return false;
+                    const candidates = [
+                        document.querySelector('#factoryTitleBar'),
+                        document.querySelector('#filePanel'),
+                        document.querySelector('#taskCardList'),
+                        document.body && document.body.firstElementChild,
+                    ].filter(Boolean);
+                    const visibleSized = candidates.some((el) => {
+                        try {
+                            const st = window.getComputedStyle(el);
+                            if (st.display === 'none' || st.visibility === 'hidden') return false;
+                            const r = el.getBoundingClientRect();
+                            return r.width > 10 && r.height > 10;
+                        } catch (_) {
+                            return false;
+                        }
+                    });
+                    if (!visibleSized) return false;
                     const text = (document.body && document.body.innerText) || '';
                     return text.replace(/\\s+/g, '').length > 8;
                 })();`,
@@ -776,11 +898,11 @@ function createMainWindowTray(deps) {
         try {
             const win = mainWindow();
             if (!win || win.isDestroyed()) return false;
-            const focused = BrowserWindow.getFocusedWindow();
+            const focused = BW.getFocusedWindow();
             if (focused && !focused.isDestroyed() && focused.id !== win.id) return true;
             // Dialog / shell handoff: focus may be null briefly; still treat other
             // visible secondaries as owning the session.
-            for (const other of BrowserWindow.getAllWindows()) {
+            for (const other of BW.getAllWindows()) {
                 if (!other || other.isDestroyed() || other.id === win.id) continue;
                 try {
                     if (other.isVisible() && !other.isMinimized() && other.isFocused()) return true;
@@ -790,12 +912,41 @@ function createMainWindowTray(deps) {
         return false;
     }
 
+    /**
+     * Spurious main minimize while a sibling owns the session (settings / wizard /
+     * editor). Distinct from suppress-armed close/retheme: no suppress window yet.
+     * Must NOT match Win+D / show-desktop (that path uses native minimize).
+     */
+    function looksLikeSiblingSpuriousMinimize(userInitiated) {
+        if (userInitiated) return false;
+        if (looksLikeShowDesktopMinimize({ userInitiated: false })) return false;
+        if (anotherTransubWindowFocused()) return true;
+        if (secondaryMinimizeRaceActive()) return true;
+        // Focus can be null for a beat when Windows minimizes a sibling; a still-
+        // visible secondary means this is not a lone main-window minimize.
+        if (hasVisibleSecondaryWindow()) return true;
+        return false;
+    }
+
+    function wakeAfterNativeMinimizeRestore(win) {
+        if (!win || win.isDestroyed() || mainHiddenToTray) return;
+        const minimizedAt = mainNativeMinimizeAt;
+        mainNativeMinimizeAt = 0;
+        const hiddenForMs = minimizedAt > 0 ? (Date.now() - minimizedAt) : 0;
+        lastRevealHiddenForMs = hiddenForMs;
+        blankReloadArmed = true;
+        setMainBackgroundThrottling(false);
+        scheduleMainWindowRepaint({ strong: true, extended: true });
+        ensureMainSurfaceAlive();
+    }
+
     function restoreMainIfHiddenBySpuriousMinimize() {
         if (!isSuppressMinimizeToTrayActive()) return;
         if (!mainVisibleWhenSuppressArmed) return;
         const keepSecondaryFocus = anotherTransubWindowFocused();
         if (!mainNeedsSpuriousMinimizeUndo()) {
-            forceMainWindowRepaint();
+            // Main never left the screen — do not force compositor wake / executeJavaScript
+            // on every secondary (editor) close; that briefly freezes the main window.
             return;
         }
         revealMainWindowChrome({ activate: !keepSecondaryFocus });
@@ -819,11 +970,30 @@ function createMainWindowTray(deps) {
             } catch (_) { /* ignore */ }
         };
         const recoverFromSecondaryMinimize = () => {
+            lastSecondaryMinimizeAt = Date.now();
             armIfSecondary();
             setTimeout(() => {
                 const win = mainWindow();
                 if (!win || win.isDestroyed()) return;
-                if (!isSuppressMinimizeToTrayActive()) return;
+
+                // Race: main soft-parked before suppress armed — undo even when
+                // siblings also look "show-desktop down" (ordering quirk).
+                const recentSpuriousPark = mainHiddenToTray
+                    && mainHiddenToTrayAt > 0
+                    && (Date.now() - mainHiddenToTrayAt) < RECENT_SPURIOUS_PARK_MS;
+                if (recentSpuriousPark && mainNeedsSpuriousMinimizeUndo()) {
+                    revealMainWindowChrome({ activate: !anotherTransubWindowFocused() });
+                    return;
+                }
+
+                // Show-desktop / Win+D: siblings and main all minimize — do not
+                // pull main back on-screen (that blanks the compositor on restore).
+                if (looksLikeShowDesktopMinimize({ userInitiated: false })) return;
+                if (mainNativeMinimizeAt > 0) return;
+                try {
+                    if (win.isMinimized() && !mainHiddenToTray) return;
+                } catch (_) { /* ignore */ }
+                if (!isSuppressMinimizeToTrayActive() && !secondaryMinimizeRaceActive()) return;
                 if (mainHiddenToTray && !mainVisibleWhenSuppressArmed) {
                     mainNeedsRepaintOnShow = true;
                     return;
@@ -832,8 +1002,8 @@ function createMainWindowTray(deps) {
                     revealMainWindowChrome({ activate: !anotherTransubWindowFocused() });
                     return;
                 }
-                forceMainWindowRepaint();
-            }, 0);
+                forceMainWindowRepaint({ strong: true });
+            }, MINIMIZE_CLASSIFY_DELAY_MS);
         };
         child.on('close', armIfSecondary);
         child.on('minimize', recoverFromSecondaryMinimize);
@@ -854,7 +1024,7 @@ function createMainWindowTray(deps) {
             setImmediate(() => attachSecondaryWindowMinimizeGuardTo(child));
         });
         try {
-            for (const win of BrowserWindow.getAllWindows()) {
+            for (const win of BW.getAllWindows()) {
                 attachSecondaryWindowMinimizeGuardTo(win);
             }
         } catch (_) { /* ignore */ }
@@ -1003,6 +1173,19 @@ function createMainWindowTray(deps) {
             if (hideToTrayInProgress || mainHiddenToTray) return;
             clearTrayThrottleTimer();
             setMainBackgroundThrottling(false);
+            if (mainNativeMinimizeAt > 0) {
+                wakeAfterNativeMinimizeRestore(win);
+            }
+        });
+        win.on('restore', () => {
+            if (hideToTrayInProgress || mainHiddenToTray) return;
+            setMainBackgroundThrottling(false);
+            if (mainNativeMinimizeAt > 0 || mainNeedsRepaintOnShow) {
+                mainNeedsRepaintOnShow = false;
+                wakeAfterNativeMinimizeRestore(win);
+            } else {
+                scheduleMainWindowRepaint({ strong: true, extended: true });
+            }
         });
         win.on('blur', () => {
             if (mainBlurClearTimer) clearTimeout(mainBlurClearTimer);
@@ -1065,6 +1248,14 @@ function createMainWindowTray(deps) {
 
         win.on('minimize', (event) => {
             if (isQuitting()) return;
+            // Complete native minimize for show-desktop (we re-entered minimize).
+            if (allowNextNativeMinimize) {
+                allowNextNativeMinimize = false;
+                mainNativeMinimizeAt = Date.now();
+                blankReloadArmed = true;
+                mainNeedsRepaintOnShow = true;
+                return;
+            }
             if (!minimizeToTrayEnabled) return;
             event.preventDefault();
 
@@ -1073,17 +1264,40 @@ function createMainWindowTray(deps) {
             try { focusedNow = !win.isDestroyed() && win.isFocused(); } catch (_) { /* ignore */ }
             const userInitiated = mainHadUserFocus || focusedNow;
             const wasHiddenToTray = mainHiddenToTray;
+
             const shouldUndoAsSpurious = () => {
+                if (looksLikeShowDesktopMinimize({ userInitiated })) return false;
+                if (looksLikeSiblingSpuriousMinimize(userInitiated)) return true;
                 if (Date.now() >= suppressMinimizeToTrayUntil) return false;
-                // Secondary close / nativeTheme retheme often focuses main first.
-                // That must not count as a user title-bar minimize while suppress
-                // is armed for a main window that was visibly open.
                 if (mainVisibleWhenSuppressArmed) return true;
                 return !userInitiated;
             };
+
+            const completeNativeShowDesktopMinimize = () => {
+                if (token !== minimizeHideToken) return;
+                if (isQuitting() || !win || win.isDestroyed()) return;
+                // Undo any accidental soft-park from a raced earlier path.
+                if (mainHiddenToTray || softParkSnapshot) {
+                    revealMainWindowChrome({ activate: false });
+                }
+                allowNextNativeMinimize = true;
+                mainNativeMinimizeAt = Date.now();
+                blankReloadArmed = true;
+                mainNeedsRepaintOnShow = true;
+                try {
+                    win.minimize();
+                } catch (_) {
+                    allowNextNativeMinimize = false;
+                }
+            };
+
             const settleMinimizeToTray = () => {
                 if (token !== minimizeHideToken) return;
                 if (isQuitting() || !win || win.isDestroyed()) return;
+                if (looksLikeShowDesktopMinimize({ userInitiated })) {
+                    completeNativeShowDesktopMinimize();
+                    return;
+                }
                 if (shouldUndoAsSpurious()) {
                     if (!wasHiddenToTray) {
                         revealMainWindowChrome({ activate: !anotherTransubWindowFocused() });
@@ -1095,19 +1309,30 @@ function createMainWindowTray(deps) {
                 maybeShowTrayHint();
             };
 
-            if (shouldUndoAsSpurious()) {
-                settleMinimizeToTray();
-                return;
-            }
-            // Already in tray: do not re-run hideToTray (freezes WebContents).
-            if (wasHiddenToTray || mainHiddenToTray) {
-                mainNeedsRepaintOnShow = true;
-                if (USE_SOFT_PARK) ensureSoftParked(win);
+            // Wait for sibling minimize events (show-desktop) before choosing a path.
+            setTimeout(() => {
+                if (token !== minimizeHideToken) return;
+                if (isQuitting() || !win || win.isDestroyed()) return;
+
+                if (looksLikeShowDesktopMinimize({ userInitiated })) {
+                    completeNativeShowDesktopMinimize();
+                    return;
+                }
+
+                if (shouldUndoAsSpurious()) {
+                    settleMinimizeToTray();
+                    forceMainWindowRepaint({ strong: true });
+                    return;
+                }
+                if (wasHiddenToTray || mainHiddenToTray) {
+                    mainNeedsRepaintOnShow = true;
+                    if (USE_SOFT_PARK) ensureSoftParked(win);
+                    setTimeout(settleMinimizeToTray, 80);
+                    return;
+                }
+                hideToTray();
                 setTimeout(settleMinimizeToTray, 80);
-                return;
-            }
-            hideToTray();
-            setTimeout(settleMinimizeToTray, 80);
+            }, MINIMIZE_CLASSIFY_DELAY_MS);
         });
     }
 
@@ -1143,6 +1368,8 @@ function createMainWindowTray(deps) {
     }
 
     function clearTrayProgress() {
+        // End of batch: drop the progress gate so the default/download tip applies again.
+        trayProgressEnabled = false;
         if (!tray) return;
         applyTrayTooltip();
     }
@@ -1167,6 +1394,8 @@ function createMainWindowTray(deps) {
         softParkSnapshot = null;
         blankReloadArmed = false;
         lastRevealHiddenForMs = 0;
+        mainNativeMinimizeAt = 0;
+        allowNextNativeMinimize = false;
     }
 
     function setMainBackgroundThrottlingVisible(enabled) {
@@ -1201,6 +1430,12 @@ function createMainWindowTray(deps) {
         isMainVisiblyOpen,
         /** @internal test/helper */
         _softParkSnapshot: () => softParkSnapshot,
+        /** @internal test/helper */
+        _ensureMainSurfaceAlive: ensureMainSurfaceAlive,
+        /** @internal test/helper */
+        _armBlankReload: () => { blankReloadArmed = true; },
+        /** @internal test/helper */
+        _attachSecondaryMinimizeGuard: attachSecondaryWindowMinimizeGuardTo,
     };
 }
 
@@ -1211,4 +1446,5 @@ module.exports = {
     SOFT_UNPARK_STEP2_MS,
     SOFT_PARK_KEEPALIVE_MS,
     DEFAULT_TRAY_TOOLTIP,
+    MINIMIZE_CLASSIFY_DELAY_MS,
 };

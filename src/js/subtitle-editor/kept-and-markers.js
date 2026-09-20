@@ -2,6 +2,16 @@
  * 字幕编辑器 — 原文缓存利用、标记（书签/A-B/审校）、导出检查、情境条
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installKeptAndMarkers(ctx) {
         const {
             state,
@@ -223,6 +233,7 @@
                     await electron.transubPinKeptTranscript?.({ path: res.path, hard: false });
                     state.keptTranscript.pinned = true;
                 } catch (_) { /* ignore */ }
+                await maybeAutoAttachKeptAsPairTrack();
                 refreshContextActionBar();
                 return state.keptTranscript;
             } catch (_) {
@@ -245,21 +256,22 @@
             }
         }
 
-        async function attachKeptAsPairTrack() {
+        async function attachKeptAsPairTrack(opts = {}) {
+            const silent = !!opts.silent;
             const kt = state.keptTranscript;
             if (!kt?.found || !kt.path) {
-                setStatus('没有可用的原文缓存', 'err');
+                if (!silent) setStatus('没有可用的原文缓存', 'err');
                 return false;
             }
             if (kt.sameAsPrimary) {
-                setStatus('当前文件已是原文轨', 'warn');
+                if (!silent) setStatus('当前文件已是原文轨', 'warn');
                 return false;
             }
             if (!electron?.transubReadSubtitle) return false;
             try {
                 const doc = await electron.transubReadSubtitle({ path: kt.path });
                 if (!doc?.ok || !doc.cues?.length) {
-                    setStatus('原文缓存读取失败', 'err');
+                    if (!silent) setStatus('原文缓存读取失败', 'err');
                     return false;
                 }
                 state.pairPath = kt.path;
@@ -284,12 +296,26 @@
                 renderCueList?.();
                 renderDetailPane?.();
                 refreshKeptTools();
-                setStatus(`已挂载原文缓存为副轨：${basename(kt.path)}`, 'ok');
+                if (!silent) {
+                    setStatus(uiTf('已挂载原文缓存为副轨：{name}', { name: basename(kt.path) }), 'ok');
+                }
                 return true;
             } catch (err) {
-                setStatus(err?.message || '挂载原文失败', 'err');
+                if (!silent) setStatus(err?.message || '挂载原文失败', 'err');
                 return false;
             }
+        }
+
+        async function maybeAutoAttachKeptAsPairTrack() {
+            const kt = state.keptTranscript;
+            if (!kt?.found || !kt.path) return false;
+            if (kt.sameAsPrimary) return false;
+            if (isKeptAttachedAsPair()) return false;
+            // Keep an existing complementary sidecar pair; only default-mount when none.
+            if (typeof hasDualPair === 'function' ? hasDualPair() : !!(state.pairPath && state.pairCues?.length)) {
+                return false;
+            }
+            return attachKeptAsPairTrack({ silent: true });
         }
 
         async function detachKeptPairTrack() {
@@ -540,7 +566,7 @@
             } else {
                 const up = markersCore.upsertBookmark(state.markers, t, '');
                 state.markers = up.doc;
-                setStatus(`已添加书签 ${formatMs(t)}`, 'ok');
+                setStatus(uiTf('已添加书签 {time}', { time: formatMs(t) }), 'ok');
             }
             refreshMarkersUi();
             void persistMarkers();
@@ -564,13 +590,13 @@
                     renderTimeline?.();
                     return;
                 }
-                setStatus(`已设 A 点 ${formatMs(t)}，再设 B 点`, 'ok');
+                setStatus(uiTf('已设 A 点 {time}，再设 B 点', { time: formatMs(t) }), 'ok');
                 return;
             }
             const aMs = state._pendingAbPoint?.aMs ?? state.markers?.abLoop?.aMs;
             if (aMs == null) {
                 state._pendingAbPoint = { aMs: null, bMs: t };
-                setStatus(`已设 B 点 ${formatMs(t)}，请再设 A 点`, 'warn');
+                setStatus(uiTf('已设 B 点 {time}，请再设 A 点', { time: formatMs(t) }), 'warn');
                 return;
             }
             state.markers = markersCore.setAbLoop(state.markers, aMs, t, true);
@@ -628,7 +654,7 @@
                 return 0;
             }
             state.markers = result.doc;
-            setStatus(`已移除 ${result.removed} 个书签`, 'ok');
+            setStatus(uiTf('已移除 {count} 个书签', { count: result.removed }), 'ok');
             refreshMarkersUi();
             void persistMarkers();
             renderTimeline?.();
@@ -685,7 +711,10 @@
             refreshMarkersUi();
             refreshListAfterMarkerChange(indexes);
             void persistMarkers();
-            setStatus(`已标记为「${markersCore.reviewStatusLabel(status)}」×${indexes.length}`, 'ok');
+            setStatus(uiTf('已标记为「{status}」×{count}', {
+                status: markersCore.reviewStatusLabel(status),
+                count: indexes.length,
+            }), 'ok');
         }
 
         async function applyAssStyleToSelected() {
@@ -709,7 +738,10 @@
             }
             if (names.length === 1) {
                 const applied = ui.applyStyleByName(names[0], indexes);
-                setStatus(`已将 ${applied.changed} 条套用为 ${applied.styleName}`, 'ok');
+                setStatus(uiTf('已将 {count} 条套用为 {name}', {
+                    count: applied.changed,
+                    name: applied.styleName,
+                }), 'ok');
                 return;
             }
             if (typeof editorChoice === 'function') {
@@ -726,7 +758,10 @@
                     return;
                 }
                 const applied = ui.applyStyleByName(names[pick], indexes);
-                setStatus(`已将 ${applied.changed} 条套用为 ${applied.styleName}`, 'ok');
+                setStatus(uiTf('已将 {count} 条套用为 {name}', {
+                    count: applied.changed,
+                    name: applied.styleName,
+                }), 'ok');
                 return;
             }
             await ui.openModal?.({ tab: 'styles' });
@@ -912,8 +947,9 @@
                 reviewGroup.push('<button type="button" class="ed-ctx-action" data-ctx="review-edited">标为已改</button>');
                 reviewGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ass-style" title="Pro：为选中字幕套用 ASS Style">◆ ASS 样式</button>');
                 reviewGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ass-speaker" title="Pro：为选中字幕指定说话人">◆ 说话人</button>');
+                aiGroup.push('<button type="button" class="ed-ctx-action" data-ctx="text-translate" title="按设置翻译选中条到成片目标语">翻译</button>');
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="ctx-reconstruct" title="Pro：语境重构选中条">◆ 语境重构</button>');
-                aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="smart-translate" title="Pro：智能翻译选中条（专训句级 + 剧情贴合润色）">◆ 智能翻译</button>');
+                aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="smart-translate" title="Pro：智能翻译选中条到成片目标语（翻译 + 剧情贴合润色）">◆ 智能翻译</button>');
             }
             if (hasBookmarks) {
                 aiGroup.push('<button type="button" class="ed-ctx-action is-pro" data-ctx="bm-reconstruct" title="Pro：仅重构覆盖书签的字幕">◆ 书签段重构</button>');
@@ -1168,6 +1204,11 @@
                 }
                 if (action === 'smart-translate') {
                     void startTextTranslate?.({ engine: 'smart', forceSelected: true });
+                    closeCtxMenus();
+                    return;
+                }
+                if (action === 'text-translate') {
+                    void startTextTranslate?.({ engine: 'auto', forceSelected: true });
                     closeCtxMenus();
                     return;
                 }

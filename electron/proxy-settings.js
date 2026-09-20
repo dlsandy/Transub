@@ -401,6 +401,111 @@ function resolveHfProbeUrl(endpoint = '') {
  * Probe Hugging Face hub / mirror reachability.
  * @param {{ hfEndpoint?: string, proxyEnabled?: boolean, proxyUrl?: string, proxyBypass?: string }} [options]
  */
+const DEFAULT_HF_MIRROR_ENDPOINT = 'https://hf-mirror.com';
+
+/**
+ * Pure ranking helper for HF probe results (no network).
+ * Prefer reachable endpoints, then lower latencyMs.
+ * @param {Array<{ ok?: boolean, hfEndpoint?: string, label?: string, latencyMs?: number, id?: string }>} results
+ * @param {{ fallbackEndpoint?: string, fallbackLabel?: string }} [opts]
+ */
+function chooseBestHfCandidate(results = [], opts = {}) {
+    const list = Array.isArray(results) ? results.slice() : [];
+    const okOnes = list
+        .filter((r) => r && r.ok)
+        .sort((a, b) => {
+            const la = Number.isFinite(a.latencyMs) ? a.latencyMs : Number.POSITIVE_INFINITY;
+            const lb = Number.isFinite(b.latencyMs) ? b.latencyMs : Number.POSITIVE_INFINITY;
+            return la - lb;
+        });
+    if (okOnes.length) {
+        const best = okOnes[0];
+        const endpoint = best.hfEndpoint != null ? String(best.hfEndpoint).trim().replace(/\/+$/, '') : '';
+        return {
+            ok: true,
+            hfEndpoint: endpoint,
+            label: best.label || (endpoint ? endpoint : '官方 Hub'),
+            latencyMs: Number.isFinite(best.latencyMs) ? best.latencyMs : null,
+            id: best.id || (endpoint ? 'mirror' : 'official'),
+            fallback: false,
+        };
+    }
+    const fallbackEndpoint = opts.fallbackEndpoint != null
+        ? String(opts.fallbackEndpoint).trim().replace(/\/+$/, '')
+        : DEFAULT_HF_MIRROR_ENDPOINT;
+    return {
+        ok: false,
+        hfEndpoint: fallbackEndpoint,
+        label: opts.fallbackLabel || '国内镜像',
+        latencyMs: null,
+        id: 'mirror',
+        fallback: true,
+    };
+}
+
+/**
+ * Probe HF official + mirror in parallel and pick the faster reachable source.
+ * @param {{
+ *   candidates?: Array<{ id?: string, hfEndpoint?: string, label?: string }>,
+ *   proxyEnabled?: boolean,
+ *   proxyUrl?: string,
+ *   proxyBypass?: string,
+ * }} [options]
+ */
+async function pickBestHfEndpoint(options = {}) {
+    const candidates = Array.isArray(options.candidates) && options.candidates.length
+        ? options.candidates
+        : [
+            { id: 'official', hfEndpoint: '', label: '官方 Hub' },
+            { id: 'mirror', hfEndpoint: DEFAULT_HF_MIRROR_ENDPOINT, label: '国内镜像' },
+        ];
+    const proxyOpts = {
+        proxyEnabled: options.proxyEnabled,
+        proxyUrl: options.proxyUrl,
+        proxyBypass: options.proxyBypass,
+    };
+    const results = await Promise.all(candidates.map(async (c) => {
+        const hfEndpoint = c.hfEndpoint != null ? String(c.hfEndpoint).trim().replace(/\/+$/, '') : '';
+        const probe = await testHfEndpointConnectivity({
+            ...proxyOpts,
+            hfEndpoint,
+        });
+        return {
+            id: c.id || (hfEndpoint ? 'mirror' : 'official'),
+            label: c.label || (hfEndpoint ? hfEndpoint : '官方 Hub'),
+            hfEndpoint,
+            ok: !!probe.ok,
+            latencyMs: probe.latencyMs,
+            status: probe.status,
+            viaProxy: probe.viaProxy,
+            error: probe.error,
+            message: probe.message,
+            url: probe.url,
+        };
+    }));
+    const pick = chooseBestHfCandidate(results, {
+        fallbackEndpoint: DEFAULT_HF_MIRROR_ENDPOINT,
+        fallbackLabel: '国内镜像',
+    });
+    const viaProxy = results.some((r) => r.viaProxy);
+    if (pick.ok) {
+        const ms = pick.latencyMs != null ? `（约 ${pick.latencyMs} ms）` : '';
+        return {
+            ...pick,
+            results,
+            viaProxy,
+            message: `下载源：${pick.label}${ms}${viaProxy ? ' · 经代理' : ''}`,
+        };
+    }
+    return {
+        ...pick,
+        results,
+        viaProxy,
+        message: '测速失败，已回退国内镜像；可稍后在设置 → 网络调整',
+        error: results.map((r) => r.error).filter(Boolean)[0] || 'all_unreachable',
+    };
+}
+
 async function testHfEndpointConnectivity(options = {}) {
     const resolved = resolveHfProbeUrl(options.hfEndpoint);
     if (!resolved.ok) {
@@ -519,4 +624,7 @@ module.exports = {
     testProxyConnectivity,
     resolveHfProbeUrl,
     testHfEndpointConnectivity,
+    DEFAULT_HF_MIRROR_ENDPOINT,
+    chooseBestHfCandidate,
+    pickBestHfEndpoint,
 };

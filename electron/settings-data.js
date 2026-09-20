@@ -6,6 +6,14 @@ const { getWritableRoot, getInstallRoot, getLegacyUserDataRoot } = require('./ap
 const SETTINGS_FILE_NAME = 'transub-settings.json';
 const LEGACY_SETTINGS_FILE_NAME = 'transwithai-settings.json';
 
+/** In-memory options cache — loadSettings is hit from many IPC/batch paths. */
+let _cachedFilePath = '';
+let _cachedOptions = undefined; // undefined = cold; null = loaded empty
+let _cachedOptionsKey = ''; // compact JSON of options only (skip identical writes)
+let _cachedSerialized = '';
+/** Frozen deep clone returned by loadSettings (shared; O(1) after warm). */
+let _readonlyOptions = undefined;
+
 function getSettingsFilePath(_getAppRoot) {
     return path.join(getWritableRoot(), SETTINGS_FILE_NAME);
 }
@@ -57,6 +65,57 @@ function getLegacyUserDataSettingsCandidates() {
     ];
 }
 
+function invalidateSettingsCache() {
+    _cachedFilePath = '';
+    _cachedOptions = undefined;
+    _cachedOptionsKey = '';
+    _cachedSerialized = '';
+    _readonlyOptions = undefined;
+}
+
+function cloneOptions(options) {
+    if (!options || typeof options !== 'object') return null;
+    try {
+        return JSON.parse(JSON.stringify(options));
+    } catch {
+        return { ...options };
+    }
+}
+
+function optionsKey(options) {
+    try {
+        return JSON.stringify(options || {});
+    } catch {
+        return '';
+    }
+}
+
+function deepFreeze(value) {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i += 1) deepFreeze(value[i]);
+    } else {
+        const keys = Object.keys(value);
+        for (let i = 0; i < keys.length; i += 1) deepFreeze(value[keys[i]]);
+    }
+    return Object.freeze(value);
+}
+
+function setCache(filePath, options) {
+    _cachedFilePath = filePath;
+    _cachedOptions = options && typeof options === 'object' ? cloneOptions(options) : null;
+    _cachedOptionsKey = optionsKey(_cachedOptions);
+    _readonlyOptions = _cachedOptions ? deepFreeze(cloneOptions(_cachedOptions)) : null;
+}
+
+function getReadonlyOptions() {
+    if (_cachedOptions === undefined) return undefined;
+    if (_readonlyOptions === undefined) {
+        _readonlyOptions = _cachedOptions ? deepFreeze(cloneOptions(_cachedOptions)) : null;
+    }
+    return _readonlyOptions;
+}
+
 function readSettingsFile(filePath) {
     if (!fs.existsSync(filePath)) return null;
     try {
@@ -69,8 +128,18 @@ function readSettingsFile(filePath) {
     }
 }
 
-function loadSettings(getAppRoot) {
+/**
+ * @param {Function} getAppRoot
+ * @param {{ clone?: boolean }} [opts] — `clone: true` returns a mutable deep copy (rare write paths).
+ *   Default returns a shared frozen snapshot (safe for MT/hot-path reads).
+ */
+function loadSettings(getAppRoot, opts = {}) {
     const filePath = getSettingsFilePath(getAppRoot);
+    const wantClone = opts && opts.clone === true;
+    if (_cachedOptions !== undefined && _cachedFilePath === filePath) {
+        if (wantClone) return { options: cloneOptions(_cachedOptions) };
+        return { options: getReadonlyOptions() };
+    }
     let options = readSettingsFile(filePath);
     if (!options) {
         const legacyCandidates = [
@@ -91,23 +160,47 @@ function loadSettings(getAppRoot) {
             }
         }
     }
-    return { options: options || null };
+    setCache(filePath, options || null);
+    _cachedSerialized = '';
+    if (wantClone) return { options: cloneOptions(_cachedOptions) };
+    return { options: getReadonlyOptions() };
 }
 
 function saveSettings(getAppRoot, options) {
     const filePath = getSettingsFilePath(getAppRoot);
+    const nextOptions = options && typeof options === 'object' ? options : {};
+    const nextKey = optionsKey(nextOptions);
+    // Compare options-only first (avoid pretty-print + updatedAt noise).
+    if (_cachedFilePath === filePath && _cachedOptionsKey && _cachedOptionsKey === nextKey) {
+        if (_readonlyOptions === undefined) setCache(filePath, nextOptions);
+        return {
+            version: 1,
+            options: getReadonlyOptions() || cloneOptions(nextOptions) || {},
+            updatedAt: new Date().toISOString(),
+        };
+    }
+
     const payload = {
         version: 1,
-        options: options && typeof options === 'object' ? options : {},
+        options: nextOptions,
         updatedAt: new Date().toISOString(),
     };
+    const body = `${JSON.stringify(payload, null, 2)}\n`;
+    if (_cachedFilePath === filePath && _cachedSerialized === body) {
+        setCache(filePath, nextOptions);
+        return payload;
+    }
+
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(filePath, body, 'utf8');
+    setCache(filePath, nextOptions);
+    _cachedSerialized = body;
     return payload;
 }
 
 function patchSettings(getAppRoot, patch = {}) {
-    const current = loadSettings(getAppRoot).options || {};
+    // Need a mutable base for spread; use clone so callers never mutate the frozen view.
+    const current = loadSettings(getAppRoot, { clone: true }).options || {};
     return saveSettings(getAppRoot, { ...current, ...patch });
 }
 
@@ -125,4 +218,5 @@ module.exports = {
     saveSettings,
     patchSettings,
     hasSettingsFile,
+    invalidateSettingsCache,
 };

@@ -36,7 +36,7 @@ describe('silence-split-plan', () => {
     it('multi-pass detect then build cues', async () => {
         let calls = 0;
         const result = await silence.planSilenceCueSplit(
-            { startMs: 0, endMs: 4000, text: 'hello world foo bar' },
+            { startMs: 0, endMs: 4000, text: '今天天气很好，我们去公园玩。然后回家。' },
             { silenceDb: -30, silenceDur: 0.12 },
             {
                 splitApi: split,

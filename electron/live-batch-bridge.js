@@ -37,6 +37,23 @@ function setupLiveBatchBridge(api) {
             return { ok: false, error: err.message || String(err) };
         }
     });
+
+    register('transub-live-batch-snapshot', async () => {
+        try {
+            return { ok: true, ...liveBatch.getSnapshot() };
+        } catch (err) {
+            return {
+                ok: false,
+                active: false,
+                paths: [],
+                current: '',
+                currentIndex1: 0,
+                total: 0,
+                skipped: [],
+                error: err.message || String(err),
+            };
+        }
+    });
 }
 
 module.exports = {

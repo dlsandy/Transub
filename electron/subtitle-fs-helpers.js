@@ -14,7 +14,7 @@ function dualTargetPathFromSource(sourcePath, sourceSuffix, targetSuffix) {
     const ext = path.extname(resolved);
     let base = path.basename(resolved, ext);
     const srcTag = String(sourceSuffix || '').trim().toLowerCase();
-    const dstTag = String(targetSuffix || '').trim().toLowerCase() || 'zh';
+    const dstTag = String(targetSuffix || '').trim().toLowerCase() || 'zh-cn';
     let stem = base;
     if (srcTag) {
         const suffix = `.${srcTag}`;

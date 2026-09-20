@@ -2,14 +2,38 @@
  * ASS override tags + approximate preview helpers (browser + Node)
  */
 (function (global, factory) {
-    const api = factory();
+    const api = factory(global);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubAssOverride = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function assOverrideCoreFactory() {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function assOverrideCoreFactory(global) {
+    function uiTf(template, vars) {
+        try {
+            if (typeof global !== 'undefined' && typeof global.TransubUiTf === 'function') {
+                return global.TransubUiTf(template, vars);
+            }
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tf === 'function') {
+                return global.TransubI18n.tf(template, vars);
+            }
+        } catch { /* ignore */ }
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        try {
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tx === 'function') {
+                return global.TransubI18n.tx(text);
+            }
+        } catch { /* ignore */ }
+        return String(text || '');
+    }
+
     const OVERRIDE_BLOCK_RE = /\{\\([^}]*)\}/g;
 
     const COMMON_FONTS = new Set([
@@ -330,7 +354,7 @@
         return [
             {
                 id: 'fade-soft',
-                label: '淡入淡出',
+                label: uiTx('淡入淡出'),
                 detail: '{\\fad(300,300)}',
                 build: (opts = {}) => {
                     const dur = Math.max(0, Number(opts.cueDurationMs) || 0);
@@ -340,49 +364,49 @@
             },
             {
                 id: 'fade-quick',
-                label: '快淡入出',
+                label: uiTx('快淡入出'),
                 detail: '{\\fad(150,150)}',
                 build: () => fadeCommand(150, 150),
             },
             {
                 id: 'fade-in',
-                label: '仅淡入',
+                label: uiTx('仅淡入'),
                 detail: '{\\fad(400,0)}',
                 build: () => fadeCommand(400, 0),
             },
             {
                 id: 'fade-out',
-                label: '仅淡出',
+                label: uiTx('仅淡出'),
                 detail: '{\\fad(0,400)}',
                 build: () => fadeCommand(0, 400),
             },
             {
                 id: 'blur-soft',
-                label: '柔光模糊',
+                label: uiTx('柔光模糊'),
                 detail: '{\\blur1.5}',
                 build: () => 'blur1.5',
             },
             {
                 id: 'blur-strong',
-                label: '强模糊',
+                label: uiTx('强模糊'),
                 detail: '{\\blur3}',
                 build: () => blurCommand(3),
             },
             {
                 id: 'bord-thick',
-                label: '加粗描边',
+                label: uiTx('加粗描边'),
                 detail: '{\\bord4}',
                 build: () => bordCommand(4),
             },
             {
                 id: 'shad-deep',
-                label: '加深阴影',
+                label: uiTx('加深阴影'),
                 detail: '{\\shad3}',
                 build: () => shadCommand(3),
             },
             {
                 id: 'pos-bottom',
-                label: '定位底部',
+                label: uiTx('定位底部'),
                 detail: '{\\pos(960,980)} · PlayRes 1920×1080',
                 build: (opts = {}) => {
                     const w = clampInt(opts.playResX, 320, 10000, 1920);
@@ -392,7 +416,7 @@
             },
             {
                 id: 'pos-top',
-                label: '定位顶部',
+                label: uiTx('定位顶部'),
                 detail: '{\\pos(960,80)}',
                 build: (opts = {}) => {
                     const w = clampInt(opts.playResX, 320, 10000, 1920);
@@ -402,8 +426,8 @@
             },
             {
                 id: 'move-up',
-                label: '上移入画',
-                detail: '{\\move} 自下而上',
+                label: uiTx('上移入画'),
+                detail: uiTx('{\\move} 自下而上'),
                 build: (opts = {}) => {
                     const w = clampInt(opts.playResX, 320, 10000, 1920);
                     const h = clampInt(opts.playResY, 240, 10000, 1080);
@@ -414,20 +438,20 @@
             },
             {
                 id: 'frz-tilt',
-                label: '轻微旋转',
+                label: uiTx('轻微旋转'),
                 detail: '{\\frz-3}',
                 build: () => frzCommand(-3),
             },
             {
                 id: 'alpha-soft',
-                label: '半透明',
+                label: uiTx('半透明'),
                 detail: '{\\alpha&H80&}',
                 build: () => alphaCommand('80'),
             },
             {
                 id: 'clear-fx',
-                label: '清除特效标签',
-                detail: '移除 fad/blur/pos/move 等常见特效',
+                label: uiTx('清除特效标签'),
+                detail: uiTx('移除 fad/blur/pos/move 等常见特效'),
                 clear: true,
                 families: EFFECT_CLEAR_FAMILIES,
             },
@@ -437,7 +461,7 @@
     function applyEffectPreset(text, presetId, options = {}) {
         const presets = listEffectPresets();
         const hit = presets.find((p) => p.id === presetId);
-        if (!hit) return { text: String(text ?? ''), ok: false, error: '未知特效' };
+        if (!hit) return { text: String(text ?? ''), ok: false, error: uiTx('未知特效') };
         if (hit.clear) {
             return {
                 text: clearLeadingOverrideFamilies(text, hit.families || EFFECT_CLEAR_FAMILIES),
@@ -448,7 +472,7 @@
             };
         }
         const cmd = typeof hit.build === 'function' ? hit.build(options) : hit.command;
-        if (!cmd) return { text: String(text ?? ''), ok: false, error: '无法生成特效' };
+        if (!cmd) return { text: String(text ?? ''), ok: false, error: uiTx('无法生成特效') };
         return {
             text: setLeadingOverride(text, cmd),
             ok: true,
@@ -493,7 +517,7 @@
     ];
 
     function listDialogueEffectPresets() {
-        return DIALOGUE_EFFECT_PRESETS.slice();
+        return DIALOGUE_EFFECT_PRESETS.map((p) => ({ ...p, label: uiTx(p.label) }));
     }
 
     function normalizeDialogueEffect(value) {
@@ -652,8 +676,8 @@
             return [{
                 id: 'ass_fonts',
                 severity: 'ok',
-                label: 'ASS 字体',
-                detail: '使用默认样式字体',
+                label: uiTx('ASS 字体'),
+                detail: uiTx('使用默认样式字体'),
                 count: 0,
             }];
         }
@@ -670,28 +694,30 @@
             }
         }
         if (missing.length) {
+            const fontsList = `${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}`;
             return [{
                 id: 'ass_fonts',
                 severity: 'warn',
-                label: 'ASS 字体',
-                detail: `本机可能缺失：${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}`,
+                label: uiTx('ASS 字体'),
+                detail: uiTf('本机可能缺失：{fonts}', { fonts: fontsList }),
                 count: missing.length,
             }];
         }
         if (uncommon.length) {
+            const fontsList = `${uncommon.slice(0, 3).join('、')}${uncommon.length > 3 ? '…' : ''}`;
             return [{
                 id: 'ass_fonts',
                 severity: 'info',
-                label: 'ASS 字体',
-                detail: `非常见字体（请确认播放器可用）：${uncommon.slice(0, 3).join('、')}${uncommon.length > 3 ? '…' : ''}`,
+                label: uiTx('ASS 字体'),
+                detail: uiTf('非常见字体（请确认播放器可用）：{fonts}', { fonts: fontsList }),
                 count: uncommon.length,
             }];
         }
         return [{
             id: 'ass_fonts',
             severity: 'ok',
-            label: 'ASS 字体',
-            detail: `${fonts.length} 种字体 · 常见系统字体`,
+            label: uiTx('ASS 字体'),
+            detail: uiTf('{count} 种字体 · 常见系统字体', { count: fonts.length }),
             count: fonts.length,
         }];
     }

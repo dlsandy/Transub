@@ -23,6 +23,33 @@ describe('engine-batch-history', () => {
         assert.deepStrictEqual(api.loadEngineGlossaryPairs({ task: 'dual' }), [['a', 'b']]);
     });
 
+    it('loadEngineAsrExtras respects glossaryPromptEnabled', () => {
+        const api = createEngineBatchHistory({
+            buildEngineGlossaryPairs: () => [],
+            buildEngineAsrGlossaryPairs: () => [{ wrong: 'a', correct: 'b', stage: 'asr' }],
+            buildEngineAsrHintsFromGlossary: () => ({
+                initial_prompt: '专名',
+                hotwords: 'foo bar',
+            }),
+            readBatchMergedGlossary: () => ({
+                entries: [{ canonical: 'b', aliases: ['a'], asrReplace: true }],
+            }),
+            getAbortController: () => null,
+            setAbortController: () => {},
+            stripPostTaskFields: (o) => o,
+            mapEngineResultsToHistoryOutputs: () => [],
+        });
+        assert.deepStrictEqual(api.loadEngineAsrExtras({ glossaryPromptEnabled: false }), {
+            asrGlossary: [],
+            initialPrompt: '',
+            hotwords: '',
+        });
+        const on = api.loadEngineAsrExtras({ glossaryPromptEnabled: true });
+        assert.strictEqual(on.asrGlossary.length, 1);
+        assert.strictEqual(on.initialPrompt, '专名');
+        assert.strictEqual(on.hotwords, 'foo bar');
+    });
+
     it('abortBatchMtAdapter clears controller', () => {
         let ctrl = { abort() { this.aborted = true; } };
         const api = createEngineBatchHistory({
@@ -70,7 +97,7 @@ describe('engine-batch-history', () => {
         assert.deepStrictEqual(rec.outputs, ['a.srt', 'b.mp4']);
     });
 
-    it('recordEngineBatchHistory appends and ingests', () => {
+    it('recordEngineBatchHistory appends and soft-calls shelf ingest', () => {
         const appended = [];
         const ingested = [];
         const api = createEngineBatchHistory({
@@ -83,7 +110,7 @@ describe('engine-batch-history', () => {
                 appended.push(rec);
                 return { ...rec, id: 'h1' };
             },
-            ingestBatchHistoryEntry: (rec) => ingested.push(rec),
+            ingestShelfEntry: (rec) => { ingested.push(rec); },
             now: () => Date.now(),
         });
         const out = api.recordEngineBatchHistory({
@@ -96,5 +123,6 @@ describe('engine-batch-history', () => {
         assert.strictEqual(out.id, 'h1');
         assert.strictEqual(appended.length, 1);
         assert.strictEqual(ingested.length, 1);
+        assert.strictEqual(ingested[0].id, 'h1');
     });
 });

@@ -11,10 +11,17 @@
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function dualSubtitleCoreFactory() {
     const SOURCE_SUFFIXES = new Set(['source', 'ja', 'zh', 'en']);
-    const TARGET_SUFFIX_DEFAULT = 'zh';
+    /** Default 成片 sidecar tag (简体中文 → zh-cn). Legacy bare `zh` still accepted. */
+    const TARGET_SUFFIX_DEFAULT = 'zh-cn';
     const DISPLAY_MODES = new Set(['both', 'source', 'target']);
     const PRIMARY_TRACKS = new Set(['source', 'target']);
     const LINE_ORDERS = new Set(['source-first', 'target-first']);
+
+    /** BCP-47-ish file tags: en / ja / zh / zh-cn / zh-tw / zh-hk … */
+    function isDualLangFileTag(value) {
+        const raw = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+        return /^[a-z]{2,8}(?:-[a-z0-9]{2,8}){0,2}$/.test(raw);
+    }
 
     function resolveDualSourceSuffix(language, targetSuffix = TARGET_SUFFIX_DEFAULT) {
         const lang = String(language || 'auto').trim().toLowerCase();
@@ -22,15 +29,35 @@
         let src = 'source';
         if (lang === 'ja' || lang === 'zh' || lang === 'en') src = lang;
         // 避免原文/译文同后缀互相覆盖（如源语言选中文时）
-        if (src === tgt) return 'source';
+        if (src === tgt || (src === 'zh' && String(tgt).startsWith('zh'))) return 'source';
         return src;
     }
 
     function normalizeDualTargetSuffix(value) {
-        const raw = String(value || '').trim().toLowerCase();
+        const raw = String(value || '').trim().toLowerCase().replace(/_/g, '-');
         if (!raw) return TARGET_SUFFIX_DEFAULT;
-        if (/^[a-z]{2,8}$/.test(raw)) return raw;
+        // Legacy bare Chinese tag → current default file tag
+        if (raw === 'zh' || raw === 'chs' || raw === 'cn') return TARGET_SUFFIX_DEFAULT;
+        if (raw === 'cht' || raw === 'tw') return 'zh-tw';
+        if (raw === 'hk') return 'zh-hk';
+        if (isDualLangFileTag(raw)) return raw;
         return TARGET_SUFFIX_DEFAULT;
+    }
+
+    /** media = same basename as video; lang = `{stem}.{zh-cn|en|…}` */
+    function normalizeTargetSubtitleNaming(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (raw === 'media' || raw === 'same' || raw === 'video' || raw === 'bare') return 'media';
+        return 'lang';
+    }
+
+    /**
+     * Effective file tag for the translation/target sidecar.
+     * Empty string → `{stem}.{ext}` (same name as media).
+     */
+    function resolveTargetFileSuffix(options = {}) {
+        if (normalizeTargetSubtitleNaming(options.targetSubtitleNaming) === 'media') return '';
+        return normalizeDualTargetSuffix(options.dualTargetSuffix);
     }
 
     function normalizeDualDisplayMode(value) {
@@ -54,6 +81,31 @@
     }
 
     /**
+     * Factory task-list chip label for bilingual merge options.
+     * @param {{ task?: string, merge?: boolean, lineOrder?: string, deleteSources?: boolean }} input
+     */
+    function summarizeBilingualChip(input = {}) {
+        const task = String(input.task || '').trim().toLowerCase();
+        if (task && task !== 'dual') return '仅双语';
+        if (!input.merge) return '不合并';
+        const order = normalizeDualLineOrder(input.lineOrder);
+        const orderLabel = order === 'source-first' ? '原上' : '译上';
+        if (input.deleteSources) return `合并·${orderLabel}·删单语`;
+        return `合并·${orderLabel}`;
+    }
+
+    /**
+     * Short phrase for recipe capsule when dual + merge.
+     */
+    function summarizeBilingualRecipe(input = {}) {
+        if (String(input.task || '').trim().toLowerCase() !== 'dual') return '';
+        if (!input.merge) return '';
+        const order = normalizeDualLineOrder(input.lineOrder);
+        const orderLabel = order === 'source-first' ? '原上' : '译上';
+        return input.deleteSources ? `双语合并·${orderLabel}·删单语` : `双语合并·${orderLabel}`;
+    }
+
+    /**
      * Parse `{videoStem}.{suffix}` from a subtitle basename (without ext).
      * @returns {{ videoStem: string, suffix: string|null }}
      */
@@ -67,12 +119,9 @@
         if (stem && name.startsWith(`${stem}.`)) {
             const rest = name.slice(stem.length + 1);
             const first = rest.split('.')[0] || '';
-            if (SOURCE_SUFFIXES.has(first) || first === TARGET_SUFFIX_DEFAULT) {
-                return { videoStem: stem, suffix: first };
-            }
-            // e.g. demo.zh.srt → suffix zh
-            if (/^[a-z]{2,8}$/i.test(first)) {
-                return { videoStem: stem, suffix: first.toLowerCase() };
+            const tag = first.toLowerCase();
+            if (SOURCE_SUFFIXES.has(tag) || isDualLangFileTag(tag)) {
+                return { videoStem: stem, suffix: tag };
             }
             return { videoStem: stem, suffix: null };
         }
@@ -80,7 +129,7 @@
         const parts = name.split('.');
         if (parts.length >= 2) {
             const maybe = parts[parts.length - 1].toLowerCase();
-            if (SOURCE_SUFFIXES.has(maybe) || /^[a-z]{2,8}$/.test(maybe)) {
+            if (SOURCE_SUFFIXES.has(maybe) || isDualLangFileTag(maybe)) {
                 return {
                     videoStem: parts.slice(0, -1).join('.'),
                     suffix: maybe,
@@ -107,10 +156,11 @@
     } = {}) {
         const ext = String(format || 'srt').replace(/^\./, '').toLowerCase();
         const src = String(sourceSuffix || 'source').toLowerCase();
-        const tgt = normalizeDualTargetSuffix(targetSuffix);
+        const rawTgt = String(targetSuffix == null ? TARGET_SUFFIX_DEFAULT : targetSuffix).trim().toLowerCase();
+        const tgt = rawTgt === '' ? '' : normalizeDualTargetSuffix(rawTgt);
         return {
             sourcePath: `${dir}/${videoStem}.${src}.${ext}`.replace(/\\/g, '/'),
-            targetPath: `${dir}/${videoStem}.${tgt}.${ext}`.replace(/\\/g, '/'),
+            targetPath: buildSuffixedSubtitlePath(dir, videoStem, tgt, ext),
             sourceSuffix: src,
             targetSuffix: tgt,
             format: ext,
@@ -131,7 +181,8 @@
         if (!suffix) {
             return { role: null, pairSuffix: null, suffix: null, videoStem: stem };
         }
-        if (suffix === tgt) {
+        if (suffix === tgt
+            || (String(tgt).startsWith('zh') && (suffix === 'zh' || String(suffix).startsWith('zh-')))) {
             return { role: 'target', pairSuffix: src, suffix, videoStem: stem };
         }
         // zh 在 SOURCE_SUFFIXES 中，但作为译文后缀时已在上方处理
@@ -288,7 +339,7 @@
             const list = [preferred, 'source', 'ja', 'en'].filter((s) => s && s !== tgt);
             return [...new Set(list)];
         }
-        const list = [preferred || tgt, tgt, 'zh'].filter(Boolean);
+        const list = [preferred || tgt, tgt, 'zh-cn', 'zh-tw', 'zh-hk', 'zh'].filter(Boolean);
         return [...new Set(list)];
     }
 
@@ -591,7 +642,7 @@
         let videoStem = stemFull;
         if (parts.length >= 2) {
             const last = parts[parts.length - 1].toLowerCase();
-            if (SOURCE_SUFFIXES.has(last) || /^[a-z]{2,8}$/.test(last)) {
+            if (SOURCE_SUFFIXES.has(last) || isDualLangFileTag(last)) {
                 videoStem = parts.slice(0, -1).join('.');
             }
         }
@@ -605,8 +656,11 @@
         DISPLAY_MODES,
         PRIMARY_TRACKS,
         LINE_ORDERS,
+        isDualLangFileTag,
         resolveDualSourceSuffix,
         normalizeDualTargetSuffix,
+        normalizeTargetSubtitleNaming,
+        resolveTargetFileSuffix,
         normalizeDualDisplayMode,
         normalizeDualPrimaryTrack,
         normalizeDualLineOrder,
@@ -625,5 +679,7 @@
         mapDualPassProgress,
         buildMergedDualCues,
         suggestMergedExportName,
+        summarizeBilingualChip,
+        summarizeBilingualRecipe,
     };
 }));

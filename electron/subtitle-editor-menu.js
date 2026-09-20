@@ -85,7 +85,6 @@ function buildSubtitleEditorMenuTemplate(onAction, opts = {}) {
     fileSubmenu.push(
         { type: 'separator' },
         { label: '打开字幕生成器', click: act('open-generator') },
-        { label: '打开字幕库', click: act('open-library') },
         { label: '设置(&S)', click: act('open-settings') },
         { type: 'separator' },
         { label: '复原到初始', click: act('restore-initial') },
@@ -287,7 +286,6 @@ const SUBTITLE_EDITOR_MENU_ACTIONS = Object.freeze([
     'save-as',
     'export-dual',
     'open-generator',
-    'open-library',
     'open-settings',
     'restore-initial',
     'undo',

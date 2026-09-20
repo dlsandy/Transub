@@ -1,5 +1,5 @@
 /**
- * Advanced 软件内模型广播（独立选模窗口已并入设置页「智能翻译模型」）
+ * Advanced 软件内模型变更广播（独立选模窗口已并入设置页「智能翻译模型」）
  */
 
 /**
@@ -17,27 +17,6 @@ function broadcastManagedModelChanged(payload = {}) {
     } catch (_) { /* ignore */ }
 }
 
-/** @deprecated 独立窗口已移除；保留空实现以免旧调用方崩溃 */
-function openAdvancedLlmPickWindow() {
-    return { ok: true, removed: true, message: '请在设置 → Pro → 智能翻译模型内选用模型' };
-}
-
-function getPickWindow() {
-    return null;
-}
-
-function sendToPickWindow() {
-    return false;
-}
-
-function focusPickWindow() {
-    return null;
-}
-
 module.exports = {
-    openAdvancedLlmPickWindow,
-    getPickWindow,
-    sendToPickWindow,
-    focusPickWindow,
     broadcastManagedModelChanged,
 };

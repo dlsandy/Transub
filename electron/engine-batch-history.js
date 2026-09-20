@@ -6,17 +6,56 @@ const path = require('path');
 /**
  * @param {{
  *   buildEngineGlossaryPairs: (glossary: object) => Array,
+ *   buildEngineAsrGlossaryPairs?: (glossary: object) => Array,
+ *   buildEngineAsrHintsFromGlossary?: (glossary: object) => object,
  *   readGlossary?: () => { ok?: boolean, glossary?: object },
+ *   readBatchMergedGlossary?: (opts: object) => object,
  *   getAbortController: () => AbortController | null,
  *   setAbortController: (c: AbortController | null) => void,
  *   appendTaskHistory?: (rec: object) => object,
- *   ingestBatchHistoryEntry?: (rec: object) => void,
  *   stripPostTaskFields: (opts: object) => object,
  *   mapEngineResultsToHistoryOutputs: (results: Array) => Array,
  *   now?: () => number,
  * }} deps
  */
 function createEngineBatchHistory(deps) {
+    function loadEngineGlossaryBundle(merged = {}) {
+        const glossary = readBatchGlossary(merged);
+        return {
+            glossary,
+            pairs: loadEngineGlossaryPairs({ ...merged, _glossaryCache: glossary }),
+            asrExtras: loadEngineAsrExtras({ ...merged, _glossaryCache: glossary }),
+        };
+    }
+
+    function readBatchGlossary(merged = {}) {
+        if (merged._glossaryCache) return merged._glossaryCache;
+        try {
+            const readBatch = deps.readBatchMergedGlossary || (() => {
+                const { readBatchMergedGlossary } = require('./glossary-data');
+                return readBatchMergedGlossary;
+            })();
+            if (typeof readBatch === 'function') {
+                return readBatch({
+                    mediaPath: merged.mediaPath,
+                    outputDir: merged.outputDir,
+                    subtitlePath: merged.subtitlePath,
+                });
+            }
+        } catch { /* ignore */ }
+        try {
+            const readGlossary = deps.readGlossary || (() => {
+                const { readGlossary: rg } = require('./glossary-data');
+                return rg();
+            });
+            const gloss = readGlossary();
+            if (!gloss?.ok || !gloss.glossary) return null;
+            return gloss.glossary;
+        } catch {
+            return null;
+        }
+    }
+
     function loadEngineGlossaryPairs(merged = {}) {
         if (merged.glossaryMtEnabled === false) return [];
         const task = String(merged.task || '');
@@ -24,16 +63,31 @@ function createEngineBatchHistory(deps) {
         if (merged.mtGlossaryMode === 'prompt' || merged._skipEngineGlossaryProtect) {
             return [];
         }
+        const glossary = readBatchGlossary(merged);
+        if (!glossary) return [];
+        return deps.buildEngineGlossaryPairs(glossary) || [];
+    }
+
+    function loadEngineAsrExtras(merged = {}) {
+        const empty = { asrGlossary: [], initialPrompt: '', hotwords: '' };
+        if (merged.glossaryPromptEnabled === false) return empty;
+        const glossary = readBatchGlossary(merged);
+        if (!glossary) return empty;
         try {
-            const readGlossary = deps.readGlossary || (() => {
-                const { readGlossary: rg } = require('./glossary-data');
-                return rg();
-            });
-            const gloss = readGlossary();
-            if (!gloss?.ok || !gloss.glossary) return [];
-            return deps.buildEngineGlossaryPairs(gloss.glossary) || [];
+            const buildAsr = deps.buildEngineAsrGlossaryPairs || (() => []);
+            const buildHints = deps.buildEngineAsrHintsFromGlossary || (() => ({
+                initial_prompt: '',
+                hotwords: '',
+            }));
+            const asrGlossary = buildAsr(glossary) || [];
+            const hints = buildHints(glossary) || {};
+            return {
+                asrGlossary,
+                initialPrompt: String(hints.initial_prompt || '').trim(),
+                hotwords: String(hints.hotwords || '').trim(),
+            };
         } catch {
-            return [];
+            return empty;
         }
     }
 
@@ -91,17 +145,15 @@ function createEngineBatchHistory(deps) {
                 const { appendTaskHistory } = require('./task-history');
                 return appendTaskHistory(rec);
             });
-            const historyRecord = append(record);
+            const saved = append(record);
             try {
-                const ingest = deps.ingestBatchHistoryEntry || ((rec) => {
-                    const { ingestBatchHistoryEntry } = require('./subtitle-library');
+                const ingest = deps.ingestShelfEntry || ((rec) => {
+                    const { ingestBatchHistoryEntry } = require('./subtitle-shelf');
                     return ingestBatchHistoryEntry(rec);
                 });
-                if (historyRecord && !historyRecord.cancelled) {
-                    ingest(historyRecord);
-                }
-            } catch { /* ignore library ingest errors */ }
-            return historyRecord;
+                ingest(saved || record);
+            } catch { /* ignore shelf ingest */ }
+            return saved;
         } catch {
             return null;
         }
@@ -109,6 +161,8 @@ function createEngineBatchHistory(deps) {
 
     return {
         loadEngineGlossaryPairs,
+        loadEngineAsrExtras,
+        loadEngineGlossaryBundle,
         abortBatchMtAdapter,
         buildEngineBatchHistoryRecord,
         recordEngineBatchHistory,

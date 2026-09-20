@@ -1,0 +1,202 @@
+<div id="editorFilmHintModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFilmHintTitle" inert>
+        <div class="editor-modal-backdrop" data-film-hint-dismiss></div>
+        <div class="editor-modal-panel film-hint-panel">
+            <h3 id="editorFilmHintTitle">影片理解重构</h3>
+            <p id="editorFilmHintLead">先生成全片 Brief（人物/专名/语气），确认后再按场景改写。可选填写片名与简介；留空也可直接开始。</p>
+            <p id="editorFilmHintSourceHint" class="film-hint-source-hint hidden" aria-live="polite"></p>
+            <label class="film-hint-field">
+                <span>片名</span>
+                <input type="text" id="editorFilmHintTitleInput" maxlength="120" placeholder="例如：星际穿越" autocomplete="off">
+            </label>
+            <label class="film-hint-field">
+                <span>简介 <span class="hint-sub">类型 + 核心突破，3～5 句即可（或也可留空）</span></span>
+                <textarea id="editorFilmHintSynopsisInput" maxlength="800" placeholder="科幻；宇航员穿越虫洞寻找人类新家园…"></textarea>
+            </label>
+            <label class="film-hint-field">
+                <span>译名与补充 <span class="hint-sub">人名/地名固定译法、忌讳等</span></span>
+                <textarea id="editorFilmHintTermsInput" maxlength="800" placeholder="Cooper→库珀；Murph→墨菲；语气自然口语，勿文言"></textarea>
+            </label>
+            <p id="editorFilmHintGlossaryHint" class="film-hint-glossary-hint hidden"></p>
+            <fieldset class="film-hint-intensity">
+                <legend style="font-size:0.72rem;font-weight:600;margin-bottom:0.25rem">改写强度</legend>
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="light"
+                        data-help="尽量少改，优先保留原译用词与句式，只修明显不通顺处。适合已较通顺、只需微调的字幕。">
+                    轻度
+                </label>
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="balanced" checked
+                        data-help="在贴合剧情与专名的前提下适度润色，兼顾通顺与忠实。推荐大多数影片使用。">
+                    均衡
+                </label>
+                <label>
+                    <input type="radio" name="editorFilmHintIntensity" value="strong"
+                        data-help="更大胆统一专名、语气与跨场景风格，改动可能更多；会自动缩小场景块以降低并条错位风险。适合译名混乱、语气不一致的片子。">
+                    加强
+                </label>
+            </fieldset>
+            <p id="editorFilmHintIntensityHelp" class="film-hint-intensity-help" aria-live="polite">在贴合剧情与专名的前提下适度润色，兼顾通顺与忠实。推荐大多数影片使用。</p>
+            <p id="editorFilmHintScope" class="batch-dur-preview">—</p>
+            <div class="editor-modal-actions">
+                <button type="button" id="editorFilmHintCancel" data-film-hint-dismiss>取消</button>
+                <button type="button" id="editorFilmHintConfirm" class="editor-btn-primary">生成 Brief</button>
+            </div>
+        </div>
+    </div>
+
+<div id="editorFilmBriefModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorFilmBriefTitle" inert>
+        <div class="editor-modal-backdrop" data-film-brief-dismiss></div>
+        <div class="editor-modal-panel film-brief-panel">
+            <div class="film-brief-header">
+                <h3 id="editorFilmBriefTitle">影片简要预览</h3>
+                <p id="editorFilmBriefLead">请先核对人物、专名与梗概；确认后才会开始场景改写。Brief 不准时后面整片都会跟着偏。</p>
+                <p id="editorFilmBriefSourceHint" class="film-hint-source-hint hidden" aria-live="polite"></p>
+            </div>
+            <div class="film-brief-body" id="editorFilmBriefBody">
+                <section class="film-brief-section" aria-labelledby="filmBriefSecOverview">
+                    <h4 id="filmBriefSecOverview">概览</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-compact">
+                            <span>片名推测</span>
+                            <input type="text" id="editorFilmBriefTitleGuess" maxlength="120" placeholder="例如：星际穿越" autocomplete="off">
+                        </label>
+                        <label class="film-hint-field is-compact">
+                            <span>类型</span>
+                            <input type="text" id="editorFilmBriefGenre" maxlength="80" placeholder="科幻 / 剧情 / …" autocomplete="off">
+                        </label>
+                    </div>
+                    <label class="film-hint-field is-mid">
+                        <span>梗概</span>
+                        <textarea id="editorFilmBriefSynopsis" maxlength="800" rows="4" placeholder="3～5 句概括核心冲突与主线"></textarea>
+                    </label>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecStyle">
+                    <h4 id="filmBriefSecStyle">语气与文风</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-mid">
+                            <span>语气 / 风格</span>
+                            <textarea id="editorFilmBriefTone" maxlength="200" rows="3" placeholder="口语自然、克制、略带戏谑…"></textarea>
+                        </label>
+                        <label class="film-hint-field is-mid">
+                            <span>字幕文风备注</span>
+                            <textarea id="editorFilmBriefStyleNotes" maxlength="400" rows="3" placeholder="勿文言；专名统一；句末语气词可保留…"></textarea>
+                        </label>
+                    </div>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecNames">
+                    <h4 id="filmBriefSecNames">人物与专名</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-tall">
+                            <span>人物 <span class="hint-sub">每行：姓名（身份）：备注</span></span>
+                            <textarea id="editorFilmBriefCharacters" maxlength="2000" rows="6" placeholder="香水纯（叙述者）&#10;丈夫（配偶）"></textarea>
+                        </label>
+                        <label class="film-hint-field is-tall">
+                            <span>专名 <span class="hint-sub">每行：规范译名：说明/旧译</span></span>
+                            <textarea id="editorFilmBriefTerms" maxlength="2000" rows="6" placeholder="XX市：故事发生地&#10;旧名：规范名"></textarea>
+                        </label>
+                    </div>
+                </section>
+                <section class="film-brief-section" aria-labelledby="filmBriefSecPlot">
+                    <h4 id="filmBriefSecPlot">主线与约束</h4>
+                    <div class="film-brief-grid film-brief-grid--2">
+                        <label class="film-hint-field is-mid">
+                            <span>主线要点 <span class="hint-sub">每行一条</span></span>
+                            <textarea id="editorFilmBriefTimeline" maxlength="1200" rows="4" placeholder="开场设定&#10;中段转折&#10;收束冲突"></textarea>
+                        </label>
+                        <label class="film-hint-field is-mid">
+                            <span>避免项 <span class="hint-sub">每行一条</span></span>
+                            <textarea id="editorFilmBriefAvoid" maxlength="800" rows="4" placeholder="勿过度文言&#10;勿混淆人物称呼"></textarea>
+                        </label>
+                    </div>
+                </section>
+            </div>
+            <div class="editor-modal-actions film-brief-actions">
+                <button type="button" id="editorFilmBriefCancel" data-film-brief-dismiss>取消</button>
+                <button type="button" id="editorFilmBriefConfirm" class="editor-btn-primary">确认并开始改写</button>
+            </div>
+        </div>
+    </div>
+
+<div id="editorReconstructReviewModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorReconstructReviewTitle" inert>
+        <div class="editor-modal-backdrop" data-recon-review-dismiss></div>
+        <div class="editor-modal-panel reconstruct-review-panel">
+            <h3 id="editorReconstructReviewTitle">重构结果对照</h3>
+            <p id="editorReconstructReviewLead">左边为原文，右边为重构结果。勾选要替换的条目后确认，才会覆盖字幕。</p>
+            <div class="recon-review-toolbar">
+                <span id="editorReconstructReviewMeta" class="recon-review-meta">—</span>
+                <div class="recon-review-actions-inline">
+                    <button type="button" id="editorReconstructReviewRetryFailed" class="hidden">重试失败块</button>
+                    <button type="button" id="editorReconstructReviewSelectAll">全选变更</button>
+                    <button type="button" id="editorReconstructReviewSelectNone">全不选</button>
+                    <button type="button" id="editorReconstructReviewOnlyChanged">仅显示变更</button>
+                </div>
+            </div>
+            <div class="recon-review-head" aria-hidden="true">
+                <span></span>
+                <span>#</span>
+                <span id="editorReconstructReviewBeforeLabel">原文</span>
+                <span id="editorReconstructReviewAfterLabel">重构后</span>
+            </div>
+            <div id="editorReconstructReviewList" class="recon-review-list" role="list"></div>
+            <div class="editor-modal-actions" style="margin-top:0.75rem">
+                <button type="button" id="editorReconstructReviewCancel" data-recon-review-dismiss>放弃</button>
+                <button type="button" id="editorReconstructReviewConfirm" class="editor-btn-primary">确认替换</button>
+            </div>
+        </div>
+    </div>
+
+<div id="editorGenericModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorGenericModalTitle">
+        <div class="editor-modal-backdrop" data-kept-dismiss></div>
+        <div class="editor-modal-panel" style="width: min(32rem, 94vw);">
+            <h3 id="editorGenericModalTitle">提示</h3>
+            <div id="editorGenericModalBody"></div>
+        </div>
+    </div>
+
+<div id="editorShortcutsModal" class="editor-modal hidden" role="dialog" aria-modal="true" aria-labelledby="editorShortcutsTitle">
+        <div class="editor-modal-backdrop" data-shortcuts-dismiss></div>
+        <div class="editor-modal-panel" style="width: min(28rem, 94vw);">
+            <h3 id="editorShortcutsTitle">快捷键说明</h3>
+            <table class="shortcuts-table">
+                <thead><tr><th>快捷键</th><th>功能</th></tr></thead>
+                <tbody>
+                    <tr><th colspan="2">文件与历史</th></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>S</kbd></td><td>保存字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></td><td>另存为</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>返回（撤销）</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>Y</kbd></td><td>重做</td></tr>
+                    <tr><th colspan="2">文本</th></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>F</kbd></td><td>查找与替换</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>H</kbd></td><td>查找与替换（聚焦替换）</td></tr>
+                    <tr><th colspan="2">条目与时间</th></tr>
+                    <tr><td><kbd>F11</kbd></td><td>设为起始时间（当前条）</td></tr>
+                    <tr><td><kbd>F12</kbd></td><td>设为结束时间（当前条）</td></tr>
+                    <tr><td><kbd>Delete</kbd></td><td>删除当前/选中字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>A</kbd></td><td>全选可见字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>点击</kbd></td><td>多选切换</td></tr>
+                    <tr><td><kbd>Shift</kbd> + <kbd>点击</kbd></td><td>范围多选</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>M</kbd></td><td>合并选中相邻字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>J</kbd></td><td>多行合并（当前条）</td></tr>
+                    <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上一条 / 下一条字幕</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd></td><td>上一条 / 下一条字幕（文字编辑框内）</td></tr>
+                    <tr><th colspan="2">视频预览</th></tr>
+                    <tr><td><kbd>Space</kbd></td><td>播放 / 暂停（列表或播放区聚焦时）</td></tr>
+                    <tr><td><kbd>Enter</kbd></td><td>在播放头处插入字幕（列表聚焦时）</td></tr>
+                    <tr><td><kbd>B</kbd></td><td>播放头处添加 / 移除书签</td></tr>
+                    <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>设置 A-B 循环入点 / 出点</td></tr>
+                    <tr><th colspan="2">工作区</th></tr>
+                    <tr><td><kbd>Alt</kbd> + <kbd>1</kbd>…<kbd>5</kbd></td><td>精修 / 时间轴 / 双语 / AI / Pro</td></tr>
+                    <tr><td>双击字幕行</td><td>视频跳转到该字幕起始时间</td></tr>
+                    <tr><td>右键字幕行 / 时间轴字幕块 / 波形</td><td>翻译、分割、时间轴、重转写等上下文菜单</td></tr>
+                    <tr><td>时间轴拖拽</td><td>拖字幕块整段移动；拖左右边改起止</td></tr>
+                    <tr><td>时间轴滚轮</td><td>左右平移（放大后）</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> + 滚轮</td><td>放大 / 缩小时间轴与波形</td></tr>
+                    <tr><td><kbd>Shift</kbd> / <kbd>Alt</kbd> + 拖拽空白处</td><td>平移时间轴</td></tr>
+                    <tr><td>中键拖拽</td><td>平移时间轴</td></tr>
+                </tbody>
+            </table>
+            <div class="editor-modal-actions" style="margin-top: 0.75rem;">
+                <button type="button" id="editorShortcutsClose" data-shortcuts-dismiss>关闭</button>
+            </div>
+        </div>
+    </div>

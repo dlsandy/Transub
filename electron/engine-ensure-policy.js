@@ -54,6 +54,18 @@ function decideEngineEnsureAction(input = {}) {
         };
     }
 
+    // Explicit forceRestart (Torch reimport poison, post-extras reload, crash recovery)
+    // must kill a *live* poisoned child. Catalog / Settings probes use forceRestart=false
+    // and still hit compute_busy below.
+    if (engineJob && forceRestart) {
+        return {
+            allowKill: true,
+            allowForceRestart: true,
+            treatAsRunning: false,
+            reason: 'explicit_force_restart',
+        };
+    }
+
     if (engineJob) {
         return {
             allowKill: false,
@@ -61,7 +73,7 @@ function decideEngineEnsureAction(input = {}) {
             // Prefer soft-success so list/catalog callers do not spuriously fail
             // while the batch still holds a live child.
             treatAsRunning: true,
-            reason: forceRestart ? 'compute_busy_restart' : 'compute_busy',
+            reason: 'compute_busy',
         };
     }
 

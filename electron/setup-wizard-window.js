@@ -3,6 +3,7 @@ const path = require('path');
 const { resolveHtmlPath } = require('./app-paths');
 const { getWindowIconOption, applyWindowIcon } = require('./icons');
 const { attachUiZoom } = require('./ui-zoom');
+const { attachSplashThenLoad } = require('./window-splash-boot');
 
 /** @type {import('electron').BrowserWindow|null} */
 let setupWizardWindow = null;
@@ -58,7 +59,7 @@ function openSetupWizardWindow(app, { forceWizard } = {}) {
         height: 860,
         minWidth: 680,
         minHeight: 720,
-        title: 'Transub 设置向导',
+        title: '字幕工厂 设置向导',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor,
@@ -86,22 +87,28 @@ function openSetupWizardWindow(app, { forceWizard } = {}) {
         standaloneWizard: '1',
         forceWizard: pendingWizardOpen.forceWizard ? '1' : '0',
     });
-    win.loadFile(resolveHtmlPath(app, 'index.html'), { search: query.toString() });
-
-    win.once('ready-to-show', () => {
-        if (win.isDestroyed()) return;
-        applyWindowIcon(win);
-        win.show();
-        win.focus();
-        win.webContents.send('transub-open-setup-wizard', {
-            forceWizard: pendingWizardOpen.forceWizard,
-        });
+    const notifyOpen = () => {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+        const payload = { forceWizard: pendingWizardOpen.forceWizard };
+        win.webContents.send('transub-open-setup-wizard', payload);
         setTimeout(() => {
             if (win.isDestroyed() || win.webContents.isDestroyed()) return;
-            win.webContents.send('transub-open-setup-wizard', {
-                forceWizard: pendingWizardOpen.forceWizard,
-            });
+            win.webContents.send('transub-open-setup-wizard', payload);
         }, 150);
+    };
+
+    attachSplashThenLoad(win, {
+        splashHtml: resolveHtmlPath(app, 'splash.html'),
+        splashSearch: 'kind=wizard',
+        mainHtml: resolveHtmlPath(app, 'index.html'),
+        mainSearch: query.toString(),
+        onReveal: () => {
+            if (win.isDestroyed()) return;
+            applyWindowIcon(win);
+            if (!win.isVisible()) win.show();
+            win.focus();
+        },
+        onMainLoaded: notifyOpen,
     });
 
     return { ok: true };

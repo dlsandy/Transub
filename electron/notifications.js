@@ -28,6 +28,9 @@ function sendNotification(body) {
         const n = new Notification({
             title: '',
             body: text,
+            // Avoid Windows toast chime during/after jobs unless the user wants sound
+            // via playSoundOnComplete (PowerShell beep) separately.
+            silent: true,
         });
         n.show();
         return true;

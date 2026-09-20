@@ -9,7 +9,7 @@ try {
 }
 
 describe('advanced-bilingual-semantic', () => {
-    before(function () {
+    beforeAll(function () {
         if (typeof parseIssues !== 'function' || typeof buildMessages !== 'function') {
             this.skip();
         }

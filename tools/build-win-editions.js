@@ -417,8 +417,8 @@ async function buildEdition(edition, args) {
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     ensureTar();
-    if (!fs.existsSync(path.join(args.unpacked, 'Transub.exe'))) {
-        throw new Error(`Missing Transub.exe under ${args.unpacked}`);
+    if (!fs.existsSync(path.join(args.unpacked, 'transub.exe'))) {
+        throw new Error(`Missing transub.exe under ${args.unpacked}`);
     }
     if (!args.editions.length) {
         throw new Error('No editions selected (use --editions=cpu,cuda)');

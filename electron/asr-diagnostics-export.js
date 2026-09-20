@@ -36,7 +36,8 @@ function redactOptions(options = {}) {
  * @param {string[]} [input.logLines]
  * @param {string} [input.engineLogPath]
  * @param {string} [input.d01Version]
- * @param {object} [input.extra]
+ * @param {object} [input.secondOpinion]
+ * @param {object} [input.badPool]
  */
 function buildDiagnosticsPayload(input = {}) {
     const now = new Date();
@@ -57,6 +58,8 @@ function buildDiagnosticsPayload(input = {}) {
         domainFixTrace: input.domainFixTrace || null,
         cueStats: input.cueStats || null,
         d01Version: input.d01Version || '',
+        secondOpinion: input.secondOpinion || null,
+        badPool: input.badPool || null,
         logTail: Array.isArray(input.logLines) ? input.logLines.slice(-200) : [],
         engineLogPath: input.engineLogPath || '',
         extra: input.extra || null,

@@ -17,12 +17,17 @@
         scene: '场景切分',
         vad: '语音检测',
         vad_failover: 'VAD 回退',
-        cleanup: '字幕清理',
-        semantic_repair: '转录语义校正',
-        model: '加载模型',
-        transcribe: '转写中',
+        cleanup: '译文校正',
+        source_cleanup: '原文校正',
+        semantic_repair: '原文校正',
+        pre_mt_qc: '译前质量门闸',
+        model: '加载识别模型',
+        transcribe: '原文提取',
         translate: '翻译中',
+        qc_fix: '译文校正 · QC修复',
+        qc_loop: 'QC 闭环',
         save: '保存字幕',
+        postprocess: '字幕后期处理',
         done: '完成',
         failed: '失败',
     };
@@ -33,14 +38,21 @@
         separate: 1,
         vad: 2,
         vad_failover: 2,
+        scene: 2,
         model: 3,
         transcribe: 4,
-        cleanup: 5,
+        source_cleanup: 5,
         semantic_repair: 5,
+        pre_mt_qc: 5,
         translate: 6,
-        save: 7,
-        done: 8,
-        failed: 8,
+        cleanup: 7,
+        save: 8,
+        write: 8,
+        qc_fix: 9,
+        qc_loop: 9,
+        postprocess: 9,
+        done: 10,
+        failed: 10,
     };
 
     function stageRank(stage) {
@@ -50,11 +62,46 @@
     function scrubProgressDetail(detail) {
         return String(detail || '')
             .trim()
-            .replace(/^(转写\s*\/\s*翻译中|转写中|翻译中|转写|翻译|识别中)\s*[·•]?\s*/u, '')
+            .replace(/^(转写\s*\/\s*翻译中|转写中|提取原文中|原文提取中|翻译中|转写|提取原文|原文提取|翻译|识别中)\s*[·•]?\s*/u, '')
             .trim();
     }
 
-    /** Align with transwithai-bridge mapInferStageProgress (renderer fallback). */
+    function parseTranslateWorkNumerator(detail) {
+        const text = String(detail || '');
+        if (/(?:Sakura|推理|重新|分块|机器|Hy-MT2|GalTransl|TranslateGemma)\s*翻译/i.test(text)) return null;
+        const m = text.match(/(?:^|[^a-zA-Z])翻译\s+(\d+)\s*[/／]\s*(\d+)/i);
+        if (!m) return null;
+        const done = Number(m[1]);
+        const total = Number(m[2]);
+        if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
+        return { done: Math.max(0, done), total };
+    }
+
+    function capTranslateProgressByWork(mapped, detail, videoProgress = 0) {
+        const batch = parseTranslateWorkNumerator(detail);
+        if (batch && batch.total > 0) {
+            const ratioCap = batch.done <= 0
+                ? 65
+                : Math.round(70 + (batch.done / batch.total) * 25);
+            const headroom = batch.done <= 0 ? 5 : 2;
+            if (mapped > ratioCap + headroom) {
+                return Math.max(65, Math.min(mapped, ratioCap + headroom));
+            }
+            return mapped;
+        }
+        if (Number.isFinite(mapped) && mapped > videoProgress + 25
+            && videoProgress < 72 && mapped >= 88) {
+            return Math.min(mapped, Math.max(videoProgress + 6, 65));
+        }
+        return mapped;
+    }
+
+    function scaleBand(localPct, lo, hi) {
+        const ratio = Math.max(0, Math.min(100, Number(localPct) || 0)) / 100;
+        return Math.round(lo + (hi - lo) * ratio);
+    }
+
+    /** Align with transwithai-bridge / engine remap_job_progress (renderer fallback). */
     function mapStageProgress(stage, rawPct = 0, videoCurrentSec = 0, videoTotalSec = 0) {
         const local = Math.max(0, Math.min(100, Number(rawPct) || 0));
         const mediaSec = Number(videoTotalSec) || 0;
@@ -63,20 +110,27 @@
             case 'starting':
             case 'vad':
             case 'model':
-                return 0;
+                return Math.min(5, scaleBand(Math.max(local, 5), 1, 5));
             case 'cleanup':
+                return scaleBand(local, 95, 97);
+            case 'source_cleanup':
             case 'semantic_repair':
-                return Math.min(67, 64 + Math.round((local / 100) * 3));
+            case 'pre_mt_qc':
+                return scaleBand(local, 62, 65);
             case 'transcribe': {
                 const timelinePct = mediaSec >= 60
                     ? Math.min(100, Math.round((currentSec / mediaSec) * 100))
                     : local;
-                // Leave ~28% for translate / finalize (align with engine remap_job_progress).
-                return Math.min(68, Math.round((timelinePct / 100) * 68));
+                return Math.min(65, Math.round(5 + (timelinePct / 100) * 60));
             }
-            case 'translate':
-                return Math.min(96, 68 + Math.round((local / 100) * 28));
-            case 'save': return 99;
+            case 'translate': {
+                if (local <= 8) return scaleBand((local / 8) * 100, 65, 70);
+                return scaleBand(((local - 8) / 92) * 100, 70, 95);
+            }
+            case 'qc_fix':
+            case 'qc_loop':
+                return scaleBand(local, 98, 100);
+            case 'save': return scaleBand(local, 97, 98);
             case 'done': return 100;
             default:
                 return stageRank(stage) >= stageRank('transcribe')
@@ -129,7 +183,13 @@
                 }
                 return { itemDualPhase, itemStage, videoProgress, videoTotalSec, videoCurrentSec };
             }
-            videoProgress = 0;
+            const mappedPrep = mapStageProgress(
+                itemStage,
+                Number(payload.itemProgress) || 0,
+                Number(payload.videoCurrentSec) || 0,
+                Number(payload.videoTotalSec) || 0,
+            );
+            videoProgress = bumpProgress(videoProgress, mappedPrep);
             return { itemDualPhase, itemStage, videoProgress, videoTotalSec, videoCurrentSec };
         }
 
@@ -141,7 +201,16 @@
                 Number(payload.videoCurrentSec) || 0,
                 Number(payload.videoTotalSec) || 0,
             );
-        videoProgress = bumpProgress(videoProgress, mapped);
+        const progressDetail = payload.itemDetail || payload.detail || '';
+        let nextMapped = stage === 'translate'
+            ? capTranslateProgressByWork(mapped, progressDetail, videoProgress)
+            : mapped;
+        // Drop premature save/done hold (~97%) when real translate ticks arrive.
+        if (stage === 'translate' && videoProgress >= 96 && nextMapped < videoProgress && nextMapped <= 95) {
+            videoProgress = Math.max(0, Math.min(99, nextMapped));
+        } else {
+            videoProgress = bumpProgress(videoProgress, nextMapped);
+        }
         if (Number(payload.videoTotalSec) > 0) {
             videoTotalSec = Number(payload.videoTotalSec);
             videoCurrentSec = Number(payload.videoCurrentSec) || 0;
@@ -154,6 +223,8 @@
         STAGE_RANK,
         stageRank,
         scrubProgressDetail,
+        parseTranslateWorkNumerator,
+        capTranslateProgressByWork,
         mapStageProgress,
         bumpProgress,
         isPreTranscribeStage,

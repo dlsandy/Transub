@@ -2,6 +2,16 @@
  * Dev-only: one-click upload current editor cues to subtitlecat.com
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installSubtitleCatUploadUi(ctx) {
         if (!ctx?.state) {
             throw new Error('installSubtitleCatUploadUi(ctx): ctx.state required');
@@ -40,11 +50,20 @@
             uploading = true;
             setStatus('正在上传到 SubtitleCat…', '');
             try {
+                const helpers = global.TransubEditorParts?.targetLangHelpers;
+                const resolvedLabel = helpers?.labelFromOptions?.(state.targetLangOptions || {})
+                    || global.TransubSubtitleTargetLang?.subtitleTargetLangLabel?.(
+                        global.TransubSubtitleTargetLang?.resolveSubtitleTargetLang?.(
+                            state.targetLangOptions || {},
+                        ),
+                    );
                 const result = await electron.transubUploadSubtitleCat({
                     cues: state.cues,
                     fileName,
                     sourcePath: state.path || '',
-                    targetLanguage: opts.targetLanguage || 'Chinese (Simplified)',
+                    targetLanguage: opts.targetLanguage
+                        || resolvedLabel
+                        || 'Chinese (Simplified)',
                     openResult: opts.openResult !== false,
                 });
                 if (!result?.ok) {
@@ -62,7 +81,7 @@
                 return result;
             } catch (err) {
                 const msg = err?.message || String(err);
-                setStatus(`SubtitleCat 上传失败：${msg}`, 'err');
+                setStatus(uiTf('SubtitleCat 上传失败：{msg}', { msg }), 'err');
                 return { ok: false, error: msg };
             } finally {
                 uploading = false;

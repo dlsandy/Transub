@@ -135,6 +135,17 @@ function buildVadJobOptions(merged = {}) {
         if (isFreeDefault(merged.vadSpeechPadMs, 200)) speechPadMs = 180;
     }
 
+    // Soft AV (TEN/FireRed path): slightly longer end-silence when still on free defaults
+    // → fewer micro-islands that explode cue count / blank-retry cost.
+    {
+        const profile = String(merged.contentProfile || merged.senseProfile || '').toLowerCase();
+        if (profile === 'av_soft' && !film && !sensitive
+            && isFreeDefault(merged.vadMinSilenceDurationMs, 100)
+            && minSilenceMs < 160) {
+            minSilenceMs = 160;
+        }
+    }
+
     let vadModel = normalizeVadModelId(merged.engineVadModel, 'fsmn-vad');
     // Sensitive Whisper path → WhisperSeg ASMR.
     if (sensitive) {

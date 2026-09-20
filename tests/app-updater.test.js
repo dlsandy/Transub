@@ -3,8 +3,6 @@ const {
     compareVersions,
     normalizeReleaseNotes,
     releaseVersion,
-    CODEBERG_OWNER,
-    CODEBERG_REPO,
     GITCODE_OWNER,
     GITCODE_REPO,
     WEBSITE_UPDATES_BASE,
@@ -17,6 +15,8 @@ const {
     canAutoInstallZip,
     buildUpdateFailure,
     formatUpdateFailureMeta,
+    normalizeUpdateSource,
+    filterUrlsByUpdateSource,
 } = require('../electron/app-updater');
 
 describe('app-updater', () => {
@@ -40,8 +40,6 @@ describe('app-updater', () => {
     it('parses release version tags and exposes mirror host constants', () => {
         assert.strictEqual(releaseVersion({ tag_name: 'v3.0.1' }), '3.0.1');
         assert.strictEqual(releaseVersion({ name: '3.0.0' }), '3.0.0');
-        assert.strictEqual(CODEBERG_OWNER, 'flyforyou');
-        assert.strictEqual(CODEBERG_REPO, 'Transub');
         assert.strictEqual(GITCODE_OWNER, 'AndyDai');
         assert.strictEqual(GITCODE_REPO, 'Transub');
     });
@@ -78,6 +76,29 @@ describe('app-updater', () => {
         assert.ok(state.componentUrls.shell.some((u) => u.includes('win-shell.zip') && u.includes('transub.cc')));
         assert.strictEqual(state.deltaUrls.length, 0);
         assert.strictEqual(state.componentUrls.app.length, 0);
+    });
+
+    it('filterUrlsByUpdateSource excludes website mirrors and honors pinned nodes', () => {
+        const urls = [
+            'https://github.com/dlsandy/Transub/releases/download/v3.0.3/Transub-3.0.3-win.zip',
+            'https://gitcode.com/AndyDai/Transub/releases/download/v3.0.3/Transub-3.0.3-win.zip',
+            'https://www.transub.cc/updates/3.0.3/Transub-3.0.3-win.zip',
+        ];
+        assert.deepStrictEqual(
+            filterUrlsByUpdateSource(urls, 'auto').filter((u) => /transub\.cc/i.test(u)),
+            [],
+        );
+        assert.strictEqual(filterUrlsByUpdateSource(urls, 'github').length, 1);
+        assert.ok(/github\.com/i.test(filterUrlsByUpdateSource(urls, 'github')[0]));
+        assert.strictEqual(filterUrlsByUpdateSource(urls, 'gitcode').length, 1);
+        assert.ok(/gitcode\.com/i.test(filterUrlsByUpdateSource(urls, 'gitcode')[0]));
+    });
+
+    it('normalizeUpdateSource accepts known node ids and maps legacy codeberg to auto', () => {
+        assert.strictEqual(normalizeUpdateSource('GitCode'), 'gitcode');
+        assert.strictEqual(normalizeUpdateSource('codeberg'), 'auto');
+        assert.strictEqual(normalizeUpdateSource(''), 'auto');
+        assert.strictEqual(normalizeUpdateSource('unknown'), 'auto');
     });
 
     it('exposes GitCode release constants for the domestic mirror channel', () => {
@@ -118,11 +139,11 @@ describe('app-updater', () => {
             expectedSha: 'deadbeef',
             gotSha: 'cafebabe',
         });
-        const fail = buildUpdateFailure(err, { preferredSource: 'Codeberg', triedSources: ['GitHub', 'Codeberg'] });
+        const fail = buildUpdateFailure(err, { preferredSource: 'GitCode', triedSources: ['GitHub', 'GitCode'] });
         assert.strictEqual(fail.ok, false);
         assert.strictEqual(fail.code, 'checksum');
         assert.strictEqual(fail.expectedSha, 'deadbeef');
-        assert.ok(formatUpdateFailureMeta(fail).includes('Codeberg'));
+        assert.ok(formatUpdateFailureMeta(fail).includes('GitCode'));
         assert.ok(formatUpdateFailureMeta(fail).includes('校验失败'));
     });
 });

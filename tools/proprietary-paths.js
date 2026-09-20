@@ -59,12 +59,22 @@ const LOCAL_DEV_NEVER_PUBLISH = [
     'node_modules/.vite/',
 ];
 
+/**
+ * Bundled data under shared/ (i18n, TDP, glossaries, ASR/MT tables).
+ * Ships in Windows binaries via package.json build.files / extraFiles only —
+ * never publish as public source.
+ */
+const SHARED_DATA_NEVER_PUBLISH = [
+    'shared/',
+];
+
 /** Everything that must stay untracked on public remotes. */
 const NEVER_GIT_TRACK = [
     ...PROPRIETARY_ALGORITHM_SOURCES,
     ...PROPRIETARY_TESTS,
     ...PROPRIETARY_ARTIFACTS_AND_SECRETS,
     ...LOCAL_DEV_NEVER_PUBLISH,
+    ...SHARED_DATA_NEVER_PUBLISH,
 ];
 
 /** Paths that must be excluded from electron-builder asar (`!path`). */
@@ -86,6 +96,7 @@ module.exports = {
     PROPRIETARY_TESTS,
     PROPRIETARY_ARTIFACTS_AND_SECRETS,
     LOCAL_DEV_NEVER_PUBLISH,
+    SHARED_DATA_NEVER_PUBLISH,
     NEVER_GIT_TRACK,
     ASAR_EXCLUDE,
     RENDERER_DIST_FORBIDDEN,

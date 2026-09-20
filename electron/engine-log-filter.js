@@ -60,6 +60,22 @@ function friendlyEngineError(raw) {
     ) {
         return '操作已中止或请求超时，请重试';
     }
+    // Torch re-import poison after sys.modules strip (Qwen3 / SenseVoice).
+    if (isTorchEngineProcessPoisonError(msg)) {
+        if (msg.includes('Torch 已在本引擎进程中损坏') && !msg.includes('原始错误：')) {
+            return msg;
+        }
+        return (
+            'Torch 已在本引擎进程中损坏（重复加载）。'
+            + '请完全退出并重启 Transub 后重试；桌面端会尝试自动重启引擎。'
+            + (
+                /rocm|amd|radeon/i.test(msg)
+                    ? '若仍失败，请点「自动修复」补齐 ROCm PyTorch。'
+                    : '若仍失败，在设置中「补齐 CUDA PyTorch」。'
+            )
+            + ` 原始错误：${msg}`
+        );
+    }
     // torch\\lib\\cublas WinError 999 = DLL conflict with nvidia-cublas already
     // mapped for CT2 — not a missing Toolkit. Whisper does not need torch.
     if (
@@ -79,6 +95,16 @@ function friendlyEngineError(raw) {
             'Torch CUDA 库与引擎 cuBLAS 冲突（WinError 999）。'
             + 'Whisper/CTranslate2 不依赖 torch；请完全退出并重启 Transub 后重试。'
             + '若仍失败，将设置 → 推理设备改为 CPU。'
+            + ` 原始错误：${msg}`
+        );
+    }
+    if (
+        (lower.includes('winerror 1114') || lower.includes('[winerror 1114]'))
+        && (lower.includes('torch') || lower.includes('cublas'))
+    ) {
+        return (
+            'Torch CUDA 库加载失败（WinError 1114 · cublas）。'
+            + '请完全退出并重启 Transub 后重试；若仍失败，在设置中「补齐 CUDA PyTorch」。'
             + ` 原始错误：${msg}`
         );
     }
@@ -116,10 +142,26 @@ function friendlyEngineError(raw) {
     return msg;
 }
 
+/**
+ * True when the engine process poisoned torch (docstring / reimport) and needs a
+ * fresh Python process — soft GPU release cannot recover.
+ */
+function isTorchEngineProcessPoisonError(raw) {
+    const msg = String(raw || '');
+    const lower = msg.toLowerCase();
+    if (!msg) return false;
+    if (lower.includes('already has a docstring')) return true;
+    if (msg.includes('TORCH_REIMPORT_POISON')) return true;
+    if (msg.includes('Torch 已在本引擎进程中损坏')) return true;
+    if (/torch reimport poisoned/i.test(msg)) return true;
+    return false;
+}
+
 module.exports = {
     ENGINE_LOG_DROP_PATTERNS,
     stripAnsi,
     normalizeEngineLogLine,
     shouldDropEngineLogLine,
     friendlyEngineError,
+    isTorchEngineProcessPoisonError,
 };

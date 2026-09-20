@@ -46,6 +46,9 @@ function ensureRuntimeExtrasOffline(opts = {}) {
     const timeoutMs = Math.max(60_000, Number(opts.timeoutMs) || 1_800_000);
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const signal = opts.signal;
+    const preferredPipMirror = opts.preferredPipMirror != null
+        ? String(opts.preferredPipMirror)
+        : undefined;
     const args = [
         '-m', 'transub_engine', 'runtime', command,
         '--progress', 'jsonl',
@@ -64,6 +67,10 @@ function ensureRuntimeExtrasOffline(opts = {}) {
                 PYTHONUNBUFFERED: '1',
                 PYTHONIOENCODING: 'utf-8',
             };
+            try {
+                const { applyPreferredPipMirrorEnv } = require('./pip-mirrors');
+                extrasEnv = applyPreferredPipMirrorEnv(extrasEnv, preferredPipMirror);
+            } catch { /* optional */ }
             try {
                 extrasEnv = require('./temp-cleanup').applyEngineTempEnv(extrasEnv);
             } catch { /* optional */ }
@@ -184,6 +191,15 @@ function ensureAsrQwen3Offline(opts = {}) {
     });
 }
 
+function ensureTorchRocmOffline(opts = {}) {
+    return ensureRuntimeExtrasOffline({
+        ...opts,
+        command: 'ensure-torch-rocm',
+        label: 'ROCm PyTorch',
+        timeoutMs: Math.max(Number(opts.timeoutMs) || 0, 3_600_000),
+    });
+}
+
 module.exports = {
     modelIdsNeedWhisperExtras,
     modelIdsNeedSensevoiceExtras,
@@ -192,4 +208,5 @@ module.exports = {
     ensureAsrWhisperOffline,
     ensureAsrSensevoiceOffline,
     ensureAsrQwen3Offline,
+    ensureTorchRocmOffline,
 };

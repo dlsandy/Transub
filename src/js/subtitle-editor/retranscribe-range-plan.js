@@ -214,7 +214,17 @@
         const incoming = Array.isArray(newCues) ? newCues : [];
         let selectAt = 0;
         let replacedCount = 0;
+        let creditApi = null;
+        try {
+            creditApi = (typeof module !== 'undefined' && module.exports)
+                ? require('../subtitle-software-credit-core')
+                : (global && global.TransubSubtitleSoftwareCredit);
+        } catch { /* optional */ }
+        const isCreditCue = (cue) => creditApi?.isSoftwareCreditText?.(String(cue?.text ?? ''));
         if (mode === 'cue' && selectedIndex >= 0 && selectedIndex < target.length) {
+            if (isCreditCue(target[selectedIndex])) {
+                return { selectAt: selectedIndex, replacedCount: 0, skippedCredit: true };
+            }
             target.splice(selectedIndex, 1, ...incoming);
             selectAt = selectedIndex;
             replacedCount = 1;

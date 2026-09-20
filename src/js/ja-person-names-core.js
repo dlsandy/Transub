@@ -586,13 +586,9 @@
             if (/^[…⋅・.\s。！？!?～〜ー\-'"]*$/.test(cur)) cur = '';
         }
 
-        // Whole-cue pollution name with no honorific (玲奈 / 玲奈…) → drop
-        if (isNameOnlyDebris(cur) && !/(さん|くん|ちゃん|君|様|氏)/.test(raw)) {
-            if (!stripped.includes(cur.replace(/[…⋅・.。！？!?\s～〜\-ー'"]+/g, ''))) {
-                stripped.push(cur.replace(/[…⋅・.。！？!?\s～〜\-ー'"]+/g, '') || 'name_only');
-            }
-            cur = '';
-        }
+        // Keep single name-call cues (理沙 / 玲奈…). Whisper debris is the *loop*
+        // shape (≥2); wiping bare names drops real vocatives on JA source tracks
+        // (MFYD-185). MT still refuses to justify ZH from name-only via isNameOnlyDebris.
 
         return { text: cur, changed: cur !== raw.trim(), stripped };
     }
@@ -644,6 +640,21 @@
             .replace(/[…⋅・.。！？!?？\s～〜\-ー'"]+/g, '');
         if (!bare || Array.from(bare).length > 4) return false;
         return POLLUTION_NAME_STEMS.has(bare);
+    }
+
+    /**
+     * Whole-cue JA vocative that should survive ASR noise/hallucination delete
+     * (MFYD-185「理沙」). Requires ≥2 chars so single-mora pollution (舞) still
+     * goes through short-hallucination cleanup.
+     */
+    function isKeepablePersonNameVocative(text) {
+        const bare = String(text || '')
+            .trim()
+            .replace(/[…⋅・.。！？!?？\s～〜\-ー'"]+/g, '');
+        if (Array.from(bare).length < 2) return false;
+        return isNameOnlyDebris(text)
+            || LEXICON.kanji.has(bare)
+            || (LEXICON.kana.has(bare) && !LEXICON.ambiguousKana.has(bare));
     }
 
     function sourceStronglyJustifiesZhName(token, sourceText, options = {}) {
@@ -860,6 +871,7 @@
         sourceStronglyJustifiesZhName,
         isPollutionNameStem,
         isNameOnlyDebris,
+        isKeepablePersonNameVocative,
         isAmbiguousHiraganaForm,
     };
 }));

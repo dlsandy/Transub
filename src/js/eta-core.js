@@ -12,6 +12,9 @@
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function etaCoreFactory() {
     const DEFAULT_WALL_FACTOR = 0.35;
     const PRE_TRANSCRIBE_FLOOR_SEC = 25;
+    const MIN_PROGRESS_ETA_ELAPSED_SEC = 12;
+    const PROGRESS_STALL_SEC = 45;
+    const HIGH_PROGRESS_TAIL_FLOOR = 0.35;
 
     function median(nums) {
         const list = (Array.isArray(nums) ? nums : [])
@@ -63,14 +66,62 @@
         return Math.min(99, Math.round(((i - 1) + itemPct / 100) / t * 100));
     }
 
+    function pendingItemsMediaSec(items, activePath) {
+        const activeKey = String(activePath || '').replace(/\//g, '\\').toLowerCase();
+        let pendingMediaSec = 0;
+        let preFloor = 0;
+        for (const item of items) {
+            if (!item) continue;
+            const st = String(item.status || '');
+            if (st === 'done' || st === 'skipped' || st === 'failed' || st === 'error') continue;
+            const key = String(item.path || '').replace(/\//g, '\\').toLowerCase();
+            if (activeKey && key === activeKey) continue;
+            const dur = Math.max(0, Number(item.duration) || 0);
+            pendingMediaSec += dur;
+            preFloor += Math.min(PRE_TRANSCRIBE_FLOOR_SEC, 15);
+        }
+        return { pendingMediaSec, preFloor };
+    }
+
+    function estimateActiveItemRemainMediaSec(opts = {}) {
+        const stage = String(opts.itemStage || '');
+        const dur = Math.max(0, Number(opts.videoTotalSec) || 0);
+        const cur = Math.max(0, Number(opts.videoCurrentSec) || 0);
+        const itemProgress = Math.max(0, Math.min(99, Number(opts.itemProgress) || 0));
+
+        if (stage === 'transcribe' || stage === 'source_cleanup' || stage === 'semantic_repair') {
+            const total = dur || cur;
+            return Math.max(0, total - cur);
+        }
+
+        // Post-ASR bands (translate / polish / QC): timeline no longer tracks media seconds.
+        const totalDur = dur || cur;
+        if (itemProgress >= 8) {
+            const postShare = stage === 'translate' ? 0.42
+                : (stage === 'qc_fix' ? 0.08 : (stage === 'cleanup' ? 0.12 : 0.18));
+            return totalDur * postShare * Math.max(0, (100 - itemProgress) / 100);
+        }
+
+        if (stage === 'translate') return totalDur * 0.45;
+        if (stage === 'qc_fix') return totalDur * 0.08;
+        if (stage === 'cleanup' || stage === 'save') return totalDur * 0.12;
+        if (stage === 'starting' || stage === 'vad' || stage === 'model' || !stage) {
+            return totalDur > 0 ? totalDur : 0;
+        }
+        return totalDur * Math.max(0, (100 - itemProgress) / 100);
+    }
+
     /**
      * Estimate remaining wall seconds for the rest of the batch.
      * @param {object} opts
-     * @param {Array<{duration?:number,status?:string,path?:string}>} opts.items
+     * @param {Array<{duration?:number,status?:string,path?:string,startedAt?:number}>} opts.items
      * @param {string} [opts.activePath]
      * @param {number} [opts.videoCurrentSec]
      * @param {number} [opts.videoTotalSec]
      * @param {string} [opts.itemStage]
+     * @param {number} [opts.itemProgress] job-wide 0–100 for active item
+     * @param {number} [opts.activeStartedAt] ms timestamp
+     * @param {number} [opts.lastProgressBumpAt] ms timestamp of last itemProgress increase
      * @param {number} [opts.rate] wallSec per mediaSec
      */
     function estimateEtaSec(opts = {}) {
@@ -78,35 +129,60 @@
         const wallFactor = Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_WALL_FACTOR;
         const items = Array.isArray(opts.items) ? opts.items : [];
         const activePath = String(opts.activePath || '').replace(/\//g, '\\').toLowerCase();
-        const stage = String(opts.itemStage || '');
-        let remainingMediaSec = 0;
-        let preFloor = 0;
+        const itemProgress = Math.max(0, Math.min(99, Number(opts.itemProgress) || 0));
+        const activeStartedAt = Number(opts.activeStartedAt) || 0;
+        const lastProgressBumpAt = Number(opts.lastProgressBumpAt) || 0;
+        const itemStage = String(opts.itemStage || '');
+        const { pendingMediaSec, preFloor } = pendingItemsMediaSec(items, activePath);
+        const pendingWall = pendingMediaSec * wallFactor + preFloor;
 
-        for (const item of items) {
-            if (!item) continue;
-            const st = String(item.status || '');
-            if (st === 'done' || st === 'skipped' || st === 'failed' || st === 'error') continue;
-            const dur = Math.max(0, Number(item.duration) || 0);
-            const key = String(item.path || '').replace(/\//g, '\\').toLowerCase();
-            const isActive = activePath && key === activePath;
-            if (isActive) {
-                const total = Math.max(0, Number(opts.videoTotalSec) || dur);
-                const cur = Math.max(0, Number(opts.videoCurrentSec) || 0);
-                if (stage === 'transcribe' || stage === 'save') {
-                    remainingMediaSec += Math.max(0, total - cur);
+        let activeRemainWall = 0;
+        let activePreFloor = 0;
+        const activeItem = items.find(
+            (it) => String(it?.path || '').replace(/\//g, '\\').toLowerCase() === activePath,
+        );
+
+        if (activePath && activeItem) {
+            const st = String(activeItem.status || '');
+            if (st !== 'done' && st !== 'skipped' && st !== 'failed' && st !== 'error') {
+                const elapsedSec = activeStartedAt > 0
+                    ? Math.max(0, (Date.now() - activeStartedAt) / 1000)
+                    : 0;
+                const tailMedia = estimateActiveItemRemainMediaSec({
+                    itemStage,
+                    videoCurrentSec: opts.videoCurrentSec,
+                    videoTotalSec: opts.videoTotalSec || activeItem.duration,
+                    itemProgress,
+                });
+                const tailWall = tailMedia * wallFactor;
+                const stallSec = lastProgressBumpAt > 0
+                    ? Math.max(0, (Date.now() - lastProgressBumpAt) / 1000)
+                    : 0;
+                const postAsrStage = itemStage === 'translate' || itemStage === 'qc_fix'
+                    || itemStage === 'cleanup' || itemStage === 'save';
+
+                if (itemProgress >= 8 && elapsedSec >= MIN_PROGRESS_ETA_ELAPSED_SEC) {
+                    activeRemainWall = (elapsedSec / itemProgress) * (100 - itemProgress);
                 } else {
-                    remainingMediaSec += total > 0 ? total : dur;
-                    if (stage === 'starting' || stage === 'vad' || stage === 'model' || !stage) {
-                        preFloor += PRE_TRANSCRIBE_FLOOR_SEC;
+                    activeRemainWall = tailWall;
+                    if (itemStage === 'starting' || itemStage === 'vad' || itemStage === 'model' || !itemStage) {
+                        activePreFloor = PRE_TRANSCRIBE_FLOOR_SEC;
                     }
                 }
-            } else if (st === 'pending' || st === 'ready' || st === 'running' || st === 'probing' || !st) {
-                remainingMediaSec += dur;
-                preFloor += Math.min(PRE_TRANSCRIBE_FLOOR_SEC, 15);
+
+                if (postAsrStage && itemProgress >= 70) {
+                    activeRemainWall = Math.min(
+                        activeRemainWall,
+                        Math.max(tailWall, HIGH_PROGRESS_TAIL_FLOOR * tailWall + 15),
+                    );
+                }
+                if (postAsrStage && stallSec >= PROGRESS_STALL_SEC) {
+                    activeRemainWall = Math.max(activeRemainWall, tailWall);
+                }
             }
         }
 
-        const eta = remainingMediaSec * wallFactor + preFloor;
+        const eta = activeRemainWall + activePreFloor + pendingWall;
         return Math.max(0, Math.round(eta));
     }
 
@@ -122,7 +198,7 @@
     }
 
     function buildTrayTooltip({ batchPct, index, total, etaText } = {}) {
-        const parts = ['Transub 字幕生成'];
+        const parts = ['Transub 字幕工厂'];
         const i = Number(index) || 0;
         const t = Number(total) || 0;
         const pct = Number(batchPct);
@@ -139,6 +215,7 @@
     return {
         DEFAULT_WALL_FACTOR,
         PRE_TRANSCRIBE_FLOOR_SEC,
+        MIN_PROGRESS_ETA_ELAPSED_SEC,
         median,
         rateFromHistory,
         batchProgressPct,

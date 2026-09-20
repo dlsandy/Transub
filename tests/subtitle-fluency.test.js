@@ -127,6 +127,27 @@ function testHallucinationCleanup() {
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 1600, text: 'おわり' }));
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 1600, text: 'ユーモア' }));
     assert.ok(isHallucinationCue({ startMs: 0, endMs: 1500, text: '◆ ◆ ◆ ◆ ◆ ◆' }));
+    // Short JA dialogue must survive (EBWH-361 綺麗 / ほら / でも / ここ)
+    assert.ok(!isHallucinationCue({ startMs: 0, endMs: 600, text: '綺麗' }));
+    assert.ok(!isHallucinationCue({ startMs: 0, endMs: 600, text: 'ほら' }));
+    assert.ok(!isHallucinationCue({ startMs: 0, endMs: 600, text: 'でも' }));
+    assert.ok(!isHallucinationCue({ startMs: 0, endMs: 600, text: 'ここ' }));
+    // 2-mora ASR crumbs still drop
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 500, text: 'すご' }));
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 500, text: 'しよ' }));
+    // Framed lexical triple-rep is not Whisper debris (PRED-898)
+    assert.ok(!isHallucinationCue({ startMs: 0, endMs: 1200, text: 'ああ、いるいるいる' }));
+    // Pure token×3 still counts as heavy-rep hallucination
+    assert.ok(isHallucinationCue({ startMs: 0, endMs: 900, text: 'イキイキイキ' }));
+    // Software credit must not be treated as URL hallucination
+    assert.ok(!isHallucinationCue({
+        startMs: 0,
+        endMs: 2000,
+        text: '字幕由 Transub Pro 生成 [ www.transub.cc ]',
+    }));
+    assert.ok(!require('../src/js/subtitle-fluency-core').looksLikeWeirdCueText(
+        '字幕由 Transub Pro 生成 [ www.transub.cc ]',
+    ));
     const { isSymbolOnlyCue, isSoundEffectCue } = require('../src/js/subtitle-fluency-core');
     assert.ok(isSymbolOnlyCue('◆ ◆ ◆ ◆ ◆ ◆'));
     assert.ok(isSoundEffectCue('◆ ◆ ◆'));
@@ -186,6 +207,73 @@ function testCompressRepetition() {
     const g = compressRepetitionInText('好的好的');
     assert.ok(!g.changed, '少于 3 次不压缩');
 
+    // URL / software-credit: never compress www → ww！
+    const credit = '字幕由 Transub Pro 生成 [ www.transub.cc ]';
+    const creditCmp = compressRepetitionInText(credit);
+    assert.ok(!creditCmp.changed, creditCmp.text);
+    assert.strictEqual(creditCmp.text, credit);
+    const wwwOnly = compressRepetitionInText('www.example.com');
+    assert.ok(!wwwOnly.changed, wwwOnly.text);
+
+    // English: do not treat short particle + longer word as stacked repetition
+    for (const sample of [
+        'so sorry',
+        'I am so sorry',
+        'to tomorrow',
+        'no nobody',
+        'but butter',
+        'then strength',
+        'or order',
+        'color or order',
+        'lor or order',
+        'in inside',
+        'at attack',
+        'on only',
+        'me message',
+        'be because',
+    ]) {
+        const bad = compressRepetitionInText(sample, {
+            minRepeats: 2,
+            compressSingleChar: true,
+            addExclaim: true,
+        });
+        assert.strictEqual(bad.text, sample, `must keep intact: ${sample} → ${bad.text}`);
+    }
+    // Intentional spaced doubles still compress
+    const orOr = compressRepetitionInText('or or or or', {
+        minRepeats: 2,
+        compressSingleChar: true,
+        addExclaim: true,
+    });
+    assert.ok(orOr.changed, orOr.text);
+    assert.ok(!/！rder|o！r/.test(orOr.text), orOr.text);
+
+    const haHa = compressRepetitionInText('ha ha ha ha', {
+        minRepeats: 2,
+        compressSingleChar: true,
+        addExclaim: true,
+    });
+    assert.ok(haHa.changed, haHa.text);
+    assert.ok(/ha/i.test(haHa.text));
+
+    const {
+        collapseSoftDoublePhrase,
+    } = require('../src/js/subtitle-fluency-core');
+    const softA = collapseSoftDoublePhrase('会融化的，会融化的');
+    assert.ok(softA.changed);
+    assert.strictEqual(softA.text, '会融化的');
+    const softB = collapseSoftDoublePhrase('亏了光理亏了光理');
+    assert.ok(softB.changed);
+    assert.strictEqual(softB.text, '亏了光理');
+    const softMid = collapseSoftDoublePhrase('她真的是个非常亏了光理亏了光理呢');
+    assert.ok(softMid.changed);
+    assert.strictEqual(softMid.text, '她真的是个非常亏了光理呢');
+    const softName = collapseSoftDoublePhrase('风户濑吉风户濑吉酱？');
+    assert.ok(softName.changed);
+    assert.strictEqual(softName.text, '风户濑吉酱？');
+    const softKeep = collapseSoftDoublePhrase('好的好的');
+    assert.ok(!softKeep.changed, 'exactly two 好的 without sep stays for compress path');
+
     const legacy = compressRepetitionInText('好的…好的！');
     assert.ok(legacy.changed);
     assert.strictEqual(legacy.text, '好的好的！');
@@ -229,11 +317,29 @@ function testSimplifyViewingPunctuation() {
     assert.ok(ell.changed);
     assert.strictEqual(ell.text, '等等 好的');
 
+    // Pure MT blank stubs must survive clear/light (otherwise SRT round-trip drops cues).
+    const stub = simplifyViewingPunctuationInText('…', { level: 'clear' });
+    assert.strictEqual(stub.text, '…');
+    const stubBatch = simplifyViewingPunctuationInCues([
+        { startMs: 0, endMs: 1000, text: '…' },
+        { startMs: 1000, endMs: 2000, text: '……' },
+        { startMs: 2000, endMs: 3000, text: '走吧。' },
+    ], { level: 'clear' });
+    assert.strictEqual(stubBatch.cues[0].text, '…');
+    assert.strictEqual(stubBatch.cues[1].text, '…');
+    assert.strictEqual(stubBatch.cues[2].text, '走吧');
+
     const c = simplifyViewingPunctuationInText('什么？');
     assert.ok(!c.changed);
 
     const off = simplifyViewingPunctuationInText('你好。', { level: 'off' });
     assert.ok(!off.changed);
+
+    // Software credit URL dots must survive viewing punctuation cleanup
+    const credit = '字幕由 Transub Pro 生成 [ www.transub.cc ]';
+    const creditView = simplifyViewingPunctuationInText(credit, { level: 'light' });
+    assert.ok(!creditView.changed, creditView.text);
+    assert.strictEqual(creditView.text, credit);
 
     const batch = simplifyViewingPunctuationInCues([
         { startMs: 0, endMs: 1000, text: '走吧。' },
@@ -425,13 +531,15 @@ function testDropPureInterjectionPairs() {
         { startMs: 4900, endMs: 5400, text: '啊……' },
     ];
     const dropped = dropPureInterjectionPairs(zh, ja);
-    // 4 classic fillers + はい/そう acknowledgments; あっ…いい kept (semantic いい)
-    assert.strictEqual(dropped.dropped, 6);
-    assert.strictEqual(dropped.zhCues.length, 3);
-    assert.strictEqual(dropped.jaCues.length, 3);
-    assert.strictEqual(dropped.zhCues[0].text, '嗯，没问题吧？');
-    assert.strictEqual(dropped.zhCues[1].text, '等一下');
-    assert.strictEqual(dropped.zhCues[2].text, '啊……');
+    // Classic fillers + はい/そう; leading うん kept when next cue is substantive (context bridge).
+    // あっ…いい kept (semantic いい)
+    assert.strictEqual(dropped.dropped, 5);
+    assert.strictEqual(dropped.zhCues.length, 4);
+    assert.strictEqual(dropped.jaCues.length, 4);
+    assert.ok(dropped.zhCues.some((c) => /没问题/.test(c.text)));
+    assert.ok(dropped.zhCues.some((c) => c.text === '等一下'));
+    assert.ok(dropped.jaCues.some((c) => c.text === 'うん'));
+    assert.ok(dropped.jaCues.some((c) => /いい/.test(c.text)));
     assert.ok(summarizePureInterjectionDrop(2).includes('清除'));
 
     const timed = dropPureInterjectionPairs(
@@ -497,6 +605,143 @@ function testDropPureInterjectionPairs() {
     assert.strictEqual(bi.cues[0].text, '等一下\nちょっと待って');
 }
 
+function testPreserveSubstantiveDialogue() {
+    const {
+        dropPureInterjectionPairs,
+        removeNoiseFromCues,
+        shouldPreserveSubstantiveDialogueCue,
+        isHallucinationCue,
+    } = require('../src/js/subtitle-fluency-core');
+
+    const jaCue = { startMs: 10000, endMs: 11500, text: 'だめ、やめて' };
+    const zhCue = { startMs: 10000, endMs: 11500, text: '不要，停下' };
+    assert.ok(shouldPreserveSubstantiveDialogueCue(jaCue, jaCue.text));
+    assert.ok(shouldPreserveSubstantiveDialogueCue(zhCue, zhCue.text));
+
+    const kept = dropPureInterjectionPairs([zhCue], [jaCue]);
+    assert.strictEqual(kept.dropped, 0);
+    assert.strictEqual(kept.zhCues.length, 1);
+    assert.strictEqual(kept.jaCues.length, 1);
+
+    const moanJa = { startMs: 0, endMs: 2200, text: 'はぁ…' };
+    const moanZh = { startMs: 0, endMs: 2200, text: '哈啊' };
+    const moanDrop = dropPureInterjectionPairs([moanZh], [moanJa]);
+    assert.strictEqual(moanDrop.dropped, 1);
+
+    const noise = removeNoiseFromCues([jaCue], {
+        removeHallucinations: true,
+        removeFragments: true,
+    });
+    assert.strictEqual(noise.stats.removed, 0);
+    assert.strictEqual(noise.cues.length, 1);
+
+    assert.ok(!isHallucinationCue({ startMs: 10000, endMs: 11500, text: '不要' }));
+}
+
+function testIntlFillerClearByLanguage() {
+    const {
+        isPureDiscourseEn,
+        isPureOnomatopoeiaEn,
+        isPureInterjectionEn,
+        isPureDiscourseKo,
+        isPureOnomatopoeiaKo,
+        isPureInterjectionKo,
+        isPureDiscourseJa,
+        isPureOnomatopoeiaJa,
+        isPureDiscourseZh,
+        isPureOnomatopoeiaZh,
+        isPureInterjectionForLang,
+        softenPureFillerInCues,
+        dropPureInterjectionPairs,
+        normalizeFillerLang,
+    } = require('../src/js/subtitle-fluency-core');
+
+    assert.strictEqual(normalizeFillerLang('en-US'), 'en');
+    assert.strictEqual(normalizeFillerLang('ko'), 'ko');
+    assert.strictEqual(normalizeFillerLang('zh-Hans'), 'zh');
+
+    assert.ok(isPureDiscourseEn('Okay'));
+    assert.ok(isPureDiscourseEn('yeah'));
+    assert.ok(isPureDiscourseEn('mm-hmm'));
+    assert.ok(isPureOnomatopoeiaEn('haha'));
+    assert.ok(isPureOnomatopoeiaEn('bang'));
+    assert.ok(isPureOnomatopoeiaEn('ugh'));
+    assert.ok(isPureInterjectionEn('oh'));
+    assert.ok(!isPureInterjectionEn('sorry'));
+    assert.ok(!isPureInterjectionEn('Wait a second'));
+    assert.ok(!isPureDiscourseEn('hello'));
+
+    assert.ok(isPureDiscourseKo('응'));
+    assert.ok(isPureDiscourseKo('네'));
+    assert.ok(isPureDiscourseKo('그래'));
+    assert.ok(isPureOnomatopoeiaKo('하하하'));
+    assert.ok(isPureOnomatopoeiaKo('쿵'));
+    assert.ok(isPureInterjectionKo('어'));
+    assert.ok(!isPureInterjectionKo('미안해'));
+    assert.ok(!isPureInterjectionKo('잠깐만'));
+
+    assert.ok(isPureDiscourseJa('そっか'));
+    assert.ok(isPureDiscourseJa('まあ'));
+    assert.ok(isPureOnomatopoeiaJa('きゃっ'));
+    assert.ok(isPureOnomatopoeiaJa('どきどき'));
+    assert.ok(isPureDiscourseZh('唉'));
+    assert.ok(isPureDiscourseZh('好吧'));
+    assert.ok(isPureOnomatopoeiaZh('砰'));
+    assert.ok(isPureOnomatopoeiaZh('嘿嘿'));
+
+    assert.ok(isPureInterjectionForLang('Okay.', 'en'));
+    assert.ok(isPureInterjectionForLang('응응', 'ko'));
+
+    const enSoft = softenPureFillerInCues(
+        [{ startMs: 0, endMs: 800, text: 'hahahaha' }],
+        { kind: 'onomatopoeia', lang: 'en' },
+    );
+    assert.ok(enSoft.stats.cueTouched >= 1);
+    assert.ok(/ha/i.test(enSoft.cues[0].text));
+    assert.ok(enSoft.cues[0].text.length < 'hahahaha'.length);
+
+    const enDrop = dropPureInterjectionPairs(
+        [
+            { startMs: 0, endMs: 400, text: 'Okay' },
+            { startMs: 500, endMs: 1200, text: 'Wait a second' },
+            { startMs: 1300, endMs: 1800, text: 'haha' },
+            { startMs: 1900, endMs: 2400, text: 'bang' },
+        ],
+        [
+            { startMs: 0, endMs: 400, text: 'はい' },
+            { startMs: 500, endMs: 1200, text: 'ちょっと待って' },
+            { startMs: 1300, endMs: 1800, text: 'あはは' },
+            { startMs: 1900, endMs: 2400, text: 'ドンッ' },
+        ],
+        { targetLang: 'en', sourceLang: 'ja' },
+    );
+    // Discourse bridge may keep leading ack before real dialogue; moan/SFX pairs must clear.
+    assert.ok(enDrop.dropped >= 2);
+    assert.ok(enDrop.zhCues.some((c) => /Wait/.test(c.text)));
+    assert.ok(!enDrop.zhCues.some((c) => /^haha$/i.test(c.text)));
+    assert.ok(!enDrop.zhCues.some((c) => /^bang$/i.test(c.text)));
+
+    const koDrop = dropPureInterjectionPairs(
+        [
+            { startMs: 0, endMs: 400, text: '네' },
+            { startMs: 500, endMs: 1200, text: '잠깐만' },
+            { startMs: 1300, endMs: 1800, text: '하하' },
+            { startMs: 1900, endMs: 2400, text: '쿵' },
+        ],
+        [
+            { startMs: 0, endMs: 400, text: 'はい' },
+            { startMs: 500, endMs: 1200, text: 'ちょっと待って' },
+            { startMs: 1300, endMs: 1800, text: 'あはは' },
+            { startMs: 1900, endMs: 2400, text: 'ドンッ' },
+        ],
+        { targetLang: 'ko', sourceLang: 'ja' },
+    );
+    assert.ok(koDrop.dropped >= 2);
+    assert.ok(koDrop.zhCues.some((c) => /잠깐/.test(c.text)));
+    assert.ok(!koDrop.zhCues.some((c) => c.text === '하하'));
+    assert.ok(!koDrop.zhCues.some((c) => c.text === '쿵'));
+}
+
 describe("subtitle-fluency", () => {
     it("repetition and stutter", () => {
         testRepetitionAndStutter();
@@ -531,7 +776,13 @@ describe("subtitle-fluency", () => {
     it("drop pure interjection pairs", () => {
         testDropPureInterjectionPairs();
     });
+    it("clears fillers by language features", () => {
+        testIntlFillerClearByLanguage();
+    });
     it("remove aligned noise from cue pairs", () => {
         testRemoveAlignedNoiseFromCuePairs();
+    });
+    it("preserves substantive dialogue from filler/noise cleanup", () => {
+        testPreserveSubstantiveDialogue();
     });
 });

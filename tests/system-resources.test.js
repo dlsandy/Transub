@@ -22,6 +22,11 @@ describe('system-resources', () => {
         });
         assert.strictEqual(parseNvidiaCsvLine(''), null);
         assert.strictEqual(parseNvidiaCsvLine('x, y, z'), null);
+        assert.deepStrictEqual(parseNvidiaCsvLine('19 %, 7587 MiB, 10240 MiB'), {
+            utilPct: 19,
+            memUsedMiB: 7587,
+            memTotalMiB: 10240,
+        });
     });
 
     it('formats gib helpers', () => {

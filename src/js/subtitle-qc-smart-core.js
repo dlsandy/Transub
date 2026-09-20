@@ -35,6 +35,7 @@
         '保持每条 index 不变，不要合并或拆分，不要改时间轴，不要编造剧情。',
         '保留句末语气词；勿把有语义对白压成单字语气词；勿擅自删除纯拟声条目。',
         '改动宜小；若原文语义已清楚且通顺无怪字，可原样返回。',
+        '每条只输出最终字幕正文，禁止使用「原文 -> 改写」或箭头对照格式。',
     ].join('');
 
     /**
@@ -69,11 +70,34 @@
      */
     function mergeWeirdTextIssues(cues, issues) {
         const list = Array.isArray(cues) ? cues : [];
-        const out = Array.isArray(issues) ? issues.map((it) => ({
-            ...it,
-            types: Array.isArray(it?.types) ? it.types.slice() : [],
-            messages: Array.isArray(it?.messages) ? it.messages.slice() : [],
-        })) : [];
+        let creditApi = null;
+        try {
+            creditApi = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-software-credit-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+        } catch (_) { /* optional */ }
+        const out = [];
+        for (const it of Array.isArray(issues) ? issues : []) {
+            const idx = Number(it?.index);
+            const cueText = Number.isInteger(idx) && idx >= 0 ? String(list[idx]?.text ?? '') : '';
+            // Drop fluency/weird flags on software-credit rows (must not enter LLM polish).
+            if (creditApi?.isSoftwareCreditText?.(cueText)) {
+                const types = (Array.isArray(it?.types) ? it.types : [])
+                    .filter((t) => t !== 'fluency' && t !== 'weird' && t !== 'repetition');
+                if (!types.length) continue;
+                out.push({
+                    ...it,
+                    types,
+                    messages: Array.isArray(it?.messages) ? it.messages.slice() : [],
+                });
+                continue;
+            }
+            out.push({
+                ...it,
+                types: Array.isArray(it?.types) ? it.types.slice() : [],
+                messages: Array.isArray(it?.messages) ? it.messages.slice() : [],
+            });
+        }
         const byIndex = new Map();
         for (const issue of out) {
             const idx = Number(issue?.index);
@@ -81,6 +105,7 @@
         }
         for (let i = 0; i < list.length; i += 1) {
             const text = String(list[i]?.text ?? '');
+            if (creditApi?.isSoftwareCreditText?.(text)) continue;
             if (!looksLikeWeirdCueText(text)) continue;
             const existing = byIndex.get(i);
             if (existing) {
@@ -148,6 +173,30 @@
         }
         scored.sort((a, b) => b.score - a.score || a.index - b.index);
         return scored.slice(0, max);
+    }
+
+    /**
+     * Drop targets whose cue text is a Transub software-credit watermark.
+     * @param {object[]} cues
+     * @param {{ index: number }[]} targets
+     * @returns {{ index: number }[]}
+     */
+    function filterSoftwareCreditTargets(cues, targets) {
+        let creditApi = null;
+        try {
+            creditApi = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-software-credit-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+        } catch (_) { /* optional */ }
+        if (!creditApi?.isSoftwareCreditText) {
+            return Array.isArray(targets) ? targets.slice() : [];
+        }
+        const list = Array.isArray(cues) ? cues : [];
+        return (Array.isArray(targets) ? targets : []).filter((t) => {
+            const idx = Number(t?.index);
+            if (!Number.isInteger(idx) || idx < 0 || idx >= list.length) return true;
+            return !creditApi.isSoftwareCreditText(String(list[idx]?.text ?? ''));
+        });
     }
 
     /**
@@ -602,14 +651,47 @@
             const idx = Number(u?.index);
             if (!Number.isInteger(idx) || !next[idx]) continue;
             if (allow && !allow.has(idx)) continue;
-            const after = String(u?.text ?? '');
+            let after = String(u?.text ?? '');
+            // Models sometimes return 「原文 -> 改写」; keep the revised side only.
+            after = collapseArrowEditArtifact(after).text;
             const before = String(next[idx].text ?? '');
             if (after === before) continue;
+            if (!String(after).trim()) continue;
             next[idx] = { ...next[idx], text: after };
             changed += 1;
             changedIndexes.push(idx);
         }
         return { cues: next, changed, changedIndexes };
+    }
+
+    /**
+     * Collapse LLM diff-style「旧句 -> 新句」artifacts into the revised text.
+     * Does NOT touch glossary dumps like「メンエス->男士按摩店」(leave for leak strip).
+     */
+    function collapseArrowEditArtifact(text) {
+        const raw = String(text ?? '');
+        const cur = raw.trim();
+        if (!cur || (!cur.includes('->') && !cur.includes('→'))) {
+            return { text: raw, changed: false };
+        }
+        // Glossary / prompt dumps keep arrow form for leak detectors
+        if (/[ぁ-んァ-ン]/.test(cur) || /[#＃]|勿译|术语表|__GLOSS/i.test(cur)) {
+            return { text: raw, changed: false };
+        }
+        const parts = cur.split(/\s*(?:->|→)\s*/u).map((p) => p.trim()).filter(Boolean);
+        if (parts.length < 2) {
+            const only = cur.replace(/\s*(?:->|→)\s*/gu, '').trim();
+            return { text: only || '…', changed: only !== cur };
+        }
+        const left = parts[0];
+        const right = parts[parts.length - 1];
+        const leftCjk = (left.match(/[\u4e00-\u9fff]/g) || []).length;
+        const rightCjk = (right.match(/[\u4e00-\u9fff]/g) || []).length;
+        // Require ZH on both sides (polish rewrite), not term->gloss
+        if (leftCjk < 1 || rightCjk < 1) {
+            return { text: raw, changed: false };
+        }
+        return { text: right, changed: right !== cur };
     }
 
     function buildQcSmartReconstructOptions(options = {}) {
@@ -1152,6 +1234,50 @@
         return src;
     }
 
+    /**
+     * QC 局部重转写写入目标：有独立原文对照轨时只写原文（ASR），禁止把日文塞进译文。
+     * @param {{
+     *   path?: string, filePath?: string, subtitlePath?: string,
+     *   pairPath?: string, sourceSubtitlePath?: string,
+     * }} [input]
+     * @returns {{ writePath: string, writeKind: 'source'|'self', keepTargetText: boolean, confidencePath: string }}
+     */
+    function resolveQcRetranscribeWriteTarget(input = {}) {
+        const zhPath = String(
+            input.path || input.filePath || input.subtitlePath || '',
+        ).trim();
+        const pairPath = String(input.pairPath || '').trim();
+        if (pairPath && zhPath && normPathKey(pairPath) !== normPathKey(zhPath)) {
+            return {
+                writePath: pairPath,
+                writeKind: 'source',
+                keepTargetText: true,
+                confidencePath: pairPath,
+            };
+        }
+        const sourcePath = String(input.sourceSubtitlePath || '').trim();
+        if (
+            sourcePath
+            && zhPath
+            && normPathKey(sourcePath) !== normPathKey(zhPath)
+            && (/\.transcribe\./i.test(sourcePath) || /[/\\]source[/\\]/i.test(sourcePath))
+        ) {
+            return {
+                writePath: sourcePath,
+                writeKind: 'source',
+                keepTargetText: true,
+                confidencePath: sourcePath,
+            };
+        }
+        const selfPath = zhPath || String(input.subtitlePath || input.path || '').trim();
+        return {
+            writePath: selfPath,
+            writeKind: 'self',
+            keepTargetText: false,
+            confidencePath: selfPath || sourcePath,
+        };
+    }
+
     return {
         DEFAULT_MAX_SMART_CUES,
         DEFAULT_NEIGHBOR_RADIUS,
@@ -1167,6 +1293,7 @@
         QC_SEMANTIC_NOTE,
         looksLikeWeirdCueText,
         mergeWeirdTextIssues,
+        filterSoftwareCreditTargets,
         isBlankOrEllipsisZh,
         collectBlankEllipsisIndexes,
         mergeBlankEllipsisIssues,
@@ -1178,6 +1305,7 @@
         applyQcSemanticSuggestions,
         summarizeQcSemanticPlan,
         resolveQcSemanticPairPath,
+        resolveQcRetranscribeWriteTarget,
         buildQcRetranscribeRanges,
         planLowConfidenceRetranscribeRanges,
         planMergedQcRetranscribeRanges,
@@ -1197,6 +1325,7 @@
         applyQcLlmSplitResults,
         summarizeQcLlmSplitPlan,
         applyQcSmartUpdates,
+        collapseArrowEditArtifact,
         buildQcSmartReconstructOptions,
         summarizeQcSmartPlan,
         cueEndMs,

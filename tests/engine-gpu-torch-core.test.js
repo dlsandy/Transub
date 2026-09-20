@@ -24,6 +24,18 @@ describe('engine-gpu-torch-core', () => {
         assert.equal(api.shouldBlockBatchOnTorchMismatch(probe, 'whisper-large-v3'), false);
     });
 
+    it('treats unsuitable Blackwell torch as mismatch', () => {
+        assert.equal(api.isTorchCudaMismatch({
+            needsTorchCuda128: true,
+            torchCudaSuitable: false,
+        }), true);
+        assert.equal(api.isTorchCudaMismatch({
+            needsTorchCuda128: true,
+            torchCudaSuitable: true,
+            torchCudaMismatch: false,
+        }), false);
+    });
+
     it('builds user-facing mismatch copy', () => {
         const msg = api.buildTorchMismatchMessage({
             torchCudaVariant: 'cu130',
@@ -32,5 +44,23 @@ describe('engine-gpu-torch-core', () => {
         }, 'qwen3-asr-0.6b');
         assert.match(msg, /cu130/);
         assert.match(msg, /llama-server CUDA 无关/);
+    });
+
+    it('does not treat AMD ROCm as CUDA torch mismatch', () => {
+        assert.equal(api.isTorchCudaMismatch({
+            hasRocm: true,
+            hasCuda: false,
+            torchCudaMismatch: true,
+        }), false);
+        assert.equal(api.needsTorchRocmForAsr({
+            hasRocm: true,
+            hasCuda: false,
+            torchRocm: false,
+        }, 'qwen3-asr-1.7b-ja-anime-galgame'), true);
+        assert.equal(api.shouldBlockBatchOnTorchMismatch({
+            hasRocm: true,
+            hasCuda: false,
+            torchRocm: false,
+        }, 'qwen3-asr-1.7b-ja-anime-galgame'), true);
     });
 });

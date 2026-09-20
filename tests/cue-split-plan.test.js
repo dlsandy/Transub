@@ -62,4 +62,17 @@ describe('cue-split-plan', () => {
         const msg = plan.connectedSplitGuard('chars', '連続書きのテキストですよ', split, () => []);
         assert.ok(msg);
     });
+
+    it('merges multiple lines into one', () => {
+        const zh = plan.planMergeCueLines({ text: '你好\n世界' }, { splitApi: split });
+        assert.ok(!zh.error);
+        assert.strictEqual(zh.text, '你好世界');
+
+        const en = plan.planMergeCueLines({ text: 'hello\nworld' }, { splitApi: split });
+        assert.ok(!en.error);
+        assert.strictEqual(en.text, 'hello world');
+
+        const single = plan.planMergeCueLines({ text: '单行' }, { splitApi: split });
+        assert.ok(single.error);
+    });
 });

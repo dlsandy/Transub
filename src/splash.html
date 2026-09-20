@@ -3,13 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transub</title>
+    <title>Transub 字幕工厂</title>
     <style>
+        :root {
+            --splash-bg: #f9fafb;
+            --splash-fg: #1f2937;
+            --splash-muted: #6b7280;
+            --splash-ring: #e5e7eb;
+            --splash-accent: #c30d23;
+            --splash-shadow: rgba(15, 23, 42, 0.08);
+        }
+        html.main-theme-dark {
+            color-scheme: dark;
+            --splash-bg: #141214;
+            --splash-fg: #f3efef;
+            --splash-muted: #a39e9f;
+            --splash-ring: #2a2728;
+            --splash-accent: #e85a6a;
+            --splash-shadow: rgba(0, 0, 0, 0.35);
+        }
         html, body {
             margin: 0;
             height: 100%;
-            background: #f9fafb;
-            color: #1f2937;
+            background: var(--splash-bg);
+            color: var(--splash-fg);
             font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
             overflow: hidden;
             user-select: none;
@@ -28,9 +45,7 @@
         .logo {
             width: 56px;
             height: 56px;
-            border-radius: 12px;
             object-fit: cover;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
         }
         .brand {
             margin: 0;
@@ -41,13 +56,13 @@
         .msg {
             margin: 0;
             font-size: 0.8125rem;
-            color: #6b7280;
+            color: var(--splash-muted);
         }
         .spinner {
             width: 1.75rem;
             height: 1.75rem;
-            border: 2.5px solid #e5e7eb;
-            border-top-color: #7c3aed;
+            border: 2.5px solid var(--splash-ring);
+            border-top-color: var(--splash-accent);
             border-radius: 50%;
             animation: spin 0.7s linear infinite;
             margin-top: 0.25rem;
@@ -56,19 +71,41 @@
             to { transform: rotate(360deg); }
         }
     </style>
+    <script>
+        (function () {
+            try {
+                var dark = localStorage.getItem('transub.mainTheme') === 'dark'
+                    || localStorage.getItem('transub-editor-theme') === 'dark';
+                if (dark) {
+                    document.documentElement.classList.add('main-theme-dark');
+                }
+            } catch (e) { /* ignore */ }
+        }());
+    </script>
 </head>
 <body>
     <div class="wrap" role="status" aria-live="polite">
-        <img class="logo" src="icon.png" alt="" width="56" height="56" decoding="async">
-        <p class="brand">Transub</p>
+        <img class="logo" src="icon-64.png" alt="" width="56" height="56" decoding="async">
+        <p class="brand">Transub 字幕工厂</p>
         <p class="msg" id="splashMsg">正在启动…</p>
         <div class="spinner" aria-hidden="true"></div>
     </div>
     <script>
         (function () {
-            var msgs = ['正在启动…', '正在加载界面…', '即将就绪…'];
+            var params = new URLSearchParams(location.search || '');
+            var kind = String(params.get('kind') || '').trim().toLowerCase();
+            var custom = String(params.get('msg') || '').trim();
+            var sequences = {
+                settings: ['正在打开设置…', '正在加载配置…', '即将就绪…'],
+                wizard: ['正在打开设置向导…', '正在准备步骤…', '即将就绪…'],
+                app: ['正在启动…', '正在加载界面…', '即将就绪…'],
+            };
+            var msgs = custom
+                ? [custom, '正在加载界面…', '即将就绪…']
+                : (sequences[kind] || sequences.app);
             var i = 0;
             var el = document.getElementById('splashMsg');
+            if (el) el.textContent = msgs[0];
             setInterval(function () {
                 i = (i + 1) % msgs.length;
                 if (el) el.textContent = msgs[i];

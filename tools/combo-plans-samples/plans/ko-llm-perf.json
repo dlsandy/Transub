@@ -1,0 +1,37 @@
+{
+  "id": "ko-llm-perf",
+  "version": 1,
+  "group": "ko",
+  "name": "韩剧 · 推理 · 性能",
+  "description": "韩剧：SenseVoice 听写+ LN-Korean 7B 本地推理翻译硬件档：性能 · <8GB 显存。",
+  "language": "ko",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad",
+    "sakura-ln-korean-7b"
+  ],
+  "options": {
+    "language": "ko",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "llm",
+    "engineLlmMtModel": "sakura-ln-korean-7b",
+    "engineProfile": "speed",
+    "activePresetId": "ko-sensevoice",
+    "vadEnabled": true,
+    "audioLightDenoise": true
+  }
+}

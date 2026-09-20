@@ -192,7 +192,7 @@
         },
         'text.sakuraTranslate': {
             id: 'text.sakuraTranslate',
-            label: 'Sakura 翻译',
+            label: '推理翻译',
             group: 'AI',
             preferConfirm: true,
             defaultParams: {
@@ -302,6 +302,12 @@
         'cue.splitLines': {
             id: 'cue.splitLines',
             label: '按换行分割条目',
+            group: '条目',
+            defaultParams: { scope: 'all' },
+        },
+        'cue.mergeLines': {
+            id: 'cue.mergeLines',
+            label: '多行合并条目',
             group: '条目',
             defaultParams: { scope: 'all' },
         },

@@ -15,6 +15,7 @@
      *   running?: boolean,
      *   postBatchBusy?: boolean,
      *   retranslateBusy?: boolean,
+     *   batchStartInFlight?: boolean,
      *   computeBusy?: boolean,
      *   computeBusyLabel?: string,
      *   items?: object[],
@@ -22,7 +23,7 @@
      * }} state
      */
     function computeStartBlockReason(state = {}) {
-        if (state.running || state.postBatchBusy || state.retranslateBusy) {
+        if (state.running || state.postBatchBusy || state.retranslateBusy || state.batchStartInFlight) {
             return '任务或后处理进行中';
         }
         if (state.computeBusy) {
@@ -39,9 +40,6 @@
         }
         const probing = items.some((i) => i.selected && (i.status === 'probing' || i.status === 'pending'));
         if (probing) return '正在探测视频信息…';
-        const sensing = !!state.autoSenseEnabled
-            && items.some((i) => i.selected && i.sense?.status === 'sensing');
-        if (sensing) return '智能感知进行中…';
         return '';
     }
 
@@ -52,6 +50,16 @@
     function shouldForceReleaseStaleComputeLock(state = {}) {
         if (!state.computeBusy) return false;
         if (state.running || state.postBatchBusy || state.retranslateBusy) return false;
+        return true;
+    }
+
+    /**
+     * Renderer job flags can stick after a missed job-finished IPC while the engine
+     * is already idle. Safe to clear when main reports no batch and no compute lock.
+     */
+    function shouldClearStuckSubtitleTaskFlags(state = {}) {
+        if (!state.running && !state.retranslateBusy && !state.postBatchBusy) return false;
+        if (state.computeBusy || state.batchRunning) return false;
         return true;
     }
 
@@ -83,14 +91,21 @@
                 const opus = String(input.opusMtId || '');
                 parts.push(opus ? `MT ${opus}` : 'MT 智能');
             } else if (mode === 'llm' || mode === 'sakura') {
-                const llm = String(input.llmMtId || '');
-                if (llm) parts.push(`推理 ${llm}`);
-                else {
-                    const prefer = String(input.llmPreferId || '');
-                    parts.push(prefer ? `推理 智能→${prefer}` : '推理 智能→…');
+                if (input.sentenceMtByok && input.sentenceMtByokLabel) {
+                    parts.push(String(input.sentenceMtByokLabel));
+                } else {
+                    const llm = String(input.llmMtId || '');
+                    if (llm) parts.push(`推理 ${llm}`);
+                    else {
+                        const prefer = String(input.llmPreferId || '');
+                        parts.push(prefer ? `推理 智能→${prefer}` : '推理 智能→…');
+                    }
                 }
-            } else if (mode === 'smart') {
-                parts.push(advancedEntitled ? 'Pro LLM' : '需解锁 Pro');
+            } else if (mode === 'smart' || mode === 'dialog') {
+                const smartPart = String(input.smartStripPart || '').trim();
+                if (!advancedEntitled) parts.push('需解锁 Pro');
+                else if (smartPart) parts.push(smartPart);
+                else parts.push(mode === 'dialog' ? '智能译' : '混合译');
             }
         }
 
@@ -102,12 +117,22 @@
                 action: { label: '去配置环境', action: 'install' },
             };
         }
-        if (mode === 'smart' && !advancedEntitled) {
+        if ((mode === 'smart' || mode === 'dialog') && !advancedEntitled) {
             return {
                 parts,
                 text: parts.join(' · '),
                 tone: 'warn',
                 action: { label: '解锁 Pro', action: 'pro' },
+            };
+        }
+        if ((mode === 'smart' || mode === 'dialog') && advancedEntitled && input.smartTone === 'warn') {
+            return {
+                parts,
+                text: parts.join(' · '),
+                tone: 'warn',
+                action: input.smartAction && typeof input.smartAction === 'object'
+                    ? input.smartAction
+                    : null,
             };
         }
         return {
@@ -129,10 +154,9 @@
      * @returns {{ label: string, title: string, tone: string, autoEnabled: boolean, presetId: string }}
      */
     function buildParamsModeChipViewModel(input = {}) {
-        const autoEnabled = !!input.autoEnabled;
+        const autoEnabled = false;
         const presetId = String(input.presetId || '');
         const presetName = String(input.presetName || '');
-        const ui = input.autoSenseUi || {};
         const mtUseForm = !!input.mtUseForm;
         const translateTask = !!input.translateTask;
         const presetDesc = String(input.presetDesc || '').trim();
@@ -141,16 +165,7 @@
         let title = '按设置里的识别参数';
         let tone = 'off';
 
-        if (autoEnabled) {
-            tone = ui.tone && ui.tone !== 'off' ? ui.tone : 'idle';
-            const raw = String(ui.chipLabel || '').trim();
-            if (/已采纳|感知中|已感知/.test(raw)) {
-                label = raw;
-            } else {
-                label = '智能感知';
-            }
-            title = ui.title || ui.detail || '按影片类型自动匹配推荐设置';
-        } else if (presetId && presetName) {
+        if (presetId && presetName) {
             tone = 'off';
             label = shortParamsModeLabel(presetName, 12);
             title = presetDesc
@@ -185,6 +200,7 @@
     return {
         computeStartBlockReason,
         shouldForceReleaseStaleComputeLock,
+        shouldClearStuckSubtitleTaskFlags,
         buildReadinessStripViewModel,
         shortParamsModeLabel,
         buildParamsModeChipViewModel,

@@ -12,11 +12,18 @@ describe('engine-options', () => {
     it('defaults to transub backend', () => {
         const opts = mergeEngineOptions({});
         assert.strictEqual(opts.engineBackend, 'transub');
-        assert.strictEqual(opts.engineAsrModel, 'sensevoice-small');
+        assert.strictEqual(opts.engineAsrModel, 'qwen3-asr-1.7b-ja-anime-galgame');
         assert.strictEqual(opts.engineInstallPath, '');
         assert.ok(String(opts.engineUrl).includes('127.0.0.1'));
-        assert.strictEqual(opts.engineHfEndpoint, 'https://hf-mirror.com');
+        assert.strictEqual(opts.engineHfEndpoint, '');
         assert.strictEqual(opts.engineHfToken, '');
+        assert.strictEqual(opts.engineLlmMtModel, '');
+        assert.strictEqual(opts.engineVadModel, 'silero-vad');
+    });
+
+    it('aliases retired non-hf Qwen3 JA to official 1.7B-hf', () => {
+        const opts = mergeEngineOptions({ engineAsrModel: 'qwen3-asr-1.7b-ja' });
+        assert.strictEqual(opts.engineAsrModel, 'qwen3-asr-1.7b');
     });
 
     it('preserves Hugging Face token from options', () => {
@@ -68,7 +75,7 @@ describe('engine-options', () => {
     });
 
     it('preserves empty engineLlmMtModel (智能选择) and defaults when omitted', () => {
-        assert.strictEqual(mergeEngineOptions({}).engineLlmMtModel, 'sakura-1.5b');
+        assert.strictEqual(mergeEngineOptions({}).engineLlmMtModel, '');
         assert.strictEqual(mergeEngineOptions({ engineLlmMtModel: '' }).engineLlmMtModel, '');
         assert.strictEqual(
             mergeEngineOptions({ engineLlmMtModel: 'sakura-7b' }).engineLlmMtModel,

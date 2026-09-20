@@ -86,7 +86,7 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
     }
 
     function setMainWindowTitle(title) {
-        const next = String(title || '').trim() || 'Transub';
+        const next = String(title || '').trim() || 'Transub 字幕工厂';
         if (!mainWindow || mainWindow.isDestroyed()) return;
         try {
             mainWindow.setTitle(next);
@@ -94,13 +94,13 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
     }
 
     function refreshProductTitle() {
-        let title = 'Transub';
+        let title = 'Transub 字幕工厂';
         try {
-            const { getProductWindowTitle } = require('./advanced-bridge');
+            const { getProductWindowTitle } = require('./product-title');
             if (typeof getProductWindowTitle === 'function') {
-                title = getProductWindowTitle() || 'Transub';
+                title = getProductWindowTitle() || 'Transub 字幕工厂';
             }
-        } catch (_) { /* advanced bridge not ready */ }
+        } catch (_) { /* ignore */ }
         setMainWindowTitle(title);
     }
 
@@ -123,8 +123,10 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
             height: saved?.height || DEFAULT_WINDOW.height,
             minWidth: DEFAULT_WINDOW.minWidth,
             minHeight: DEFAULT_WINDOW.minHeight,
-            title: 'Transub',
+            title: 'Transub 字幕工厂',
             icon: getWindowIconOption(),
+            frame: false,
+            thickFrame: true,
             autoHideMenuBar: true,
             backgroundColor,
             webPreferences: {
@@ -199,6 +201,17 @@ function createWindowManager({ getAppRoot: _getAppRoot, getUserDataPath: _getUse
 
         tray.attachTrayBehavior(mainWindow);
         attachWindowStatePersistence(mainWindow);
+
+        const emitMaximizeChanged = () => {
+            try {
+                if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+                mainWindow.webContents.send('transub-window-maximize-changed', {
+                    maximized: !!mainWindow.isMaximized(),
+                });
+            } catch (_) { /* ignore */ }
+        };
+        mainWindow.on('maximize', emitMaximizeChanged);
+        mainWindow.on('unmaximize', emitMaximizeChanged);
 
         mainWindow.on('closed', () => {
             if (saveStateTimer) {

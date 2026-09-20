@@ -1,11 +1,23 @@
 /**
- * Post-ASR second opinion on low-confidence windows (sibling model).
- * Nested inside engine batch: allowDuringBatch + skip compute lock.
+ * Post-ASR second opinion on low-confidence windows (same-model re-decode,
+ * or a safer sibling for fragile CT2). Nested inside engine batch:
+ * allowDuringBatch + skip compute lock. Range jobs keep ASR weights loaded;
+ * VRAM is released once after the burst.
  */
 const path = require('path');
 const fs = require('fs');
 const core = require('../src/js/asr-second-opinion-core');
 const { asString, asPlainObject } = require('./ipc-validate');
+
+function buildSecondOpinionRangeOptions(options, sibling) {
+    return {
+        ...options,
+        engineAsrModel: sibling,
+        task: 'transcribe',
+        smartTranslate: false,
+        releaseGpuAfter: false,
+    };
+}
 
 function loadSubtitleCues(subPath) {
     const filePath = asString(subPath, 4096).trim();
@@ -110,13 +122,30 @@ async function runAsrSecondOpinionPass(input = {}) {
         try { return require('../src/js/subtitle-qc-smart-core'); } catch { return null; }
     })();
     const rangePolicy = require('./engine-range-asr-policy');
+    const contentProfile = options.contentProfile || options.senseProfile || input.contentProfile;
+    const mediaDurationMs = await resolveMediaDurationMs(mediaPath, cues, options, input);
+    let bandByIndex = options.bandByIndex || options.cueRiskBands || null;
+    if (!bandByIndex) {
+        try {
+            const { readSubtitleMeta } = require('./subtitle-meta');
+            const read = readSubtitleMeta(subtitlePath);
+            bandByIndex = read?.meta?.cueRiskBands || read?.meta?.bandByIndex || null;
+        } catch { /* optional */ }
+    }
     const planned = core.planAsrSecondOpinion(cues, lowIndexes, {
         maxRanges: Number(options.asrSecondOpinionMaxRanges) || core.DEFAULT_MAX_RANGES,
         minLowCues: Number(options.asrSecondOpinionMinLow) || core.DEFAULT_MIN_LOW_CUES,
         minRangeMs: Number(options.asrSecondOpinionMinRangeMs) || core.DEFAULT_MIN_RANGE_MS,
         strictThreshold: Number(options.asrSecondOpinionStrictThreshold)
             || core.DEFAULT_STRICT_LOW_THRESHOLD,
+        minGapMs: Number(options.asrSecondOpinionMinGapMs) || undefined,
+        mediaDurationMs,
+        contentProfile,
+        primaryAsr,
+        includeTimelineGaps: options.asrSecondOpinionIncludeGaps,
         annotations,
+        bandByIndex,
+        cueRiskBands: bandByIndex,
         buildRanges: smartCore?.buildQcRetranscribeRanges
             ? (list, indexes, opts) => smartCore.buildQcRetranscribeRanges(list, indexes, opts)
             : undefined,
@@ -128,13 +157,22 @@ async function runAsrSecondOpinionPass(input = {}) {
             reason: planned.reason,
             lowConfidenceCueCount: lowIndexes.length,
             riskyLowCueCount: (planned.lowIndexes || []).length,
+            hallucCueCount: (planned.hallucIndexes || []).length,
+            gapWindowCount: planned.gapWindowCount || 0,
             skippedRanges: planned.skippedRanges || [],
         };
     }
+    const onLogEarly = typeof input.onLog === 'function' ? input.onLog : null;
+    const stats = planned.planStats || {};
+    onLogEarly?.(
+        `ASR 二意见：低置信 ${stats.riskyLowCueCount ?? (planned.lowIndexes || []).length}`
+        + ` · 幻觉 ${(stats.hallucCueCount ?? (planned.hallucIndexes || []).length) || 0}`
+        + ` · 空洞 ${stats.gapWindowCount ?? planned.gapWindowCount ?? 0}`
+        + ` · 实跑 ${planned.ranges.length}`,
+    );
     if ((planned.skippedRanges || []).length) {
         const n = planned.skippedRanges.length;
         const reasons = [...new Set(planned.skippedRanges.map((r) => r.skipReason).filter(Boolean))];
-        const onLogEarly = typeof input.onLog === 'function' ? input.onLog : null;
         onLogEarly?.(
             `ASR 二意见：跳过 ${n} 个过短/空窗${reasons.length ? `（${reasons.join(',')}）` : ''}`,
         );
@@ -148,11 +186,11 @@ async function runAsrSecondOpinionPass(input = {}) {
     } catch (_) {
         installedIds = null;
     }
-    const siblings = core.listSecondOpinionAsrModels(primaryAsr, {
+    const opinionModels = core.listSecondOpinionAsrModels(primaryAsr, {
         candidates: rangePolicy.buildBatchAsrCandidates(primaryAsr),
         installedIds,
     });
-    if (!siblings.length) {
+    if (!opinionModels.length) {
         return { ok: true, skipped: true, reason: 'no_sibling_model' };
     }
 
@@ -165,10 +203,17 @@ async function runAsrSecondOpinionPass(input = {}) {
     const metaCore = require('../src/js/subtitle-meta-core');
     const { mergeRangeAsrConfidenceMeta } = require('./asr-confidence-seed');
 
-    // After long anime/kotoba + LLM unload, CT2 loads often AV-crash. Prefer safer sibling
-    // and respawn engine if the previous child already died.
+    // Fragile CT2 (anime/kotoba) still prefers a safer sibling. Other backends
+    // re-decode with the primary still loaded; respawn if the engine child died.
+
     let siblingIdx = 0;
-    let sibling = siblings[siblingIdx];
+    let sibling = opinionModels[siblingIdx];
+    const reusePrimary = sibling.toLowerCase() === primaryAsr.toLowerCase();
+    onLogEarly?.(
+        reusePrimary
+            ? `ASR 二意见：同模型重解码（${sibling}）`
+            : `ASR 二意见：兄弟模型 ${sibling}`,
+    );
     try {
         const ensure = await ensureEngineRunning({
             ...options,
@@ -189,6 +234,7 @@ async function runAsrSecondOpinionPass(input = {}) {
     let replacedWindows = 0;
     let attempted = 0;
     let engineRestarts = 0;
+    let badPoolDraftsAppended = 0;
     /** @type {{ startMs: number, endMs: number }[]} */
     const acceptedRanges = [];
 
@@ -200,9 +246,9 @@ async function runAsrSecondOpinionPass(input = {}) {
     };
 
     const advanceSibling = (reason) => {
-        if (siblingIdx >= siblings.length - 1) return false;
+        if (siblingIdx >= opinionModels.length - 1) return false;
         siblingIdx += 1;
-        sibling = siblings[siblingIdx];
+        sibling = opinionModels[siblingIdx];
         onLog?.(`ASR 二意见：改用更稳模型 ${sibling}${reason ? `（${reason}）` : ''}`);
         return true;
     };
@@ -210,9 +256,12 @@ async function runAsrSecondOpinionPass(input = {}) {
     for (let i = 0; i < planned.ranges.length; i += 1) {
         const range = planned.ranges[i];
         attempted += 1;
+        const kindLabel = range?.source === 'gap' || range?.kind === 'gap'
+            ? '空洞'
+            : (range?.source === 'hallucination' || range?.kind === 'hallucination' ? '幻觉' : '低置信');
         onProgress?.({
             stage: 'asr-second-opinion',
-            detail: `低置信二意见 ${i + 1}/${planned.ranges.length}（${sibling}）`,
+            detail: `ASR二意见(${kindLabel}) ${i + 1}/${planned.ranges.length}（${sibling}）`,
             range: i + 1,
             totalRanges: planned.ranges.length,
         });
@@ -221,6 +270,7 @@ async function runAsrSecondOpinionPass(input = {}) {
                 (c) => Number(c.startMs) < range.endMs && Number(c.endMs) > range.startMs,
             );
             // One sibling only — avoid SenseVoice empty → tiny → turbo on micro clips.
+            const rangeOpts = buildSecondOpinionRangeOptions(options, sibling);
             const res = await transcribeRangeWithEngine({
                 mediaPath,
                 startMs: range.startMs,
@@ -231,19 +281,11 @@ async function runAsrSecondOpinionPass(input = {}) {
                 asrCandidates: [sibling],
                 allowDuringBatch: true,
                 _skipComputeLock: true,
-                options: {
-                    ...options,
-                    engineAsrModel: sibling,
-                    task: 'transcribe',
-                    smartTranslate: false,
-                },
+                options: rangeOpts,
             }, {
                 allowDuringBatch: true,
                 _skipComputeLock: true,
-                options: {
-                    ...options,
-                    engineAsrModel: sibling,
-                },
+                options: rangeOpts,
                 onProgress: (info) => onProgress?.({
                     stage: 'asr-second-opinion',
                     detail: info?.detail || info?.message || `二意见 ${i + 1}/${planned.ranges.length}`,
@@ -272,6 +314,27 @@ async function runAsrSecondOpinionPass(input = {}) {
             }
             const winner = core.chooseSecondOpinionWinner(primarySlice, res.cues);
             if (!winner.useOpinion) continue;
+            try {
+                const { buildSecondOpinionBadDrafts, appendAsrBadPoolDrafts } = require('./asr-bad-pool-draft');
+                const drafts = buildSecondOpinionBadDrafts({
+                    primaryCues: primarySlice,
+                    opinionCues: winner.cues,
+                    primaryAsr,
+                    opinionAsr: sibling,
+                    contentProfile: options.contentProfile || options.senseProfile || input.contentProfile,
+                    mediaPath,
+                    startMs: range.startMs,
+                    endMs: range.endMs,
+                    reason: winner.reason,
+                });
+                const writtenDraft = appendAsrBadPoolDrafts(drafts, {
+                    enabled: options.asrBadPoolDrafts !== false,
+                });
+                if (writtenDraft?.appended > 0) {
+                    badPoolDraftsAppended += writtenDraft.appended;
+                    onLog?.(`ASR 坏句草稿 +${writtenDraft.appended} → ${path.basename(writtenDraft.path || '')}`);
+                }
+            } catch (_) { /* optional training scratch */ }
             const replacedDoc = metaCore.replaceCuesInTimeRange(
                 working,
                 range.startMs,
@@ -305,6 +368,14 @@ async function runAsrSecondOpinionPass(input = {}) {
         }
     }
 
+    if (attempted > 0) {
+        try {
+            const { releaseGpuAfterQcRetranscribeBurst } = require('./engine-qc-retranscribe-options');
+            await releaseGpuAfterQcRetranscribeBurst(options);
+            onLog?.('ASR 二意见：窗间保持显存，现已释放');
+        } catch (_) { /* llama afterAsr / next item will also try */ }
+    }
+
     if (!replacedWindows) {
         return {
             ok: true,
@@ -312,11 +383,14 @@ async function runAsrSecondOpinionPass(input = {}) {
             replacedWindows: 0,
             attempted,
             sibling,
-            siblingsTried: siblings.slice(0, siblingIdx + 1),
+            siblingsTried: opinionModels.slice(0, siblingIdx + 1),
             lowConfidenceCueCount: lowIndexes.length,
             riskyLowCueCount: (planned.lowIndexes || []).length,
+            hallucCueCount: (planned.hallucIndexes || []).length,
+            gapWindowCount: planned.gapWindowCount || 0,
             planRanges: planned.ranges.length,
             skippedRanges: planned.skippedRanges || [],
+            badPoolDraftsAppended,
         };
     }
 
@@ -361,26 +435,52 @@ async function runAsrSecondOpinionPass(input = {}) {
         }
     }
 
-    onLog?.(`ASR 低置信二意见：采纳 ${replacedWindows}/${attempted} 窗（${sibling}）`);
+    onLog?.(`ASR 二意见：采纳 ${replacedWindows}/${attempted} 窗（${sibling}）`);
     return {
         ok: !!written.ok,
         skipped: false,
         replacedWindows,
         attempted,
         sibling,
-        siblingsTried: siblings.slice(0, siblingIdx + 1),
+        siblingsTried: opinionModels.slice(0, siblingIdx + 1),
         lowConfidenceCueCount: lowIndexes.length,
         riskyLowCueCount: (planned.lowIndexes || []).length,
+        hallucCueCount: (planned.hallucIndexes || []).length,
+        gapWindowCount: planned.gapWindowCount || 0,
         planRanges: planned.ranges.length,
         skippedRanges: planned.skippedRanges || [],
         targetBlanked,
+        badPoolDraftsAppended,
         path: subtitlePath,
         error: written.error,
     };
+}
+
+async function resolveMediaDurationMs(mediaPath, cues, options = {}, input = {}) {
+    const explicit = Number(options.mediaDurationMs || input.mediaDurationMs);
+    if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+    const fromCues = (Array.isArray(cues) ? cues : []).reduce(
+        (max, c) => Math.max(max, Number(c?.endMs) || 0),
+        0,
+    );
+    try {
+        const { probeVideo } = require('./ffmpeg-bridge');
+        const probed = await Promise.race([
+            probeVideo(mediaPath, options.ffprobePath),
+            new Promise((resolve) => setTimeout(() => resolve({ ok: false }), 4000)),
+        ]);
+        const sec = Number(probed?.duration) || 0;
+        if (probed?.ok && sec > 0) {
+            return Math.max(fromCues, Math.round(sec * 1000));
+        }
+    } catch (_) { /* cue fallback */ }
+    return fromCues;
 }
 
 module.exports = {
     runAsrSecondOpinionPass,
     loadSubtitleCues,
     loadLowConfidenceIndexes,
+    resolveMediaDurationMs,
+    buildSecondOpinionRangeOptions,
 };

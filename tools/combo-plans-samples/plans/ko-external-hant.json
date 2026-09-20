@@ -1,0 +1,36 @@
+{
+  "id": "ko-external-hant",
+  "version": 1,
+  "group": "ko",
+  "name": "韩剧 · 外部 · 繁中",
+  "description": "SenseVoice 韩语听写，目标繁中，译文走 Station / 外接 API。",
+  "language": "ko",
+  "subtitleTargetLang": "zh-Hant",
+  "translateMode": "external",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "ko",
+    "subtitleTargetLang": "zh-Hant",
+    "device": "cuda",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "translateMode": "external",
+    "engineLlmMtModel": "",
+    "engineProfile": "balanced",
+    "activePresetId": "ko-sensevoice"
+  }
+}

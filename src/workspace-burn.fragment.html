@@ -1,0 +1,236 @@
+<section id="workspaceBurn" class="factory-burn-panel" aria-label="字幕烧录">
+            <div id="burnCommandBar" class="relative z-10 flex flex-col shrink-0 command-bar factory-command-bar">
+                <div class="command-bar-row flex items-center min-w-0">
+                    <div class="flex items-center shrink-0">
+                        <div class="relative shrink-0" id="burnAddMenuWrap">
+                            <button type="button" id="burnAddMenuBtn"
+                                class="command-bar-add"
+                                aria-haspopup="menu" aria-expanded="false">
+                                <i class="fa fa-plus" aria-hidden="true"></i>
+                                <span>新增</span>
+                                <i class="fa fa-caret-down text-xs opacity-90" aria-hidden="true"></i>
+                            </button>
+                            <div id="burnAddMenu" class="post-task-menu post-task-menu--left hidden w-48" role="menu" aria-label="添加烧录任务">
+                                <button type="button" class="post-task-menu-item" data-burn-add="video" role="menuitem">
+                                    <i class="fa fa-file-video-o w-3 text-center text-gray-400" aria-hidden="true"></i>
+                                    <span>添加视频</span>
+                                </button>
+                                <button type="button" class="post-task-menu-item" id="burnFromQueueBtn" data-burn-add="queue" role="menuitem" title="从任务队列载入选中或最近完成项">
+                                    <i class="fa fa-list w-3 text-center text-gray-400" aria-hidden="true"></i>
+                                    <span>从任务队列载入</span>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="button" id="burnRemoveSelectedBtn" class="toolbar-icon-btn" title="移除选中" aria-label="移除选中">
+                            <i class="fa fa-minus" aria-hidden="true"></i><span class="sr-only">移除</span>
+                        </button>
+                        <button type="button" id="burnClearListBtn" class="toolbar-icon-btn" title="清空队列" aria-label="清空队列">
+                            <i class="fa fa-trash-o" aria-hidden="true"></i><span class="sr-only">清空</span>
+                        </button>
+                    </div>
+                    <div class="command-bar-run flex items-center shrink-0 justify-end ml-auto">
+                        <button type="button" id="burnBatchRetryBtn" class="toolbar-icon-btn" title="将失败/取消项重新排队" aria-label="重试失败项">
+                            <i class="fa fa-refresh" aria-hidden="true"></i><span class="sr-only">重试</span>
+                        </button>
+                        <button type="button" id="burnCancelBtn" class="command-bar-stop toolbar-icon-btn" disabled title="停止" aria-label="停止">
+                            <i class="fa fa-stop" aria-hidden="true"></i><span class="sr-only">停止</span>
+                        </button>
+                        <button type="button" id="burnBatchStartBtn" class="command-bar-start btn-primary-cta" disabled>
+                            <i class="fa fa-play" aria-hidden="true"></i><span>开始烧录</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="params-chips-row flex min-w-0 factory-burn-chips-row" id="burnWorkspaceForm">
+                    <div id="burnParamsChips" class="params-chips flex-1" aria-label="烧录参数">
+                        <label class="param-chip" title="输出方式：硬字幕烧入画面，或软字幕封装为可开关轨道">
+                            <span class="param-chip-label">输出</span>
+                            <select id="burnOutputModeSelect" class="param-chip-select" aria-label="输出方式">
+                                <option value="hardsub">硬字幕</option>
+                                <option value="softsub">软字幕</option>
+                            </select>
+                        </label>
+                        <label class="param-chip" title="标准：SRT/VTT 用烧录预设样式；文档：按 ASS 文件内样式烧录（Pro）">
+                            <span class="param-chip-label">字幕类型</span>
+                            <select id="burnStyleModeSelect" class="param-chip-select" aria-label="字幕类型">
+                                <option value="basic">标准(srt; vtt)</option>
+                                <option value="document">文档(ass)</option>
+                            </select>
+                        </label>
+                        <button type="button" id="burnStylePresetsBtn" class="param-chip param-chip-btn" title="样式预设：免费可用观影白字 / 大字号观影；更多与自定义需 Pro" aria-label="样式预设">
+                            <span class="param-chip-label">预设</span>
+                            <span id="burnStylePresetChipLabel" class="param-chip-value">观影白字</span>
+                        </button>
+                        <button type="button" id="burnOpenSettingsBtn" class="param-chip param-chip-btn" title="容器 / 编码 / 质量等参数在设置 → 字幕烧录" aria-label="打开烧录参数设置">
+                            <span class="param-chip-label">参数</span>
+                            <span class="param-chip-value">设置…</span>
+                        </button>
+                    </div>
+                </div>
+                <div id="burnProgressWrap" class="factory-burn-progress hidden">
+                    <div class="factory-burn-progress-track">
+                        <div id="burnProgressBar" class="factory-burn-progress-bar"></div>
+                    </div>
+                    <div class="factory-burn-progress-meta">
+                        <span id="burnProgressText">正在烧录…</span>
+                        <span id="burnProgressPct" class="tabular-nums">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="burnFilterTabs" class="factory-task-tabs" role="tablist" aria-label="烧录队列分类">
+                <button type="button" role="tab" class="factory-task-tab is-active" id="burnTabAll" data-burn-tab="all" aria-selected="true">
+                    全部<span class="factory-task-tab-count" id="burnTabAllCount">0</span>
+                </button>
+                <button type="button" role="tab" class="factory-task-tab" id="burnTabActive" data-burn-tab="active" aria-selected="false">
+                    进行中<span class="factory-task-tab-count" id="burnTabActiveCount">0</span>
+                </button>
+                <button type="button" role="tab" class="factory-task-tab" id="burnTabDone" data-burn-tab="done" aria-selected="false">
+                    完成<span class="factory-task-tab-count" id="burnTabDoneCount">0</span>
+                </button>
+                <button type="button" role="tab" class="factory-task-tab" id="burnTabFailed" data-burn-tab="failed" aria-selected="false">
+                    失败<span class="factory-task-tab-count" id="burnTabFailedCount">0</span>
+                </button>
+                <span id="burnBatchSummary" class="factory-task-summary">队列为空</span>
+            </div>
+
+            <div class="factory-burn-workspace flex-1 min-h-0 min-w-0 relative overflow-hidden">
+                <div id="burnEmptyState" class="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 px-6 text-center factory-empty-state">
+                    <div class="factory-empty-icon" aria-hidden="true">
+                        <i class="fa fa-fire"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium">添加视频后，在列表里关联字幕</p>
+                        <p class="text-xs mt-1 factory-empty-hint">未关联完整的任务无法开始烧录。样式用「预设」；编码与输出用「参数」。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-center gap-2">
+                        <button type="button" id="burnEmptyAddBtn" class="factory-empty-primary">
+                            <i class="fa fa-file-video-o mr-1"></i>添加视频
+                        </button>
+                        <button type="button" id="burnEmptyFromQueueBtn" class="factory-empty-secondary">
+                            <i class="fa fa-list mr-1"></i>从任务队列
+                        </button>
+                    </div>
+                </div>
+                <div id="burnBatchList" class="task-card-list factory-burn-card-list hidden" aria-label="烧录队列"></div>
+            </div>
+
+            <div id="burnPreviewModal" class="factory-burn-preview-modal hidden" role="dialog" aria-modal="true" aria-label="烧录预览" hidden>
+                <div class="factory-burn-preview-modal-card">
+                    <div class="factory-burn-preview-head">
+                        <span id="burnPreviewTitle">像素预览</span>
+                        <button type="button" id="burnPreviewCloseBtn" class="btn btn-xs">关闭</button>
+                    </div>
+                    <div class="factory-burn-preview-stage">
+                        <div class="factory-burn-preview-video-stack">
+                            <video id="burnPreviewVideo" class="factory-burn-preview-video" controls playsinline></video>
+                            <canvas id="burnPreviewCanvas" class="factory-burn-preview-canvas" aria-hidden="true"></canvas>
+                            <div id="burnPreviewOverlay" class="factory-burn-preview-overlay hidden" aria-hidden="true">
+                                <div id="burnPreviewOverlayStack" class="factory-burn-preview-overlay-stack">
+                                    <div id="burnPreviewOverlaySource" class="factory-burn-preview-overlay-line is-empty"></div>
+                                    <div id="burnPreviewOverlayTarget" class="factory-burn-preview-overlay-line is-empty"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="burnStylePresetsModal" class="factory-burn-style-modal hidden" role="dialog" aria-modal="true" aria-labelledby="burnStylePresetsTitle" hidden>
+                <div class="factory-burn-style-modal-card">
+                    <div class="factory-burn-style-modal-head">
+                        <div>
+                            <h2 id="burnStylePresetsTitle" class="factory-burn-style-modal-title">烧录样式预设</h2>
+                            <p class="factory-burn-style-modal-sub">免费可用「观影白字」「大字号观影」；其余内置与自定义、表单编辑需 <span class="factory-burn-pro-mark">Pro</span>。</p>
+                        </div>
+                        <button type="button" id="burnStylePresetsCloseBtn" class="btn btn-xs" aria-label="关闭">关闭</button>
+                    </div>
+                    <div class="factory-burn-style-modal-body">
+                        <aside class="factory-burn-style-sidebar">
+                            <div class="factory-burn-style-sidebar-tools">
+                                <button type="button" id="burnStylePresetNewBtn" class="btn factory-burn-style-tool-btn" title="新建自定义预设">
+                                    <i class="fa fa-plus" aria-hidden="true"></i><span>新建</span>
+                                </button>
+                                <button type="button" id="burnStylePresetDeleteBtn" class="btn factory-burn-style-tool-btn is-danger" disabled title="删除当前自定义预设">
+                                    <i class="fa fa-trash-o" aria-hidden="true"></i><span>删除</span>
+                                </button>
+                            </div>
+                            <div id="burnStylePresetList" class="factory-burn-style-list" role="listbox" aria-label="样式预设列表"></div>
+                        </aside>
+                        <div class="factory-burn-style-editor">
+                            <div class="factory-burn-style-preview-wrap">
+                                <div id="burnStylePreviewBox" class="factory-burn-style-preview" aria-hidden="true">
+                                    <div id="burnStylePreviewStack" class="factory-burn-style-preview-stack">
+                                        <div id="burnStylePreviewSource" class="factory-burn-style-preview-line">Original line</div>
+                                        <div id="burnStylePreviewTarget" class="factory-burn-style-preview-line">译文字幕样例</div>
+                                    </div>
+                                </div>
+                                <p id="burnStylePresetHint" class="factory-burn-style-hint">—</p>
+                            </div>
+                            <div class="factory-burn-style-form">
+                                <label class="factory-burn-style-field factory-burn-style-field--wide">
+                                    <span>预设名称</span>
+                                    <input type="text" id="burnStylePresetName" maxlength="40" placeholder="我的样式">
+                                </label>
+                                <label class="factory-burn-style-check">
+                                    <input type="checkbox" id="burnStyleEnableSource" checked>
+                                    <span>启用原文样式（双语 ASS 烧录时生效）</span>
+                                </label>
+
+                                <fieldset class="factory-burn-style-fieldset">
+                                    <legend>布局</legend>
+                                    <label class="factory-burn-style-field"><span>底部边距</span><input type="number" id="burnStyleMarginV" min="0" max="400" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>左边距</span><input type="number" id="burnStyleMarginL" min="0" max="400" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>右边距</span><input type="number" id="burnStyleMarginR" min="0" max="400" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>双语行距</span><input type="number" id="burnStyleLineGap" min="8" max="200" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>对齐</span><select id="burnStyleAlign"></select></label>
+                                    <label class="factory-burn-style-field"><span>行序</span>
+                                        <select id="burnStyleLineOrder">
+                                            <option value="target-first">译文在上</option>
+                                            <option value="source-first">原文在上</option>
+                                        </select>
+                                    </label>
+                                </fieldset>
+
+                                <fieldset class="factory-burn-style-fieldset">
+                                    <legend>译文</legend>
+                                    <label class="factory-burn-style-field"><span>字体</span><select id="burnStyleTargetFont" aria-label="译文字体"></select></label>
+                                    <label class="factory-burn-style-field"><span>字号</span><input type="number" id="burnStyleTargetSize" min="10" max="96" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>颜色</span><input type="color" id="burnStyleTargetColor"></label>
+                                    <label class="factory-burn-style-field"><span>阴影强度</span><input type="number" id="burnStyleTargetShadow" min="0" max="12" step="0.5"></label>
+                                    <label class="factory-burn-style-field"><span>阴影色</span><input type="color" id="burnStyleTargetShadowColor"></label>
+                                    <label class="factory-burn-style-field"><span>边框样式</span><select id="burnStyleTargetBorder"></select></label>
+                                    <label class="factory-burn-style-field"><span>描边粗细</span><input type="number" id="burnStyleTargetOutline" min="0" max="12" step="0.5"></label>
+                                    <label class="factory-burn-style-field"><span>边框色</span><input type="color" id="burnStyleTargetOutlineColor"></label>
+                                    <label class="factory-burn-style-field"><span>边框不透明度%</span><input type="number" id="burnStyleTargetOutlineAlpha" min="0" max="100" step="1" title="100=不透明，0=全透明"></label>
+                                    <label class="factory-burn-style-check"><input type="checkbox" id="burnStyleTargetBold"><span>粗体</span></label>
+                                    <label class="factory-burn-style-check"><input type="checkbox" id="burnStyleTargetItalic"><span>斜体</span></label>
+                                </fieldset>
+
+                                <fieldset id="burnStyleSourceFields" class="factory-burn-style-fieldset">
+                                    <legend>原文</legend>
+                                    <label class="factory-burn-style-field"><span>字体</span><select id="burnStyleSourceFont" aria-label="原文字体"></select></label>
+                                    <label class="factory-burn-style-field"><span>字号</span><input type="number" id="burnStyleSourceSize" min="10" max="96" step="1"></label>
+                                    <label class="factory-burn-style-field"><span>颜色</span><input type="color" id="burnStyleSourceColor"></label>
+                                    <label class="factory-burn-style-field"><span>阴影强度</span><input type="number" id="burnStyleSourceShadow" min="0" max="12" step="0.5"></label>
+                                    <label class="factory-burn-style-field"><span>阴影色</span><input type="color" id="burnStyleSourceShadowColor"></label>
+                                    <label class="factory-burn-style-field"><span>边框样式</span><select id="burnStyleSourceBorder"></select></label>
+                                    <label class="factory-burn-style-field"><span>描边粗细</span><input type="number" id="burnStyleSourceOutline" min="0" max="12" step="0.5"></label>
+                                    <label class="factory-burn-style-field"><span>边框色</span><input type="color" id="burnStyleSourceOutlineColor"></label>
+                                    <label class="factory-burn-style-field"><span>边框不透明度%</span><input type="number" id="burnStyleSourceOutlineAlpha" min="0" max="100" step="1" title="100=不透明，0=全透明"></label>
+                                    <label class="factory-burn-style-check"><input type="checkbox" id="burnStyleSourceBold"><span>粗体</span></label>
+                                    <label class="factory-burn-style-check"><input type="checkbox" id="burnStyleSourceItalic"><span>斜体</span></label>
+                                </fieldset>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="factory-burn-style-modal-foot">
+                        <p id="burnStylePresetStatus" class="factory-burn-style-status" aria-live="polite"></p>
+                        <div class="factory-burn-style-actions">
+                            <button type="button" id="burnStylePresetsCancelBtn" class="btn factory-burn-style-foot-btn">取消</button>
+                            <button type="button" id="burnStylePresetSaveBtn" class="btn factory-burn-style-foot-btn">保存预设</button>
+                            <button type="button" id="burnStylePresetApplyBtn" class="btn factory-burn-style-foot-btn is-primary">应用到烧录</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>

@@ -1,4 +1,5 @@
 const { app, ipcMain } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { getAppRoot, getWritableRoot, migrateLegacyUserDataFiles } = require('./app-paths');
 
@@ -18,7 +19,12 @@ const { getAppRoot, getWritableRoot, migrateLegacyUserDataFiles } = require('./a
 const { createDeferredBridgeSetup } = require('./bridge-registry');
 const { createWindowManager } = require('./window-manager');
 const { registerMediaScheme, registerMediaProtocolHandler } = require('./media-protocol');
-const { isEditableSubtitleFile } = require('./subtitle-utils');
+const { isEditableSubtitleFile, MEDIA_EXTENSIONS } = require('./subtitle-utils');
+const {
+    parsePlayerProtocolArgv,
+    registerPlayerProtocolClient,
+} = require('./player-protocol');
+const { prepareQueueHandoff } = require('./player-handoff');
 const { loadSettings, hasSettingsFile } = require('./settings-data');
 const {
     mergeTransWithAiOptions,
@@ -48,9 +54,14 @@ try {
 let earlyPendingFiles = [];
 let transwithaiBridgeLoaded = false;
 
-function setPendingFilesForWindow(files) {
+function setPendingFilesForWindow(files, { keepHandoffOptions = false } = {}) {
     const list = Array.isArray(files) ? files.filter(Boolean) : [];
     earlyPendingFiles = list;
+    if (!keepHandoffOptions) {
+        try {
+            require('./player-handoff').setPendingHandoffOptions(null, null);
+        } catch (_) { /* ignore */ }
+    }
     // Avoid eager-loading the heavy bridge just to stash CLI paths
     if (transwithaiBridgeLoaded) {
         require('./transwithai-bridge').setPendingFilesForWindow(list);
@@ -63,11 +74,17 @@ function setPendingFilesForWindow(files) {
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 
 // Prefer OS / GPU hardware video decode (H.264, HEVC on Windows 10+).
+// Intentionally omit SpareRendererForSitePerProcess — faster cold start / lower baseline RAM.
+const enableFeatures = [];
 if (process.platform === 'win32') {
-    app.commandLine.appendSwitch(
-        'enable-features',
-        'PlatformHEVCDecoderSupport,D3D11VideoDecoder,UseMediaFoundationForMediaPlayback',
+    enableFeatures.push(
+        'PlatformHEVCDecoderSupport',
+        'D3D11VideoDecoder',
+        'UseMediaFoundationForMediaPlayback',
     );
+}
+if (enableFeatures.length) {
+    app.commandLine.appendSwitch('enable-features', enableFeatures.join(','));
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -76,10 +93,16 @@ if (!gotTheLock) {
     return;
 }
 
-app.setName('Transub');
+app.setName('Transub 字幕工厂');
 if (process.platform === 'win32') {
     // Must match package.json build.appId so Windows taskbar/shortcuts use Transub icon
     app.setAppUserModelId('com.transub.app');
+}
+
+try {
+    registerPlayerProtocolClient();
+} catch (err) {
+    console.warn('[main] protocol register skipped:', err?.message || err);
 }
 
 /** Writable app data (settings / TWAI config cache) — software directory, not AppData. */
@@ -89,14 +112,28 @@ function getUserDataPath() {
 
 function parseCliFiles(argv = process.argv.slice(1)) {
     const files = [];
+    const seen = new Set();
+    const push = (p) => {
+        const trimmed = String(p || '').trim();
+        if (!trimmed) return;
+        const key = trimmed.replace(/\\/g, '/').toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        files.push(trimmed);
+    };
     for (const arg of argv) {
         if (arg.startsWith('--files=')) {
             const raw = arg.slice('--files='.length);
-            raw.split('|').forEach((p) => {
-                const trimmed = String(p || '').trim();
-                if (trimmed) files.push(trimmed);
-            });
+            raw.split('|').forEach(push);
+            continue;
         }
+        // Bare media path (e.g. from Transub Player / shell open) — not --edit-sub.
+        if (arg.startsWith('-')) continue;
+        if (isEditableSubtitleFile(arg)) continue;
+        try {
+            const ext = path.extname(arg).replace(/^\./, '').toLowerCase();
+            if (MEDIA_EXTENSIONS.includes(ext)) push(arg);
+        } catch (_) { /* ignore */ }
     }
     return files;
 }
@@ -128,7 +165,63 @@ function isEditorOnlyArgv(argv = process.argv.slice(1)) {
     if (argv.some((arg) => arg === '--subtitle-editor-only' || arg === '--editor-only')) {
         return true;
     }
+    const proto = parsePlayerProtocolArgv(argv);
+    if (proto?.mode === 'edit') return true;
     return Boolean(parseCliEditSubtitle(argv));
+}
+
+/**
+ * Apply Player handoff URL / argv. Returns which path was taken.
+ * @returns {'edit'|'queue'|'open'|null}
+ */
+function applyPlayerProtocolHandoff(handoff) {
+    if (!handoff) return null;
+    if (handoff.mode === 'shelf' || handoff.mode === 'library') {
+        try {
+            const { openSubtitleShelfWindow } = require('./subtitle-shelf-window');
+            openSubtitleShelfWindow(app, {
+                mediaPath: handoff.media || '',
+            });
+        } catch (err) {
+            console.warn('[player-handoff] shelf open failed:', err?.message || err);
+        }
+        return 'shelf';
+    }
+    if (handoff.mode === 'edit' && handoff.sub) {
+        let playerHandoff = null;
+        try {
+            const { enrichPlayerHandoff, buildPlayerHandoffEditorSession } = require('./player-handoff');
+            const { meta } = enrichPlayerHandoff(handoff);
+            playerHandoff = buildPlayerHandoffEditorSession(meta);
+        } catch (err) {
+            console.warn('[player-handoff] editor session failed:', err?.message || err);
+        }
+        openCliSubtitleEditor({
+            subPath: handoff.sub,
+            videoPath: handoff.media || '',
+            mediaPath: handoff.media || '',
+            sourceLanguage: handoff.src || playerHandoff?.sourceLanguage || '',
+            translateTarget: handoff.tgt || playerHandoff?.translateTarget || '',
+            contentProfile: handoff.profile || playerHandoff?.contentProfile || '',
+            chineseSubtitleVariant: playerHandoff?.chineseSubtitleVariant || '',
+            from: handoff.from || 'player',
+            ...(playerHandoff ? { playerHandoff } : {}),
+        });
+        return 'edit';
+    }
+    if (handoff.mode === 'queue' && handoff.media) {
+        try {
+            prepareQueueHandoff(handoff);
+        } catch (err) {
+            console.warn('[player-handoff] prepare failed:', err?.message || err);
+        }
+        setPendingFilesForWindow([handoff.media], { keepHandoffOptions: true });
+        try {
+            windowManager.sendToRenderer('transub-cli-files-pending', { count: 1 });
+        } catch (_) { /* ignore */ }
+        return 'queue';
+    }
+    return 'open';
 }
 
 function resolveStartupWindowPref(options = {}) {
@@ -169,11 +262,46 @@ function scheduleWarmEditorHeavyBridges() {
 }
 
 function openCliSubtitleEditor(editRequest) {
-    if (!editRequest?.subPath) return;
+    if (!editRequest?.subPath && !editRequest?.welcome) return;
     warmEditorBridges();
     scheduleWarmEditorHeavyBridges();
-    const { createSubtitleEditorWindow } = require('./subtitle-editor-window');
-    createSubtitleEditorWindow(app, editRequest);
+    const launch = require('./editor-external-launch');
+    const { loadSettings } = require('./settings-data');
+    const { mergeTransWithAiOptions } = require('./transwithai-options');
+    let options = {};
+    try {
+        options = mergeTransWithAiOptions(loadSettings(() => getAppRoot(app)).options || {});
+    } catch (_) { /* ignore */ }
+
+    const result = launch.openSubtitleEditorPreferExternal(
+        {
+            subPath: editRequest.subPath,
+            videoPath: editRequest.videoPath || editRequest.mediaPath || '',
+            mediaPath: editRequest.mediaPath || editRequest.videoPath || '',
+            sourceLanguage: editRequest.sourceLanguage || editRequest.src || '',
+            translateTarget: editRequest.translateTarget || editRequest.tgt || '',
+            contentProfile: editRequest.contentProfile || editRequest.profile || '',
+            chineseSubtitleVariant: editRequest.chineseSubtitleVariant || '',
+            manifestPath: editRequest.manifestPath || '',
+            from: editRequest.from || 'transub',
+            playerHandoff: editRequest.playerHandoff,
+            welcome: !!editRequest.welcome && !editRequest.subPath,
+        },
+        {
+            getOptions: () => options,
+            getAppRoot: () => getAppRoot(app),
+            electronFallback: (payload) => {
+                const { createSubtitleEditorWindow } = require('./subtitle-editor-window');
+                createSubtitleEditorWindow(app, {
+                    subPath: payload.subPath,
+                    videoPath: payload.videoPath || payload.mediaPath,
+                    playerHandoff: payload.playerHandoff,
+                });
+                return { path: payload.subPath || '' };
+            },
+        },
+    );
+    return result;
 }
 
 const deferredBridges = createDeferredBridgeSetup(ipcMain);
@@ -181,6 +309,13 @@ const windowManager = createWindowManager({
     getAppRoot: () => getAppRoot(app),
     getUserDataPath,
 });
+
+try {
+    const { registerWindowControlsIpc } = require('./window-controls');
+    registerWindowControlsIpc(ipcMain, {
+        getMainWindow: () => windowManager.getMainWindow(),
+    });
+} catch (_) { /* optional */ }
 
 const appTheme = require('./app-theme');
 appTheme.linkSuppressMinimizeToTray((ms) => {
@@ -237,6 +372,39 @@ ipcMain.handle('transub-get-system-resources', async (_event, payload = {}) => {
     }
 });
 
+ipcMain.handle('transub-get-cli-launcher', async () => {
+    try {
+        const path = require('path');
+        const { getInstallRoot, getProjectRoot } = require('./app-paths');
+        const installRoot = getInstallRoot();
+        const projectRoot = getProjectRoot();
+        const packaged = !!app.isPackaged;
+        if (packaged) {
+            const transubExe = process.platform === 'win32'
+                ? path.join(installRoot, 'transub.exe')
+                : process.execPath;
+            return {
+                ok: true,
+                packaged: true,
+                transubExe,
+                installRoot,
+                projectRoot,
+            };
+        }
+        return {
+            ok: true,
+            packaged: false,
+            transubExe: process.platform === 'win32'
+                ? 'D:\\Transub\\transub.exe'
+                : '',
+            installRoot,
+            projectRoot,
+        };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    }
+});
+
 ipcMain.handle('transub-get-ui-zoom', async () => {
     try {
         const { getUiZoomPref, resolveZoomFactor, loadUiZoomPref } = require('./ui-zoom');
@@ -268,24 +436,110 @@ ipcMain.handle('transub-set-ui-zoom', async (_event, payload = {}) => {
     }
 });
 
+// Cold entitlement — does not load advanced-bridge / TDP / managed catalog.
+ipcMain.handle('transub-advanced-get-entitlement', async () => {
+    try {
+        const { getEntitlementStatusCold } = require('./advanced-status-cold');
+        return getEntitlementStatusCold();
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err), status: { entitled: false } };
+    }
+});
+
+// Cold bundled engine path — used to fill settings before engine-bridge loads.
+ipcMain.handle('transub-engine-bundled-path', async () => {
+    try {
+        const {
+            getBundledEnginePath,
+            getBundledEnginePathIfPresent,
+            isValidEngineRoot,
+        } = require('./app-paths');
+        const bundled = getBundledEnginePath();
+        const present = isValidEngineRoot(bundled);
+        return {
+            ok: true,
+            path: bundled,
+            present,
+            resolved: present ? bundled : getBundledEnginePathIfPresent(),
+        };
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+});
+
+// Cold model-list cache — browse during engine jobs without touching the process.
+ipcMain.handle('transub-engine-models-cache-load', async () => {
+    try {
+        return require('./engine-models-cache').loadCache();
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err), cache: null };
+    }
+});
+ipcMain.handle('transub-engine-models-cache-save', async (_event, payload = {}) => {
+    try {
+        return require('./engine-models-cache').saveCache(payload || {});
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+});
+
+// Cold UI fragment read — file:// fetch is blocked by Chromium CORS.
+const UI_FRAGMENT_ALLOWLIST = new Set([
+    'settings-panels.fragment.html',
+    'workspace-scenes.fragment.html',
+    'workspace-shelf.fragment.html',
+    'workspace-models.fragment.html',
+    'workspace-burn.fragment.html',
+    'setup-wizard.fragment.html',
+    'factory-modals.fragment.html',
+    'editor-modals-drawers.fragment.html',
+    'editor-modals-tools.fragment.html',
+    'editor-modals-pro.fragment.html',
+]);
+ipcMain.handle('transub-read-ui-fragment', async (_event, payload = {}) => {
+    try {
+        const name = String(payload?.name || payload?.file || '').trim().replace(/\\/g, '/');
+        const base = path.basename(name);
+        if (!UI_FRAGMENT_ALLOWLIST.has(base) || name.includes('..') || name.includes('/')) {
+            return { ok: false, error: 'fragment not allowed' };
+        }
+        const filePath = path.join(getAppRoot(app), base);
+        let html;
+        try {
+            html = await fs.promises.readFile(filePath, 'utf8');
+        } catch (err) {
+            if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+                return { ok: false, error: `fragment missing: ${base}` };
+            }
+            throw err;
+        }
+        return { ok: true, name: base, html };
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+});
+
 deferredBridges.installLazyRoutes({
     'electron-select-folder': 'transwithai',
     'transwithai-validate': 'transwithai',
     'transwithai-check-engine-update': 'transwithai',
     'transwithai-generate-subtitles': 'transwithai',
     'transwithai-cancel': 'transwithai',
+    'transwithai-cancel-current': 'transwithai',
     'transub-live-batch-append': 'liveBatch',
     'transub-live-batch-skip': 'liveBatch',
     'transub-live-batch-update-overrides': 'liveBatch',
+    'transub-live-batch-snapshot': 'liveBatch',
     'transub-engine-validate': 'engine',
-    'transub-engine-bundled-path': 'engine',
     'transub-engine-list-models': 'engine',
+    'transub-engine-delete-models': 'engine',
     'transub-engine-recommend': 'engine',
     'transub-engine-detect-language': 'engine',
     'transub-engine-download-models': 'engine',
     'transub-engine-gpu-status': 'engine',
     'transub-engine-scan-cuda': 'engine',
     'transub-engine-adopt-cuda': 'engine',
+    'transub-engine-pick-cuda-root': 'engine',
     'transub-engine-asr-whisper-status': 'engine',
     'transub-engine-ensure-gpu': 'engine',
     'transub-engine-audio-separate-status': 'engine',
@@ -294,12 +548,16 @@ deferredBridges.installLazyRoutes({
     'transub-engine-cancel-download': 'engine',
     'transub-engine-download-info': 'engine',
     'transub-engine-open-manual-url': 'engine',
+    'transub-engine-open-thunder-urls': 'engine',
+    'transub-engine-open-download-tool': 'engine',
     'transub-engine-open-download-folder': 'engine',
     'transub-engine-pick-whl': 'engine',
+    'transub-engine-validate-whl': 'engine',
     'transub-engine-install-local-wheels': 'engine',
     'transub-engine-generate-subtitles': 'engine',
     'transub-engine-translate-cues': 'engine',
     'transub-engine-cancel': 'engine',
+    'transub-engine-cancel-current': 'engine',
     'transub-engine-resume-job': 'engine',
     'transub-engine-job-checkpoint': 'engine',
     'transub-engine-export-diagnostics': 'engine',
@@ -317,6 +575,8 @@ deferredBridges.installLazyRoutes({
     'transub-save-glossary': 'extensions',
     'transub-export-glossary': 'extensions',
     'transub-import-glossary': 'extensions',
+    'transub-import-anilist-glossary': 'extensions',
+    'transub-import-bad-pool-glossary': 'extensions',
     'transub-get-text-presets': 'extensions',
     'transub-save-text-presets': 'extensions',
     'transub-export-text-presets': 'extensions',
@@ -327,7 +587,13 @@ deferredBridges.installLazyRoutes({
     'transub-import-editor-workflows': 'extensions',
     'transwithai-save-options': 'transwithai',
     'transub-test-proxy': 'transwithai',
+    'transub-station-probe': 'transwithai',
+    'transub-station-fetch-config': 'transwithai',
+    'transub-station-list-models': 'transwithai',
+    'transub-station-select-model': 'transwithai',
     'transub-test-hf-endpoint': 'transwithai',
+    'transub-pick-hf-endpoint': 'transwithai',
+    'transub-test-github-mirrors': 'transwithai',
     'transwithai-set-post-task': 'transwithai',
     'transub-batch-finalize': 'transwithai',
     'transwithai-get-pending-files': 'transwithai',
@@ -336,14 +602,16 @@ deferredBridges.installLazyRoutes({
     'transwithai-open-external': 'transwithai',
     'ffmpeg-probe': 'extensions',
     'ffmpeg-probe-acoustic': 'extensions',
-    'transub-sense-memory-lookup': 'extensions',
-    'transub-sense-memory-record': 'extensions',
-    'transub-sense-memory-stats': 'extensions',
-    'transub-sense-memory-clear': 'extensions',
     'ffmpeg-validate': 'extensions',
     'transub-env-check': 'extensions',
     'ffmpeg-detect-silence': 'extensions',
     'ffmpeg-cancel': 'extensions',
+    'ffmpeg-burn-hardsub': 'extensions',
+    'ffmpeg-burn-preview-clip': 'extensions',
+    'ffmpeg-burn-delete-preview': 'extensions',
+    'ffmpeg-burn-list-encoders': 'extensions',
+    'ffmpeg-burn-read-text': 'extensions',
+    'ffmpeg-burn-select-output': 'extensions',
     'ffmpeg-extract-waveform': 'extensions',
     'electron-select-ffmpeg': 'extensions',
     'transwithai-scan-folder': 'extensions',
@@ -354,32 +622,23 @@ deferredBridges.installLazyRoutes({
     'transwithai-delete-preset': 'extensions',
     'transwithai-export-preset': 'extensions',
     'transwithai-import-preset': 'extensions',
+    'combo-plans-list': 'extensions',
+    'combo-plans-get': 'extensions',
+    'combo-plans-refresh': 'extensions',
     'transwithai-get-task-history': 'extensions',
     'transwithai-clear-task-history': 'extensions',
-    'transub-library-status': 'extensions',
-    'transub-library-list': 'extensions',
-    'transub-library-get-media': 'extensions',
-    'transub-library-set-active': 'extensions',
-    'transub-library-open-version': 'extensions',
-    'transub-library-preview-version': 'extensions',
-    'transub-library-load-version-cues': 'extensions',
-    'transub-library-diff': 'extensions',
-    'transub-library-set-status': 'extensions',
-    'transub-library-delete-version': 'extensions',
-    'transub-library-delete-media': 'extensions',
-    'transub-library-set-note': 'extensions',
-    'transub-library-set-ab-tag': 'extensions',
-    'transub-library-prepare-mt-train': 'extensions',
-    'transub-library-export-pack': 'extensions',
-    'transub-library-export-tags': 'extensions',
-    'transub-library-export-corpus': 'extensions',
-    'transub-library-prepare-rerun': 'extensions',
-    'transub-library-set-media-path': 'extensions',
-    'transub-library-rename-media': 'extensions',
-    'transub-library-suggest-media': 'extensions',
-    'transub-library-auto-link-media': 'extensions',
-    'transub-library-auto-link-media-batch': 'extensions',
     'transub-clear-transcript-cache': 'extensions',
+    'transub-shelf-status': 'extensions',
+    'transub-shelf-list': 'extensions',
+    'transub-shelf-get-media': 'extensions',
+    'transub-shelf-delete-media': 'extensions',
+    'transub-shelf-delete-translation': 'extensions',
+    'transub-shelf-register-translation': 'extensions',
+    'transub-shelf-set-media-path': 'extensions',
+    'transub-shelf-rename-media': 'extensions',
+    'transub-shelf-open-slot': 'extensions',
+    'transub-shelf-preview-slot': 'extensions',
+    'transub-shelf-scan-media': 'extensions',
     'transub-find-kept-transcript': 'extensions',
     'transub-pin-kept-transcript': 'extensions',
     'transub-get-editor-history': 'extensions',
@@ -404,7 +663,6 @@ deferredBridges.installLazyRoutes({
     'transwithai-list-models': 'extensions',
     'transwithai-validate-model': 'extensions',
     'transub-copy-subtitle-as': 'extensions',
-    'transub-trial-compare': 'transwithai',
     'transub-read-subtitle-draft': 'extensions',
     'transub-write-subtitle-draft': 'extensions',
     'transub-clear-subtitle-draft': 'extensions',
@@ -415,26 +673,17 @@ deferredBridges.installLazyRoutes({
     'transub-guess-video-for-subtitle': 'extensions',
     'transub-resolve-media-url': 'extensions',
     'transub-open-subtitle-editor': 'editorWindow',
+    'transub-open-player': 'playerLaunch',
+    'transub-resolve-player': 'playerLaunch',
+    'transub-resolve-external-editor': 'editorWindow',
     'transub-editor-register-path': 'editorWindow',
     'transub-open-settings': 'editorWindow',
     'transub-open-setup-wizard': 'editorWindow',
     'transub-open-update-window': 'editorWindow',
     'transub-open-about-window': 'editorWindow',
-    'transub-open-subtitle-library': 'editorWindow',
-    'transub-library-start-retranslate': 'editorWindow',
-    'transub-library-start-mt-train': 'editorWindow',
-    'transub-open-mt-train': 'editorWindow',
-    'transub-mt-train-access': 'editorWindow',
+    'transub-open-subtitle-shelf': 'editorWindow',
     'transub-is-dev-build': 'editorWindow',
     'transub-upload-subtitlecat': 'editorWindow',
-    'transub-mt-train-infer-suggest': 'editorWindow',
-    'transub-mt-train-list-history-pairs': 'editorWindow',
-    'transub-mt-train-load-history-pair': 'editorWindow',
-    'transub-mt-train-load-history-pairs': 'editorWindow',
-    'transub-mt-train-consume-pending-pair': 'editorWindow',
-    'transub-mt-train-idle-status': 'editorWindow',
-    'transub-mt-train-idle-prefs': 'editorWindow',
-    'transub-mt-train-idle-run': 'editorWindow',
     'transub-show-main-window': 'editorWindow',
     'transub-consume-pending-open-params': 'editorWindow',
     'transub-consume-pending-setup-wizard': 'editorWindow',
@@ -470,9 +719,10 @@ deferredBridges.installLazyRoutes({
     'transub-advanced-managed-llm-scan-cuda': 'advanced',
     'transub-advanced-managed-llm-adopt-cuda': 'advanced',
     'transub-advanced-managed-llm-set-runtime': 'advanced',
-    'transub-advanced-managed-llm-set-server-tuning': 'advanced',
     'transub-advanced-managed-llm-import-runtime': 'advanced',
     'transub-advanced-managed-llm-cancel-pull': 'advanced',
+    'transub-advanced-managed-llm-lab-add': 'advanced',
+    'transub-advanced-managed-llm-lab-remove': 'advanced',
     'transub-advanced-managed-llm-stop-server': 'advanced',
     'transub-advanced-managed-llm-perf-test': 'advanced',
     'transub-advanced-open-ollama-download': 'advanced',
@@ -519,12 +769,13 @@ deferredBridges.defer('editorWindow', (api) => {
         },
         windowManager,
     });
-    try {
-        const { registerMtTrainBridge } = require('./mt-train-bridge');
-        registerMtTrainBridge(api.register, app);
-    } catch (err) {
-        console.warn('[main] mt-train bridge init failed:', err.message || err);
-    }
+});
+
+deferredBridges.defer('playerLaunch', (api) => {
+    const { registerPlayerLaunchRoutes } = require('./player-external-launch');
+    registerPlayerLaunchRoutes(api.register, {
+        getAppRoot: () => getAppRoot(app),
+    });
 });
 
 deferredBridges.defer('liveBatch', (api) => {
@@ -560,6 +811,20 @@ deferredBridges.defer('transwithai', (api) => {
 
 app.on('second-instance', (_event, commandLine) => {
     const cliArgs = commandLine.slice(1);
+    const proto = parsePlayerProtocolArgv(cliArgs);
+    if (proto) {
+        const kind = applyPlayerProtocolHandoff(proto);
+        if (kind === 'edit') return;
+        if (editorOnlyMode) {
+            editorOnlyMode = false;
+            windowManager.createMainWindow();
+            windowManager.setupTray();
+            return;
+        }
+        windowManager.showMainWindow();
+        return;
+    }
+
     const cliEdit = parseCliEditSubtitle(cliArgs);
     if (cliEdit) {
         openCliSubtitleEditor(cliEdit);
@@ -567,7 +832,12 @@ app.on('second-instance', (_event, commandLine) => {
     }
 
     const cliFiles = parseCliFiles(cliArgs);
-    if (cliFiles.length) setPendingFilesForWindow(cliFiles);
+    if (cliFiles.length) {
+        setPendingFilesForWindow(cliFiles);
+        try {
+            windowManager.sendToRenderer('transub-cli-files-pending', { count: cliFiles.length });
+        } catch (_) { /* ignore */ }
+    }
 
     if (editorOnlyMode) {
         editorOnlyMode = false;
@@ -577,6 +847,16 @@ app.on('second-instance', (_event, commandLine) => {
     }
 
     windowManager.showMainWindow();
+});
+
+// macOS / some Windows deep-link paths
+app.on('open-url', (event, url) => {
+    try { event.preventDefault(); } catch (_) { /* ignore */ }
+    const proto = parsePlayerProtocolArgv([url]);
+    if (!proto) return;
+    const kind = applyPlayerProtocolHandoff(proto);
+    if (kind === 'edit') return;
+    try { windowManager.showMainWindow(); } catch (_) { /* ignore */ }
 });
 
 app.whenReady().then(() => {
@@ -589,8 +869,13 @@ app.whenReady().then(() => {
     try {
         require('./advanced-runtime-prefer').refreshPreferCuda().catch(() => {});
     } catch (_) { /* ignore */ }
-    const cliEdit = parseCliEditSubtitle();
-    const cliFiles = parseCliFiles();
+    const cliProto = parsePlayerProtocolArgv();
+    const cliEdit = cliProto?.mode === 'edit'
+        ? { subPath: cliProto.sub, videoPath: cliProto.media || '' }
+        : parseCliEditSubtitle();
+    const cliFiles = cliProto?.mode === 'queue' && cliProto.media
+        ? [cliProto.media]
+        : parseCliFiles();
     if (cliFiles.length) setPendingFilesForWindow(cliFiles);
 
     let preferEditorStartup = false;
@@ -621,6 +906,15 @@ app.whenReady().then(() => {
         windowManager.createMainWindow();
     }
 
+    if (process.argv.slice(1).some((a) => a === '--open-shelf' || a === '--shelf')) {
+        try {
+            const { openSubtitleShelfWindow } = require('./subtitle-shelf-window');
+            openSubtitleShelfWindow(app, {});
+        } catch (err) {
+            console.warn('[main] --open-shelf failed:', err?.message || err);
+        }
+    }
+
     // Migrate after window creation is scheduled so first paint is not blocked.
     setImmediate(() => {
         try {
@@ -637,6 +931,17 @@ app.whenReady().then(() => {
                 console.warn('[main] proxy apply failed:', err.message || err);
             }
             try {
+                const { startEditorFactoryServer } = require('./editor-factory-server');
+                void startEditorFactoryServer().then((r) => {
+                    if (r?.ok) console.log('[factory] Editor RPC at', r.baseUrl);
+                    else console.warn('[factory] start failed:', r?.error || 'unknown');
+                }).catch((err) => {
+                    console.warn('[factory] start failed:', err?.message || err);
+                });
+            } catch (err) {
+                console.warn('[factory] load failed:', err?.message || err);
+            }
+            try {
                 const { scheduleAutoUpdateChecks } = require('./auto-update-check');
                 scheduleAutoUpdateChecks(app, {
                     getAppRoot: () => getAppRoot(app),
@@ -645,19 +950,21 @@ app.whenReady().then(() => {
             } catch (err) {
                 console.warn('[main] auto update schedule failed:', err.message || err);
             }
-            try {
-                if (!app.isPackaged) {
-                    const { startIdleWatcher } = require('./mt-train-idle');
-                    startIdleWatcher(app);
-                }
-            } catch (err) {
-                console.warn('[main] mt-train idle watcher failed:', err.message || err);
-            }
         } catch (err) {
             console.warn('[main] user data migration failed:', err.message || err);
         }
+        // Warm MT sanitize / opaque tables after first paint so the first
+        // translate job does not pay the large sync require on the critical path.
+        setTimeout(() => {
+            try {
+                require('../src/js/mt-sanitize-core');
+            } catch (err) {
+                console.warn('[main] mt-sanitize warm failed:', err?.message || err);
+            }
+        }, 1500);
     });
 });
+
 app.on('window-all-closed', () => {
     if (windowManager.isQuitting()) return;
     // Spurious last-window close (seen when a dark editor flipped nativeTheme)
@@ -681,16 +988,20 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
     windowManager.setQuitting(true);
     try {
+        const { stopEditorFactoryServer } = require('./editor-factory-server');
+        void stopEditorFactoryServer();
+    } catch { /* ignore */ }
+    try {
         const { stopAutoUpdateChecks } = require('./auto-update-check');
         stopAutoUpdateChecks();
     } catch { /* ignore */ }
     try {
         const { closeAllSubtitleEditorWindows } = require('./subtitle-editor-window');
         closeAllSubtitleEditorWindows();
-        try {
-            const { closeSubtitleLibraryWindow } = require('./subtitle-library-window');
-            closeSubtitleLibraryWindow();
-        } catch { /* ignore */ }
+    } catch { /* ignore */ }
+    try {
+        const { closeSubtitleShelfWindow } = require('./subtitle-shelf-window');
+        closeSubtitleShelfWindow();
     } catch { /* ignore */ }
     try {
         const { stopSubtitleJobs } = require('./transwithai-bridge');
@@ -707,14 +1018,6 @@ app.on('before-quit', () => {
     try {
         const { forceRelease } = require('./compute-task-lock');
         forceRelease();
-    } catch { /* ignore */ }
-    try {
-        const { stopTrainServerChild } = require('./mt-train-window');
-        stopTrainServerChild();
-    } catch { /* ignore */ }
-    try {
-        const { stopIdleWatcher } = require('./mt-train-idle');
-        stopIdleWatcher();
     } catch { /* ignore */ }
 });
 

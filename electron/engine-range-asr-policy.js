@@ -36,25 +36,14 @@ function normalizeOpusTextCues(cuesIn) {
 }
 
 /**
- * Resolve native Opus MT model id (never Sakura / LLM inference ids).
+ * Resolve native Opus MT model id — always empty (Opus removed).
  */
-function resolveNativeOpusMtModel(options = {}, payload = {}, deps = {}) {
-    const isSakura = deps.isSakuraMtModel || (() => false);
-    const isLlm = deps.isLlmInferenceMtModel || (() => false);
-    let mtModel = String(
-        payload.mtModel
-        || options.engineOpusMtModel
-        || options.engineMtModel
-        || '',
-    ).trim();
-    if (isSakura(mtModel) || isLlm(mtModel)) {
-        mtModel = String(options.engineOpusMtModel || '').trim();
-    }
-    return mtModel;
+function resolveNativeOpusMtModel(_options = {}, _payload = {}, _deps = {}) {
+    return '';
 }
 
 /**
- * For range ASR jobs: strip Sakura/LLM from engineMtModel → Opus fallback.
+ * For range ASR jobs: never fall back to Opus; return null when MT is LLM/smart.
  */
 function resolveRangeAsrMtModel(options = {}, deps = {}) {
     const isSakura = deps.isSakuraMtModel || (() => false);
@@ -66,10 +55,12 @@ function resolveRangeAsrMtModel(options = {}, deps = {}) {
         || isLlm(mtModel)
         || isSakura(options.engineLlmMtModel)
         || isLlm(options.engineLlmMtModel)
+        || /^opus[-_]?mt/i.test(String(mtModel || ''))
+        || /^opus[-_]?mt/i.test(String(options.engineOpusMtModel || ''))
     ) {
-        mtModel = String(options.engineOpusMtModel || '').trim() || null;
+        return null;
     }
-    return mtModel;
+    return null;
 }
 
 function _dedupeAsrIds(ids) {
@@ -119,8 +110,9 @@ function filterAsrCandidatesByInstalled(candidates, installedIds, options = {}) 
 /**
  * Full-file batch + range ASR failover chain (content-aware).
  * JA/anime specialists try sibling specialists before generic SenseVoice/tiny.
+ * Pass `{ perfProfile: 'speed' }` (or `maxCandidates`) to cap chain length.
  */
-function buildBatchAsrCandidates(primaryAsr) {
+function buildBatchAsrCandidates(primaryAsr, options = {}) {
     const primary = String(primaryAsr || 'sensevoice-small').trim() || 'sensevoice-small';
     const low = primary.toLowerCase();
     const chain = [primary];
@@ -131,7 +123,8 @@ function buildBatchAsrCandidates(primaryAsr) {
         'kotoba-whisper-v2.0-faster',
         'reazonspeech-k2',
         'qwen3-asr-1.7b-ja-anime-galgame',
-        'qwen3-asr-1.7b-ja',
+        'qwen3-asr-1.7b-ja-anime-lora-v3',
+        'qwen3-asr-1.7b',
         'qwen3-asr-0.6b',
     ];
     const isJaSpecialist = jaSpecialists.some((id) => low === id || low.startsWith(id));
@@ -171,8 +164,8 @@ function buildBatchAsrCandidates(primaryAsr) {
             if (!low.includes('1.7b-ja-anime')) {
                 chain.push('qwen3-asr-1.7b-ja-anime-galgame');
             }
-            if (!low.includes('1.7b-ja') || low.includes('anime')) {
-                chain.push('qwen3-asr-1.7b-ja');
+            if (!low.includes('lora') && low !== 'qwen3-asr-1.7b') {
+                chain.push('qwen3-asr-1.7b');
             }
             if (!low.includes('0.6b')) {
                 chain.push('qwen3-asr-0.6b');
@@ -188,12 +181,71 @@ function buildBatchAsrCandidates(primaryAsr) {
             chain.push('whisper-large-v3-turbo');
         }
     }
-    return _dedupeAsrIds(chain);
+    return limitBatchAsrFailoverChain(_dedupeAsrIds(chain), options);
+}
+
+/** Max ASR models to try for short editor/QC range clips (not full-file batch). */
+const RANGE_RETRANSCRIBE_FAILOVER_MAX = 3;
+/** Full-file empty-result failover under perfProfile=speed (primary + one sibling). */
+const BATCH_ASR_FAILOVER_SPEED_MAX = 2;
+/** Full-file empty-result failover under quality (primary + up to 2 siblings). */
+const BATCH_ASR_FAILOVER_QUALITY_MAX = 3;
+/** Stop full-file failover after this many consecutive ASR_EMPTY results. */
+const BATCH_ASR_EMPTY_STREAK_STOP = 2;
+
+/**
+ * Cap full-file ASR failover when perfProfile / maxCandidates is set.
+ * Omitting perfProfile leaves the full specialist chain (tests / SO callers).
+ * @param {string[]} candidates
+ * @param {{ perfProfile?: string, maxCandidates?: number }} [options]
+ */
+function limitBatchAsrFailoverChain(candidates, options = {}) {
+    const list = _dedupeAsrIds(Array.isArray(candidates) ? candidates : []);
+    let max = Number(options.maxCandidates);
+    if (!Number.isFinite(max) || max <= 0) {
+        const perf = String(options.perfProfile || '').trim().toLowerCase();
+        if (perf === 'speed' || perf === 'fast') max = BATCH_ASR_FAILOVER_SPEED_MAX;
+        else if (perf === 'quality' || perf === 'accurate' || perf === 'balanced') {
+            max = BATCH_ASR_FAILOVER_QUALITY_MAX;
+        } else {
+            max = 0;
+        }
+    }
+    if (!max || max <= 0) return list;
+    return list.slice(0, Math.max(1, Math.round(max)));
+}
+
+function _isQwenAsrId(asrId) {
+    return /qwen3-asr/i.test(String(asrId || ''));
+}
+
+/**
+ * Short failover for range retranscribe / QC windows.
+ * Avoids sibling-Qwen churn (same TEN path → same empty clip) and heavy turbo loads.
+ */
+function buildRangeRetranscribeAsrCandidates(primaryAsr) {
+    const primary = String(primaryAsr || 'sensevoice-small').trim() || 'sensevoice-small';
+    const low = primary.toLowerCase();
+    const chain = [primary];
+
+    if (_isQwenAsrId(primary)) {
+        // Sibling Qwen rarely fixes empty short clips; try one lightweight fallback.
+        chain.push('sensevoice-small', 'whisper-tiny');
+    } else if (/sensevoice/i.test(primary)) {
+        chain.push('whisper-tiny');
+    } else if (/anime-whisper|kotoba|whisper-ja|reazon|cohere|parakeet/i.test(primary)) {
+        if (!/sensevoice/i.test(primary)) chain.push('sensevoice-small');
+        if (!/whisper-tiny/i.test(low)) chain.push('whisper-tiny');
+    } else {
+        chain.push('sensevoice-small', 'whisper-tiny');
+    }
+
+    return _dedupeAsrIds(chain).slice(0, RANGE_RETRANSCRIBE_FAILOVER_MAX);
 }
 
 /** @deprecated Prefer buildBatchAsrCandidates — kept for range callers. */
 function buildRangeAsrCandidates(primaryAsr) {
-    return buildBatchAsrCandidates(primaryAsr);
+    return buildRangeRetranscribeAsrCandidates(primaryAsr);
 }
 
 function isEmptyAsrFail(res) {
@@ -231,6 +283,12 @@ module.exports = {
     resolveRangeAsrMtModel,
     filterAsrCandidatesByInstalled,
     buildBatchAsrCandidates,
+    limitBatchAsrFailoverChain,
+    buildRangeRetranscribeAsrCandidates,
+    RANGE_RETRANSCRIBE_FAILOVER_MAX,
+    BATCH_ASR_FAILOVER_SPEED_MAX,
+    BATCH_ASR_FAILOVER_QUALITY_MAX,
+    BATCH_ASR_EMPTY_STREAK_STOP,
     buildRangeAsrCandidates,
     isEmptyAsrFail,
     isRetryableAsrFail,

@@ -56,4 +56,59 @@ describe('batch-cue-filter-plan', () => {
         });
         assert.ok(adj.summary.includes('重合'));
     });
+
+    it('batch retranslate text condition matches equals / ellipsis family', () => {
+        const cues = [
+            { startMs: 0, endMs: 1000, text: '你好' },
+            { startMs: 1000, endMs: 2000, text: '…' },
+            { startMs: 2000, endMs: 3000, text: '...' },
+            { startMs: 3000, endMs: 4000, text: '' },
+            { startMs: 4000, endMs: 5000, text: '说…话' },
+        ];
+        const matched = filter.collectRetranslateTextMatches(cues, {
+            pattern: '...',
+            matchMode: 'equals',
+        });
+        assert.deepStrictEqual(matched, [1, 2, 3]);
+
+        const contains = filter.collectRetranslateTextMatches(cues, {
+            pattern: '…',
+            matchMode: 'contains',
+        });
+        assert.deepStrictEqual(contains, [1, 4]);
+
+        const preview = filter.previewBatchRetranslatePlan({
+            matchedIndexes: matched,
+            pattern: '...',
+            engine: 'llm',
+        });
+        assert.strictEqual(preview.isErr, false);
+        assert.strictEqual(preview.matched, 3);
+        assert.ok(preview.summary.includes('推理翻译'));
+    });
+
+    it('batch delete plan applies indexes and remaps selection', () => {
+        const cues = [
+            { text: 'a' },
+            { text: '…' },
+            { text: 'b' },
+            { text: '...' },
+        ];
+        const matched = filter.collectRetranslateTextMatches(cues, { pattern: '…', matchMode: 'equals' });
+        assert.deepStrictEqual(matched, [1, 3]);
+        const preview = filter.previewBatchDeletePlan({
+            matchedIndexes: matched,
+            pattern: '…',
+            totalCues: cues.length,
+        });
+        assert.strictEqual(preview.isErr, false);
+        assert.strictEqual(preview.remaining, 2);
+        assert.ok(preview.summary.includes('删除'));
+
+        const applied = filter.applyDeleteCueIndexes(cues, matched);
+        assert.strictEqual(applied.removed, 2);
+        assert.deepStrictEqual(applied.cues.map((c) => c.text), ['a', 'b']);
+        assert.strictEqual(filter.nextSelectedIndexAfterDelete(1, matched, 2), 1);
+        assert.strictEqual(filter.nextSelectedIndexAfterDelete(2, matched, 2), 1);
+    });
 });

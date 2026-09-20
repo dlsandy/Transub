@@ -4,6 +4,7 @@ const { resolveHtmlPath } = require('./app-paths');
 const { getWindowIconOption, applyWindowIcon } = require('./icons');
 const { asString } = require('./ipc-validate');
 const { attachUiZoom } = require('./ui-zoom');
+const { attachSplashThenLoad } = require('./window-splash-boot');
 
 /** @type {import('electron').BrowserWindow|null} */
 let settingsWindow = null;
@@ -57,8 +58,11 @@ function focusSettingsWindow({ tab, wizard, forceWizard, openLibrary } = {}) {
     if (win.webContents.isLoading()) {
         win.webContents.once('did-finish-load', () => setTimeout(send, 80));
     } else {
+        // Immediate + delayed retries: renderer may not have onOpenParams yet, or an
+        // in-flight openParamsModal may need a later generation to win the race.
         send();
         setTimeout(send, 120);
+        setTimeout(send, 400);
     }
     return win;
 }
@@ -106,7 +110,7 @@ function openSettingsWindow(app, {
         height: 820,
         minWidth: 800,
         minHeight: 600,
-        title: wizard ? 'Transub 设置向导' : 'Transub 设置',
+        title: wizard ? '字幕工厂 设置向导' : '字幕工厂 设置',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor,
@@ -138,25 +142,29 @@ function openSettingsWindow(app, {
     if (forceWizard) query.set('forceWizard', '1');
     if (openLibrary) query.set('openLibrary', '1');
 
-    win.loadFile(resolveHtmlPath(app, 'index.html'), { search: query.toString() });
+    const openPayload = {
+        tab: resolved,
+        wizard: !!wizard,
+        forceWizard: !!forceWizard,
+        openLibrary: !!openLibrary,
+    };
+    const notifyOpen = () => {
+        sendOpenParams(win, openPayload);
+        setTimeout(() => sendOpenParams(win, openPayload), 150);
+    };
 
-    win.once('ready-to-show', () => {
-        if (win.isDestroyed()) return;
-        applyWindowIcon(win);
-        win.show();
-        win.focus();
-        sendOpenParams(win, {
-            tab: resolved,
-            wizard: !!wizard,
-            forceWizard: !!forceWizard,
-            openLibrary: !!openLibrary,
-        });
-        setTimeout(() => sendOpenParams(win, {
-            tab: resolved,
-            wizard: !!wizard,
-            forceWizard: !!forceWizard,
-            openLibrary: !!openLibrary,
-        }), 150);
+    attachSplashThenLoad(win, {
+        splashHtml: resolveHtmlPath(app, 'splash.html'),
+        splashSearch: 'kind=settings',
+        mainHtml: resolveHtmlPath(app, 'index.html'),
+        mainSearch: query.toString(),
+        onReveal: () => {
+            if (win.isDestroyed()) return;
+            applyWindowIcon(win);
+            if (!win.isVisible()) win.show();
+            win.focus();
+        },
+        onMainLoaded: notifyOpen,
     });
 
     return { ok: true };

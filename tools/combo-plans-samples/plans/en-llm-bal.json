@@ -1,0 +1,38 @@
+{
+  "id": "en-llm-bal",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 推理 · 均衡",
+  "description": "欧美剧：SenseVoice 听写+ TranslateGemma 4B 本地推理翻译硬件档：均衡 · 8–12GB 显存。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad",
+    "translategemma-4b"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "llm",
+    "engineLlmMtModel": "translategemma-4b",
+    "engineProfile": "balanced",
+    "activePresetId": "film-turbo-stable",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "beamSize": 5
+  }
+}

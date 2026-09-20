@@ -136,6 +136,16 @@ describe('ja-person-names-core', () => {
         );
         assert.ok(keepHonorific.text.includes('美咲さん'));
 
+        // Single vocative cues stay (MFYD-185 理沙); only ≥2 loops strip
+        const single = jaNames.stripAsrHallucinationLoops('理沙');
+        assert.strictEqual(single.changed, false);
+        assert.strictEqual(single.text, '理沙');
+        const singleEllipsis = jaNames.stripAsrHallucinationLoops('玲奈…');
+        assert.strictEqual(singleEllipsis.text, '玲奈…');
+        const double = jaNames.stripAsrHallucinationLoops('理沙理沙');
+        assert.ok(double.changed);
+        assert.ok(!double.text.includes('理沙'), double.text);
+
         assert.ok(!jaNames.sourceJustifiesZhName('玲奈', 'あ〜玲奈玲奈玲奈玲奈'));
         assert.ok(!jaNames.sourceJustifiesZhName('玲奈', '嬉玲奈玲奈玲奈玲奈'));
         assert.ok(!jaNames.sourceJustifiesZhName('玲奈', '玲奈'));
@@ -153,5 +163,25 @@ describe('ja-person-names-core', () => {
 
         const danceLoop = sanitize.sanitizeMtCueText('谁才是舞…舞', 'どっちのが');
         assert.ok(!danceLoop.text.includes('舞'), danceLoop.text);
+    });
+
+    it('keeps single JA name cue through noise removal (MFYD-185)', () => {
+        const fluency = require('../src/js/subtitle-fluency-core');
+        const removed = fluency.removeNoiseFromCues(
+            [
+                { startMs: 4614432, endMs: 4615200, text: '理沙' },
+                { startMs: 4616000, endMs: 4619000, text: 'こんにちは' },
+            ],
+            {
+                removeEmpty: true,
+                removeFragments: true,
+                removeSoundEffects: true,
+                removeSymbolOnly: true,
+                removeHallucinations: true,
+                stripAsrNameLoops: true,
+            },
+        );
+        assert.ok(removed.cues.some((c) => c.text === '理沙'), JSON.stringify(removed));
+        assert.ok(removed.cues.some((c) => c.text === 'こんにちは'));
     });
 });

@@ -177,7 +177,10 @@ async function main() {
         }
     }
 
-    const exePath = meta.exePath || path.join(meta.installRoot, 'Transub.exe');
+    const exePath = meta.exePath
+        || (typeof merge.resolveMainExePath === 'function'
+            ? merge.resolveMainExePath(meta.installRoot)
+            : path.join(meta.installRoot, 'transub.exe'));
     if (!fs.existsSync(exePath)) {
         throw new Error(`安装后未找到可执行文件: ${exePath}`);
     }

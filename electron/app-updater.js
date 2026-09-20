@@ -1,9 +1,9 @@
 /**
- * Windows app update via GitHub + Codeberg + GitCode Releases (zip-only),
- * with official-site mirrors under https://www.transub.cc/updates/{version}/.
+ * Windows app update via GitHub + GitCode Releases (zip-only).
  * - Manifest is block digests only (shell / app / engine / other) — no file list
  * - Prefer delta zip when present; else dirty block zips; else full Transub-*-win.zip
- * - Download probes GitHub / Codeberg / GitCode / 官网; domestic networks prefer GitCode first
+ * - Download probes GitHub / GitCode; domestic networks prefer GitCode first
+ * - UI may pin a single mirror (GitCode / GitHub) or leave on auto probe
  * - Legacy NSIS installs are guided to switch to zip (Setup is no longer published)
  * Code signing is not used (no free Authenticode cert); archives are sha256-verified.
  * Failure objects may include: code, preferredSource, triedSources, expectedSha, gotSha.
@@ -16,6 +16,8 @@ const { asString } = require('./ipc-validate');
 const {
     collectPreserveRelPaths,
     findPackageRoot,
+    hasMainExe,
+    resolveMainExePath,
     rimrafSafe,
 } = require('./zip-update-merge');
 const {
@@ -90,31 +92,96 @@ function formatUpdateFailureMeta(fail = {}) {
     const tipByCode = {
         checksum: '校验失败：换线路重试，或从发布页手动下载同版本 zip',
         extract: '解压失败：确认磁盘空间充足且安装目录可写',
-        probe: '清单探测失败：检查网络，或稍后再试 GitHub / Codeberg / GitCode / 官网',
+        probe: '清单探测失败：检查网络，或稍后再试 GitHub / GitCode',
         download: '下载失败：可改用其它镜像，或从发布页手动下载',
         cancelled: '已取消',
     };
     const tip = tipByCode[String(fail.code || '')]
-        || '可改从 GitHub / Codeberg / GitCode / 官网 Releases 手动下载';
+        || '可改从 GitHub / GitCode Releases 手动下载';
     parts.push(tip);
     return parts.join(' · ');
 }
 
 const GITHUB_OWNER = 'dlsandy';
 const GITHUB_REPO = 'Transub';
-const CODEBERG_OWNER = 'flyforyou';
-const CODEBERG_REPO = 'Transub';
 const GITCODE_OWNER = 'AndyDai';
 const GITCODE_REPO = 'Transub';
 const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
-const CODEBERG_RELEASES_URL = `https://codeberg.org/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases`;
 const GITCODE_RELEASES_URL = `https://gitcode.com/${GITCODE_OWNER}/${GITCODE_REPO}/releases`;
 const LATEST_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
-const CODEBERG_LATEST_API = `https://codeberg.org/api/v1/repos/${CODEBERG_OWNER}/${CODEBERG_REPO}/releases/latest`;
 const GITCODE_LATEST_API = `https://api.gitcode.com/api/v5/repos/${GITCODE_OWNER}/${GITCODE_REPO}/releases/latest`;
 const WEBSITE_ORIGIN = 'https://www.transub.cc';
 const WEBSITE_UPDATES_BASE = `${WEBSITE_ORIGIN}/updates`;
 const TRANWITHAI_RELEASES_URL = 'https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/releases';
+
+const APP_UPDATE_SOURCES = ['auto', 'gitcode', 'github'];
+
+/**
+ * @param {unknown} raw
+ * @returns {'auto'|'gitcode'|'github'}
+ */
+function normalizeUpdateSource(raw) {
+    const s = String(raw || '').trim().toLowerCase();
+    if (s === 'codeberg') return 'auto';
+    if (APP_UPDATE_SOURCES.includes(s)) return /** @type {const} */ (s);
+    return 'auto';
+}
+
+/**
+ * App updates no longer use www.transub.cc/updates mirrors (TDP still uses transub.cc CDN).
+ * @param {string} url
+ */
+function isAppWebsiteMirrorUrl(url) {
+    return /transub\.cc\/updates\//i.test(String(url || ''));
+}
+
+/**
+ * @param {string} url
+ * @param {'auto'|'gitcode'|'github'} source
+ */
+function urlMatchesUpdateSource(url, source) {
+    const u = String(url || '').trim();
+    if (!u || isAppWebsiteMirrorUrl(u)) return false;
+    if (source === 'auto') return true;
+    const lower = u.toLowerCase();
+    if (source === 'gitcode') return /gitcode\.com|raw\.gitcode\.com/i.test(lower);
+    if (source === 'github') return /github\.com|githubusercontent\.com/i.test(lower);
+    return true;
+}
+
+/**
+ * @param {string[]} urls
+ * @param {'auto'|'gitcode'|'github'} source
+ * @returns {string[]}
+ */
+function filterUrlsByUpdateSource(urls, source) {
+    const src = normalizeUpdateSource(source);
+    const list = (Array.isArray(urls) ? urls : [])
+        .map((u) => String(u || '').trim())
+        .filter((u) => /^https:\/\//i.test(u) && urlMatchesUpdateSource(u, src));
+    return [...new Set(list)];
+}
+
+/**
+ * @param {Record<string, unknown>} dual
+ * @param {'auto'|'gitcode'|'github'} source
+ */
+function applyUpdateSourceToDual(dual, source) {
+    const src = normalizeUpdateSource(source);
+    dual.zipUrls = filterUrlsByUpdateSource(dual.zipUrls, src);
+    dual.manifestUrls = filterUrlsByUpdateSource(dual.manifestUrls, src);
+    dual.deltaUrls = filterUrlsByUpdateSource(dual.deltaUrls, src);
+    for (const block of BLOCK_NAMES) {
+        dual.componentUrls[block] = filterUrlsByUpdateSource(dual.componentUrls?.[block], src);
+    }
+    return dual;
+}
+
+const UPDATE_SOURCE_LABELS = {
+    auto: '自动',
+    gitcode: 'GitCode',
+    github: 'GitHub',
+};
 
 let updateReady = false;
 /** @type {{
@@ -268,7 +335,7 @@ function compareVersions(a, b) {
 }
 
 /**
- * Normalize GitHub / Codeberg release notes into plain text for the UI.
+ * Normalize GitHub release notes into plain text for the UI.
  * @param {unknown} notes
  * @param {number} [maxLen]
  */
@@ -318,10 +385,6 @@ async function fetchGithubLatestRelease() {
     return fetchLatestReleaseJson(LATEST_API, { github: true });
 }
 
-async function fetchCodebergLatestRelease() {
-    return fetchLatestReleaseJson(CODEBERG_LATEST_API);
-}
-
 async function fetchGitcodeLatestRelease() {
     const release = await fetchLatestReleaseJson(GITCODE_LATEST_API);
     // GitCode sometimes omits html_url on public latest payloads.
@@ -357,7 +420,7 @@ function pushUniqueHttpsUrl(list, url) {
 
 /**
  * Append www.transub.cc/updates/{ver}/… mirrors for probe/download.
- * Only mirrors artifact kinds already discovered on GitHub/Codeberg.
+ * Only mirrors artifact kinds already discovered on GitHub/GitCode.
  * @returns {boolean} whether any website URL was added
  */
 function appendWebsiteUpdateUrls(state) {
@@ -392,26 +455,23 @@ function appendWebsiteUpdateUrls(state) {
 }
 
 /**
- * Collect zip / manifest / component asset URLs from GitHub + Codeberg + GitCode
+ * Collect zip / manifest / component asset URLs from GitHub + GitCode
  * for the same latest version, then append official-site mirrors for download speed probes.
  */
 async function fetchDualHostLatestReleases() {
     const settled = await Promise.allSettled([
         fetchGithubLatestRelease(),
-        fetchCodebergLatestRelease(),
         fetchGitcodeLatestRelease(),
     ]);
     const github = settled[0].status === 'fulfilled' ? settled[0].value : null;
-    const codeberg = settled[1].status === 'fulfilled' ? settled[1].value : null;
-    const gitcode = settled[2].status === 'fulfilled' ? settled[2].value : null;
-    if (!github && !codeberg && !gitcode) {
+    const gitcode = settled[1].status === 'fulfilled' ? settled[1].value : null;
+    if (!github && !gitcode) {
         const err = settled.find((r) => r.status === 'rejected')?.reason;
-        throw new Error(err?.message || '无法连接 GitHub / Codeberg / GitCode 发布接口');
+        throw new Error(err?.message || '无法连接 GitHub / GitCode 发布接口');
     }
 
     const hosts = [
         { key: 'github', release: github, ver: github ? releaseVersion(github) : '' },
-        { key: 'codeberg', release: codeberg, ver: codeberg ? releaseVersion(codeberg) : '' },
         { key: 'gitcode', release: gitcode, ver: gitcode ? releaseVersion(gitcode) : '' },
     ];
     let latestVersion = '';
@@ -469,7 +529,6 @@ async function fetchDualHostLatestReleases() {
 
     const dual = {
         github,
-        codeberg,
         gitcode,
         latestVersion,
         primaryRelease,
@@ -484,14 +543,10 @@ async function fetchDualHostLatestReleases() {
         githubError: settled[0].status === 'rejected'
             ? String(settled[0].reason?.message || settled[0].reason || '')
             : '',
-        codebergError: settled[1].status === 'rejected'
+        gitcodeError: settled[1].status === 'rejected'
             ? String(settled[1].reason?.message || settled[1].reason || '')
             : '',
-        gitcodeError: settled[2].status === 'rejected'
-            ? String(settled[2].reason?.message || settled[2].reason || '')
-            : '',
     };
-    dual.website = appendWebsiteUpdateUrls(dual);
     try {
         const {
             likelyDomesticNetwork,
@@ -563,7 +618,6 @@ async function checkViaGithubApi() {
             mode: 'release-api',
             installKind: getInstallKind(),
             releasesUrl: RELEASES_URL,
-            codebergReleasesUrl: CODEBERG_RELEASES_URL,
             gitcodeReleasesUrl: GITCODE_RELEASES_URL,
             transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
             message: '无法解析最新版本号',
@@ -589,9 +643,12 @@ async function checkViaGithubApi() {
     const releaseNotes = normalizeReleaseNotes(release.body || '');
     const sources = [];
     if (dual.github) sources.push('GitHub');
-    if (dual.codeberg) sources.push('Codeberg');
     if (dual.gitcode) sources.push('GitCode');
-    if (dual.website) sources.push('官网');
+
+    const hostVersions = {
+        github: dual.github ? releaseVersion(dual.github) : '',
+        gitcode: dual.gitcode ? releaseVersion(dual.gitcode) : '',
+    };
 
     if (zipAuto) {
         pendingUpdate = {
@@ -611,7 +668,6 @@ async function checkViaGithubApi() {
 
     const pageUrl = release.html_url
         || (dual.github?.html_url)
-        || (dual.codeberg?.html_url)
         || (dual.gitcode?.html_url)
         || RELEASES_URL;
 
@@ -625,14 +681,14 @@ async function checkViaGithubApi() {
         releaseName: release.name || `v${latestVersion}`,
         releaseNotes,
         releasesUrl: dual.github?.html_url || RELEASES_URL,
-        codebergReleasesUrl: dual.codeberg?.html_url || CODEBERG_RELEASES_URL,
         gitcodeReleasesUrl: dual.gitcode?.html_url || GITCODE_RELEASES_URL,
-        websiteUpdatesUrl: `${WEBSITE_UPDATES_BASE}/${encodeURIComponent(latestVersion)}/`,
         downloadUrl: preferredZip || pageUrl,
         downloadUrls: zipUrls,
         downloadName: dual.zipName || '',
         manifestUrls: dual.manifestUrls || [],
         updateSources: sources,
+        hostVersions,
+        serverVersion: latestVersion,
         portable: isPortableBuild(),
         packaged: Boolean(electronApp?.isPackaged),
         canAutoInstall: zipAuto,
@@ -641,7 +697,6 @@ async function checkViaGithubApi() {
         incrementalLikely: incrementalReady,
         transWithAiReleasesUrl: TRANWITHAI_RELEASES_URL,
         githubError: dual.githubError || '',
-        codebergError: dual.codebergError || '',
         gitcodeError: dual.gitcodeError || '',
         message: updateAvailable
             ? (zipAuto
@@ -800,7 +855,21 @@ async function downloadFullZipUpdate({
     version,
     downloadName,
     updateManifest,
+    updateSource = 'auto',
 }) {
+    const src = normalizeUpdateSource(updateSource);
+    const filteredPrimary = filterUrlsByUpdateSource([downloadUrl], src);
+    downloadUrl = filteredPrimary[0]
+        || filterUrlsByUpdateSource(downloadUrls, src)[0]
+        || '';
+    downloadUrls = filterUrlsByUpdateSource(downloadUrls, src);
+    if (!downloadUrl) {
+        const label = UPDATE_SOURCE_LABELS[src] || src;
+        throw Object.assign(
+            new Error(`所选更新节点「${label}」暂无可用下载地址`),
+            { code: 'download' },
+        );
+    }
     const extraUrls = downloadUrls.filter((u) => u && u !== downloadUrl && /^https:\/\//i.test(u));
     const downloader = require('./advanced-llm-download');
     clearPendingZipArtifacts();
@@ -829,6 +898,7 @@ async function downloadFullZipUpdate({
     const preferredSourceRef = { value: '' };
     await downloader.downloadFile(downloadUrl, zipPath, {
         extraUrls,
+        skipProbe: src !== 'auto' && extraUrls.length === 0,
         onProgress: (p) => emitDownloaderProgress(downloader, downloadUrl, preferredSourceRef, p),
     });
 
@@ -881,13 +951,13 @@ async function downloadDeltaUpdate({
     deltaUrls,
     updateManifest,
     fullZipFallback,
+    updateSource = 'auto',
 }) {
     const downloader = require('./advanced-llm-download');
     clearPendingZipArtifacts();
 
-    const urls = (Array.isArray(deltaUrls) ? deltaUrls : [])
-        .map((u) => String(u || '').trim())
-        .filter((u) => /^https:\/\//i.test(u));
+    const src = normalizeUpdateSource(updateSource);
+    const urls = filterUrlsByUpdateSource(deltaUrls, src);
     if (!urls.length) throw new Error('缺少 delta 增量包下载地址');
 
     const workDir = path.join(os.tmpdir(), `transub-zip-update-${process.pid}-${Date.now()}`);
@@ -911,6 +981,7 @@ async function downloadDeltaUpdate({
         });
         await downloader.downloadFile(downloadUrl, zipPath, {
             extraUrls,
+            skipProbe: src !== 'auto' && extraUrls.length === 0,
             onProgress: (p) => emitDownloaderProgress(downloader, downloadUrl, preferredSourceRef, p),
         });
         emitDownloadProgress({
@@ -933,7 +1004,7 @@ async function downloadDeltaUpdate({
         downloader.extractArchive(zipPath, extractDir, 'zip');
 
         let packageRoot = extractDir;
-        if (fs.existsSync(path.join(extractDir, 'Transub.exe'))) {
+        if (hasMainExe(extractDir)) {
             packageRoot = extractDir;
         } else {
             try {
@@ -978,7 +1049,7 @@ async function downloadDeltaUpdate({
                 phase: 'retry',
                 message: `增量更新不可用，改为全量下载…（${err.message || err}）`,
             });
-            return downloadFullZipUpdate(fullZipFallback);
+            return downloadFullZipUpdate({ ...fullZipFallback, updateSource: src });
         }
         throw err;
     }
@@ -991,10 +1062,12 @@ async function downloadIncrementalUpdate({
     dirtyBlocks,
     updateManifest,
     fullZipFallback,
+    updateSource = 'auto',
 }) {
     const downloader = require('./advanced-llm-download');
     clearPendingZipArtifacts();
 
+    const src = normalizeUpdateSource(updateSource);
     const blocks = Array.isArray(dirtyBlocks) ? dirtyBlocks : [];
     const workDir = path.join(os.tmpdir(), `transub-zip-update-${process.pid}-${Date.now()}`);
     const extractDir = path.join(workDir, 'extract');
@@ -1006,7 +1079,7 @@ async function downloadIncrementalUpdate({
         let lastUrl = '';
         for (let i = 0; i < blocks.length; i++) {
             const block = blocks[i];
-            const urls = Array.isArray(componentUrls?.[block]) ? componentUrls[block] : [];
+            const urls = filterUrlsByUpdateSource(componentUrls?.[block], src);
             if (!urls.length) {
                 throw new Error(`缺少区块包 ${block}，回退全量更新`);
             }
@@ -1025,6 +1098,7 @@ async function downloadIncrementalUpdate({
             });
             await downloader.downloadFile(downloadUrl, zipPath, {
                 extraUrls,
+                skipProbe: src !== 'auto' && extraUrls.length === 0,
                 onProgress: (p) => emitDownloaderProgress(downloader, downloadUrl, preferredSourceRef, p),
             });
             const expectSha = String(updateManifest?.blocks?.[block]?.sha256 || '');
@@ -1042,7 +1116,7 @@ async function downloadIncrementalUpdate({
         });
 
         let packageRoot = extractDir;
-        if (fs.existsSync(path.join(extractDir, 'Transub.exe'))) {
+        if (hasMainExe(extractDir)) {
             packageRoot = extractDir;
         } else {
             try {
@@ -1087,13 +1161,14 @@ async function downloadIncrementalUpdate({
                 phase: 'retry',
                 message: `增量更新不可用，改为全量下载…（${err.message || err}）`,
             });
-            return downloadFullZipUpdate(fullZipFallback);
+            return downloadFullZipUpdate({ ...fullZipFallback, updateSource: src });
         }
         throw err;
     }
 }
 
-async function downloadZipUpdate() {
+async function downloadZipUpdate(options = {}) {
+    const updateSource = normalizeUpdateSource(options.updateSource);
     if (!canAutoInstallZip()) {
         return { ok: false, error: '当前不是 zip 解压版，无法应用内更新', code: 'install_kind' };
     }
@@ -1136,12 +1211,34 @@ async function downloadZipUpdate() {
         return { ok: false, error: '缺少有效的 zip 下载地址' };
     }
 
+    downloadUrl = filterUrlsByUpdateSource([downloadUrl], updateSource)[0]
+        || filterUrlsByUpdateSource(downloadUrls, updateSource)[0]
+        || '';
+    downloadUrls = filterUrlsByUpdateSource(downloadUrls, updateSource);
+    manifestUrls = filterUrlsByUpdateSource(manifestUrls, updateSource);
+    deltaUrls = filterUrlsByUpdateSource(deltaUrls, updateSource);
+    const filteredComponentUrls = {};
+    for (const block of BLOCK_NAMES) {
+        filteredComponentUrls[block] = filterUrlsByUpdateSource(componentUrls?.[block], updateSource);
+    }
+    componentUrls = filteredComponentUrls;
+
+    if (!downloadUrl) {
+        const label = UPDATE_SOURCE_LABELS[updateSource] || updateSource;
+        return {
+            ok: false,
+            error: `所选更新节点「${label}」暂无可用下载地址`,
+            code: 'download',
+        };
+    }
+
     const fullZipFallback = {
         downloadUrl,
         downloadUrls,
         version,
         downloadName,
         updateManifest: null,
+        updateSource,
     };
 
     try {
@@ -1180,6 +1277,7 @@ async function downloadZipUpdate() {
                             deltaUrls,
                             updateManifest: remoteManifest,
                             fullZipFallback,
+                            updateSource,
                         });
                     }
 
@@ -1194,6 +1292,7 @@ async function downloadZipUpdate() {
                             dirtyBlocks,
                             updateManifest: remoteManifest,
                             fullZipFallback,
+                            updateSource,
                         });
                     }
                 }
@@ -1212,10 +1311,10 @@ async function downloadZipUpdate() {
     }
 }
 
-async function downloadAppUpdate() {
+async function downloadAppUpdate(options = {}) {
     const installKind = getInstallKind();
     if (installKind === 'zip') {
-        return downloadZipUpdate();
+        return downloadZipUpdate(options);
     }
     if (installKind === 'nsis') {
         return {
@@ -1290,7 +1389,7 @@ function quitAndInstallZipUpdate() {
         preserveRelPaths: meta.preserveRelPaths,
         allowPartial: Boolean(meta.allowPartial),
         updateManifest: meta.updateManifest || null,
-        exePath: path.join(meta.installRoot, 'Transub.exe'),
+        exePath: resolveMainExePath(meta.installRoot),
         logPath,
         statusPath,
         cleanupPaths: [meta.workDir],
@@ -1378,17 +1477,19 @@ async function openUpdateDownload(url) {
 module.exports = {
     GITHUB_OWNER,
     GITHUB_REPO,
-    CODEBERG_OWNER,
-    CODEBERG_REPO,
     GITCODE_OWNER,
     GITCODE_REPO,
     RELEASES_URL,
-    CODEBERG_RELEASES_URL,
     GITCODE_RELEASES_URL,
     WEBSITE_ORIGIN,
     WEBSITE_UPDATES_BASE,
     websiteUpdateAssetUrl,
     appendWebsiteUpdateUrls,
+    normalizeUpdateSource,
+    filterUrlsByUpdateSource,
+    applyUpdateSourceToDual,
+    APP_UPDATE_SOURCES,
+    UPDATE_SOURCE_LABELS,
     compareVersions,
     normalizeReleaseNotes,
     releaseVersion,

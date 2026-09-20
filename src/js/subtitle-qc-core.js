@@ -50,6 +50,21 @@
         return chars / durSec;
     }
 
+    /** Post-batch / task-list QC scan defaults (align with subtitle editor factory settings). */
+    function defaultPostBatchQcScanOptions(overrides = {}) {
+        return {
+            checkFluency: true,
+            maxCps: 18,
+            minSec: 0.5,
+            maxSec: 10,
+            gapMs: 1,
+            smartMaxChars: 20,
+            smartLineChars: 18,
+            targetCps: 3,
+            ...overrides,
+        };
+    }
+
     function normalizeQcOptions(options = {}) {
         const minSec = Math.max(0.1, Number(options.minSec) || 0.5);
         const maxSec = Math.max(minSec, Number(options.maxSec) || 10);
@@ -77,7 +92,66 @@
             useCpsTime: options.useCpsTime !== false,
             checkFluency: options.checkFluency !== false,
             noPunctMinChars: Math.max(8, Number(options.noPunctMinChars) || 28),
+            /** Skip CPS split when cue is already short (fast speech); preserves ASR timing. */
+            minSplitDurMs: Math.max(0, Math.round(Number(options.minSplitDurMs) || 0)),
+            /**
+             * When timeline looks collapsed / mass-invalid / QC-packed, skip destructive
+             * timing invent (fixInvalid cascade + fixOverlap + minDur) — MFYD-185.
+             * Explicit false restores legacy unpack behaviour.
+             */
+            skipBrokenTimelineTimingFix: options.skipBrokenTimelineTimingFix !== false,
+            /** Override cascade for sparse invalids: true|false|undefined(auto). */
+            allowInvalidCascade: options.allowInvalidCascade,
         };
+    }
+
+    function countInvalidCueTimings(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        let n = 0;
+        for (const c of list) {
+            const start = Number(c.startMs) || 0;
+            const end = c.endMs != null ? Number(c.endMs) : NaN;
+            if (!Number.isFinite(end) || end <= start) n += 1;
+        }
+        return n;
+    }
+
+    /**
+     * Detect collapsed / mass-invalid / QC-packed tracks where cascade unpack
+     * invents a fake timeline (MFYD-185). Keep in sync with transcript-keep fingerprints.
+     */
+    function cuesNeedDestructiveTimingGuard(cues) {
+        const list = Array.isArray(cues) ? cues : [];
+        const n = list.length;
+        if (n < 8) return false;
+        const invalid = countInvalidCueTimings(list);
+        if (invalid >= Math.max(8, Math.ceil(n * 0.45))) return true;
+
+        let zeroShort = 0;
+        const starts = new Set();
+        let maxStart = 0;
+        let dur500 = 0;
+        let gap1 = 0;
+        for (let i = 0; i < n; i += 1) {
+            const start = Number(list[i].startMs) || 0;
+            const end = list[i].endMs != null ? Number(list[i].endMs) : start;
+            const dur = Math.max(0, end - start);
+            if (start <= 50 && dur <= 600) zeroShort += 1;
+            starts.add(start);
+            if (start > maxStart) maxStart = start;
+            if (dur >= 490 && dur <= 520) dur500 += 1;
+            if (i > 0) {
+                const prevEnd = list[i - 1].endMs != null
+                    ? Number(list[i - 1].endMs)
+                    : (Number(list[i - 1].startMs) || 0);
+                if (start - prevEnd === 1) gap1 += 1;
+            }
+        }
+        if (zeroShort >= Math.ceil(n * 0.8)) return true;
+        if (starts.size <= 2 && n >= 10) return true;
+        if (maxStart < 1500 && n >= 10 && invalid >= Math.ceil(n * 0.25)) return true;
+        if (dur500 >= Math.ceil(n * 0.65) && gap1 >= Math.ceil((n - 1) * 0.5)) return true;
+        return false;
     }
 
     function issueSeverity(types) {
@@ -271,9 +345,17 @@
 
     /**
      * 修复无效时间轴（end <= start）
+     * Cascade shift of later cues is refused when allowInvalidCascade=false or
+     * the track looks mass-collapsed (auto) — otherwise MFYD-185 unpacks a fake axis.
      */
     function fixInvalidCueTimings(cues, options = {}) {
         const opts = normalizeQcOptions(options);
+        let allowCascade = opts.allowInvalidCascade;
+        if (allowCascade == null) {
+            allowCascade = !cuesNeedDestructiveTimingGuard(cues);
+        } else {
+            allowCascade = !!allowCascade;
+        }
         let fixed = 0;
         for (let i = 0; i < cues.length; i += 1) {
             const cue = cues[i];
@@ -289,7 +371,7 @@
                     const room = nextStart - opts.gapMs;
                     if (room > start + 100) {
                         newEnd = Math.min(newEnd, room);
-                    } else {
+                    } else if (allowCascade) {
                         // 下条贴太紧：先给本条最短时长，再把后续整体后移
                         newEnd = start + Math.max(100, Math.min(opts.minDurMs, 300));
                         const shift = (newEnd + opts.gapMs) - nextStart;
@@ -301,6 +383,10 @@
                                 }
                             }
                         }
+                    } else {
+                        // Local clamp only — do not invent a packed chain.
+                        newEnd = Math.max(start + 100, Math.min(start + opts.minDurMs, room));
+                        if (newEnd <= start) newEnd = start + 100;
                     }
                 }
             }
@@ -327,6 +413,7 @@
             minDurFixed: 0,
             maxDurFixed: 0,
             invalidFixed: 0,
+            timingFixSkipped: false,
         };
         const touched = new Set();
 
@@ -335,6 +422,12 @@
             if (end === cueEndMs(cue)) return;
             cue.endMs = end;
             touched.add(idx);
+        }
+
+        // Collapsed / mass-invalid tracks: refuse timing invent (MFYD-185).
+        if (opts.skipBrokenTimelineTimingFix && cuesNeedDestructiveTimingGuard(cues)) {
+            stats.timingFixSkipped = true;
+            return stats;
         }
 
         if (opts.fixInvalid) {
@@ -458,10 +551,12 @@
         if (stats.minDurFixed) parts.push(`过短 ${stats.minDurFixed} 条`);
         if (stats.maxDurFixed) parts.push(`过长 ${stats.maxDurFixed} 条`);
         if (stats.invalidFixed) parts.push(`无效轴 ${stats.invalidFixed} 条`);
+        if (stats.timingFixSkipped) parts.push('已跳过损坏时间轴的强制展开');
         if (stats.compressRepFixed) parts.push(`叠词 ${stats.compressRepFixed} 条`);
         if (stats.noiseRemoved) parts.push(`清杂音 ${stats.noiseRemoved} 条`);
         if (stats.duplicatesRemoved) parts.push(`去重 ${stats.duplicatesRemoved} 条`);
         if (stats.skipConnected) parts.push(`跳过连续文本 ${stats.skipConnected}`);
+        if (stats.skipFastSpeech) parts.push(`保留快语速 ${stats.skipFastSpeech}`);
         if (!parts.length) return '当前字幕无需修复';
         const countHint = afterCount !== beforeCount
             ? `（${beforeCount} → ${afterCount} 条）`
@@ -503,10 +598,12 @@
             minDurFixed: 0,
             maxDurFixed: 0,
             invalidFixed: 0,
+            timingFixSkipped: false,
             compressRepFixed: 0,
             noiseRemoved: 0,
             duplicatesRemoved: 0,
             skipConnected: 0,
+            skipFastSpeech: 0,
         };
 
         if ((opts.removeNoise || opts.removeDuplicates) && fluencyCore?.removeNoiseFromCues) {
@@ -544,9 +641,21 @@
         if (opts.fixCpsBySplit) {
             for (let i = working.length - 1; i >= 0; i -= 1) {
                 const cue = working[i];
+                const text = String(cue.text || '').trim();
+                // Never CPS-split software-credit watermarks
+                try {
+                    const creditCore = (typeof module !== 'undefined' && module.exports)
+                        ? require('./subtitle-software-credit-core')
+                        : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+                    if (creditCore?.isSoftwareCreditText?.(text)) continue;
+                } catch (_) { /* optional */ }
+                const durMs = cueDurationMs(cue);
+                if (opts.minSplitDurMs > 0 && durMs > 0 && durMs < opts.minSplitDurMs) {
+                    stats.skipFastSpeech += 1;
+                    continue;
+                }
                 const cps = getCueCps(cue);
                 if (cps == null || cps <= opts.maxCps) continue;
-                const text = String(cue.text || '').trim();
                 const parts = trySmartSplitCue(cue, opts);
                 if (!parts) {
                     if (text && splitCore.isConnectedText(text)) stats.skipConnected += 1;
@@ -571,17 +680,36 @@
                 minSec: opts.minSec,
                 maxSec: opts.maxSec,
                 gapMs: opts.gapMs,
+                skipBrokenTimelineTimingFix: opts.skipBrokenTimelineTimingFix,
+                allowInvalidCascade: opts.allowInvalidCascade,
             });
             stats.overlapFixed = adj.overlapFixed;
             stats.cpsFixed = adj.cpsFixed;
             stats.minDurFixed = adj.minDurFixed;
             stats.maxDurFixed = adj.maxDurFixed;
             stats.invalidFixed = adj.invalidFixed || 0;
+            stats.timingFixSkipped = !!adj.timingFixSkipped;
             stats.affected = adj.affected + stats.splitCount + stats.compressRepFixed
                 + stats.noiseRemoved;
         } else {
             stats.affected = stats.splitCount + stats.compressRepFixed + stats.noiseRemoved;
         }
+
+        // Heal software-credit watermarks corrupted by compress / older files (www → ww！).
+        try {
+            const creditCore = (typeof module !== 'undefined' && module.exports)
+                ? require('./subtitle-software-credit-core')
+                : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+            if (typeof creditCore?.normalizeSoftwareCreditInCues === 'function') {
+                const healed = creditCore.normalizeSoftwareCreditInCues(working);
+                working = healed.cues;
+                const n = Number(healed.changed) || 0;
+                if (n > 0) {
+                    stats.softwareCreditNormalized = n;
+                    stats.affected += n;
+                }
+            }
+        } catch (_) { /* optional */ }
 
         const afterScan = options.skipAfterScan
             ? null
@@ -883,11 +1011,14 @@
         cloneCues,
         getCueCps,
         normalizeQcOptions,
+        defaultPostBatchQcScanOptions,
         scanCueIssues,
         summarizeScan,
         summarizeRemaining,
         applySmartAdjustToCues,
         fixInvalidCueTimings,
+        countInvalidCueTimings,
+        cuesNeedDestructiveTimingGuard,
         applyQcFixes,
         buildQcOptionsForIssueType,
         buildQcFixEstimate,

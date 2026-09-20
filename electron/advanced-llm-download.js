@@ -69,12 +69,23 @@ function expandDownloadUrls(url) {
         if (u.hostname === 'huggingface.co' || u.hostname.endsWith('.huggingface.co')) {
             mirrors.push(raw.replace('://huggingface.co', '://hf-mirror.com'));
         }
-        if (u.hostname === 'github.com') {
-            mirrors.push(`https://ghfast.top/${raw}`);
-            mirrors.push(`https://mirror.ghproxy.com/${raw}`);
-        }
-        if (u.hostname === 'objects.githubusercontent.com' || u.hostname === 'release-assets.githubusercontent.com') {
-            mirrors.push(`https://ghfast.top/${raw}`);
+        if (
+            u.hostname === 'github.com'
+            || u.hostname === 'objects.githubusercontent.com'
+            || u.hostname === 'release-assets.githubusercontent.com'
+            || u.hostname.endsWith('.githubusercontent.com')
+        ) {
+            let prefixes;
+            try {
+                const { loadGithubMirrorPrefixesFromSettings, expandWithGithubMirrors } = require('./github-mirrors');
+                prefixes = loadGithubMirrorPrefixesFromSettings();
+                mirrors.push(...expandWithGithubMirrors(raw, prefixes));
+            } catch (_) {
+                mirrors.push(`https://g.blfrp.cn/${raw}`);
+                mirrors.push(`https://gh-proxy.com/${raw}`);
+                mirrors.push(`https://gh.nxnow.top/${raw}`);
+                mirrors.push(`https://ghproxy.net/${raw}`);
+            }
         }
     } catch (_) { /* ignore */ }
     return [...new Set([...mirrors, raw])];
@@ -82,7 +93,7 @@ function expandDownloadUrls(url) {
 
 function isMirrorCandidateUrl(url, originalUrl = '') {
     const u = String(url || '');
-    if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|codeberg\.org|gitcode\.com|transub\.cc/i.test(u)) return true;
+    if (/hf-mirror\.com|g\.blfrp\.cn|gh\.nxnow\.top|gh\.dpik\.top|tvv\.tw|gh\.monlor\.com|ghproxy\.net|gh-proxy\.com|ghfast\.top|ghproxy\.com|gitcode\.com|transub\.cc/i.test(u)) return true;
     const orig = String(originalUrl || '').trim();
     return Boolean(orig) && u !== orig && u.includes(orig);
 }
@@ -117,7 +128,7 @@ function likelyDomesticNetwork() {
 }
 
 /**
- * Domestic-friendly candidate order: GitCode → CN mirrors / 官网 → Codeberg → GitHub.
+ * Domestic-friendly candidate order: GitCode → CN mirrors / 官网 → GitHub.
  * @param {string[]} urls
  * @returns {string[]}
  */
@@ -126,10 +137,9 @@ function prioritizeDomesticDownloadUrls(urls) {
     if (list.length <= 1) return list;
     const rank = (u) => {
         if (isGitcodeDownloadUrl(u)) return 0;
-        if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
-        if (/codeberg\.org/i.test(u)) return 2;
-        if (/github\.com|githubusercontent\.com/i.test(u)) return 3;
-        return 4;
+        if (/hf-mirror\.com|g\.blfrp\.cn|gh\.nxnow\.top|gh\.dpik\.top|tvv\.tw|gh\.monlor\.com|ghproxy\.net|gh-proxy\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
+        if (/github\.com|githubusercontent\.com/i.test(u)) return 2;
+        return 3;
     };
     return [...list].sort((a, b) => rank(a) - rank(b) || list.indexOf(a) - list.indexOf(b));
 }
@@ -137,10 +147,16 @@ function prioritizeDomesticDownloadUrls(urls) {
 function downloadSourceLabel(url, originalUrl = '') {
     const u = String(url || '');
     if (/hf-mirror\.com/i.test(u)) return 'HF 镜像';
+    if (/g\.blfrp\.cn/i.test(u)) return 'blfrp';
+    if (/gh\.nxnow\.top/i.test(u)) return 'nxnow';
+    if (/gh\.dpik\.top|github\.dpik\.top/i.test(u)) return 'dpik';
+    if (/tvv\.tw/i.test(u)) return 'tvv';
+    if (/gh\.monlor\.com/i.test(u)) return 'gh.monlor';
+    if (/ghproxy\.net/i.test(u)) return 'ghproxy.net';
+    if (/gh-proxy\.com/i.test(u)) return 'gh-proxy';
     if (/ghfast\.top/i.test(u)) return 'ghfast';
     if (/ghproxy\.com/i.test(u)) return 'ghproxy';
     if (/transub\.cc/i.test(u)) return '官网';
-    if (/codeberg\.org/i.test(u)) return 'Codeberg';
     if (isGitcodeDownloadUrl(u)) return 'GitCode';
     if (/github\.com|githubusercontent\.com/i.test(u)) return 'GitHub';
     if (originalUrl && u === String(originalUrl).trim()) return '官方源';
@@ -316,10 +332,9 @@ function orderDownloadUrlsByProbe(probeResults, urls, options = {}) {
     const domesticRank = (u) => {
         if (!preferDomestic) return 0;
         if (isGitcodeDownloadUrl(u)) return 0;
-        if (/hf-mirror\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
-        if (/codeberg\.org/i.test(u)) return 2;
-        if (/github\.com|githubusercontent\.com/i.test(u)) return 3;
-        return 4;
+        if (/hf-mirror\.com|g\.blfrp\.cn|gh\.nxnow\.top|gh\.dpik\.top|tvv\.tw|gh\.monlor\.com|ghproxy\.net|gh-proxy\.com|ghfast\.top|ghproxy\.com|transub\.cc/i.test(u)) return 1;
+        if (/github\.com|githubusercontent\.com/i.test(u)) return 2;
+        return 3;
     };
 
     return [...list].sort((a, b) => {

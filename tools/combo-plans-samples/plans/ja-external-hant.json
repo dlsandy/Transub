@@ -1,0 +1,37 @@
+{
+  "id": "ja-external-hant",
+  "version": 1,
+  "group": "ja",
+  "name": "日语动漫 · 外部 · 繁中",
+  "description": "Anime Whisper 听写，目标繁中，译文走 Station / 外接 API。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hant",
+  "translateMode": "external",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "anime-whisper",
+    "firered-vad"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hant",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "anime-whisper",
+    "engineVadModel": "firered-vad",
+    "contentProfile": "av_soft",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "firered",
+    "translateMode": "external",
+    "engineLlmMtModel": "",
+    "engineProfile": "speed",
+    "activePresetId": "ja-av-anime-whisper-firered"
+  }
+}

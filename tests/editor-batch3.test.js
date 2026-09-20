@@ -133,7 +133,7 @@ describe('serializeDualAss', () => {
 });
 
 describe('bilingual semantic parse', () => {
-    before(function () {
+    beforeAll(function () {
         if (typeof parseIssues !== 'function') this.skip();
     });
 

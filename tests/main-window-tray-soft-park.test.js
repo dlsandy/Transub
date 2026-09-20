@@ -3,8 +3,12 @@ const {
     USE_SOFT_PARK,
     SOFT_PARK_POS,
     SOFT_UNPARK_STEP2_MS,
+    MINIMIZE_CLASSIFY_DELAY_MS,
     createMainWindowTray,
 } = require('../electron/main-window-tray');
+
+const afterClassify = () => new Promise((r) => setTimeout(r, MINIMIZE_CLASSIFY_DELAY_MS + 40));
+const afterClassifyAndSettle = () => new Promise((r) => setTimeout(r, MINIMIZE_CLASSIFY_DELAY_MS + 120));
 
 describe('main-window-tray soft-park', () => {
     it('exports soft-park constants for Windows', () => {
@@ -222,13 +226,14 @@ describe('main-window-tray soft-park', () => {
         const preventDefault = () => {};
         fakeWin.emit('minimize', { preventDefault });
 
+        await afterClassify();
         assert.strictEqual(tray.isMainHiddenToTray(), false,
             'suppress must undo hide-to-tray even when main just gained focus');
         assert.strictEqual(skipTaskbar, false);
         assert.ok(opacity === 1 || opacity === 0.99);
 
         // Allow settle timeout from minimize handler to run.
-        await new Promise((r) => setTimeout(r, 100));
+        await afterClassifyAndSettle();
         assert.strictEqual(tray.isMainHiddenToTray(), false);
         assert.strictEqual(tray.isMainVisiblyOpen(), true);
     });
@@ -304,5 +309,451 @@ describe('main-window-tray soft-park', () => {
 
         await new Promise((r) => setTimeout(r, 20));
         assert.strictEqual(tray.isMainHiddenToTray(), false);
+    });
+
+    it('does not soft-park when settings is focused and main gets spurious minimize', async () => {
+        const listeners = new Map();
+        let focused = false;
+        let opacity = 1;
+        let skipTaskbar = false;
+        let bounds = { x: 80, y: 90, width: 1100, height: 700 };
+        let hideCalls = 0;
+
+        const fakeWin = {
+            id: 10,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isMaximized: () => false,
+            isFocused: () => focused,
+            getBounds: () => ({ ...bounds }),
+            getNormalBounds: () => ({ ...bounds }),
+            getOpacity: () => opacity,
+            setOpacity(v) { opacity = v; },
+            setSkipTaskbar(v) { skipTaskbar = !!v; },
+            setIgnoreMouseEvents() {},
+            setBounds(b) { bounds = { ...bounds, ...b }; },
+            setPosition(x, y) { bounds.x = x; bounds.y = y; },
+            showInactive() {},
+            show() {},
+            hide() { hideCalls += 1; },
+            restore() {},
+            unmaximize() {},
+            maximize() {},
+            focus() { focused = true; },
+            moveTop() {},
+            webContents: {
+                isDestroyed: () => false,
+                setBackgroundThrottling() {},
+                focus() {},
+                invalidate() {},
+                isLoading: () => false,
+                executeJavaScript: async () => true,
+                reload() {},
+            },
+            on(evt, fn) {
+                const list = listeners.get(evt) || [];
+                list.push(fn);
+                listeners.set(evt, list);
+            },
+            once() {},
+            emit(evt, ...args) {
+                for (const fn of (listeners.get(evt) || [])) fn(...args);
+            },
+        };
+
+        const settingsWin = {
+            id: 11,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isFocused: () => true,
+        };
+
+        const tray = createMainWindowTray({
+            getMainWindow: () => fakeWin,
+            isQuitting: () => false,
+            ensureMainWindow: () => fakeWin,
+            confirmQuitApp: () => {},
+            dialogShowMessageBox: async () => ({ response: 0 }),
+            BrowserWindow: {
+                getFocusedWindow: () => settingsWin,
+                getAllWindows: () => [fakeWin, settingsWin],
+            },
+        });
+
+        tray.attachTrayBehavior(fakeWin);
+        // Settings owns focus; blur clears mainHadUserFocus after 50ms.
+        fakeWin.emit('blur');
+        focused = false;
+        await new Promise((r) => setTimeout(r, 60));
+
+        fakeWin.emit('minimize', { preventDefault() {} });
+
+        await afterClassify();
+        assert.strictEqual(tray.isMainHiddenToTray(), false,
+            'must not hide-to-tray while a visible secondary owns the session');
+        assert.strictEqual(skipTaskbar, false);
+        assert.ok(opacity === 1 || opacity === 0.99);
+        if (USE_SOFT_PARK) {
+            assert.ok(bounds.x !== SOFT_PARK_POS.x,
+                'must not soft-park off-screen on sibling spurious minimize');
+        }
+        assert.strictEqual(hideCalls, 0);
+    });
+
+    it('undoes recent soft-park when secondary minimize races ahead of suppress', async () => {
+        const listeners = new Map();
+        let focused = false;
+        let opacity = 1;
+        let skipTaskbar = false;
+        let bounds = { x: 80, y: 90, width: 1100, height: 700 };
+
+        const fakeWin = {
+            id: 12,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isMaximized: () => false,
+            isFocused: () => focused,
+            getBounds: () => ({ ...bounds }),
+            getNormalBounds: () => ({ ...bounds }),
+            getOpacity: () => opacity,
+            setOpacity(v) { opacity = v; },
+            setSkipTaskbar(v) { skipTaskbar = !!v; },
+            setIgnoreMouseEvents() {},
+            setBounds(b) { bounds = { ...bounds, ...b }; },
+            setPosition(x, y) { bounds.x = x; bounds.y = y; },
+            showInactive() {},
+            show() {},
+            hide() {},
+            restore() {},
+            unmaximize() {},
+            maximize() {},
+            focus() { focused = true; },
+            moveTop() {},
+            webContents: {
+                isDestroyed: () => false,
+                setBackgroundThrottling() {},
+                focus() {},
+                invalidate() {},
+                isLoading: () => false,
+                executeJavaScript: async () => true,
+                reload() {},
+            },
+            on(evt, fn) {
+                const list = listeners.get(evt) || [];
+                list.push(fn);
+                listeners.set(evt, list);
+            },
+            once() {},
+            emit(evt, ...args) {
+                for (const fn of (listeners.get(evt) || [])) fn(...args);
+            },
+        };
+
+        const secondaryListeners = new Map();
+        const settingsWin = {
+            id: 13,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isFocused: () => false,
+            on(evt, fn) {
+                const list = secondaryListeners.get(evt) || [];
+                list.push(fn);
+                secondaryListeners.set(evt, list);
+            },
+            emit(evt, ...args) {
+                for (const fn of (secondaryListeners.get(evt) || [])) fn(...args);
+            },
+        };
+
+        const tray = createMainWindowTray({
+            getMainWindow: () => fakeWin,
+            isQuitting: () => false,
+            ensureMainWindow: () => fakeWin,
+            confirmQuitApp: () => {},
+            dialogShowMessageBox: async () => ({ response: 0 }),
+            BrowserWindow: {
+                getFocusedWindow: () => null,
+                getAllWindows: () => [fakeWin, settingsWin],
+            },
+        });
+
+        tray.attachTrayBehavior(fakeWin);
+        tray._attachSecondaryMinimizeGuard(settingsWin);
+
+        // User focus was on main earlier; clear it so minimize looks non-user.
+        fakeWin.emit('blur');
+        focused = false;
+        await new Promise((r) => setTimeout(r, 60));
+
+        // Main minimize runs first (no suppress yet) → would soft-park without the fix.
+        // Force park by temporarily having no visible secondary / no race marker:
+        // simulate park via hideToTray then immediate secondary minimize recovery.
+        tray.hideToTray();
+        assert.strictEqual(tray.isMainHiddenToTray(), true);
+
+        settingsWin.isMinimized = () => true;
+        settingsWin.emit('minimize');
+        await new Promise((r) => setTimeout(r, MINIMIZE_CLASSIFY_DELAY_MS + 40));
+
+        assert.strictEqual(tray.isMainHiddenToTray(), false,
+            'recent park must be undone when secondary minimize arrives');
+        assert.strictEqual(skipTaskbar, false);
+        assert.ok(opacity === 1 || opacity === 0.99);
+    });
+
+    it('uses native minimize for show-desktop instead of soft-park', async () => {
+        const listeners = new Map();
+        let focused = true;
+        let minimized = false;
+        let opacity = 1;
+        let skipTaskbar = false;
+        let bounds = { x: 80, y: 90, width: 1100, height: 700 };
+        let nativeMinimizeCalls = 0;
+
+        const fakeWin = {
+            id: 20,
+            isDestroyed: () => false,
+            isVisible: () => !minimized,
+            isMinimized: () => minimized,
+            isMaximized: () => false,
+            isFocused: () => focused && !minimized,
+            getBounds: () => ({ ...bounds }),
+            getNormalBounds: () => ({ ...bounds }),
+            getOpacity: () => opacity,
+            setOpacity(v) { opacity = v; },
+            setSkipTaskbar(v) { skipTaskbar = !!v; },
+            setIgnoreMouseEvents() {},
+            setBounds(b) { bounds = { ...bounds, ...b }; },
+            setPosition(x, y) { bounds.x = x; bounds.y = y; },
+            showInactive() {},
+            show() { minimized = false; },
+            hide() {},
+            restore() { minimized = false; },
+            unmaximize() {},
+            maximize() {},
+            focus() { focused = true; },
+            moveTop() {},
+            minimize() {
+                nativeMinimizeCalls += 1;
+                minimized = true;
+                focused = false;
+                fakeWin.emit('minimize', { preventDefault() {} });
+            },
+            webContents: {
+                isDestroyed: () => false,
+                setBackgroundThrottling() {},
+                focus() {},
+                invalidate() {},
+                isLoading: () => false,
+                executeJavaScript: async () => true,
+                reload() {},
+            },
+            on(evt, fn) {
+                const list = listeners.get(evt) || [];
+                list.push(fn);
+                listeners.set(evt, list);
+            },
+            once() {},
+            emit(evt, ...args) {
+                for (const fn of (listeners.get(evt) || [])) fn(...args);
+            },
+        };
+
+        let settingsMinimized = false;
+        const settingsWin = {
+            id: 21,
+            isDestroyed: () => false,
+            isVisible: () => !settingsMinimized,
+            isMinimized: () => settingsMinimized,
+            isFocused: () => false,
+            on() {},
+        };
+
+        const tray = createMainWindowTray({
+            getMainWindow: () => fakeWin,
+            isQuitting: () => false,
+            ensureMainWindow: () => fakeWin,
+            confirmQuitApp: () => {},
+            dialogShowMessageBox: async () => ({ response: 0 }),
+            BrowserWindow: {
+                getFocusedWindow: () => null,
+                getAllWindows: () => [fakeWin, settingsWin],
+            },
+        });
+
+        tray.attachTrayBehavior(fakeWin);
+        tray._attachSecondaryMinimizeGuard(settingsWin);
+        fakeWin.emit('focus');
+
+        // Ctrl+D / Win+D: both windows minimize; focus already on desktop.
+        settingsMinimized = true;
+        focused = false;
+        fakeWin.emit('minimize', { preventDefault() {} });
+
+        await afterClassifyAndSettle();
+
+        assert.strictEqual(tray.isMainHiddenToTray(), false,
+            'show-desktop must not soft-park/hide-to-tray');
+        assert.ok(nativeMinimizeCalls >= 1, 'show-desktop must complete via native minimize');
+        assert.strictEqual(minimized, true);
+        assert.strictEqual(skipTaskbar, false);
+        if (USE_SOFT_PARK) {
+            assert.ok(bounds.x !== SOFT_PARK_POS.x, 'show-desktop must not soft-park off-screen');
+        }
+
+        // Restore after show-desktop should wake the surface without staying blank.
+        minimized = false;
+        fakeWin.emit('restore');
+        await new Promise((r) => setTimeout(r, 40));
+        assert.strictEqual(tray.isMainHiddenToTray(), false);
+        assert.ok(opacity === 1 || opacity === 0.99);
+    });
+
+    it('still hides to tray when user minimizes main while settings is open', async () => {
+        const listeners = new Map();
+        let focused = true;
+        let opacity = 1;
+        let skipTaskbar = false;
+        let bounds = { x: 80, y: 90, width: 1100, height: 700 };
+
+        const fakeWin = {
+            id: 14,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isMaximized: () => false,
+            isFocused: () => focused,
+            getBounds: () => ({ ...bounds }),
+            getNormalBounds: () => ({ ...bounds }),
+            getOpacity: () => opacity,
+            setOpacity(v) { opacity = v; },
+            setSkipTaskbar(v) { skipTaskbar = !!v; },
+            setIgnoreMouseEvents() {},
+            setBounds(b) { bounds = { ...bounds, ...b }; },
+            setPosition(x, y) { bounds.x = x; bounds.y = y; },
+            showInactive() {},
+            show() {},
+            hide() {},
+            restore() {},
+            unmaximize() {},
+            maximize() {},
+            focus() { focused = true; },
+            moveTop() {},
+            webContents: {
+                isDestroyed: () => false,
+                setBackgroundThrottling() {},
+                focus() {},
+                invalidate() {},
+                isLoading: () => false,
+                executeJavaScript: async () => true,
+                reload() {},
+            },
+            on(evt, fn) {
+                const list = listeners.get(evt) || [];
+                list.push(fn);
+                listeners.set(evt, list);
+            },
+            once() {},
+            emit(evt, ...args) {
+                for (const fn of (listeners.get(evt) || [])) fn(...args);
+            },
+        };
+
+        const settingsWin = {
+            id: 15,
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isFocused: () => false,
+        };
+
+        const tray = createMainWindowTray({
+            getMainWindow: () => fakeWin,
+            isQuitting: () => false,
+            ensureMainWindow: () => fakeWin,
+            confirmQuitApp: () => {},
+            dialogShowMessageBox: async () => ({ response: 0 }),
+            BrowserWindow: {
+                getFocusedWindow: () => fakeWin,
+                getAllWindows: () => [fakeWin, settingsWin],
+            },
+        });
+
+        tray.attachTrayBehavior(fakeWin);
+        fakeWin.emit('focus');
+        focused = true;
+
+        fakeWin.emit('minimize', { preventDefault() {} });
+
+        await afterClassifyAndSettle();
+        assert.strictEqual(tray.isMainHiddenToTray(), true,
+            'user title-bar minimize must still hide-to-tray with settings open');
+        assert.strictEqual(skipTaskbar, true);
+    });
+
+    it('does not reload renderer while an active task is running', async () => {
+        const computeLock = require('../electron/compute-task-lock');
+        let reloadCount = 0;
+        let bounds = { x: -32000, y: -32000, width: 1100, height: 700 };
+        const fakeWin = {
+            isDestroyed: () => false,
+            isVisible: () => true,
+            isMinimized: () => false,
+            isMaximized: () => false,
+            isFocused: () => false,
+            getBounds: () => ({ ...bounds }),
+            getNormalBounds: () => ({ ...bounds }),
+            getOpacity: () => 0.4,
+            setOpacity() {},
+            setSkipTaskbar() {},
+            setIgnoreMouseEvents() {},
+            setBounds(b) { bounds = { ...bounds, ...b }; },
+            setPosition() {},
+            showInactive() {},
+            show() {},
+            hide() {},
+            restore() {},
+            unmaximize() {},
+            maximize() {},
+            focus() {},
+            webContents: {
+                isDestroyed: () => false,
+                setBackgroundThrottling() {},
+                focus() {},
+                invalidate() {},
+                isLoading: () => false,
+                executeJavaScript: async () => false,
+                reload() { reloadCount += 1; },
+            },
+            on() {},
+            once() {},
+            id: 5,
+        };
+
+        const tray = createMainWindowTray({
+            getMainWindow: () => fakeWin,
+            isQuitting: () => false,
+            ensureMainWindow: () => fakeWin,
+            confirmQuitApp: () => {},
+            dialogShowMessageBox: async () => ({ response: 0 }),
+        });
+
+        const lock = computeLock.tryAcquire({ kind: 'engine_batch', forceLocal: true });
+        assert.strictEqual(lock.ok, true);
+        try {
+            tray.hideToTray();
+            assert.strictEqual(tray.isMainHiddenToTray(), true);
+            tray._armBlankReload();
+            tray._ensureMainSurfaceAlive();
+            // Wait past nudge + chrome-still-parked + active-task wake retry.
+            await new Promise((r) => setTimeout(r, 1800));
+            assert.strictEqual(reloadCount, 0, 'must not wc.reload while hasActiveTask');
+        } finally {
+            if (lock.token) computeLock.release(lock.token);
+        }
     });
 });

@@ -142,10 +142,94 @@
         return `<span class="file-batch-recover" role="group" aria-label="失败可执行下一步">${chips}</span>`;
     }
 
+    /**
+     * Dispatch a recovery chip action against shell adapters.
+     * @param {string} actionId
+     * @param {number} idx
+     * @param {{
+     *   items?: any[],
+     *   els?: { deviceSelect?: HTMLSelectElement|null },
+     *   electron?: { transubEngineOpenLatestLog?: () => Promise<any> },
+     *   retrySingleItem?: (i: number) => void,
+     *   resumeSingleItem?: (i: number) => void|Promise<void>,
+     *   exportItemDiagnostics?: (i: number) => void|Promise<void>,
+     *   openAppSettings?: (tab?: string, opts?: object) => void,
+     *   markSettingsDirty?: (dirty?: boolean) => void,
+     *   persistFormOptionsQuiet?: () => void|Promise<void>,
+     *   showToast?: (msg: string, tone?: string) => void,
+     *   appendLog?: (msg: string, tone?: string) => void,
+     * }} [deps]
+     */
+    function applyBatchRecoveryAction(actionId, idx, deps = {}) {
+        const id = String(actionId || '').trim();
+        const index = Number(idx);
+        if (!id || !Number.isFinite(index)) return;
+        const items = Array.isArray(deps.items) ? deps.items : [];
+        const item = items[index];
+        if (!item) return;
+        const els = deps.els || {};
+        const electron = deps.electron;
+        const retrySingleItem = deps.retrySingleItem || (() => {});
+        const resumeSingleItem = deps.resumeSingleItem || (() => {});
+        const exportItemDiagnostics = deps.exportItemDiagnostics || (() => {});
+        const openAppSettings = deps.openAppSettings || (() => {});
+        const markSettingsDirty = deps.markSettingsDirty || (() => {});
+        const persistFormOptionsQuiet = deps.persistFormOptionsQuiet || (() => {});
+        const showToast = deps.showToast || (() => {});
+        const appendLog = deps.appendLog || (() => {});
+
+        if (id === 'retry-item') {
+            retrySingleItem(index);
+            return;
+        }
+        if (id === 'resume-from-asr') {
+            void resumeSingleItem(index);
+            return;
+        }
+        if (id === 'export-diagnostics') {
+            void exportItemDiagnostics(index);
+            return;
+        }
+        if (id === 'open-engine-log') {
+            if (electron?.transubEngineOpenLatestLog) {
+                void electron.transubEngineOpenLatestLog().then((res) => {
+                    if (res?.ok === false) {
+                        showToast(res.error || '无法打开引擎日志', 'warn');
+                        return;
+                    }
+                    showToast('已打开引擎日志', 'ok');
+                }).catch((err) => {
+                    showToast(err?.message || '无法打开引擎日志', 'warn');
+                });
+            } else {
+                openAppSettings('runtime');
+                showToast('请在设置中查看引擎日志路径', 'info');
+            }
+            return;
+        }
+        if (id === 'switch-device-cpu') {
+            if (els.deviceSelect) {
+                els.deviceSelect.value = 'cpu';
+                els.deviceSelect.dispatchEvent(new Event('change'));
+            }
+            markSettingsDirty(true);
+            void persistFormOptionsQuiet();
+            showToast('已切换为 CPU，正在重试本条…', 'ok');
+            appendLog('恢复引导：设备已改为 CPU，自动重试本条', 'ok');
+            retrySingleItem(index);
+            return;
+        }
+        if (id === 'open-models') {
+            openAppSettings('models', { openLibrary: true });
+            showToast('请更换或下载 ASR 模型后重试', 'info');
+        }
+    }
+
     return {
         ACTIONS,
         inferPrimaryActionId,
         buildBatchFailureGuidance,
         buildBatchRecoveryChipsHtml,
+        applyBatchRecoveryAction,
     };
 }));

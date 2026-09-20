@@ -162,16 +162,66 @@ function updateRef(sha) {
     ]);
 }
 
+function shouldDropRemoteOnly(relPath) {
+    const p = String(relPath || '').replace(/\\/g, '/');
+    // Never re-publish bundled data / local-only paths that older remotes may still have.
+    if (p === 'shared' || p.startsWith('shared/')) return true;
+    if (p === 'docs' || p.startsWith('docs/')) return true;
+    if (p === 'AGENTS.md' || p === '.cursor' || p.startsWith('.cursor/')) return true;
+    if (p === '_advanced' || p.startsWith('_advanced/')) return true;
+    if (p === 'services' || p.startsWith('services/')) return true;
+    return false;
+}
+
 function ensureExtraRemoteFiles(remoteMap) {
-    // Keep files that exist on remote but not in our HEAD (e.g. 222.png)
-    const localSet = new Set(listLocalFiles());
+    // Keep files that exist on remote but not in our HEAD (e.g. 222.png),
+    // except proprietary / never-publish paths.
+    const localSet = new Set(listLocalFiles().map((p) => p.replace(/\\/g, '/')));
     const extras = [];
     for (const [p, item] of remoteMap.entries()) {
-        if (!localSet.has(p)) {
-            extras.push({ path: p, mode: item.mode || '100644', type: 'blob', sha: item.sha });
-        }
+        if (localSet.has(p)) continue;
+        if (shouldDropRemoteOnly(p)) continue;
+        extras.push({ path: p, mode: item.mode || '100644', type: 'blob', sha: item.sha });
     }
     return extras;
+}
+
+function buildDeltaTreeEntries(remoteMap, pathToSha) {
+    const localSet = new Set(pathToSha.keys());
+    const preserve = new Set(ensureExtraRemoteFiles(remoteMap).map((e) => e.path));
+    const entries = [];
+
+    for (const [norm, sha] of pathToSha.entries()) {
+        const remote = remoteMap.get(norm);
+        if (remote && remote.sha === sha) continue;
+        entries.push({ path: norm, mode: '100644', type: 'blob', sha });
+    }
+
+    for (const [p] of remoteMap.entries()) {
+        if (localSet.has(p) || preserve.has(p)) continue;
+        entries.push({ path: p, mode: '100644', type: 'blob', sha: null });
+    }
+
+    return entries;
+}
+
+function createTreeWithBase(baseTreeSha, entries) {
+    // GitHub rejects very large single tree POSTs (504). Chunk when needed.
+    const CHUNK = 400;
+    let treeSha = baseTreeSha;
+    for (let i = 0; i < entries.length; i += CHUNK) {
+        const chunk = entries.slice(i, i + CHUNK);
+        const body = JSON.stringify({ base_tree: treeSha, tree: chunk });
+        const treeRes = spawnSync(GH, [
+            'api', '--method', 'POST', `repos/${OWNER}/${REPO}/git/trees`, '--input', '-',
+        ], { cwd: ROOT, input: body, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+        if (treeRes.status !== 0) {
+            throw new Error(`create delta tree failed @${i}\n${treeRes.stderr || treeRes.stdout}`);
+        }
+        treeSha = JSON.parse(treeRes.stdout).sha;
+        console.log(`  tree chunk ${Math.min(i + CHUNK, entries.length)}/${entries.length} -> ${treeSha}`);
+    }
+    return { sha: treeSha };
 }
 
 function buildChangelogNotes() {
@@ -281,62 +331,47 @@ function main() {
     const localFiles = listLocalFiles();
     console.log('local files:', localFiles.length);
 
-    const treeEntries = [];
+    const pathToSha = new Map();
     let uploaded = 0;
     let reused = 0;
 
     for (const rel of localFiles) {
         const abs = path.join(ROOT, rel);
         if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) continue;
-        const mode = '100644';
         const localSha = gitBlobSha(abs);
         const remote = remoteMap.get(rel.replace(/\\/g, '/'));
         const norm = rel.replace(/\\/g, '/');
         let sha = localSha;
         if (!remote || remote.sha !== localSha) {
-            // Verify object exists on GitHub; if not, upload
             let exists = false;
-            if (remote && remote.sha === localSha) exists = true;
-            else {
-                try {
-                    ghApi([`repos/${OWNER}/${REPO}/git/blobs/${localSha}`]);
-                    exists = true;
-                } catch (_) {
-                    exists = false;
-                }
+            try {
+                ghApi([`repos/${OWNER}/${REPO}/git/blobs/${localSha}`]);
+                exists = true;
+            } catch (_) {
+                exists = false;
             }
             if (!exists) {
                 sha = createBlobFromFile(abs);
                 uploaded += 1;
                 if (uploaded % 10 === 0) console.log(`  uploaded ${uploaded} blobs…`);
             } else {
-                sha = localSha;
                 reused += 1;
             }
         } else {
             sha = remote.sha;
             reused += 1;
         }
-        treeEntries.push({ path: norm, mode, type: 'blob', sha });
+        pathToSha.set(norm, sha);
     }
 
-    // Preserve remote-only files (222.png etc.)
     for (const extra of ensureExtraRemoteFiles(remoteMap)) {
-        treeEntries.push(extra);
         console.log('keep remote-only:', extra.path);
     }
 
-    console.log(`blobs uploaded=${uploaded} reused=${reused} entries=${treeEntries.length}`);
+    const treeEntries = buildDeltaTreeEntries(remoteMap, pathToSha);
+    console.log(`blobs uploaded=${uploaded} reused=${reused} deltaEntries=${treeEntries.length}`);
 
-    // Use flat tree (no base_tree) to avoid stale deleted paths from remote
-    const body = JSON.stringify({ tree: treeEntries });
-    const treeRes = spawnSync(GH, [
-        'api', '--method', 'POST', `repos/${OWNER}/${REPO}/git/trees`, '--input', '-',
-    ], { cwd: ROOT, input: body, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    if (treeRes.status !== 0) {
-        throw new Error(`create full tree failed\n${treeRes.stderr || treeRes.stdout}`);
-    }
-    const newTree = JSON.parse(treeRes.stdout);
+    const newTree = createTreeWithBase(remoteTreeSha, treeEntries);
     console.log('new tree:', newTree.sha);
 
     const localMsg = sh('git', ['log', '-1', '--format=%B', 'HEAD']).trim();

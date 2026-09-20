@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "transub-asr-bad-pool-entry",
+  "title": "ASR bad-pool entry",
+  "description": "Reusable JA ASR mishear card. title is provenance only — never gate runtime rules.",
+  "type": "object",
+  "required": ["ja_wrong", "ja_right", "kind", "profile"],
+  "properties": {
+    "id": { "type": "string", "description": "Stable local id, e.g. 2026-08-26-001" },
+    "ja_wrong": { "type": "string", "minLength": 1 },
+    "ja_right": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["mishear", "proper_noun", "hallucination", "loop", "other"]
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["av_soft", "film", "talk", "anime", "unknown"]
+    },
+    "asr_model": { "type": "string", "description": "Primary ASR id when captured" },
+    "title": { "type": "string", "description": "Provenance / smoke sample only" },
+    "adult": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, ship via mt-opaque-strings / TDP D01 — not plaintext JSON"
+    },
+    "zh": { "type": "string" },
+    "time_ms": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" }
+      }
+    },
+    "notes": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["open", "ruled", "wontfix", "needs_second_title"],
+      "default": "open"
+    },
+    "rule_target": {
+      "type": "string",
+      "enum": ["ja-asr-domain-fixes", "opaque-adult-asr", "none"],
+      "description": "Where a reusable rule should land after ≥2 titles share the pattern"
+    }
+  },
+  "additionalProperties": true
+}

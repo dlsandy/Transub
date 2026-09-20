@@ -187,7 +187,6 @@ function migrateLegacyUserDataFiles(fileNames = [
     'ui-prefs.json',
     'window-state.json',
     'transcript-keep-pins.json',
-    'transub-sense-memory.json',
 ]) {
     let writable;
     let legacyRoot;
@@ -217,7 +216,6 @@ function migrateLegacyUserDataFiles(fileNames = [
     copyDirIfMissing(path.join(legacyRoot, 'advanced-modules'), path.join(writable, 'advanced-modules'));
     copyDirIfMissing(path.join(legacyRoot, 'backup'), path.join(writable, 'backup'));
     copyDirIfMissing(path.join(legacyRoot, 'tdp'), path.join(writable, 'tdp'));
-    copyDirIfMissing(path.join(legacyRoot, 'subtitle-library'), path.join(writable, 'subtitle-library'));
 }
 
 module.exports = {

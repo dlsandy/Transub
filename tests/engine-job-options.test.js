@@ -3,9 +3,11 @@ const {
     normalizeEngineSubFormatsList,
     resolveEngineSubFormats,
     buildEngineGlossaryPairs,
+    buildEngineAsrGlossaryPairs,
     resolveEngineMtGlossaryMode,
     buildEngineJobFlags,
     buildExternalMtJobFields,
+    resolveExternalMtAdapterCall,
 } = require('../electron/engine-job-options');
 
 describe('engine-job-options', () => {
@@ -47,6 +49,16 @@ describe('engine-job-options', () => {
         ]);
     });
 
+    it('builds asr glossary pairs only for asrReplace entries', () => {
+        const pairs = buildEngineAsrGlossaryPairs({
+            entries: [
+                { canonical: '転売', aliases: ['天売'], asrReplace: true, enabled: true },
+                { canonical: '長門有希', aliases: ['Yuki'], enabled: true },
+            ],
+        });
+        assert.deepStrictEqual(pairs, [{ wrong: '天売', correct: '転売', stage: 'asr' }]);
+    });
+
     it('defaults releaseGpuAfter for sakura/smart handoff', () => {
         assert.strictEqual(buildEngineJobFlags({}, { sakuraOrSmart: true }).releaseGpuAfter, true);
         assert.strictEqual(buildEngineJobFlags({}, { sakuraOrSmart: false }).releaseGpuAfter, false);
@@ -73,6 +85,9 @@ describe('engine-job-options', () => {
         const flags = buildEngineJobFlags({ karaokeVtt: true });
         assert.strictEqual(flags.karaokeVtt, true);
         assert.strictEqual(flags.includeWords, true);
+        assert.strictEqual(flags.wordTimestamps, true);
+        assert.strictEqual(buildEngineJobFlags({}).wordTimestamps, false);
+        assert.strictEqual(buildEngineJobFlags({ includeWords: true }).wordTimestamps, true);
     });
 
     it('builds external MT job fields', () => {
@@ -92,5 +107,21 @@ describe('engine-job-options', () => {
             buildExternalMtJobFields({ url: 'http://127.0.0.1:9/translate' }).mtExternal.batchSize,
             8,
         );
+    });
+
+    it('resolves adapter HTTP batch by Sakura model size', () => {
+        assert.deepStrictEqual(resolveExternalMtAdapterCall({ useSmartTranslate: true }), {
+            batchSize: 40,
+            timeoutSec: 1800,
+        });
+        assert.deepStrictEqual(resolveExternalMtAdapterCall({
+            modelId: 'sakura-1.5b',
+        }), {
+            batchSize: 32,
+            timeoutSec: 600,
+        });
+        assert.strictEqual(resolveExternalMtAdapterCall({
+            engineMtModel: 'sakura-7b',
+        }).batchSize, 16);
     });
 });

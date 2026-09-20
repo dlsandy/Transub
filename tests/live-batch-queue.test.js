@@ -31,4 +31,23 @@ describe('live-batch-queue (main)', () => {
         assert.strictEqual(ap.ok, false);
         assert.strictEqual(ap.code, 'no_batch');
     });
+
+    it('getSnapshot reports idle and active queue', () => {
+        const idle = live.getSnapshot();
+        assert.strictEqual(idle.active, false);
+        assert.deepStrictEqual(idle.paths, []);
+
+        const a = path.resolve('a.mp4');
+        const b = path.resolve('b.mp4');
+        live.begin([{ fullPath: a }, { fullPath: b }]);
+        live.setCurrent(a);
+        live.skip([b]);
+        const snap = live.getSnapshot();
+        assert.strictEqual(snap.active, true);
+        assert.strictEqual(snap.total, 2);
+        assert.strictEqual(snap.currentIndex1, 1);
+        assert.strictEqual(live.normKey(snap.current), live.normKey(a));
+        assert.strictEqual(snap.skipped.length, 1);
+        assert.strictEqual(live.normKey(snap.skipped[0]), live.normKey(b));
+    });
 });

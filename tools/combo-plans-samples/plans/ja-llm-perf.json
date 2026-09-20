@@ -1,0 +1,36 @@
+{
+  "id": "ja-llm-perf",
+  "version": 1,
+  "group": "ja",
+  "name": "软对白 · 推理 · 性能",
+  "description": "软对白：Whisper JA 1.5B 听写+ Sakura 1.5B 本地推理翻译硬件档：性能 · <8GB 显存。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "whisper-ja-1.5b",
+    "silero-vad",
+    "sakura-1.5b"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "whisper-ja-1.5b",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "llm",
+    "engineLlmMtModel": "sakura-1.5b",
+    "engineProfile": "speed",
+    "activePresetId": "ja-av-soft-translate",
+    "vadEnabled": true
+  }
+}

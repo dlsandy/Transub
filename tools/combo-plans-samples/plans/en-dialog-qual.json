@@ -1,0 +1,38 @@
+{
+  "id": "en-dialog-qual",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 智能 · 质量",
+  "description": "欧美剧：Whisper turbo 听写+ 智能翻译（对话模型按行）硬件档：质量 · >12GB 显存。需 Pro。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "whisper-large-v3-turbo",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "whisper-large-v3-turbo",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "quality",
+    "activePresetId": "film-vad-only",
+    "vadEnabled": true,
+    "filmVadPreset": true,
+    "audioLightDenoise": false,
+    "beamSize": 5
+  }
+}

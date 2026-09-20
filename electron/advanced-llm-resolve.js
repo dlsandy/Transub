@@ -15,9 +15,13 @@ const { asString, asPlainObject } = require('./ipc-validate');
  */
 async function resolveAdvancedLlmConfig(doc, overrides = {}) {
     const patch = asPlainObject(overrides);
-    const source = catalog.normalizeLlmSource(
+    // External sentence MT may pass allowByok:true; Pro chat/polish/reconstruct never use BYOK.
+    let source = catalog.normalizeLlmSource(
         patch.llmSource != null ? patch.llmSource : doc?.llmSource,
     );
+    if (patch.allowByok !== true) {
+        source = 'managed';
+    }
 
     let resolved;
     if (source === 'managed') {

@@ -52,93 +52,19 @@
      * Sense badge / resense icon HTML for a file row.
      * @param {object} opts
      */
-    function buildSenseCellHtml(opts = {}) {
-        const {
-            sense,
-            autoOn = true,
-            running = false,
-            idx = 0,
-            esc = (s) => String(s ?? ''),
-            profileBadge = '',
-            methodShort = '',
-            senseMtLabel = '',
-            acousticHint = '',
-        } = opts;
-
-        let profileBadgeHtml = '';
-        if (sense?.status === 'sensing') {
-            profileBadgeHtml = '<span class="file-sense-status" title="正在感知…" aria-label="正在感知"><span class="file-sense-icon is-sensing"><i class="fa fa-magic" aria-hidden="true"></i></span><span class="file-sense-label">感知中...</span></span>';
-        } else if (sense?.status === 'done' || sense?.status === 'error') {
-            const hit = sense.classification;
-            const badge = hit ? (profileBadge || hit.label || '') : '';
-            const confPct = hit?.confidence ? Math.round(hit.confidence * 100) : 0;
-            const lang = sense.overrides?.language || sense.languagePrior?.language || '';
-            const acousticLabel = acousticLabelFromHint(
-                acousticHint && acousticHint !== 'neutral' ? acousticHint : '',
-            );
-            const hasSenseOverrides = !!(sense.overrides && Object.keys(sense.overrides).length);
-            const canToggleAdopt = sense.status === 'done'
-                && !running
-                && (sense.adopted || hasSenseOverrides);
-            const tipParts = [
-                sense.status === 'error' ? '感知失败' : '',
-                sense.status === 'error' ? (sense.recovery?.shortTip || sense.message || '') : '',
-                sense.status !== 'error' && sense.adopted ? '将使用感知参数' : '',
-                sense.status !== 'error' && !sense.adopted
-                    ? (autoOn ? '感知未采纳' : '感知已关')
-                    : '',
-                hit?.label || badge || (sense.status === 'error' ? '' : '未识别'),
-                confPct ? `${confPct}%` : '',
-                lang && lang !== 'auto' ? `语种 ${lang}` : '',
-                methodShort && sense.adopted ? methodShort : '',
-                sense.overrides?.engineAsrModel || '',
-                senseMtLabel,
-                acousticLabel ? `声学·${acousticLabel}` : '',
-                ...(hit?.reasons || []).slice(0, 2),
-                canToggleAdopt
-                    ? (sense.adopted ? '点击改为不采纳' : '点击采纳')
-                    : '',
-                sense.status === 'error' && sense.recovery?.primaryAction
-                    ? `推荐：${sense.recovery.primaryAction.label}`
-                    : (sense.status === 'error' ? '点「深度感知」重试，或关闭智能感知后选手动场景' : ''),
-            ].filter(Boolean);
-            const tip = tipParts.join(' · ') || sense.message || '';
-            const rejectedCls = !sense.adopted ? ' is-rejected' : '';
-            const suggestCls = !sense.adopted && sense.action === 'suggest' ? ' is-suggest' : '';
-            const adoptedCls = sense.adopted ? ' is-adopted' : '';
-            const profileCls = hit?.profile && hit.profile !== 'unknown'
-                ? ` profile-${esc(hit.profile)}`
-                : '';
-            const aria = sense.adopted
-                ? `已采纳感知参数：${badge || hit?.label || '已采纳'}（点击不采纳）`
-                : (canToggleAdopt
-                    ? `未采纳：${badge || hit?.label || '感知结果'}（点击采纳）`
-                    : (badge || hit?.label || '感知结果'));
-            const toggleAttrs = canToggleAdopt
-                ? ` type="button" data-sense-toggle="${idx}"`
-                : ' type="button" disabled';
-            profileBadgeHtml = `<button${toggleAttrs} class="file-sense-icon${profileCls}${adoptedCls}${rejectedCls}${suggestCls}" title="${esc(tip)}" aria-label="${esc(aria)}"><i class="fa fa-magic" aria-hidden="true"></i></button>`;
-            if (sense.status === 'error' && Array.isArray(sense.recovery?.actions) && sense.recovery.actions.length) {
-                const chips = sense.recovery.actions.slice(0, 3).map((a) => (
-                    `<button type="button" class="file-sense-recover-btn" data-sense-recover="${esc(a.id)}" data-sense-recover-idx="${idx}" title="${esc(a.label)}">${esc(a.label)}</button>`
-                )).join('');
-                profileBadgeHtml += `<span class="file-sense-recover" role="group" aria-label="感知失败可执行下一步">${chips}</span>`;
-            }
-        } else if (!autoOn && sense?.status === 'off') {
-            profileBadgeHtml = '';
-        }
-
-        let resenseIconHtml = '';
-        if (!running && sense && (sense.status === 'done' || sense.status === 'error' || sense.status === 'sensing')) {
-            resenseIconHtml = `<button type="button" data-sense-resense="${idx}" class="file-sense-icon is-resense" title="深入感知：短窗语种、声学分析并刷新匹配" aria-label="深度感知"${sense.status === 'sensing' ? ' disabled' : ''}><i class="fa fa-search-plus" aria-hidden="true"></i></button>`;
-        }
-        return { profileBadgeHtml, resenseIconHtml };
+    function buildSenseCellHtml() {
+        return { profileBadgeHtml: '', resenseIconHtml: '' };
     }
 
     /**
      * QC status + fixed tag cell.
      */
     function buildQcCellHtml(item, { esc, idx }) {
+        const status = String(item?.status || '');
+        // After completion, keep the queue row clean — no QC count / fix affordances here.
+        if (status === 'done' || status === 'skipped') {
+            return '<span class="text-gray-300">—</span>';
+        }
         let qcStatusHtml = '<span class="text-gray-300">—</span>';
         if (item.qcError) {
             qcStatusHtml = `<span class="text-amber-600 text-xs" title="${esc(item.qcError)}">?</span>`;
@@ -161,6 +87,23 @@
     /**
      * Progress cell HTML.
      */
+    const STAGE_SHORT = {
+        starting: '启动',
+        denoise: '降噪',
+        separate: '分离',
+        vad: 'VAD',
+        model: '加载',
+        transcribe: '原文',
+        source_cleanup: '清洗',
+        semantic_repair: '语义',
+        pre_mt_qc: '门闸',
+        translate: '翻译',
+        cleanup: '润色',
+        qc_fix: 'QC',
+        qc_loop: '闭环',
+        save: '保存',
+    };
+
     function buildProgressCellHtml(item, {
         esc,
         elapsed = '—',
@@ -168,10 +111,17 @@
     }) {
         const pct = Math.max(0, Math.min(100, Number(item.progress) || 0));
         if (item.status === 'running') {
+            const stageShort = STAGE_SHORT[item.stage] || '';
+            const hint = stageShort
+                ? `${stageShort} · ${pct}%`
+                : `${pct}%`;
+            const titleDetail = String(item.detail || '').trim();
             return `
-                <div class="space-y-0.5" title="已用 ${esc(elapsed)} · ${esc(processed)}">
-                    <div class="row-mini-progress"><span style="width:${pct}%"></span></div>
-                    <div class="text-[10px] text-gray-500 tabular-nums">${pct}%</div>
+                <div class="space-y-0.5 row-progress-live" title="${esc(titleDetail || `已用 ${elapsed} · ${processed}`)}">
+                    <div class="row-mini-progress"><span class="row-mini-progress-bar" style="width:${pct}%"></span></div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <div class="text-[10px] text-gray-500 tabular-nums truncate row-progress-hint">${esc(hint)}</div>
+                    </div>
                 </div>`;
         }
         if (item.status === 'done' || item.status === 'skipped') {
@@ -181,6 +131,57 @@
             return `<span class="text-xs text-gray-400 tabular-nums" title="已用 ${esc(elapsed)}">${pct ? `${pct}%` : '—'}</span>`;
         }
         return `<span class="text-gray-400 text-xs">—</span>`;
+    }
+
+    function buildStyleBadgeHtml(item, ctx = {}) {
+        const {
+            esc = (s) => String(s ?? ''),
+            globalPreset = 'natural_spoken',
+            globalNote = '',
+            styleApi = null,
+            idx = null,
+            styleEnabled = true,
+        } = ctx;
+        if (!styleEnabled) return '';
+        const api = styleApi || ((typeof globalThis !== 'undefined' && globalThis.TransubTranslateStyle)
+            || (typeof window !== 'undefined' && window.TransubTranslateStyle)
+            || null);
+        if (!api?.resolveEffectiveTranslateStyle) return '';
+        const resolved = api.resolveEffectiveTranslateStyle({
+            globalPreset,
+            globalNote,
+            itemPreset: item.translateStylePreset,
+            itemNote: item.translateStyleCustomNote,
+            enabled: true,
+        });
+        const label = String(resolved.label || '').trim();
+        if (!label) return '';
+        const follow = !!resolved.followGlobal;
+        const displayName = follow
+            ? '默认'
+            : (resolved.preset === 'custom' && resolved.customNote
+                ? String(resolved.customNote).trim().slice(0, 12) || label
+                : label);
+        const tipParts = [
+            follow ? '跟随全局' : '本条覆盖',
+            item.translateStyleSenseSuggested ? '感知建议' : '',
+            label,
+            resolved.preset === 'custom' && resolved.customNote
+                ? resolved.customNote
+                : '',
+            '点击设置',
+        ].filter(Boolean);
+        const tip = esc(tipParts.join(' · '));
+        const cls = [
+            'row-style-badge',
+            follow ? 'is-global' : 'is-override',
+            item.translateStyleSenseSuggested ? 'is-sense-suggested' : '',
+        ].filter(Boolean).join(' ');
+        const rowIdx = Number(idx);
+        const idxAttr = Number.isFinite(rowIdx)
+            ? ` data-translate-style-idx="${rowIdx}"`
+            : '';
+        return `<button type="button" class="${cls}"${idxAttr} title="译文风格：${tip}" aria-label="设置译文风格：${esc(follow ? '默认' : label)}"><i class="fa fa-font" aria-hidden="true"></i><span class="row-style-badge-label">${esc(displayName)}</span></button>`;
     }
 
     /**
@@ -228,8 +229,17 @@
             senseMtLabel = '',
             acousticHint = '',
             canPostBatch = false,
+            canRemove = true,
+            canStop = false,
+            globalPreset = 'natural_spoken',
+            globalNote = '',
+            styleApi = null,
+            styleEnabled = true,
         } = ctx;
 
+        const styleBadgeHtml = buildStyleBadgeHtml(item, {
+            esc, globalPreset, globalNote, styleApi, idx, styleEnabled,
+        });
         const folderTitle = subPath
             ? `在文件夹中显示字幕：${basename(subPath)}`
             : `在文件夹中显示：${basename(item.path)}`;
@@ -254,6 +264,7 @@
         const editBtn = subPath
             ? `<button type="button" data-edit-sub="${esc(subPath)}" data-edit-video="${esc(item.path)}" class="row-action-btn text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="编辑字幕"><i class="fa fa-pencil text-xs"></i></button>` : '';
         const canQcFix = !running && !qcFixing
+            && item.status !== 'done' && item.status !== 'skipped'
             && Number(item.qcIssueCount) > 0
             && canPostBatch;
         const qcFixBtn = canQcFix
@@ -274,6 +285,21 @@
         const diagBtn = (item.status === 'failed' || item.status === 'error') && !running
             ? `<button type="button" data-diag-idx="${idx}" class="row-action-btn text-gray-400 hover:text-gray-700 hover:bg-gray-100" title="导出 ASR 诊断包" aria-label="导出诊断包"><i class="fa fa-stethoscope text-xs"></i></button>`
             : '';
+        const canStopBtn = canStop || (item.status === 'running' && !!running);
+        const stopBtn = canStopBtn
+            ? `<button type="button" data-stop-idx="${idx}" class="row-action-btn text-rose-600 hover:text-rose-800 hover:bg-rose-50" title="停止本条任务" aria-label="停止本条任务"><i class="fa fa-stop text-xs"></i></button>`
+            : '';
+        const removeBtn = canRemove
+            ? `<button type="button" data-remove-idx="${idx}" class="row-action-btn text-gray-400 hover:text-rose-600 hover:bg-rose-50" title="从列表移除" aria-label="从列表移除"><i class="fa fa-trash-o text-xs"></i></button>`
+            : '';
+        const executeBtn = item.path
+            ? `<button type="button" data-execute-idx="${idx}" class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100" title="执行" aria-label="执行"><i class="fa fa-play text-xs"></i></button>`
+            : '';
+        const canBurn = !!item.path && (item.status === 'done' || item.status === 'skipped');
+        const burnBtn = canBurn
+            ? `<button type="button" data-burn-idx="${idx}" class="row-action-btn text-orange-500 hover:text-orange-700 hover:bg-orange-50" title="字幕烧录" aria-label="字幕烧录"><i class="fa fa-fire text-xs"></i></button>`
+            : '';
+        const moreBtn = `<button type="button" data-more-idx="${idx}" class="row-action-btn text-gray-400 hover:text-primary hover:bg-gray-100" title="更多" aria-label="更多"><i class="fa fa-ellipsis-h text-xs"></i></button>`;
         const isFailed = item.status === 'failed' || item.status === 'error';
         const isCancelledResumable = item.status === 'cancelled' && item.resumable && item.resumeFromJobId;
         const errText = item.error || item.recovery?.tip || (isFailed ? detail : '');
@@ -303,7 +329,9 @@
         } else if (recoverChips) {
             detailHtml = recoverChips;
         }
-        const progressCell = buildProgressCellHtml(item, { esc, elapsed, processed });
+        const progressCell = buildProgressCellHtml(item, {
+            esc, elapsed, processed,
+        });
         const canOpenByName = !!subPath
             && (item.status === 'done' || item.status === 'skipped');
         const nameTitle = canOpenByName
@@ -314,9 +342,9 @@
             : `<span class="cell-ellipsis font-medium text-gray-800">${esc(basename(item.path))}</span>`;
 
         return `
-            <tr class="task-row hover:bg-gray-50/80" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
+            <tr class="task-row" data-idx="${idx}" data-status="${esc(item.status)}" data-path="${esc(normPath(item.path))}">
                 <td class="px-2 py-1.5"><input type="checkbox" data-row-check ${item.selected ? 'checked' : ''} ${running ? 'disabled' : ''}></td>
-                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${senseCell.profileBadgeHtml}${senseCell.resenseIconHtml}</div></td>
+                <td class="px-2 py-1.5 text-xs col-file"><div class="file-cell-main" title="${esc(item.path)}">${nameHtml}${subBadge}${styleBadgeHtml}${senseCell.profileBadgeHtml}${senseCell.resenseIconHtml}</div></td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-duration">${item.duration ? formatDuration(item.duration) : '—'}</td>
                 <td class="px-2 py-1.5 text-right text-xs tabular-nums text-gray-500 col-elapsed"${elapsed !== '—' ? ` title="已用 ${esc(elapsed)}"` : ''}>${esc(elapsed)}</td>
                 <td class="px-2 py-1.5 col-progress">${progressCell}</td>
@@ -328,6 +356,10 @@
                 <td class="px-1 py-1.5 text-center text-xs col-qc">${qcCell}</td>
                 <td class="px-1 py-1.5 text-center col-actions">
                     <div class="row-actions">
+                    ${executeBtn}
+                    ${burnBtn}
+                    ${stopBtn}
+                    ${removeBtn}
                     ${resumeBtn}
                     ${retryBtn}
                     ${diagBtn}
@@ -339,9 +371,51 @@
                         title="${esc(folderTitle)}" ${revealPath ? '' : 'disabled'}>
                         <i class="fa fa-folder-open text-xs"></i>
                     </button>
+                    ${moreBtn}
                     </div>
                 </td>
             </tr>`;
+    }
+
+    /** @param {Array<{ selected?: boolean }>} items */
+    function computeSelectAllState(items) {
+        const list = Array.isArray(items) ? items : [];
+        const selectedCount = list.filter((i) => i && i.selected).length;
+        return {
+            checked: list.length > 0 && selectedCount === list.length,
+            indeterminate: selectedCount > 0 && selectedCount < list.length,
+        };
+    }
+
+    /**
+     * Toolbar select-all control: icon mirrors list state (empty / partial / all).
+     * @param {{ checked?: boolean, indeterminate?: boolean }} st
+     */
+    function describeSelectAllToolbar(st) {
+        const checked = !!(st && st.checked);
+        const indeterminate = !!(st && st.indeterminate);
+        if (checked) {
+            return {
+                iconClass: 'fa fa-check-square',
+                title: '取消全选 (Ctrl+A)',
+                ariaLabel: '取消全选',
+                ariaChecked: 'true',
+            };
+        }
+        if (indeterminate) {
+            return {
+                iconClass: 'fa fa-minus-square-o',
+                title: '全选 (Ctrl+A)',
+                ariaLabel: '全选',
+                ariaChecked: 'mixed',
+            };
+        }
+        return {
+            iconClass: 'fa fa-square-o',
+            title: '全选 (Ctrl+A)',
+            ariaLabel: '全选',
+            ariaChecked: 'false',
+        };
     }
 
     return {
@@ -352,6 +426,9 @@
         buildQcCellHtml,
         buildProgressCellHtml,
         buildAsrRunBadgeHtml,
+        buildStyleBadgeHtml,
         buildListRowHtml,
+        computeSelectAllState,
+        describeSelectAllToolbar,
     };
 }));

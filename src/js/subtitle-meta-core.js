@@ -12,14 +12,17 @@
     const fluencyCore = (typeof module !== 'undefined' && module.exports)
         ? require('./subtitle-fluency-core')
         : (global && global.TransubSubtitleFluency);
-    const api = factory(splitCore, fluencyCore);
+    const creditCore = (typeof module !== 'undefined' && module.exports)
+        ? require('./subtitle-software-credit-core')
+        : (global && global.TransubSubtitleSoftwareCredit);
+    const api = factory(splitCore, fluencyCore, creditCore);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubSubtitleMeta = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleMetaCoreFactory(splitCore, fluencyCore) {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function subtitleMetaCoreFactory(splitCore, fluencyCore, creditCore) {
     const DEFAULT_LOW_THRESHOLD = 0.55;
     const META_VERSION = 1;
 
@@ -490,6 +493,11 @@
         return indices;
     }
 
+    function isPreservedSoftwareCreditCue(cue) {
+        if (!creditCore?.isSoftwareCreditText) return false;
+        return creditCore.isSoftwareCreditText(String(cue?.text ?? ''));
+    }
+
     /**
      * 用 newCues 替换与 [startMs, endMs) 重叠的旧条目；无重叠时按时间插入
      */
@@ -507,6 +515,15 @@
         let inserted = false;
         for (let i = 0; i < list.length; i += 1) {
             if (cueOverlapsRange(list[i], startMs, endMs)) {
+                if (isPreservedSoftwareCreditCue(list[i])) {
+                    next.push({
+                        startMs: list[i].startMs,
+                        endMs: list[i].endMs,
+                        text: list[i].text ?? '',
+                        index: list[i].index,
+                    });
+                    continue;
+                }
                 if (!inserted) {
                     next.push(...incoming);
                     inserted = true;
@@ -534,7 +551,9 @@
             ));
             if (insertAt < 0) insertAt = 0;
         }
-        return { cues: next, insertAt, replaced: collectOverlappingCueIndices(list, startMs, endMs).length };
+        const replaced = collectOverlappingCueIndices(list, startMs, endMs)
+            .filter((idx) => !isPreservedSoftwareCreditCue(list[idx])).length;
+        return { cues: next, insertAt, replaced };
     }
 
     return {

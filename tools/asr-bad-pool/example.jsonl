@@ -1,0 +1,2 @@
+{"id":"example-001","ja_wrong":"免税しては大丈夫","ja_right":"メンエスは大丈夫","kind":"mishear","profile":"av_soft","asr_model":"anime-whisper","title":"provenance-only","adult":false,"status":"ruled","rule_target":"ja-asr-domain-fixes","notes":"Schema sample — do not treat as live training data"}
+{"id":"example-002","ja_wrong":"ああああああ","ja_right":"","kind":"loop","profile":"av_soft","asr_model":"anime-whisper","title":"provenance-only","adult":false,"status":"open","rule_target":"none","notes":"Hallucination loop — prefer second-opinion / strip, not a from→to pair"}

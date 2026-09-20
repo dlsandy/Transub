@@ -2,7 +2,7 @@ const assert = require('assert');
 const missing = require('../src/js/engine-missing-models-core');
 
 describe('engine-missing-models-core', () => {
-    it('resolves expected opus ids', () => {
+    it('never expects Opus MT downloads', () => {
         assert.deepStrictEqual(missing.resolveExpectedOpusMtModelIds({
             task: 'asr',
             translateMode: 'engine',
@@ -11,13 +11,13 @@ describe('engine-missing-models-core', () => {
             task: 'translate',
             translateMode: 'engine',
             explicitOpusMtId: 'opus-mt-en-zh',
-        }), ['opus-mt-en-zh']);
+        }), []);
         assert.deepStrictEqual(missing.resolveExpectedOpusMtModelIds({
             task: 'dual',
             translateMode: 'engine',
             formLang: 'ja',
             selectedItems: [],
-        }), ['opus-mt-ja-zh']);
+        }), []);
         assert.deepStrictEqual(missing.resolveExpectedOpusMtModelIds({
             task: 'translate',
             translateMode: 'engine',
@@ -31,7 +31,7 @@ describe('engine-missing-models-core', () => {
         }), []);
     });
 
-    it('warns when models missing', () => {
+    it('warns when ASR/VAD models missing (not Opus)', () => {
         const models = [
             { id: 'sensevoice-small', installed: true },
             { id: 'fsmn-vad', installed: false, incomplete: true },
@@ -44,8 +44,8 @@ describe('engine-missing-models-core', () => {
             asrModelId: 'sensevoice-small',
             cachedEngineModels: models,
         });
-        assert.ok(msg.includes('opus-mt-ja-zh'));
         assert.ok(msg.includes('fsmn-vad'));
+        assert.ok(!msg.includes('opus-mt-ja-zh'));
 
         assert.strictEqual(missing.anyCommonOpusMtInstalled([
             { id: 'opus-mt-en-zh', installed: true },
@@ -57,7 +57,12 @@ describe('engine-missing-models-core', () => {
             engineAsrModel: 'anime-whisper',
             engineVadModel: 'silero-vad',
             engineMtModel: 'opus-mt-ja-zh',
-        }), ['anime-whisper', 'silero-vad']);
+        }), ['anime-whisper']);
+
+        assert.deepStrictEqual(missing.collectRequiredModelIdsFromOptions({
+            engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
+            engineVadModel: 'silero-vad',
+        }), ['qwen3-asr-1.7b-ja-anime-galgame']);
 
         const missingRows = missing.findMissingCatalogModels(
             ['anime-whisper', 'silero-vad', 'fsmn-vad'],
@@ -70,6 +75,12 @@ describe('engine-missing-models-core', () => {
         assert.deepStrictEqual(missingRows.map((m) => m.id), ['anime-whisper', 'fsmn-vad']);
         assert.strictEqual(missingRows[0].reason, 'not_installed');
         assert.strictEqual(missingRows[1].reason, 'incomplete');
+
+        const skipBundled = missing.findMissingCatalogModels(
+            ['qwen3-asr-1.7b-ja-anime-galgame', 'silero-vad'],
+            [{ id: 'qwen3-asr-1.7b-ja-anime-galgame', name: 'Galgame', installed: true }],
+        );
+        assert.deepStrictEqual(skipBundled, []);
 
         const copy = missing.buildMissingModelsConfirmCopy({
             contextLabel: '预设「Anime Whisper」',

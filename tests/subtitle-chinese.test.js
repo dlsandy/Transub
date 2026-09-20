@@ -13,6 +13,7 @@ const {
     stripTranslatePromptLeakage,
     ensureSpaceAfterChinesePunctuation,
     spaceAfterChinesePunctuationCues,
+    normalizeMtChineseCues,
 } = require('../src/js/subtitle-chinese-core');
 
 function testNormalizeDirection() {
@@ -91,6 +92,23 @@ function testRoundTripCommonChars() {
     const trad = convertText(sample, 's2t', { locale: 'tw' }).text;
     const back = convertText(trad, 't2s', { locale: 'tw' }).text;
     assert.strictEqual(back, sample);
+}
+
+function testNormalizeMtChineseCues() {
+    const cues = [
+        { index: 0, text: '這是繁體字幕' },
+        { index: 1, text: '已经是简体' },
+    ];
+    const simplified = normalizeMtChineseCues(cues, 'simplified');
+    assert.strictEqual(simplified.cues[0].text, '这是繁体字幕');
+    assert.strictEqual(simplified.cues[1].text, '已经是简体');
+    assert.strictEqual(simplified.cues[0].index, 0);
+    assert.strictEqual(simplified.cues[1].index, 1);
+    assert.ok(simplified.changed);
+
+    const traditional = normalizeMtChineseCues(cues, 'traditional');
+    assert.strictEqual(traditional.cues[0].text, '這是繁體字幕');
+    assert.strictEqual(traditional.changed, false);
 }
 
 function testDirectionLabel() {
@@ -198,6 +216,9 @@ describe('subtitle-chinese', () => {
     });
     it('direction label', () => {
         testDirectionLabel();
+    });
+    it('normalizes LLM MT output to simplified when configured', () => {
+        testNormalizeMtChineseCues();
     });
     it('noop when no convertible chars', () => {
         testNoopWhenAlreadyTarget();

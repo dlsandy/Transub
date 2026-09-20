@@ -5,6 +5,19 @@
     const electron = window.__ELECTRON__;
     if (!electron?.transubAdvancedGetStatus) return;
 
+    function uiTf(template, vars) {
+        const api = window.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        return window.TransubI18n?.tx?.(text) ?? String(text || '');
+    }
+
     const AFDIAN_PURCHASE_URL = 'https://afdian.com/item/41fef1a28bf211f189e252540025c377';
 
     const els = {
@@ -28,9 +41,6 @@
         managedRuntime: () => document.getElementById('advancedManagedRuntimeStatus'),
         managedRuntimeBackendWrap: () => document.getElementById('advancedManagedRuntimeBackendWrap'),
         managedRuntimeBackendSelect: () => document.getElementById('advancedManagedRuntimeBackendSelect'),
-        llamaParallelModeSelect: () => document.getElementById('advancedLlamaParallelModeSelect'),
-        llamaSmartParallelCheck: () => document.getElementById('advancedLlamaSmartParallelCheck'),
-        llamaSpeculativeCheck: () => document.getElementById('advancedLlamaSpeculativeCheck'),
         llamaServerActionStatus: () => document.getElementById('advancedLlamaServerActionStatus'),
         llamaServerProgressWrap: () => document.getElementById('advancedLlamaServerProgressWrap'),
         llamaServerProgressBar: () => document.getElementById('advancedLlamaServerProgressBar'),
@@ -80,6 +90,27 @@
         if (el) el.textContent = text || '';
     }
 
+    /** Idempotent listeners — settings markup is injected after first DOMContentLoaded. */
+    function bindListener(el, type, handler, flag) {
+        if (!el || typeof el.addEventListener !== 'function') return;
+        const key = flag || `adv${type}Bound`;
+        if (el.dataset[key] === '1') return;
+        el.dataset[key] = '1';
+        el.addEventListener(type, handler);
+    }
+    function bindClick(idOrEl, handler) {
+        const el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+        bindListener(el, 'click', handler, 'advClickBound');
+    }
+    function bindChange(idOrEl, handler) {
+        const el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+        bindListener(el, 'change', handler, 'advChangeBound');
+    }
+    function bindInput(idOrEl, handler) {
+        const el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+        bindListener(el, 'input', handler, 'advInputBound');
+    }
+
     function formatDays(ms) {
         const n = Math.max(0, Number(ms) || 0);
         if (n <= 0) return '0';
@@ -89,11 +120,11 @@
     /** 体验剩余：≥1 天按天；否则按小时 */
     function formatExpiryRemaining(ms) {
         const n = Math.max(0, Number(ms) || 0);
-        if (n <= 0) return '已到期';
+        if (n <= 0) return uiTx('已到期');
         const dayMs = 24 * 60 * 60 * 1000;
-        if (n >= dayMs) return `约 ${Math.ceil(n / dayMs)} 天`;
+        if (n >= dayMs) return uiTf('约 {n} 天', { n: Math.ceil(n / dayMs) });
         const hours = Math.max(1, Math.ceil(n / (60 * 60 * 1000)));
-        return `约 ${hours} 小时`;
+        return uiTf('约 {n} 小时', { n: hours });
     }
 
     function currentLlmSource() {
@@ -102,82 +133,106 @@
     }
 
     function setLlmSourceUi(source) {
-        const managed = source === 'managed';
-        if (els.sourceByok()) els.sourceByok().checked = !managed;
-        if (els.sourceManaged()) els.sourceManaged().checked = managed;
-        els.byokPanel()?.classList.toggle('hidden', managed);
-        els.managedPanel()?.classList.toggle('hidden', !managed);
+        // Pro chat/polish always use managed; BYOK panel lives under 外部翻译.
+        const managed = true;
+        if (els.sourceByok()) els.sourceByok().checked = false;
+        if (els.sourceManaged()) els.sourceManaged().checked = true;
+        // Do not hide BYOK panel based on source — visibility is owned by translate-mode UI.
+        els.managedPanel()?.classList.remove('hidden');
+        void source;
+        void managed;
     }
 
-    function modelOptionLabel(item) {
+    function modelOptionLabel(item, { forSmartTranslate = false } = {}) {
         const name = item?.name || item?.id || '';
         const bits = [];
-        if (item?.translateOnly) bits.push('仅译中');
+        if (item?.translateOnly) {
+            bits.push(forSmartTranslate ? uiTx('不支持简要/润色') : uiTx('仅译中'));
+        }
         if (item?.proScale) bits.push('Pro');
-        return bits.length ? `${name}（${bits.join(' · ')}）` : name;
+        return bits.length ? uiTf('{name}（{bits}）', { name, bits: bits.join(' · ') }) : name;
+    }
+
+    function isManagedTranslateOnly(item) {
+        if (!item) return false;
+        if (item.translateOnly) return true;
+        try {
+            const api = window.TransubAdvancedManagedLlmCatalog;
+            if (api?.isTranslateOnlyModel?.(item) || api?.isTranslateOnlyModel?.(item.id)) return true;
+        } catch { /* ignore */ }
+        return false;
     }
 
     function fillManagedModelSelect(selectEl, managed, selectedId, {
         preferReconstruct = false,
         disableTranslateOnly = false,
+        excludeTranslateOnly = false,
+        labelTranslateOnlyAsLite = false,
+        emptyLabel = '',
     } = {}) {
         if (!selectEl) return;
         const catalog = (Array.isArray(managed?.catalog) ? managed.catalog : [])
-            .filter((item) => item?.id && item.installed);
+            .filter((item) => item?.id && item.installed)
+            .filter((item) => !(excludeTranslateOnly && isManagedTranslateOnly(item)));
         catalog.sort((a, b) => {
-            if (preferReconstruct || disableTranslateOnly) {
+            if (preferReconstruct || disableTranslateOnly || labelTranslateOnlyAsLite) {
                 const ar = a.translateOnly ? 1 : 0;
                 const br = b.translateOnly ? 1 : 0;
                 if (ar !== br) return ar - br;
             }
             return String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh');
         });
-        const want = String(selectedId || '').trim();
-        const prev = selectEl.value;
+        let want = String(selectedId || '').trim();
+        // Stale translate-only smart pick: treat as auto (not listed for dialog/polish).
+        if (excludeTranslateOnly && want) {
+            const meta = (managed?.catalog || []).find((m) => m.id === want);
+            if (isManagedTranslateOnly(meta)) want = '';
+        }
         selectEl.innerHTML = '';
         const empty = document.createElement('option');
         empty.value = '';
-        empty.textContent = catalog.length ? '（尚未选用）' : '（暂无已下载模型，请先在下方目录下载）';
+        empty.textContent = emptyLabel
+            || (catalog.length ? uiTx('（尚未选用）') : uiTx('（暂无已下载模型，请先在下方目录下载）'));
         selectEl.appendChild(empty);
         for (const item of catalog) {
             const opt = document.createElement('option');
             opt.value = item.id;
-            opt.textContent = modelOptionLabel(item);
-            if (disableTranslateOnly && item.translateOnly) {
+            opt.textContent = modelOptionLabel(item, { forSmartTranslate: labelTranslateOnlyAsLite });
+            if (disableTranslateOnly && isManagedTranslateOnly(item)) {
                 opt.disabled = true;
-                opt.textContent = `${modelOptionLabel(item)} · 不可用于智能翻译`;
+                opt.textContent = uiTf('{label} · 不可用于智能翻译', { label: modelOptionLabel(item) });
             }
             selectEl.appendChild(opt);
         }
         // 当前选用若尚未下载，仍显示一项以免下拉空白，但不列入可选下载目录外的其它未装模型
         if (want && ![...selectEl.options].some((o) => o.value === want)) {
             const orphanMeta = (managed?.catalog || []).find((m) => m.id === want);
-            const orphan = document.createElement('option');
-            orphan.value = want;
-            orphan.textContent = orphanMeta
-                ? `${modelOptionLabel(orphanMeta)}（未下载）`
-                : `${want}（未下载）`;
-            selectEl.appendChild(orphan);
+            if (excludeTranslateOnly && isManagedTranslateOnly(orphanMeta)) {
+                // skip — translate-only cannot be smart/dialog pick
+            } else {
+                const orphan = document.createElement('option');
+                orphan.value = want;
+                orphan.textContent = orphanMeta
+                    ? uiTf('{label}（未下载）', {
+                        label: modelOptionLabel(orphanMeta, { forSmartTranslate: labelTranslateOnlyAsLite }),
+                    })
+                    : uiTf('{id}（未下载）', { id: want });
+                selectEl.appendChild(orphan);
+            }
         }
-        const next = want || prev || '';
-        if (next && [...selectEl.options].some((o) => o.value === next)) {
-            selectEl.value = next;
-        } else {
-            selectEl.value = '';
-        }
+        // Honor explicit empty (自动) — never revive a previous selection.
+        selectEl.value = want && [...selectEl.options].some((o) => o.value === want) ? want : '';
     }
 
     function renderModelSelects(managed) {
         syncingModelSelects = true;
         try {
-            const smartId = managed?.smartTranslateModelId
-                || managed?.smartTranslateModel?.id
-                || managed?.activeModelId
-                || '';
+            const smartId = String(managed?.smartTranslateModelId || '').trim();
             const inferId = managed?.activeModelId || managed?.activeModel?.id || '';
             fillManagedModelSelect(els.smartTranslateSelect(), managed, smartId, {
                 preferReconstruct: true,
-                disableTranslateOnly: true,
+                excludeTranslateOnly: true,
+                emptyLabel: '（尚未选用）',
             });
             fillManagedModelSelect(els.inferenceSelect(), managed, inferId, { preferReconstruct: true });
         } finally {
@@ -306,10 +361,10 @@
             const visible = Number(managedSnapshot?.catalogVisibleCount) || (managedSnapshot?.catalog?.length || 0);
             if (!entitled && full > visible) {
                 hint.hidden = false;
-                hint.innerHTML = `当前显示 <strong>${visible}</strong> 个基础规格。解锁 <strong>Pro</strong> 后可浏览全部 <strong>${full}</strong> 个规格。`;
+                hint.textContent = uiTf('当前显示 {visible} 个基础规格。解锁 Pro 后可浏览全部 {full} 个规格。', { visible, full });
             } else if (entitled) {
                 hint.hidden = false;
-                hint.innerHTML = `Pro 已解锁 · 目录 <strong>${visible}</strong> 个模型，可按规格筛选。`;
+                hint.textContent = uiTf('Pro 已解锁 · 目录 {visible} 个模型，可按规格筛选。', { visible });
             } else {
                 hint.hidden = true;
                 hint.textContent = '';
@@ -325,37 +380,46 @@
             const total = managedSnapshot?.catalog?.length || 0;
             const full = Number(managedSnapshot?.catalogFullCount) || total;
             if (items.length === total && total === full) {
-                els.catalogCount().textContent = `共 ${total} 个模型`;
+                els.catalogCount().textContent = uiTf('共 {total} 个模型', { total });
             } else if (items.length === total && full > total) {
-                els.catalogCount().textContent = `显示 ${total} / 全目录 ${full}`;
+                els.catalogCount().textContent = uiTf('显示 {total} / 全目录 {full}', { total, full });
             } else {
-                els.catalogCount().textContent = `显示 ${items.length} / ${total}`;
+                els.catalogCount().textContent = uiTf('显示 {visible} / {total}', { visible: items.length, total });
             }
         }
         if (!items.length) {
-            list.innerHTML = '<div class="engine-model-empty">没有匹配的模型</div>';
+            list.innerHTML = `<div class="engine-model-empty">${escapeHtml(uiTx('没有匹配的模型'))}</div>`;
             return;
         }
         list.innerHTML = items.map((item) => {
             const badges = [];
             if (item.recommended) badges.push('<span class="engine-model-badge is-rec">推荐</span>');
-            if (item.translateOnly) badges.push('<span class="engine-model-badge is-warn">仅译中</span>');
+            if (isManagedTranslateOnly(item)) {
+                badges.push('<span class="engine-model-badge is-warn">仅译中</span>');
+            }
             if (item.proScale) badges.push('<span class="engine-model-badge is-pro">Pro</span>');
             if (item.installed) badges.push('<span class="engine-model-badge is-ok">已下载</span>');
             else if (item.present && item.installError) {
                 badges.push('<span class="engine-model-badge is-warn">文件异常</span>');
             }
-            if (item.smartTranslate) badges.push('<span class="engine-model-badge is-use">智能翻译</span>');
+            // Translate-only never counts as smart/dialog pick.
+            const smartPick = !!(item.smartTranslate && !isManagedTranslateOnly(item));
+            if (smartPick) badges.push('<span class="engine-model-badge is-use">智能翻译</span>');
             if (item.active) badges.push('<span class="engine-model-badge is-use">推理</span>');
             if (item.ramTight) badges.push('<span class="engine-model-badge is-warn">内存紧张</span>');
             if (item.familyLabel) badges.push(`<span class="engine-model-badge">${escapeHtml(item.familyLabel)}</span>`);
-            const selected = item.active || item.smartTranslate ? ' is-selected' : '';
+            const selected = item.active || smartPick ? ' is-selected' : '';
             const ramClass = item.ramTight ? ' is-ram-tight' : '';
             const scaleLabel = item.paramBillion ? `${item.paramBillion}B` : '';
             const disabled = catalogBusy ? ' disabled' : '';
             const installNote = (!item.installed && item.installError)
                 ? `<p class="engine-model-card-note">${escapeHtml(item.installError)}</p>`
                 : '';
+            const smartBtn = isManagedTranslateOnly(item)
+                ? ''
+                : `<button type="button" class="btn btn-primary" data-action="use-smart" data-model-id="${escapeHtml(item.id)}"${disabled}>
+                            ${smartPick ? '已用作智能翻译' : '用作智能翻译'}
+                        </button>`;
             return `
                 <article class="engine-model-card${selected}${ramClass}" data-model-id="${escapeHtml(item.id)}">
                     <div class="engine-model-card-top">
@@ -368,9 +432,7 @@
                     ${item.note ? `<p class="engine-model-card-note">${escapeHtml(item.note)}</p>` : ''}
                     ${installNote}
                     <div class="engine-model-card-actions">
-                        <button type="button" class="btn btn-primary" data-action="use-smart" data-model-id="${escapeHtml(item.id)}"${disabled}>
-                            ${item.smartTranslate ? '已用作智能翻译' : '用作智能翻译'}
-                        </button>
+                        ${smartBtn}
                         <button type="button" class="btn btn-primary" data-action="use-infer" data-model-id="${escapeHtml(item.id)}"${disabled}>
                             ${item.active ? '已用作推理' : '用作 LLM 推理'}
                         </button>
@@ -407,7 +469,7 @@
             || choices[0]?.id
             || '',
         ).trim();
-        // choices 已按硬件偏好排序：首项即推荐默认（NVIDIA→CUDA 13/12，否则 Vulkan）
+        // choices 已按硬件偏好排序：首项即推荐默认（NVIDIA→CUDA / AMD→ROCm，否则 Vulkan）
         const hardwareDefaultId = String(choices[0]?.id || '').trim();
         const html = choices.map((c) => {
             const id = String(c.id || '').trim();
@@ -427,42 +489,6 @@
         select.classList.toggle('border-amber-400', !!runtime.mismatch);
     }
 
-    function applyLlamaServerTuning(managed) {
-        const parallel = els.llamaParallelModeSelect();
-        const smart = els.llamaSmartParallelCheck();
-        const speculative = els.llamaSpeculativeCheck();
-        const m = managed?.managedLlm || managed || {};
-        if (parallel) {
-            const mode = String(m.llamaParallelMode || 'auto').trim() || 'auto';
-            if ([...parallel.options].some((o) => o.value === mode)) {
-                parallel.value = mode;
-            } else {
-                parallel.value = 'auto';
-            }
-        }
-        if (smart) {
-            smart.checked = m.llamaSmartTranslateParallel === true;
-        }
-        if (speculative) {
-            speculative.checked = m.llamaSpeculativeEnabled === true;
-        }
-    }
-
-    async function saveLlamaServerTuning() {
-        if (!electron.transubAdvancedManagedLlmSetServerTuning) return;
-        const parallel = String(els.llamaParallelModeSelect()?.value || 'auto').trim() || 'auto';
-        const smart = !!els.llamaSmartParallelCheck()?.checked;
-        const speculative = !!els.llamaSpeculativeCheck()?.checked;
-        await withAction(
-            els.llamaServerActionStatus() || els.managedRuntime(),
-            () => electron.transubAdvancedManagedLlmSetServerTuning({
-                llamaParallelMode: parallel,
-                llamaSmartTranslateParallel: smart,
-                llamaSpeculativeEnabled: speculative,
-            }),
-        );
-    }
-
     function applyManagedStatus(managed) {
         if (!managed) return;
         managedSnapshot = enrichManagedCatalog(managed);
@@ -473,14 +499,38 @@
                 ? (runtime.message || 'llama-server 可用')
                 : (runtime.message || '尚未安装运行时。请先点击「安装 / 更新运行时」。'),
         );
+        try {
+            const chipApi = window.TransubSettingsModalUi;
+            if (runtime.available) {
+                const tag = String(runtime.installedTag || runtime.package?.tag || '').trim();
+                chipApi?.setEnvOverviewChip?.('llama', {
+                    state: runtime.outdated ? 'warn' : 'ok',
+                    label: runtime.outdated
+                        ? (tag ? `可更新 · ${tag}` : '可更新')
+                        : (tag ? `已就绪 · ${tag}` : '已就绪'),
+                });
+            } else if (runtime.supported === false) {
+                chipApi?.setEnvOverviewChip?.('llama', { state: 'err', label: '平台不支持' });
+            } else {
+                chipApi?.setEnvOverviewChip?.('llama', { state: 'warn', label: '未安装' });
+            }
+        } catch (_) { /* ignore */ }
         applyRuntimeBackendSelect(managedSnapshot);
-        applyLlamaServerTuning(managedSnapshot);
         renderModelSelects(managedSnapshot);
         renderCatalog();
     }
 
     async function maybePromptTorchCudaAfterLlamaRuntime(installRes = {}) {
         if (!installRes?.ok || !electron?.transubEngineGpuStatus) return;
+        const backend = String(
+            installRes?.meta?.backend
+            || installRes?.managed?.runtime?.package?.backend
+            || managedSnapshot?.runtime?.package?.backend
+            || '',
+        ).trim().toLowerCase();
+        // CUDA PyTorch is for Engine ASR — only prompt after NVIDIA CUDA llama runtime.
+        if (backend && backend !== 'cuda') return;
+        if (managedSnapshot?.runtime?.preferRocm && !managedSnapshot?.runtime?.preferCuda) return;
         const enginePath = String(document.getElementById('engineInstallPathInput')?.value || '').trim();
         let probe = null;
         try {
@@ -494,7 +544,7 @@
         const message = gpuTorch.buildLlamaFollowUpMessage?.(probe)
             || (
                 'llama-server 已就绪，但 Qwen3-ASR 转写还需补齐 CUDA PyTorch（约 2.5GB）。'
-                + ' 是否现在前往运行环境安装？'
+                + ' 是否现在前往「运行环境 → GPU」安装？'
             );
         const choice = await askConfirmChoice({
             title: '翻译运行时已就绪',
@@ -531,16 +581,17 @@
     }
 
     function buildManualGgufHint(info = {}) {
-        const name = String(info.name || info.modelId || '模型').trim();
+        const name = String(info.name || info.modelId || uiTx('模型')).trim();
         const fileName = String(info.fileName || '').trim();
         const folder = String(info.folder || '').trim();
         const sizeHint = String(info.sizeHint || '').trim();
-        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
-        return (
-            `将在浏览器打开「${name}」的 GGUF 下载链接。${sizeLine}\n\n`
-            + `下载完成后，请将文件保存为：\n${fileName || '（见模型卡片上的文件名）'}\n\n`
-            + `并放到以下目录（文件名需完全一致）：\n${folder || '（软件目录）/advanced-llm/models'}`
-        );
+        const sizeLine = sizeHint ? `\n${uiTf('体积约 {size}。', { size: sizeHint })}` : '';
+        return uiTf('将在浏览器打开「{name}」的 GGUF 下载链接。{sizeLine}\n\n下载完成后，请将文件保存为：\n{fileName}\n\n并放到以下目录（文件名需完全一致）：\n{folder}', {
+            name,
+            sizeLine,
+            fileName: fileName || uiTx('（见模型卡片上的文件名）'),
+            folder: folder || uiTx('（软件目录）/advanced-llm/models'),
+        });
     }
 
     function buildManualRuntimeHint(info = {}) {
@@ -549,17 +600,19 @@
         const archive = String(info.runtimeArchiveName || '').trim();
         const companion = String(info.runtimeCompanionArchiveName || '').trim();
         const folder = String(info.folder || '').trim();
-        const sizeLine = sizeHint ? `\n体积约 ${sizeHint}。` : '';
+        const sizeLine = sizeHint ? `\n${uiTf('体积约 {size}。', { size: sizeHint })}` : '';
         const files = companion
-            ? `需下载两个文件：\n1) ${archive || '主程序 zip'}\n2) ${companion}`
-            : `需下载：\n${archive || '运行时 zip'}`;
-        return (
-            `将在浏览器打开「${label}」下载链接。${sizeLine}\n\n`
-            + `${files}\n\n`
-            + `下载完成后请点「选择 zip 安装」，由软件解压到：\n`
-            + `${folder || '（软件目录）/advanced-llm/runtime'}\n\n`
-            + `也可自行解压到上述目录后点「检测」。`
-        );
+            ? uiTf('需下载两个文件：\n1) {archive}\n2) {companion}', {
+                archive: archive || uiTx('主程序 zip'),
+                companion,
+            })
+            : uiTf('需下载：\n{archive}', { archive: archive || uiTx('运行时 zip') });
+        return uiTf('将在浏览器打开「{label}」下载链接。{sizeLine}\n\n{files}\n\n下载完成后请点「选择 zip 安装」，由软件解压到：\n{folder}\n\n也可自行解压到上述目录后点「检测」。', {
+            label,
+            sizeLine,
+            files,
+            folder: folder || uiTx('（软件目录）/advanced-llm/runtime'),
+        });
     }
 
     function currentRuntimeId() {
@@ -719,18 +772,18 @@
     }
 
     async function confirmTranslateOnlyIfNeeded(item, role) {
-        if (!item?.translateOnly && String(item?.family || '').toLowerCase() !== 'sakura') return true;
+        if (!isManagedTranslateOnly(item) && String(item?.family || '').toLowerCase() !== 'sakura') return true;
+        const name = item.name || item.id;
         if (role === 'smartTranslate') {
-            await askConfirm({
-                title: '不能用作智能翻译',
-                message: `「${item.name || item.id}」是日→中翻译专用模型，无法完成智能翻译（需影片简要）。\n请改选 Qwen2.5 Instruct 等通用对话模型；Sakura 请用于「推理翻译」或智能翻译的句级混合。`,
-                primaryLabel: '知道了',
-            });
+            setCatalogStatus(
+                uiTf('「{name}」是翻译专用模型，不能用作智能翻译/润色模型；请改选通用对话模型，句级请用「翻译模型」或推理翻译。', { name }),
+                'err',
+            );
             return false;
         }
         return askConfirm({
             title: '翻译专用模型',
-            message: `「${item.name || item.id}」是日→中翻译专用模型，无法做语境重构或影片理解重构。\n若要做影片理解，请改选 Qwen2.5 Instruct 等通用对话模型。\n\n仍要用作 LLM 推理吗？`,
+            message: uiTf('「{name}」是日→中翻译专用模型，无法做语境重构或影片理解重构。\n若要做影片理解，请改选 Qwen2.5 Instruct 等通用对话模型。\n\n仍要用作 LLM 推理吗？', { name }),
         });
     }
 
@@ -739,7 +792,7 @@
         const name = item.name || item.id;
         return askConfirm({
             title: '下载模型',
-            message: `「${name}」尚未下载到本机。\n是否先下载，完成后再选用？`,
+            message: uiTf('「{name}」尚未下载到本机。\n是否先下载，完成后再选用？', { name }),
             primaryLabel: '下载并选用',
         });
     }
@@ -786,7 +839,7 @@
             const needDownload = !!(item && !item.installed);
             if (needDownload) {
                 const pulled = await pullCatalogModel(modelId, {
-                    statusPrefix: `正在下载「${item.name || modelId}」…`,
+                    statusPrefix: uiTf('正在下载「{name}」…', { name: item.name || modelId }),
                 });
                 if (!pulled) return;
                 item = (managedSnapshot?.catalog || []).find((m) => m.id === modelId) || item;
@@ -848,7 +901,7 @@
         }
         const folder = res?.folder || info?.folder || '';
         const fileName = res?.fileName || info?.fileName || '';
-        const detail = [res?.error || '未检测到有效的模型文件', fileName && folder ? `请确认 ${fileName} 已放在：${folder}` : '']
+        const detail = [res?.error || uiTx('未检测到有效的模型文件'), fileName && folder ? uiTf('请确认 {fileName} 已放在：{folder}', { fileName, folder }) : '']
             .filter(Boolean)
             .join('\n');
         setCatalogStatus(detail, 'err');
@@ -891,7 +944,7 @@
             try {
                 const folderRes = await electron.transubAdvancedManagedLlmOpenFolder?.({ kind: 'model' });
                 if (folderRes?.ok) {
-                    setCatalogStatus(`已打开存放目录：${folderRes.folder || info.folder || ''}`);
+                    setCatalogStatus(uiTf('已打开存放目录：{folder}', { folder: folderRes.folder || info.folder || '' }));
                 } else {
                     setCatalogStatus(folderRes?.error || '无法打开存放目录', 'err');
                 }
@@ -900,7 +953,9 @@
             }
             const again = await askConfirmChoice({
                 title: '手动下载 GGUF',
-                message: `${buildManualGgufHint(info)}\n\n目录已打开。是否继续打开下载链接？`,
+                message: uiTf('{hint}\n\n目录已打开。是否继续打开下载链接？', {
+                    hint: buildManualGgufHint(info),
+                }),
                 primaryLabel: '打开下载链接',
                 secondaryLabel: '稍后',
             });
@@ -924,19 +979,19 @@
         const fileName = String(info.fileName || '').trim();
         setCatalogStatus(
             fileName && folder
-                ? `已打开下载页。请将 ${fileName} 放到：${folder}`
-                : '已打开下载页。请按提示将 GGUF 放到 advanced-llm/models 目录',
+                ? uiTf('已打开下载页。请将 {fileName} 放到：{folder}', { fileName, folder })
+                : uiTx('已打开下载页。请按提示将 GGUF 放到 advanced-llm/models 目录'),
         );
         const verifyChoice = await askConfirmChoice({
-            title: '检测本地文件',
+            title: uiTx('检测本地文件'),
             message: (
-                `若已将文件放到指定目录，可立即检测是否可用。\n\n`
-                + (fileName ? `文件名：${fileName}\n` : '')
-                + (folder ? `目录：${folder}` : '')
+                uiTx('若已将文件放到指定目录，可立即检测是否可用。\n\n')
+                + (fileName ? uiTf('文件名：{fileName}\n', { fileName }) : '')
+                + (folder ? uiTf('目录：{folder}', { folder }) : '')
             ),
-            primaryLabel: '我已放入，检测',
-            tertiaryLabel: '打开存放目录',
-            secondaryLabel: '稍后',
+            primaryLabel: uiTx('我已放入，检测'),
+            tertiaryLabel: uiTx('打开存放目录'),
+            secondaryLabel: uiTx('稍后'),
         });
         if (verifyChoice === 'tertiary') {
             try {
@@ -966,14 +1021,14 @@
         let line;
         if (entitled) {
             if (status.devUnlock) {
-                line = '已解锁（开发模式）';
+                line = uiTx('已解锁（开发模式）');
             } else if (status.isTrial && status.expiresInMs != null) {
-                line = `已解锁 Pro 体验（剩余 ${formatExpiryRemaining(status.expiresInMs)}）`;
+                line = uiTf('已解锁 Pro 体验（剩余 {remaining}）', { remaining: formatExpiryRemaining(status.expiresInMs) });
             } else {
-                line = '已解锁 Pro';
+                line = uiTx('已解锁 Pro');
             }
         } else {
-            line = status.message || '未解锁';
+            line = status.message || uiTx('未解锁');
         }
         setText(els.status(), line);
         if (els.status()) {
@@ -984,20 +1039,20 @@
         }
 
         const parts = [];
-        if (status.licenseId) parts.push(`许可 ID：${status.licenseId}`);
-        if (status.isTrial) parts.push('类型：7 天体验');
-        parts.push(`设备 ${status.deviceCount || 0}/${status.maxDevices || 1}`);
-        if (status.deviceBound) parts.push('本机已绑定');
+        if (status.licenseId) parts.push(uiTf('许可 ID：{id}', { id: status.licenseId }));
+        if (status.isTrial) parts.push(uiTx('类型：7 天体验'));
+        parts.push(uiTf('设备 {used}/{max}', { used: status.deviceCount || 0, max: status.maxDevices || 1 }));
+        if (status.deviceBound) parts.push(uiTx('本机已绑定'));
         if (status.isTrial && status.expiresAt && !status.expired && status.expiresInMs != null) {
-            parts.push(`到期剩余 ${formatExpiryRemaining(status.expiresInMs)}`);
+            parts.push(uiTf('到期剩余 {remaining}', { remaining: formatExpiryRemaining(status.expiresInMs) }));
         }
         if (status.needsRevalidation) {
-            parts.push('需联网复核');
+            parts.push(uiTx('需联网复核'));
         } else if (status.lastValidatedAt && !status.isTrial) {
-            parts.push(`复核剩余约 ${formatDays(status.revalidateInMs)} 天`);
+            parts.push(uiTf('复核剩余约 {days} 天', { days: formatDays(status.revalidateInMs) }));
         }
         if (!status.canTransfer && status.transferRetryInMs) {
-            parts.push(`换机冷却约 ${formatDays(status.transferRetryInMs)} 天`);
+            parts.push(uiTf('换机冷却约 {days} 天', { days: formatDays(status.transferRetryInMs) }));
         }
         setText(els.meta(), parts.join(' · '));
 
@@ -1014,9 +1069,9 @@
         const buyHint = document.getElementById('advancedBuyProHint');
         if (buyHint && !entitled) {
             if (status.reason === 'expired' || status.expired) {
-                buyHint.textContent = '体验已到期。可购买大版本内买断继续使用 Pro；体验包不可抵扣买断，每爱发电账号限购体验包 1 次。';
+                buyHint.textContent = uiTx('体验已到期。可购买大版本内买断继续使用 Pro；体验包不可抵扣买断，每爱发电账号限购体验包 1 次。');
             } else {
-                buyHint.textContent = '付款后填写订单号领取并激活密钥；也可粘贴许可密钥（TSUB1.…）';
+                buyHint.textContent = uiTx('付款后填写订单号领取并激活密钥；也可粘贴许可密钥（TSUB1.…）');
             }
         }
         const moreAfdianBtn = document.getElementById('openAfdianFromSettingsBtn');
@@ -1033,21 +1088,31 @@
             setText(
                 els.byokHint(),
                 byok.hasApiKey
-                    ? `已保存密钥${status.byokKeyHint ? `（${status.byokKeyHint}）` : ''}`
-                    : '尚未保存 API Key',
+                    ? (status.byokKeyHint
+                        ? uiTf('已保存密钥（{hint}）', { hint: status.byokKeyHint })
+                        : uiTx('已保存密钥'))
+                    : uiTx('尚未保存 API Key'),
             );
         }
 
-        setLlmSourceUi(status.llmSource === 'managed' ? 'managed' : 'byok');
+        setLlmSourceUi('managed');
+        if (status.translateModeByokMigrate?.migrated) {
+            setText(
+                els.byokStatus(),
+                '已将原「外接 API」迁移为翻译方式「外部翻译」；请到「设置 → 外部翻译」配置 Station 或 BYOK。Pro 智能/混合改用软件内模型。',
+            );
+        }
 
         const mod = status.module || {};
         setText(
             els.moduleStatus(),
             mod.loaded
-                ? `已加载闭源模块：${mod.name || 'Pro Module'}${mod.version ? ` v${mod.version}` : ''}`
+                ? (mod.version
+                    ? uiTf('已加载闭源模块：{name} v{version}', { name: mod.name || 'Pro Module', version: mod.version })
+                    : uiTf('已加载闭源模块：{name}', { name: mod.name || 'Pro Module' }))
                 : (mod.message
-                    ? `未加载闭源模块：${mod.message}`
-                    : '使用内置语境重构。安装 `_advanced/index.js` 后可覆盖为闭源实现。'),
+                    ? uiTf('未加载闭源模块：{message}', { message: mod.message })
+                    : uiTx('使用内置语境重构。安装 `_advanced/index.js` 后可覆盖为闭源实现。')),
         );
 
         void refreshTdp();
@@ -1058,30 +1123,37 @@
 
     function applyTdpStatus(tdp, check = null) {
         if (!tdp) return;
-        const ver = tdp.installedVersion || (tdp.bundledAvailable ? '内置' : '无');
+        const ver = tdp.installedVersion || (tdp.bundledAvailable ? uiTx('内置') : uiTx('无'));
         const useLine = tdp.entitled
-            ? (tdp.applied ? '已热加载使用中' : '已开通 Pro，可更新并应用')
-            : '开通 Pro 后可使用语言优化包';
+            ? (tdp.applied ? uiTx('已热加载使用中') : uiTx('已开通 Pro，可更新并应用'))
+            : uiTx('开通 Pro 后可使用语言优化包');
         const remoteVer = check?.remote?.version || lastTdpCheck?.remote?.version || '';
         const updateAvailable = !!(check?.updateAvailable ?? lastTdpCheck?.updateAvailable);
         if (updateAvailable && remoteVer) {
-            setText(els.tdpStatus(), `当前版本：${ver} · 可更新至 ${remoteVer} · ${useLine}`);
+            setText(els.tdpStatus(), uiTf('当前版本：{ver} · 可更新至 {remote} · {use}', { ver, remote: remoteVer, use: useLine }));
         } else {
-            setText(els.tdpStatus(), `当前版本：${ver} · ${useLine}`);
+            setText(els.tdpStatus(), uiTf('当前版本：{ver} · {use}', { ver, use: useLine }));
         }
         const meta = [];
-        if (tdp.source) meta.push(`来源：${tdp.source === 'cdn' ? '官方更新' : tdp.source === 'bundled' ? '安装包内置' : tdp.source}`);
-        if (tdp.installedAt) meta.push(`安装于 ${String(tdp.installedAt).slice(0, 10)}`);
+        if (tdp.source) {
+            const sourceLabel = tdp.source === 'cdn'
+                ? uiTx('官方更新')
+                : tdp.source === 'bundled'
+                    ? uiTx('安装包内置')
+                    : tdp.source;
+            meta.push(uiTf('来源：{source}', { source: sourceLabel }));
+        }
+        if (tdp.installedAt) meta.push(uiTf('安装于 {date}', { date: String(tdp.installedAt).slice(0, 10) }));
         const notes = String(check?.remote?.notes || lastTdpCheck?.remote?.notes || tdp.notes || '').trim();
-        if (updateAvailable && notes) meta.push(`更新说明：${notes}`);
-        else if (!updateAvailable && check?.upToDate) meta.push('已是最新');
+        if (updateAvailable && notes) meta.push(uiTf('更新说明：{notes}', { notes }));
+        else if (!updateAvailable && check?.upToDate) meta.push(uiTx('已是最新'));
         setText(els.tdpMeta(), meta.join(' · '));
         const updateBtn = els.tdpUpdateBtn();
         if (updateBtn) {
             updateBtn.disabled = false;
             updateBtn.textContent = updateAvailable && remoteVer
-                ? `立即更新 · ${remoteVer}`
-                : '立即更新';
+                ? uiTf('立即更新 · {version}', { version: remoteVer })
+                : uiTx('立即更新');
             updateBtn.classList.toggle('ring-2', updateAvailable);
             updateBtn.classList.toggle('ring-violet-300', updateAvailable);
         }
@@ -1093,7 +1165,7 @@
         try {
             const res = await electron.transubTdpGetStatus();
             if (!res?.ok) {
-                setText(els.tdpStatus(), res?.error || '无法读取优化包状态');
+                setText(els.tdpStatus(), res?.error || uiTx('无法读取优化包状态'));
                 return;
             }
             applyTdpStatus(res.tdp);
@@ -1104,16 +1176,22 @@
                         lastTdpCheck = checked;
                         applyTdpStatus(checked.local || res.tdp, checked);
                         if (checked.updateAvailable) {
+                            const notes = checked.remote?.notes
+                                ? uiTf('：{notes}', { notes: checked.remote.notes })
+                                : '';
                             setText(
                                 els.tdpAction(),
-                                `发现新版本 ${checked.remote?.version || ''}${checked.remote?.notes ? `：${checked.remote.notes}` : ''}`.trim(),
+                                uiTf('发现新版本 {version}{notes}', {
+                                    version: checked.remote?.version || '',
+                                    notes,
+                                }).trim(),
                             );
                         }
                     }
                 } catch (_) { /* soft check — status already shown */ }
             }
         } catch (err) {
-            setText(els.tdpStatus(), err.message || '读取失败');
+            setText(els.tdpStatus(), err.message || uiTx('读取失败'));
         }
     }
 
@@ -1132,8 +1210,12 @@
         cancel?.classList.remove('hidden');
         const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
         if (bar) bar.style.width = `${pct}%`;
-        const phase = p.phase === 'download' ? '下载中' : p.phase === 'apply' ? '应用中' : '准备中';
-        setText(text, `${phase}${p.version ? ` ${p.version}` : ''} ${pct ? `${Math.round(pct)}%` : ''}`.trim());
+        const phase = p.phase === 'download' ? uiTx('下载中') : p.phase === 'apply' ? uiTx('应用中') : uiTx('准备中');
+        setText(text, uiTf('{phase}{version} {pct}', {
+            phase,
+            version: p.version ? ` ${p.version}` : '',
+            pct: pct ? `${Math.round(pct)}%` : '',
+        }).trim());
     }
 
     async function refreshManaged() {
@@ -1222,7 +1304,7 @@
     }
 
     function bind() {
-        document.getElementById('advancedBuyProBtn')?.addEventListener('click', async () => {
+        bindClick('advancedBuyProBtn', async () => {
             try {
                 const res = await electron.openExternal?.(AFDIAN_PURCHASE_URL);
                 if (res && res.ok === false) {
@@ -1232,7 +1314,7 @@
                 setText(els.actionStatus(), err.message || '无法打开爱发电页面');
             }
         });
-        document.getElementById('advancedRedeemAfdianBtn')?.addEventListener('click', () => {
+        bindClick('advancedRedeemAfdianBtn', () => {
             const outTradeNo = String(els.orderInput()?.value || '').trim();
             void withAction(els.actionStatus(), async () => {
                 if (!electron.transubAdvancedRedeemAfdian) {
@@ -1245,7 +1327,7 @@
                 return res;
             });
         });
-        document.getElementById('advancedActivateBtn')?.addEventListener('click', () => {
+        bindClick('advancedActivateBtn', () => {
             const key = String(els.keyInput()?.value || '').trim();
             void withAction(els.actionStatus(), async () => {
                 const res = await electron.transubAdvancedActivate({ licenseKey: key });
@@ -1254,7 +1336,7 @@
                 return res;
             });
         });
-        document.getElementById('advancedTransferBtn')?.addEventListener('click', () => {
+        bindClick('advancedTransferBtn', () => {
             const key = String(els.keyInput()?.value || '').trim();
             void withAction(els.actionStatus(), async () => {
                 const res = await electron.transubAdvancedTransfer({ licenseKey: key });
@@ -1263,7 +1345,7 @@
                 return res;
             });
         });
-        document.getElementById('advancedRevalidateBtn')?.addEventListener('click', () => {
+        bindClick('advancedRevalidateBtn', () => {
             void withAction(els.actionStatus(), async () => {
                 const res = await electron.transubAdvancedRevalidate();
                 await electron.transubTdpSync?.();
@@ -1271,7 +1353,7 @@
                 return res;
             });
         });
-        document.getElementById('advancedDeactivateBtn')?.addEventListener('click', async () => {
+        bindClick('advancedDeactivateBtn', async () => {
             if (!(await askConfirm({ title: '清除许可', message: '确定清除本机 Pro 许可？', danger: true }))) return;
             void withAction(els.actionStatus(), async () => {
                 const res = await electron.transubAdvancedDeactivate();
@@ -1294,26 +1376,30 @@
                     : res;
             });
         };
-        els.sourceByok()?.addEventListener('change', onSourceChange);
-        els.sourceManaged()?.addEventListener('change', onSourceChange);
+        bindChange(els.sourceByok(), onSourceChange);
+        bindChange(els.sourceManaged(), onSourceChange);
 
-        document.getElementById('advancedSaveByokBtn')?.addEventListener('click', () => {
+        bindClick('advancedSaveByokBtn', () => {
+            // Persist BYOK credentials for 外部翻译; keep Pro llmSource=managed.
             const payload = {
-                llmSource: 'byok',
+                llmSource: 'managed',
                 provider: els.provider()?.value || 'openai',
                 baseUrl: els.baseUrl()?.value || '',
                 model: els.model()?.value || '',
                 reconstructMock: false,
+                saveByokCredentials: true,
             };
             const apiKey = String(els.apiKey()?.value || '').trim();
             if (apiKey) payload.apiKey = apiKey;
             void withAction(els.byokStatus(), async () => {
                 const res = await electron.transubAdvancedSaveByok(payload);
                 if (res?.ok && els.apiKey()) els.apiKey().value = '';
-                return res;
+                return res?.ok
+                    ? { ...res, message: res.message || '已保存外接 API（外部翻译）' }
+                    : res;
             });
         });
-        document.getElementById('advancedTestByokBtn')?.addEventListener('click', () => {
+        bindClick('advancedTestByokBtn', () => {
             const apiKeyTyped = String(els.apiKey()?.value || '').trim();
             const payload = {
                 llmSource: 'byok',
@@ -1327,7 +1413,7 @@
                 return { ok: false, error: res?.error || '连接失败' };
             });
         });
-        document.getElementById('advancedClearByokKeyBtn')?.addEventListener('click', () => {
+        bindClick('advancedClearByokKeyBtn', () => {
             void withAction(els.byokStatus(), async () => {
                 const res = await electron.transubAdvancedClearByokKey();
                 if (els.apiKey()) els.apiKey().value = '';
@@ -1346,7 +1432,7 @@
                     const res = await electron.transubAdvancedSaveByok(patch);
                     if (res?.ok) await refreshManaged();
                     return res?.ok
-                        ? { ...res, message: role === 'smartTranslate' ? '已清除智能翻译模型' : '已清除 LLM 推理模型' }
+                        ? { ...res, message: role === 'smartTranslate' ? '已清除润色模型' : '已清除推理模型' }
                         : res;
                 });
                 return;
@@ -1358,26 +1444,26 @@
                 return res;
             });
         };
-        els.smartTranslateSelect()?.addEventListener('change', onManagedModelSelect('smartTranslate'));
-        els.inferenceSelect()?.addEventListener('change', onManagedModelSelect('inference'));
+        bindChange(els.smartTranslateSelect(), onManagedModelSelect('smartTranslate'));
+        bindChange(els.inferenceSelect(), onManagedModelSelect('inference'));
 
-        els.catalogSearch()?.addEventListener('input', (ev) => {
+        bindInput(els.catalogSearch(), (ev) => {
             searchQuery = String(ev.target?.value || '');
             renderCatalogList();
         });
-        els.catalogFilters()?.addEventListener('click', (ev) => {
+        bindClick(els.catalogFilters(), (ev) => {
             const btn = ev.target?.closest?.('[data-family]');
             if (!btn) return;
             familyFilter = btn.getAttribute('data-family') || 'all';
             renderCatalog();
         });
-        els.catalogScaleFilters()?.addEventListener('click', (ev) => {
+        bindClick(els.catalogScaleFilters(), (ev) => {
             const btn = ev.target?.closest?.('[data-scale]');
             if (!btn) return;
             scaleFilter = btn.getAttribute('data-scale') || 'all';
             renderCatalog();
         });
-        els.catalogList()?.addEventListener('click', (ev) => {
+        bindClick(els.catalogList(), (ev) => {
             const btn = ev.target?.closest?.('[data-action]');
             if (!btn || !els.catalogList()?.contains(btn)) return;
             const action = btn.getAttribute('data-action');
@@ -1387,16 +1473,10 @@
             if (action === 'pull') void downloadCatalogModel(modelId);
             if (action === 'manual') void manualDownloadCatalogModel(modelId);
         });
-        document.getElementById('advancedManagedCatalogRefreshBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedCatalogRefreshBtn', () => {
             void withAction(els.byokStatus(), async () => {
                 await refreshManaged();
                 return { ok: true, message: '已刷新目录' };
-            });
-        });
-        document.getElementById('advancedManagedRefreshBtn')?.addEventListener('click', () => {
-            void withAction(els.byokStatus(), async () => {
-                await refreshManaged();
-                return { ok: true, message: '已刷新' };
             });
         });
         const runtimeStatusEl = () => (
@@ -1405,7 +1485,7 @@
             || els.byokStatus()
         );
 
-        document.getElementById('advancedManagedRuntimeRefreshBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedRuntimeRefreshBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 await refreshManaged();
                 const runtime = managedSnapshot?.runtime || {};
@@ -1416,30 +1496,50 @@
                 return {
                     ok: true,
                     message: runtime.outdated
-                        ? `已刷新 · ${detail}`
-                        : `已刷新运行时状态 · ${detail}`,
+                        ? uiTf('已刷新 · {detail}', { detail })
+                        : uiTf('已刷新运行时状态 · {detail}', { detail }),
                     managed: managedSnapshot || undefined,
                 };
             });
         });
-        document.getElementById('advancedManagedInstallRuntimeBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedInstallRuntimeBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const runtimeId = String(els.managedRuntimeBackendSelect()?.value || '').trim();
                 const choice = (managedSnapshot?.runtime?.choices || [])
                     .find((c) => c.id === runtimeId);
-                const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
+                const sizeHint = choice?.sizeHint
+                    ? `\n${uiTf('体积约 {size}。', { size: choice.sizeHint })}`
+                    : '';
+                let accelNote = '';
                 if (choice?.backend === 'cuda' || /^win-cuda\d+-x64$/i.test(runtimeId)) {
-                    const ok = await askConfirm({
-                        title: '安装 CUDA 运行时',
-                        message: `将下载 NVIDIA CUDA 版 llama-server（含运行库）。${sizeHint}\n\n需要较新的 NVIDIA 驱动；若安装失败可改回 Vulkan 或改用「手动下载运行时」。\n若该后端已安装且版本匹配，将跳过下载。`,
-                        primaryLabel: '继续安装',
-                        secondaryLabel: '取消',
-                    });
-                    if (!ok) return { ok: false, error: '已取消' };
+                    accelNote = `\n\n${uiTx('当前后端为 NVIDIA CUDA（含运行库），需要较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用「手动下载运行时」。')}`;
+                } else if (choice?.backend === 'rocm' || /rocm/i.test(runtimeId)) {
+                    accelNote = `\n\n${uiTx('当前后端为 AMD ROCm；Windows 上通常还需本机 ROCm/HIP。失败时可改用 Vulkan 或「手动下载运行时」。')}`;
                 }
+                const recommendedTag = String(
+                    window.TransubAdvancedManagedLlmCatalog?.LLAMA_CPP_TAG
+                    || managedSnapshot?.runtime?.package?.tag
+                    || 'b11029',
+                ).trim();
+                const versionChoice = await askConfirmChoice({
+                    title: uiTx('选择运行时版本'),
+                    message: uiTf(
+                        '请选择要安装 / 更新的 llama-server（llama.cpp）版本：\n\n'
+                        + '• Transub 官方建议版（{recommendedTag}）：经本产品验证，推荐日常使用。\n'
+                        + '• llama.cpp 官方最新版：从 GitHub 拉取上游最新构建，可能尚未经本产品充分验证。\n\n'
+                        + '若所选版本已安装且匹配，将跳过下载。{sizeHint}{accelNote}',
+                        { recommendedTag, sizeHint, accelNote },
+                    ),
+                    primaryLabel: uiTx('安装建议版'),
+                    tertiaryLabel: uiTx('安装最新版'),
+                    secondaryLabel: uiTx('取消'),
+                });
+                if (versionChoice === 'secondary') return { ok: false, error: '已取消' };
+                const channel = versionChoice === 'tertiary' ? 'latest' : 'recommended';
                 const res = await electron.transubAdvancedManagedLlmInstallRuntime?.({
                     force: true,
                     runtimeId: runtimeId || undefined,
+                    channel,
                 });
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
@@ -1450,14 +1550,14 @@
                 return res || { ok: false, error: '运行时安装失败' };
             });
         });
-        document.getElementById('advancedManagedManualRuntimeBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedManualRuntimeBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const res = await manualDownloadRuntime();
                 if (res?.cancelled) return { ok: true, message: res.message || '已取消' };
                 return res || { ok: false, error: '手动下载失败' };
             });
         });
-        document.getElementById('advancedManagedScanCudaBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedScanCudaBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const runtimeId = String(els.managedRuntimeBackendSelect()?.value || '').trim();
                 const scan = await electron.transubAdvancedManagedLlmScanCuda?.({
@@ -1467,12 +1567,26 @@
                     return scan || { ok: false, error: '扫描失败' };
                 }
                 if (!scan.found) {
-                    await askConfirm({
+                    const pickChoice = await askConfirmChoice({
                         title: '未找到可复用 CUDA',
-                        message: `${scan.message || '未找到齐全的 CUDA 运行库。'}\n\n将在安装 CUDA 版运行时时报官方 cudart；也可改用「手动下载运行时」。`,
-                        primaryLabel: '知道了',
-                        secondaryLabel: '',
+                        message: uiTf('{msg}\n\n可手动选择含 cudart/cublas 的目录后再扫；或安装时下载官方 cudart。', {
+                            msg: scan.message || '未找到齐全的 CUDA 运行库。',
+                        }),
+                        primaryLabel: '选择 CUDA 目录',
+                        secondaryLabel: '知道了',
+                        tertiaryLabel: '',
                     });
+                    if (pickChoice === 'primary' && electron.transubEnginePickCudaRoot) {
+                        const picked = await electron.transubEnginePickCudaRoot({});
+                        if (picked?.ok) {
+                            setText(els.managedRuntime(), picked.message || '已加入扫描目录');
+                            return { ok: true, message: picked.message };
+                        }
+                        if (picked?.cancelled) {
+                            return { ok: true, message: '已取消' };
+                        }
+                        return picked || { ok: false, error: '选择目录失败' };
+                    }
                     setText(
                         els.managedRuntime(),
                         scan.message || '未找到可复用的本机 CUDA 运行库',
@@ -1482,11 +1596,15 @@
 
                 const dirs = (scan.best?.dirs || []).slice(0, 3).join('\n') || '（见详情）';
                 const extra = (scan.candidates || []).length > 1
-                    ? `\n另有 ${scan.candidates.length - 1} 处候选。`
+                    ? `\n${uiTf('另有 {count} 处候选。', { count: scan.candidates.length - 1 })}`
                     : '';
                 const choice = await askConfirmChoice({
                     title: '找到可复用 CUDA 运行库',
-                    message: `${scan.message}\n\n来源目录：\n${dirs}${extra}\n\n可立即复制到 llama-server 运行时目录（跳过后续 cudart 下载），或仅记录结果。`,
+                    message: uiTf('{msg}\n\n来源目录：\n{dirs}{extra}\n\n可立即复制到 llama-server 运行时目录（跳过后续 cudart 下载），或仅记录结果。', {
+                        msg: scan.message,
+                        dirs,
+                        extra,
+                    }),
                     primaryLabel: '复用到运行时',
                     secondaryLabel: '仅查看',
                     tertiaryLabel: '',
@@ -1508,16 +1626,19 @@
                 return { ok: true, message: adopt.message || '已复用本机 CUDA 运行库' };
             });
         });
-        els.llamaParallelModeSelect()?.addEventListener('change', () => {
-            void saveLlamaServerTuning();
+        bindClick('advancedManagedPickCudaRootBtn', () => {
+            void withAction(runtimeStatusEl(), async () => {
+                if (!electron?.transubEnginePickCudaRoot) {
+                    return { ok: false, error: '当前环境不支持选择 CUDA 目录' };
+                }
+                const picked = await electron.transubEnginePickCudaRoot({});
+                if (picked?.cancelled) return { ok: true, message: '已取消' };
+                if (!picked?.ok) return picked || { ok: false, error: '选择失败' };
+                setText(els.managedRuntime(), picked.message || '已加入扫描目录');
+                return { ok: true, message: picked.message || '已加入 CUDA 扫描目录' };
+            });
         });
-        els.llamaSmartParallelCheck()?.addEventListener('change', () => {
-            void saveLlamaServerTuning();
-        });
-        els.llamaSpeculativeCheck()?.addEventListener('change', () => {
-            void saveLlamaServerTuning();
-        });
-        els.managedRuntimeBackendSelect()?.addEventListener('change', () => {
+        bindChange(els.managedRuntimeBackendSelect(), () => {
             void withAction(runtimeStatusEl(), async () => {
                 const select = els.managedRuntimeBackendSelect();
                 const runtimeId = String(select?.value || '').trim();
@@ -1542,7 +1663,7 @@
                 // 目标后端已在本机安装：只改偏好，无需确认、无需再下
                 if (targetAlreadyInstalled) {
                     if (runtimeId === prevId) {
-                        return { ok: true, message: `已是「${choice?.label || runtimeId}」` };
+                        return { ok: true, message: uiTf('已是「{label}」', { label: choice?.label || runtimeId }) };
                     }
                     const setRes = await electron.transubAdvancedManagedLlmSetRuntime?.({ runtimeId });
                     if (!setRes?.ok) {
@@ -1553,18 +1674,28 @@
                     else await refreshManaged();
                     return {
                         ok: true,
-                        message: `已切换为「${choice?.label || runtimeId}」`,
+                        message: uiTf('已切换为「{label}」', { label: choice?.label || runtimeId }),
                         managed: setRes.managed || managedSnapshot || undefined,
                     };
                 }
 
-                const sizeHint = choice?.sizeHint ? `\n体积约 ${choice.sizeHint}。` : '';
-                const cudaNote = (choice?.backend === 'cuda' || /^win-cuda\d+-x64$/i.test(runtimeId))
-                    ? '\n需较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用手动下载。'
+                const sizeHint = choice?.sizeHint
+                    ? `\n${uiTf('体积约 {size}。', { size: choice.sizeHint })}`
                     : '';
+                let accelNote = '';
+                if (choice?.backend === 'cuda' || /^win-cuda\d+-x64$/i.test(runtimeId)) {
+                    accelNote = `\n${uiTf('需较新的 NVIDIA 驱动；失败时可改回 Vulkan 或改用手动下载。')}`;
+                } else if (choice?.backend === 'rocm' || /rocm/i.test(runtimeId)) {
+                    accelNote = `\n${uiTf('需 AMD 显卡；Windows 上通常还需 ROCm/HIP；失败时可改回 Vulkan 或改用手动下载。')}`;
+                }
                 const confirmed = await askConfirm({
                     title: '切换 llama-server 后端',
-                    message: `确定从「${prevChoice?.label || prevId || '当前'}」切换为「${choice?.label || runtimeId}」吗？\n\n确认后将自动安装/更新运行时；若目标后端已就绪则跳过下载。${sizeHint}${cudaNote}`,
+                    message: uiTf('确定从「{from}」切换为「{to}」吗？\n\n确认后将自动安装/更新运行时；若目标后端已就绪则跳过下载。{sizeHint}{cudaNote}', {
+                        from: prevChoice?.label || prevId || '当前',
+                        to: choice?.label || runtimeId,
+                        sizeHint,
+                        cudaNote: accelNote,
+                    }),
                     primaryLabel: '确认切换',
                     secondaryLabel: '取消',
                 });
@@ -1575,6 +1706,7 @@
                 const installed = await electron.transubAdvancedManagedLlmInstallRuntime?.({
                     force: true,
                     runtimeId,
+                    channel: 'recommended',
                 });
                 if (installed?.ok) {
                     if (installed.managed) applyManagedStatus(installed.managed);
@@ -1605,7 +1737,7 @@
                 return installed || { ok: false, error: '运行时安装失败' };
             });
         });
-        document.getElementById('advancedManagedStopServerBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedStopServerBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 const res = await electron.transubAdvancedManagedLlmStopServer?.();
                 if (res?.ok) await refreshManaged();
@@ -1614,24 +1746,17 @@
                     : res;
             });
         });
-        document.getElementById('advancedTestManagedBtn')?.addEventListener('click', () => {
-            void withAction(els.byokStatus(), async () => {
-                const res = await electron.transubAdvancedTestByok({ llmSource: 'managed' });
-                if (res?.ok) return { ok: true, message: res.message || '连接成功' };
-                return { ok: false, error: res?.error || '连接失败' };
-            });
-        });
-        document.getElementById('advancedManagedPerfTestBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedPerfTestBtn', () => {
             void withAction(runtimeStatusEl(), async () => {
                 setText(runtimeStatusEl(), '性能测试进行中（首次可能较慢）…');
                 const res = await electron.transubAdvancedManagedLlmPerfTest?.({});
                 if (res?.ok) {
                     if (res.managed) applyManagedStatus(res.managed);
                     const lines = [
-                        String(res.message || '性能测试完成').trim(),
-                        res.tokensPerSec != null ? `吞吐：${res.tokensPerSec} tok/s` : '',
-                        res.loadMs != null ? `启动：${Math.round(Number(res.loadMs) || 0)} ms` : '',
-                        res.sample ? `样例：${res.sample}` : '',
+                        String(res.message || uiTx('性能测试完成')).trim(),
+                        res.tokensPerSec != null ? uiTf('吞吐：{n} tok/s', { n: res.tokensPerSec }) : '',
+                        res.loadMs != null ? uiTf('启动：{ms} ms', { ms: Math.round(Number(res.loadMs) || 0) }) : '',
+                        res.sample ? uiTf('样例：{sample}', { sample: res.sample }) : '',
                     ].filter(Boolean);
                     const detail = lines.join('\n');
                     await askConfirm({
@@ -1652,11 +1777,11 @@
                 return { ok: false, error: err };
             });
         });
-        document.getElementById('advancedManagedCancelPullBtn')?.addEventListener('click', () => {
+        bindClick('advancedManagedCancelPullBtn', () => {
             void electron.transubAdvancedManagedLlmCancelPull?.();
         });
 
-        document.getElementById('advancedReloadModuleBtn')?.addEventListener('click', () => {
+        bindClick('advancedReloadModuleBtn', () => {
             void withAction(els.moduleStatus(), async () => {
                 const res = await electron.transubAdvancedReloadModule();
                 await refresh();
@@ -1666,7 +1791,7 @@
             });
         });
 
-        document.getElementById('tdpCheckBtn')?.addEventListener('click', () => {
+        bindClick('tdpCheckBtn', () => {
             void withAction(els.tdpAction(), async () => {
                 const res = await electron.transubTdpCheck?.();
                 if (!res?.ok) return res || { ok: false, error: '检查失败' };
@@ -1674,16 +1799,22 @@
                 applyTdpStatus(res.local || {}, res);
                 if (res.upToDate) return { ok: true, message: '已是最新' };
                 if (res.updateAvailable) {
+                    const notes = res.remote?.notes
+                        ? uiTf('：{notes}', { notes: res.remote.notes })
+                        : '';
                     return {
                         ok: true,
-                        message: `发现新版本 ${res.remote?.version || ''}${res.remote?.notes ? `：${res.remote.notes}` : ''}`.trim(),
+                        message: uiTf('发现新版本 {version}{notes}', {
+                            version: res.remote?.version || '',
+                            notes,
+                        }).trim(),
                     };
                 }
                 return { ok: true, message: res.message || '检查完成' };
             });
         });
 
-        document.getElementById('tdpUpdateBtn')?.addEventListener('click', () => {
+        bindClick('tdpUpdateBtn', () => {
             void withAction(els.tdpAction(), async () => {
                 setTdpProgress({ phase: 'start', percent: 0 });
                 const res = await electron.transubTdpPull?.();
@@ -1696,7 +1827,7 @@
             });
         });
 
-        document.getElementById('tdpCancelBtn')?.addEventListener('click', () => {
+        bindClick('tdpCancelBtn', () => {
             void electron.transubTdpCancelPull?.();
         });
 
@@ -1713,12 +1844,11 @@
         }
 
         document.querySelectorAll('.params-tab-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
+            bindClick(btn, () => {
                 const tab = btn.getAttribute('data-tab');
                 if (
                     tab === 'install'
                     || tab === 'pro'
-                    || tab === 'pro-llm'
                     || tab === 'pro-smart-translate'
                     || tab === 'pro-film-audio'
                     || tab === 'pro-qc-smart'
@@ -1729,6 +1859,20 @@
             });
         });
     }
+
+    function onSettingsFragmentReady(ev) {
+        if (ev?.detail?.key && ev.detail.key !== 'settings-panels') return;
+        bind();
+        void refresh();
+    }
+
+    window.TransubAdvancedSettings = {
+        bind,
+        refresh,
+        refreshManaged,
+    };
+
+    window.addEventListener('transub-ui-fragment-ready', onSettingsFragmentReady);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {

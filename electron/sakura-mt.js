@@ -98,7 +98,7 @@ async function resolveSakuraEndpoint(options = {}) {
     }
 
     if (!llmFs.isModelInstalled(entry)) {
-        const label = sakuraEntry ? 'Sakura' : 'LLM';
+        const label = sakuraCatalog.translateModeLabel?.('llm') || '推理翻译';
         return {
             ok: false,
             error: `${label}「${entry.name}」尚未下载，请在设置 → 模型中下载`,
@@ -124,9 +124,12 @@ async function resolveSakuraEndpoint(options = {}) {
         modelId: entry.id,
         port,
         nGpuLayers: opts.nGpuLayers,
-        contextSize: opts.contextSize || (sakuraEntry ? 4096 : 8192),
+        contextSize: opts.contextSize
+            || (Number.isFinite(Number(entry?.contextSize)) ? Number(entry.contextSize) : null)
+            || (sakuraEntry ? 4096 : 8192),
         runtimeId,
         afterAsr: opts.afterAsr === true,
+        engineUrl: opts.engineUrl,
         parallelPurpose: 'mt',
         onProgress: opts.onProgress,
         signal: opts.signal,
@@ -134,6 +137,11 @@ async function resolveSakuraEndpoint(options = {}) {
     if (!started.ok) {
         return { ...started, source: sakuraEntry ? 'sakura' : 'managed' };
     }
+
+    const stateNgl = llamaServer.getServerState?.()?.nGpuLayers;
+    const resolvedNgl = Number.isFinite(Number(started.nGpuLayers))
+        ? Number(started.nGpuLayers)
+        : (Number.isFinite(Number(stateNgl)) ? Number(stateNgl) : null);
 
     return {
         ok: true,
@@ -143,6 +151,7 @@ async function resolveSakuraEndpoint(options = {}) {
         model: started.model || entry.id,
         modelId: entry.id,
         modelName: entry.name,
+        nGpuLayers: resolvedNgl,
         parallelSlots: Number(started.parallelSlots) > 1 ? Number(started.parallelSlots) : 1,
         speculative: !!started.speculative,
         draftModelId: started.draftModelId || '',

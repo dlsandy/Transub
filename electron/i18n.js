@@ -59,7 +59,7 @@ function t(key, vars) {
     return core.t(key, {
         catalogs,
         locale,
-        fallbackLocale: core.FALLBACK_UI_LOCALE,
+        fallbackChain: core.UI_LOCALE_REGISTRY?.fallbackChain,
         vars,
     });
 }
@@ -70,6 +70,14 @@ function tx(text, vars) {
         locale,
         vars,
         convertHansToHant: resolveConverter(),
+    });
+}
+
+function tf(template, vars) {
+    return core.tf(template, vars, {
+        catalogs,
+        locale,
+        fallbackChain: core.UI_LOCALE_REGISTRY?.fallbackChain,
     });
 }
 
@@ -113,15 +121,19 @@ function catalogPath(localeId) {
 
 module.exports = {
     UI_LOCALES: core.UI_LOCALES,
+    UI_LOCALE_REGISTRY: core.UI_LOCALE_REGISTRY,
     DEFAULT_UI_LOCALE: core.DEFAULT_UI_LOCALE,
     normalizeUiLocale: core.normalizeUiLocale,
     isHantLocale: core.isHantLocale,
+    localeStrategy: core.localeStrategy,
+    listUiLocales: core.listUiLocales,
     htmlLangForLocale: core.htmlLangForLocale,
     reloadCatalogs,
     setLocale,
     getLocale,
     initFromOptions,
     t,
+    tf,
     tx,
     localizeMenuTemplate,
     localizeDialogOptions,

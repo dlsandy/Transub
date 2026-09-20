@@ -34,6 +34,18 @@ function collectUniqueZhSubtitlePaths(outPaths = {}, deps = {}) {
         });
 }
 
+/**
+ * Honor UI post-batch interjection / onomatopoeia modes for all titles
+ * (including 番号 / av_soft). Soft-AV no longer forces a skip.
+ *
+ * @param {object} [merged]
+ * @returns {{
+ *   dropDiscourse: boolean,
+ *   dropOnomatopoeia: boolean,
+ *   shouldCompact: boolean,
+ *   softAvSkipped: false,
+ * }}
+ */
 function resolveInterjectionDropFlags(merged = {}) {
     // Prefer three-way viewing modes; legacy boolean only when mode fields absent.
     // Legacy must stay opt-in (`=== true`) so old saves without the flag do not suddenly drop cues.
@@ -47,6 +59,8 @@ function resolveInterjectionDropFlags(merged = {}) {
         dropDiscourse,
         dropOnomatopoeia,
         shouldCompact: dropDiscourse || dropOnomatopoeia,
+        // Kept for callers; always false — settings apply to AV soft / 番号 too.
+        softAvSkipped: false,
     };
 }
 

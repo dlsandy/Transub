@@ -96,6 +96,13 @@
             const cue = list[i];
             const text = String(cue?.text || '').trim();
             if (!text) continue;
+            // Never silence-split software credit — fragments into "transub." / "cc ]"
+            try {
+                const creditCore = (typeof module !== 'undefined' && module.exports)
+                    ? require('./subtitle-software-credit-core')
+                    : (typeof globalThis !== 'undefined' ? globalThis.TransubSubtitleSoftwareCredit : null);
+                if (creditCore?.isSoftwareCreditText?.(text)) continue;
+            } catch { /* optional */ }
             if (charCount(text) <= maxChars) continue;
             if (!canSplit(cue, i, deps)) continue;
             out.push(i);

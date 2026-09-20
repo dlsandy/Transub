@@ -9,6 +9,10 @@ const {
     buildHubUrls: defaultBuildHubUrls,
     normalizeHfEndpoint: defaultNormalizeHfEndpoint,
 } = require('./engine-download-urls');
+const {
+    canonicalizeEngineAsrModelId,
+    isRetiredEngineAsrModelId,
+} = require('./engine-asr-aliases');
 
 const ENGINE_MODEL_HUB_FALLBACK = {
     'sensevoice-small': {
@@ -90,70 +94,34 @@ const ENGINE_MODEL_HUB_FALLBACK = {
         note: '25 种欧语自动检测；标点/大小写/时间戳；不含中日韩',
     },
     'qwen3-asr-0.6b': {
-        hubId: 'Qwen/Qwen3-ASR-0.6B',
+        hubId: 'Qwen/Qwen3-ASR-0.6B-hf',
         kind: 'asr',
         name: 'Qwen3-ASR 0.6B',
-        note: 'Qwen3 专用 ASR；默认 TEN/VAD 帧时间戳（省显存）；可选下载 ForcedAligner 做词级对齐；依赖较重',
+        note: 'Transformers 原生 (-hf)；默认 TEN/VAD 帧时间戳；需 transformers≥5.13（不再依赖 qwen-asr）',
     },
     'qwen3-asr-1.7b-ja-anime-galgame': {
-        hubId: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame',
+        hubId: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame-hf',
         kind: 'asr',
         name: 'Qwen3-ASR 1.7B JA Anime/Galgame',
-        note: '日语动漫/Galgame 微调（约 4GB）；补漏句更强，可能多出 junk；需较多显存，按需下载',
+        note: '日语动漫/Galgame 微调 (-hf，约 4GB)；补漏句更强；需 transformers≥5.13 与较多显存',
     },
-    'qwen3-asr-1.7b-ja': {
-        hubId: 'neosophie/Qwen3-ASR-1.7B-JA',
+    'qwen3-asr-1.7b': {
+        hubId: 'Qwen/Qwen3-ASR-1.7B-hf',
         kind: 'asr',
-        name: 'Qwen3-ASR 1.7B JA（neosophie）',
-        note: '日语专有名词/汉字表达微调（约 4GB）；弱音较好，汉字偏多；需较多显存，按需下载',
+        name: 'Qwen3-ASR 1.7B',
+        note: '官方 1.7B (-hf)；亦可作 LoRA 基座；需 transformers≥5.13 与较多显存',
+    },
+    'qwen3-asr-1.7b-ja-anime-lora-v3': {
+        hubId: 'hhim8826/qwen3-asr-lora-ja-anime-v3',
+        kind: 'asr',
+        name: 'Qwen3-ASR 1.7B JA Anime LoRA v3',
+        note: 'PEFT LoRA（hhim8826；动漫/VN 日语）；自动附带下载基座 qwen3-asr-1.7b；推理用 beam=4；需 peft + transformers≥5.13',
     },
     'qwen3-forced-aligner-0.6b': {
-        hubId: 'Qwen/Qwen3-ForcedAligner-0.6B',
+        hubId: 'Qwen/Qwen3-ForcedAligner-0.6B-hf',
         kind: 'asr',
         name: 'Qwen3 ForcedAligner 0.6B',
-        note: '可选：为 Qwen3-ASR 提供词/字级时间戳（timingAlignModel=qwen3-forced-aligner-0.6b）；默认不随 ASR 下载',
-    },
-    'opus-mt-en-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-en-zh',
-        kind: 'mt',
-        name: 'Opus-MT EN→ZH',
-        note: '英语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-ja-zh': {
-        hubId: 'shun89/opus-mt-ja-zh',
-        kind: 'mt',
-        name: 'Opus-MT JA→ZH',
-        note: '日语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-ko-zh': {
-        hubId: 'shun89/opus-mt-ko-zh',
-        kind: 'mt',
-        name: 'Opus-MT KO→ZH',
-        note: '韩语→简中机器翻译；本地 Opus-MT，无需大模型',
-    },
-    'opus-mt-de-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-de-ZH',
-        kind: 'mt',
-        name: 'Opus-MT DE→ZH',
-        note: '德语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-es-zh': {
-        hubId: 'Helsinki-NLP/opus-tatoeba-es-zh',
-        kind: 'mt',
-        name: 'Opus-MT ES→ZH',
-        note: '西班牙语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-fi-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-fi-ZH',
-        kind: 'mt',
-        name: 'Opus-MT FI→ZH',
-        note: '芬兰语→简中机器翻译；本地 Opus-MT',
-    },
-    'opus-mt-sv-zh': {
-        hubId: 'Helsinki-NLP/opus-mt-sv-ZH',
-        kind: 'mt',
-        name: 'Opus-MT SV→ZH',
-        note: '瑞典语→简中机器翻译；本地 Opus-MT',
+        note: '可选词/字级时间戳 (-hf；timingAlignModel=qwen3-forced-aligner-0.6b)；默认不随 ASR 下载',
     },
     'sakura-1.5b': {
         hubId: '',
@@ -196,10 +164,10 @@ const ENGINE_MODEL_HUB_FALLBACK = {
 };
 
 const ENGINE_PROFILE_MODELS = {
-    speed: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
-    balanced: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
+    speed: ['sensevoice-small', 'sakura-1.5b', 'fsmn-vad', 'whisperseg-asmr'],
+    balanced: ['sensevoice-small', 'sakura-1.5b', 'fsmn-vad', 'whisperseg-asmr'],
     // quality no longer auto-installs whisper-large-v3-turbo (optional download).
-    quality: ['sensevoice-small', 'opus-mt-en-zh', 'opus-mt-ja-zh', 'opus-mt-ko-zh', 'fsmn-vad', 'whisperseg-asmr'],
+    quality: ['sensevoice-small', 'sakura-1.5b', 'fsmn-vad', 'whisperseg-asmr'],
 };
 
 /**
@@ -371,18 +339,18 @@ const TORCH_CUDA126_MANUAL_PACKAGES = [
     {
         id: 'torch-cuda',
         name: 'PyTorch CUDA（cu126）',
-        fileName: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.9.1%2Bcu126-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        note: 'torch-2.9.1+cu126-cp312-cp312-win_amd64.whl · 约 2.5GB',
+        fileName: 'torch-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torch-2.11.0%2Bcu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torch-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.11.0+cu126-cp312-cp312-win_amd64.whl · 约 2.5GB',
     },
     {
         id: 'torchaudio-cuda',
         name: 'TorchAudio CUDA（cu126）',
-        fileName: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
-        note: 'torchaudio-2.9.1+cu126-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu126/torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu126/torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -391,18 +359,18 @@ const TORCH_CUDA128_MANUAL_PACKAGES = [
     {
         id: 'torch-cuda',
         name: 'PyTorch CUDA（cu128）',
-        fileName: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        note: 'torch-2.9.1+cu128-cp312-cp312-win_amd64.whl · RTX 50 系 · 约 2.5GB',
+        fileName: 'torch-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torch-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.11.0+cu128-cp312-cp312-win_amd64.whl · RTX 50 系 · 约 2.5GB',
     },
     {
         id: 'torchaudio-cuda',
         name: 'TorchAudio CUDA（cu128）',
-        fileName: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
-        note: 'torchaudio-2.9.1+cu128-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu128/torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu128/torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.11.0+cu128-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -411,18 +379,18 @@ const TORCH_CUDA130_MANUAL_PACKAGES = [
     {
         id: 'torch-cuda',
         name: 'PyTorch CUDA（cu130）',
-        fileName: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        note: 'torch-2.9.1+cu130-cp312-cp312-win_amd64.whl · RTX 50 系 + CUDA 13 驱动 · 约 2.5GB',
+        fileName: 'torch-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torch-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        note: 'torch-2.11.0+cu130-cp312-cp312-win_amd64.whl · RTX 50 系 + CUDA 13 驱动 · 约 2.5GB',
     },
     {
         id: 'torchaudio-cuda',
         name: 'TorchAudio CUDA（cu130）',
-        fileName: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
-        note: 'torchaudio-2.9.1+cu130-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://download.pytorch.org/whl/cu130/torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pytorch-wheels/cu130/torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
+        note: 'torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -502,16 +470,16 @@ const SENSEVOICE_CPU_TORCH_PACKAGES = [
     {
         id: 'torch',
         name: 'PyTorch（torch，仅 CPU 机）',
-        fileName: 'torch-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/b1/1a/64f5769025db846a82567fa5b7d21dba4558a7234ee631712ee4771c436c/torch-2.9.1-cp312-cp312-win_amd64.whl',
+        fileName: 'torch-2.11.0-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/1c/ff/6756f1c7ee302f6d202120e0f4f05b432b839908f9071157302cedfc5232/torch-2.11.0-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/1c/ff/6756f1c7ee302f6d202120e0f4f05b432b839908f9071157302cedfc5232/torch-2.11.0-cp312-cp312-win_amd64.whl',
     },
     {
         id: 'torchaudio',
         name: 'TorchAudio（仅 CPU 机）',
-        fileName: 'torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        officialUrl: 'https://files.pythonhosted.org/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
-        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/2e/7c/df90eb0b337cbad59296ed91778e32be069330f5186256d4ce9ea603d324/torchaudio-2.9.1-cp312-cp312-win_amd64.whl',
+        fileName: 'torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
+        officialUrl: 'https://files.pythonhosted.org/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
+        mirrorUrl: 'https://mirrors.aliyun.com/pypi/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl',
     },
 ];
 
@@ -583,7 +551,8 @@ function resolveDownloadModelIds(payload = {}) {
     }
     const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
     // Sakura GGUF is downloaded via managed LLM path, not engine Hub.
-    return uniqueIds(ids).filter((id) => !sakuraCatalog.isSakuraMtModel(id));
+    return uniqueIds(ids.map((id) => canonicalizeEngineAsrModelId(id)))
+        .filter((id) => id && !sakuraCatalog.isSakuraMtModel(id) && !isRetiredEngineAsrModelId(id));
 }
 
 function manualPlaceHintForModel(spec = {}) {
@@ -633,6 +602,9 @@ function normalizeEngineDownloadKind(value) {
     if (k === 'gpu') return 'gpu';
     if (k === 'torch-cuda' || k === 'torchcuda' || k === 'cuda-torch' || k === 'pytorch-cuda') {
         return 'torch-cuda';
+    }
+    if (k === 'torch-rocm' || k === 'torchrocm' || k === 'rocm-torch' || k === 'pytorch-rocm') {
+        return 'torch-rocm';
     }
     if (k === 'demucs' || k === 'audio-separate' || k === 'audioseparate' || k === 'separate') {
         return 'demucs';
@@ -804,8 +776,8 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                     `# 有 NVIDIA GPU 时改装 CUDA 版 PyTorch（${torchVariant}，约 2.5GB，替换 CPU torch）：`,
                     torchCudaPip,
                 ].join('\n'),
-                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。有 NVIDIA GPU 时请下载下方「CUDA PyTorch」两项（勿装 CPU 版 torch）；无独显再用 CPU torch。RTX 50 系：CUDA 13 驱动用 cu130。',
-                wheelHint: `先装 numpy 2.4.x 与 numba/llvmlite/scipy/funasr；有 GPU 时装 ${torchVariant} 的 torch + torchaudio（约 2.5GB）。`,
+                hint: 'SenseVoice 需要 torch / funasr / numpy(<2.5) / numba / scipy / librosa。有 NVIDIA GPU 时请下载下方「CUDA PyTorch」两项（勿装 CPU 版 torch）；无独显再用 CPU torch。CPU 与 CUDA 版 torch/torchaudio 互斥，不可同选。RTX 50 系：CUDA 13 驱动用 cu130。',
+                wheelHint: `先装 numpy 2.4.x 与 numba/llvmlite/scipy/funasr；有 GPU 时只装 ${torchVariant} 的 torch + torchaudio（约 2.5GB，勿与 CPU 版同选）；无独显只装 CPU 组。`,
                 items: sensevoiceBase.map((pkg) => ({
                     id: pkg.id,
                     name: pkg.name,
@@ -857,6 +829,39 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
                     defaultUrl: pkg.mirrorUrl || pkg.officialUrl,
                     note: pkg.note || pkg.fileName,
                 })),
+            },
+        };
+    }
+
+    if (kind === 'torch-rocm') {
+        const installPath = String(merged.engineInstallPath || '').trim();
+        const runtimePy = resolveEngineRuntimePython(installPath);
+        const runtimeDir = path.join(installPath, 'runtime');
+        const venv = path.join(installPath, '.venv');
+        const folder = fs.existsSync(runtimeDir) ? runtimeDir : (fs.existsSync(venv) ? venv : installPath);
+        const pipPrefix = runtimePy
+            ? `"${runtimePy}" -m pip`
+            : 'python -m pip';
+        const gfxRaw = String(payload.rocmGfx || payload.gfx || '').trim().toLowerCase();
+        const gfx = /^gfx\d+/.test(gfxRaw) ? gfxRaw : 'gfx1201';
+        const extra = gfx === 'all' ? 'device-all' : `device-${gfx}`;
+        const index = 'https://stable.repo.amd.com/rocm/whl-next/';
+        const pipCommand = [
+            `${pipPrefix} install --upgrade --force-reinstall --index-url ${index} --extra-index-url https://pypi.org/simple `
+            + `"torch[${extra}]==2.12.0+rocm10.0.0" "torchvision[${extra}]==0.27.0+rocm10.0.0" "torchaudio==2.11.0+rocm10.0.0"`,
+            '# 必须用上面引擎 runtime\\python.exe；系统 Python 里的 ROCm 包对本软件无效。',
+            '# 若 pin 失败，可去掉版本号重试，或换 index：https://repo.amd.com/rocm/whl-multi-arch/',
+        ].join('\n');
+        return {
+            ok: true,
+            info: {
+                kind: 'torch-rocm',
+                title: `手动安装 ROCm 版 PyTorch（${gfx}）`,
+                folder,
+                pipCommand,
+                hint: '自动修复失败时，请在「已完全退出引擎」后，把上面命令复制到终端执行。务必使用引擎 runtime\\python.exe。RX 9070 / 9070 XT 用 gfx1201。不要安装 CUDA 版 torch。',
+                wheelHint: 'ROCm 轮子体积较大，需稳定网络；安装完成后请重启 Transub 再检测。',
+                items: [],
             },
         };
     }
@@ -917,9 +922,9 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
     const profileIds = ENGINE_PROFILE_MODELS[profile] || ENGINE_PROFILE_MODELS.balanced;
     const hasExplicitModelIds = Array.isArray(payload.modelIds);
     const requestedIds = hasExplicitModelIds
-        ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
+        ? payload.modelIds.map((id) => canonicalizeEngineAsrModelId(String(id || '').trim())).filter(Boolean)
         : [
-            merged.engineAsrModel,
+            canonicalizeEngineAsrModelId(merged.engineAsrModel),
             merged.engineMtModel,
             merged.engineVadModel,
         ].filter(Boolean);
@@ -931,8 +936,8 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
     const catalogIds = uniqueIds([
         ...Object.keys(ENGINE_MODEL_HUB_FALLBACK),
         ...sakuraCatalog.listCatalog().map((e) => e.id),
-        ...byId.keys(),
-    ]);
+        ...[...byId.keys()].map((id) => canonicalizeEngineAsrModelId(id)),
+    ]).filter((id) => !isRetiredEngineAsrModelId(id));
     const kindOrder = { asr: 0, mt: 1, vad: 2 };
 
     const catalog = catalogIds.map((id) => {
@@ -947,6 +952,9 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
         const sizeHint = sakuraEntry?.sizeHint
             || (Number(live.size_hint_mb) > 0 ? `约 ${live.size_hint_mb} MB` : '')
             || '';
+        const ramHint = String(
+            sakuraEntry?.ramHint || fallback.ramHint || '',
+        ).trim();
         const backend = String(
             live.backend || fallback.backend || sakuraEntry?.backend || '',
         ).trim();
@@ -963,6 +971,8 @@ async function buildEngineDownloadInfo(payload = {}, deps = {}) {
             selected: preselected.has(id),
             recommended: profileIds.includes(id),
             sizeHint,
+            ramHint,
+            size_hint_mb: Number(live.size_hint_mb) || 0,
             backend,
             note: sakuraEntry?.note
                 || fallback.note

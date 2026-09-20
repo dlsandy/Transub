@@ -3,6 +3,7 @@ const {
     extractChatMessageContent,
     supportsThinkingControls,
     formatLlmNetworkError,
+    mergeCatalogChatDefaults,
 } = require('../electron/advanced-llm-client');
 
 describe('advanced-llm-client', () => {
@@ -55,5 +56,35 @@ describe('advanced-llm-client', () => {
             }, { ignoreReasoning: true }),
             '{"cues":[]}',
         );
+    });
+
+    it('applyCatalogSampling overrides temps from Huihui chatDefaults', () => {
+        const line = mergeCatalogChatDefaults({
+            modelId: 'qwen3-8b-abliterated',
+            temperature: 0.05,
+            frequency_penalty: 0.3,
+            applyCatalogSampling: true,
+            samplingRole: 'line',
+        });
+        assert.strictEqual(line.temperature, 0.15);
+        assert.strictEqual(line.topP, 0.8);
+        assert.strictEqual(line.repeatPenalty, 1.08);
+        assert.strictEqual(line.frequencyPenalty, 0.12);
+        assert.strictEqual(line.frequency_penalty, undefined);
+
+        const polish = mergeCatalogChatDefaults({
+            modelId: 'qwen3-8b-abliterated-q5',
+            temperature: 0.05,
+            applyCatalogSampling: true,
+            samplingRole: 'polish',
+        });
+        assert.strictEqual(polish.temperature, 0.23);
+        assert.strictEqual(polish.frequencyPenalty, 0.12);
+
+        const fillOnly = mergeCatalogChatDefaults({
+            modelId: 'qwen3-8b-abliterated',
+            temperature: 0.05,
+        });
+        assert.strictEqual(fillOnly.temperature, 0.05);
     });
 });

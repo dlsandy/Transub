@@ -10,6 +10,46 @@ const SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc', '.ass', '.ssa', '.sub', '.sup', '
 const PREFERRED_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc'];
 const EDITABLE_SUBTITLE_EXTS = ['.srt', '.vtt', '.lrc', '.ass', '.ssa'];
 
+/** Short-TTL readdir cache — sidecar scans repeat the same dirs during a batch. */
+const DIR_LIST_TTL_MS = 2500;
+const _dirListCache = new Map(); // dir -> { at, names }
+
+function listDirCached(dir) {
+    const key = process.platform === 'win32'
+        ? String(dir || '').toLowerCase()
+        : String(dir || '');
+    if (!key) return [];
+    const hit = _dirListCache.get(key);
+    const now = Date.now();
+    if (hit && (now - hit.at) < DIR_LIST_TTL_MS) {
+        return hit.names;
+    }
+    let names;
+    try {
+        names = fs.readdirSync(dir);
+    } catch {
+        names = [];
+    }
+    _dirListCache.set(key, { at: now, names });
+    // Bound cache size for long-lived processes scanning many folders.
+    if (_dirListCache.size > 64) {
+        const oldest = _dirListCache.keys().next().value;
+        if (oldest != null) _dirListCache.delete(oldest);
+    }
+    return names;
+}
+
+function invalidateDirListCache(dir) {
+    if (dir == null || dir === '') {
+        _dirListCache.clear();
+        return;
+    }
+    const key = process.platform === 'win32'
+        ? String(dir).toLowerCase()
+        : String(dir);
+    _dirListCache.delete(key);
+}
+
 function extRank(filePath) {
     const ext = path.extname(String(filePath || '')).toLowerCase();
     const idx = PREFERRED_SUBTITLE_EXTS.indexOf(ext);
@@ -27,9 +67,9 @@ function trackRank(filePath) {
     if (parts.length < 2) return 0;
     const tag = parts[parts.length - 1];
     if (tag === 'bilingual') return 0;
-    if (tag === 'zh') return 1;
+    if (tag === 'zh' || tag === 'zh-cn' || tag.startsWith('zh-')) return 1;
     if (tag === 'source' || tag === 'ja' || tag === 'en') return 3;
-    if (/^[a-z]{2,8}$/.test(tag)) return 2;
+    if (/^[a-z]{2,8}(?:-[a-z0-9]{2,8}){0,2}$/.test(tag)) return 2;
     return 1;
 }
 
@@ -45,7 +85,7 @@ function pickPreferredSidecar(candidates) {
 function matchSidecarsInDir(dir, stem) {
     const matches = [];
     try {
-        for (const name of fs.readdirSync(dir)) {
+        for (const name of listDirCached(dir)) {
             if (!isSubtitleFile(name)) continue;
             const fileStem = name.slice(0, name.length - path.extname(name).length);
             if (fileStem === stem || fileStem.startsWith(`${stem}.`)) {
@@ -76,7 +116,7 @@ function collectSubtitleSidecars(videoPath) {
     };
 
     try {
-        for (const name of fs.readdirSync(dir)) {
+        for (const name of listDirCached(dir)) {
             if (!isSubtitleFile(name)) continue;
             const fileStem = name.slice(0, name.length - path.extname(name).length);
             if (fileStem === stem || fileStem.startsWith(`${stem}.`)) {
@@ -110,7 +150,7 @@ function resolveLocalSubtitlePath(videoPath, preferredDir) {
  */
 function resolveDualSubtitlePaths(videoPath, preferredDir, {
     sourceSuffix = 'source',
-    targetSuffix = 'zh',
+    targetSuffix = 'zh-cn',
     subFormats = 'srt',
 } = {}) {
     const resolved = path.resolve(String(videoPath || ''));
@@ -124,15 +164,23 @@ function resolveDualSubtitlePaths(videoPath, preferredDir, {
         .filter((s) => ['srt', 'vtt', 'lrc'].includes(s));
     const uniqueFormats = formats.length ? [...new Set(formats)] : ['srt'];
     const src = String(sourceSuffix || 'source').toLowerCase();
-    const tgt = String(targetSuffix || 'zh').toLowerCase();
+    const tgtRaw = targetSuffix == null ? 'zh-cn' : String(targetSuffix).trim().toLowerCase();
+    const tgt = tgtRaw;
 
     const sourcePaths = [];
     const targetPaths = [];
+    const legacyTargetTags = tgt === 'zh-cn' ? ['zh', 'chs', 'cn'] : [];
     for (const fmt of uniqueFormats) {
         const sourcePath = path.join(dir, `${stem}.${src}.${fmt}`);
-        const targetPath = path.join(dir, `${stem}.${tgt}.${fmt}`);
+        const targetPath = tgt
+            ? path.join(dir, `${stem}.${tgt}.${fmt}`)
+            : path.join(dir, `${stem}.${fmt}`);
         if (fs.existsSync(sourcePath)) sourcePaths.push(sourcePath);
         if (fs.existsSync(targetPath)) targetPaths.push(targetPath);
+        for (const legacy of legacyTargetTags) {
+            const legacyPath = path.join(dir, `${stem}.${legacy}.${fmt}`);
+            if (fs.existsSync(legacyPath)) targetPaths.push(legacyPath);
+        }
     }
 
     return {
@@ -145,10 +193,16 @@ function resolveDualSubtitlePaths(videoPath, preferredDir, {
         targetPaths,
         sourcePath: pickPreferredSidecar(sourcePaths),
         targetPath: pickPreferredSidecar(targetPaths),
-        complete: uniqueFormats.every((fmt) => (
-            fs.existsSync(path.join(dir, `${stem}.${src}.${fmt}`))
-            && fs.existsSync(path.join(dir, `${stem}.${tgt}.${fmt}`))
-        )),
+        complete: uniqueFormats.every((fmt) => {
+            const srcOk = fs.existsSync(path.join(dir, `${stem}.${src}.${fmt}`));
+            const tgtOk = tgt
+                ? (
+                    fs.existsSync(path.join(dir, `${stem}.${tgt}.${fmt}`))
+                    || legacyTargetTags.some((legacy) => fs.existsSync(path.join(dir, `${stem}.${legacy}.${fmt}`)))
+                )
+                : fs.existsSync(path.join(dir, `${stem}.${fmt}`));
+            return srcOk && tgtOk;
+        }),
     };
 }
 
@@ -171,7 +225,8 @@ function isEditableSubtitleFile(fileName) {
 /** Trailing basename tags commonly used for subtitle tracks (not part of the media stem). */
 const SUBTITLE_STEM_TAGS = new Set([
     'src', 'source', 'orig', 'original',
-    'zh', 'chs', 'cht', 'cn', 'tw',
+    'zh', 'chs', 'cht', 'cn', 'tw', 'hk',
+    'zh-cn', 'zh-tw', 'zh-hk', 'zh-hans', 'zh-hant',
     'ja', 'jp', 'en', 'ko', 'kr',
     'bilingual', 'dual', 'cc', 'sdh', 'forced',
 ]);
@@ -238,7 +293,7 @@ function guessVideoPathForSubtitle(subtitlePath) {
     try {
         let best = null;
         let bestStemLen = -1;
-        for (const name of fs.readdirSync(dir)) {
+        for (const name of listDirCached(dir)) {
             const extWithDot = path.extname(name);
             const ext = extWithDot.slice(1).toLowerCase();
             if (!mediaExtSet.has(ext)) continue;
@@ -275,4 +330,5 @@ module.exports = {
     resolveDualSubtitlePaths,
     guessVideoPathForSubtitle,
     mediaStemCandidatesFromSubtitle,
+    invalidateDirListCache,
 };

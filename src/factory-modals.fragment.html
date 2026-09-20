@@ -1,0 +1,493 @@
+<div id="previewModal" class="hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/40" role="dialog">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-xl max-h-[70vh] flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b">
+                <h3 class="font-semibold text-sm">字幕预览</h3>
+                <button type="button" id="closePreviewBtn" class="text-gray-400 hover:text-gray-600"><i class="fa fa-times"></i></button>
+            </div>
+            <pre id="previewContent" class="p-4 text-xs overflow-auto flex-1 font-mono text-gray-700"></pre>
+        </div>
+    </div>
+
+<div id="envFixProgressModal" class="hidden fixed inset-0 z-[4500] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="envFixProgressTitle" aria-hidden="true">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[min(88vh,40rem)]">
+            <div class="px-4 py-3 border-b border-gray-100 shrink-0">
+                <h2 id="envFixProgressTitle" class="text-base font-semibold text-gray-900">自动修复</h2>
+                <p id="envFixProgressSubtitle" class="text-xs text-gray-500 mt-1 leading-relaxed">正在按项目下载与安装…</p>
+                <p id="envFixPipMirrorStatus" class="text-[11px] text-gray-500 mt-1 min-h-[1rem]" role="status"></p>
+                <p id="envFixProgressTransfer" class="hidden text-xs tabular-nums text-violet-700 mt-1 font-medium leading-relaxed" aria-live="polite"></p>
+            </div>
+            <div id="envFixProgressList" class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0"></div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                <button type="button" id="envFixProgressManualBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">改为手动修复</button>
+                <button type="button" id="envFixProgressCancelBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">取消修复</button>
+            </div>
+        </div>
+    </div>
+
+<div id="envFixStartModal" class="hidden fixed inset-0 z-[4550] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="envFixStartTitle" aria-hidden="true">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[min(90vh,42rem)]">
+            <div class="px-4 py-3 border-b border-gray-100 shrink-0">
+                <h2 id="envFixStartTitle" class="text-base font-semibold text-gray-900">环境修复</h2>
+                <p id="envFixStartSubtitle" class="text-xs text-gray-500 mt-1 leading-relaxed">可「手动修复」下载安装，或「自动修复」联网补齐。</p>
+            </div>
+            <div class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+                <pre id="envFixStartSummary" class="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 max-h-28 overflow-y-auto"></pre>
+                <div id="envFixStartDropZone" class="env-fix-whl-drop rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/50 px-4 py-6 text-center cursor-pointer select-none" tabindex="0" role="button" aria-label="拖放或点击选择已下载的 whl 文件">
+                    <p class="text-sm font-medium text-violet-900">将已下载的 .whl 拖放到此处</p>
+                    <p class="text-[11px] text-violet-700/80 mt-1 leading-relaxed">支持多选；也可点击此处选择文件。装好后会自动整理 CPU / GPU onnxruntime 冲突。</p>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        <p class="text-xs font-medium text-gray-700">待安装文件</p>
+                        <button type="button" id="envFixStartClearPathsBtn" class="text-[11px] text-gray-500 hover:text-gray-800 hidden">清空</button>
+                    </div>
+                    <p id="envFixStartPathEmpty" class="text-xs text-gray-400">尚未拖入或选择文件</p>
+                    <ul id="envFixStartPathList" class="space-y-1 text-xs text-gray-700"></ul>
+                </div>
+                <p id="envFixStartStatus" class="text-xs text-gray-500 min-h-[1.25rem]" role="status"></p>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                <button type="button" id="envFixStartCancelBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消</button>
+                <button type="button" id="envFixStartAutoBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">自动修复</button>
+                <button type="button" id="envFixStartManualBtn" class="px-4 py-2 rounded-lg text-sm border border-violet-200 text-violet-800 hover:bg-violet-50">手动修复</button>
+                <button type="button" id="envFixStartInstallBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50" disabled>安装所选 .whl</button>
+            </div>
+        </div>
+    </div>
+
+<div id="envCheckModal" class="hidden fixed inset-0 items-center justify-center p-3 sm:p-4 bg-black/45 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="envCheckTitle">
+        <div class="env-check-card">
+            <div class="px-5 pt-5 pb-3 text-center">
+                <h2 id="envCheckTitle" class="text-xl font-semibold text-gray-900 tracking-tight">系统检查</h2>
+                <p id="envCheckSubtitle" class="text-sm text-gray-500 mt-1">正在检查依赖项…</p>
+                <p id="envCheckFixHint" class="hidden text-xs text-amber-700 mt-1.5 leading-relaxed">下载文件体积较大，可能需要较长时间，请耐心等待</p>
+            </div>
+            <div class="px-5 pb-2">
+                <div id="envCheckOverview" class="settings-env-overview" role="group" aria-label="环境总览">
+                    <button type="button" class="settings-env-chip" id="envCheckChipBase" data-env-target="envCheckList" data-state="busy" title="安装路径 / FFmpeg / VC++">
+                        <span class="settings-env-chip-kicker">安装路径</span>
+                        <span class="settings-env-chip-state" id="envCheckChipBaseState">待检测</span>
+                    </button>
+                    <button type="button" class="settings-env-chip" id="envCheckChipEngine" data-env-target="envCheckList" data-state="busy" title="Transub Engine / 模型运行库">
+                        <span class="settings-env-chip-kicker">Transub Engine</span>
+                        <span class="settings-env-chip-state" id="envCheckChipEngineState">待检测</span>
+                    </button>
+                    <button type="button" class="settings-env-chip" id="envCheckChipAccel" data-env-target="envCheckList" data-state="busy" title="GPU / PyTorch 引擎启动 / llama-server">
+                        <span class="settings-env-chip-kicker">硬件加速</span>
+                        <span class="settings-env-chip-state" id="envCheckChipAccelState">待检测</span>
+                    </button>
+                </div>
+            </div>
+            <div class="px-5 pb-2">
+                <div id="envCheckList" class="env-check-list" role="list"></div>
+            </div>
+            <div id="envCheckRepairTools" class="px-5 pb-3 space-y-2">
+                <!-- Inline drop panel kept for legacy drop-controller ids; primary path is「手动修复」modal -->
+                <div id="envCheckWhlPanel" class="hidden space-y-2" hidden aria-hidden="true">
+                    <div id="envCheckWhlDropZone" class="env-fix-whl-drop rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/50 px-3 py-4 text-center cursor-pointer select-none" tabindex="-1" role="button" aria-label="拖放或点击选择已下载的 whl 文件">
+                        <p class="text-sm font-medium text-violet-900">将已下载的 .whl 拖放到此处</p>
+                        <p class="text-[11px] text-violet-700/80 mt-1 leading-relaxed">推荐手动安装（成功率更高）；支持多选，自动整理 CPU / GPU onnxruntime 冲突。</p>
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between gap-2 mb-1">
+                            <p class="text-xs font-medium text-gray-700">待安装文件</p>
+                            <button type="button" id="envCheckWhlClearPathsBtn" class="text-[11px] text-gray-500 hover:text-gray-800 hidden">清空</button>
+                        </div>
+                        <p id="envCheckWhlPathEmpty" class="text-xs text-gray-400">尚未拖入或选择文件</p>
+                        <ul id="envCheckWhlPathList" class="space-y-1 text-xs text-gray-700 max-h-20 overflow-y-auto"></ul>
+                    </div>
+                    <p id="envCheckWhlStatus" class="text-xs text-gray-500 min-h-[1rem]" role="status"></p>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="envCheckWhlExportBtn" class="px-3 py-1.5 rounded-lg text-xs border border-violet-200 text-violet-800 hover:bg-violet-50">导出链接</button>
+                        <button type="button" id="envCheckWhlInstallBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50" disabled>安装所选 .whl</button>
+                    </div>
+                </div>
+                <details class="env-check-more">
+                    <summary>更多选项</summary>
+                    <div class="env-check-more-body space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <label for="envCheckPipMirrorSelect" class="text-xs text-gray-600 shrink-0">运行库镜像</label>
+                            <select id="envCheckPipMirrorSelect" class="text-xs rounded-lg px-2 py-1.5 min-w-[9.5rem] border border-gray-200 bg-white text-gray-800" title="环境修复时下载 Python 运行库用的 PyPI 镜像（不是模型下载源）">
+                                <option value="">自动测速</option>
+                            </select>
+                            <span class="text-[11px] text-gray-400">卡住可换源</span>
+                        </div>
+                        <button type="button" id="envCheckReuseCudaBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-sky-200 text-sky-800 hover:bg-sky-50 hidden" title="扫描并复用本机已有 CUDA 运行库">复用本机 CUDA</button>
+                    </div>
+                </details>
+            </div>
+            <div class="env-check-actions">
+                <button type="button" id="envCheckStartBtn" class="env-check-btn-primary px-3 py-2.5 rounded-xl text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white" disabled>完成</button>
+                <button type="button" id="envCheckFixBtn" class="env-check-btn-fix hidden px-3 py-2.5 rounded-xl text-sm font-medium" disabled title="自动联网下载并安装缺失依赖">自动修复</button>
+                <button type="button" id="envCheckManualBtn" class="env-check-btn-manual hidden px-3 py-2.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-800 hover:bg-gray-50" disabled title="打开手动下载与本地安装窗口">手动修复</button>
+                <button type="button" id="envCheckRetryBtn" class="px-3 py-2.5 rounded-xl text-sm font-medium bg-violet-100 hover:bg-violet-200 text-violet-800">重新检测</button>
+            </div>
+        </div>
+    </div>
+
+<div id="translateStylePickerModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="translateStylePickerTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100">
+                <h2 id="translateStylePickerTitle" class="text-base font-semibold text-gray-900">设置译文风格</h2>
+                <p id="translateStylePickerSummary" class="text-xs text-gray-500 mt-1"></p>
+            </div>
+            <div class="px-4 py-4 space-y-3">
+                <label class="block text-sm">
+                    <span class="text-gray-700 font-medium">风格预设</span>
+                    <select id="translateStylePickerSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm"></select>
+                </label>
+                <label class="block text-sm hidden" id="translateStylePickerCustomWrap">
+                    <span class="text-gray-700 font-medium"><span class="settings-adv-mark" aria-hidden="true">◆</span>自定义备注（Pro）</span>
+                    <textarea id="translateStylePickerCustomNote" maxlength="200" rows="2" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm resize-y" placeholder="例如：口语自然、克制…"></textarea>
+                </label>
+            </div>
+            <div class="px-4 py-3 border-t border-gray-100 flex justify-end gap-2">
+                <button type="button" id="translateStylePickerCancelBtn" class="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">取消</button>
+                <button type="button" id="translateStylePickerConfirmBtn" class="px-3 py-1.5 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700">应用</button>
+            </div>
+        </div>
+    </div>
+
+<div id="retranslateModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="retranslateModalTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100">
+                <h2 id="retranslateModalTitle" class="text-base font-semibold text-gray-900">重新翻译</h2>
+            </div>
+            <div class="px-4 py-4 space-y-3">
+                <p id="retranslateModalSummary" class="text-sm text-gray-700 leading-relaxed"></p>
+                <p id="retranslateModalMissing" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed"></p>
+                <fieldset class="space-y-2">
+                    <legend class="text-xs font-semibold text-gray-600">翻译方式</legend>
+                    <div class="translate-mode-row">
+                        <label class="translate-mode-choice">
+                            <input type="radio" name="retranslateMode" id="retranslateModeLlm" value="llm" class="accent-violet-600" checked>
+                            <span class="text-sm text-gray-800">推理翻译</span>
+                        </label>
+                        <label class="translate-mode-choice" id="retranslateModeExternalWrap">
+                            <input type="radio" name="retranslateMode" id="retranslateModeExternal" value="external" class="accent-violet-600">
+                            <span class="text-sm text-gray-800">外部翻译</span>
+                        </label>
+                        <label class="translate-mode-choice" id="retranslateModeDialogWrap">
+                            <input type="radio" name="retranslateMode" id="retranslateModeDialog" value="dialog" class="accent-violet-600">
+                            <span class="text-sm text-gray-800">◆ 智能翻译</span>
+                        </label>
+                        <label class="translate-mode-choice" id="retranslateModeSmartWrap">
+                            <input type="radio" name="retranslateMode" id="retranslateModeSmart" value="smart" class="accent-violet-600">
+                            <span class="text-sm text-gray-800">◆ 混合翻译</span>
+                        </label>
+                    </div>
+                </fieldset>
+                <div id="retranslateSmartOptions" class="space-y-2 hidden">
+                    <input type="checkbox" id="retranslateSmartHybridCheck" class="sr-only" tabindex="-1" aria-hidden="true" checked>
+                    <p class="text-xs text-gray-600 leading-relaxed" id="retranslateSmartHybridWrap">
+                        日语→中文时自动用专训翻译；不适用时降级为对话按行。
+                    </p>
+                    <label class="settings-row text-sm" id="retranslateSmartPolishWrap">
+                        <input type="checkbox" id="retranslateSmartPolishCheck" class="rounded" checked>
+                        <span class="settings-label font-medium text-gray-700">剧情贴合润色（推荐）</span>
+                    </label>
+                    <p id="retranslateSmartSchemeHint" class="text-xs text-gray-500 leading-relaxed">
+                        专训做翻译，对话模型做贴合润色。
+                    </p>
+                </div>
+                <label class="block text-sm hidden" id="retranslateHybridMtWrap">
+                    <span class="settings-label text-gray-700 font-medium" id="retranslateHybridMtLabel">句级推理模型</span>
+                    <select id="retranslateHybridMtSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono"></select>
+                </label>
+                <label class="block text-sm" id="retranslateModelWrap">
+                    <span class="settings-label text-gray-700 font-medium" id="retranslateModelLabel">翻译模型</span>
+                    <select id="retranslateModelSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono"></select>
+                </label>
+                <p id="retranslateModelHint" class="text-xs text-gray-500 leading-relaxed"></p>
+                <div class="block text-sm space-y-2" id="retranslateStyleWrap">
+                    <span class="settings-label text-gray-700 font-medium">译文风格</span>
+                    <label class="settings-row text-sm" id="retranslateStyleEnabledWrap">
+                        <input type="checkbox" id="retranslateStyleEnabledCheck" class="rounded">
+                        <span class="settings-label font-medium text-gray-700">启用译文风格</span>
+                    </label>
+                    <label class="block text-sm" id="retranslateStylePresetWrap">
+                        <span class="settings-label text-gray-600 text-xs">风格预设</span>
+                        <select id="retranslateStyleSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" aria-label="译文风格预设"></select>
+                    </label>
+                    <p class="text-xs text-gray-500 leading-relaxed">关闭则不强制文风；确认后同步到所选任务。</p>
+                </div>
+                <label class="block text-sm hidden" id="retranslateStyleCustomWrap">
+                    <span class="settings-label text-gray-700 font-medium"><span class="settings-adv-mark" aria-hidden="true">◆</span>自定义风格备注</span>
+                    <textarea id="retranslateStyleCustomNote" maxlength="200" rows="2" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm resize-y" placeholder="例如：口语自然、克制、略带戏谑…"></textarea>
+                </label>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80">
+                <button type="button" id="retranslateCancelBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消</button>
+                <button type="button" id="retranslateConfirmBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">开始翻译</button>
+            </div>
+        </div>
+    </div>
+
+<div id="appConfirmModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100">
+                <h2 id="appConfirmTitle" class="text-base font-semibold text-gray-900">确认</h2>
+            </div>
+            <p id="appConfirmMessage" class="px-4 py-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed"></p>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80">
+                <button type="button" id="appConfirmTertiaryBtn" class="hidden px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100">跳过</button>
+                <button type="button" id="appConfirmSecondaryBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消</button>
+                <button type="button" id="appConfirmPrimaryBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">确定</button>
+            </div>
+        </div>
+    </div>
+
+<div id="cliCommandModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="cliCommandTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[min(90vh,36rem)]">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
+                <h2 id="cliCommandTitle" class="text-base font-semibold text-gray-900">生成命令行</h2>
+                <button type="button" id="closeCliCommandBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0 text-sm">
+                <fieldset class="space-y-2">
+                    <legend class="text-xs font-medium text-gray-700">命令类型</legend>
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="cliCommandKind" value="regular" class="mt-0.5" checked>
+                        <span>
+                            <span class="font-medium text-gray-800">常规</span>
+                            <span class="block text-xs text-gray-500 mt-0.5">在 cmd / PowerShell 中启动 Transub 并传入媒体（<code class="text-[11px]">--files=</code>）。</span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="radio" name="cliCommandKind" value="jasna" class="mt-0.5">
+                        <span>
+                            <span class="font-medium text-gray-800">Jasna</span>
+                            <span class="block text-xs text-gray-500 mt-0.5">Jasna 每条视频完成后，将输出文件提交到 Transub（<code class="text-[11px]">{output}</code> 占位符）。</span>
+                        </span>
+                    </label>
+                </fieldset>
+                <p id="cliCommandHint" class="text-xs text-gray-500 leading-relaxed"></p>
+                <label class="block">
+                    <span class="text-xs font-medium text-gray-700">命令</span>
+                    <textarea id="cliCommandText" class="w-full border rounded-lg px-3 py-2 mt-1 text-xs font-mono leading-relaxed min-h-[4.5rem] resize-y" readonly spellcheck="false"></textarea>
+                </label>
+                <div id="cliCommandJasnaExampleWrap" class="hidden space-y-1">
+                    <span class="text-xs font-medium text-gray-700">Jasna CLI 示例</span>
+                    <textarea id="cliCommandJasnaExample" class="w-full border rounded-lg px-3 py-2 text-xs font-mono leading-relaxed min-h-[4rem] resize-y bg-gray-50" readonly spellcheck="false"></textarea>
+                </div>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                <button type="button" id="closeCliCommandBtn2" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">关闭</button>
+                <button type="button" id="copyCliCommandBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">复制命令</button>
+            </div>
+        </div>
+    </div>
+
+<div id="batchSummaryModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="batchSummaryTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100">
+                <h2 id="batchSummaryTitle" class="text-base font-semibold text-gray-900">任务完成</h2>
+            </div>
+            <div class="px-4 py-4 space-y-3">
+                <p id="batchSummaryBody" class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed"></p>
+                <p id="batchSummaryElapsed" class="hidden text-sm text-gray-500 tabular-nums"></p>
+                <p id="batchSummaryLibrary" class="hidden text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2 leading-relaxed"></p>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80">
+                <button type="button" id="batchSummarySecondaryBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">关闭</button>
+                <button type="button" id="batchSummaryTertiaryBtn" class="hidden px-4 py-2 rounded-lg text-sm border border-violet-200 text-violet-700 hover:bg-violet-50">查看</button>
+                <button type="button" id="batchSummaryPrimaryBtn" class="hidden px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">确定</button>
+            </div>
+        </div>
+    </div>
+
+<div id="shortcutsModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+                <h2 id="shortcutsTitle" class="text-base font-semibold text-gray-900">快捷键</h2>
+                <button type="button" id="closeShortcutsBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" aria-label="关闭"><i class="fa fa-times"></i></button>
+            </div>
+            <dl class="px-4 py-3 text-sm space-y-2 max-h-[min(70vh,24rem)] overflow-y-auto">
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">添加媒体菜单</dt><dd class="font-mono text-xs text-gray-800">A</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">开始执行</dt><dd class="font-mono text-xs text-gray-800">Enter</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">停止任务</dt><dd class="font-mono text-xs text-gray-800">Esc</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">全选 / 取消全选</dt><dd class="font-mono text-xs text-gray-800">Ctrl+A</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">移除选中</dt><dd class="font-mono text-xs text-gray-800">Delete</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">任务行菜单</dt><dd class="font-mono text-xs text-gray-800">右键</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-gray-600">快捷键帮助</dt><dd class="font-mono text-xs text-gray-800">?</dd></div>
+            </dl>
+            <div class="px-4 py-3 border-t border-gray-100 bg-gray-50/80 flex justify-end">
+                <button type="button" id="closeShortcutsBtn2" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">关闭</button>
+            </div>
+        </div>
+    </div>
+
+<div id="manualWhlModal" class="hidden fixed inset-0 z-[5000] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="manualWhlTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg overflow-hidden max-h-[min(90vh,40rem)] flex flex-col">
+            <div class="px-4 py-3 border-b border-gray-100 shrink-0">
+                <h2 id="manualWhlTitle" class="text-base font-semibold text-gray-900">手动修复</h2>
+            </div>
+            <div class="px-4 py-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+                <p id="manualWhlError" class="hidden text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 whitespace-pre-wrap leading-relaxed"></p>
+                <p id="manualWhlHint" class="text-xs text-gray-600 leading-relaxed"></p>
+
+                <div>
+                    <div class="flex items-center justify-between gap-2 mb-1.5">
+                        <p class="text-xs font-medium text-gray-700">拖入已下载的 .whl 安装</p>
+                        <button type="button" id="manualWhlClearBtn" class="text-[11px] text-gray-500 hover:text-gray-800">清空</button>
+                    </div>
+                    <div id="manualWhlDropZone" class="env-fix-whl-drop rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/40 px-3 py-5 text-center cursor-pointer select-none mb-2" tabindex="0" role="button" aria-label="拖放或点击选择已下载的 whl 文件">
+                        <p class="text-sm font-medium text-violet-900">将 .whl 拖放到此处，或点击选择</p>
+                        <p class="text-[11px] text-violet-700/80 mt-1">可多选；装好后点右下角「安装所选文件」</p>
+                    </div>
+                    <p id="manualWhlPathEmpty" class="text-xs text-gray-400">尚未选择文件</p>
+                    <div id="manualWhlPathList" class="space-y-1"></div>
+                </div>
+
+                <div class="manual-whl-quick-actions grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button type="button" id="manualWhlCopyLinksBtn" class="px-3 py-2.5 rounded-lg text-sm font-medium border border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100" title="复制全部直链，便于粘贴到下载软件">复制全部链接</button>
+                    <button type="button" id="manualWhlExportLinksBtn" class="px-3 py-2.5 rounded-lg text-sm font-medium border border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100" title="导出为 .txt，供批量导入">导出链接</button>
+                    <div class="manual-whl-tool-dd relative">
+                        <button type="button" id="manualWhlToolBtn" class="w-full px-3 py-2.5 rounded-lg text-sm font-medium border border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 inline-flex items-center justify-center gap-1.5" title="复制全部链接并用下载工具批量添加" aria-haspopup="menu" aria-expanded="false" aria-controls="manualWhlToolMenu">
+                            <span>用工具下载</span>
+                            <i class="fa fa-caret-down text-[10px] opacity-80" aria-hidden="true"></i>
+                        </button>
+                        <div id="manualWhlToolMenu" class="manual-whl-tool-menu hidden absolute left-0 right-0 top-full mt-1 z-20 rounded-lg border border-gray-200 bg-white shadow-lg py-1" role="menu" aria-label="下载工具">
+                            <button type="button" role="menuitem" data-download-tool="thunder" class="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-sky-50">迅雷下载</button>
+                            <button type="button" role="menuitem" data-download-tool="idm" class="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-sky-50">IDM 下载</button>
+                            <button type="button" role="menuitem" data-download-tool="motrix" class="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-sky-50">Motrix 下载</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <p class="text-xs font-medium text-gray-700 mb-1.5">推荐镜像清单</p>
+                    <div id="manualWhlPackageList" class="space-y-1.5"></div>
+                    <div class="mt-2">
+                        <label for="manualWhlLinksText" class="block text-[11px] text-gray-500 mb-1">批量下载链接（每行一个）</label>
+                        <textarea id="manualWhlLinksText" readonly rows="4" class="w-full text-[11px] font-mono leading-relaxed rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-gray-700 resize-y min-h-[4.5rem]" placeholder="加载清单后自动生成…" spellcheck="false"></textarea>
+                    </div>
+                </div>
+
+                <p id="manualWhlStatus" class="text-xs text-gray-500 min-h-[1.25rem]" role="status" aria-live="polite"></p>
+                <div id="manualWhlProgressWrap" class="hidden space-y-1.5" aria-live="polite">
+                    <p id="manualWhlProgressHint" class="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-relaxed">
+                        本地安装可能需要几分钟，请耐心等待，勿关闭窗口。
+                    </p>
+                    <div class="h-1.5 w-full rounded-full overflow-hidden bg-violet-100">
+                        <div id="manualWhlProgressBar" class="h-full rounded-full bg-violet-600 transition-[width] duration-200" style="width:0%"></div>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 text-[11px] text-gray-500">
+                        <p id="manualWhlProgressDetail" class="min-w-0 flex-1 truncate">准备安装…</p>
+                        <span id="manualWhlProgressPct" class="tabular-nums shrink-0">0%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                <button type="button" id="manualWhlCancelBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">取消</button>
+                <button type="button" id="manualWhlPickBtn" class="px-4 py-2 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-white">选择 .whl</button>
+                <button type="button" id="manualWhlInstallBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50" disabled>安装所选文件</button>
+            </div>
+        </div>
+    </div>
+
+<div id="comboPlansModal" class="hidden fixed inset-0 z-[120] items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="comboPlansTitle" hidden aria-hidden="true">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-4xl max-h-[min(90vh,44rem)] flex flex-col overflow-hidden">
+            <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
+                <div class="min-w-0">
+                    <h3 id="comboPlansTitle" class="font-semibold text-sm text-gray-900">组合方案</h3>
+                    <p id="comboPlansStatus" class="text-[11px] text-gray-500 mt-0.5">识别 + 翻译推荐配方</p>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button type="button" id="comboPlansRefreshBtn" class="px-2.5 py-1.5 rounded-lg text-xs border border-gray-200 text-gray-700 hover:bg-gray-50" title="从服务器刷新">刷新</button>
+                    <button type="button" id="comboPlansCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" aria-label="关闭">
+                        <i class="fa fa-times" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="comboPlansFilters" class="combo-plan-filters shrink-0">
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">片源</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="片源语言">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="language" data-filter-value="">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="auto">自动</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ja">日语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="en">英语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="ko">韩语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="zh">中文</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="language" data-filter-value="yue">粤语</button>
+                    </div>
+                </div>
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">目标</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="目标语言">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="subtitleTargetLang" data-filter-value="">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hans">简中</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="zh-Hant">繁中</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="en">英语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ja">日语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="subtitleTargetLang" data-filter-value="ko">韩语</button>
+                    </div>
+                </div>
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">硬件</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="硬件档位">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="hardwareTier" data-filter-value="">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="cpu">CPU</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="low" title="&lt;8GB 显存">性能</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="balanced" title="8–12GB 显存">均衡</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="hardwareTier" data-filter-value="quality" title="&gt;12GB 显存">质量</button>
+                    </div>
+                </div>
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">译法</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="翻译方式">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="translateMode" data-filter-value="">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="llm">推理</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="external">外部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="dialog">智能◆</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="translateMode" data-filter-value="smart">混合◆</button>
+                    </div>
+                </div>
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">授权</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="授权">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="pro" data-filter-value="all">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="free">仅免费</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="pro" data-filter-value="pro">仅 Pro</button>
+                    </div>
+                </div>
+                <div class="combo-plan-filter-row">
+                    <span class="combo-plan-filter-kicker">分组</span>
+                    <div class="combo-plan-filter-chips" role="group" aria-label="场景分组">
+                        <button type="button" class="combo-plan-filter-chip is-active" data-filter-key="group" data-filter-value="">全部</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ja">日语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="ko">韩语</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="western">欧美</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="zh">中文</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="talk">访谈</button>
+                        <button type="button" class="combo-plan-filter-chip" data-filter-key="group" data-filter-value="other">其他</button>
+                    </div>
+                    <button type="button" id="comboPlansClearFiltersBtn" class="combo-plan-filter-clear">清除筛选</button>
+                </div>
+            </div>
+            <div class="combo-plans-body grid grid-cols-1 sm:grid-cols-2 gap-0 overflow-hidden">
+                <div class="border-b sm:border-b-0 sm:border-r border-gray-100 overflow-y-auto p-3 space-y-2 min-h-0">
+                    <div id="comboPlansList" class="space-y-2"></div>
+                    <p id="comboPlansEmpty" class="hidden text-sm text-gray-500 px-1">无匹配方案</p>
+                </div>
+                <div class="overflow-y-auto p-4 min-h-0 flex flex-col">
+                    <div id="comboPlansDetail" class="flex-1 min-h-0">
+                        <p class="text-sm text-gray-500">请选择一个组合方案</p>
+                    </div>
+                    <div id="comboPlansProgressWrap" class="hidden mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2" hidden>
+                        <div class="flex items-center justify-between gap-2 text-[11px] text-violet-900 mb-1">
+                            <span id="comboPlansProgressText">正在下载模型…</span>
+                            <span id="comboPlansProgressPct" class="tabular-nums font-medium">0%</span>
+                        </div>
+                        <div class="h-1.5 rounded-full bg-violet-100 overflow-hidden">
+                            <span id="comboPlansProgressBar" class="block h-full bg-violet-500 transition-[width] duration-200" style="width:0%"></span>
+                        </div>
+                    </div>
+                    <div class="mt-4 flex flex-wrap justify-end gap-2 shrink-0">
+                        <button type="button" id="comboPlansApplyBtn" class="px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">应用此方案</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

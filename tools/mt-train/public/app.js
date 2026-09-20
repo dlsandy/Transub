@@ -3137,7 +3137,7 @@
 
     loadTitles().catch((e) => log(e.message));
 
-    async function applyPendingLibraryPair(pair) {
+    async function applyPendingTrainPair(pair) {
         if (!pair || typeof pair !== 'object') return;
         const ja = String(pair.jaPath || '').trim();
         const zh = String(pair.zhPath || '').trim();
@@ -3146,8 +3146,8 @@
         if (zh) zhPathEl.value = zh;
         const title = String(pair.title || '').trim();
         log(title
-            ? `已从字幕库带入：${title}${pair.hasAbPair || pair.zhPathA ? '（含对照路径）' : ''}`
-            : `已从字幕库带入日/中路径`);
+            ? `已带入路径：${title}${pair.hasAbPair || pair.zhPathA ? '（含对照路径）' : ''}`
+            : `已带入日/中路径`);
         try {
             await runScan({ force: true });
         } catch (err) {
@@ -3155,20 +3155,20 @@
         }
     }
 
-    async function hydratePendingLibraryPair() {
+    async function hydratePendingTrainPair() {
         try {
             if (!window.transubTrain?.consumePendingPair) return;
             const res = await window.transubTrain.consumePendingPair();
-            if (res?.ok && res.pair) await applyPendingLibraryPair(res.pair);
+            if (res?.ok && res.pair) await applyPendingTrainPair(res.pair);
         } catch (err) {
-            log(`读取字幕库路径失败：${err?.message || err}`);
+            log(`读取带入路径失败：${err?.message || err}`);
         }
         try {
             window.transubTrain?.onPendingPair?.((payload) => {
-                void applyPendingLibraryPair(payload);
+                void applyPendingTrainPair(payload);
             });
         } catch (_) { /* ignore */ }
     }
 
-    void hydratePendingLibraryPair();
+    void hydratePendingTrainPair();
 })();

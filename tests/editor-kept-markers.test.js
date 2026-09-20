@@ -211,7 +211,7 @@ describe('transcript-keep find + pin', () => {
     it('finds kept transcript by stem and respects soft pin', () => {
         const keep = require('../electron/transcript-keep');
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-keep-'));
-        const file = path.join(dir, 'movie.src.srt');
+        const file = path.join(dir, 'movie.transcribe.srt');
         fs.writeFileSync(file, '1\n00:00:00,000 --> 00:00:01,000\nhello\n', 'utf8');
         const found = keep.findKeptTranscript({
             stem: 'movie',
@@ -221,7 +221,7 @@ describe('transcript-keep find + pin', () => {
         assert.strictEqual(path.resolve(found.path), path.resolve(file));
 
         keep.pinKeptTranscript(file, { hard: false });
-        // Age the file beyond keep days
+        // Unlimited retention: prune is a no-op even for aged files.
         const old = Date.now() - 100 * 24 * 60 * 60 * 1000;
         fs.utimesSync(file, new Date(old), new Date(old));
         const pruned = keep.pruneTranscriptKeepDir(dir, {
@@ -229,22 +229,30 @@ describe('transcript-keep find + pin', () => {
             transcriptKeepDays: 90,
             transcriptKeepLimit: 200,
         });
-        assert.ok(pruned.skippedPinned >= 1);
+        assert.strictEqual(pruned.removed, 0);
         assert.ok(fs.existsSync(file));
+        assert.strictEqual(found.pinned, false);
+        const foundPinned = keep.findKeptTranscript({
+            stem: 'movie',
+            options: { transcriptKeepDir: dir },
+        });
+        assert.strictEqual(foundPinned.pinned, true);
         keep.unpinKeptTranscript(file, { hard: false });
         try {
             fs.rmSync(dir, { recursive: true, force: true });
         } catch { /* ignore */ }
     });
 
-    it('matches subtitles by video basename only (same-name), prefers .src over fuzzy', () => {
+    it('matches subtitles by video basename only (same-name), prefers .transcribe over fuzzy', () => {
         const keep = require('../electron/transcript-keep');
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-keep-same-'));
         try {
-            const src = path.join(dir, 'SQTE-704.src.srt');
+            const src = path.join(dir, 'SQTE-704.transcribe.srt');
+            const legacy = path.join(dir, 'SQTE-704.src.srt');
             const zh = path.join(dir, 'SQTE-704.zh.srt');
             const other = path.join(dir, 'prefix-SQTE-704-extra.srt');
             fs.writeFileSync(src, '1\n00:00:00,000 --> 00:00:01,000\nja\n', 'utf8');
+            fs.writeFileSync(legacy, '1\n00:00:00,000 --> 00:00:01,000\nlegacy\n', 'utf8');
             fs.writeFileSync(zh, '1\n00:00:00,000 --> 00:00:01,000\nzh\n', 'utf8');
             fs.writeFileSync(other, '1\n00:00:00,000 --> 00:00:01,000\nx\n', 'utf8');
 

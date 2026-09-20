@@ -36,14 +36,14 @@ describe('engine-process-lifecycle', () => {
         setProc(null);
     });
 
-    it('reclaimLocalComputeAfterEngineBatch matrix', () => {
+    it('reclaimLocalComputeAfterEngineBatch matrix', async () => {
         const { life, logs } = makeLife();
-        life.reclaimLocalComputeAfterEngineBatch({ usedExternalMt: true, failedOrCancelled: false });
+        await life.reclaimLocalComputeAfterEngineBatch({ usedExternalMt: true, failedOrCancelled: false });
         assert.ok(logs.includes('llama-stop'));
         assert.ok(logs.some((l) => l.includes('本地 LLM')));
 
         const b = makeLife();
-        b.life.reclaimLocalComputeAfterEngineBatch({ failedOrCancelled: true });
+        await b.life.reclaimLocalComputeAfterEngineBatch({ failedOrCancelled: true });
         assert.ok(b.logs.includes('llama-stop'));
         assert.ok(b.logs.some((l) => l.includes('失败或已中断')));
     });

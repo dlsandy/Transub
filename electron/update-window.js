@@ -37,13 +37,13 @@ function openUpdateWindow(app, { parent: _parent, autoCheck = true } = {}) {
         backgroundColor = MAIN_BG[getAppTheme()] || backgroundColor;
     } catch (_) { /* ignore */ }
     const win = new BrowserWindow({
-        width: 500,
-        height: 560,
-        minWidth: 420,
-        minHeight: 380,
+        width: 680,
+        height: 720,
+        minWidth: 580,
+        minHeight: 520,
         resizable: true,
         maximizable: false,
-        title: '检查更新',
+        title: '更新中心',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor,

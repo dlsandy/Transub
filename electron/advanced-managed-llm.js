@@ -1,6 +1,7 @@
 /**
  * Advanced 软件内模型：GGUF 下载 + llama-server（主路径）
  */
+const fs = require('fs');
 const catalog = require('../src/js/advanced-managed-llm-catalog-core');
 const llmFs = require('./advanced-llm-fs');
 const downloader = require('./advanced-llm-download');
@@ -47,10 +48,14 @@ function summarizeCatalogEntry(entry) {
 }
 
 function buildManagedStatus(doc, options = {}) {
-    const managed = catalog.normalizeManagedLlm(doc?.managedLlm);
-    const active = catalog.findCatalogEntry(managed.activeModelId);
+    let hints = {};
+    try {
+        hints = require('./advanced-runtime-prefer').getHints();
+    } catch (_) { /* ignore */ }
+    const managed = catalog.normalizeManagedLlm(doc?.managedLlm, hints);
+    const active = catalog.findCatalogEntry(managed.activeModelId, { labModels: managed.labModels });
     const smartId = catalog.resolveSmartTranslateModelId(managed);
-    const smart = catalog.findCatalogEntry(smartId);
+    const smart = catalog.findCatalogEntry(smartId, { labModels: managed.labModels });
     const runtime = llamaServer.getRuntimeStatus();
     const server = llamaServer.getServerState();
     const entitled = !!options.entitled;
@@ -61,12 +66,15 @@ function buildManagedStatus(doc, options = {}) {
     const visible = catalog.listCatalogVisible({
         entitled,
         alwaysIncludeIds,
+        labModels: managed.labModels,
     });
-    const fullCount = catalog.listCatalog().length;
+    const fullCount = catalog.listCatalog().length + (managed.labModels || []).length;
     const items = visible.map((entry) => {
         const present = llmFs.isModelInstalled(entry);
         const validated = present ? llmFs.validateModelFile(entry) : null;
         const installed = !!(validated?.ok);
+        const isLab = entry.lab === true || entry.experimental === true
+            || String(entry.family || '') === 'lab';
         return {
             id: entry.id,
             name: entry.name,
@@ -81,10 +89,13 @@ function buildManagedStatus(doc, options = {}) {
             freePipelineTranslate: !!entry.freePipelineTranslate,
             translateOnly: !!entry.translateOnly
                 || String(entry.family || '').toLowerCase() === 'sakura',
-            proScale: !!entry.proScale || catalog.isProScaleModel(entry),
+            proScale: isLab ? false : (!!entry.proScale || catalog.isProScaleModel(entry)),
             scaleTier: entry.scaleTier || catalog.getModelScaleTier(entry),
             paramBillion: Number(entry.paramBillion) || 0,
             ollamaTag: entry.ollamaTag || '',
+            experimental: !!isLab,
+            lab: !!isLab,
+            ggufUrl: entry.ggufUrl || '',
             installed,
             present,
             installError: present && !installed ? (validated?.error || '') : '',
@@ -127,6 +138,13 @@ function buildManagedStatus(doc, options = {}) {
                     return false;
                 }
             })(),
+            preferRocm: (() => {
+                try {
+                    return !!require('./advanced-runtime-prefer').getHints().preferRocm;
+                } catch (_) {
+                    return false;
+                }
+            })(),
             tag: runtime.tag,
             installedTag: runtime.installedTag || '',
             exePath: runtime.exePath || '',
@@ -138,7 +156,10 @@ function buildManagedStatus(doc, options = {}) {
         catalog: items,
         activeModelId: managed.activeModelId || '',
         activeModel: summarizeCatalogEntry(active),
-        smartTranslateModelId: smartId || '',
+        // Explicit user preference (empty = 未选用；不回退推理模型).
+        // Do NOT overwrite with resolveSmartTranslateModelId — empty must stay selectable in the UI.
+        smartTranslateModelId: String(managed.smartTranslateModelId || '').trim(),
+        smartTranslateResolvedId: smartId || '',
         smartTranslateModel: summarizeCatalogEntry(smart),
     };
 }
@@ -236,15 +257,16 @@ async function pullManagedModel(options = {}) {
 
         llmFs.ensureDirs();
         const dest = llmFs.getModelPath(entry);
+        const ggufUrl = catalog.normalizeGgufDownloadUrl?.(entry.ggufUrl) || entry.ggufUrl;
         send({
             phase: 'start',
             kind: 'model',
             modelId: entry.id,
-            message: `开始下载 ${entry.name}（${entry.sizeHint}）…`,
+            message: `开始下载 ${entry.name}${entry.sizeHint ? `（${entry.sizeHint}）` : ''}…`,
             pct: 0,
         });
 
-        await downloader.downloadFile(entry.ggufUrl, dest, {
+        await downloader.downloadFile(ggufUrl, dest, {
             signal: controller.signal,
             expectedBytes: entry.sizeBytes,
             onProgress: (p) => send({
@@ -257,15 +279,28 @@ async function pullManagedModel(options = {}) {
 
         const validated = llmFs.validateModelFile(entry);
         if (!validated.ok) {
+            // Remove bogus downloads (HF HTML pages are often ~100–300KB).
+            try {
+                if (dest && fs.existsSync(dest) && (!validated.size || validated.size < 1024 * 1024)) {
+                    fs.unlinkSync(dest);
+                }
+            } catch (_) { /* ignore */ }
+            let errMsg = validated.error || '模型文件校验失败';
+            const looksLikeHtmlPage = validated.code === 'model_file_too_small'
+                || validated.code === 'model_not_gguf'
+                || (Number(validated.size) > 0 && Number(validated.size) < 512 * 1024);
+            if (looksLikeHtmlPage) {
+                errMsg += '。请确认链接是 GGUF 直链（Hugging Face 须含 /resolve/，不要用 /blob/ 网页地址），或改用「打开模型目录」手动放入文件。';
+            }
             send({
                 phase: 'error',
                 kind: 'model',
                 modelId: entry.id,
-                message: validated.error || '模型文件校验失败',
+                message: errMsg,
             });
             return {
                 ok: false,
-                error: validated.error || '模型文件校验失败',
+                error: errMsg,
                 code: validated.code || 'model_invalid',
                 modelId: entry.id,
                 path: dest,
@@ -307,7 +342,7 @@ async function pullManagedModel(options = {}) {
 async function resolveManagedEndpoint(doc, options = {}) {
     const managed = catalog.normalizeManagedLlm(doc?.managedLlm);
     const modelId = asString(options.activeModelId || managed.activeModelId, 128).trim();
-    const entry = catalog.findCatalogEntry(modelId);
+    const entry = catalog.findCatalogEntry(modelId, { labModels: managed.labModels });
     if (!entry) {
         return {
             ok: false,
@@ -315,6 +350,32 @@ async function resolveManagedEndpoint(doc, options = {}) {
             error: '请先在设置 → 高级 →「软件内选模型」中选择模型',
             code: 'managed_model_missing',
         };
+    }
+    const isLab = entry.lab === true || entry.experimental === true
+        || String(entry.family || '') === 'lab';
+    if (isLab) {
+        let entitled = options.entitled === true;
+        if (!entitled) {
+            try {
+                const entitlement = require('../src/js/advanced-entitlement-core');
+                const status = entitlement.buildStatusView(doc?.license, '');
+                entitled = !!status?.entitled;
+            } catch (_) { /* ignore */ }
+        }
+        if (!entitled) {
+            try {
+                entitled = !!require('./advanced-gates').isDevUnlockEnabled?.();
+            } catch (_) { /* ignore */ }
+        }
+        if (!entitled) {
+            return {
+                ok: false,
+                source: 'managed',
+                error: '模型实验室为 Pro 功能。解锁 Pro 后可使用自定义 GGUF。',
+                code: 'pro_required',
+                modelId: entry.id,
+            };
+        }
     }
     const validated = llmFs.validateModelFile(entry);
     if (!validated.ok) {
@@ -356,6 +417,7 @@ async function resolveManagedEndpoint(doc, options = {}) {
         model: started.model || entry.id,
         modelId: entry.id,
         modelName: entry.name,
+        chatDefaults: catalog.resolveChatDefaults(entry) || undefined,
     };
 }
 
@@ -609,10 +671,31 @@ function adoptSystemCudaCompanion(options = {}) {
 
     llmFs.ensureDirs();
     const destDir = llmFs.getRuntimeDir();
-    const result = require('./cuda-runtime-scan').tryReuseSystemCudaCompanion({
+    const cudaScanMod = require('./cuda-runtime-scan');
+    let writableRoot = '';
+    /** @type {string[]} */
+    const engineRoots = [];
+    /** @type {string[]} */
+    const startDirs = [destDir];
+    try {
+        const { getWritableRoot, getBundledEnginePathIfPresent, getInstallRoot } = require('./app-paths');
+        writableRoot = getWritableRoot() || '';
+        const bundled = getBundledEnginePathIfPresent?.() || '';
+        if (bundled) engineRoots.push(bundled);
+        if (writableRoot) startDirs.push(writableRoot);
+        try { startDirs.push(getInstallRoot()); } catch (_) { /* ignore */ }
+    } catch (_) { /* ignore */ }
+    const result = cudaScanMod.tryReuseSystemCudaCompanion({
         major,
         destDir,
-        extraRoots: Array.isArray(patch.extraRoots) ? patch.extraRoots : undefined,
+        extraRoots: [
+            ...(Array.isArray(patch.extraRoots) ? patch.extraRoots : []),
+            ...cudaScanMod.discoverCudaExtraRoots({
+                engineRoots,
+                writableRoot,
+                startDirs,
+            }),
+        ],
         env: patch.env,
         includePath: patch.includePath,
     });
@@ -658,6 +741,48 @@ function adoptSystemCudaCompanion(options = {}) {
     };
 }
 
+/**
+ * Build a laboratory catalog entry from user input.
+ * @returns {{ ok: true, entry: object }|{ ok: false, error: string, code?: string }}
+ */
+function buildLabModelFromInput(raw, existingLabModels = []) {
+    const existing = catalog.normalizeLabModels(existingLabModels);
+    const entry = catalog.normalizeLabModelEntry(raw, {
+        existingIds: existing.map((m) => m.id),
+    });
+    if (!entry) {
+        return {
+            ok: false,
+            error: '请提供有效的 .gguf 文件名或直链 URL（llama.cpp 兼容）',
+            code: 'lab_model_invalid',
+        };
+    }
+    if (existing.length >= (catalog.MAX_LAB_MODELS || 32)) {
+        return {
+            ok: false,
+            error: `实验室模型最多 ${catalog.MAX_LAB_MODELS || 32} 个`,
+            code: 'lab_model_limit',
+        };
+    }
+    return { ok: true, entry };
+}
+
+function appendLabModel(labModels, entry) {
+    const list = catalog.normalizeLabModels(labModels);
+    if (!entry?.id) return list;
+    const without = list.filter((m) => String(m.id).toLowerCase() !== String(entry.id).toLowerCase());
+    without.push(entry);
+    return catalog.normalizeLabModels(without);
+}
+
+function removeLabModelById(labModels, modelId) {
+    const want = String(modelId || '').trim().toLowerCase();
+    if (!want) return catalog.normalizeLabModels(labModels);
+    return catalog.normalizeLabModels(labModels).filter(
+        (m) => String(m.id || '').toLowerCase() !== want,
+    );
+}
+
 module.exports = {
     buildManagedStatus,
     pullManagedModel,
@@ -673,4 +798,7 @@ module.exports = {
     syncRuntimePreferenceToHardware: (...args) => llamaServer.syncRuntimePreferenceToHardware(...args),
     probeLlamaServerTag: (...args) => llamaServer.probeLlamaServerTag(...args),
     isModelInstalled: (...args) => llmFs.isModelInstalled(...args),
+    buildLabModelFromInput,
+    appendLabModel,
+    removeLabModelById,
 };

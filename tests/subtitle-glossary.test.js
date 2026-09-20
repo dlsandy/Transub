@@ -9,6 +9,8 @@ const {
     replaceTerm,
     mergeGlossaries,
     buildJaAvAsrPromptHints,
+    buildAsrGlossaryEntries,
+    entryAsrReplaceEnabled,
 } = require('../src/js/subtitle-glossary-core');
 
 function testParseAliasesInput() {
@@ -99,9 +101,13 @@ function testJaAvAsrPromptHints() {
     assert.ok(hints.initial_prompt.includes('メンズエステ'));
     assert.ok(hints.hotwords.includes('オイル'));
     assert.ok(hints.hotwords.includes('指圧'));
+    assert.ok(hints.hotwords.includes('施術'));
+    assert.ok(hints.hotwords.includes('マッサージ'));
+    assert.ok(hints.hotwords.includes('着替え'));
     assert.ok(!hints.hotwords.includes('ギリギリ'));
     assert.ok(!/人名です|用語：/.test(hints.initial_prompt));
     assert.strictEqual(hints.domain, 'mens_esthe');
+    assert.strictEqual(hints.termCount, 19);
 
     // School / sibling soft-AV (IPZZ-745): avoid mens-esthe term spam
     const school = buildJaAvAsrPromptHints({
@@ -109,8 +115,10 @@ function testJaAvAsrPromptHints() {
     });
     assert.ok(school.initial_prompt.includes('自然な会話'));
     assert.ok(school.hotwords.includes('お兄ちゃん'));
+    assert.ok(school.hotwords.includes('やめて'));
     assert.ok(!school.hotwords.includes('メンズエステ'));
     assert.strictEqual(school.domain, 'soft_av_general');
+    assert.strictEqual(school.termCount, 10);
 }
 
 describe("subtitle-glossary", () => {
@@ -137,5 +145,16 @@ describe("subtitle-glossary", () => {
     });
     it("JA AV ASR prompt hints", () => {
         testJaAvAsrPromptHints();
+    });
+    it("buildAsrGlossaryEntries respects asrReplace", () => {
+        assert.strictEqual(entryAsrReplaceEnabled({ asrReplace: true }), true);
+        assert.strictEqual(entryAsrReplaceEnabled({ note: 'bad-pool' }), true);
+        assert.strictEqual(entryAsrReplaceEnabled({ note: 'AniList' }), false);
+        const rows = buildAsrGlossaryEntries({
+            entries: [
+                { canonical: '転売', aliases: ['天売'], asrReplace: true, enabled: true },
+            ],
+        });
+        assert.deepStrictEqual(rows, [{ wrong: '天売', correct: '転売', stage: 'asr' }]);
     });
 });

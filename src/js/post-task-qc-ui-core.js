@@ -80,6 +80,16 @@
         item.qcFixedWritten = !!written;
         item.qcFixedSummary = String(summary || '').trim().slice(0, 200);
         item.qcFixedAt = now;
+        // Quiet single-item QC uses status=running as a progress flag — restore done.
+        if (String(item.status || '') === 'running'
+            && (String(item.stage || '') === 'qc_fix' || /QC/.test(String(item.detail || '')))) {
+            item.status = 'done';
+            item.progress = 100;
+            item.stage = '';
+            if (!String(item.detail || '').trim() || /QC/.test(String(item.detail || ''))) {
+                item.detail = String(summary || '已完成').trim() || '已完成';
+            }
+        }
         return item;
     }
 
@@ -106,54 +116,19 @@
      *   smartVisible: boolean,
      *   smartDisabled: boolean,
      *   smartLabel: string,
-     *   mtTrainVisible: boolean,
-     *   mtTrainDisabled: boolean,
-     *   mtTrainLabel: string,
      * }}
      */
-    function buildQcBannerViewModel({
-        issueCount = 0,
-        dismissed = false,
-        fixing = false,
-        smartFixing = false,
-        running = false,
-        advancedEntitled = false,
-        smartFixAvailable = false,
-        mtTrainCanOpen = false,
-        mtTrainSuggested = false,
-    } = {}) {
-        const n = Number(issueCount) || 0;
-        if (n <= 0 || dismissed) {
-            return {
-                visible: false,
-                text: '',
-                fixDisabled: true,
-                fixLabel: '一键修复QC',
-                smartVisible: false,
-                smartDisabled: true,
-                smartLabel: '智能修复 (Pro)',
-                mtTrainVisible: false,
-                mtTrainDisabled: true,
-                mtTrainLabel: '学习向导',
-            };
-        }
-        const smartOk = !!advancedEntitled && !!smartFixAvailable;
-        const mtTrainVisible = !!mtTrainCanOpen && (!!mtTrainSuggested || n > 0);
+    function buildQcBannerViewModel(_opts = {}) {
+        // Post-task QC banner retired: do not surface after subtitle jobs finish.
+        // Keep the view-model shape for callers / future re-enable.
         return {
-            visible: true,
-            text: fixing
-                ? `正在${smartFixing ? '智能' : '一键'}修复 QC（${n} 条有问题）…`
-                : mtTrainSuggested
-                    ? `${n} 条字幕仍有 QC 问题；可开学习向导对照训练（勿整句润色入库）`
-                    : `${n} 条字幕有 QC 问题，可一键修复${advancedEntitled ? ' / 智能修复' : ''}或在编辑器中查看`,
-            fixDisabled: !!running || !!fixing,
-            fixLabel: fixing && !smartFixing ? '修复中…' : '一键修复QC',
-            smartVisible: smartOk,
-            smartDisabled: !smartOk || !!running || !!fixing,
-            smartLabel: smartFixing ? '智能修复中…' : '智能修复 (Pro)',
-            mtTrainVisible,
-            mtTrainDisabled: !mtTrainVisible || !!running || !!fixing,
-            mtTrainLabel: mtTrainSuggested ? '打开学习向导' : '学习向导',
+            visible: false,
+            text: '',
+            fixDisabled: true,
+            fixLabel: '一键修复QC',
+            smartVisible: false,
+            smartDisabled: true,
+            smartLabel: '智能修复 (Pro)',
         };
     }
 

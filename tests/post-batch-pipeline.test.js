@@ -8,8 +8,11 @@ const {
 } = require('../electron/post-batch-pipeline');
 
 function isSourceTrack(filePath) {
-    return /\.src\.|_src\.|\.source\./i.test(path.basename(String(filePath || '')))
-        || /[.\\_-]ja(?:\.|$)/i.test(path.basename(String(filePath || '')));
+    const base = path.basename(String(filePath || ''));
+    return /\.src\.|_src\.|\.source\./i.test(base)
+        || /\.transcribe\./i.test(base)
+        || /\.original\./i.test(base)
+        || /[.\\_-]ja(?:\.|$)/i.test(base);
 }
 
 describe('post-batch JA↔ZH stem pairing', () => {
@@ -21,6 +24,20 @@ describe('post-batch JA↔ZH stem pairing', () => {
         assert.strictEqual(
             stemKeyForPairing(ja, isSourceTrack),
             stemKeyForPairing(zh, isSourceTrack),
+        );
+    });
+
+    it('matches .transcribe.srt with .zh-cn.srt (engine keep naming)', () => {
+        const ja = 'F:\\Transub3\\subtitles\\DLDSS-533.transcribe.srt';
+        const zh = 'E:\\迅雷下载\\DLDSS-533.zh-cn.srt';
+        assert.strictEqual(stemKeyForPairing(ja, isSourceTrack), 'dldss-533');
+        assert.strictEqual(stemKeyForPairing(zh, isSourceTrack), 'dldss-533');
+        const sourcesByStem = new Map([
+            ['dldss-533', [ja]],
+        ]);
+        assert.strictEqual(
+            resolveSourceForTarget(sourcesByStem, zh, isSourceTrack),
+            ja,
         );
     });
 

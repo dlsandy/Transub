@@ -3,6 +3,16 @@
  * 纯树操作可在 Node 测试；installLayout 负责 DOM 渲染与拖拽。
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     const LAYOUT_KEY = 'transub-editor-layout';
     const LAYOUT_VERSION = 2;
     const PANEL_IDS = Object.freeze(['list', 'detail', 'media', 'timeline']);
@@ -778,7 +788,7 @@
             saveLayout();
             renderLayout();
             if (typeof ctx.setStatus === 'function') {
-                ctx.setStatus(`布局：${PRESETS[id].label}`, 'ok');
+                ctx.setStatus(uiTf('布局：{label}', { label: PRESETS[id].label }), 'ok');
             }
         }
 

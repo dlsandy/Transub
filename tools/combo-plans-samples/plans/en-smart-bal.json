@@ -1,0 +1,40 @@
+{
+  "id": "en-smart-bal",
+  "version": 2,
+  "group": "western",
+  "name": "欧美剧 · 混合 · 均衡",
+  "description": "欧美剧：SenseVoice 听写+ 混合翻译（TranslateGemma 4B 句级翻译，Qwen3 8B 剧情贴合润色）硬件档：均衡 · 8–12GB 显存。需 Pro。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad",
+    "translategemma-4b",
+    "qwen3-8b"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "smart",
+    "engineLlmMtModel": "translategemma-4b",
+    "engineProfile": "balanced",
+    "activePresetId": "film-turbo-stable",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "beamSize": 5,
+    "smartTranslateModelId": "qwen3-8b"
+  }
+}

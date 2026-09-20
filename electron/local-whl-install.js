@@ -35,10 +35,147 @@ function normalizeWhlPaths(value) {
 }
 
 /**
- * @param {string[]} paths
- * @returns {{ ok: true, paths: string[] } | { ok: false, error: string }}
+ * Parse PEP 427 version from a wheel basename (best-effort).
+ * @param {string} filePath
+ * @returns {string}
  */
-function validateWhlFiles(paths) {
+function parseWhlVersion(filePath) {
+    const base = path.basename(String(filePath || ''), '.whl');
+    const m = String(base).match(/-(\d+\.\d+(?:\.\d+){0,2})(?:[+-]|$)/);
+    return m ? m[1] : '';
+}
+
+/**
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function compareWhlSemver(a, b) {
+    const pa = String(a || '').split('.').map((x) => Number(x) || 0);
+    const pb = String(b || '').split('.').map((x) => Number(x) || 0);
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i += 1) {
+        const x = pa[i] || 0;
+        const y = pb[i] || 0;
+        if (x !== y) return x - y;
+    }
+    return 0;
+}
+
+/**
+ * Prefer CUDA12 (<1.27) vs CUDA13 (>=1.27) onnxruntime-gpu wheel from opts / driver.
+ * @param {object} [opts]
+ * @returns {{ target: 'cuda12'|'cuda13', fileName?: string } | null}
+ */
+function resolveOrtGpuPrefer(opts = {}) {
+    try {
+        const { resolveOrtGpuManualPackage } = require('./engine-download-info');
+        const pkg = resolveOrtGpuManualPackage(opts || {});
+        if (pkg?.target === 'cuda12' || pkg?.target === 'cuda13') {
+            return { target: pkg.target, fileName: pkg.fileName || '' };
+        }
+    } catch (_) { /* optional */ }
+    const req = String(opts.ortGpuRequirement || '').trim();
+    if (/<\s*1\.27/.test(req)) return { target: 'cuda12' };
+    if (/>=\s*1\.27/.test(req)) return { target: 'cuda13' };
+    return null;
+}
+
+/**
+ * Pick one onnxruntime-gpu wheel when several were selected.
+ * @param {string[]} gpuPaths
+ * @param {object} [opts]
+ * @returns {string}
+ */
+function pickOrtGpuWheel(gpuPaths, opts = {}) {
+    const list = (Array.isArray(gpuPaths) ? gpuPaths : []).filter(Boolean);
+    if (list.length <= 1) return list[0] || '';
+    const prefer = resolveOrtGpuPrefer(opts);
+    if (prefer?.fileName) {
+        const want = String(prefer.fileName).toLowerCase();
+        const hit = list.find((p) => path.basename(p).toLowerCase() === want);
+        if (hit) return hit;
+    }
+    const wantCuda13 = prefer?.target === 'cuda13';
+    const scored = list.map((p) => {
+        const ver = parseWhlVersion(p);
+        const parts = ver.split('.').map((x) => Number(x) || 0);
+        const minor = (parts[0] || 0) * 1000 + (parts[1] || 0);
+        const isCuda13ish = minor >= 1027; // 1.27+
+        let score = 0;
+        if (wantCuda13) score += isCuda13ish ? 1000 : 0;
+        else if (prefer?.target === 'cuda12') score += isCuda13ish ? 0 : 1000;
+        else score += 100;
+        // Prefer higher patch within the matching band.
+        score += Math.min(99, (parts[0] || 0) * 10 + (parts[1] || 0) + Math.min(9, parts[2] || 0) / 10);
+        return { p, score, ver };
+    });
+    scored.sort((a, b) => b.score - a.score || compareWhlSemver(b.ver, a.ver));
+    return scored[0].p;
+}
+
+/**
+ * Auto-fix mutual-exclusion / duplicate ORT wheels and order install so GPU wins.
+ * Does not touch torch CPU/CUDA mixes (those still hard-fail in conflict check).
+ *
+ * @param {string[]} paths already normalized / size-checked
+ * @param {object} [opts] ortGpuRequirement / ortGpuDesiredTarget / ortGpuTarget
+ * @returns {{ paths: string[], dropped: string[], notes: string[], note: string }}
+ */
+function resolveWhlVariantSelection(paths, opts = {}) {
+    const list = Array.isArray(paths) ? paths.slice() : [];
+    /** @type {string[]} */
+    const dropped = [];
+    /** @type {string[]} */
+    const notes = [];
+
+    const isOrtCpu = (p) => guessPackageIdFromWhl(p) === 'onnxruntime';
+    const isOrtGpu = (p) => guessPackageIdFromWhl(p) === 'onnxruntime-gpu';
+
+    const ortCpu = list.filter(isOrtCpu);
+    const ortGpu = list.filter(isOrtGpu);
+
+    let kept = list.slice();
+
+    if (ortCpu.length && ortGpu.length) {
+        for (const p of ortCpu) {
+            dropped.push(p);
+            notes.push(`已自动忽略 CPU 版 onnxruntime（${path.basename(p)}），保留 onnxruntime-gpu`);
+        }
+        kept = kept.filter((p) => !isOrtCpu(p));
+    }
+
+    const gpuLeft = kept.filter(isOrtGpu);
+    if (gpuLeft.length > 1) {
+        const keepOne = pickOrtGpuWheel(gpuLeft, opts);
+        for (const p of gpuLeft) {
+            if (path.resolve(p).toLowerCase() === path.resolve(keepOne).toLowerCase()) continue;
+            dropped.push(p);
+            notes.push(`已自动忽略多余的 onnxruntime-gpu（${path.basename(p)}），保留 ${path.basename(keepOne)}`);
+        }
+        const keepKey = path.resolve(keepOne).toLowerCase();
+        kept = kept.filter((p) => !isOrtGpu(p) || path.resolve(p).toLowerCase() === keepKey);
+    }
+
+    // Install onnxruntime-gpu last so --force-reinstall wins over any CPU ORT leftovers.
+    const nonGpu = kept.filter((p) => !isOrtGpu(p));
+    const gpuTail = kept.filter(isOrtGpu);
+    const ordered = nonGpu.concat(gpuTail);
+
+    return {
+        paths: ordered,
+        dropped,
+        notes,
+        note: notes.join('；'),
+    };
+}
+
+/**
+ * @param {string[]} paths
+ * @param {object} [opts]
+ * @returns {{ ok: true, paths: string[], dropped?: string[], notes?: string[], note?: string } | { ok: false, error: string }}
+ */
+function validateWhlFiles(paths, opts = {}) {
     const list = normalizeWhlPaths(paths);
     if (!list.length) {
         return { ok: false, error: '请选择至少一个 .whl 文件' };
@@ -60,7 +197,21 @@ function validateWhlFiles(paths) {
             return { ok: false, error: `文件过小，可能不是有效 wheel：${path.basename(filePath)}` };
         }
     }
-    return { ok: true, paths: list };
+    const resolved = resolveWhlVariantSelection(list, opts);
+    if (!resolved.paths.length) {
+        return { ok: false, error: '自动调整后没有可安装的 .whl（请至少保留 onnxruntime-gpu 或其它组件）' };
+    }
+    const conflict = findWhlVariantConflictError(resolved.paths);
+    if (conflict) {
+        return { ok: false, error: conflict };
+    }
+    return {
+        ok: true,
+        paths: resolved.paths,
+        dropped: resolved.dropped,
+        notes: resolved.notes,
+        note: resolved.note,
+    };
 }
 
 /**
@@ -73,12 +224,50 @@ function guessPackageIdFromWhl(filePath) {
     return name.replace(/_/g, '-').toLowerCase();
 }
 
+const TORCH_FAMILY_IDS = new Set(['torch', 'torchaudio', 'torchvision']);
+
+/**
+ * Build a clear Chinese error when multiple wheels map to the same pip package
+ * (e.g. CPU + CUDA torch). onnxruntime CPU/GPU mixes are auto-resolved earlier.
+ * @param {string[]} paths
+ * @returns {string|null}
+ */
+function findWhlVariantConflictError(paths) {
+    const list = Array.isArray(paths) ? paths : [];
+    /** @type {Map<string, string[]>} */
+    const byPkg = new Map();
+    for (const filePath of list) {
+        const id = guessPackageIdFromWhl(filePath);
+        if (!id) continue;
+        const base = path.basename(String(filePath || ''));
+        if (!byPkg.has(id)) byPkg.set(id, []);
+        byPkg.get(id).push(base);
+    }
+
+    for (const [pkgId, files] of byPkg) {
+        if (files.length <= 1) continue;
+        if (TORCH_FAMILY_IDS.has(pkgId)) {
+            const hasCuda = files.some((f) => /\+cu\d+/i.test(f));
+            const hasCpu = files.some((f) => !/\+cu\d+/i.test(f));
+            if (hasCuda && hasCpu) {
+                return `不能同时选择 CPU 与 CUDA 版 ${pkgId}（${files.join('、')}）。有 NVIDIA 独显请只保留 +cu 版；无独显请只保留无 +cu 的 CPU 版。`;
+            }
+            if (hasCuda) {
+                return `不能同时选择多种 CUDA 变体的 ${pkgId}（${files.join('、')}）。请只保留与本机驱动匹配的一项（如 cu126 / cu128 / cu130）。`;
+            }
+            return `不能同时安装多个 ${pkgId}（${files.join('、')}）。请只保留一个 .whl。`;
+        }
+        return `不能同时安装多个 ${pkgId}（${files.join('、')}）。请只保留一个 .whl。`;
+    }
+    return null;
+}
+
 /**
  * @param {string[]} wheelPaths
  * @param {{ indexUrl?: string, trustedHost?: string, allowIndex?: boolean }} [opts]
  */
 function buildLocalPipInstallArgs(wheelPaths, opts = {}) {
-    const validated = validateWhlFiles(wheelPaths);
+    const validated = validateWhlFiles(wheelPaths, opts);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
@@ -138,8 +327,39 @@ function installLocalWheels(opts = {}) {
     }
 
     let args;
+    /** @type {string[]} */
+    let validatedPaths = [];
+    let adjustNote = '';
     try {
-        args = buildLocalPipInstallArgs(opts.wheelPaths, opts);
+        const validated = validateWhlFiles(opts.wheelPaths, opts);
+        if (!validated.ok) {
+            return Promise.resolve({ ok: false, error: validated.error });
+        }
+        validatedPaths = validated.paths;
+        adjustNote = String(validated.note || '');
+        // Paths already validated — build argv without re-running resolve.
+        if (opts.allowIndex) {
+            const indexUrl = String(opts.indexUrl || DEFAULT_PIP_INDEX).trim() || DEFAULT_PIP_INDEX;
+            let trustedHost = String(opts.trustedHost || '').trim();
+            if (!trustedHost) {
+                try {
+                    trustedHost = new URL(indexUrl).hostname || DEFAULT_PIP_TRUSTED_HOST;
+                } catch (_) {
+                    trustedHost = DEFAULT_PIP_TRUSTED_HOST;
+                }
+            }
+            args = [
+                '-m', 'pip', 'install', '--force-reinstall',
+                '-i', indexUrl, '--trusted-host', trustedHost,
+                ...validatedPaths,
+            ];
+        } else {
+            args = [
+                '-m', 'pip', 'install', '--force-reinstall',
+                '--no-deps', '--no-index', '--no-cache-dir', '--disable-pip-version-check',
+                ...validatedPaths,
+            ];
+        }
     } catch (err) {
         return Promise.resolve({ ok: false, error: err.message || String(err) });
     }
@@ -154,13 +374,16 @@ function installLocalWheels(opts = {}) {
             return;
         }
 
-        const names = normalizeWhlPaths(opts.wheelPaths).map((p) => path.basename(p));
+        const names = validatedPaths.map((p) => path.basename(p));
         onProgress?.({
             type: 'progress',
             stage: 'install',
             percent: 5,
-            detail: `正在本地安装 ${names.length} 个 wheel…`,
+            detail: adjustNote
+                ? `${adjustNote}。正在本地安装 ${names.length} 个组件，请耐心等待…`
+                : `正在本地安装 ${names.length} 个组件，请耐心等待…`,
             files: names,
+            note: adjustNote,
         });
 
         /** @type {import('child_process').ChildProcessWithoutNullStreams} */
@@ -188,6 +411,7 @@ function installLocalWheels(opts = {}) {
         let settled = false;
         const lines = [];
         let lastDetail = '';
+        let progressTick = 0;
         const finish = (result) => {
             if (settled) return;
             settled = true;
@@ -243,10 +467,13 @@ function installLocalWheels(opts = {}) {
                 lines.push(trimmed);
                 if (lines.length > 80) lines.shift();
                 lastDetail = trimmed.slice(0, 200);
+                progressTick += 1;
+                // Pip rarely emits percent; climb slowly while lines arrive so UI isn't stuck at 40%.
+                const softPct = Math.min(88, 35 + Math.min(50, Math.floor(progressTick * 1.2)));
                 onProgress?.({
                     type: 'progress',
                     stage: 'install',
-                    percent: 40,
+                    percent: softPct,
                     detail: lastDetail,
                 });
             }
@@ -270,7 +497,8 @@ function installLocalWheels(opts = {}) {
                 finish({
                     ok: true,
                     installed: names,
-                    files: normalizeWhlPaths(opts.wheelPaths),
+                    files: validatedPaths,
+                    note: adjustNote,
                     logTail,
                 });
                 return;
@@ -294,6 +522,10 @@ module.exports = {
     normalizeWhlPaths,
     validateWhlFiles,
     guessPackageIdFromWhl,
+    parseWhlVersion,
+    resolveWhlVariantSelection,
+    pickOrtGpuWheel,
+    findWhlVariantConflictError,
     buildLocalPipInstallArgs,
     installLocalWheels,
 };

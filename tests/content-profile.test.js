@@ -40,6 +40,9 @@ const {
     FILM_PATCH,
     APPLY_CONFIDENCE,
     SENSE_OWNED_KEYS,
+    PROFILE_OWNED_KEYS,
+    optionPatchForProfile,
+    pickSenseOverrides,
 } = require('../src/js/content-profile-core');
 
 describe('content-profile-core', () => {
@@ -51,7 +54,7 @@ describe('content-profile-core', () => {
         });
         assert.strictEqual(hit.profile, 'av_soft');
         assert.ok(hit.confidence >= APPLY_CONFIDENCE);
-        assert.ok(hit.presetId === 'ja-av-anime-whisper-translate');
+        assert.ok(hit.presetId === 'ja-av-anime-whisper-firered');
     });
 
     it('skips codec-looking product codes', () => {
@@ -114,8 +117,21 @@ describe('content-profile-core', () => {
         assert.strictEqual(resolved.overrides.engineAsrModel, 'anime-whisper');
         assert.strictEqual(resolved.overrides.engineMtModel, 'sakura-galtransl-7b-q6k');
         assert.strictEqual(resolved.overrides.filmAudioEnhance, false);
+        assert.strictEqual(resolved.overrides.contentProfile, 'av_soft');
+        assert.strictEqual(resolved.overrides.strongAv, true);
         assert.strictEqual(base.vadSensitive, false, 'must not mutate base');
         assert.ok(SENSE_OWNED_KEYS.includes('language'));
+        assert.ok(SENSE_OWNED_KEYS.includes('contentProfile'));
+        assert.ok(PROFILE_OWNED_KEYS.includes('contentProfile'));
+        const soft = optionPatchForProfile('av_soft', { task: 'translate' });
+        assert.strictEqual(soft.contentProfile, 'av_soft');
+        assert.strictEqual(soft.strongAv, true);
+        const merged = mergeSenseOverrides(
+            { postBatchInterjectionMode: 'clear' },
+            pickSenseOverrides(soft),
+        );
+        assert.strictEqual(merged.contentProfile, 'av_soft');
+        assert.strictEqual(merged.sakuraNsfwPrompt, true);
     });
 
     it('skips MT model override when task is transcribe', () => {
@@ -128,16 +144,18 @@ describe('content-profile-core', () => {
         assert.ok(!Object.prototype.hasOwnProperty.call(resolved.overrides, 'engineMtModel'));
     });
 
-    it('recommendFormMtModel picks Opus auto for engine mode by language', () => {
+    it('recommendFormMtModel maps legacy engine mode to llm (no Opus)', () => {
         const rec = recommendFormMtModel({
             translateMode: 'engine',
             language: 'ja',
             device: 'cuda',
-            installedModels: [{ id: 'opus-mt-ja-zh', installed: true }],
+            installedModels: [
+                { id: 'opus-mt-ja-zh', installed: true },
+                { id: 'sakura-1.5b', installed: true },
+            ],
         });
-        assert.strictEqual(rec.mode, 'engine');
-        assert.strictEqual(rec.id, '');
-        assert.strictEqual(rec.preferId, 'opus-mt-ja-zh');
+        assert.strictEqual(rec.mode, 'llm');
+        assert.ok(!/opus/i.test(rec.preferId || ''));
     });
 
     it('recommendFormMtModel prefers Sakura for JA llm and respects low-vram tier', () => {
@@ -318,10 +336,14 @@ describe('content-profile-core', () => {
         const overrides = { engineMtModel: 'sakura-1.5b' };
         assert.strictEqual(
             describeSenseMtForUi(overrides, { task: 'translate', translateMode: 'smart' }),
-            '智能翻译',
+            '混合翻译',
         );
         assert.strictEqual(
             describeSenseMtForUi(overrides, { task: 'dual', smartTranslate: true }),
+            '混合翻译',
+        );
+        assert.strictEqual(
+            describeSenseMtForUi(overrides, { task: 'translate', translateMode: 'dialog' }),
             '智能翻译',
         );
         assert.strictEqual(
@@ -799,6 +821,43 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b-q6k');
     });
 
+    it('refineSenseModels prefers GalTransl over Hy-MT2 for av_soft when both installed', () => {
+        const { overrides } = refineSenseModels(
+            {
+                language: 'ja',
+                engineAsrModel: 'anime-whisper',
+            },
+            {
+                profile: 'av_soft',
+                language: 'ja',
+                task: 'translate',
+                presetId: 'ja-av-anime-whisper-firered',
+                device: 'cuda',
+                vramGb: 16,
+                installedModels: [
+                    { id: 'anime-whisper', installed: true },
+                    { id: 'hy-mt2-7b', installed: true },
+                    { id: 'sakura-galtransl-7b-q6k', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b-q6k');
+    });
+
+    it('recommendFormMtModel prefers GalTransl over Hy-MT2 for smart hybrid when installed', () => {
+        const rec = recommendFormMtModel({
+            translateMode: 'smart',
+            language: 'ja',
+            profile: 'av_soft',
+            installedModels: [
+                { id: 'hy-mt2-7b', installed: true },
+                { id: 'sakura-galtransl-7b', installed: true },
+            ],
+        });
+        assert.strictEqual(rec.preferId, 'sakura-galtransl-7b');
+        assert.match(rec.reason, /混合翻译/);
+    });
+
     it('refineSenseModels skips GalTransl Q6 on mid tier for AV soft', () => {
         const { overrides } = refineSenseModels(
             {
@@ -823,7 +882,7 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b');
     });
 
-    it('refineSenseModels keeps Gal/Sakura as declared target when neither installed', () => {
+    it('refineSenseModels keeps GalTransl as declared target when neither installed', () => {
         const { overrides, notes } = refineSenseModels(
             {
                 language: 'ja',
@@ -839,12 +898,12 @@ describe('content-profile-core', () => {
                 ],
             },
         );
-        // Mid tier (no VRAM hint): prefer IQ4 as pending download target
+        // Mid-tier default (no VRAM) skips Q6 → GalTransl IQ4 first.
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b');
         assert.ok(notes.some((n) => /sakura-galtransl-7b/i.test(n)));
     });
 
-    it('refineSenseModels prefers Gal/Sakura over installed Opus for JA AV', () => {
+    it('refineSenseModels prefers GalTransl over installed Opus for JA AV', () => {
         const { overrides } = refineSenseModels(
             {
                 language: 'ja',
@@ -868,7 +927,7 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b');
     });
 
-    it('refineSenseModels declares Gal/Sakura for JA soft when model catalog is empty', () => {
+    it('refineSenseModels declares GalTransl for JA soft when model catalog is empty', () => {
         const { overrides } = refineSenseModels(
             { language: 'ja', engineMtModel: 'sakura-1.5b' },
             {
@@ -881,7 +940,7 @@ describe('content-profile-core', () => {
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b');
     });
 
-    it('refineSenseModels keeps Gal/Sakura pending for soft AV when only general LLM installed', () => {
+    it('refineSenseModels keeps GalTransl pending for soft AV when only general LLM installed', () => {
         const { overrides, notes } = refineSenseModels(
             {
                 language: 'ja',
@@ -898,7 +957,7 @@ describe('content-profile-core', () => {
             },
         );
         assert.strictEqual(overrides.engineMtModel, 'sakura-galtransl-7b');
-        assert.ok(notes.some((n) => /待下载|galtransl/i.test(n)));
+        assert.ok(notes.some((n) => /待下载|sakura-galtransl/i.test(n)));
     });
 
     it('refineSenseModels never selects Sakura for non-Japanese film', () => {
@@ -996,6 +1055,99 @@ describe('content-profile-core', () => {
         );
         assert.strictEqual(changed, false);
         assert.strictEqual(options.engineMtModel, 'sakura-1.5b');
+    });
+
+    it('sanitizeSakuraMtForLanguage keeps LN-Korean for Korean→ZH', () => {
+        const { options, changed } = sanitizeSakuraMtForLanguage(
+            {
+                language: 'ko',
+                subtitleTargetLang: 'zh-Hans',
+                engineMtModel: 'sakura-ln-korean-7b',
+            },
+            'ko',
+        );
+        assert.strictEqual(changed, false);
+        assert.strictEqual(options.engineMtModel, 'sakura-ln-korean-7b');
+    });
+
+    it('sanitizeSakuraMtForLanguage swaps JA Sakura to LN-Korean when KO source installed', () => {
+        const { options, changed } = sanitizeSakuraMtForLanguage(
+            {
+                language: 'ko',
+                subtitleTargetLang: 'zh-Hans',
+                engineMtModel: 'sakura-1.5b',
+            },
+            'ko',
+            {
+                installedModels: [
+                    { id: 'sakura-ln-korean-7b', installed: true },
+                    { id: 'sakura-1.5b', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(changed, true);
+        assert.strictEqual(options.engineMtModel, 'sakura-ln-korean-7b');
+    });
+
+    it('refineSenseModels prefers LN-Korean for Korean→ZH', () => {
+        const { overrides } = refineSenseModels(
+            {
+                language: 'ko',
+                subtitleTargetLang: 'zh-Hans',
+                engineMtModel: 'sakura-1.5b',
+            },
+            {
+                profile: 'film',
+                language: 'ko',
+                task: 'translate',
+                installedModels: [
+                    { id: 'sakura-1.5b', installed: true },
+                    { id: 'sakura-ln-korean-7b', installed: true },
+                    { id: 'qwen25-7b', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(overrides.engineMtModel, 'sakura-ln-korean-7b');
+    });
+
+    it('refineSenseModels prefers LN-ko2ja for Korean→JA', () => {
+        const { overrides } = refineSenseModels(
+            {
+                language: 'ko',
+                subtitleTargetLang: 'ja',
+                engineMtModel: 'translategemma-4b',
+            },
+            {
+                profile: 'film',
+                language: 'ko',
+                task: 'translate',
+                installedModels: [
+                    { id: 'sakura-ln-ko2ja-14b', installed: true },
+                    { id: 'translategemma-4b', installed: true },
+                ],
+            },
+        );
+        assert.strictEqual(overrides.engineMtModel, 'sakura-ln-ko2ja-14b');
+    });
+
+    it('sanitizeSakuraMtForLanguage strips Sakura when 成片 is English (source ja)', () => {
+        const { options, changed, note } = sanitizeSakuraMtForLanguage(
+            {
+                language: 'ja',
+                engineMtModel: 'sakura-1.5b',
+                subtitleTargetLang: 'en',
+                smartTranslateHybridMt: true,
+            },
+            'ja',
+            { installedModels: [
+                { id: 'qwen25-7b', installed: true },
+                { id: 'translategemma-4b', installed: true },
+            ] },
+        );
+        assert.strictEqual(changed, true);
+        assert.ok(!/sakura/i.test(String(options.engineMtModel || '')));
+        assert.strictEqual(options.smartTranslateHybridMt, true);
+        assert.ok(/成片|English|非中文/i.test(note));
     });
 
     it('collectSenseSupportGaps does not prefer Sakura for English film', () => {
@@ -1097,6 +1249,7 @@ describe('content-profile-core', () => {
         assert.ok(ids.includes('anime-whisper'));
         assert.ok(ids.includes('whisperseg-asmr'));
         assert.ok(ids.includes('sakura-galtransl-7b'));
+        assert.ok(!ids.includes('hy-mt2-7b'));
     });
 
     it('collectSenseSupportGaps treats JA 1.5B as satisfying av_soft preference', () => {

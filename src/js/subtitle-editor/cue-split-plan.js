@@ -118,7 +118,7 @@
             const idx = typeof deps.getCursorIndex === 'function'
                 ? deps.getCursorIndex(text)
                 : text.length;
-            const parts = splitApi.splitTextAtIndex(text, idx);
+            const parts = splitApi.splitTextAtIndex(text, idx, { force: true });
             return parts
                 ? { cues: build(parts) }
                 : { error: '请将光标置于文本中间再分割' };
@@ -134,13 +134,34 @@
             const ratio = (atMs - cue.startMs) / (endMs - cue.startMs);
             const approx = Math.min(text.length - 1, Math.max(1, Math.round(text.length * ratio)));
             const snapped = splitApi.snapSplitIndexNearPunctuation(text, approx, 12);
-            let parts = splitApi.splitTextAtIndex(text, snapped);
-            if (!parts) parts = splitApi.splitTextAtIndex(text, Math.floor(text.length / 2));
+            let parts = splitApi.splitTextAtIndex(text, snapped, { force: true });
+            if (!parts) parts = splitApi.splitTextAtIndex(text, Math.floor(text.length / 2), { force: true });
             if (!parts) return { error: '文本过短，无法在播放头处分割' };
             const cues = splitAtPlayheadMidpoint(cue, atMs, parts[0], parts[1], getEndMs);
             return cues ? { cues } : { error: '播放头位置无效' };
         }
         return { error: '未知的分割方式' };
+    }
+
+    /**
+     * Plan merging multiple lines in one cue into a single line (no timing change).
+     * @param {{ text?: string }} cue
+     * @param {{ splitApi?: object }} deps
+     */
+    function planMergeCueLines(cue, deps = {}) {
+        const splitApi = deps.splitApi;
+        if (!splitApi?.mergeTextLines) {
+            return { error: '分割核心未加载' };
+        }
+        const text = String(cue?.text ?? '');
+        if (!text.trim()) {
+            return { error: '当前字幕文本为空，无法合并' };
+        }
+        const merged = splitApi.mergeTextLines(text);
+        if (!merged) {
+            return { error: '文本中没有多个换行，无法合并为单行' };
+        }
+        return { text: merged };
     }
 
     const api = {
@@ -152,6 +173,7 @@
         splitAtPlayheadMidpoint,
         connectedSplitGuard,
         planCueSplit,
+        planMergeCueLines,
     };
 
     global.TransubEditorParts = global.TransubEditorParts || {};

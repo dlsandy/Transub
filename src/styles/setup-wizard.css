@@ -1,0 +1,1571 @@
+/**
+ * Setup wizard + shared env-check / settings-env chips.
+ * --wiz-* must live on body.factory-shell (same node as --fx-*), not :root —
+ * otherwise dark --fx-* remaps never reach wizard surfaces.
+ */
+body.factory-shell {
+    --wiz-accent: var(--fx-accent, #c30d23);
+    --wiz-accent-hover: var(--fx-accent-hover, #a30b1d);
+    --wiz-accent-soft: var(--fx-accent-soft, rgba(195, 13, 35, 0.1));
+    --wiz-accent-line: var(--fx-accent-line, rgba(195, 13, 35, 0.28));
+    --wiz-surface: var(--fx-surface, #ffffff);
+    --wiz-bg: var(--fx-bg, #f3f5f7);
+    --wiz-line: var(--fx-line, #cfd5dc);
+    --wiz-line-soft: var(--fx-line-soft, #e2e7ec);
+    --wiz-text: var(--fx-text, #15181c);
+    --wiz-muted: var(--fx-muted, #5f6670);
+    --wiz-faint: var(--fx-faint, #8b939e);
+    --wiz-ok: var(--fx-ok-text, #059669);
+    --wiz-ok-soft: var(--fx-ok-soft, #ecfdf5);
+    --wiz-radius: var(--fx-radius, 0.5rem);
+}
+
+/* extracted — will be rewritten by hand polish */
+#setupWizardModal .env-check-list.is-env-flash {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--wiz-accent) 45%, transparent);
+    transition: box-shadow 0.35s ease;
+    border-radius: 0.5rem;
+    }
+
+#paramsModal .settings-env-purpose,
+    #setupWizardModal .settings-env-purpose {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+    color: var(--fx-muted, #5f6670);
+    background: color-mix(in srgb, var(--fx-chrome, #e8ecf0) 70%, transparent);
+    border: 1px solid var(--fx-line-soft, #e2e7ec);
+    }
+
+#paramsModal .settings-env-overview,
+    #setupWizardModal .settings-env-overview {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+    }
+
+@media (max-width: 640px) {
+    #paramsModal .settings-env-overview,
+    #setupWizardModal .settings-env-overview {
+    grid-template-columns: 1fr;
+    }
+    }
+
+#paramsModal .settings-env-chip,
+    #setupWizardModal .settings-env-chip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    text-align: left;
+    padding: 0.55rem 0.65rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--fx-line, #cfd5dc);
+    background: color-mix(in srgb, var(--fx-surface, #ffffff) 85%, transparent);
+    cursor: pointer;
+    min-width: 0;
+    }
+
+#paramsModal .settings-env-chip:hover,
+    #setupWizardModal .settings-env-chip:hover {
+    border-color: var(--fx-accent-line, rgba(195, 13, 35, 0.28));
+    background: var(--fx-surface, #ffffff);
+    }
+
+#paramsModal .settings-env-chip:focus-visible,
+    #setupWizardModal .settings-env-chip:focus-visible {
+    outline: 2px solid var(--fx-accent, #c30d23);
+    outline-offset: 1px;
+    }
+
+#paramsModal .settings-env-chip-kicker,
+    #setupWizardModal .settings-env-chip-kicker {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--fx-muted, #5f6670);
+    }
+
+#paramsModal .settings-env-chip-state,
+    #setupWizardModal .settings-env-chip-state {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--fx-text, #15181c);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    }
+
+#paramsModal .settings-env-chip[data-state="ok"],
+    #setupWizardModal .settings-env-chip[data-state="ok"] {
+    border-color: color-mix(in srgb, var(--fx-ok-text, #4fb000) 45%, var(--fx-line, #cfd5dc));
+    }
+
+#paramsModal .settings-env-chip[data-state="ok"] .settings-env-chip-state,
+    #setupWizardModal .settings-env-chip[data-state="ok"] .settings-env-chip-state {
+    color: var(--fx-ok-text, #4fb000);
+    }
+
+#paramsModal .settings-env-chip[data-state="warn"],
+    #setupWizardModal .settings-env-chip[data-state="warn"] {
+    border-color: #fcd34d;
+    }
+
+#paramsModal .settings-env-chip[data-state="warn"] .settings-env-chip-state,
+    #setupWizardModal .settings-env-chip[data-state="warn"] .settings-env-chip-state {
+    color: #b45309;
+    }
+
+#paramsModal .settings-env-chip[data-state="err"],
+    #setupWizardModal .settings-env-chip[data-state="err"] {
+    border-color: #fca5a5;
+    }
+
+#paramsModal .settings-env-chip[data-state="err"] .settings-env-chip-state,
+    #setupWizardModal .settings-env-chip[data-state="err"] .settings-env-chip-state {
+    color: #b91c1c;
+    }
+
+#paramsModal .settings-env-chip[data-state="busy"] .settings-env-chip-state,
+    #setupWizardModal .settings-env-chip[data-state="busy"] .settings-env-chip-state {
+    color: var(--fx-accent-mute, #b01022);
+    }
+
+#paramsModal .settings-env-steps,
+    #setupWizardModal .settings-env-steps {
+    margin: 0 0 0.65rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 0.55rem;
+    border: 1px dashed var(--fx-line, #cfd5dc);
+    background: color-mix(in srgb, var(--fx-surface, #ffffff) 55%, transparent);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--fx-muted, #5f6670);
+    }
+
+#paramsModal .settings-env-steps ol,
+    #setupWizardModal .settings-env-steps ol {
+    margin: 0.25rem 0 0;
+    padding-left: 1.1rem;
+    }
+
+#paramsModal .settings-env-actions button:disabled,
+    #paramsModal .settings-env-more-menu button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    }
+
+#paramsModal .settings-env-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    }
+
+#paramsModal .settings-env-more {
+    position: relative;
+    }
+
+#paramsModal .settings-env-more > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.375rem 0.75rem;
+    border: 1px solid var(--fx-line, #cfd5dc);
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    background: color-mix(in srgb, var(--fx-surface, #ffffff) 70%, transparent);
+    color: var(--fx-text, #15181c);
+    }
+
+#paramsModal .settings-env-more > summary::-webkit-details-marker {
+    display: none;
+    }
+
+#paramsModal .settings-env-more > summary::after {
+    content: "▾";
+    margin-left: 0.35rem;
+    font-size: 0.7rem;
+    opacity: 0.7;
+    }
+
+#paramsModal .settings-env-more[open] > summary {
+    border-color: var(--fx-accent-line, rgba(195, 13, 35, 0.28));
+    background: var(--fx-surface, #ffffff);
+    }
+
+#paramsModal .settings-env-more-menu {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    top: calc(100% + 4px);
+    min-width: 12.5rem;
+    padding: 0.25rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--fx-line, #cfd5dc);
+    background: var(--fx-surface, #ffffff);
+    box-shadow: 0 8px 24px rgba(21, 24, 28, 0.12);
+    }
+
+#paramsModal .settings-env-more-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.45rem 0.65rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: transparent;
+    font-size: 0.8125rem;
+    color: var(--fx-text, #15181c);
+    cursor: pointer;
+    }
+
+#paramsModal .settings-env-more-menu button:hover {
+    background: var(--fx-rail-well, rgba(21, 24, 28, 0.04));
+    }
+
+#previewModal:not(.hidden), #setupWizardModal:not(.hidden), #envCheckModal:not(.hidden),
+    #envFixProgressModal:not(.hidden), #envFixStartModal:not(.hidden),
+    #appConfirmModal:not(.hidden), #batchSummaryModal:not(.hidden), #shortcutsModal:not(.hidden), #manualWhlModal:not(.hidden), #cliCommandModal:not(.hidden) { display: flex; }
+
+/* envCheck uses a z-* class that may be missing from prebuilt Tailwind — set explicitly. */
+    #envCheckModal {
+    z-index: 4000;
+    }
+
+#setupWizardModal .wizard-step { display: none; }
+
+#setupWizardModal .wizard-step.active { display: block; }
+
+#setupWizardModal > div {
+    position: relative;
+    width: min(100%, 44rem);
+    max-height: min(92vh, 48rem);
+    }
+
+#setupWizardDetectWait {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(249, 250, 251, 0.88);
+    backdrop-filter: blur(2px);
+    }
+
+#setupWizardDetectWait:not(.hidden) {
+    display: flex;
+    }
+
+#setupWizardModal .wizard-choice {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    border: 1px solid var(--wiz-line-soft); border-radius: 0.75rem; padding: 0.75rem 0.85rem;
+    cursor: pointer; background: var(--wiz-surface); color: var(--wiz-text);
+    transition: border-color .15s, background .15s;
+    }
+
+#setupWizardModal .wizard-choice:hover { border-color: var(--wiz-accent-line); background: var(--wiz-accent-soft); }
+
+#setupWizardModal .wizard-choice:has(input:checked) {
+    border-color: var(--wiz-accent); background: var(--wiz-accent-soft); box-shadow: inset 0 0 0 1px var(--wiz-accent);
+    }
+
+#setupWizardModal .wizard-progress-dot {
+    width: 0.45rem; height: 0.45rem; border-radius: 999px; background: #d1d5db;
+    }
+
+#setupWizardModal .wizard-progress-dot.active { background: var(--wiz-accent); }
+
+#setupWizardModal .wizard-progress-dot.done { background: var(--wiz-accent-line); }
+
+#setupWizardModal .wizard-dd {
+    position: relative;
+    }
+
+#setupWizardModal .wizard-dd-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background: #fff;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: #374151;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+#setupWizardModal .wizard-dd-toggle:hover { border-color: var(--wiz-accent-line); background: var(--wiz-accent-soft); }
+
+#setupWizardModal .wizard-dd.open .wizard-dd-toggle {
+    border-color: var(--wiz-accent-line);
+    box-shadow: 0 0 0 2px var(--wiz-accent-soft);
+    }
+
+#setupWizardModal .wizard-dd-summary {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    }
+
+#setupWizardModal .wizard-dd-chevron {
+    color: #9ca3af;
+    font-size: 0.65rem;
+    transition: transform 0.12s ease;
+    flex-shrink: 0;
+    }
+
+#setupWizardModal .wizard-dd.open .wizard-dd-chevron { transform: rotate(180deg); }
+
+/* In-flow panel (not absolute) so overflow:auto parents don't clip / hide styles */
+    #setupWizardModal .wizard-model-pick {
+    display: none;
+    max-height: 10.5rem;
+    overflow-y: auto;
+    margin-top: 0.35rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background: #fff;
+    padding: 0.35rem;
+    flex-direction: column;
+    gap: 0.2rem;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+    }
+
+#setupWizardModal .wizard-dd.open .wizard-model-pick { display: flex; }
+
+#setupWizardModal .wizard-model-pick label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    padding: 0.35rem 0.45rem;
+    border-radius: 0.4rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1.25;
+    color: #374151;
+    }
+
+#setupWizardModal .wizard-model-pick label:hover { background: #f9fafb; }
+
+#setupWizardModal .wizard-model-pick label:has(input:checked) {
+    background: var(--wiz-accent-soft);
+    color: #5b21b6;
+    }
+
+#setupWizardModal .wizard-model-pick .model-id {
+    display: block;
+    font-size: 0.65rem;
+    color: #9ca3af;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+#setupWizardModal select {
+    display: block;
+    width: 100%;
+    margin-top: 0.25rem;
+    border: 1px solid var(--wiz-line-soft);
+    border-radius: 0.5rem;
+    background: var(--wiz-surface);
+    color: var(--wiz-text);
+    padding: 0.4rem 0.55rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    }
+
+#setupWizardModal select:focus {
+    outline: none;
+    border-color: var(--wiz-accent-line);
+    box-shadow: 0 0 0 2px var(--wiz-accent-soft);
+    }
+
+/* Confirm step: explicit spacing (do not rely on purged Tailwind gap/grid utilities) */
+    #setupWizardModal .wizard-step.active[data-wizard-step="confirm"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    }
+
+#setupWizardModal .wizard-plan-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem 0.85rem;
+    }
+
+#setupWizardModal .wizard-plan-meta > label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+    margin: 0;
+    font-size: 0.75rem;
+    }
+
+#setupWizardModal .wizard-plan-meta > label > span {
+    color: #374151;
+    font-weight: 600;
+    line-height: 1.2;
+    }
+
+#setupWizardModal .wizard-plan-meta select {
+    margin-top: 0;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    }
+
+#setupWizardModal .wizard-plan-models {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    }
+
+#setupWizardModal .wizard-plan-models > .wizard-plan-model-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+    }
+
+#setupWizardModal .wizard-plan-models .wizard-plan-model-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #374151;
+    line-height: 1.2;
+    }
+
+#setupWizardModal .wizard-dd-toggle {
+    min-height: 2.25rem;
+    }
+
+#setupWizardModal #setupWizardModelList {
+    max-height: 6.5rem;
+    overflow-y: auto;
+    }
+
+/* First-run system check (Jasna-style checklist, Transub light theme) */
+    #envCheckModal:not(.hidden) { display: flex; }
+
+#envCheckModal .env-check-card, #setupWizardModal .env-check-card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 36rem;
+    background: #fff;
+    border-radius: 1rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+    overflow: hidden;
+    }
+
+#envCheckModal .env-check-list {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    max-height: min(52vh, 28rem);
+    overflow-y: auto;
+    }
+
+#setupWizardModal .env-check-list {
+    background: var(--wiz-bg, #f8fafc);
+    border: 1px solid var(--wiz-line-soft, #e2e8f0);
+    border-radius: var(--wiz-radius);
+    overflow: hidden;
+    max-height: 13.5rem;
+    overflow-y: auto;
+}
+
+#setupWizardModal .wizard-step.active[data-wizard-step="prepare"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    min-height: stretch;
+    overflow: hidden;
+}
+
+#setupWizardModal .wizard-step.active[data-wizard-step="prepare"] #setupWizardDetectList {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+}
+
+#envCheckModal .env-check-row, #setupWizardModal .env-check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--wiz-line-soft, #e2e8f0);
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    }
+
+#envCheckModal .env-check-row:last-child, #setupWizardModal .env-check-row:last-child { border-bottom: none; }
+
+#envCheckModal .env-check-mark, #setupWizardModal .env-check-mark {
+    width: 1.1rem;
+    height: 1.1rem;
+    margin-top: 0.1rem;
+    border-radius: 9999px;
+    border: 1.5px solid #cbd5e1;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    }
+
+#envCheckModal .env-check-row[data-status="checking"] .env-check-mark,
+    #setupWizardModal .env-check-row[data-status="checking"] .env-check-mark {
+    border-color: var(--wiz-accent-line);
+    }
+
+#envCheckModal .env-check-row[data-status="ok"] .env-check-mark,
+    #setupWizardModal .env-check-row[data-status="ok"] .env-check-mark {
+    border-color: #34d399;
+    background: #ecfdf5;
+    color: #059669;
+    }
+
+#envCheckModal .env-check-row[data-status="warn"] .env-check-mark,
+    #setupWizardModal .env-check-row[data-status="warn"] .env-check-mark {
+    border-color: #fbbf24;
+    background: #fffbeb;
+    color: #d97706;
+    }
+
+#envCheckModal .env-check-row[data-status="fail"] .env-check-mark,
+    #setupWizardModal .env-check-row[data-status="fail"] .env-check-mark {
+    border-color: #f87171;
+    background: #fef2f2;
+    color: #dc2626;
+    }
+
+#envCheckModal .env-check-label, #setupWizardModal .env-check-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--wiz-text, #1f2937);
+    font-weight: 500;
+    }
+
+#envCheckModal .env-check-detail, #setupWizardModal .env-check-detail {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: #6b7280;
+    word-break: break-all;
+    }
+
+#envCheckModal .env-check-status, #setupWizardModal .env-check-status {
+    flex-shrink: 0;
+    max-width: 9rem;
+    text-align: right;
+    font-size: 0.75rem;
+    color: #6b7280;
+    }
+
+#envCheckModal .env-check-row[data-status="ok"] .env-check-status,
+    #setupWizardModal .env-check-row[data-status="ok"] .env-check-status { color: #059669; }
+
+#envCheckModal .env-check-row[data-status="warn"] .env-check-status,
+    #setupWizardModal .env-check-row[data-status="warn"] .env-check-status { color: #d97706; }
+
+#envCheckModal .env-check-row[data-status="fail"] .env-check-status,
+    #setupWizardModal .env-check-row[data-status="fail"] .env-check-status { color: #dc2626; }
+
+#envCheckModal .env-check-action, #setupWizardModal .env-check-action {
+    display: inline-block;
+    margin-top: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--wiz-accent);
+    text-decoration: underline;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    }
+
+#envCheckModal .env-check-passed-group, #setupWizardModal .env-check-passed-group {
+    border-bottom: 1px solid #e2e8f0;
+    }
+
+#envCheckModal .env-check-passed-summary, #setupWizardModal .env-check-passed-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 0.85rem;
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    color: #1f2937;
+    font-weight: 500;
+    user-select: none;
+    }
+
+#envCheckModal .env-check-passed-summary::-webkit-details-marker,
+    #setupWizardModal .env-check-passed-summary::-webkit-details-marker { display: none; }
+
+#envCheckModal .env-check-passed-summary .env-check-mark,
+    #setupWizardModal .env-check-passed-summary .env-check-mark {
+    border-color: #34d399;
+    background: #ecfdf5;
+    color: #059669;
+    }
+
+#envCheckModal .env-check-passed-summary-text, #setupWizardModal .env-check-passed-summary-text { flex: 1; min-width: 0; }
+
+#envCheckModal .env-check-passed-summary-hint, #setupWizardModal .env-check-passed-summary-hint {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #94a3b8;
+    }
+
+#envCheckModal .env-check-passed-group[open] .env-check-passed-summary,
+    #setupWizardModal .env-check-passed-group[open] .env-check-passed-summary {
+    border-bottom: 1px solid #e2e8f0;
+    }
+
+#envCheckModal .env-check-passed-group[open] .env-check-passed-summary-hint::before,
+    #setupWizardModal .env-check-passed-group[open] .env-check-passed-summary-hint::before {
+    content: '点击收起';
+    }
+
+#envCheckModal .env-check-passed-group:not([open]) .env-check-passed-summary-hint::before,
+    #setupWizardModal .env-check-passed-group:not([open]) .env-check-passed-summary-hint::before {
+    content: '点击展开';
+    }
+
+#envCheckModal .env-check-passed-list .env-check-row:last-child,
+    #setupWizardModal .env-check-passed-list .env-check-row:last-child {
+    border-bottom: none;
+    }
+
+#envCheckModal .env-check-actions {
+    padding: 0.35rem 1.25rem 1.75rem;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    }
+
+#envCheckModal .env-check-more {
+    border: 1px solid var(--wiz-line-soft, #e2e8f0);
+    border-radius: 0.65rem;
+    background: var(--wiz-bg, #fafafa);
+    padding: 0;
+    }
+
+#envCheckModal .env-check-more > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--fx-muted, #5f6670);
+    }
+
+#envCheckModal .env-check-more > summary::-webkit-details-marker {
+    display: none;
+    }
+
+#envCheckModal .env-check-more > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.12s ease;
+    }
+
+#envCheckModal .env-check-more[open] > summary::before {
+    transform: rotate(90deg);
+    }
+
+#envCheckModal .env-check-more-body {
+    padding: 0 0.75rem 0.75rem;
+    border-top: 1px solid var(--wiz-line-soft, #e2e8f0);
+    padding-top: 0.65rem;
+    }
+
+#envCheckModal .env-fix-whl-drop,
+#envFixStartModal .env-fix-whl-drop,
+#manualWhlModal .env-fix-whl-drop {
+    transition: border-color .15s ease, background-color .15s ease;
+    }
+
+#manualWhlModal .manual-whl-tool-menu:not(.hidden) {
+    display: block;
+    }
+
+html.main-theme-dark #manualWhlModal .manual-whl-tool-menu {
+    background: var(--fx-surface, #1c1a1b);
+    border-color: rgba(255, 255, 255, 0.12);
+    }
+
+html.main-theme-dark #manualWhlModal .manual-whl-tool-menu button {
+    color: var(--fx-text, #f3efef);
+    }
+
+#envCheckModal #envCheckRepairTools {
+    border-top: 1px solid rgba(148, 163, 184, 0.35);
+    padding-top: 0.75rem;
+    }
+
+html.main-theme-dark #envCheckModal #envCheckRepairTools {
+    border-top-color: rgba(255, 255, 255, 0.08);
+    }
+
+html.main-theme-dark #envCheckModal .env-check-more {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 92%, #000);
+    }
+
+html.main-theme-dark #envCheckModal .env-check-more-body {
+    border-top-color: rgba(255, 255, 255, 0.08);
+    }
+
+html.main-theme-dark #envCheckModal .env-fix-whl-drop,
+html.main-theme-dark #envFixStartModal .env-fix-whl-drop {
+    border-color: rgba(167, 139, 250, 0.45);
+    background: rgba(91, 33, 182, 0.18);
+    }
+
+html.main-theme-dark #envCheckModal #envCheckPipMirrorSelect {
+    background: var(--fx-surface, #1c1a1b);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--fx-text, #f3efef);
+    }
+
+#envCheckModal .env-check-actions > button {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: nowrap;
+    }
+
+#envCheckModal .env-check-btn-primary:disabled,
+    #envCheckModal .env-check-btn-fix:disabled,
+    #envCheckModal .env-check-btn-manual:disabled,
+    #envCheckModal #envCheckRetryBtn:disabled,
+    #setupWizardModal .env-check-btn-fix:disabled,
+    #setupWizardModal .env-check-btn-manual:disabled,
+    #setupWizardModal #setupWizardRetryDetectBtn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    }
+
+#envCheckModal .env-check-btn-fix,
+    #setupWizardModal .env-check-btn-fix {
+    background: #059669;
+    color: #fff;
+    }
+
+#envCheckModal .env-check-btn-fix:hover:not(:disabled),
+    #setupWizardModal .env-check-btn-fix:hover:not(:disabled) {
+    background: #047857;
+    }
+
+#envCheckModal .env-check-btn-fix.hidden,
+    #envCheckModal .env-check-btn-manual.hidden,
+    #setupWizardModal .env-check-btn-fix.hidden,
+    #setupWizardModal .env-check-btn-manual.hidden {
+    display: none;
+    }
+
+#envFixProgressModal .env-fix-progress-track {
+    background: var(--fx-prog-track, #e2e7ec);
+    }
+#envFixProgressModal .env-fix-progress-bar {
+    background: var(--fx-accent, #c30d23);
+    min-width: 0;
+    }
+#envFixProgressModal .env-fix-progress-row[data-status="done"] .env-fix-progress-bar {
+    background: var(--fx-ok-text, #059669);
+    }
+#envFixProgressModal .env-fix-progress-row[data-status="error"] .env-fix-progress-bar {
+    background: #dc2626;
+    }
+#envFixProgressModal .env-fix-progress-row[data-status="active"] .env-fix-progress-bar {
+    background: var(--fx-accent, #c30d23);
+    }
+
+#envCheckModal .env-check-btn-manual,
+    #setupWizardModal .env-check-btn-manual {
+    background: #fff;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    }
+
+#envCheckModal .env-check-btn-manual:hover:not(:disabled),
+    #setupWizardModal .env-check-btn-manual:hover:not(:disabled) {
+    background: #f8fafc;
+    border-color: #94a3b8;
+    }
+
+#setupWizardModal .wizard-detect-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    }
+
+#setupWizardModal .wizard-detect-actions > button {
+    min-width: 0;
+    white-space: nowrap;
+    }
+
+#setupWizardModal .wizard-prepare-more {
+    border: 1px solid var(--wiz-line-soft, #e2e8f0);
+    border-radius: 0.65rem;
+    background: var(--wiz-bg, #fafafa);
+    padding: 0;
+    }
+
+#setupWizardModal .wizard-prepare-more > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--fx-muted, #5f6670);
+    }
+
+#setupWizardModal .wizard-prepare-more > summary::-webkit-details-marker {
+    display: none;
+    }
+
+#setupWizardModal .wizard-prepare-more > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.12s ease;
+    }
+
+#setupWizardModal .wizard-prepare-more[open] > summary::before {
+    transform: rotate(90deg);
+    }
+
+#setupWizardModal .wizard-prepare-more-body {
+    padding: 0 0.75rem 0.75rem;
+    border-top: 1px solid var(--wiz-line-soft, #e2e8f0);
+    padding-top: 0.65rem;
+    }
+
+#setupWizardModal .wizard-step.active[data-wizard-step="prepare"] .wizard-prepare-overview[hidden] {
+    display: none !important;
+    }
+
+#setupWizardModal .wizard-sample-drop {
+    border: 2px dashed var(--wiz-line, #d1d5db);
+    border-radius: 0.75rem;
+    padding: 1.25rem 1rem;
+    text-align: center;
+    background: var(--wiz-bg, #fafafa);
+    transition: border-color .15s, background .15s;
+    }
+
+#setupWizardModal .wizard-sample-drop.dragover {
+    border-color: var(--wiz-accent);
+    background: var(--wiz-accent-soft);
+    }
+
+#setupWizardModal .wizard-sample-list {
+    max-height: 8rem;
+    overflow-y: auto;
+    }
+
+#setupWizardModal .wizard-plan-advanced[open] summary {
+    margin-bottom: 0.5rem;
+    }
+
+html.main-theme-dark #paramsModal .settings-env-purpose,
+    html.main-theme-dark #setupWizardModal .settings-env-purpose {
+    color: var(--fx-muted, #9a9294);
+    background: color-mix(in srgb, var(--fx-chrome, #1c1a1b) 70%, transparent);
+    border-color: var(--fx-line-soft, #2a2728);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip,
+    html.main-theme-dark #setupWizardModal .settings-env-chip {
+    border-color: var(--fx-line, #3a3536);
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 90%, transparent);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip-kicker,
+    html.main-theme-dark #setupWizardModal .settings-env-chip-kicker {
+    color: var(--fx-muted, #9a9294);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip-state,
+    html.main-theme-dark #setupWizardModal .settings-env-chip-state {
+    color: var(--fx-text, #f3efef);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip[data-state="ok"],
+    html.main-theme-dark #setupWizardModal .settings-env-chip[data-state="ok"] {
+    border-color: color-mix(in srgb, var(--fx-ok-text, #c8ff4a) 45%, var(--fx-line, #3a3536));
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip[data-state="warn"],
+    html.main-theme-dark #setupWizardModal .settings-env-chip[data-state="warn"] {
+    border-color: #d97706;
+    }
+
+html.main-theme-dark #paramsModal .settings-env-chip[data-state="err"],
+    html.main-theme-dark #setupWizardModal .settings-env-chip[data-state="err"] {
+    border-color: #dc2626;
+    }
+
+html.main-theme-dark #paramsModal .settings-env-steps,
+    html.main-theme-dark #setupWizardModal .settings-env-steps {
+    border-color: var(--fx-line, #3a3536);
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 70%, transparent);
+    color: var(--fx-muted, #9a9294);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-more > summary {
+    border-color: var(--fx-line, #3a3536);
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 80%, transparent);
+    color: var(--fx-text, #f3efef);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-more[open] > summary {
+    border-color: var(--fx-accent-line, rgba(195, 13, 35, 0.35));
+    background: var(--fx-surface, #1c1a1b);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-more-menu {
+    border-color: var(--fx-line, #3a3536);
+    background: var(--fx-surface, #1c1a1b);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-more-menu button {
+    color: var(--fx-text, #f3efef);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-more-menu button:hover {
+    background: var(--fx-surface-2, #242122);
+    }
+
+/* Secondary bordered controls without solid Tailwind bg-* (浏览 / 内置 / 环境操作钮等) */
+    html.main-theme-dark #paramsModal .settings-env-actions > button:not(.bg-emerald-600),
+    html.main-theme-dark #paramsModal #engineInstallBrowseBtn,
+    html.main-theme-dark #paramsModal #engineInstallUseBundledBtn,
+    html.main-theme-dark #paramsModal #autoScanAddFolderBtn {
+    background-color: var(--fx-surface, #1c1a1b);
+    border-color: var(--fx-line, #3a3536);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-actions > button:not(.bg-emerald-600):not(.text-sky-700):not(.text-amber-700):not(.text-red-600),
+    html.main-theme-dark #paramsModal #engineInstallBrowseBtn,
+    html.main-theme-dark #paramsModal #engineInstallUseBundledBtn,
+    html.main-theme-dark #paramsModal #autoScanAddFolderBtn {
+    color: var(--fx-text, #f3efef);
+    }
+
+html.main-theme-dark #paramsModal .settings-env-actions > button:not(.bg-emerald-600):hover:not(:disabled):not(.text-sky-700):not(.text-amber-700),
+    html.main-theme-dark #paramsModal #engineInstallBrowseBtn:hover,
+    html.main-theme-dark #paramsModal #engineInstallUseBundledBtn:hover,
+    html.main-theme-dark #paramsModal #autoScanAddFolderBtn:hover {
+    background-color: var(--fx-surface-2, #242122);
+    }
+
+html.main-theme-dark.wizard-standalone,
+    html.main-theme-dark.wizard-standalone body,
+    html.main-theme-dark.wizard-standalone #setupWizardModal {
+    background: var(--fx-bg, #141214);
+    }
+
+/* Settings / wizard / confirm: map legacy violet/indigo utilities → factory brand accent */
+    #paramsModal .bg-violet-600,
+    #paramsModal .bg-indigo-600,
+    #setupWizardModal .bg-violet-600,
+    #envCheckModal .bg-violet-600,
+    #presetNameModal .bg-violet-600,
+    #appConfirmModal .bg-violet-600,
+    #batchSummaryModal .bg-violet-600,
+    #manualWhlModal .bg-violet-600,
+    #envFixProgressModal .bg-violet-600,
+    #translateStylePickerModal .bg-violet-600,
+    #retranslateModal .bg-violet-600,
+    #cliCommandModal .bg-violet-600 {
+    background-color: var(--fx-accent, #c30d23) !important;
+    }
+
+#paramsModal .hover\:bg-violet-700:hover,
+    #paramsModal .hover\:bg-indigo-700:hover,
+    #setupWizardModal .hover\:bg-violet-700:hover,
+    #envCheckModal .hover\:bg-violet-700:hover,
+    #presetNameModal .hover\:bg-violet-700:hover,
+    #appConfirmModal .hover\:bg-violet-700:hover,
+    #batchSummaryModal .hover\:bg-violet-700:hover,
+    #manualWhlModal .hover\:bg-violet-700:hover,
+    #envFixProgressModal .hover\:bg-violet-700:hover,
+    #translateStylePickerModal .hover\:bg-violet-700:hover,
+    #retranslateModal .hover\:bg-violet-700:hover,
+    #cliCommandModal .hover\:bg-violet-700:hover {
+    background-color: var(--fx-accent-hover, #a30b1d) !important;
+    }
+
+#paramsModal .bg-violet-500,
+    #paramsModal .bg-indigo-500,
+    #setupWizardModal .bg-indigo-500 {
+    background-color: var(--fx-accent, #c30d23) !important;
+    }
+
+#paramsModal .bg-violet-100,
+    #paramsModal .bg-violet-50,
+    #paramsModal .bg-violet-50\/50,
+    #paramsModal .bg-violet-50\/60,
+    #paramsModal .bg-violet-50\/80,
+    #setupWizardModal .bg-violet-50\/70,
+    #setupWizardModal .bg-indigo-50\/60,
+    #setupWizardModal .bg-indigo-100,
+    #envCheckModal .bg-violet-100,
+    #batchSummaryModal .bg-violet-50 {
+    background-color: var(--fx-accent-soft, rgba(195, 13, 35, 0.1)) !important;
+    }
+
+#paramsModal .hover\:bg-violet-50:hover,
+    #paramsModal .hover\:bg-violet-100:hover,
+    #envCheckModal .hover\:bg-violet-200:hover,
+    #batchSummaryModal .hover\:bg-violet-50:hover {
+    background-color: var(--fx-accent-soft, rgba(195, 13, 35, 0.1)) !important;
+    }
+
+#paramsModal .border-violet-100,
+    #paramsModal .border-violet-200,
+    #paramsModal .border-violet-300,
+    #setupWizardModal .border-violet-100,
+    #setupWizardModal .border-indigo-100,
+    #batchSummaryModal .border-violet-100,
+    #batchSummaryModal .border-violet-200 {
+    border-color: var(--fx-accent-line, rgba(195, 13, 35, 0.28)) !important;
+    }
+
+#paramsModal .text-violet-400,
+    #paramsModal .text-violet-500,
+    #paramsModal .text-violet-600,
+    #paramsModal .text-violet-700,
+    #paramsModal .text-violet-700\/90,
+    #paramsModal .text-violet-800,
+    #paramsModal .text-violet-800\/90,
+    #paramsModal .text-violet-900,
+    #paramsModal .text-violet-950,
+    #setupWizardModal .text-violet-700,
+    #setupWizardModal .text-violet-800,
+    #setupWizardModal .text-violet-900,
+    #setupWizardModal .text-indigo-700\/80,
+    #setupWizardModal .text-indigo-800,
+    #envCheckModal .text-violet-800,
+    #batchSummaryModal .text-violet-700 {
+    color: var(--fx-accent-mute, #b01022) !important;
+    }
+
+#setupWizardModal .hover\:text-violet-900:hover {
+    color: var(--fx-accent-hover, #a30b1d) !important;
+    }
+
+html.main-theme-dark #paramsModal .text-violet-400,
+    html.main-theme-dark #paramsModal .text-violet-500,
+    html.main-theme-dark #paramsModal .text-violet-600,
+    html.main-theme-dark #paramsModal .text-violet-700,
+    html.main-theme-dark #paramsModal .text-violet-700\/90,
+    html.main-theme-dark #paramsModal .text-violet-800,
+    html.main-theme-dark #paramsModal .text-violet-800\/90,
+    html.main-theme-dark #paramsModal .text-violet-900,
+    html.main-theme-dark #paramsModal .text-violet-950,
+    html.main-theme-dark #setupWizardModal .text-violet-700,
+    html.main-theme-dark #setupWizardModal .text-violet-800,
+    html.main-theme-dark #setupWizardModal .text-violet-900,
+    html.main-theme-dark #setupWizardModal .text-indigo-700\/80,
+    html.main-theme-dark #setupWizardModal .text-indigo-800,
+    html.main-theme-dark #envCheckModal .text-violet-800,
+    html.main-theme-dark #batchSummaryModal .text-violet-700 {
+    color: var(--fx-accent-mute, #e85a6a) !important;
+    }
+
+#paramsModal .accent-violet-600,
+    #retranslateModal .accent-violet-600,
+    #setupWizardModal .accent-violet-600 {
+    accent-color: var(--fx-accent, #c30d23);
+    }
+
+/* Keep overlays used by settings/wizard (confirm, toast, tip, boot, etc.) visible. */
+    html.settings-standalone body > *:not(#paramsModal):not(#presetNameModal):not(#previewModal):not(#setupWizardModal):not(#envCheckModal):not(#envFixProgressModal):not(#envFixStartModal):not(#appConfirmModal):not(#toastHost):not(#batchSummaryModal):not(#shortcutsModal):not(#manualWhlModal):not(#settingsTipHost):not(#loadingOverlay):not(#transubBusyOverlay) {
+    display: none !important;
+    }
+
+html.settings-standalone #setupWizardModal:not(.hidden) {
+    display: flex !important;
+    z-index: 200 !important;
+    }
+
+html.settings-standalone #envCheckModal:not(.hidden),
+html.settings-standalone #envFixProgressModal:not(.hidden),
+html.settings-standalone #envFixStartModal:not(.hidden) {
+    display: flex !important;
+    z-index: 4000 !important;
+    }
+
+html.settings-standalone #toastHost {
+    z-index: 5100 !important;
+    }
+
+/* Dedicated setup-wizard BrowserWindow: fill the window, minimize nested scroll */
+    html.wizard-standalone,
+    html.wizard-standalone body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--fx-bg, #f3f5f7);
+    }
+
+html.wizard-standalone body > *:not(#paramsModal):not(#setupWizardModal):not(#appConfirmModal):not(#toastHost):not(#manualWhlModal):not(#envCheckModal):not(#envFixProgressModal):not(#envFixStartModal):not(#loadingOverlay):not(#transubBusyOverlay) {
+    display: none !important;
+    }
+
+html.wizard-standalone #paramsModal {
+    /* Keep settings form fields in DOM for save/load; never show the panel. */
+    display: none !important;
+    pointer-events: none !important;
+    }
+
+/* Keep boot mask until the wizard shell is painted (cleared in app-init). */
+html.wizard-standalone #loadingOverlay.is-open {
+    display: flex !important;
+    z-index: 6000;
+}
+
+html.wizard-standalone #setupWizardModal {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    padding: 0;
+    background: var(--fx-bg, #f3f5f7);
+    backdrop-filter: none;
+    }
+
+html.wizard-standalone #setupWizardModal > div {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    }
+
+html.wizard-standalone #setupWizardBody {
+    padding: 1rem 1.25rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    }
+
+html.wizard-standalone #setupWizardModal .wizard-choice {
+    padding: 0.65rem 0.8rem;
+    }
+
+/* Env step: stacked sections, body scrolls — do NOT flex-fill both lists */
+#setupWizardModal .wizard-step.active[data-wizard-step="env"],
+html.wizard-standalone #setupWizardModal .wizard-step.active[data-wizard-step="env"] {
+    display: block;
+    flex: none;
+    min-height: 0;
+}
+
+#setupWizardModal .wizard-env-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+#setupWizardModal .wizard-env-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    flex: 0 0 auto;
+    position: relative;
+    min-height: 0;
+    padding: 0.85rem 0.9rem;
+    border: 1px solid var(--wiz-line-soft);
+    border-radius: var(--wiz-radius);
+    background: var(--wiz-surface);
+}
+
+#setupWizardModal .wizard-env-section > .wizard-env-section-title {
+    margin: 0;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--wiz-muted);
+}
+
+#setupWizardModal .wizard-step.active[data-wizard-step="env"] .env-check-list,
+#setupWizardModal #setupWizardRuntimeList,
+html.wizard-standalone #setupWizardModal #setupWizardRuntimeList,
+html.wizard-standalone #setupWizardModal .wizard-step.active[data-wizard-step="env"] .env-check-list {
+    flex: none !important;
+    min-height: 0 !important;
+    max-height: 13.5rem;
+    overflow-y: auto;
+}
+
+html.wizard-standalone #setupWizardModal .wizard-step.active {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+html.wizard-standalone #setupWizardModal .wizard-step.active[data-wizard-step="prepare"] {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+html.wizard-standalone #setupWizardModal .wizard-step.active[data-wizard-step="prepare"] #setupWizardDetectList {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto;
+}
+
+html.wizard-standalone #setupWizardModal .wizard-sample-list {
+    max-height: 10rem;
+    }
+
+html.wizard-standalone #setupWizardModal #setupWizardModelList {
+    max-height: 8rem;
+    }
+
+html.wizard-standalone #envCheckModal:not(.hidden),
+    html.wizard-standalone #envFixProgressModal:not(.hidden),
+    html.wizard-standalone #envFixStartModal:not(.hidden),
+    html.wizard-standalone #appConfirmModal:not(.hidden),
+    html.wizard-standalone #manualWhlModal:not(.hidden) {
+    display: flex !important;
+    z-index: 5000 !important;
+    }
+
+html.wizard-standalone #toastHost {
+    z-index: 5100 !important;
+    }
+
+/* Self-contained boot spinner — visible before Font Awesome / app.css finish */
+    #loadingOverlay .boot-spinner,
+    #setupWizardDetectWait .boot-spinner {
+    width: 2rem;
+    height: 2rem;
+    margin: 0 auto 0.75rem;
+    border: 2.5px solid var(--wiz-line-soft, #e5e7eb);
+    border-top-color: var(--wiz-accent);
+    border-radius: 50%;
+    animation: transub-boot-spin 0.7s linear infinite;
+    }
+
+@keyframes transub-boot-spin {
+    to { transform: rotate(360deg); }
+    }
+
+
+#setupWizardModal #setupWizardNextBtn {
+    background: var(--wiz-accent);
+    color: #fff;
+    border: 1px solid var(--wiz-accent);
+}
+#setupWizardModal #setupWizardNextBtn:hover:not(:disabled) {
+    background: var(--wiz-accent-hover);
+    border-color: var(--wiz-accent-hover);
+}
+#setupWizardModal #setupWizardNextBtn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+#setupWizardModal .wizard-sense-card {
+    border-color: var(--wiz-accent-line);
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-text);
+}
+#setupWizardModal .wizard-apply-progress {
+    border-color: var(--wiz-accent-line);
+    background: var(--wiz-accent-soft);
+}
+#setupWizardModal .wizard-apply-progress-track {
+    background: var(--fx-prog-track, color-mix(in srgb, var(--wiz-accent) 18%, var(--wiz-surface, #fff)));
+}
+#setupWizardModal .wizard-apply-progress-bar {
+    background: var(--wiz-accent);
+}
+#setupWizardModal .wizard-inline-link {
+    color: var(--wiz-accent);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+}
+#setupWizardModal .wizard-inline-link:hover {
+    color: var(--wiz-accent-hover);
+}
+#setupWizardModal .wizard-btn-secondary {
+    appearance: none;
+    border: 1px solid var(--wiz-line, #cfd5dc);
+    background: var(--wiz-surface, #fff);
+    color: var(--wiz-text, #15181c);
+    cursor: pointer;
+}
+#setupWizardModal .wizard-btn-secondary:hover:not(:disabled) {
+    background: var(--wiz-bg, #f3f5f7);
+    border-color: var(--wiz-line, #cfd5dc);
+}
+#setupWizardModal .wizard-btn-secondary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+#setupWizardModal .wizard-btn-ghost {
+    appearance: none;
+    background: none;
+    border: 0;
+    color: var(--wiz-muted, #5f6670);
+    cursor: pointer;
+}
+#setupWizardModal .wizard-btn-ghost:hover:not(:disabled) {
+    color: var(--wiz-text, #15181c);
+}
+#setupWizardModal .wizard-footer {
+    background: color-mix(in srgb, var(--wiz-bg, #f3f5f7) 80%, var(--wiz-surface, #fff));
+    border-color: var(--wiz-line-soft, #e2e7ec);
+}
+#setupWizardModal .wizard-wait-card {
+    background: var(--wiz-surface, #fff);
+    border-color: var(--wiz-line-soft, #e2e7ec);
+    color: var(--wiz-text, #15181c);
+}
+#setupWizardModal .wizard-wait-card .text-gray-700,
+#setupWizardModal .wizard-wait-card .text-gray-400 {
+    color: inherit;
+}
+
+html.main-theme-dark #setupWizardModal {
+    color: var(--wiz-text, #f3efef);
+}
+html.main-theme-dark #setupWizardModal .text-gray-800,
+html.main-theme-dark #setupWizardModal .text-gray-900,
+html.main-theme-dark #setupWizardModal .text-gray-700,
+html.main-theme-dark #setupWizardModal .font-medium.text-gray-800 {
+    color: var(--wiz-text, #f3efef) !important;
+}
+html.main-theme-dark #setupWizardModal .text-gray-600,
+html.main-theme-dark #setupWizardModal .text-gray-500,
+html.main-theme-dark #setupWizardModal .text-gray-400 {
+    color: var(--wiz-muted, #9a9294) !important;
+}
+html.main-theme-dark #setupWizardModal .border-gray-100,
+html.main-theme-dark #setupWizardModal .border-gray-200 {
+    border-color: var(--wiz-line-soft, #2a2728) !important;
+}
+html.main-theme-dark #setupWizardModal .bg-white,
+html.main-theme-dark #setupWizardModal .hover\:bg-white:hover,
+html.main-theme-dark #setupWizardModal .hover\:bg-gray-50:hover,
+html.main-theme-dark #setupWizardModal .hover\:bg-gray-100:hover {
+    background-color: var(--wiz-surface, #1c1a1b) !important;
+}
+html.main-theme-dark #setupWizardModal button:not(.env-check-btn-fix):not(#setupWizardNextBtn):not(.wizard-inline-link):not(.wizard-btn-ghost) {
+    border-color: var(--wiz-line, #3a3536);
+}
+html.main-theme-dark #setupWizardModal input[type="text"],
+html.main-theme-dark #setupWizardModal input[type="number"],
+html.main-theme-dark #setupWizardModal textarea,
+html.main-theme-dark #setupWizardModal select {
+    background: var(--wiz-surface, #1c1a1b);
+    color: var(--wiz-text, #f3efef);
+    border-color: var(--wiz-line, #3a3536);
+}
+html.main-theme-dark #setupWizardModal .env-check-list {
+    background: color-mix(in srgb, var(--wiz-surface, #1c1a1b) 86%, #000);
+    border-color: var(--wiz-line-soft, #2a2728);
+}
+html.main-theme-dark #setupWizardModal .env-check-detail {
+    color: var(--wiz-muted, #9a9294);
+}
+html.main-theme-dark #setupWizardModal .env-check-row[data-status="ok"] .env-check-mark {
+    background: color-mix(in srgb, var(--wiz-ok, #c8ff4a) 16%, transparent);
+    color: var(--wiz-ok, #c8ff4a);
+}
+html.main-theme-dark #setupWizardModal .env-check-btn-manual {
+    background: var(--wiz-surface, #1c1a1b);
+    color: var(--wiz-text, #f3efef);
+    border-color: var(--wiz-line, #3a3536);
+}
+html.main-theme-dark #setupWizardDetectWait {
+    background: rgba(20, 18, 20, 0.78);
+}
+html.main-theme-dark #setupWizardModal #setupWizardModelSuggestList,
+html.main-theme-dark #setupWizardModal #setupWizardModelHardwareNote {
+    background: color-mix(in srgb, var(--wiz-surface, #1c1a1b) 88%, #000);
+    border-color: var(--wiz-line-soft, #2a2728);
+    color: var(--wiz-text, #f3efef);
+}
+html.main-theme-dark #setupWizardModal #setupWizardPrefsReadySummary,
+html.main-theme-dark #setupWizardModal [data-wizard-step="prefs"] .border-emerald-200 {
+    border-color: color-mix(in srgb, var(--wiz-ok, #c8ff4a) 28%, var(--wiz-line, #3a3536));
+    background: color-mix(in srgb, var(--wiz-ok, #c8ff4a) 10%, var(--wiz-surface, #1c1a1b));
+    color: var(--wiz-text, #f3efef);
+}
+html.main-theme-dark #setupWizardModal [data-wizard-step="prefs"] .text-emerald-900,
+html.main-theme-dark #setupWizardModal [data-wizard-step="prefs"] .text-emerald-800 {
+    color: var(--wiz-ok, #c8ff4a) !important;
+}
+html.main-theme-dark #setupWizardDetectWait .boot-spinner {
+    border-color: var(--wiz-line, #3a3536);
+    border-top-color: var(--wiz-accent);
+}
+html.main-theme-dark #setupWizardModal .params-mode-preset-tab {
+    border-color: var(--wiz-line, #3a3536);
+    background: var(--wiz-surface, #1c1a1b);
+    color: var(--wiz-muted, #9a9294);
+}
+html.main-theme-dark #setupWizardModal .params-mode-preset-tab.is-active {
+    border-color: var(--wiz-accent);
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-text, #f3efef);
+}
+
+#setupWizardModal .wizard-dl-row {
+    border: 1px solid var(--wiz-line-soft);
+    border-radius: var(--wiz-radius);
+    padding: 0.65rem 0.75rem;
+    background: var(--wiz-surface);
+}
+#setupWizardModal .wizard-dl-row[data-status="done"] .wizard-dl-bar {
+    background: var(--wiz-ok);
+}
+#setupWizardModal .wizard-dl-row[data-status="error"] .wizard-dl-msg {
+    color: #b91c1c;
+}
+#setupWizardModal .wizard-model-suggest-row input {
+    accent-color: var(--wiz-accent);
+}
+
+/* Panel chrome aligns with factory surfaces */
+#setupWizardModal > div {
+    background: var(--wiz-surface);
+    border-color: var(--wiz-line-soft);
+    color: var(--wiz-text);
+}
+
+/* Shared overlay dark theme (env check / confirm / manual whl / fix progress) */
+html.main-theme-dark #envCheckModal,
+html.main-theme-dark #envFixProgressModal,
+html.main-theme-dark #envFixStartModal,
+html.main-theme-dark #appConfirmModal,
+html.main-theme-dark #manualWhlModal {
+    color: var(--fx-text, #f3efef);
+}
+html.main-theme-dark #envCheckModal .bg-white,
+html.main-theme-dark #envFixProgressModal .bg-white,
+html.main-theme-dark #envFixStartModal .bg-white,
+html.main-theme-dark #appConfirmModal .bg-white,
+html.main-theme-dark #manualWhlModal .bg-white,
+html.main-theme-dark #envCheckModal .bg-gray-50\/80,
+html.main-theme-dark #envFixProgressModal .bg-gray-50\/80,
+html.main-theme-dark #envFixStartModal .bg-gray-50\/80,
+html.main-theme-dark #appConfirmModal .bg-gray-50\/80,
+html.main-theme-dark #manualWhlModal .bg-gray-50\/80 {
+    background-color: var(--fx-surface, #1c1a1b) !important;
+}
+html.main-theme-dark #envCheckModal .text-gray-900,
+html.main-theme-dark #envFixProgressModal .text-gray-900,
+html.main-theme-dark #appConfirmModal .text-gray-900,
+html.main-theme-dark #manualWhlModal .text-gray-900,
+html.main-theme-dark #envCheckModal .text-gray-800,
+html.main-theme-dark #envFixProgressModal .text-gray-800,
+html.main-theme-dark #appConfirmModal .text-gray-800,
+html.main-theme-dark #manualWhlModal .text-gray-800,
+html.main-theme-dark #envCheckModal .text-gray-700,
+html.main-theme-dark #envFixProgressModal .text-gray-700,
+html.main-theme-dark #appConfirmModal .text-gray-700,
+html.main-theme-dark #manualWhlModal .text-gray-700 {
+    color: var(--fx-text, #f3efef) !important;
+}
+html.main-theme-dark #envCheckModal .text-gray-600,
+html.main-theme-dark #envFixProgressModal .text-gray-600,
+html.main-theme-dark #appConfirmModal .text-gray-600,
+html.main-theme-dark #manualWhlModal .text-gray-600,
+html.main-theme-dark #envCheckModal .text-gray-500,
+html.main-theme-dark #envFixProgressModal .text-gray-500,
+html.main-theme-dark #appConfirmModal .text-gray-500,
+html.main-theme-dark #manualWhlModal .text-gray-500,
+html.main-theme-dark #envCheckModal .text-gray-400,
+html.main-theme-dark #envFixProgressModal .text-gray-400,
+html.main-theme-dark #appConfirmModal .text-gray-400,
+html.main-theme-dark #manualWhlModal .text-gray-400 {
+    color: var(--fx-muted, #9a9294) !important;
+}
+html.main-theme-dark #envCheckModal .border-gray-100,
+html.main-theme-dark #envFixProgressModal .border-gray-100,
+html.main-theme-dark #appConfirmModal .border-gray-100,
+html.main-theme-dark #manualWhlModal .border-gray-100,
+html.main-theme-dark #envCheckModal .border-gray-200,
+html.main-theme-dark #envFixProgressModal .border-gray-200,
+html.main-theme-dark #appConfirmModal .border-gray-200,
+html.main-theme-dark #manualWhlModal .border-gray-200 {
+    border-color: var(--fx-line-soft, #2a2728) !important;
+}
+html.main-theme-dark #envCheckModal button:not(.env-check-btn-fix),
+html.main-theme-dark #envFixProgressModal button,
+html.main-theme-dark #appConfirmModal button,
+html.main-theme-dark #manualWhlModal button {
+    border-color: var(--fx-line, #3a3536);
+}
+html.main-theme-dark #setupWizardModal .text-sky-800,
+html.main-theme-dark #setupWizardModal .text-sky-700,
+html.main-theme-dark #setupWizardModal .wizard-dl-retry {
+    color: #7dd3fc !important;
+}
+html.main-theme-dark #setupWizardModal .bg-sky-50,
+html.main-theme-dark #setupWizardModal .border-sky-100 {
+    background-color: color-mix(in srgb, #0ea5e9 12%, var(--fx-surface, #1c1a1b)) !important;
+    border-color: color-mix(in srgb, #0ea5e9 28%, var(--fx-line-soft, #2a2728)) !important;
+    color: var(--fx-text, #f3efef);
+}
+html.main-theme-dark #setupWizardModal .text-amber-700,
+html.main-theme-dark #envCheckModal .text-amber-700 {
+    color: #fbbf24 !important;
+}
+html.main-theme-dark #setupWizardModal .wizard-dl-row[data-status="error"] .wizard-dl-msg {
+    color: #fca5a5;
+}
+html.main-theme-dark #envFixProgressModal .text-violet-700,
+html.main-theme-dark #envFixProgressTransfer,
+html.main-theme-dark #envFixProgressModal .env-fix-progress-transfer {
+    color: #c4b5fd;
+}
+html.main-theme-dark #envFixProgressModal .env-fix-progress-track {
+    background: var(--fx-prog-track, #2c292a);
+}
+html.main-theme-dark #envCheckModal .env-check-card,
+html.main-theme-dark #envFixProgressModal > div {
+    background: var(--fx-surface, #1c1a1b);
+    border-color: var(--fx-line-soft, #2a2728);
+    color: var(--fx-text, #f3efef);
+}
+html.main-theme-dark #envCheckModal .env-check-list {
+    background: color-mix(in srgb, var(--fx-surface, #1c1a1b) 86%, #000);
+    border-color: var(--fx-line-soft, #2a2728);
+}

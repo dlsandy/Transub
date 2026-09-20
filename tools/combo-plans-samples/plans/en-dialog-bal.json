@@ -1,0 +1,37 @@
+{
+  "id": "en-dialog-bal",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 智能 · 均衡",
+  "description": "欧美剧：SenseVoice 听写+ 智能翻译（对话模型按行）硬件档：均衡 · 8–12GB 显存。需 Pro。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "balanced",
+    "activePresetId": "film-turbo-stable",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "beamSize": 5
+  }
+}

@@ -230,7 +230,7 @@ Var /GLOBAL tsPreserveRoot
 ; tree if the user cancels the wizard.
 !macro customInit
   ${if} ${Silent}
-    ${if} ${FileExists} "$INSTDIR\Transub.exe"
+    ${if} ${FileExists} "$INSTDIR\transub.exe"
       !insertmacro tsSetPreserveRoot
       ${ifNot} ${FileExists} "$tsPreserveRoot"
         !insertmacro tsStashUserData

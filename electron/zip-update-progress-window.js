@@ -1,6 +1,6 @@
 /**
  * Standalone progress UI for zip updates (survives main app quit).
- * Launch: Transub.exe --zip-update-progress=<statusJsonPath>
+ * Launch: transub.exe --zip-update-progress=<statusJsonPath>
  */
 const fs = require('fs');
 const os = require('os');

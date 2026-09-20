@@ -95,12 +95,32 @@ foreach ($c in @($conns)) {
         } catch { /* ignore */ }
     }
 
-    function reclaimLocalComputeAfterEngineBatch({
+    async function stopLlamaServerQuietAsync() {
+        try {
+            if (typeof deps.stopLlamaServerAsync === 'function') {
+                await deps.stopLlamaServerAsync();
+                return;
+            }
+            if (typeof deps.stopLlamaServer === 'function') {
+                const r = deps.stopLlamaServer();
+                if (r && typeof r.then === 'function') await r;
+                return;
+            }
+            const llama = require('./advanced-llama-server');
+            if (typeof llama.stopLlamaServerAsync === 'function') {
+                await llama.stopLlamaServerAsync();
+            } else {
+                llama.stopLlamaServer();
+            }
+        } catch { /* ignore */ }
+    }
+
+    async function reclaimLocalComputeAfterEngineBatch({
         usedExternalMt = false,
         failedOrCancelled = false,
     } = {}) {
         if (usedExternalMt || failedOrCancelled) {
-            stopLlamaServerQuiet();
+            await stopLlamaServerQuietAsync();
         }
         if (failedOrCancelled) {
             stopEngineProcessAndPort();
@@ -130,6 +150,7 @@ foreach ($c in @($conns)) {
         stopEngineProcess,
         stopEngineProcessAndPort,
         stopLlamaServerQuiet,
+        stopLlamaServerQuietAsync,
         reclaimLocalComputeAfterEngineBatch,
         killListenersOnPort,
         releaseEngineVramBeforeLocalLlm,

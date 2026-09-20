@@ -1,12 +1,15 @@
 /**
- * llama-server 默认后端偏好：有可用 NVIDIA（驱动 CUDA ≥12）时优先 CUDA；
- * 具体 12 / 13 由目录按 hints.cudaVersion 选择。
+ * llama-server 默认后端偏好：
+ * - 有可用 NVIDIA（驱动 CUDA ≥12）时优先 CUDA（12/13 由目录按 hints.cudaVersion 选择）
+ * - 有 AMD 独显时优先 ROCm
+ * - 否则默认 Vulkan
  */
 const { detectGpuEnvironment } = require('./gpu-detect');
 
-/** @type {{ preferCuda: boolean, ready: boolean, gpuName: string, cudaVersion: string }} */
+/** @type {{ preferCuda: boolean, preferRocm: boolean, ready: boolean, gpuName: string, cudaVersion: string }} */
 let state = {
     preferCuda: false,
+    preferRocm: false,
     ready: false,
     gpuName: '',
     cudaVersion: '',
@@ -23,9 +26,14 @@ function shouldPreferCuda12(info) {
     return true;
 }
 
+function shouldPreferRocm(info) {
+    return !!(info && info.vendor === 'amd' && info.detected);
+}
+
 function getHints() {
     return {
         preferCuda: !!state.preferCuda,
+        preferRocm: !!state.preferRocm,
         ready: !!state.ready,
         gpuName: state.gpuName || '',
         cudaVersion: state.cudaVersion || '',
@@ -35,6 +43,7 @@ function getHints() {
 function applyGpuInfo(info) {
     state = {
         preferCuda: shouldPreferCuda12(info),
+        preferRocm: shouldPreferRocm(info),
         ready: true,
         gpuName: String(info?.gpuName || '').trim(),
         cudaVersion: String(info?.cudaVersion || '').trim(),
@@ -44,7 +53,7 @@ function applyGpuInfo(info) {
 
 /**
  * 异步探测并缓存偏好。可重复调用；并发共用同一 Promise。
- * @returns {Promise<{ preferCuda: boolean, ready: boolean, gpuName: string, cudaVersion: string }>}
+ * @returns {Promise<{ preferCuda: boolean, preferRocm: boolean, ready: boolean, gpuName: string, cudaVersion: string }>}
  */
 async function refreshPreferCuda() {
     if (inflight) return inflight;
@@ -55,6 +64,7 @@ async function refreshPreferCuda() {
         } catch (_) {
             state = {
                 preferCuda: false,
+                preferRocm: false,
                 ready: true,
                 gpuName: '',
                 cudaVersion: '',
@@ -77,6 +87,7 @@ async function ensurePreferCudaReady() {
 
 module.exports = {
     shouldPreferCuda12,
+    shouldPreferRocm,
     getHints,
     applyGpuInfo,
     refreshPreferCuda,
@@ -86,11 +97,18 @@ module.exports = {
         state = next && typeof next === 'object'
             ? {
                 preferCuda: !!next.preferCuda,
+                preferRocm: !!next.preferRocm,
                 ready: next.ready !== false,
                 gpuName: String(next.gpuName || ''),
                 cudaVersion: String(next.cudaVersion || ''),
             }
-            : { preferCuda: false, ready: false, gpuName: '', cudaVersion: '' };
+            : {
+                preferCuda: false,
+                preferRocm: false,
+                ready: false,
+                gpuName: '',
+                cudaVersion: '',
+            };
         inflight = null;
     },
 };

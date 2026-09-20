@@ -71,7 +71,7 @@ describe('app-paths renderer root', () => {
         const prevResources = process.resourcesPath;
         Object.defineProperty(process, 'execPath', {
             configurable: true,
-            value: path.join(exeDir, 'Transub.exe'),
+            value: path.join(exeDir, 'transub.exe'),
         });
         Object.defineProperty(process, 'resourcesPath', {
             configurable: true,

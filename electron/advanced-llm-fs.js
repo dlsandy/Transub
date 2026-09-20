@@ -15,14 +15,22 @@ function getAdvancedLlmRoot() {
     return path.join(getWritableRoot(), 'advanced-llm');
 }
 
-/** Resolve GGUF catalog entry from Advanced or free Sakura catalogs. */
+/** Resolve GGUF catalog entry from Advanced, Sakura, or laboratory models. */
 function resolveModelEntry(entryOrId) {
     if (entryOrId && typeof entryOrId === 'object' && entryOrId.fileName) {
         return entryOrId;
     }
     const id = String(entryOrId || '').trim();
     if (!id) return null;
-    return catalog.findCatalogEntry(id) || sakuraCatalog.findCatalogEntry(id);
+    const builtin = catalog.findCatalogEntry(id) || sakuraCatalog.findCatalogEntry(id);
+    if (builtin) return builtin;
+    try {
+        const { readAdvancedDoc } = require('./advanced-license-data');
+        const managed = catalog.normalizeManagedLlm(readAdvancedDoc().doc?.managedLlm);
+        return catalog.findCatalogEntry(id, { labModels: managed.labModels });
+    } catch (_) {
+        return null;
+    }
 }
 
 function getRuntimeDir() {
@@ -406,6 +414,27 @@ function buildMisplacedModelHint(entryOrId) {
         + `请将其重命名为 ${entry.fileName} 后重试（目录：${getModelsDir()}）。`;
 }
 
+function deleteModelFile(entryOrId) {
+    const entry = resolveModelEntry(entryOrId);
+    if (!entry?.fileName) {
+        return { ok: false, error: '未知模型', code: 'unknown_model' };
+    }
+    const modelsDir = path.resolve(getModelsDir());
+    const target = path.resolve(getModelPath(entry));
+    if (!target || !target.startsWith(`${modelsDir}${path.sep}`)) {
+        return { ok: false, error: '拒绝删除模型目录外的文件', code: 'unsafe_path' };
+    }
+    if (!fs.existsSync(target)) {
+        return { ok: true, removed: false, missing: true, path: target };
+    }
+    try {
+        fs.unlinkSync(target);
+        return { ok: true, removed: true, path: target };
+    } catch (err) {
+        return { ok: false, error: err.message || String(err), path: target };
+    }
+}
+
 module.exports = {
     getAdvancedLlmRoot,
     getRuntimeDir,
@@ -425,6 +454,7 @@ module.exports = {
     findMisplacedModelCandidates,
     buildMisplacedModelHint,
     formatBytesZh,
+    deleteModelFile,
     GGUF_MAGIC,
     __setModelsDirForTests,
 };

@@ -1,0 +1,40 @@
+{
+  "id": "ja-smart-bal",
+  "version": 2,
+  "group": "ja",
+  "name": "软对白 · 混合 · 均衡",
+  "description": "软对白：Anime Whisper 听写+ 混合翻译（GalTransl 7B 句级翻译，Qwen3 8B 剧情贴合润色）硬件档：均衡 · 8–12GB 显存。需 Pro。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "anime-whisper",
+    "firered-vad",
+    "sakura-galtransl-7b-q6k",
+    "qwen3-8b"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "anime-whisper",
+    "engineVadModel": "firered-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "smart",
+    "engineLlmMtModel": "sakura-galtransl-7b-q6k",
+    "engineProfile": "balanced",
+    "activePresetId": "ja-av-anime-whisper-firered",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "firered",
+    "smartTranslateModelId": "qwen3-8b"
+  }
+}

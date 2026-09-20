@@ -17,20 +17,47 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 const REQUIRED_RENDERER_FILES = [
     'index.html',
+    'settings-panels.fragment.html',
+    'workspace-scenes.fragment.html',
+    'workspace-shelf.fragment.html',
+    'workspace-models.fragment.html',
+    'workspace-burn.fragment.html',
+    'setup-wizard.fragment.html',
+    'factory-modals.fragment.html',
+    'editor-modals-drawers.fragment.html',
+    'editor-modals-tools.fragment.html',
+    'editor-modals-pro.fragment.html',
     'splash.html',
     'subtitle-editor.html',
-    'subtitle-library.html',
     'about.html',
+    'subtitle-shelf.html',
     'update.html',
     'update-progress.html',
-    'advanced-llm-pick.html',
     'icon.png',
     'icon-64.png',
     'icon-editor.png',
+    'icon-player.png',
     'tseditor.png',
     'js/app.js',
     'js/main-ui-ux.js',
     'js/av-makers-embed.js',
+    'js/ui-fragment-load-core.js',
+    'js/settings-dom-load-core.js',
+    'js/editor-ui-fragment-load-core.js',
+    'js/setup-wizard-steps-core.js',
+    'js/setup-wizard-appearance-core.js',
+    'js/setup-wizard-goals-core.js',
+    'js/setup-wizard-needs-core.js',
+    'js/setup-wizard-model-recommend-core.js',
+    'js/pip-mirror-ui-core.js',
+    'js/env-fix-start-core.js',
+    'js/setup-wizard-hf-pick-core.js',
+    'js/setup-wizard-detect-core.js',
+    'js/setup-wizard-plan-core.js',
+    'js/setup-wizard-download-ui-core.js',
+    'js/setup-wizard-prefs-core.js',
+    'js/setup-wizard-apply-core.js',
+    'js/setup-wizard-onboarding-core.js',
     'js/setup-wizard.js',
     'js/settings-editor-prefs.js',
     'js/advanced-settings.js',
@@ -48,6 +75,15 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/audio-snap-duration-plan.js',
     'js/subtitle-editor/retranscribe-range-plan.js',
     'js/subtitle-editor/batch-cue-filter-plan.js',
+    'js/subtitle-editor/filler-check-plan.js',
+    'js/subtitle-editor/filler-check-ui.js',
+    'js/subtitle-editor/batch-retranslate-ui.js',
+    'js/subtitle-editor/batch-delete-ui.js',
+    'js/subtitle-editor/playhead-scrub.js',
+    'js/subtitle-editor/subtitlecat-upload-ui.js',
+    'js/subtitle-editor/glossary-import-ui.js',
+    'js/subtitle-editor/player-handoff-ui.js',
+    'js/subtitle-editor/target-lang-ui.js',
     'js/subtitle-editor/workflows.js',
     'js/subtitle-editor/inference-progress.js',
     'js/subtitle-editor/layout.js',
@@ -60,53 +96,166 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-editor/ass-styles-ui.js',
     'js/subtitle-editor/jassub-preview.js',
     'js/subtitle-editor/low-conf-retranscribe.js',
-    'js/subtitle-library-ui.js',
-    'js/library-player-ui.js',
     'js/about-window.js',
+    'js/scene-presets-core.js',
+    'js/scene-presets-ui.js',
+    'js/combo-plans-core.js',
+    'js/combo-plans-ui-core.js',
+    'js/subtitle-shelf-core.js',
+    'js/subtitle-shelf-translate-core.js',
+    'js/subtitle-shelf-ui.js',
     'js/update-window.js',
     'js/update-progress.js',
-    'js/advanced-llm-pick-window.js',
+    // Packaged index collapses CHROME_SCRIPTS into this bundle (build-renderer.js)
+    'js/chrome.bundle.js',
     'js/eta-core.js',
     'js/i18n-core.js',
     'js/i18n-catalogs.js',
     'js/i18n.js',
+    'js/i18n-ui-tf-core.js',
+    'js/deferred-script-load-core.js',
     'js/media-extensions-core.js',
     'js/app-path-utils-core.js',
     'js/infer-stage-progress-core.js',
     'js/progress-display-core.js',
+    'js/job-progress-log-core.js',
+    'js/log-auto-scroll-core.js',
+    'js/log-panel-render-core.js',
+    'js/quality-pipeline-policy-core.js',
     'js/settings-options-normalize-core.js',
+    'js/translate-mode-byok-policy-core.js',
+    'js/translate-mode-form-core.js',
+    'js/external-import-action-core.js',
+    'js/item-posttask-paths-core.js',
+    'js/subtitle-software-credit-core.js',
+    'js/per-item-qc-pipeline-core.js',
     'js/post-task-qc-ui-core.js',
     'js/translate-mode-chip-core.js',
+    'js/hybrid-model-pick-sync-core.js',
+    'js/translate-external-pick-core.js',
+    'js/translate-mode-ui-core.js',
+    'js/params-mode-ui-core.js',
+    'js/quick-toolbar-chips-ui-core.js',
+    'js/translate-style-core.js',
+    'js/huihui-qwen3-profile-core.js',
+    'js/translategemma-profile-core.js',
+    'js/smart-translate-recycle-guard-core.js',
+    'js/smart-translate-align-core.js',
+    'js/smart-translate-delivery-finalize-core.js',
     'js/engine-download-format-core.js',
     'js/engine-models-ui-core.js',
+    'js/engine-models-lab-core.js',
+    'js/engine-models-lab-ui-core.js',
+    'js/engine-models-workspace-core.js',
+    'js/engine-models-library-ui-core.js',
+    'js/engine-models-cache-core.js',
+    'js/engine-models-cache-shell-core.js',
     'js/engine-manual-download-core.js',
-    'js/sense-queue-core.js',
-    'js/sense-recovery-core.js',
-    'js/sense-finalize-core.js',
+    'js/engine-gpu-torch-core.js',
+    'js/compute-busy-ui-core.js',
+    'js/batch-recovery-core.js',
+    'js/asr-settings-core.js',
+    'js/audio-option-mutex-core.js',
     'js/engine-missing-models-core.js',
+    'js/missing-models-prompt-core.js',
     'js/start-readiness-core.js',
+    'js/start-readiness-ui-core.js',
     'js/selection-toolbar-core.js',
     'js/live-batch-queue-core.js',
+    'js/live-batch-rehydrate-core.js',
     'js/settings-saved-options-core.js',
+    'js/settings-form-apply-core.js',
+    'js/settings-modal-ui-core.js',
+    'js/engine-env-ui-core.js',
     'js/post-batch-autofix-plan-core.js',
+    'js/post-batch-runner-core.js',
+    'js/batch-job-progress-core.js',
+    'js/batch-start-runner-core.js',
+    'js/busy-overlay-core.js',
+    'js/media-intake-core.js',
     'js/retranslate-plan-core.js',
+    'js/retranslate-runner-core.js',
+    'js/retranslate-modal-ui-core.js',
+    'js/shelf-translate-flow-core.js',
+    'js/factory-task-list-ui-core.js',
+    'js/player-launch-ui-core.js',
+    'js/factory-shell-ui-core.js',
+    'js/factory-workspace-nav-core.js',
+    'js/factory-chrome-core.js',
+    'js/factory-task-tab-core.js',
+    'js/factory-task-ui-core.js',
+    'js/task-list-actions-ui-core.js',
+    'js/factory-task-reorder-core.js',
+    'js/factory-status-bar-core.js',
+    'js/list-removal-ui-core.js',
+    'js/cli-command-core.js',
+    'js/cli-command-ui-core.js',
+    'js/burn-settings-ui-core.js',
+    'js/job-session-control-core.js',
+    'js/quick-extras-ui-core.js',
+    'js/bilingual-task-ui-core.js',
+    'js/factory-status-chips-core.js',
+    'js/twai-model-select-ui-core.js',
+    'js/managed-llm-pick-core.js',
+    'js/app-dom-ids-core.js',
+    'js/app-api-bind-core.js',
+    'js/app-shell-deps-core.js',
+    'js/post-task-ui-core.js',
+    'js/item-qc-markers-core.js',
+    'js/runtime-options-core.js',
+    'js/app-menu-coord-core.js',
+    'js/app-progress-shell-core.js',
+    'js/app-wire-utils-core.js',
+    'js/app-wire-chrome-shell-core.js',
+    'js/app-wire-chrome-entitlement-core.js',
+    'js/app-wire-chrome-translate-core.js',
+    'js/app-wire-chrome-toolbar-core.js',
+    'js/app-wire-chrome-session-core.js',
+    'js/app-wire-chrome-intake-core.js',
+    'js/app-wire-chrome-shelf-core.js',
+    'js/app-wire-chrome-core.js',
+    'js/app-wire-factory-ui-core.js',
+    'js/app-wire-settings-core.js',
+    'js/app-wire-engine-models-core.js',
+    'js/app-wire-batch-core.js',
+    'js/app-wire-boot-core.js',
+    'js/app-init-core.js',
+    'js/translate-style-picker-ui-core.js',
+    'js/app-events-binder-core.js',
+    'js/advanced-entitlement-ui-core.js',
+    'js/resource-usage-ui-core.js',
+    'js/main-ui-extras-core.js',
     'js/task-list-sort-core.js',
     'js/task-list-row-core.js',
     'js/content-profile-core.js',
+    'js/subtitle-target-lang-core.js',
+    'js/mt-target-route-core.js',
+    'js/mt-target-form-sync-core.js',
+    'js/glossary-target-pick-core.js',
+    'js/mt-cast-link-core.js',
+    'js/mt-concept-core.js',
     'js/advanced-entitlement-core.js',
     'js/advanced-license-crypto-core.js',
     'js/advanced-managed-llm-catalog-core.js',
     'js/sakura-mt-catalog-core.js',
     'js/sakura-translate-core.js',
     'js/smart-translate-hybrid-core.js',
+    'js/smart-translate-readiness-core.js',
     'js/smart-translate-polish-core.js',
+    'js/auto-scan-folders-core.js',
+    'js/qwen-asr-batch-core.js',
+    'js/qwen-asr-progress-core.js',
+    'js/anime-whisper-preset-tip.js',
     'js/dual-subtitle-core.js',
     'js/transwithai-model-core.js',
     'js/subtitle-text-presets-core.js',
     'js/subtitle-workflows-core.js',
     'js/subtitle-chinese-core.js',
-    'js/subtitle-library-core.js',
-    'js/library-player-core.js',
+    'js/subtitle-burn-style-presets-core.js',
+    'js/subtitle-burn-core.js',
+    'js/subtitle-burn-style-presets-ui.js',
+    'js/subtitle-burn-preview.js',
+    'js/subtitle-burn-ui.js',
     'js/ass-override-core.js',
     'js/ass-style-packs-core.js',
     'js/ass-styles-core.js',
@@ -120,6 +269,8 @@ const REQUIRED_RENDERER_FILES = [
     'js/subtitle-qc-smart-core.js',
     'js/subtitle-qc-silence-core.js',
     'js/subtitle-glossary-core.js',
+    'js/subtitle-glossary-import-core.js',
+    'js/subtitle-merge-core.js',
     'js/subtitle-fluency-core.js',
     'js/mt-sanitize-core.js',
     'js/mt-sanitize-intent-core.js',
@@ -136,26 +287,35 @@ const REQUIRED_RENDERER_FILES = [
     'js/editor-workspace-core.js',
     'js/bilingual-review-core.js',
     'js/find-replace-core.js',
+    'js/env-fix-progress-core.js',
+    'js/env-fix-start-core.js',
+    'js/pip-mirror-ui-core.js',
     'js/env-check.js',
+    'js/setup-wizard-steps-core.js',
+    'js/setup-wizard-appearance-core.js',
+    'js/setup-wizard-goals-core.js',
+    'js/setup-wizard-needs-core.js',
+    'js/setup-wizard-model-recommend-core.js',
+    'js/setup-wizard-hf-pick-core.js',
+    'js/setup-wizard-detect-core.js',
+    'js/setup-wizard-plan-core.js',
+    'js/setup-wizard-download-ui-core.js',
+    'js/setup-wizard-prefs-core.js',
+    'js/setup-wizard-apply-core.js',
+    'js/setup-wizard-onboarding-core.js',
+    'js/manual-whl-link-export-core.js',
     'js/manual-whl-install.js',
     // Loaded via new Worker(), not <script src> — easy to miss in packaging audits
     'js/subtitle-qc-worker.js',
     'js/subtitle-find-worker.js',
     'vendor/app.css',
+    'vendor/setup-wizard.css',
+    'vendor/factory.css',
+    'vendor/editor.css',
     'vendor/font-awesome/css/font-awesome.min.css',
     'vendor/font-awesome/fonts/fontawesome-webfont.woff2',
     'vendor/font-awesome/fonts/fontawesome-webfont.woff',
     'vendor/font-awesome/fonts/fontawesome-webfont.ttf',
-];
-
-const MT_TRAIN_MUST_EXIST = [
-    'tools/mt-train/server.js',
-    'tools/mt-train/public/index.html',
-    'tools/mt-train/public/wizard.js',
-    'tools/mt-train/lib/sandbox.js',
-    'tools/mt-train/lib/train.js',
-    'electron/mt-train-window.js',
-    'electron/mt-train-bridge.js',
 ];
 
 const ELECTRON_MUST_EXIST = [
@@ -168,18 +328,38 @@ const ELECTRON_MUST_EXIST = [
     'electron/engine-job-options.js',
     'electron/engine-audio-options.js',
     'electron/engine-mt-adapter.js',
+    'electron/engine-batch-loop.js',
+    'electron/engine-download-job.js',
+    'electron/engine-ensure-running.js',
+    'electron/engine-range-transcribe.js',
     'electron/advanced-bridge.js',
     'electron/advanced-gates.js',
+    'electron/advanced-module-loader.js',
+    'electron/advanced-closed-api.js',
+    'electron/advanced-qc-smart-fix.js',
+    'electron/advanced-smart-translate-job.js',
+    'electron/advanced-smart-translate-file.js',
+    'electron/advanced-reconstruct-orchestration.js',
+    'electron/advanced-batch-reconstruct.js',
+    'electron/advanced-license-lifecycle.js',
+    'electron/advanced-managed-llm-jobs.js',
+    'electron/advanced-managed-llm-ipc.js',
+    'electron/delivery-underfill-repair.js',
     'electron/tdp-fs.js',
     'electron/tdp-runtime.js',
     'electron/sakura-mt.js',
     'electron/sakura-translate.js',
     'electron/transwithai-bridge.js',
+    'electron/transwithai-batch-loop.js',
+    'electron/transwithai-progress-parse.js',
+    'electron/transwithai-runtime-options-normalize.js',
     'electron/extensions-bridge.js',
-    'electron/subtitle-library.js',
-    'electron/subtitle-library-window.js',
+    'electron/extensions-ffmpeg-ipc.js',
+    'electron/extensions-shelf-ipc.js',
+    'electron/extensions-subtitle-document.js',
+    'electron/extensions-subtitle-editor-ipc.js',
+    'electron/extensions-subtitle-postprocess.js',
     'electron/smart-translate-hybrid.js',
-    'electron/advanced-closed-api.js',
     'electron/live-batch-bridge.js',
     'electron/live-batch-queue.js',
 ];
@@ -188,11 +368,10 @@ const HTML_PAGES = [
     'index.html',
     'splash.html',
     'subtitle-editor.html',
-    'subtitle-library.html',
     'about.html',
+    'subtitle-shelf.html',
     'update.html',
     'update-progress.html',
-    'advanced-llm-pick.html',
 ];
 
 function listJsFiles(dir, acc = []) {
@@ -256,14 +435,6 @@ function packageFilesCover(relPosix) {
             if (f === normalized) return true;
             if (f === 'shared/**/*') return true;
             if (typeof f === 'string' && f.startsWith('shared/') && !f.startsWith('!')) return true;
-            return false;
-        });
-    }
-    if (normalized.startsWith('tools/mt-train/')) {
-        return files.some((f) => {
-            if (f === normalized) return true;
-            if (f === 'tools/mt-train/**/*') return true;
-            if (typeof f === 'string' && f.startsWith('tools/mt-train/') && !f.startsWith('!')) return true;
             return false;
         });
     }
@@ -408,6 +579,101 @@ function main() {
             }
         }
 
+        // Settings + factory workspace panels must stay extracted (keeps index.html boot HTML lean).
+        const fragSrc = path.join(src, 'settings-panels.fragment.html');
+        const indexSrc = path.join(src, 'index.html');
+        const workspaceFrags = [
+            'workspace-scenes.fragment.html',
+            'workspace-shelf.fragment.html',
+            'workspace-models.fragment.html',
+            'workspace-burn.fragment.html',
+        ];
+        if (!fs.existsSync(fragSrc)) {
+            errors.push('缺少 src/settings-panels.fragment.html（先 npm run extract:settings-fragment）');
+        } else if (fs.existsSync(indexSrc)) {
+            const indexHtml = fs.readFileSync(indexSrc, 'utf8');
+            if (!indexHtml.includes('data-settings-dom="pending"') && !indexHtml.includes('data-ui-fragment="pending"')) {
+                errors.push('src/index.html 缺少设置占位 data-settings-dom/data-ui-fragment="pending"（勿把面板重新内联）');
+            }
+            if (indexHtml.includes('id="engineInstallPathInput"')) {
+                errors.push('src/index.html 仍含设置控件 engineInstallPathInput（应只在 fragment）');
+            }
+            for (const name of workspaceFrags) {
+                if (!fs.existsSync(path.join(src, name))) {
+                    errors.push(`缺少 src/${name}（先 npm run extract:workspace-fragments）`);
+                }
+            }
+            const chromeFrags = [
+                'setup-wizard.fragment.html',
+                'factory-modals.fragment.html',
+            ];
+            for (const name of chromeFrags) {
+                if (!fs.existsSync(path.join(src, name))) {
+                    errors.push(`缺少 src/${name}（先 npm run extract:factory-modal-fragments）`);
+                }
+            }
+            if (!indexHtml.includes('vendor/factory.css')) {
+                errors.push('src/index.html 缺少 vendor/factory.css 链接（先 npm run extract:factory-css）');
+            }
+            if (!/id="setupWizardModal"[^>]*data-ui-fragment="pending"/.test(indexHtml)) {
+                errors.push('src/index.html 缺少设置向导占位 setupWizardModal[data-ui-fragment=pending]');
+            }
+            if (!/id="retranslateModal"[^>]*data-ui-fragment="pending"/.test(indexHtml)) {
+                errors.push('src/index.html 缺少 retranslateModal[data-ui-fragment=pending]');
+            }
+            if (indexHtml.includes('id="wizardUiLocaleList"')) {
+                errors.push('src/index.html 仍含向导控件 wizardUiLocaleList（应只在 setup-wizard.fragment.html）');
+            }
+            if (indexHtml.includes('id="retranslateModeLlm"')) {
+                errors.push('src/index.html 仍含重译控件 retranslateModeLlm（应只在 factory-modals.fragment.html）');
+            }
+            if (!indexHtml.includes('id="workspaceShelf"') || !/id="workspaceShelf"[^>]*data-ui-fragment="pending"/.test(indexHtml)) {
+                errors.push('src/index.html 缺少字幕库占位 workspaceShelf[data-ui-fragment=pending]');
+            }
+            if (indexHtml.includes('id="shelfCardList"')) {
+                errors.push('src/index.html 仍含字幕库控件 shelfCardList（应只在 workspace-shelf.fragment.html）');
+            }
+            if (indexHtml.includes('id="engineModelsList"')) {
+                errors.push('src/index.html 仍含模型列表 engineModelsList（应只在 workspace-models.fragment.html）');
+            }
+            if (indexHtml.includes('id="burnBatchList"')) {
+                errors.push('src/index.html 仍含烧录队列 burnBatchList（应只在 workspace-burn.fragment.html）');
+            }
+            if (indexHtml.includes('id="scenesCardList"')) {
+                errors.push('src/index.html 仍含场景列表 scenesCardList（应只在 workspace-scenes.fragment.html）');
+            }
+        }
+
+        const editorSrcHtml = path.join(src, 'subtitle-editor.html');
+        const editorFrags = [
+            'editor-modals-drawers.fragment.html',
+            'editor-modals-tools.fragment.html',
+            'editor-modals-pro.fragment.html',
+        ];
+        for (const name of editorFrags) {
+            if (!fs.existsSync(path.join(src, name))) {
+                errors.push(`缺少 src/${name}（先 npm run extract:editor-modal-fragments）`);
+            }
+        }
+        if (fs.existsSync(editorSrcHtml)) {
+            const editorHtml = fs.readFileSync(editorSrcHtml, 'utf8');
+            if (!editorHtml.includes('vendor/editor.css')) {
+                errors.push('src/subtitle-editor.html 缺少 vendor/editor.css 链接（先 npm run extract:editor-css）');
+            }
+            if (!/id="editorFindReplaceModal"[^>]*data-ui-fragment="pending"/.test(editorHtml)) {
+                errors.push('src/subtitle-editor.html 缺少 editorFindReplaceModal[data-ui-fragment=pending]');
+            }
+            if (!/id="editorSplitModal"[^>]*data-ui-fragment="pending"/.test(editorHtml)) {
+                errors.push('src/subtitle-editor.html 缺少 editorSplitModal[data-ui-fragment=pending]');
+            }
+            if (editorHtml.includes('id="editorAssStyleList"')) {
+                errors.push('src/subtitle-editor.html 仍含 ASS 样式列表（应只在 editor-modals-drawers.fragment.html）');
+            }
+            if (editorHtml.includes('id="editorBatchDurConfirm"')) {
+                errors.push('src/subtitle-editor.html 仍含批量时长控件（应只在 editor-modals-tools.fragment.html）');
+            }
+        }
+
         for (const page of HTML_PAGES) {
             const htmlPath = path.join(src, page);
             if (!fs.existsSync(htmlPath)) {
@@ -486,6 +752,8 @@ function main() {
     const electronMustExist = [
         ...ELECTRON_MUST_EXIST,
         'electron/about-window.js',
+        'electron/subtitle-shelf.js',
+        'electron/subtitle-shelf-window.js',
         'electron/settings-window.js',
         'electron/subtitle-editor-window.js',
         'electron/update-window.js',
@@ -502,13 +770,6 @@ function main() {
     for (const rel of electronMustExist) {
         if (!fs.existsSync(path.join(root, rel))) {
             errors.push(`缺少主进程/打包文件: ${rel}`);
-        }
-    }
-    for (const rel of MT_TRAIN_MUST_EXIST) {
-        if (!fs.existsSync(path.join(root, rel))) {
-            errors.push(`缺少学习向导打包文件: ${rel}`);
-        } else if (!packageFilesCover(rel)) {
-            errors.push(`package.json build.files 可能未打包学习向导: ${rel}`);
         }
     }
 
@@ -583,7 +844,11 @@ function main() {
     } else if (!packageFilesCover(jaAsrFixesRel)) {
         errors.push(`package.json build.files 可能未打包: ${jaAsrFixesRel}`);
     }
-    for (const rel of ['shared/av-actor-glossary.json', 'shared/av-domain-glossary.json']) {
+    for (const rel of [
+        'shared/av-actor-glossary.json',
+        'shared/av-domain-glossary.json',
+        'shared/av-glossary-i18n-overrides.json',
+    ]) {
         if (!fs.existsSync(path.join(root, rel))) {
             errors.push(`缺少 AV 词库: ${rel}（运行 npm run build:av-glossary）`);
         } else if (!packageFilesCover(rel)) {
@@ -660,7 +925,7 @@ function main() {
         const requiredWheels = [
             { name: 'faster_whisper-1.2.1-py3-none-any.whl', minBytes: 500 * 1024 },
             { name: 'funasr-1.3.30-py3-none-any.whl', minBytes: 200 * 1024 },
-            { name: 'tokenizers-0.23.1-cp310-abi3-win_amd64.whl', minBytes: 500 * 1024 },
+            { name: 'tokenizers-0.22.2-cp39-abi3-win_amd64.whl', minBytes: 500 * 1024 },
             { name: 'huggingface_hub-1.25.1-py3-none-any.whl', minBytes: 100 * 1024 },
             { name: 'httpx-0.28.1-py3-none-any.whl', minBytes: 20 * 1024 },
             { name: 'tqdm-4.70.0-py3-none-any.whl', minBytes: 10 * 1024 },
@@ -693,6 +958,38 @@ function main() {
             if (!fs.existsSync(pkgDir)) {
                 errors.push(
                     `缺少已安装的 ${pkg} 包（先运行 node tools/ensure-bundled-wheels.js）`,
+                );
+            }
+        }
+        // Silero VAD: PyPI faster-whisper 1.2.1 ships v6.0; we patch to v6.2 (#1390).
+        const sileroWant = '914fd98ac0a73d69ba1e70c9b1d66acb740eff90500dfde08b89a961b168a6a9';
+        const sileroInstalled = path.join(
+            root,
+            'transub-engine',
+            'runtime',
+            'Lib',
+            'site-packages',
+            'faster_whisper',
+            'assets',
+            'silero_vad_v6.onnx',
+        );
+        const sileroPatch = path.join(
+            root,
+            'transub-engine',
+            'patches',
+            'faster-whisper',
+            'silero_vad_v6.onnx',
+        );
+        if (!fs.existsSync(sileroPatch)) {
+            errors.push('缺少 Silero VAD v6.2 补丁: transub-engine/patches/faster-whisper/silero_vad_v6.onnx');
+        } else if (!fs.existsSync(sileroInstalled)) {
+            errors.push('缺少已安装的 silero_vad_v6.onnx（先运行 node tools/ensure-bundled-wheels.js）');
+        } else {
+            const crypto = require('crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(sileroInstalled)).digest('hex');
+            if (hash !== sileroWant) {
+                errors.push(
+                    `内置 Silero VAD 未升级到 v6.2（got ${hash.slice(0, 12)}…；运行 node tools/ensure-bundled-wheels.js）`,
                 );
             }
         }
@@ -803,18 +1100,42 @@ function main() {
 
     if (asarRoot) {
         const list = asarList(asarRoot);
+        // Every non-Pro electron/*.js on disk must ship (catches stale packs after extracts)
+        const allElectronJs = listJsFiles(path.join(root, 'electron'))
+            .map((full) => path.relative(root, full).split(path.sep).join('/'))
+            .filter((rel) => !isProprietaryAsarPath(rel));
+        // Every non-Pro top-level src/js/*-core.js must ship via build.files glob
+        const allSrcCores = fs.existsSync(path.join(root, 'src', 'js'))
+            ? fs.readdirSync(path.join(root, 'src', 'js'))
+                .filter((name) => /-core\.js$/.test(name))
+                .map((name) => `src/js/${name}`)
+                .filter((rel) => !isProprietaryAsarPath(rel))
+            : [];
+        const htmlAssetsInAsar = [];
+        for (const page of HTML_PAGES) {
+            const htmlPath = path.join(src, page);
+            if (!fs.existsSync(htmlPath)) continue;
+            for (const asset of extractHtmlLocalAssets(htmlPath)) {
+                htmlAssetsInAsar.push(`renderer-dist/${asset.replace(/\\/g, '/')}`);
+            }
+        }
         const mustInAsar = [
             ...REQUIRED_RENDERER_FILES.map((f) => `renderer-dist/${f}`),
+            ...htmlAssetsInAsar,
             ...requiredSrc.map((f) => f.replace(/\\/g, '/')),
+            ...allSrcCores,
             ...asarElectronMust,
-            ...MT_TRAIN_MUST_EXIST,
+            ...allElectronJs,
         ];
         if (list) {
             const set = new Set(
                 list.map((p) => String(p).replace(/\\/g, '/').replace(/^\//, '')),
             );
+            const seenMust = new Set();
             for (const rel of mustInAsar) {
                 const norm = rel.replace(/\\/g, '/').replace(/^\//, '');
+                if (seenMust.has(norm)) continue;
+                seenMust.add(norm);
                 const found = set.has(norm)
                     || [...set].some((x) => x === norm || x.endsWith(`/${norm}`));
                 if (!found) errors.push(`asar 缺少: ${rel}`);
@@ -831,10 +1152,21 @@ function main() {
                     errors.push(`asar 误含闭源源码: ${rel}`);
                 }
             }
+            // Basename catch: proprietary algorithm sources must never appear under any asar path
+            const propBasenames = new Set(
+                PROPRIETARY_ASAR_FORBIDDEN.map((p) => path.posix.basename(p)),
+            );
+            for (const entry of set) {
+                const base = path.posix.basename(entry);
+                if (propBasenames.has(base)) {
+                    errors.push(`asar 误含闭源源码（按文件名）: ${entry}`);
+                }
+            }
             for (const rel of [
                 'shared/ja-asr-domain-fixes.json',
                 'shared/av-actor-glossary.json',
                 'shared/av-domain-glossary.json',
+                'shared/av-glossary-i18n-overrides.json',
             ]) {
                 if (!set.has(rel) && ![...set].some((x) => x === rel || x.endsWith(`/${rel}`))) {
                     errors.push(`asar 缺少: ${rel}`);

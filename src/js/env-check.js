@@ -4,6 +4,116 @@
 (function (global) {
     const electron = global.__ELECTRON__;
     const DONE_KEY = 'transub.envCheck.done';
+
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        return global.TransubI18n?.tx?.(text) ?? String(text || '');
+    }
+
+    /** Live-merge preferred PyPI mirror so mid-fix select changes apply to the next download. */
+    function withDownloadExtras(base) {
+        return {
+            ...(base && typeof base === 'object' ? base : {}),
+            ...(global.TransubPipMirrorUi?.downloadPayloadPatch?.() || {}),
+        };
+    }
+
+    /** @type {ReturnType<typeof global.TransubEnvFixStart.createWhlDropController>|null} */
+    let envCheckWhlDrop = null;
+
+    function buildGpuFormPayloadFromResult(result) {
+        const gpuItem = (result?.items || []).find((it) => it.id === 'gpuRuntime') || {};
+        return manualFormPayload(result, {
+            asrGpuReady: gpuItem.asrGpuReady === true,
+            ortGpuCuda: gpuItem.ortGpuCuda === true,
+            ortGpuRequirement: gpuItem.ortGpuRequirement || '',
+            ortOnly: gpuItem.asrGpuReady === true && gpuItem.ortGpuCuda === false,
+        });
+    }
+
+    function ensureEnvCheckWhlDrop() {
+        if (envCheckWhlDrop) return envCheckWhlDrop;
+        const FixStart = global.TransubEnvFixStart;
+        if (typeof FixStart?.createWhlDropController !== 'function') return null;
+        envCheckWhlDrop = FixStart.createWhlDropController({
+            $,
+            electron,
+            uiTx,
+            uiTf,
+            esc,
+            ids: FixStart.ENV_CHECK_WHL_IDS || {
+                zone: 'envCheckWhlDropZone',
+                list: 'envCheckWhlPathList',
+                empty: 'envCheckWhlPathEmpty',
+                clear: 'envCheckWhlClearPathsBtn',
+                install: 'envCheckWhlInstallBtn',
+                status: 'envCheckWhlStatus',
+                exportBtn: 'envCheckWhlExportBtn',
+                panel: 'envCheckWhlPanel',
+            },
+            onInstall: (paths) => {
+                void (async () => {
+                    envCheckWhlDrop?.setBusy(true);
+                    try {
+                        const res = await runManualDownloadSession({
+                            initialPaths: paths,
+                            preferInstall: true,
+                        });
+                        if (res?.ok) envCheckWhlDrop?.clearPaths(uiTx('安装完成，已重新检测'));
+                    } finally {
+                        envCheckWhlDrop?.setBusy(false);
+                        syncEnvCheckRepairTools();
+                    }
+                })();
+            },
+            onExport: (paths) => {
+                void (async () => {
+                    envCheckWhlDrop?.setBusy(true);
+                    try {
+                        await runManualDownloadSession({
+                            initialPaths: paths,
+                            preferInstall: false,
+                        });
+                    } finally {
+                        envCheckWhlDrop?.setBusy(false);
+                        syncEnvCheckRepairTools();
+                    }
+                })();
+            },
+        });
+        return envCheckWhlDrop;
+    }
+
+    function syncEnvCheckRepairTools() {
+        try {
+            global.TransubPipMirrorUi?.bindSelects?.({ uiTx });
+        } catch (_) { /* ignore */ }
+        const drop = ensureEnvCheckWhlDrop();
+        drop?.bindOnce();
+        // Inline .whl panel stays collapsed;「手动修复」opens shared manualWhlModal.
+        drop?.setPanelVisible(false);
+        if (state.result) {
+            drop?.setFormPayload(buildGpuFormPayloadFromResult(state.result));
+        }
+        drop?.setBusy(state.running || state.fixing);
+    }
+
+    /** Keep「手动修复」visible whenever「自动修复」is shown (wizard parity). */
+    function syncManualBesideFix(fixBtn, manualBtn) {
+        if (!manualBtn || !fixBtn) return;
+        if (!fixBtn.classList.contains('hidden')) {
+            manualBtn.classList.remove('hidden');
+        }
+    }
+
     const DEFAULT_ITEMS = [
         { id: 'installPath', label: '安装路径（仅限 ASCII 字符）' },
         { id: 'ffmpeg', label: 'FFmpeg / FFprobe' },
@@ -13,6 +123,7 @@
         { id: 'gpuRuntime', label: 'GPU 运行时' },
         { id: 'engine', label: 'Transub Engine' },
         { id: 'llamaServerRuntime', label: 'llama-server 运行时' },
+        { id: 'torchEngineStartup', label: 'PyTorch 引擎启动探测' },
         { id: 'asrModel', label: 'ASR 模型' },
         { id: 'vadModel', label: 'VAD 模型（FSMN）' },
         { id: 'lidModel', label: '语种探测模型' },
@@ -21,10 +132,11 @@
         { id: 'whisperRuntime', label: 'Whisper 运行库' },
     ];
     const BASE_ITEM_IDS = [
-        'installPath', 'ffmpeg', 'vcRedist', 'gpu', 'gpuDriver', 'gpuRuntime', 'engine', 'llamaServerRuntime',
+        'installPath', 'ffmpeg', 'vcRedist', 'gpu', 'gpuDriver', 'gpuRuntime', 'engine',
+        'llamaServerRuntime', 'torchEngineStartup',
     ];
     const RUNTIME_ITEM_IDS = [
-        'asrModel', 'vadModel', 'lidModel', 'sensevoiceRuntime', 'qwenRuntime', 'whisperRuntime',
+        'asrModel', 'vadModel', 'lidModel', 'sensevoiceRuntime', 'qwenRuntime', 'torchEngineStartup', 'whisperRuntime',
     ];
 
     function itemsForScope(scope) {
@@ -44,6 +156,7 @@
         open: false,
         result: null,
         afterStart: null,
+        envKeysBound: false,
     };
 
     function $(id) {
@@ -115,7 +228,7 @@
                 `<details class="env-check-passed-group">`
                 + `<summary class="env-check-passed-summary">`
                 + `<span class="env-check-mark" aria-hidden="true"><i class="fa fa-check"></i></span>`
-                + `<span class="env-check-passed-summary-text">已通过 ${okItems.length} 项</span>`
+                + `<span class="env-check-passed-summary-text">${uiTf('已通过 {count} 项', { count: okItems.length })}</span>`
                 + `<span class="env-check-passed-summary-hint"></span>`
                 + `</summary>`
                 + `<div class="env-check-passed-list">${okItems.map(renderItemRow).join('')}</div>`
@@ -138,15 +251,150 @@
         const whisperItem = items.find((it) => it.id === 'whisperRuntime');
         const whisperPolicy = !!(whisperItem?.policyBlocked
             || /应用程序控制策略|智能应用控制|4551/i.test(String(whisperItem?.detail || '')));
+        const torchItem = items.find((it) => it.id === 'torchEngineStartup');
+        const torchBad = !!(torchItem
+            && (torchItem.status === 'fail' || torchItem.status === 'warn')
+            && !torchItem.skipped);
+        if (torchBad) {
+            const amd = items.some((it) => it.id === 'gpu' && String(it.vendor || '').toLowerCase() === 'amd');
+            return uiTx(
+                amd
+                    ? '检测完成：PyTorch 引擎启动探测未通过。请点「自动修复」把 ROCm PyTorch 装进引擎运行时（系统 pip 无效），完成后重新检测。'
+                    : '检测完成：PyTorch 引擎启动探测未通过（与真实转写同序）。请点「自动修复」或「手动修复」补齐 CUDA PyTorch，完成后重新检测。',
+            );
+        }
         if (fails > 0) {
             return whisperPolicy
-                ? `检测完成：${fails} 项未通过。Whisper 可能被系统策略拦截，可点「一键修复」重试或「手动下载」。`
-                : `检测完成：${fails} 项未通过${warns ? `，${warns} 项需注意` : ''}。缺什么可点「一键修复」。`;
+                ? uiTf('检测完成：{fails} 项未通过。Whisper 可能被系统策略拦截，可点「自动修复」或「手动修复」。', { fails })
+                : (warns
+                    ? uiTf('检测完成：{fails} 项未通过，{warns} 项需注意。缺什么可点「自动修复」或「手动修复」。', { fails, warns })
+                    : uiTf('检测完成：{fails} 项未通过。缺什么可点「自动修复」或「手动修复」。', { fails }));
         }
         if (warns > 0) {
-            return `检测完成：环境可用，有 ${warns} 项提示。可点「一键修复」补齐。`;
+            return uiTf('检测完成：环境可用，有 {count} 项提示。可点「自动修复」或「手动修复」补齐。', { count: warns });
         }
-        return '检测完成：依赖项正常。';
+        return uiTx('检测完成：依赖项正常（含 PyTorch 引擎启动探测）。');
+    }
+
+    function chipStateFromItem(item) {
+        if (!item) return { state: 'busy', label: '待检测' };
+        if (item.status === 'ok') {
+            const short = String(item.detail || '正常').trim();
+            return { state: 'ok', label: short.length > 28 ? `${short.slice(0, 28)}…` : (short || '正常') };
+        }
+        if (item.status === 'warn') return { state: 'warn', label: '注意' };
+        if (item.status === 'fail') return { state: 'err', label: '需修复' };
+        if (item.status === 'checking') return { state: 'busy', label: '检测中…' };
+        return { state: 'busy', label: '待检测' };
+    }
+
+    function mergeChipStates(...infos) {
+        const list = infos.filter(Boolean);
+        const merge = global.TransubSetupWizardDetect?.mergeChipStates;
+        if (typeof merge === 'function') return merge(...list);
+        if (!list.length) return { state: 'busy', label: '待检测' };
+        if (list.some((x) => x.state === 'fail' || x.state === 'error' || x.state === 'err')) {
+            const bad = list.find((x) => x.state === 'fail' || x.state === 'error' || x.state === 'err');
+            return { state: 'err', label: bad.label || '需修复' };
+        }
+        if (list.some((x) => x.state === 'busy' || x.state === 'checking')) {
+            return { state: 'busy', label: '检测中…' };
+        }
+        if (list.some((x) => x.state === 'warn')) {
+            return { state: 'warn', label: '注意' };
+        }
+        if (list.every((x) => x.state === 'ok')) {
+            return { state: 'ok', label: '正常' };
+        }
+        return list[0];
+    }
+
+    function setEnvCheckModalChip(which, info = {}) {
+        const map = {
+            base: { chip: 'envCheckChipBase', state: 'envCheckChipBaseState' },
+            engine: { chip: 'envCheckChipEngine', state: 'envCheckChipEngineState' },
+            accel: { chip: 'envCheckChipAccel', state: 'envCheckChipAccelState' },
+        };
+        const ids = map[which];
+        if (!ids) return;
+        const chip = $(ids.chip);
+        const stateEl = $(ids.state);
+        const state = String(info?.state || '').trim() || 'busy';
+        const label = String(info?.label || '').trim();
+        if (chip) chip.setAttribute('data-state', state);
+        if (stateEl && label) stateEl.textContent = label;
+    }
+
+    function syncEnvCheckModalChips(result) {
+        const items = Array.isArray(result?.items) ? result.items : [];
+        const byId = (id) => items.find((it) => it && it.id === id);
+        const pathItem = byId('installPath');
+        const ffmpegItem = byId('ffmpeg');
+        const vcItem = byId('vcRedist');
+        const engineItem = byId('engine');
+        const asrItem = byId('asrModel');
+        const senseItem = byId('sensevoiceRuntime');
+        const qwenItem = byId('qwenRuntime');
+        const whisperItem = byId('whisperRuntime');
+        const gpuItem = byId('gpu');
+        const gpuRtItem = byId('gpuRuntime');
+        const llamaItem = byId('llamaServerRuntime');
+        const torchItem = byId('torchEngineStartup');
+
+        setEnvCheckModalChip('base', mergeChipStates(
+            chipStateFromItem(pathItem),
+            chipStateFromItem(ffmpegItem),
+            chipStateFromItem(vcItem),
+        ));
+        setEnvCheckModalChip('engine', mergeChipStates(
+            chipStateFromItem(engineItem),
+            asrItem ? chipStateFromItem(asrItem) : null,
+            senseItem ? chipStateFromItem(senseItem) : null,
+            qwenItem ? chipStateFromItem(qwenItem) : null,
+            whisperItem ? chipStateFromItem(whisperItem) : null,
+        ));
+        setEnvCheckModalChip('accel', mergeChipStates(
+            chipStateFromItem(gpuItem),
+            chipStateFromItem(gpuRtItem),
+            chipStateFromItem(llamaItem),
+            torchItem && !torchItem.skipped ? chipStateFromItem(torchItem) : null,
+        ));
+
+        // Keep 设置 → 运行环境 overview chips in sync with the same result.
+        try {
+            const ui = global.TransubSettingsModalUi;
+            if (!ui?.setEnvOverviewChip) return;
+            ui.setEnvOverviewChip('engine', chipStateFromItem(engineItem));
+            const gpuChip = mergeChipStates(
+                chipStateFromItem(gpuItem),
+                chipStateFromItem(gpuRtItem),
+                torchItem && !torchItem.skipped ? chipStateFromItem(torchItem) : null,
+            );
+            ui.setEnvOverviewChip('gpu', gpuChip);
+            ui.setEnvOverviewChip('llama', chipStateFromItem(llamaItem));
+            if (engineItem?.status === 'ok') {
+                ui.setEnvGpuActionsEnabled?.(true);
+            }
+        } catch (_) { /* optional */ }
+    }
+
+    function bindEnvCheckOverviewChips() {
+        const overview = $('envCheckOverview');
+        if (!overview || overview.dataset.bound === '1') return;
+        overview.dataset.bound = '1';
+        overview.addEventListener('click', (event) => {
+            const chip = event.target?.closest?.('.settings-env-chip[data-env-target]');
+            if (!chip || !overview.contains(chip)) return;
+            const list = $('envCheckList');
+            if (!list) return;
+            try {
+                list.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } catch (_) {
+                list.scrollIntoView();
+            }
+            list.classList.add('is-env-flash');
+            setTimeout(() => list.classList.remove('is-env-flash'), 700);
+        });
     }
 
     function whisperRuntimeBad(result) {
@@ -165,7 +413,9 @@
             || (Array.isArray(result?.fix?.modelIds) && result.fix.modelIds.length > 0)
             || (kinds.includes('llamaRuntime')
                 && !!electron?.transubAdvancedManagedLlmOpenManual);
-        return { showFix, showManual, fixable };
+        const showReuseCuda = hasNvidiaGpuInResult(result)
+            && !!(electron?.transubEngineScanCuda && electron?.transubEngineAdoptCuda);
+        return { showFix, showManual, showReuseCuda, fixable };
     }
 
     async function offerManualLlamaRuntimeDownload(errorText = '') {
@@ -184,12 +434,14 @@
         }
         const info = infoRes.info || {};
         const detail = String(errorText || '').trim();
-        const sizeHint = info.sizeHint ? `\n体积约 ${info.sizeHint}。` : '';
+        const sizeHint = info.sizeHint ? `\n${uiTf('体积约 {size}。', { size: info.sizeHint })}` : '';
         const message = (
             (detail ? `${detail}\n\n` : '')
-            + `将打开「${info.runtimeLabel || 'llama-server'}」下载链接。${sizeHint}\n`
-            + `目标版本：${info.runtimeTag || '—'}\n\n`
-            + '下载完成后请到设置 → 运行环境 →「选择 zip 安装」或「检测」。'
+            + uiTf('将打开「{label}」下载链接。{sizeHint}\n目标版本：{tag}\n\n下载完成后请到设置 → 运行环境 →「选择 zip 安装」或「检测」。', {
+                label: info.runtimeLabel || 'llama-server',
+                sizeHint,
+                tag: info.runtimeTag || '—',
+            })
         );
         const proceed = global.TransubAppConfirm
             ? await global.TransubAppConfirm({
@@ -212,8 +464,8 @@
             return {
                 ok: true,
                 message: info.folder
-                    ? `已打开下载链接。解压或安装目标：${info.folder}`
-                    : '已打开下载链接',
+                    ? uiTf('已打开下载链接。解压或安装目标：{folder}', { folder: info.folder })
+                    : uiTx('已打开下载链接'),
             };
         } catch (err) {
             return { ok: false, error: err?.message || '无法打开下载链接' };
@@ -230,6 +482,8 @@
         const engineInstallPath = String($('engineInstallPathInput')?.value || '').trim();
         return {
             quick: true,
+            // Settings「系统检查」与向导 prepare 同源：完整项 + Torch serve 启动探测。
+            scope: 'full',
             syncLlamaBackend: true,
             ...(ffmpegPath ? { ffmpegPath } : {}),
             ...(engineInstallPath ? { engineInstallPath } : {}),
@@ -244,7 +498,7 @@
         const request = {
             ...resolveLiveCheckPayload(),
             ...(payload && typeof payload === 'object' ? payload : {}),
-            // System check + wizard: align llama-server backend to detected CUDA 12/13.
+            // System check + wizard: align llama-server to detected CUDA (NVIDIA) or ROCm (AMD).
             syncLlamaBackend: payload?.syncLlamaBackend !== false,
         };
         const scopeItems = itemsForScope(request.scope);
@@ -293,8 +547,8 @@
         const sec = Math.max(0, Math.floor(Number(ms) / 1000));
         const m = Math.floor(sec / 60);
         const s = sec % 60;
-        if (m <= 0) return `${s} 秒`;
-        return `${m} 分 ${String(s).padStart(2, '0')} 秒`;
+        if (m <= 0) return uiTf('{s} 秒', { s });
+        return uiTf('{m} 分 {s} 秒', { m, s: String(s).padStart(2, '0') });
     }
 
     function formatFixBytes(n) {
@@ -307,10 +561,10 @@
     }
 
     function setFixProgressLine(message, pct, startedAt, meta = {}) {
-        const msg = String(message || '修复中…').trim();
+        const msg = String(message || uiTx('修复中…')).trim();
         const n = Number(pct);
-        const pctPart = Number.isFinite(n) ? `（${Math.round(Math.max(0, Math.min(100, n)))}%）` : '';
-        const elapsed = startedAt ? ` · 已等待 ${formatElapsed(Date.now() - startedAt)}` : '';
+        const pctPart = Number.isFinite(n) ? uiTf('（{pct}%）', { pct: Math.round(Math.max(0, Math.min(100, n))) }) : '';
+        const elapsed = startedAt ? uiTf(' · 已等待 {elapsed}', { elapsed: formatElapsed(Date.now() - startedAt) }) : '';
         const recv = Number(meta.downloadedBytes);
         const total = Number(meta.totalBytes);
         const speed = Number(meta.bytesPerSecond);
@@ -320,7 +574,7 @@
             if (Number.isFinite(total) && total > 0) {
                 sizeBits.push(`${recvLabel} / ${formatFixBytes(total)}`);
             } else {
-                sizeBits.push(`已下 ${recvLabel}`);
+                sizeBits.push(uiTf('已下 {size}', { size: recvLabel }));
             }
         }
         if (Number.isFinite(speed) && speed > 0) {
@@ -334,6 +588,7 @@
         const startBtn = $('envCheckStartBtn');
         const fixBtn = $('envCheckFixBtn');
         const manualBtn = $('envCheckManualBtn');
+        const reuseBtn = $('envCheckReuseCudaBtn');
         const retryBtn = $('envCheckRetryBtn');
         if (startBtn) startBtn.disabled = busy;
         if (retryBtn) retryBtn.disabled = busy;
@@ -346,15 +601,28 @@
             ));
             const showFix = fixable || whisperBad || state.fixing;
             fixBtn.classList.toggle('hidden', !showFix);
-            fixBtn.disabled = busy || (!showFix && !state.fixing);
-            if (!state.fixing) fixBtn.textContent = '一键修复';
+            if (state.fixing) {
+                fixBtn.disabled = false;
+                fixBtn.textContent = '取消修复';
+                fixBtn.title = '停止当前自动修复';
+            } else {
+                fixBtn.disabled = busy || !showFix;
+                fixBtn.title = showFix ? '自动联网下载并安装缺失依赖' : '';
+                fixBtn.textContent = '自动修复';
+            }
         }
         if (manualBtn) {
             const manualable = canOfferManualDownload();
             manualBtn.classList.toggle('hidden', !manualable);
-            // 一键修复进行中仍可点「手动下载」（吞吐低/卡住时的逃生口）
             manualBtn.disabled = !manualable || (busy && !state.fixing);
+            syncManualBesideFix(fixBtn, manualBtn);
         }
+        if (reuseBtn) {
+            const showReuse = computeFixVisibility(state.result).showReuseCuda;
+            reuseBtn.classList.toggle('hidden', !showReuse);
+            reuseBtn.disabled = busy || !showReuse;
+        }
+        syncEnvCheckRepairTools();
     }
 
     function hasNvidiaGpu() {
@@ -363,7 +631,15 @@
 
     function isTorchCudaInstallError(text) {
         const s = String(text || '');
-        return /TORCH_CUDA|no kernel image|cudaerrornokernelimagefordevice|改装\s*CUDA|CUDA\s*版\s*PyTorch|CPU\s*版\s*PyTorch/i.test(s);
+        return /TORCH_CUDA|TORCH_REIMPORT|no kernel image|cudaerrornokernelimagefordevice|改装\s*CUDA|CUDA\s*版\s*PyTorch|CPU\s*版\s*PyTorch|WinError 1114|already has a docstring|引擎启动探测/i.test(s);
+    }
+
+    function isTokenizersMismatchResult(result) {
+        const items = result?.items || [];
+        const qwen = items.find((it) => it.id === 'qwenRuntime');
+        if (qwen?.tokenizersMismatch) return true;
+        const detail = String(qwen?.detail || '');
+        return /tokenizers.*不兼容|tokenizers==0\.22\.2|tokenizers.*0\.23\.1/i.test(detail);
     }
 
     function torchCudaFormPayload(result = state.result) {
@@ -423,19 +699,44 @@
             kinds.push('sensevoice');
             if (hasNvidiaGpuInResult(result)) {
                 kinds.push('torch-cuda');
+            } else if (hasAmdGpuInResult(result)) {
+                kinds.push('torch-rocm');
             }
         }
         if (
             steps.some((s) => s?.id === 'qwenRuntime')
             || statusOf('qwenRuntime') === 'fail'
             || statusOf('qwenRuntime') === 'warn'
+            || isTokenizersMismatchResult(result)
             || (Array.isArray(plan.modelIds) && plan.modelIds.some((id) => /qwen3-asr/i.test(String(id))))
         ) {
-            kinds.push('torch-cuda');
+            if (hasAmdGpuInResult(result)) kinds.push('torch-rocm');
+            else kinds.push('torch-cuda');
         }
         const gpuRt = items.find((it) => it.id === 'gpuRuntime') || {};
         if (gpuRt.torchCudaMismatch && hasNvidiaGpuInResult(result)) {
             kinds.push('torch-cuda');
+        }
+        if (gpuRt.hasRocm && !gpuRt.torchRocm && hasAmdGpuInResult(result)) {
+            kinds.push('torch-rocm');
+        }
+        if (
+            plan.ensureTorchRocm
+            || steps.some((s) => s?.id === 'torchRocm')
+        ) {
+            kinds.push('torch-rocm');
+        }
+        if (
+            plan.ensureTorchCuda
+            || steps.some((s) => s?.id === 'torchEngineStartup' || s?.id === 'audioSeparate')
+            || statusOf('torchEngineStartup') === 'fail'
+            || statusOf('torchEngineStartup') === 'warn'
+        ) {
+            if (hasAmdGpuInResult(result)) {
+                kinds.push('torch-rocm');
+            } else if (hasNvidiaGpuInResult(result)) {
+                kinds.push('torch-cuda');
+            }
         }
         if (
             steps.some((s) => s?.id === 'whisperRuntime')
@@ -447,7 +748,7 @@
         if (plan.ensureLlamaRuntime || steps.some((s) => s?.id === 'llamaServerRuntime')) {
             kinds.push('llamaRuntime');
         }
-        return kinds;
+        return [...new Set(kinds.filter(Boolean))];
     }
 
     function canOfferManualDownload() {
@@ -463,9 +764,23 @@
         return kinds[0] || 'gpu';
     }
 
+    function hasAmdGpuInResult(result) {
+        const gpu = (result?.items || []).find((it) => it.id === 'gpu');
+        return String(gpu?.vendor || '').toLowerCase() === 'amd';
+    }
+
     function hasNvidiaGpuInResult(result) {
         const gpu = (result?.items || []).find((it) => it.id === 'gpu');
-        return gpu?.status === 'ok';
+        if (!gpu || gpu.status !== 'ok') return false;
+        const vendor = String(gpu.vendor || '').toLowerCase();
+        if (vendor === 'amd') return false;
+        if (vendor === 'nvidia') return true;
+        const detail = String(gpu.detail || '');
+        // AMD discrete GPUs are also status=ok for llama-server; do not treat as NVIDIA/CUDA.
+        if (/AMD|Radeon|ROCm/i.test(detail) && !/NVIDIA|GeForce|RTX|GTX/i.test(detail)) {
+            return false;
+        }
+        return true;
     }
 
     async function openModelMirrorLinks(modelIds) {
@@ -500,8 +815,8 @@
             return {
                 ok: true,
                 message: folder
-                    ? `已打开镜像页。请将文件放到：${folder}`
-                    : '已打开模型镜像页',
+                    ? uiTf('已打开镜像页。请将文件放到：{folder}', { folder })
+                    : uiTx('已打开模型镜像页'),
                 folder,
             };
         } catch (err) {
@@ -516,20 +831,26 @@
         const result = getResult();
         const vis = computeFixVisibility(result);
         if (!vis.showManual) {
-            setSubtitleFn('当前没有可手动下载的项。');
+            setSubtitleFn('当前没有可手动修复的项。');
             return { ok: false, error: 'nothing_to_manual' };
         }
         const plan = result?.fix || {};
         const kinds = listNeededManualKindsFromResult(result);
-        const whlKinds = kinds.filter((k) => k !== 'llamaRuntime');
+        const modalKinds = kinds.filter((k) => k !== 'llamaRuntime' || !!electron?.transubAdvancedManagedLlmDownloadInfo);
+        const whlKinds = modalKinds.filter((k) => k !== 'llamaRuntime');
 
-        if (whlKinds.length && global.TransubManualWhlInstall?.openModal) {
-            const labels = whlKinds.map((k) => {
+        if (modalKinds.length && global.TransubManualWhlInstall?.openModal) {
+            const labels = modalKinds.map((k) => {
                 if (k === 'sensevoice') return 'SenseVoice';
                 if (k === 'whisper') return 'Whisper';
+                if (k === 'llamaRuntime') return 'llama-server';
                 return 'GPU';
             });
-            setSubtitleFn(`正在打开手动下载（${labels.join(' + ')}）…`);
+            setSubtitleFn(uiTf('正在打开手动修复（{labels}）…', { labels: labels.join(' + ') }));
+            // PreferInstall path shows progress inside the manual modal; keep a calm outer tip.
+            if (ui.preferInstall) {
+                setSubtitleFn('正在打开手动安装窗口…安装可能需要几分钟，请耐心等待。');
+            }
             const gpuItem = (result?.items || []).find((it) => it.id === 'gpuRuntime') || {};
             const gpuExtras = whlKinds.includes('gpu')
                 ? {
@@ -540,9 +861,11 @@
                 }
                 : {};
             const res = await global.TransubManualWhlInstall.openModal({
-                kind: whlKinds[0],
-                kinds: whlKinds,
+                kind: modalKinds[0],
+                kinds: modalKinds,
                 formPayload: manualFormPayload(result, gpuExtras),
+                initialPaths: Array.isArray(ui.initialPaths) ? ui.initialPaths : [],
+                preferInstall: !!ui.preferInstall && whlKinds.length > 0,
             });
             if (res?.ok) {
                 setSubtitleFn(res.message || '手动安装完成，正在重新检测…');
@@ -553,7 +876,7 @@
                 setSubtitleFn('已取消手动下载。');
                 return { ok: false, cancelled: true };
             }
-            setSubtitleFn(res?.error || '手动下载未完成。');
+            setSubtitleFn(res?.error || '手动修复未完成。');
             return { ok: false, error: res?.error || 'manual_failed' };
         }
 
@@ -573,17 +896,28 @@
             return opened;
         }
 
-        setSubtitleFn('当前没有可手动下载的项。');
+        setSubtitleFn('当前没有可手动修复的项。');
         return { ok: false, error: 'nothing_to_manual' };
     }
 
-    /** Active auto-fix session; used so「手动下载」can abort download mid-fix. */
+    /** Active auto-fix session; used so「手动修复 / 取消修复」can abort mid-fix. */
     let activeFixSession = null;
 
     function requestFixSwitchToManual() {
         if (!activeFixSession?.requestSwitchToManual) return false;
         activeFixSession.requestSwitchToManual();
         return true;
+    }
+
+    function requestCancelFix() {
+        if (!activeFixSession?.requestCancel) return false;
+        activeFixSession.requestCancel();
+        return true;
+    }
+
+    function abortInFlightFixDownloads() {
+        try { void electron?.transubEngineCancelDownload?.(); } catch (_) { /* ignore */ }
+        try { void electron?.transubAdvancedManagedLlmCancelPull?.(); } catch (_) { /* ignore */ }
     }
 
     function enableManualButton(manualBtn) {
@@ -594,6 +928,17 @@
         ).showManual) return;
         btn.classList.remove('hidden');
         btn.disabled = false;
+    }
+
+    function setFixButtonCancelMode(fixBtn, on) {
+        const btn = fixBtn || $('envCheckFixBtn');
+        if (!btn) return;
+        btn.classList.remove('hidden');
+        if (on) {
+            btn.disabled = false;
+            btn.textContent = '取消修复';
+            btn.title = '停止当前自动修复';
+        }
     }
 
     async function onManualDownload() {
@@ -617,9 +962,10 @@
         const recheck = typeof ui.recheck === 'function'
             ? ui.recheck
             : async (opts) => runCheck(opts);
-        const downloadExtra = ui.downloadPayload && typeof ui.downloadPayload === 'object'
+        const downloadExtraBase = ui.downloadPayload && typeof ui.downloadPayload === 'object'
             ? ui.downloadPayload
             : {};
+        const downloadExtra = () => withDownloadExtras(downloadExtraBase);
         const markFixing = typeof ui.setFixing === 'function'
             ? ui.setFixing
             : (v) => { state.fixing = !!v; };
@@ -637,6 +983,7 @@
             openVcRedist: false,
             ensureGpu: false,
             ensureTorchCuda: false,
+            ensureTorchRocm: false,
             ensureLlamaRuntime: false,
             force: false,
             modelIds: [],
@@ -661,59 +1008,102 @@
         if (!planHasAutoWork(initialPlan)) {
             const manual = (initialPlan?.manualHints || []).map((h) => h.label || h.detail).filter(Boolean);
             setSubtitleFn(manual.length
-                ? `当前项需手动处理：${manual[0]}`
-                : '当前没有可自动修复的项。');
+                ? uiTf('当前项需手动处理：{item}', { item: manual[0] })
+                : uiTx('当前没有可自动修复的项。'));
             return { ok: false, error: 'nothing_fixable' };
         }
 
-        const autoSteps = (initialPlan.steps || []).filter((s) => s && !s.manual);
-        const stepLabels = autoSteps.map((s) => s.label).filter(Boolean);
-        const manual = (initialPlan.manualHints || []).map((h) => h.label || h.detail).filter(Boolean);
-        const preview = [
-            stepLabels.length ? `将自动执行：\n· ${stepLabels.join('\n· ')}` : '',
-            manual.length ? `\n以下项需手动处理（不会自动下载）：\n· ${manual.join('\n· ')}` : '',
-            '\n下载可能需要数分钟，是否开始？\n（网络不佳时可改用「手动下载」）',
-        ].filter(Boolean).join('');
-
-        const proceed = global.TransubAppConfirm
-            ? await global.TransubAppConfirm({
-                title: '一键修复',
-                message: preview,
-                primaryLabel: '开始修复',
-                secondaryLabel: '取消',
-            })
-            : window.confirm(preview);
-        if (!proceed) return { ok: false, cancelled: true };
+        const FixProgress = global.TransubEnvFixProgress || {};
+        const FixStart = global.TransubEnvFixStart || {};
+        const startSummary = typeof FixStart.buildFixStartSummary === 'function'
+            ? FixStart.buildFixStartSummary(initialPlan, { uiTx, uiTf })
+            : (typeof FixProgress.buildFixModeChoiceMessage === 'function'
+                ? FixProgress.buildFixModeChoiceMessage(initialPlan, { uiTx, uiTf })
+                : uiTx('请选择修复方式。可「手动修复」下载安装，或「自动修复」联网补齐。'));
+        let choice = 'cancel';
+        /** @type {string[]} */
+        let startPaths = [];
+        const preferStart = String(ui.startMode || '').trim().toLowerCase();
+        if (preferStart === 'auto' || preferStart === 'manual') {
+            choice = preferStart;
+        } else if (typeof FixStart.createEnvFixStartModal === 'function') {
+            const startUi = FixStart.createEnvFixStartModal({
+                $,
+                electron,
+                uiTx,
+                uiTf,
+                esc,
+            });
+            const gpuItem = (getResult()?.items || []).find((it) => it.id === 'gpuRuntime') || {};
+            const picked = await startUi.open(initialPlan, {
+                formPayload: manualFormPayload(getResult(), {
+                    asrGpuReady: gpuItem.asrGpuReady === true,
+                    ortGpuCuda: gpuItem.ortGpuCuda === true,
+                    ortGpuRequirement: gpuItem.ortGpuRequirement || '',
+                }),
+            });
+            choice = picked?.action || 'cancel';
+            startPaths = Array.isArray(picked?.paths) ? picked.paths.filter(Boolean) : [];
+        } else if (global.TransubAppConfirmChoice) {
+            const legacy = await global.TransubAppConfirmChoice({
+                title: '选择修复方式',
+                message: startSummary,
+                primaryLabel: '手动修复',
+                secondaryLabel: '自动修复',
+                tertiaryLabel: '取消',
+            });
+            choice = legacy === 'primary' ? 'manual' : (legacy === 'secondary' ? 'auto' : 'cancel');
+        } else {
+            choice = window.confirm(startSummary) ? 'manual' : 'cancel';
+        }
+        if (choice === 'manual' || choice === 'install') {
+            return runManualDownloadSession({
+                getResult,
+                setSubtitle: setSubtitleFn,
+                recheck: (opts) => recheck(opts),
+                initialPaths: startPaths,
+                preferInstall: choice === 'install',
+            });
+        }
+        if (choice !== 'auto') return { ok: false, cancelled: true };
 
         let switchToManual = false;
+        let userCancelled = false;
         const requestSwitchToManual = () => {
-            if (switchToManual) return;
+            if (switchToManual || userCancelled) return;
             switchToManual = true;
-            setSubtitleFn('正在取消自动下载，改为手动下载…');
+            setSubtitleFn('正在取消自动修复，改为手动修复…');
             enableManualButton(manualBtn);
-            try { void electron?.transubEngineCancelDownload?.(); } catch (_) { /* ignore */ }
+            abortInFlightFixDownloads();
         };
-        activeFixSession = { requestSwitchToManual, getResult };
+        const requestCancel = () => {
+            if (userCancelled) return;
+            userCancelled = true;
+            setSubtitleFn('正在取消修复…');
+            setFixButtonCancelMode(fixBtn, true);
+            if (fixBtn) {
+                fixBtn.disabled = true;
+                fixBtn.textContent = '取消中…';
+            }
+            abortInFlightFixDownloads();
+        };
+        activeFixSession = { requestSwitchToManual, requestCancel, getResult };
 
         markFixing(true);
         setBusyFn(true);
         setFixHintFn(true);
-        // 修复中保持「手动下载」可点（提示文案写「可随时点」）
+        // 修复中保持「手动修复」可点
         enableManualButton(manualBtn);
-        setSubtitleFn('正在开始修复…');
+        setSubtitleFn('正在开始自动修复…');
         await new Promise((r) => setTimeout(r, 120));
 
         const fixStartedAt = Date.now();
-        if (fixBtn) {
-            fixBtn.classList.remove('hidden');
-            fixBtn.disabled = true;
-            fixBtn.textContent = '修复中…';
-        }
+        setFixButtonCancelMode(fixBtn, true);
 
         let unsub = null;
         let elapsedTimer = null;
         const errors = [];
-        let lastFixMsg = '正在开始修复…';
+        let lastFixMsg = '正在开始自动修复…';
         let lastFixPct = null;
         let lastFixMeta = {};
         let manualCancelled = false;
@@ -722,31 +1112,104 @@
         let roundsDone = 0;
         let lastIssues = '';
         let plan = initialPlan;
+        let sessionOk = false;
+        let progressUi = null;
+        let activeFixStepId = '';
+        let activeFixPhaseIds = [];
+        if (typeof FixProgress.createEnvFixProgressModal === 'function') {
+            progressUi = FixProgress.createEnvFixProgressModal({ $, esc, uiTx, uiTf });
+            progressUi.open(
+                typeof FixProgress.collectFixProgressItems === 'function'
+                    ? FixProgress.collectFixProgressItems(initialPlan)
+                    : [],
+                {
+                    onCancel: requestCancel,
+                    onSwitchManual: requestSwitchToManual,
+                },
+            );
+        }
+
+        const beginFixPhase = (kind, msg) => {
+            lastFixMeta = {};
+            lastFixPct = null;
+            progressUi?.setTransferLine?.('');
+            activeFixPhaseIds = typeof FixProgress.stepIdsForFixPhase === 'function'
+                ? FixProgress.stepIdsForFixPhase(kind, plan)
+                : [];
+            activeFixStepId = activeFixPhaseIds[0] || '';
+            if (progressUi && activeFixStepId) {
+                progressUi.setActive(activeFixStepId, { message: msg || '', pct: 0, transfer: '' });
+            }
+        };
+        const completeFixPhase = (msg) => {
+            progressUi?.completeMany?.(activeFixPhaseIds, msg);
+            activeFixPhaseIds = [];
+        };
+        const failFixPhase = (msg) => {
+            progressUi?.failMany?.(activeFixPhaseIds, msg);
+            activeFixPhaseIds = [];
+        };
+
+        const isAbortRequested = () => userCancelled || switchToManual || manualCancelled;
 
         const setProgress = (msg, pct, meta) => {
             lastFixMsg = msg || lastFixMsg;
             if (pct != null) lastFixPct = pct;
-            if (meta) lastFixMeta = meta;
+            if (meta) {
+                lastFixMeta = {
+                    ...lastFixMeta,
+                    ...meta,
+                    bytesPerSecond: meta.bytesPerSecond ?? meta.speed ?? lastFixMeta.bytesPerSecond,
+                    downloadedBytes: meta.downloadedBytes ?? lastFixMeta.downloadedBytes,
+                    totalBytes: meta.totalBytes ?? lastFixMeta.totalBytes,
+                };
+            }
             const n = Number(lastFixPct);
-            const pctPart = Number.isFinite(n) ? `（${Math.round(Math.max(0, Math.min(100, n)))}%）` : '';
-            const elapsed = ` · 已等待 ${formatElapsed(Date.now() - fixStartedAt)}`;
-            const recv = Number(lastFixMeta.downloadedBytes);
-            const total = Number(lastFixMeta.totalBytes);
-            const speed = Number(lastFixMeta.bytesPerSecond);
-            const sizeBits = [];
-            if (Number.isFinite(recv) && recv >= 0) {
-                const recvLabel = formatFixBytes(recv) || `${Math.round(recv)} B`;
-                if (Number.isFinite(total) && total > 0) {
-                    sizeBits.push(`${recvLabel} / ${formatFixBytes(total)}`);
-                } else {
-                    sizeBits.push(`已下 ${recvLabel}`);
+            const pctPart = Number.isFinite(n) ? uiTf('（{pct}%）', { pct: Math.round(Math.max(0, Math.min(100, n))) }) : '';
+            const elapsed = uiTf(' · 已等待 {elapsed}', { elapsed: formatElapsed(Date.now() - fixStartedAt) });
+            const transfer = typeof FixProgress.formatTransferDetail === 'function'
+                ? FixProgress.formatTransferDetail(lastFixMeta)
+                : (() => {
+                    const recv = Number(lastFixMeta.downloadedBytes);
+                    const total = Number(lastFixMeta.totalBytes);
+                    const speed = Number(lastFixMeta.bytesPerSecond);
+                    const sizeBits = [];
+                    if (Number.isFinite(recv) && recv >= 0) {
+                        const recvLabel = formatFixBytes(recv) || `${Math.round(recv)} B`;
+                        if (Number.isFinite(total) && total > 0) {
+                            sizeBits.push(`${recvLabel} / ${formatFixBytes(total)}`);
+                        } else {
+                            sizeBits.push(uiTf('已下 {size}', { size: recvLabel }));
+                        }
+                    }
+                    if (Number.isFinite(speed) && speed > 0) {
+                        sizeBits.push(`${formatFixBytes(speed)}/s`);
+                    }
+                    return sizeBits.join(' · ');
+                })();
+            const sizePart = transfer ? ` · ${transfer}` : '';
+            const line = `${lastFixMsg}${pctPart}${elapsed}${sizePart}`;
+            setSubtitleFn(line);
+            if (progressUi) {
+                const matched = typeof FixProgress.matchFixStepFromProgress === 'function'
+                    ? FixProgress.matchFixStepFromProgress(lastFixMsg, progressUi.getRows?.() || [], activeFixStepId)
+                    : activeFixStepId;
+                if (matched && matched !== activeFixStepId) {
+                    activeFixStepId = matched;
+                    if (!activeFixPhaseIds.includes(matched)) activeFixPhaseIds.push(matched);
+                    progressUi.setActive(matched);
                 }
+                if (activeFixStepId) {
+                    progressUi.update(activeFixStepId, {
+                        message: lastFixMsg,
+                        pct: Number.isFinite(n) ? n : lastFixPct,
+                        transfer,
+                    });
+                }
+                // Subtitle keeps the status text; transfer line is dedicated for size/speed.
+                progressUi.setSubtitle?.(`${lastFixMsg}${pctPart}${elapsed}`);
+                progressUi.setTransferLine?.(transfer);
             }
-            if (Number.isFinite(speed) && speed > 0) {
-                sizeBits.push(`${formatFixBytes(speed)}/s`);
-            }
-            const sizePart = sizeBits.length ? ` · ${sizeBits.join(' · ')}` : '';
-            setSubtitleFn(`${lastFixMsg}${pctPart}${elapsed}${sizePart}`);
         };
 
         try {
@@ -761,18 +1224,21 @@
                         p?.message || p?.detail || '修复中…',
                         Number.isFinite(Number(p?.pct ?? p?.percent)) ? Number(p.pct ?? p.percent) : lastFixPct,
                         {
-                            downloadedBytes: p?.downloadedBytes,
-                            totalBytes: p?.totalBytes,
-                            bytesPerSecond: p?.bytesPerSecond,
+                            downloadedBytes: p?.downloadedBytes ?? p?.receivedBytes ?? p?.loaded,
+                            totalBytes: p?.totalBytes ?? p?.total,
+                            bytesPerSecond: p?.bytesPerSecond ?? p?.speed,
                         },
                     );
+                    try {
+                        progressUi?.noteProgressMirror?.(p);
+                    } catch (_) { /* ignore */ }
                     if (p?.suggestManual) {
                         setFixHintFn(true);
                         enableManualButton(manualBtn);
                         const cudaHint = /改装\s*CUDA|CUDA\s*PyTorch|torch_cuda/i.test(String(p?.message || ''));
                         const hintText = cudaHint
-                            ? 'CUDA PyTorch 下载较慢（约 2.5GB）；若长时间无进度请点「手动下载」用浏览器直链下载 torch / torchaudio（RTX 50 系：CUDA 13 驱动选 cu130，否则 cu128）。'
-                            : '当前镜像吞吐较低或可能卡住；可随时点「手动下载」，用浏览器下载 .whl 后本地安装。';
+                            ? 'CUDA PyTorch 下载较慢（约 2.5GB）；若长时间无进度请点「手动修复」用浏览器直链下载 torch / torchaudio（RTX 50 系：CUDA 13 驱动选 cu130，否则 cu128）。'
+                            : '当前镜像吞吐较低或可能卡住；可随时点「手动修复」，用浏览器下载 .whl 后本地安装。';
                         if (ui.fixHintEl) {
                             ui.fixHintEl.textContent = hintText;
                         } else {
@@ -783,40 +1249,45 @@
                 });
             }
 
-            while (roundsDone < maxRounds && !manualCancelled && !switchToManual) {
+            while (roundsDone < maxRounds && !isAbortRequested()) {
                 if (!planHasAutoWork(plan)) break;
 
                 const issues = envIssueSignature(getResult());
                 if (roundsDone > 0 && issues === lastIssues) {
-                    errors.push('修复后仍有相同问题，请改用手动下载或查看详情');
+                    errors.push('修复后仍有相同问题，请改用「手动修复」或查看详情');
                     break;
                 }
                 lastIssues = issues;
                 roundsDone += 1;
 
                 if (roundsDone > 1) {
-                    setProgress(`继续修复剩余项（第 ${roundsDone} 轮）…`, null, {});
+                    setProgress(uiTf('继续修复剩余项（第 {n} 轮）…', { n: roundsDone }), null, {});
                     lastFixPct = null;
                     lastFixMeta = {};
                 }
 
                 if (plan.openVcRedist && !openedVcRedist) {
                     openedVcRedist = true;
-                    setProgress('正在打开 Visual C++ 运行库下载页…', null, {});
+                    beginFixPhase('vc', uiTx('正在打开 Visual C++ 运行库下载页…'));
+                    setProgress(uiTx('正在打开 Visual C++ 运行库下载页…'), null, {});
                     const url = getResult()?.urls?.vcRedist || 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
                     try {
                         await electron?.openExternal?.(url);
+                        completeFixPhase(uiTx('已打开下载页'));
                     } catch (err) {
                         errors.push(err?.message || '打开 VC++ 下载页失败');
+                        failFixPhase(err?.message || '打开失败');
                     }
                 }
-                if (switchToManual) break;
+                if (isAbortRequested()) break;
 
                 const modelIds = Array.isArray(plan.modelIds) ? plan.modelIds.filter(Boolean) : [];
                 if (modelIds.length) {
-                    setProgress(`正在下载/补齐：${modelIds.join('、')}…`, 0, {});
+                    beginFixPhase('models', uiTf('正在下载/补齐：{ids}…', { ids: modelIds.join('、') }));
+                    setProgress(uiTf('正在下载/补齐：{ids}…', { ids: modelIds.join('、') }), 0, {});
                     if (!electron?.transubEngineRunDownload) {
                         errors.push('当前环境不支持引擎下载');
+                        failFixPhase('当前环境不支持引擎下载');
                     } else {
                         const res = await electron.transubEngineRunDownload({
                             kind: 'models',
@@ -825,11 +1296,12 @@
                             forceIds: Array.isArray(plan.forceIds) ? plan.forceIds : undefined,
                             engineAutoStart: true,
                             skipGpuPrestep: !hasNvidiaGpuInResult(getResult()),
-                            ...downloadExtra,
+                            ...downloadExtra(),
                         });
-                        if (switchToManual) break;
+                        if (isAbortRequested()) break;
                         if (!res?.ok) {
-                            if (res?.cancelled) {
+                            failFixPhase(res?.error || res?.message || '下载失败');
+                            if (res?.cancelled || userCancelled) {
                                 manualCancelled = true;
                                 errors.push(res?.error || '已取消下载');
                                 break;
@@ -843,12 +1315,14 @@
                                 const useManual = global.TransubAppConfirm
                                     ? await global.TransubAppConfirm({
                                         title: '自动下载失败',
-                                        message: `${String(errText).slice(0, 500)}\n\n是否改为手动下载运行库 .whl？`,
-                                        primaryLabel: '手动下载',
+                                        message: uiTf('{err}\n\n是否改为「手动修复」下载运行库 .whl？', {
+                                            err: String(errText).slice(0, 500),
+                                        }),
+                                        primaryLabel: '手动修复',
                                         secondaryLabel: '取消',
                                     })
-                                    : window.confirm('自动下载失败，是否改为手动下载？');
-                                if (switchToManual) break;
+                                    : window.confirm('自动下载失败，是否改为手动修复？');
+                                if (isAbortRequested()) break;
                                 if (useManual) {
                                     const manualRes = await global.TransubManualWhlInstall.openModal({
                                         kind: uniqueKinds[0],
@@ -874,24 +1348,52 @@
                                     errors.push(errText);
                                 }
                             }
+                        } else {
+                            completeFixPhase(uiTx('已完成'));
                         }
                     }
                 }
 
-                if (!manualCancelled && !switchToManual && plan.ensureGpu && hasNvidiaGpuInResult(getResult())) {
+                if (!isAbortRequested() && plan.ensureGpu && hasNvidiaGpuInResult(getResult())) {
+                    // Prefer adopting system / nearby CUDA before downloading nvidia-* wheels.
+                    beginFixPhase('gpu', '正在尝试复用本机 CUDA…');
+                    setProgress('正在尝试复用本机 CUDA…', 0, {});
+                    if (electron?.transubEngineScanCuda && electron?.transubEngineAdoptCuda) {
+                        try {
+                            const scan = await electron.transubEngineScanCuda({
+                                major: 12,
+                                engineAutoStart: true,
+                                ...downloadExtra(),
+                            });
+                            if (scan?.ok && scan.found) {
+                                setProgress('正在复用本机 CUDA 到引擎…', 0, {});
+                                const adopt = await electron.transubEngineAdoptCuda({
+                                    major: 12,
+                                    engineAutoStart: true,
+                                    ...downloadExtra(),
+                                });
+                                if (adopt?.ok) {
+                                    setSubtitleFn(adopt.message || '已复用本机 CUDA');
+                                }
+                            }
+                        } catch (_) { /* fall through to download */ }
+                    }
+                    if (isAbortRequested()) break;
                     setProgress('正在安装 GPU 支持组件…', 0, {});
                     if (!electron?.transubEngineRunDownload) {
                         errors.push('当前环境不支持 GPU 组件下载');
+                        failFixPhase('当前环境不支持 GPU 组件下载');
                     } else {
                         const res = await electron.transubEngineRunDownload({
                             kind: 'gpu',
                             force: false,
                             engineAutoStart: true,
-                            ...downloadExtra,
+                            ...downloadExtra(),
                         });
-                        if (switchToManual) break;
+                        if (isAbortRequested()) break;
                         if (!res?.ok) {
-                            if (res?.cancelled) {
+                            failFixPhase(res?.error || res?.message || 'GPU 支持安装失败');
+                            if (res?.cancelled || userCancelled) {
                                 manualCancelled = true;
                                 errors.push(res?.error || '已取消下载');
                                 break;
@@ -907,24 +1409,29 @@
                             } else if (!manualRes?.ok) {
                                 errors.push(errText);
                             }
+                        } else {
+                            completeFixPhase(uiTx('已完成'));
                         }
                     }
                 }
 
-                if (!manualCancelled && !switchToManual && plan.ensureTorchCuda && hasNvidiaGpuInResult(getResult())) {
+                if (!isAbortRequested() && plan.ensureTorchCuda && hasNvidiaGpuInResult(getResult())) {
+                    beginFixPhase('torch', '正在补齐 CUDA PyTorch…');
                     setProgress('正在补齐 CUDA PyTorch…', 0, {});
                     if (!electron?.transubEngineRunDownload) {
                         errors.push('当前环境不支持 CUDA PyTorch 安装');
+                        failFixPhase('当前环境不支持 CUDA PyTorch 安装');
                     } else {
                         const res = await electron.transubEngineRunDownload({
                             kind: 'demucs',
                             force: true,
                             engineAutoStart: true,
-                            ...downloadExtra,
+                            ...downloadExtra(),
                         });
-                        if (switchToManual) break;
+                        if (isAbortRequested()) break;
                         if (!res?.ok) {
-                            if (res?.cancelled) {
+                            failFixPhase(res?.error || res?.message || 'CUDA PyTorch 安装失败');
+                            if (res?.cancelled || userCancelled) {
                                 manualCancelled = true;
                                 errors.push(res?.error || '已取消下载');
                                 break;
@@ -941,24 +1448,53 @@
                             } else if (!manualRes?.ok) {
                                 errors.push(errText);
                             }
+                        } else {
+                            completeFixPhase(uiTx('已完成'));
                         }
                     }
                 }
 
-                if (!manualCancelled && !switchToManual && plan.ensureLlamaRuntime) {
+                if (!isAbortRequested() && plan.ensureTorchRocm) {
+                    beginFixPhase('torch', '正在补齐 ROCm PyTorch…');
+                    setProgress('正在把 ROCm PyTorch 装进引擎运行时…', 0, {});
+                    if (!electron?.transubEngineRunDownload) {
+                        errors.push('当前环境不支持 ROCm PyTorch 安装');
+                        failFixPhase('当前环境不支持 ROCm PyTorch 安装');
+                    } else {
+                        const res = await electron.transubEngineRunDownload({
+                            kind: 'torch-rocm',
+                            force: true,
+                            engineAutoStart: true,
+                            ...downloadExtra(),
+                        });
+                        if (isAbortRequested()) break;
+                        if (!res?.ok) {
+                            failFixPhase(res?.error || res?.message || 'ROCm PyTorch 安装失败');
+                            if (res?.cancelled || userCancelled) {
+                                manualCancelled = true;
+                                errors.push(res?.error || '已取消下载');
+                                break;
+                            }
+                            errors.push(res?.error || res?.message || 'ROCm PyTorch 安装失败');
+                        } else {
+                            completeFixPhase(uiTx('已完成'));
+                        }
+                    }
+                }
+
+                if (!isAbortRequested() && plan.ensureLlamaRuntime) {
                     const llamaStep = (plan.steps || []).find((s) => s?.id === 'llamaServerRuntime');
                     const llamaRuntimeId = String(
                         plan.llamaRuntimeId || llamaStep?.runtimeId || '',
                     ).trim();
-                    setProgress(
-                        llamaRuntimeId
-                            ? `正在安装 llama-server 运行时（${llamaRuntimeId}）…`
-                            : '正在更新 llama-server 运行时…',
-                        0,
-                        {},
-                    );
+                    const llamaMsg = llamaRuntimeId
+                        ? uiTf('正在安装 llama-server 运行时（{id}）…', { id: llamaRuntimeId })
+                        : uiTx('正在更新 llama-server 运行时…');
+                    beginFixPhase('llama', llamaMsg);
+                    setProgress(llamaMsg, 0, {});
                     if (!electron?.transubAdvancedManagedLlmInstallRuntime) {
                         errors.push('当前环境不支持 llama-server 运行时安装');
+                        failFixPhase('当前环境不支持 llama-server 运行时安装');
                     } else {
                         let unsubLlama = null;
                         try {
@@ -970,30 +1506,38 @@
                                             ? Number(p.pct ?? p.percent)
                                             : lastFixPct,
                                         {
-                                            downloadedBytes: p?.downloadedBytes,
+                                            downloadedBytes: p?.downloadedBytes ?? p?.receivedBytes,
                                             totalBytes: p?.totalBytes,
-                                            bytesPerSecond: p?.bytesPerSecond,
+                                            bytesPerSecond: p?.bytesPerSecond ?? p?.speed,
                                         },
                                     );
                                 });
                             }
-                            // Prefer hardware-matched CUDA 12/13 package when known.
-                            const res = await electron.transubAdvancedManagedLlmInstallRuntime({
+                        // Prefer hardware-matched CUDA / ROCm package when known.
+                        const res = await electron.transubAdvancedManagedLlmInstallRuntime({
                                 force: true,
                                 runtimeId: llamaRuntimeId || undefined,
                             });
-                            if (switchToManual) break;
+                            if (isAbortRequested()) break;
                             if (!res?.ok) {
+                                failFixPhase(res?.error || res?.message || 'llama-server 运行时更新失败');
                                 const errText = res?.error || res?.message || 'llama-server 运行时更新失败';
+                                if (res?.cancelled || userCancelled) {
+                                    manualCancelled = true;
+                                    errors.push(errText);
+                                    break;
+                                }
                                 const useManual = global.TransubAppConfirm
                                     ? await global.TransubAppConfirm({
                                         title: '运行时自动下载失败',
-                                        message: `${String(errText).slice(0, 500)}\n\n是否改为浏览器手动下载？`,
-                                        primaryLabel: '手动下载',
+                                        message: uiTf('{err}\n\n是否改为「手动修复」？', {
+                                            err: String(errText).slice(0, 500),
+                                        }),
+                                        primaryLabel: '手动修复',
                                         secondaryLabel: '跳过',
                                     })
-                                    : window.confirm('运行时自动下载失败，是否改为手动下载？');
-                                if (switchToManual) break;
+                                    : window.confirm('运行时自动下载失败，是否改为手动修复？');
+                                if (isAbortRequested()) break;
                                 if (useManual) {
                                     const manualRes = await offerManualLlamaRuntimeDownload(errText);
                                     if (manualRes?.cancelled) {
@@ -1005,8 +1549,11 @@
                                 } else {
                                     errors.push(errText);
                                 }
+                            } else {
+                                completeFixPhase(uiTx('已完成'));
                             }
                         } catch (err) {
+                            failFixPhase(err?.message || 'llama-server 运行时更新失败');
                             errors.push(err?.message || 'llama-server 运行时更新失败');
                         } finally {
                             try { unsubLlama?.(); } catch (_) { /* ignore */ }
@@ -1014,13 +1561,35 @@
                     }
                 }
 
-                if (manualCancelled || switchToManual) break;
+                if (isAbortRequested()) break;
 
                 setProgress('本轮修复完成，正在重新检测剩余项…', lastFixPct, lastFixMeta);
+                setFixButtonCancelMode(fixBtn, true);
                 const next = await recheck({ duringFix: true });
+                if (isAbortRequested()) break;
                 if (next) setResult(next);
                 plan = cloneFixPlan(getResult()?.fix);
                 enableManualButton(manualBtn);
+                setFixButtonCancelMode(fixBtn, true);
+            }
+
+            if (!isAbortRequested()) {
+                if (roundsDone === 0) {
+                    setSubtitleFn(errors[0] || uiTx('未能开始自动修复。'));
+                } else {
+                    const stillFixable = planHasAutoWork(getResult()?.fix);
+                    if (stillFixable && errors.length) {
+                        setSubtitleFn(uiTf('修复未完全成功：{err}。将重新检测…', { err: errors[0] }));
+                    } else if (roundsDone > 1) {
+                        setSubtitleFn(uiTf('已连续修复 {n} 轮，正在确认最终状态…', { n: roundsDone }));
+                    } else {
+                        setSubtitleFn(uiTx('修复步骤已完成，正在重新检测…'));
+                    }
+                    setFixButtonCancelMode(fixBtn, true);
+                    const finalResult = await recheck({ duringFix: true });
+                    if (!userCancelled && finalResult) setResult(finalResult);
+                }
+                sessionOk = !userCancelled && errors.length === 0 && roundsDone > 0;
             }
         } catch (err) {
             errors.push(err?.message || String(err));
@@ -1030,10 +1599,22 @@
             activeFixSession = null;
             markFixing(false);
             setFixHintFn(false);
+            if (progressUi) {
+                if (switchToManual) {
+                    failFixPhase(uiTx('改为手动修复'));
+                    progressUi.close();
+                } else {
+                    if (userCancelled) failFixPhase(uiTx('已取消'));
+                    progressUi.finish({
+                        ok: !userCancelled && errors.length === 0,
+                        subtitle: lastFixMsg || uiTx('修复结束'),
+                    });
+                }
+            }
         }
 
-        if (switchToManual) {
-            setSubtitleFn('已改为手动下载…');
+        if (switchToManual && !userCancelled) {
+            setSubtitleFn('已改为手动修复…');
             setBusyFn(false);
             const manualUi = {
                 getResult,
@@ -1047,69 +1628,264 @@
             return { ok: !!manualRes?.ok, switchedToManual: true, manual: manualRes };
         }
 
-        if (manualCancelled) {
-            setSubtitleFn(errors[0] ? `已取消修复：${errors[0]}` : '已取消修复。');
+        if (userCancelled || manualCancelled) {
+            setSubtitleFn(
+                userCancelled
+                    ? uiTx('已取消修复。')
+                    : (errors[0] ? uiTf('已取消修复：{err}', { err: errors[0] }) : uiTx('已取消修复。')),
+            );
             setBusyFn(false);
-            if (typeof ui.onDone === 'function') ui.onDone({ cancelled: true });
-            return { ok: false, cancelled: true, errors };
+            if (typeof ui.onDone === 'function') ui.onDone({ cancelled: true, userCancelled: !!userCancelled });
+            return { ok: false, cancelled: true, userCancelled: !!userCancelled, errors };
         }
 
         if (roundsDone === 0) {
-            setSubtitleFn(errors[0] || '未能开始自动修复。');
             setBusyFn(false);
             if (typeof ui.onDone === 'function') ui.onDone({ ok: false });
             return { ok: false, error: errors[0] || 'no_rounds', errors };
         }
 
-        const stillFixable = planHasAutoWork(getResult()?.fix);
-        if (stillFixable && errors.length) {
-            setSubtitleFn(`修复未完全成功：${errors[0]}。将重新检测…`);
-        } else if (roundsDone > 1) {
-            setSubtitleFn(`已连续修复 ${roundsDone} 轮，正在确认最终状态…`);
-        } else {
-            setSubtitleFn('修复步骤已完成，正在重新检测…');
-        }
-        const finalResult = await recheck();
-        if (finalResult) setResult(finalResult);
         setBusyFn(false);
-        if (typeof ui.onDone === 'function') ui.onDone({ ok: true, roundsDone, errors });
-        return { ok: errors.length === 0, roundsDone, errors };
+        if (typeof ui.onDone === 'function') ui.onDone({ ok: sessionOk, roundsDone, errors });
+        return { ok: sessionOk, roundsDone, errors };
     }
 
     async function onFix() {
-        if (state.running || state.fixing) return;
+        if (state.fixing) {
+            requestCancelFix();
+            return { ok: false, cancelling: true };
+        }
+        if (state.running) return;
         return runAutoFixSession({
+            startMode: 'auto',
             onDone: () => updateFixButton(),
         });
+    }
+
+    /**
+     * Scan + optionally adopt system / nearby CUDA into the engine.
+     * Shared by system-check modal and setup wizard.
+     */
+    function dirnamePath(p) {
+        const s = String(p || '').trim();
+        if (!s) return '';
+        const cut = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+        if (cut <= 0) return s;
+        if (/\.(dll|so|dylib)$/i.test(s.slice(cut + 1))) return s.slice(0, cut);
+        return s;
+    }
+
+    function uniqueCudaScanPaths(scan) {
+        const out = [];
+        const seen = new Set();
+        const add = (raw) => {
+            const dir = dirnamePath(raw);
+            if (!dir) return;
+            const key = dir.replace(/\//g, '\\').toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push(dir);
+        };
+        const walkHits = (cov) => {
+            if (!cov || typeof cov !== 'object') return;
+            const markers = cov.markers && typeof cov.markers === 'object' ? cov.markers : {};
+            Object.values(markers).forEach(add);
+            (Array.isArray(cov.best?.dirs) ? cov.best.dirs : []).forEach(add);
+        };
+        walkHits(scan?.cuda13);
+        walkHits(scan?.cuda12);
+        (Array.isArray(scan?.paths) ? scan.paths : []).forEach(add);
+        (Array.isArray(scan?.best?.dirs) ? scan.best.dirs : []).forEach(add);
+        return collapseCudaSourceRoots(out);
+    }
+
+    /** Keep 1–2 source roots so the confirm dialog stays short. */
+    function collapseCudaSourceRoots(dirs) {
+        const list = Array.isArray(dirs) ? dirs.filter(Boolean) : [];
+        if (list.length <= 2) return list;
+        const norm = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '');
+        const ranked = list.slice().sort((a, b) => a.length - b.length);
+        const roots = [];
+        for (const dir of ranked) {
+            const n = norm(dir).toLowerCase();
+            if (roots.some((r) => n === norm(r).toLowerCase() || n.startsWith(`${norm(r).toLowerCase()}\\`))) {
+                continue;
+            }
+            roots.push(dir);
+            if (roots.length >= 2) break;
+        }
+        return roots;
+    }
+
+    function formatCudaScanFoundMessage(scan) {
+        const paths = uniqueCudaScanPaths(scan);
+        const pathLine = paths.length
+            ? paths.map((p) => p).join('\n')
+            : '';
+        if (pathLine) {
+            return uiTf('已找到可复用的本机 CUDA。\n\n来源路径：\n{path}\n\n将复制到引擎目录（跳过 nvidia-* 大包下载）。', {
+                path: pathLine,
+            });
+        }
+        return uiTx('已找到可复用的本机 CUDA。\n\n将复制到引擎目录（跳过 nvidia-* 大包下载）。');
+    }
+
+    /**
+     * Shared by system-check modal and setup wizard.
+     */
+    async function runReuseCudaSession(ui = {}) {
+        const setSubtitleFn = typeof ui.setSubtitle === 'function' ? ui.setSubtitle : setSubtitle;
+        const recheck = typeof ui.recheck === 'function' ? ui.recheck : runCheck;
+        const downloadExtraBase = ui.downloadPayload && typeof ui.downloadPayload === 'object'
+            ? ui.downloadPayload
+            : {};
+        const downloadExtra = () => withDownloadExtras(downloadExtraBase);
+        if (!electron?.transubEngineScanCuda || !electron?.transubEngineAdoptCuda) {
+            setSubtitleFn('当前环境不支持扫描本机 CUDA');
+            return { ok: false, error: 'unsupported' };
+        }
+        if (state.running || state.fixing) {
+            return { ok: false, error: 'busy' };
+        }
+        setSubtitleFn('正在扫描本机 CUDA…');
+        try {
+            const scan = await electron.transubEngineScanCuda({
+                major: 12,
+                engineAutoStart: true,
+                ...downloadExtra(),
+            });
+            if (!scan?.ok) {
+                setSubtitleFn(scan?.error || '扫描失败');
+                return scan || { ok: false, error: 'scan_failed' };
+            }
+            if (!scan.found) {
+                const pick = global.TransubAppConfirmChoice
+                    ? await global.TransubAppConfirmChoice({
+                        title: '未找到可复用 CUDA',
+                        message: uiTf('{msg}\n\n可手动选择含 cudart/cublas 或 nvidia 包的目录后再扫；或使用「自动修复 / 手动修复」。', {
+                            msg: scan.message || '未找到齐全的本机 CUDA 运行库。',
+                        }),
+                        primaryLabel: '选择 CUDA 目录',
+                        secondaryLabel: '知道了',
+                    })
+                    : 'secondary';
+                if (pick === 'primary' && electron.transubEnginePickCudaRoot) {
+                    const picked = await electron.transubEnginePickCudaRoot({});
+                    if (picked?.ok) {
+                        setSubtitleFn(picked.message || '已加入扫描目录，正在重试…');
+                        return runReuseCudaSession(ui);
+                    }
+                    if (picked?.cancelled) {
+                        setSubtitleFn('已取消选择目录。');
+                        return { ok: false, cancelled: true };
+                    }
+                    setSubtitleFn(picked?.error || '选择目录失败');
+                    return picked || { ok: false, error: 'pick_failed' };
+                }
+                setSubtitleFn(scan.message || '未找到可复用 CUDA');
+                return { ok: true, found: false, message: scan.message };
+            }
+            const foundMsg = formatCudaScanFoundMessage(scan);
+            const choice = global.TransubAppConfirmChoice
+                ? await global.TransubAppConfirmChoice({
+                    title: '找到可复用本机 CUDA',
+                    message: foundMsg,
+                    primaryLabel: '复用到引擎',
+                    secondaryLabel: '仅查看',
+                })
+                : 'primary';
+            const paths = uniqueCudaScanPaths(scan);
+            setSubtitleFn(
+                paths.length
+                    ? uiTf('已找到可复用 CUDA：{path}', { path: paths[0] })
+                    : uiTx('已找到可复用本机 CUDA'),
+            );
+            if (choice !== 'primary') {
+                return { ok: true, found: true, adopted: false, ...(scan || {}) };
+            }
+            setSubtitleFn('正在复用本机 CUDA 到引擎…');
+            const adopt = await electron.transubEngineAdoptCuda({
+                major: 12,
+                engineAutoStart: true,
+                ...downloadExtra(),
+            });
+            if (!adopt?.ok) {
+                setSubtitleFn(adopt?.error || '复用失败');
+                return adopt || { ok: false, error: 'adopt_failed' };
+            }
+            setSubtitleFn(adopt.message || '已复用本机 CUDA，正在重新检测…');
+            await recheck();
+            return { ok: true, found: true, adopted: true, ...(adopt || {}) };
+        } catch (err) {
+            const msg = err?.message || String(err);
+            setSubtitleFn(msg);
+            return { ok: false, error: msg };
+        }
+    }
+
+    async function onReuseCuda() {
+        if (state.running || state.fixing) return;
+        return runReuseCudaSession();
     }
 
     function updateFixButton() {
         const fixBtn = $('envCheckFixBtn');
         const manualBtn = $('envCheckManualBtn');
+        const reuseBtn = $('envCheckReuseCudaBtn');
         const vis = computeFixVisibility(state.result);
         if (fixBtn) {
-            fixBtn.classList.toggle('hidden', !vis.showFix);
-            fixBtn.disabled = state.running || state.fixing || !vis.showFix;
-            if (!state.fixing) fixBtn.textContent = '一键修复';
+            fixBtn.classList.toggle('hidden', !vis.showFix && !state.fixing);
+            if (state.fixing) {
+                fixBtn.disabled = false;
+                fixBtn.textContent = '取消修复';
+                fixBtn.title = '停止当前自动修复';
+            } else {
+                fixBtn.disabled = state.running || !vis.showFix;
+                fixBtn.title = vis.showFix ? '自动联网下载并安装缺失依赖' : '';
+                fixBtn.textContent = '自动修复';
+            }
         }
         if (manualBtn) {
             manualBtn.classList.toggle('hidden', !vis.showManual);
-            // 检测中禁用；一键修复中（含修复内重检）仍可点「手动下载」
             manualBtn.disabled = !vis.showManual || (state.running && !state.fixing);
+            syncManualBesideFix(fixBtn, manualBtn);
         }
+        if (reuseBtn) {
+            reuseBtn.classList.toggle('hidden', !vis.showReuseCuda);
+            reuseBtn.disabled = state.running || state.fixing || !vis.showReuseCuda;
+        }
+        syncEnvCheckRepairTools();
     }
 
-    function applyFixButtons(fixBtn, manualBtn, result, { busy = false, fixing = false } = {}) {
+    function applyFixButtons(fixBtn, manualBtn, result, {
+        busy = false,
+        fixing = false,
+        hideWhenIdle = true,
+        idleLabel,
+    } = {}) {
         const vis = computeFixVisibility(result);
         if (fixBtn) {
-            fixBtn.classList.toggle('hidden', !vis.showFix && !fixing);
-            fixBtn.disabled = busy || (!vis.showFix && !fixing);
-            if (!fixing) fixBtn.textContent = '一键修复';
+            if (hideWhenIdle) {
+                fixBtn.classList.toggle('hidden', !vis.showFix && !fixing);
+            } else {
+                fixBtn.classList.remove('hidden');
+            }
+            if (fixing) {
+                fixBtn.disabled = false;
+                fixBtn.textContent = '取消修复';
+                fixBtn.title = '停止当前自动修复';
+            } else {
+                fixBtn.disabled = busy || !vis.showFix;
+                fixBtn.title = '';
+                if (idleLabel) fixBtn.textContent = idleLabel;
+                else if (hideWhenIdle) fixBtn.textContent = '自动修复';
+            }
         }
         if (manualBtn) {
             manualBtn.classList.toggle('hidden', !vis.showManual);
-            // busy 时仅在「非修复」场景禁用；一键修复中保持可点
+            // busy 时仅在「非修复」场景禁用；自动修复中保持可点（改为手动修复）
             manualBtn.disabled = !vis.showManual || (busy && !fixing);
+            syncManualBesideFix(fixBtn, manualBtn);
         }
         return vis;
     }
@@ -1134,23 +1910,22 @@
             setSubtitle('正在检查依赖项…');
         }
         renderItems(DEFAULT_ITEMS.map((it) => ({ ...it, status: 'checking' })));
+        syncEnvCheckModalChips({
+            items: DEFAULT_ITEMS.map((it) => ({ ...it, status: 'checking' })),
+        });
 
         const result = await performEnvCheck(opts.payload || resolveLiveCheckPayload());
         state.result = result;
         renderItems(result.items);
+        syncEnvCheckModalChips(result);
         if (!duringFix) {
             setSubtitle(summarizeCheckResult(result));
         }
         state.running = false;
         if (duringFix) {
-            // Keep UI locked while multi-round fix continues.
+            // Keep UI locked while multi-round fix continues; cancel stays available.
             setBusy(true);
-            const fixBtn = $('envCheckFixBtn');
-            if (fixBtn) {
-                fixBtn.classList.remove('hidden');
-                fixBtn.disabled = true;
-                fixBtn.textContent = '修复中…';
-            }
+            setFixButtonCancelMode($('envCheckFixBtn'), true);
         } else {
             setBusy(false);
             updateFixButton();
@@ -1168,7 +1943,9 @@
                 openVcRedist: !!plan.openVcRedist,
                 ensureGpu: !!plan.ensureGpu,
                 ensureTorchCuda: !!plan.ensureTorchCuda,
+                ensureTorchRocm: !!plan.ensureTorchRocm,
                 ensureLlamaRuntime: !!plan.ensureLlamaRuntime,
+                llamaRuntimeId: String(plan.llamaRuntimeId || '').trim(),
                 force: !!plan.force,
                 modelIds: Array.isArray(plan.modelIds) ? plan.modelIds.slice() : [],
                 forceIds: Array.isArray(plan.forceIds) ? plan.forceIds.slice() : [],
@@ -1184,6 +1961,7 @@
         return !!plan.openVcRedist
             || !!plan.ensureGpu
             || !!plan.ensureTorchCuda
+            || !!plan.ensureTorchRocm
             || !!plan.ensureLlamaRuntime
             || models.length > 0;
     }
@@ -1195,8 +1973,10 @@
     }
 
     async function openModal(opts = {}) {
+        // Fragment may load after first bind(); ensure handlers + chips exist.
+        bind();
         const modal = $('envCheckModal');
-        if (!modal) return;
+        if (!modal || modal.getAttribute('data-ui-fragment') === 'pending') return;
         state.open = true;
         state.afterStart = typeof opts.afterStart === 'function' ? opts.afterStart : null;
         const startBtn = $('envCheckStartBtn');
@@ -1208,22 +1988,43 @@
             }
         } catch (_) { /* ignore */ }
         modal.classList.remove('hidden');
+        syncEnvCheckRepairTools();
         await runCheck();
     }
 
     async function onStart() {
         if (state.running || state.fixing) return;
         const blocking = (state.result?.items || []).filter((it) => it.blocking && it.status === 'fail');
-        if (blocking.length) {
+        const torchFail = blocking.find((it) => it.id === 'torchEngineStartup');
+        if (torchFail) {
+            const amd = hasAmdGpuInResult(state.result)
+                || !!torchFail.needsTorchRocm
+                || /ROCm|AMD|Radeon/i.test(String(torchFail.detail || ''));
+            const proceed = global.TransubAppConfirm
+                ? await global.TransubAppConfirm({
+                    title: 'PyTorch 引擎启动未通过',
+                    message: (
+                        uiTx('PyTorch 引擎启动探测失败（与真实 Qwen/SenseVoice 转写同序）。')
+                        + '\n\n'
+                        + (amd
+                            ? uiTx('建议先点「自动修复」把 ROCm PyTorch 装进引擎运行时并重新检测；强行继续时转写仍可能立刻失败。仍要关闭吗？')
+                            : uiTx('建议先点「自动修复」或「手动修复」补齐 CUDA PyTorch 并重新检测；强行继续时转写仍可能立刻失败。仍要关闭吗？'))
+                    ),
+                    primaryLabel: '仍要关闭',
+                    secondaryLabel: '返回修复',
+                })
+                : window.confirm(uiTx('PyTorch 引擎启动探测未通过，仍要关闭系统检查吗？'));
+            if (!proceed) return;
+        } else if (blocking.length) {
             const names = blocking.map((it) => it.label).join('、');
             const proceed = global.TransubAppConfirm
                 ? await global.TransubAppConfirm({
                     title: '仍有未通过项',
-                    message: `以下项未通过：${names}。缺少 Visual C++ 等依赖时，SenseVoice 可能无法加载。仍要继续吗？`,
+                    message: uiTf('以下项未通过：{names}。缺少 Visual C++ 等依赖时，SenseVoice 可能无法加载。仍要继续吗？', { names }),
                     primaryLabel: '仍要继续',
                     secondaryLabel: '返回修复',
                 })
-                : window.confirm(`以下项未通过：${names}。仍要继续吗？`);
+                : window.confirm(uiTf('以下项未通过：{names}。缺少 Visual C++ 等依赖时，SenseVoice 可能无法加载。仍要继续吗？', { names }));
             if (!proceed) return;
         }
         markDone();
@@ -1238,12 +2039,27 @@
         return false;
     }
 
-    function bind() {
-        $('openEnvCheckBtn')?.addEventListener('click', () => {
+    function bindEnvCheckOpener() {
+        const openBtn = $('openEnvCheckBtn');
+        if (!openBtn || openBtn.dataset.envCheckOpenBound === '1') return;
+        openBtn.dataset.envCheckOpenBound = '1';
+        openBtn.addEventListener('click', () => {
             void openModal({ afterStart: null });
         });
+    }
+
+    function bind() {
+        const modal = $('envCheckModal');
+        bindEnvCheckOpener();
+        if (!modal || modal.getAttribute('data-ui-fragment') === 'pending') return;
+        if (modal.dataset.envCheckBound === '1') return;
+        modal.dataset.envCheckBound = '1';
+        bindEnvCheckOverviewChips();
+        syncEnvCheckRepairTools();
+
         $('envCheckStartBtn')?.addEventListener('click', () => { void onStart(); });
         $('envCheckFixBtn')?.addEventListener('click', () => { void onFix(); });
+        $('envCheckReuseCudaBtn')?.addEventListener('click', () => { void onReuseCuda(); });
         $('envCheckManualBtn')?.addEventListener('click', () => { void onManualDownload(); });
         $('envCheckRetryBtn')?.addEventListener('click', () => { void runCheck(); });
         $('envCheckList')?.addEventListener('click', (event) => {
@@ -1252,19 +2068,26 @@
             const url = btn.getAttribute('data-env-action-url');
             if (url) void electron?.openExternal?.(url);
         });
-        document.addEventListener('keydown', (event) => {
-            const modal = $('envCheckModal');
-            if (!modal || modal.classList.contains('hidden')) return;
-            const confirmEl = $('appConfirmModal');
-            if (confirmEl && !confirmEl.classList.contains('hidden')) return;
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                if (state.fixing || state.running) return;
-                // First-run: Escape does not skip without marking; require 开始使用.
-                if (!isDone()) return;
-                closeModal();
-            }
-        });
+        if (!state.envKeysBound) {
+            state.envKeysBound = true;
+            document.addEventListener('keydown', (event) => {
+                const m = $('envCheckModal');
+                if (!m || m.classList.contains('hidden')) return;
+                const confirmEl = $('appConfirmModal');
+                if (confirmEl && !confirmEl.classList.contains('hidden')) return;
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    if (state.fixing) {
+                        requestCancelFix();
+                        return;
+                    }
+                    if (state.running) return;
+                    // First-run: Escape does not skip without marking; require 开始使用.
+                    if (!isDone()) return;
+                    closeModal();
+                }
+            });
+        }
     }
 
     function init() {
@@ -1277,6 +2100,10 @@
     } else {
         setTimeout(init, 0);
     }
+    global.addEventListener?.('transub-ui-fragment-ready', (ev) => {
+        const key = ev?.detail?.key;
+        if (key === 'factory-modals' || key === 'settings-panels') bind();
+    });
 
     global.TransubEnvCheck = {
         open: openModal,
@@ -1296,11 +2123,14 @@
         renderItemsInto,
         performEnvCheck,
         summarizeCheckResult,
+        syncEnvCheckModalChips,
         computeFixVisibility,
         applyFixButtons,
         runAutoFixSession,
         runManualDownloadSession,
+        runReuseCudaSession,
         requestFixSwitchToManual,
+        requestCancelFix,
         listNeededManualKindsFromResult,
     };
 }(window));

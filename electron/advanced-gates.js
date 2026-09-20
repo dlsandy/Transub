@@ -123,33 +123,11 @@ function requireAsrSemanticRepair() {
     return requireFeature(entitlement.FEATURE_CONTEXT_RECONSTRUCT);
 }
 
-/** 字幕库 Pro 深度能力（A/B、diff、发布等）；任意 Pro 买断亦视为解锁 */
-function requireSubtitleLibraryPro() {
-    const gateLib = requireFeature(entitlement.FEATURE_SUBTITLE_LIBRARY_PRO);
-    if (gateLib.ok) return gateLib;
-    const deviceId = getAdvancedDeviceId();
-    const current = readAdvancedDoc();
-    if (isDevUnlockEnabled()) {
-        return { ok: true, devUnlock: true, status: { entitled: true, reason: 'dev_unlock' } };
-    }
-    const ev = entitlement.evaluateEntitlement(current.doc.license, deviceId);
-    if (ev.entitled) {
-        return { ok: true, status: { entitled: true, reason: ev.reason || 'ok' } };
-    }
-    return {
-        ok: false,
-        error: gateLib.error || '字幕库高级能力需解锁 Pro',
-        code: gateLib.code || 'not_entitled',
-        status: gateLib.status || { entitled: false },
-    };
-}
-
 module.exports = {
     isDevUnlockEnabled,
     requireFeature,
     requireSmartTranslate,
     requireFilmAudioEnhance,
     requireAsrSemanticRepair,
-    requireSubtitleLibraryPro,
     evaluateFreeWithInstall,
 };

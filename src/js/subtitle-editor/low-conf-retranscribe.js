@@ -2,6 +2,16 @@
  * Subtitle editor — batch retranscribe low-confidence cues (merged time windows).
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installLowConfRetranscribe(ctx) {
         const {
             state,
@@ -93,7 +103,7 @@
             let done = 0;
             for (let i = 0; i < ranges.length; i += 1) {
                 if (state.jobAbortRequested) {
-                    setStatus?.(`已取消（完成 ${done} 窗）`, 'warn');
+                    setStatus?.(uiTf('已取消（完成 {done} 窗）', { done }), 'warn');
                     return { ok: false, cancelled: true, done };
                 }
                 const range = ranges[i];
@@ -106,7 +116,11 @@
                     mode: 'range',
                     writeAs: 'source',
                     snapAfter: snap,
-                    detail: `低置信重转 ${i + 1}/${ranges.length}（${planned.cueCount} 条）…`,
+                    detail: uiTf('低置信重转 {i}/{total}（{cueCount} 条）…', {
+                        i: i + 1,
+                        total: ranges.length,
+                        cueCount: planned.cueCount,
+                    }),
                 });
                 done += 1;
             }
@@ -115,8 +129,12 @@
             const lowLeft = metaCore?.summarizeLowConfidence
                 ? metaCore.summarizeLowConfidence(state.cueMeta).low
                 : null;
-            const leftHint = lowLeft != null ? `，剩余低置信 ${lowLeft}` : '';
-            setStatus?.(`已重转 ${done} 窗（约 ${planned.cueCount} 条）${leftHint}`, 'ok');
+            const leftHint = lowLeft != null ? uiTf('，剩余低置信 {count}', { count: lowLeft }) : '';
+            setStatus?.(uiTf('已重转 {done} 窗（约 {cueCount} 条）{leftHint}', {
+                done,
+                cueCount: planned.cueCount,
+                leftHint,
+            }), 'ok');
             return { ok: true, done, cueCount: planned.cueCount, rangeCount: ranges.length };
         }
 
@@ -131,7 +149,10 @@
                 return;
             }
             const planned = planRanges(indexes);
-            const msg = `将合并邻近低置信后重转：${planned.cueCount} 条 → ${planned.rangeCount} 个时间窗。\n写回原文轨，可按 Esc 中止。是否继续？`;
+            const msg = uiTf('将合并邻近低置信后重转：{cueCount} 条 → {rangeCount} 个时间窗。\n写回原文轨，可按 Esc 中止。是否继续？', {
+                cueCount: planned.cueCount,
+                rangeCount: planned.rangeCount,
+            });
             const ok = typeof editorConfirm === 'function'
                 ? await editorConfirm(msg, {
                     title: '重转低置信',

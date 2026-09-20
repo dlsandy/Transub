@@ -40,8 +40,14 @@ describe('ASR software improvements', () => {
         assert.ok(anime.includes('qwen3-asr-1.7b-ja-anime-galgame'));
         assert.deepStrictEqual(
             rangeAsr.buildRangeAsrCandidates('sensevoice-small'),
-            rangeAsr.buildBatchAsrCandidates('sensevoice-small'),
+            ['sensevoice-small', 'whisper-tiny'],
         );
+        const qwenRange = rangeAsr.buildRangeRetranscribeAsrCandidates('qwen3-asr-1.7b-ja');
+        assert.deepStrictEqual(qwenRange, [
+            'qwen3-asr-1.7b-ja',
+            'sensevoice-small',
+            'whisper-tiny',
+        ]);
     });
 
     it('runEngineJobWithAsrFailover retries empty ASR then succeeds', async () => {
@@ -173,8 +179,15 @@ describe('ASR software improvements', () => {
         });
         assert.ok(out.ok);
         assert.ok(fs.existsSync(out.manifestPath));
-        const payload = buildDiagnosticsPayload({ jobId: 'j1', options: { password: 'x' } });
+        const payload = buildDiagnosticsPayload({
+            jobId: 'j1',
+            options: { password: 'x' },
+            secondOpinion: { replacedWindows: 2, sibling: 'sensevoice-small' },
+            badPool: { open: 3, total: 5 },
+        });
         assert.strictEqual(payload.options.password, '[redacted]');
+        assert.strictEqual(payload.secondOpinion.replacedWindows, 2);
+        assert.strictEqual(payload.badPool.open, 3);
         fs.rmSync(dir, { recursive: true, force: true });
     });
 

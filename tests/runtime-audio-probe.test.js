@@ -169,4 +169,40 @@ print(json.dumps({"status": p.get("status"), "mismatch": p.get("torchCudaMismatc
         assert.strictEqual(payload.mismatch, true);
         assert.strictEqual(payload.status, 'partial');
     });
+
+    it('defers CUDA torch install when torch is already live in-process', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runPy(`
+import json, tempfile
+from pathlib import Path
+from unittest.mock import patch
+from transub_engine import runtime_audio as ra
+from transub_engine.runtime_audio import _install_torch_cuda
+
+td = Path(tempfile.mkdtemp())
+(td / "torch-2.11.0+cu126-cp312-cp312-win_amd64.whl").write_bytes(b"PK")
+(td / "torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl").write_bytes(b"PK")
+
+with patch.object(ra, "_torch_native_live_in_process", return_value=True), \\
+     patch.object(ra, "_local_torch_cuda_wheels_dir", return_value=str(td)), \\
+     patch.object(ra, "_torch_cuda_runtime_lists", return_value={
+         "find_links": (), "index_urls": (), "label": "cu126",
+     }):
+    out = _install_torch_cuda(force=True)
+print(json.dumps({
+    "ok": out.get("ok"),
+    "deferred": out.get("deferred"),
+    "restartRequired": out.get("restartRequired"),
+    "code": out.get("code"),
+}))
+ra.clear_pending_torch_cuda_install()
+`, 30000);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        assert.strictEqual(payload.deferred, true);
+        assert.strictEqual(payload.restartRequired, true);
+        assert.strictEqual(payload.code, 'TORCH_CUDA_DEFERRED');
+    });
 });

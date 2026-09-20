@@ -18,11 +18,77 @@
         separate: 4,
     });
 
-    const MODELS_FILTERS = Object.freeze(['all', 'asr', 'vad', 'mt', 'llm', 'separate']);
+    const MODELS_GROUP_FILTERS = Object.freeze(['all', 'asr', 'vad', 'llm', 'separate']);
+    const MODELS_STATUS_FILTERS = Object.freeze([
+        'all', 'installed', 'available', 'recommended', 'incomplete', 'experimental',
+    ]);
+    /** @deprecated use MODELS_GROUP_FILTERS + MODELS_STATUS_FILTERS */
+    const MODELS_FILTERS = Object.freeze([...MODELS_GROUP_FILTERS, ...MODELS_STATUS_FILTERS.filter((x) => x !== 'all')]);
+    const RETIRED_ENGINE_ASR_IDS = new Set(['qwen3-asr-1.7b-ja']);
 
+    function isRetiredMtModelId(id) {
+        return /^transub-ja/i.test(String(id || '').trim());
+    }
+
+    function normalizeModelsGroupFilter(next) {
+        const v = String(next || 'all');
+        // GGUF/mt tab removed — fold into LLM 翻译.
+        if (v === 'mt') return 'llm';
+        return MODELS_GROUP_FILTERS.includes(v) ? v : 'all';
+    }
+
+    function normalizeModelsStatusFilter(next) {
+        const v = String(next || 'all');
+        return MODELS_STATUS_FILTERS.includes(v) ? v : 'all';
+    }
+
+    /** @deprecated prefer normalizeModelsGroupFilter / normalizeModelsStatusFilter */
     function normalizeModelsFilter(next) {
         const v = String(next || 'all');
-        return MODELS_FILTERS.includes(v) ? v : 'all';
+        if (v === 'mt') return 'llm';
+        if (MODELS_GROUP_FILTERS.includes(v)) return v;
+        if (MODELS_STATUS_FILTERS.includes(v)) return v;
+        return 'all';
+    }
+
+    /**
+     * @param {object} item
+     * @param {string} status
+     */
+    function itemMatchesModelsStatusFilter(item, status) {
+        const s = normalizeModelsStatusFilter(status);
+        if (s === 'all') return true;
+        if (s === 'installed') return !!(item?.installed && !item?.incomplete);
+        if (s === 'available') return !item?.installed && !item?.incomplete;
+        if (s === 'recommended') return !!item?.recommended;
+        if (s === 'incomplete') return !!item?.incomplete;
+        if (s === 'experimental') {
+            return !!(item?.experimental || item?.lab || item?.source === 'lab');
+        }
+        return true;
+    }
+
+    /**
+     * @param {object} item
+     * @param {string} group
+     */
+    function itemMatchesModelsGroupFilter(item, group) {
+        const g = normalizeModelsGroupFilter(group);
+        if (g === 'all') return true;
+        const itemGroup = String(item?.group || '');
+        if (g === 'llm') return itemGroup === 'llm' || itemGroup === 'mt';
+        return itemGroup === g;
+    }
+
+    /**
+     * @param {object} item
+     * @param {string} filter legacy single filter (group or status)
+     */
+    function itemMatchesModelsFilter(item, filter) {
+        const f = normalizeModelsFilter(filter);
+        if (f === 'all') return true;
+        if (MODELS_STATUS_FILTERS.includes(f)) return itemMatchesModelsStatusFilter(item, f);
+        return itemMatchesModelsGroupFilter(item, f);
     }
 
     function engineModelKindLabel(kind) {
@@ -132,20 +198,31 @@
 
     /**
      * @param {object[]} catalog
-     * @param {{ filter?: string, query?: string }} [opts]
+     * @param {{ filter?: string, group?: string, status?: string, query?: string }} [opts]
      */
     function filterAndSortEnginePickItems(catalog, opts = {}) {
         const items = (Array.isArray(catalog) ? catalog.slice() : []).sort(compareEnginePickItems);
-        const filter = normalizeModelsFilter(opts.filter);
+        const legacy = normalizeModelsFilter(opts.filter);
+        let group = normalizeModelsGroupFilter(opts.group);
+        let status = normalizeModelsStatusFilter(opts.status);
+        // Backward compat: single `filter` may be either group or status.
+        if (opts.group == null && opts.status == null && legacy !== 'all') {
+            if (MODELS_STATUS_FILTERS.includes(legacy)) status = legacy;
+            else group = normalizeModelsGroupFilter(legacy);
+        }
         const q = String(opts.query || '').trim().toLowerCase();
         return items.filter((item) => {
-            if (filter !== 'all' && String(item.group || '') !== filter) return false;
+            if (!itemMatchesModelsGroupFilter(item, group)) return false;
+            if (!itemMatchesModelsStatusFilter(item, status)) return false;
             if (!q) return true;
             const hayParts = [
-                item.name, item.id, item.note, item.group, item.kind, item.sizeHint, item.familyLabel,
+                item.name, item.id, item.note, item.group, item.kind, item.sizeHint, item.ramHint, item.familyLabel,
             ];
             if (item.group === 'separate') hayParts.push('人声分离', 'demucs');
             if (item.group === 'llm') hayParts.push('llm', '推理', 'gguf');
+            if (item.experimental || item.lab || item.source === 'lab') {
+                hayParts.push('实验', '实验室', 'lab', 'experimental');
+            }
             const hay = hayParts.map((x) => String(x || '').toLowerCase()).join(' ');
             return hay.includes(q);
         });
@@ -160,6 +237,109 @@
     }
 
     /**
+     * Counts for filter tabs.
+     * - Group counts: scoped by current status (and ignore search).
+     * - Status counts: scoped by current group.
+     * @param {object[]} catalog
+     * @param {{ group?: string, status?: string }} [opts]
+     */
+    function countModelsByFilter(catalog, opts = {}) {
+        const group = normalizeModelsGroupFilter(opts.group);
+        const status = normalizeModelsStatusFilter(opts.status);
+        const list = Array.isArray(catalog) ? catalog : [];
+        const counts = {
+            all: 0,
+            installed: 0,
+            available: 0,
+            recommended: 0,
+            incomplete: 0,
+            experimental: 0,
+            asr: 0,
+            vad: 0,
+            llm: 0,
+            separate: 0,
+        };
+        for (const item of list) {
+            if (itemMatchesModelsStatusFilter(item, status)) {
+                counts.all += 1;
+                const g = String(item?.group || '');
+                if (g === 'asr' || g === 'vad' || g === 'separate') {
+                    counts[g] += 1;
+                } else if (g === 'llm' || g === 'mt') {
+                    counts.llm += 1;
+                }
+            }
+            if (itemMatchesModelsGroupFilter(item, group)) {
+                if (item?.installed && !item?.incomplete) counts.installed += 1;
+                if (!item?.installed && !item?.incomplete) counts.available += 1;
+                if (item?.recommended) counts.recommended += 1;
+                if (item?.incomplete) counts.incomplete += 1;
+                if (item?.experimental || item?.lab || item?.source === 'lab') {
+                    counts.experimental += 1;
+                }
+            }
+        }
+        return counts;
+    }
+
+    /**
+     * Select filters use kind `mt` for LLM 推理翻译; engine may report `llm`.
+     * @param {string} modelKind
+     * @param {string} wantKind
+     */
+    function matchesEngineSelectKind(modelKind, wantKind) {
+        const have = String(modelKind || '').trim().toLowerCase();
+        const want = String(wantKind || '').trim().toLowerCase();
+        if (!want) return true;
+        if (have === want) return true;
+        if (want === 'mt' && have === 'llm') return true;
+        return false;
+    }
+
+    /**
+     * OR installed flags from managed LLM status into engine `/v1/models` rows.
+     * Without this, model library shows「已下载」while translate/retranslate selects
+     * still filter out the same ids (engine listed them as not installed / wrong kind).
+     * @param {object[]} engineModels
+     * @param {object[]} managedInstalledRows rows already filtered to installed
+     * @returns {object[]}
+     */
+    function mergeManagedInstalledIntoEngineModels(engineModels, managedInstalledRows) {
+        const list = (Array.isArray(engineModels) ? engineModels : []).map((m) => (
+            m && typeof m === 'object' ? { ...m } : m
+        )).filter(Boolean);
+        const byId = new Map();
+        for (const row of list) {
+            const id = String(row.id || '').trim();
+            if (id) byId.set(id, row);
+        }
+        for (const src of (Array.isArray(managedInstalledRows) ? managedInstalledRows : [])) {
+            const id = String(src?.id || '').trim();
+            if (!id) continue;
+            const existing = byId.get(id);
+            if (existing) {
+                existing.installed = true;
+                existing.incomplete = false;
+                const kind = String(existing.kind || '').trim().toLowerCase();
+                if (!kind || kind === 'llm') existing.kind = 'mt';
+                if (!existing.name && src.name) existing.name = src.name;
+                continue;
+            }
+            const next = {
+                id,
+                name: src.name || id,
+                kind: 'mt',
+                installed: true,
+                incomplete: false,
+                size_hint_mb: Number(src.size_hint_mb) || 0,
+            };
+            list.push(next);
+            byId.set(id, next);
+        }
+        return list;
+    }
+
+    /**
      * Build <option> HTML for installed-model selects.
      * @param {{
      *   models: object[],
@@ -170,6 +350,7 @@
      *   esc: (s: string) => string,
      *   formatLabel?: (m: object) => string,
      *   modelFilter?: (m: object) => boolean,
+     *   modelDisableReason?: (m: object) => string,
      * }} args
      */
     function buildInstalledModelSelectOptionsHtml(args = {}) {
@@ -178,12 +359,20 @@
             ? args.formatLabel
             : formatEngineModelOptionLabel;
         const kind = args.kind;
+        const disableReasonOf = typeof args.modelDisableReason === 'function'
+            ? args.modelDisableReason
+            : () => '';
         const list = (Array.isArray(args.models) ? args.models : []).filter((m) => {
-            if (m?.kind !== kind || !m?.installed || m?.incomplete) return false;
+            if (!matchesEngineSelectKind(m?.kind, kind) || !m?.installed || m?.incomplete) return false;
             if (typeof args.modelFilter === 'function' && !args.modelFilter(m)) return false;
             return true;
         });
-        const want = String(args.selectedId || '');
+        let want = String(args.selectedId || '');
+        const wantBlocked = !!(want && list.some((m) => {
+            if (String(m.id || '') !== want) return false;
+            return !!String(disableReasonOf(m) || '').trim();
+        }));
+        if (wantBlocked) want = '';
         const opts = [];
         if (args.allowEmpty) {
             opts.push(`<option value="">${esc(args.emptyLabel || '自动（按源语言）')}</option>`);
@@ -191,8 +380,14 @@
         for (const model of list) {
             const id = String(model.id || '');
             if (!id) continue;
+            const reason = String(disableReasonOf(model) || '').trim();
             const sel = id === want ? ' selected' : '';
-            opts.push(`<option value="${esc(id)}"${sel}>${esc(formatLabel(model))}</option>`);
+            const disabledAttr = reason ? ' disabled' : '';
+            const titleAttr = reason ? ` title="${esc(reason)}"` : '';
+            const label = reason
+                ? `${formatLabel(model)}（不可用）`
+                : formatLabel(model);
+            opts.push(`<option value="${esc(id)}"${sel}${disabledAttr}${titleAttr}>${esc(label)}</option>`);
         }
         if (want && !list.some((m) => String(m.id || '') === want)) {
             opts.push(`<option value="${esc(want)}" selected>${esc(want)}（未下载）</option>`);
@@ -203,8 +398,9 @@
         return {
             html: opts.join(''),
             want,
-            hasWant: !!(want && opts.some((o) => o.includes(`value="${esc(want)}"`))),
+            hasWant: !!(want && opts.some((o) => o.includes(`value="${esc(want)}"`) && !o.includes(' disabled'))),
             allowEmpty: !!args.allowEmpty,
+            clearedDisabledSelection: wantBlocked,
         };
     }
 
@@ -291,6 +487,151 @@
         return engineModelKindLabel(group);
     }
 
+    /** Parse min GB from hints like「建议 ≥16 GB 内存」. */
+    function parseMinRamGbFromHint(ramHint) {
+        const s = String(ramHint || '');
+        const m = s.match(/(?:≥|>=)\s*(\d+(?:\.\d+)?)\s*GB/i);
+        if (m) return Number(m[1]) || 0;
+        const m2 = s.match(/(\d+(?:\.\d+)?)\s*GB/i);
+        return m2 ? (Number(m2[1]) || 0) : 0;
+    }
+
+    function parseSizeHintMb(sizeHint, sizeHintMb) {
+        const direct = Number(sizeHintMb);
+        if (Number.isFinite(direct) && direct > 0) return direct;
+        const s = String(sizeHint || '');
+        const gb = s.match(/([\d.]+)\s*GB/i);
+        if (gb) {
+            const n = Number(gb[1]);
+            return Number.isFinite(n) && n > 0 ? n * 1024 : 0;
+        }
+        const mb = s.match(/([\d.]+)\s*MB/i);
+        if (mb) {
+            const n = Number(mb[1]);
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        }
+        return 0;
+    }
+
+    /**
+     * Derive a rough runtime budget when catalog has no authored ramHint.
+     * Uses ~2× weight size for ASR/MT headroom; tiny VAD stays at 1 GB.
+     */
+    function deriveRamHintFromSizeMb(sizeHintMb, group) {
+        const mb = Number(sizeHintMb) || 0;
+        if (!(mb > 0)) return '';
+        const weightGb = mb / 1024;
+        const g = String(group || '');
+        let recommendGb;
+        if (g === 'vad') {
+            recommendGb = 1;
+        } else if (g === 'separate') {
+            recommendGb = Math.max(4, Math.ceil(weightGb + 2));
+        } else {
+            recommendGb = Math.max(2, Math.ceil(weightGb * 2));
+        }
+        if (g === 'asr' || g === 'llm' || g === 'mt') {
+            return `建议 ≥${recommendGb} GB 显存 / 内存`;
+        }
+        return `建议 ≥${recommendGb} GB 内存`;
+    }
+
+    function resolvePickItemRamHint(item = {}) {
+        const authored = String(item.ramHint || '').trim();
+        if (authored) return authored;
+        const mb = parseSizeHintMb(item.sizeHint, item.size_hint_mb ?? item.sizeHintMb);
+        return deriveRamHintFromSizeMb(mb, item.group);
+    }
+
+    const HARDWARE_FIT_LABELS = Object.freeze({
+        over: '负载',
+        tight: '高负荷',
+        ok: '流畅',
+        unknown: '',
+    });
+
+    /**
+     * Pick the memory pool to compare against a model budget.
+     * ASR / LLM / MT / separate prefer VRAM when known; otherwise system RAM.
+     * @param {string} group
+     * @param {{ systemMemoryGb?: number, vramGb?: number }} hw
+     */
+    function resolveHardwarePoolGb(group, hw = {}) {
+        const sys = Number(hw.systemMemoryGb) || 0;
+        const vram = Number(hw.vramGb) || 0;
+        const g = String(group || '');
+        const prefersGpu = g === 'asr' || g === 'llm' || g === 'mt' || g === 'separate';
+        if (prefersGpu && vram > 0) return vram;
+        if (sys > 0) return sys;
+        if (vram > 0) return vram;
+        return 0;
+    }
+
+    /**
+     * Three-tier hardware fit for model cards.
+     * @returns {{
+     *   level: 'over'|'tight'|'ok'|'unknown',
+     *   label: string,
+     *   badgeClass: string,
+     *   cardClass: string,
+     *   needGb: number,
+     *   poolGb: number,
+     * }}
+     */
+    function classifyHardwareFit(item, hw = {}) {
+        const ramHint = String(item?.ramHint || '').trim() || resolvePickItemRamHint(item);
+        const needGb = parseMinRamGbFromHint(ramHint);
+        const poolGb = resolveHardwarePoolGb(item?.group, hw);
+        const empty = {
+            level: 'unknown',
+            label: '',
+            badgeClass: '',
+            cardClass: '',
+            needGb: needGb || 0,
+            poolGb: poolGb || 0,
+        };
+        if (!(needGb > 0) || !(poolGb > 0)) return empty;
+
+        if (needGb > poolGb) {
+            return {
+                level: 'over',
+                label: HARDWARE_FIT_LABELS.over,
+                badgeClass: 'is-fit-over',
+                cardClass: 'is-fit-over',
+                needGb,
+                poolGb,
+            };
+        }
+        const headroom = Math.max(0, poolGb - 2);
+        if (needGb > headroom || needGb > poolGb * 0.7) {
+            return {
+                level: 'tight',
+                label: HARDWARE_FIT_LABELS.tight,
+                badgeClass: 'is-fit-tight',
+                cardClass: 'is-fit-tight',
+                needGb,
+                poolGb,
+            };
+        }
+        return {
+            level: 'ok',
+            label: HARDWARE_FIT_LABELS.ok,
+            badgeClass: 'is-fit-ok',
+            cardClass: 'is-fit-ok',
+            needGb,
+            poolGb,
+        };
+    }
+
+    function isRamTightForModel(item, systemMemoryGb, hwExtra = {}) {
+        const hw = {
+            systemMemoryGb: Number(systemMemoryGb) || Number(hwExtra.systemMemoryGb) || 0,
+            vramGb: Number(hwExtra.vramGb) || 0,
+        };
+        const fit = classifyHardwareFit(item, hw);
+        return fit.level === 'over' || fit.level === 'tight';
+    }
+
     /**
      * @param {object[]} models
      * @param {{
@@ -313,37 +654,60 @@
             const group = (rawKind === 'mt' && (isSakura(id) || managedEntry))
                 || model.group === 'llm'
                 || model.source === 'managed'
+                || model.source === 'lab'
+                || model.experimental === true
+                || model.lab === true
                 ? 'llm'
                 : (rawKind === 'demucs' || rawKind === 'separate'
                     ? 'separate'
                     : (rawKind === 'asr' || rawKind === 'mt' || rawKind === 'vad' ? rawKind : rawKind || 'other'));
             const sizeHint = model.sizeHint
                 || (Number(model.size_hint_mb) > 0 ? `约 ${model.size_hint_mb} MB` : '');
+            const ramHint = resolvePickItemRamHint({
+                ramHint: model.ramHint || managedEntry?.ramHint || '',
+                sizeHint,
+                size_hint_mb: model.size_hint_mb,
+                group,
+            });
+            const experimental = model.experimental === true
+                || model.lab === true
+                || model.source === 'lab'
+                || managedEntry?.experimental === true
+                || managedEntry?.lab === true;
             return {
                 id,
                 name: String(model.name || id),
                 kind: rawKind || (group === 'llm' ? 'mt' : ''),
                 group,
                 source: model.source
-                    || (isSakura(id) ? 'sakura' : (managedEntry ? 'managed' : 'engine')),
+                    || (experimental
+                        ? 'lab'
+                        : (isSakura(id) ? 'sakura' : (managedEntry ? 'managed' : 'engine'))),
                 hubId: String(model.hubId || model.hub_id || managedEntry?.hubId || '').trim(),
                 installed: !!model.installed,
                 incomplete: !!model.incomplete,
                 shipped: !!model.shipped || !!model.bundled,
                 recommended: model.recommended === true,
+                experimental,
+                lab: experimental,
                 sizeHint: String(sizeHint || ''),
+                ramHint: String(ramHint || ''),
                 note: String(model.note || ''),
                 familyLabel: String(model.familyLabel || managedEntry?.familyLabel || ''),
                 paramBillion: Number(model.paramBillion ?? managedEntry?.paramBillion) || 0,
-                proScale: model.proScale === true
-                    || !!(managedEntry && isProScale(managedEntry)),
+                proScale: experimental
+                    ? false
+                    : (model.proScale === true
+                        || !!(managedEntry && isProScale(managedEntry))),
                 freePipelineTranslate: model.freePipelineTranslate === true
                     || !!managedEntry?.freePipelineTranslate,
                 translateOnly: model.translateOnly === true
                     || !!managedEntry?.translateOnly
                     || isSakura(id),
             };
-        }).filter((m) => m.id && m.id !== demucsModelId);
+        }).filter((m) => m.id && m.id !== demucsModelId
+            && !RETIRED_ENGINE_ASR_IDS.has(m.id)
+            && !isRetiredMtModelId(m.id));
     }
 
     /**
@@ -366,20 +730,33 @@
         return rows.map((entry) => {
             const id = String(entry.id || '').trim();
             if (!id) return null;
+            const sizeHint = String(entry.sizeHint || '');
+            const ramHint = resolvePickItemRamHint({
+                ramHint: entry.ramHint,
+                sizeHint,
+                size_hint_mb: entry.size_hint_mb,
+                group: 'llm',
+            });
+            const experimental = entry.experimental === true
+                || entry.lab === true
+                || String(entry.family || '') === 'lab';
             return {
                 id,
                 name: String(entry.name || id),
                 kind: 'mt',
                 group: 'llm',
-                source: isSakura(id) ? 'sakura' : 'managed',
+                source: experimental ? 'lab' : (isSakura(id) ? 'sakura' : 'managed'),
                 installed: !!entry.installed,
                 incomplete: false,
                 recommended: !!entry.recommended,
-                sizeHint: String(entry.sizeHint || ''),
+                experimental,
+                lab: experimental,
+                sizeHint,
+                ramHint,
                 note: String(entry.note || ''),
                 familyLabel: String(entry.familyLabel || entry.family || ''),
                 paramBillion: Number(entry.paramBillion) || 0,
-                proScale: !!entry.proScale || !!isProScale(entry),
+                proScale: experimental ? false : (!!entry.proScale || !!isProScale(entry)),
                 freePipelineTranslate: !!entry.freePipelineTranslate,
                 translateOnly: !!entry.translateOnly || isSakura(id),
             };
@@ -396,6 +773,13 @@
             if (!item?.id) continue;
             const existing = byId.get(item.id);
             if (existing) {
+                const sizeHint = existing.sizeHint || item.sizeHint || '';
+                const ramHint = item.ramHint || existing.ramHint
+                    || resolvePickItemRamHint({
+                        ramHint: '',
+                        sizeHint,
+                        group: 'llm',
+                    });
                 byId.set(item.id, {
                     ...existing,
                     group: 'llm',
@@ -403,13 +787,16 @@
                     installed: !!(existing.installed || item.installed),
                     name: existing.name || item.name,
                     note: existing.note || item.note,
-                    sizeHint: existing.sizeHint || item.sizeHint,
+                    sizeHint,
+                    ramHint,
                     familyLabel: item.familyLabel || existing.familyLabel || '',
                     paramBillion: item.paramBillion || existing.paramBillion || 0,
                     proScale: !!(item.proScale || existing.proScale),
                     freePipelineTranslate: !!(item.freePipelineTranslate || existing.freePipelineTranslate),
                     translateOnly: !!(item.translateOnly || existing.translateOnly),
                     recommended: !!(existing.recommended || item.recommended),
+                    experimental: !!(existing.experimental || item.experimental || existing.lab || item.lab),
+                    lab: !!(existing.lab || item.lab || existing.experimental || item.experimental),
                 });
             } else {
                 byId.set(item.id, { ...item, group: 'llm' });
@@ -441,6 +828,7 @@
             selected: false,
             recommended: false,
             sizeHint: 'pip 包',
+            ramHint: '建议 ≥4 GB 显存 / 内存',
             note,
         };
     }
@@ -464,10 +852,63 @@
         return list;
     }
 
+    /**
+     * Whether the model library card should show a delete button.
+     * @param {object} item pick-catalog row
+     * @param {{ demucsModelId?: string }} [deps]
+     */
+    function canShowDeleteButtonForPickItem(item = {}, deps = {}) {
+        const id = String(item.id || '').trim();
+        const demucsId = String(deps.demucsModelId || 'demucs');
+        if (!id || id === demucsId) return false;
+        if (item.shipped) return false;
+        if (!item.installed && !item.incomplete) return false;
+        return true;
+    }
+
+    /**
+     * @param {object} item
+     * @param {{ demucsModelId?: string }} [deps]
+     */
+    function explainDeleteBlockedForPickItem(item = {}, deps = {}) {
+        const id = String(item.id || '').trim();
+        const demucsId = String(deps.demucsModelId || 'demucs');
+        if (!id) return '未知模型';
+        if (id === demucsId) return 'Demucs 为 pip 组件，不能在此删除';
+        if (item.shipped) return '内置模型不可删除';
+        if (!item.installed && !item.incomplete) return '模型未下载';
+        return '';
+    }
+
+    /** @param {object} item */
+    function buildDeleteModelConfirmCopy(item = {}) {
+        const name = String(item.name || item.id || '模型').trim();
+        const shippedNote = item.shipped ? '\n\n此为发行内置模型，不可删除。' : '';
+        return {
+            title: '删除模型',
+            message: (
+                `确定删除「${name}」？\n\n`
+                + '将移除本机已下载的文件以释放磁盘空间。'
+                + '若该模型正被任务或设置选用，删除后需重新下载或改选其它模型。'
+                + shippedNote
+            ),
+            primaryLabel: '删除',
+            secondaryLabel: '取消',
+            danger: true,
+        };
+    }
+
     return {
         PICK_GROUP_ORDER,
         MODELS_FILTERS,
+        MODELS_GROUP_FILTERS,
+        MODELS_STATUS_FILTERS,
         normalizeModelsFilter,
+        normalizeModelsGroupFilter,
+        normalizeModelsStatusFilter,
+        itemMatchesModelsFilter,
+        itemMatchesModelsGroupFilter,
+        itemMatchesModelsStatusFilter,
         engineModelKindLabel,
         engineModelGroupLabel,
         formatEngineModelOptionLabel,
@@ -477,6 +918,9 @@
         compareEnginePickItems,
         filterAndSortEnginePickItems,
         formatModelsSummary,
+        countModelsByFilter,
+        matchesEngineSelectKind,
+        mergeManagedInstalledIntoEngineModels,
         buildInstalledModelSelectOptionsHtml,
         decideEngineDlProgressLogAction,
         formatEngineTestResultMessage,
@@ -487,5 +931,16 @@
         mergeDemucsPickItem,
         isDemucsRuntimeUsable,
         isDemucsFullyReady,
+        canShowDeleteButtonForPickItem,
+        explainDeleteBlockedForPickItem,
+        buildDeleteModelConfirmCopy,
+        parseMinRamGbFromHint,
+        parseSizeHintMb,
+        deriveRamHintFromSizeMb,
+        resolvePickItemRamHint,
+        HARDWARE_FIT_LABELS,
+        resolveHardwarePoolGb,
+        classifyHardwareFit,
+        isRamTightForModel,
     };
 }));

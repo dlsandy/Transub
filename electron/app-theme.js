@@ -4,7 +4,7 @@ const { app, BrowserWindow, nativeTheme } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const MAIN_BG = Object.freeze({ light: '#f9fafb', dark: '#111827' });
+const MAIN_BG = Object.freeze({ light: '#f3f5f7', dark: '#141214' });
 const EDITOR_BG = Object.freeze({ light: '#f3f4f6', dark: '#0f1419' });
 
 /** @type {'light'|'dark'} */

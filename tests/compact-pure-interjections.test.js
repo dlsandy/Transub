@@ -13,6 +13,21 @@ function writeSrt(filePath, cues) {
     fs.writeFileSync(filePath, body, 'utf8');
 }
 
+function writeSrtLongDur(filePath, cues) {
+    const body = cues.map((c, i) => {
+        const n = c.index != null ? c.index : i + 1;
+        const start = c.startMs != null ? c.startMs : n * 2000;
+        const end = c.endMs != null ? c.endMs : start + 2000;
+        const fmt = (ms) => {
+            const s = Math.floor(ms / 1000);
+            const msPart = ms % 1000;
+            return `00:${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')},${String(msPart).padStart(3, '0')}`;
+        };
+        return `${n}\n${fmt(start)} --> ${fmt(end)}\n${c.text}\n`;
+    }).join('\n');
+    fs.writeFileSync(filePath, body, 'utf8');
+}
+
 describe('compactPureInterjectionSubtitlePair', () => {
     it('drops paired pure fillers and renumbers both tracks', () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-compact-'));
@@ -35,8 +50,8 @@ describe('compactPureInterjectionSubtitlePair', () => {
 
         const res = compactPureInterjectionSubtitlePair(zhPath, jaPath, { backupMode: 'off' });
         assert.strictEqual(res.ok, true);
-        assert.strictEqual(res.dropped, 4);
-        assert.strictEqual(res.afterCount, 1);
+        assert.strictEqual(res.dropped, 3);
+        assert.strictEqual(res.afterCount, 2);
 
         const zhOut = fs.readFileSync(zhPath, 'utf8');
         const jaOut = fs.readFileSync(jaPath, 'utf8');
@@ -46,11 +61,11 @@ describe('compactPureInterjectionSubtitlePair', () => {
         assert.ok(jaOut.includes('うん、大丈夫？'));
         assert.ok(!jaOut.includes('はぁ'));
         assert.ok(!jaOut.includes('ふふっ'));
-        // Renumbered to a single cue index 1
+        // Renumbered; bridge filler 「嗯」 may remain when it links substantive neighbors
         assert.ok(/^1\n/m.test(zhOut));
-        assert.ok(!/^2\n/m.test(zhOut));
+        assert.ok(/^2\n/m.test(zhOut));
         assert.ok(!/^3\n/m.test(zhOut));
-        // Bare filler 「嗯」 cue removed; only the meaningful line remains
+        assert.ok(zhOut.includes('嗯'));
         assert.strictEqual((zhOut.match(/没问题吧/g) || []).length, 1);
     });
 
@@ -142,5 +157,46 @@ describe('bilingual merged postprocess (viewing punct + filler clear)', () => {
         assert.ok(out.includes('大丈夫？'));
         assert.ok(!out.includes('你好，世界'));
         assert.ok(!out.includes('こんにちは。'));
+    });
+});
+
+describe('translation track removeNoise', () => {
+    const { applySubtitlePostprocess } = require('../electron/extensions-bridge');
+
+    it('keeps empty ZH slots when paired cleanup was skipped (blank retranslate)', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-zh-empty-'));
+        const zhPath = path.join(dir, 'clip.srt');
+        writeSrt(zhPath, [
+            { index: 1, text: '开头有译文' },
+            { index: 2, text: '…' },
+            { index: 3, text: '…' },
+            { index: 4, text: '后面有译文' },
+        ]);
+        const res = applySubtitlePostprocess(zhPath, {
+            removeNoise: true,
+            removeHallucinations: true,
+            backupMode: 'off',
+        });
+        assert.strictEqual(res.ok, true);
+        assert.strictEqual(res.afterCount, 4, 'must not delete blank MT slots on ZH track');
+        const blocks = fs.readFileSync(zhPath, 'utf8').trim().split(/\n\n+/);
+        assert.strictEqual(blocks.length, 4);
+    });
+
+    it('still removes empty cues on JA source tracks', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-ja-empty-'));
+        const jaPath = path.join(dir, 'clip.src.srt');
+        writeSrt(jaPath, [
+            { index: 1, text: 'うん' },
+            { index: 2, text: '' },
+            { index: 3, text: '大丈夫？' },
+        ]);
+        const res = applySubtitlePostprocess(jaPath, {
+            removeNoise: true,
+            removeHallucinations: true,
+            backupMode: 'off',
+        });
+        assert.strictEqual(res.ok, true);
+        assert.ok(res.afterCount < 3, 'empty JA slots are noise');
     });
 });

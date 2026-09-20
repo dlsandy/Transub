@@ -14,6 +14,9 @@ const {
     summarizeRemaining,
     getCueCps,
     fixInvalidCueTimings,
+    countInvalidCueTimings,
+    cuesNeedDestructiveTimingGuard,
+    defaultPostBatchQcScanOptions,
 } = require('../src/js/subtitle-qc-core');
 
 function testScanDetectsOverlapAndCps() {
@@ -152,6 +155,31 @@ function testQcFixSplitsPunctuatedChinese() {
     });
     assert.ok(fixed.stats.splitCount >= 1, `should split punctuated Chinese: ${fixed.summary}`);
     assert.ok(fixed.cues.length >= 2);
+}
+
+function testSkipFastSpeechSplitPreservesTiming() {
+    const cues = [
+        {
+            startMs: 1000,
+            endMs: 2200,
+            text: '这是一段很快的对白没有标点但读速很高',
+        },
+    ];
+    const fixed = applyQcFixes(cues, {
+        fixCpsBySplit: true,
+        minSplitDurMs: 2800,
+        maxCps: 5,
+        fixCpsByExtend: false,
+        enforceMinDur: false,
+        enforceMaxDur: false,
+        fixOverlap: false,
+        fixInvalid: false,
+        checkFluency: false,
+    });
+    assert.strictEqual(fixed.cues.length, 1);
+    assert.strictEqual(fixed.cues[0].startMs, 1000);
+    assert.strictEqual(fixed.cues[0].endMs, 2200);
+    assert.strictEqual(fixed.stats.skipFastSpeech, 1);
 }
 
 function testBuildPlanRequiresSelection() {
@@ -398,6 +426,9 @@ describe("subtitle-qc", () => {
     it("qc fix splits punctuated chinese", () => {
         testQcFixSplitsPunctuatedChinese();
     });
+    it("skips CPS split for short fast-speech cues when minSplitDurMs set", () => {
+        testSkipFastSpeechSplitPreservesTiming();
+    });
     it("build plan requires selection", () => {
         testBuildPlanRequiresSelection();
     });
@@ -485,5 +516,106 @@ describe("subtitle-qc", () => {
         ]);
         assert.strictEqual(applied.length, fixed.cues.length);
         assert.strictEqual(applied[0].text, fixed.cues[0].text);
+    });
+
+    it('defaultPostBatchQcScanOptions matches editor factory scan (fluency + gapMs)', () => {
+        const opts = defaultPostBatchQcScanOptions();
+        assert.strictEqual(opts.checkFluency, true);
+        assert.strictEqual(opts.gapMs, 1);
+        const touching = [
+            { startMs: 0, endMs: 2000, text: 'first line ok' },
+            { startMs: 2000, endMs: 4000, text: 'second line ok' },
+        ];
+        const legacy = scanCueIssues(touching, { gapMs: 0, checkFluency: false }).summary.total;
+        const aligned = scanCueIssues(touching, defaultPostBatchQcScanOptions({ checkFluency: false })).summary.total;
+        assert.strictEqual(legacy, 0);
+        assert.ok(aligned >= 1, 'gapMs=1 should flag touching cues as overlap');
+    });
+
+    it('preserves and heals software-credit watermark under compress/noise QC', () => {
+        const credit = '字幕由 Transub Pro 生成 [ www.transub.cc ]';
+        const corrupted = '字幕由 Transub Pro 生成 [ ww！.transub.cc ]';
+        const keep = applyQcFixes([
+            { startMs: 0, endMs: 2000, text: credit },
+            { startMs: 3000, endMs: 4000, text: '你好' },
+        ], {
+            compressRepetition: true,
+            removeNoise: true,
+            removeHallucinations: true,
+            fixOverlap: false,
+            fixCpsBySplit: false,
+            fixCpsByExtend: false,
+            enforceMinDur: false,
+            enforceMaxDur: false,
+            fixInvalid: false,
+            checkFluency: true,
+        });
+        assert.strictEqual(keep.cues[0].text, credit);
+        assert.ok(!(keep.scan?.issues || []).some((it) => it.index === 0
+            && (it.types || []).some((t) => t === 'weird' || t === 'fluency' || t === 'repetition')));
+
+        const heal = applyQcFixes([
+            { startMs: 0, endMs: 2000, text: corrupted },
+            { startMs: 3000, endMs: 4000, text: '你好' },
+        ], {
+            compressRepetition: true,
+            removeNoise: true,
+            removeHallucinations: true,
+            fixOverlap: false,
+            fixCpsBySplit: false,
+            fixCpsByExtend: false,
+            enforceMinDur: false,
+            enforceMaxDur: false,
+            fixInvalid: false,
+        });
+        assert.strictEqual(heal.cues[0].text, credit);
+        assert.ok((heal.stats.softwareCreditNormalized || 0) >= 1);
+    });
+
+    it('refuses mass-invalid cascade unpack (MFYD-185)', () => {
+        const collapsed = [];
+        for (let i = 0; i < 20; i += 1) {
+            collapsed.push({ startMs: 0, endMs: 0, text: `cue${i}` });
+        }
+        assert.strictEqual(cuesNeedDestructiveTimingGuard(collapsed), true);
+        assert.ok(countInvalidCueTimings(collapsed) >= 20);
+
+        const forAdj = collapsed.map((c) => ({ ...c }));
+        const adj = applySmartAdjustToCues(forAdj, {
+            fixInvalid: true,
+            fixOverlap: true,
+            enforceMinDur: true,
+            minSec: 0.5,
+            gapMs: 1,
+        });
+        assert.strictEqual(adj.timingFixSkipped, true);
+        assert.strictEqual(adj.invalidFixed, 0);
+        assert.ok(forAdj.every((c) => Number(c.startMs) === 0 && Number(c.endMs) === 0));
+
+        const fixed = applyQcFixes(collapsed, {
+            fixInvalid: true,
+            fixOverlap: true,
+            enforceMinDur: true,
+            fixCpsBySplit: false,
+            minSec: 0.5,
+            gapMs: 1,
+        });
+        assert.strictEqual(fixed.stats.timingFixSkipped, true);
+        const starts = new Set(fixed.cues.map((c) => Number(c.startMs) || 0));
+        assert.ok(starts.size <= 2, 'must not invent a spread timeline');
+        assert.ok(!String(fixed.summary || '').includes('无效轴 20'), 'must not claim mass invalidFixed');
+        assert.ok(String(fixed.summary || '').includes('跳过损坏时间轴'));
+    });
+
+    it('still fixes sparse invalid cues with cascade', () => {
+        const cues = [
+            { startMs: 0, endMs: 0, text: 'a' },
+            { startMs: 50, endMs: 1000, text: 'b' },
+            { startMs: 2000, endMs: 3000, text: 'c' },
+        ];
+        assert.strictEqual(cuesNeedDestructiveTimingGuard(cues), false);
+        const n = fixInvalidCueTimings(cues, { minSec: 0.3, gapMs: 1 });
+        assert.ok(n >= 1);
+        assert.ok(cues[0].endMs > cues[0].startMs);
     });
 });

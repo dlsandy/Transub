@@ -1,0 +1,153 @@
+<section id="workspaceModels" class="factory-models-panel" aria-label="模型管理">
+            <div id="engineModelsPanelHost" class="factory-models-body">
+                <div id="engineModelsPanel" class="engine-model-pick">
+                    <div class="models-filter-chrome">
+                        <div id="engineModelsFilters" class="factory-task-tabs models-filter-tabs" role="tablist" aria-label="模型类别">
+                            <button type="button" role="tab" class="factory-task-tab is-active" data-models-filter="all" aria-selected="true">
+                                全部<span class="factory-task-tab-count" id="engineModelsTabAllCount">0</span>
+                            </button>
+                            <button type="button" role="tab" class="factory-task-tab" data-models-filter="asr" aria-selected="false">
+                                ASR语音识别<span class="factory-task-tab-count" id="engineModelsTabAsrCount">0</span>
+                            </button>
+                            <button type="button" role="tab" class="factory-task-tab" data-models-filter="vad" aria-selected="false">
+                                VAD语音检测<span class="factory-task-tab-count" id="engineModelsTabVadCount">0</span>
+                            </button>
+                            <button type="button" role="tab" class="factory-task-tab" data-models-filter="llm" aria-selected="false">
+                                LLM翻译<span class="factory-task-tab-count" id="engineModelsTabLlmCount">0</span>
+                            </button>
+                            <button type="button" role="tab" class="factory-task-tab" data-models-filter="separate" aria-selected="false">
+                                人声分离<span class="factory-task-tab-count" id="engineModelsTabSeparateCount">0</span>
+                            </button>
+                            <div class="models-tabs-tools">
+                                <span id="engineModelsSummary" class="factory-task-summary models-status">检测引擎后显示</span>
+                                <input type="search" id="engineModelsSearch" class="models-search" placeholder="搜索名称、文件名、系列…" autocomplete="off">
+                                <button type="button" id="engineRefreshModelsBtn" class="toolbar-icon-btn models-refresh-btn" title="刷新状态" aria-label="刷新状态">
+                                    <i class="fa fa-refresh" aria-hidden="true"></i><span class="sr-only">刷新</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="models-status-row">
+                            <div id="engineModelsStatusFilters" class="models-status-filters" role="group" aria-label="状态筛选">
+                                <button type="button" class="models-status-chip" data-models-status="installed" aria-pressed="false">
+                                    已安装<span class="models-status-chip-count" id="engineModelsTabInstalledCount">0</span>
+                                </button>
+                                <button type="button" class="models-status-chip" data-models-status="available" aria-pressed="false">
+                                    可下载<span class="models-status-chip-count" id="engineModelsTabAvailableCount">0</span>
+                                </button>
+                                <button type="button" class="models-status-chip" data-models-status="recommended" aria-pressed="false">
+                                    推荐<span class="models-status-chip-count" id="engineModelsTabRecommendedCount">0</span>
+                                </button>
+                                <button type="button" class="models-status-chip" data-models-status="incomplete" aria-pressed="false">
+                                    不完整<span class="models-status-chip-count" id="engineModelsTabIncompleteCount">0</span>
+                                </button>
+                                <button type="button" class="models-status-chip" data-models-status="experimental" aria-pressed="false">
+                                    实验<span class="models-status-chip-count" id="engineModelsTabExperimentalCount">0</span>
+                                </button>
+                            </div>
+                            <div id="engineDownloadProgress" class="models-dl-inline hidden">
+                                <button type="button" id="engineDownloadDrawerToggle" class="models-dl-summary" aria-expanded="false" aria-controls="engineDownloadDrawer" title="展开下载详情">
+                                    <span class="models-dl-mini-track" aria-hidden="true">
+                                        <span id="engineDownloadProgressBar" class="models-dl-mini-bar"></span>
+                                    </span>
+                                    <span id="engineDownloadProgressText" class="models-dl-summary-text">正在下载模型…</span>
+                                    <span id="engineDownloadProgressPct" class="models-dl-summary-pct">0%</span>
+                                    <i class="fa fa-chevron-down models-dl-chevron" aria-hidden="true"></i>
+                                </button>
+                                <div id="engineDownloadDrawer" class="models-dl-drawer hidden" role="region" aria-label="下载详情">
+                                    <div class="models-dl-drawer-actions">
+                                        <button type="button" id="engineCancelDownloadBtn" class="btn btn-danger" disabled>取消下载</button>
+                                    </div>
+                                    <pre id="engineDownloadLog" class="engine-model-dl-log" aria-live="polite"></pre>
+                                </div>
+                            </div>
+                            <div class="models-status-row-tools">
+                                <button type="button" id="engineModelsLabBtn" class="models-lab-btn" title="实验室（Pro）：添加任意 llama 兼容 GGUF" aria-label="实验室" aria-haspopup="dialog">
+                                    <i class="fa fa-flask" aria-hidden="true"></i>
+                                    <span class="models-lab-btn-label">实验室</span>
+                                    <span class="models-lab-pro-mark" aria-hidden="true">Pro</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="models-list-host">
+                        <div id="engineModelsCacheBanner" class="models-cache-banner hidden" role="status" aria-live="polite"></div>
+                        <div id="engineModelsLoading" class="models-loading-overlay hidden" aria-live="polite" aria-busy="false">
+                            <div class="models-loading-card">
+                                <i class="fa fa-circle-o-notch fa-spin models-loading-spinner" aria-hidden="true"></i>
+                                <p class="models-loading-title">正在加载模型列表</p>
+                                <p class="models-loading-sub">请稍候，正在检测本机已装与可下载项…</p>
+                            </div>
+                        </div>
+                        <div id="engineModelsList" class="engine-model-cards" aria-label="模型列表"></div>
+                    </div>
+                    <div class="engine-model-foot">
+                        <p id="engineModelsSelectedHint" class="engine-model-status">点卡片「下载」获取模型；网络不佳时可「手动下载」。选用请在「设置 → 运行环境」中指定。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+<div id="engineModelsLabModal" class="engine-models-lab-modal hidden" role="dialog" aria-modal="true" aria-labelledby="engineModelsLabTitle" hidden>
+        <div class="engine-models-lab-dialog">
+            <div class="engine-models-lab-head">
+                <div class="min-w-0">
+                    <h3 id="engineModelsLabTitle" class="engine-models-lab-title">
+                        <i class="fa fa-flask" aria-hidden="true"></i>
+                        模型实验室
+                        <span class="factory-burn-pro-mark">Pro</span>
+                    </h3>
+                    <p class="engine-models-lab-sub">添加任意 llama.cpp 兼容的 GGUF。添加后会出现在「LLM翻译」与「实验」筛选中。</p>
+                </div>
+                <button type="button" id="closeEngineModelsLabBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 shrink-0" aria-label="关闭实验室">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <div class="engine-models-lab-body">
+                <div class="engine-models-lab-steps" aria-hidden="true">
+                    <span class="engine-models-lab-step is-on">1. 填写来源</span>
+                    <span class="engine-models-lab-step-sep"></span>
+                    <span class="engine-models-lab-step">2. 添加到列表</span>
+                    <span class="engine-models-lab-step-sep"></span>
+                    <span class="engine-models-lab-step">3. 下载或放入文件</span>
+                </div>
+                <div class="engine-models-lab-form">
+                    <label class="engine-models-lab-field">
+                        <span>显示名称 <em class="engine-models-lab-opt">可选</em></span>
+                        <input type="text" id="engineModelsLabNameInput" maxlength="120" placeholder="留空则用文件名，例如 My Qwen 7B" autocomplete="off">
+                    </label>
+                    <label class="engine-models-lab-field">
+                        <span>GGUF 直链 URL <em class="engine-models-lab-opt">与文件名二选一即可</em></span>
+                        <input type="url" id="engineModelsLabUrlInput" maxlength="2048" placeholder="https://huggingface.co/…/model.gguf" autocomplete="off">
+                    </label>
+                    <div class="engine-models-lab-field-row">
+                        <label class="engine-models-lab-field engine-models-lab-field--grow">
+                            <span>本机文件名（.gguf）</span>
+                            <input type="text" id="engineModelsLabFileInput" maxlength="240" placeholder="粘贴 URL 后自动填写，或手动输入" autocomplete="off">
+                        </label>
+                        <label class="engine-models-lab-field engine-models-lab-field--narrow">
+                            <span>参数量 B <em class="engine-models-lab-opt">可选</em></span>
+                            <input type="number" id="engineModelsLabParamsInput" min="0.1" max="1000" step="0.1" placeholder="7" inputmode="decimal">
+                        </label>
+                    </div>
+                    <p id="engineModelsLabPreview" class="engine-models-lab-preview" hidden></p>
+                    <p id="engineModelsLabFormHint" class="engine-models-lab-hint">有直链时可在模型卡点「下载」；仅文件名时请点「打开模型目录」放入同名 GGUF。</p>
+                    <p id="engineModelsLabFormStatus" class="engine-models-lab-status" role="status" aria-live="polite"></p>
+                    <div class="engine-models-lab-form-actions">
+                        <button type="button" id="engineModelsLabAddBtn" class="btn btn-primary">
+                            <i class="fa fa-plus mr-1" aria-hidden="true"></i>添加到实验室
+                        </button>
+                        <button type="button" id="engineModelsLabOpenFolderBtn" class="btn">
+                            <i class="fa fa-folder-open-o mr-1" aria-hidden="true"></i>打开模型目录
+                        </button>
+                    </div>
+                </div>
+                <div class="engine-models-lab-list-wrap">
+                    <div class="engine-models-lab-list-head">
+                        <h4 class="engine-models-lab-list-title">已添加</h4>
+                        <span id="engineModelsLabListCount" class="engine-models-lab-list-count">0</span>
+                    </div>
+                    <div id="engineModelsLabList" class="engine-models-lab-list" aria-live="polite"></div>
+                </div>
+            </div>
+        </div>
+    </div>

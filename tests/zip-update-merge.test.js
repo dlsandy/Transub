@@ -65,7 +65,7 @@ describe('zip-update-merge', () => {
         try {
             const nested = path.join(extract, 'Transub-2.0.0-win');
             fs.mkdirSync(nested, { recursive: true });
-            fs.writeFileSync(path.join(nested, 'Transub.exe'), 'exe');
+            fs.writeFileSync(path.join(nested, 'transub.exe'), 'exe');
             assert.strictEqual(findPackageRoot(extract), nested);
         } finally {
             rimrafSafe(extract);
@@ -88,7 +88,7 @@ describe('zip-update-merge', () => {
             fs.writeFileSync(path.join(install, 'advanced-llm', 'models', 'local.gguf'), 'GGUF-KEEP');
             fs.mkdirSync(path.join(install, 'advanced-llm', 'runtime'), { recursive: true });
             fs.writeFileSync(path.join(install, 'advanced-llm', 'runtime', 'llama-server.exe'), 'LLM-RT');
-            fs.writeFileSync(path.join(install, 'Transub.exe'), 'old-exe');
+            fs.writeFileSync(path.join(install, 'transub.exe'), 'old-exe');
             fs.writeFileSync(path.join(install, 'old-only.txt'), 'stale');
 
             // New package (ships tiny models placeholder + would clobber advanced-llm if not preserved)
@@ -101,7 +101,7 @@ describe('zip-update-merge', () => {
             );
             fs.mkdirSync(path.join(pkg, 'advanced-llm', 'models'), { recursive: true });
             fs.writeFileSync(path.join(pkg, 'advanced-llm', 'models', 'shipped.txt'), 'SHOULD-NOT-WIN');
-            fs.writeFileSync(path.join(pkg, 'Transub.exe'), 'new-exe');
+            fs.writeFileSync(path.join(pkg, 'transub.exe'), 'new-exe');
             fs.writeFileSync(path.join(pkg, 'resources.pak'), 'pak');
 
             const phases = [];
@@ -131,7 +131,7 @@ describe('zip-update-merge', () => {
                 'LLM-RT',
             );
             assert.ok(!fs.existsSync(path.join(install, 'advanced-llm', 'models', 'shipped.txt')));
-            assert.strictEqual(fs.readFileSync(path.join(install, 'Transub.exe'), 'utf8'), 'new-exe');
+            assert.strictEqual(fs.readFileSync(path.join(install, 'transub.exe'), 'utf8'), 'new-exe');
             assert.strictEqual(fs.readFileSync(path.join(install, 'resources.pak'), 'utf8'), 'pak');
             assert.strictEqual(
                 fs.readFileSync(
@@ -150,14 +150,14 @@ describe('zip-update-merge', () => {
         const install = makeTempDir('transub-install-fresh-');
         const pkg = makeTempDir('transub-pkg-fresh-');
         try {
-            fs.writeFileSync(path.join(install, 'Transub.exe'), 'old');
+            fs.writeFileSync(path.join(install, 'transub.exe'), 'old');
             fs.mkdirSync(path.join(install, 'transub-engine', 'models'), { recursive: true });
             fs.writeFileSync(path.join(install, 'transub-engine', 'models', 'a.bin'), 'MODEL');
             const site = path.join(install, 'transub-engine', 'runtime', 'Lib', 'site-packages', 'torch');
             fs.mkdirSync(site, { recursive: true });
             fs.writeFileSync(path.join(site, 'x.py'), 'TORCH');
 
-            fs.writeFileSync(path.join(pkg, 'Transub.exe'), 'new');
+            fs.writeFileSync(path.join(pkg, 'transub.exe'), 'new');
             fs.mkdirSync(path.join(pkg, 'transub-engine', 'models'), { recursive: true });
             fs.writeFileSync(path.join(pkg, 'transub-engine', 'models', 'b.bin'), 'PKG');
             fs.mkdirSync(path.join(pkg, 'transub-engine', 'runtime', 'Lib', 'site-packages', 'torch'), { recursive: true });

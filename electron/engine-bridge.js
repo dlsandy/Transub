@@ -2,7 +2,6 @@
  * Transub Engine bridge — spawn local engine HTTP server and run subtitle jobs.
  */
 
-const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -34,6 +33,7 @@ const {
     ensureAsrSensevoiceOffline,
     ensureAsrQwen3Offline,
 } = require('./engine-runtime-extras');
+const { omitRetiredEngineModels } = require('./engine-asr-aliases');
 const downloadInfo = require('./engine-download-info');
 const {
     resolveDownloadModelIds,
@@ -65,6 +65,9 @@ const {
     remapBridgeProgress,
     extractOutputPaths,
     mapEngineResultsToHistoryOutputs,
+    getTranslateProgressSession,
+    resetTranslateProgressSession,
+    softenTranslateProgressFields,
 } = require('./engine-job-progress');
 const {
     parseHostPort,
@@ -75,7 +78,9 @@ const {
 const {
     interpretCreateJobResponse,
     interpretWaitJobResult,
+    shouldContinueBatchAfterItemCancel,
     progressFieldsFromWaitEvent,
+    sanitizeBatchEngineSseProgress,
     resolveFileMtPlan,
     buildFailedItemResult,
     buildCancelledItemResult,
@@ -91,6 +96,7 @@ const {
     detectLanguage,
     translateCuesMt,
     downloadModels,
+    deleteModels,
     downloadModelsStream,
     getGpuRuntime,
     getAsrWhisperRuntime,
@@ -114,6 +120,14 @@ const {
     attachCheckpointResumeHint,
 } = require('./engine-run-asr-job');
 const rangeAsrPolicy = require('./engine-range-asr-policy');
+const { resolveQwenAsrBatchModeForJob } = require('./engine-qwen-batch');
+const { sampleJobGpuVramHint } = require('./engine-gpu-vram-hint');
+const {
+    resolveReleaseGpuAfterForBatchItem,
+    shouldReleaseGpuAfterQwenBatch,
+    shouldReleaseGpuAfterBatch,
+    isQwenAsrModelId,
+} = require('./engine-release-gpu-policy');
 const {
     summarizeDomainFixChanges,
     formatDomainFixLogLine,
@@ -122,31 +136,55 @@ const { exportAsrDiagnosticsPack } = require('./asr-diagnostics-export');
 const batchRecovery = require('../src/js/batch-recovery-core');
 const { mergeTransWithAiOptions, stripPostTaskFields } = require('./transwithai-options');
 const { mergeSenseOverrides, sanitizeSakuraMtForLanguage } = require('../src/js/content-profile-core');
+const { mergeTranslateStyleOverrides } = require('../src/js/translate-style-core');
 const { buildVadJobOptions, buildAudioJobOptions } = require('./engine-audio-options');
 const {
     resolveEngineSubFormats,
     buildEngineGlossaryPairs,
+    buildEngineAsrGlossaryPairs,
+    buildEngineAsrHintsFromGlossary,
     buildEngineJobFlags,
     buildExternalMtJobFields,
+    resolveExternalMtAdapterCall,
 } = require('./engine-job-options');
 const { startEngineMtAdapter } = require('./engine-mt-adapter');
 const {
     broadcastEngineDownloadProgress,
 } = require('./download-window');
-const {
-    validateWhlFiles,
-    installLocalWheels,
-} = require('./local-whl-install');
+const { registerLocalWhlIpc } = require('./local-whl-ipc');
 const { createEngineLogIo } = require('./engine-log-io');
 const { createEngineProcessLifecycle } = require('./engine-process-lifecycle');
 const { createProgressEmitter } = require('./engine-progress-emit');
 const { createEngineBatchHistory } = require('./engine-batch-history');
 const batchMtPlan = require('./engine-batch-mt-plan');
 const batchPostprocessPlan = require('./engine-batch-postprocess-plan');
+const { createEngineBatchLoop } = require('./engine-batch-loop');
+const { createEngineRangeTranscribe } = require('./engine-range-transcribe');
+const { createEngineDownloadJob } = require('./engine-download-job');
+const { createEngineEnsureRunning } = require('./engine-ensure-running');
 
 /** Prefer installed ASR weights for failover; always keep the primary id. */
-function resolveAsrFailoverCandidates(primaryAsr, engineInstallPath) {
-    const chain = rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr);
+function resolveAsrFailoverCandidates(primaryAsr, engineInstallPath, options = {}) {
+    const chain = rangeAsrPolicy.buildBatchAsrCandidates(primaryAsr, {
+        perfProfile: options.perfProfile,
+        maxCandidates: options.maxCandidates,
+    });
+    let installedIds = null;
+    try {
+        const installRoot = String(engineInstallPath || '').trim();
+        if (installRoot) {
+            const { listInstalledAsrIds } = require('./env-check');
+            installedIds = listInstalledAsrIds(installRoot);
+        }
+    } catch (_) {
+        installedIds = null;
+    }
+    return rangeAsrPolicy.filterAsrCandidatesByInstalled(chain, installedIds, { primaryAsr });
+}
+
+/** Short clip retranscribe — cap models; skip sibling-Qwen churn on ASR_EMPTY. */
+function resolveRangeAsrFailoverCandidates(primaryAsr, engineInstallPath) {
+    const chain = rangeAsrPolicy.buildRangeRetranscribeAsrCandidates(primaryAsr);
     let installedIds = null;
     try {
         const installRoot = String(engineInstallPath || '').trim();
@@ -163,12 +201,17 @@ function resolveAsrFailoverCandidates(primaryAsr, engineInstallPath) {
 let engineProc = null;
 let engineBaseUrl = DEFAULT_ENGINE_URL;
 let batchCancelled = false;
+/** Stop the in-flight file only; batch loop continues with remaining items. */
+let itemCancelled = false;
 let batchRunning = false;
 let currentJobId = '';
 /** @type {((name: string) => void) | null} */
 let ensureBridgeFn = null;
 /** @type {AbortController | null} */
 let batchMtAbortController = null;
+/** Aborts in-flight post-task LLM / QC loop when the user hits stop. */
+/** @type {AbortController|null} */
+let itemWorkAbortController = null;
 /** @type {AbortController|null} */
 let downloadAbort = null;
 let downloadBusy = false;
@@ -214,207 +257,35 @@ const {
     releaseEngineVramBeforeLocalLlm,
 } = engineLifecycle;
 
-async function waitForHealth(baseUrl, opts = {}) {
-    return waitForHealthPoll(baseUrl, { ...opts, getHealth });
-}
-
-function isEngineChildAlive() {
-    return !!(engineProc && engineProc.exitCode == null && !engineProc.killed);
-}
-
-function readEngineEnsurePolicy(forceRestart = false) {
-    const { decideEngineEnsureAction } = require('./engine-ensure-policy');
-    let computeBusyKind = '';
-    try {
-        const status = require('./compute-task-lock').getStatus();
-        if (status?.busy) computeBusyKind = String(status.kind || '').trim();
-    } catch (_) { /* ignore */ }
-    return decideEngineEnsureAction({
-        forceRestart: !!forceRestart,
-        batchRunning,
-        computeBusyKind,
-        childAlive: isEngineChildAlive(),
-    });
-}
-
-async function ensureEngineRunning(options = {}) {
-    const opts = mergeEngineOptions(options);
-    opts.engineInstallPath = resolveEngineInstallPath(opts.engineInstallPath);
-    engineBaseUrl = opts.engineUrl || DEFAULT_ENGINE_URL;
-    const forceRestart = !!options.forceRestart;
-    const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : null;
-    const preserve = readEngineEnsurePolicy(forceRestart);
-
-    if (forceRestart) {
-        if (!preserve.allowForceRestart) {
-            return {
-                ok: false,
-                error: '字幕任务运行中，无法重启引擎',
-                code: 'compute_busy',
-            };
-        }
-        const { port } = parseHostPort(engineBaseUrl);
-        stopEngineProcess();
-        killListenersOnPort(port);
-        await sleep(800);
-    }
-
-    const health = await getHealth(engineBaseUrl, { timeoutMs: 2000 }).catch(() => ({ ok: false }));
-    if (health.ok && health.data?.ok) {
-        if (!isApiCompatible(health.data.apiVersion)) {
-            return {
-                ok: false,
-                error: `引擎 API 主版本不兼容（got ${health.data.apiVersion}）`,
-                health: health.data,
-            };
-        }
-        if (forceRestart) {
-            appendEngineLogLine(
-                '[engine] 强制重启后端口仍被占用：可能是外部进程，已跳过重新拉起'
-            );
-        }
-        return { ok: true, baseUrl: engineBaseUrl, health: health.data, spawned: false };
-    }
-
-    // Settings → 模型 (and other catalog probes) call ensureEngineRunning while ASR
-    // may block the engine event loop. A short health timeout must not taskkill the job.
-    if (!preserve.allowKill) {
-        if (preserve.treatAsRunning) {
-            return {
-                ok: true,
-                baseUrl: engineBaseUrl,
-                health: health.data || null,
-                spawned: false,
-                busy: true,
-            };
-        }
-        return {
-            ok: false,
-            error: '字幕任务运行中，暂不拉起/重启引擎',
-            code: 'compute_busy',
-        };
-    }
-
-    if (!opts.engineAutoStart) {
-        return { ok: false, error: '引擎未运行，且未启用自动启动' };
-    }
-
-    const entry = resolveEngineEntrypoints(opts.engineInstallPath);
-    if (!entry) {
-        const hint = opts.engineInstallPath
-            || getBundledEnginePath()
-            || '（未找到内置引擎）';
-        return {
-            ok: false,
-            error: `未找到引擎：请确认内置目录 ${hint} 为独立版（含 runtime\\python.exe），或浏览自定义引擎目录，或启动已有 serve 并填写引擎 URL`,
-        };
-    }
-
-    stopEngineProcess();
-    const { host, port } = parseHostPort(engineBaseUrl);
-    const args = [...entry.args, 'serve', '--host', host, '--port', String(port)];
-    let env = {
-        ...process.env,
-        TRANSUB_ENGINE_STUB: process.env.TRANSUB_ENGINE_STUB || '',
-        TQDM_DISABLE: '1',
-        // Force UTF-8 so Chinese progress / logs are not GBK-mojibake on Windows.
-        PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8',
-        PYTHONUTF8: process.env.PYTHONUTF8 || '1',
-        // Suppress transformers/UserWarning spam in captured stderr.
-        PYTHONWARNINGS: process.env.PYTHONWARNINGS
-            || 'ignore::UserWarning:transformers,ignore::FutureWarning',
-    };
-    try {
-        const { applyEngineTempEnv } = require('./temp-cleanup');
-        // Keep ASR/Demucs/ffmpeg scratch out of %TEMP%; cleared after each job.
-        env = applyEngineTempEnv(env);
-    } catch { /* optional */ }
-    try {
-        const { applyProxyToEnv, normalizeProxyOptions } = require('./proxy-settings');
-        // Prefer explicit proxy fields on opts (full settings payload); otherwise keep
-        // the proxy already applied to the main process (activeProxy / process.env).
-        if (Object.prototype.hasOwnProperty.call(opts, 'proxyEnabled')
-            || Object.prototype.hasOwnProperty.call(opts, 'proxyUrl')) {
-            applyProxyToEnv(env, normalizeProxyOptions(opts));
-        } else {
-            applyProxyToEnv(env);
-        }
-    } catch { /* proxy optional */ }
-    const hfEndpoint = String(opts.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-    if (hfEndpoint) {
-        env.HF_ENDPOINT = hfEndpoint;
-    }
-    const hfToken = String(opts.engineHfToken || opts.hfToken || '').trim();
-    if (hfToken) {
-        env.HF_TOKEN = hfToken;
-        env.HUGGING_FACE_HUB_TOKEN = hfToken;
-    }
-    // Avoid Xet/CAS 401s when pulling LFS weights via domestic mirrors.
-    if (!env.HF_HUB_DISABLE_XET) {
-        env.HF_HUB_DISABLE_XET = '1';
-    }
-    // huggingface_hub defaults to 10s; too short for mirror/CDN hops on large weights.
-    if (!env.HF_HUB_DOWNLOAD_TIMEOUT) {
-        env.HF_HUB_DOWNLOAD_TIMEOUT = '120';
-    }
-    if (!env.HF_HUB_ETAG_TIMEOUT) {
-        env.HF_HUB_ETAG_TIMEOUT = '30';
-    }
-    env = injectFfmpegPathEnv(env, opts.ffmpegPath, opts.engineInstallPath);
-    if (!env.TRANSUB_ENGINE_HOME && opts.engineInstallPath) {
-        env.TRANSUB_ENGINE_HOME = path.resolve(String(opts.engineInstallPath));
-    }
-    try {
-        const tdpFs = require('./tdp-fs');
-        env.TRANSUB_TDP_DIR = tdpFs.getTdpRoot();
-    } catch { /* optional */ }
-    try {
-        resetEngineLogFile();
-        engineProc = spawn(entry.command, args, {
-            cwd: entry.cwd || opts.engineInstallPath,
-            env,
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        attachEngineProcessLogs(engineProc);
-        appendEngineLogLine(`[engine] 启动 ${entry.command} ${args.join(' ')}`);
-        engineProc.on('exit', (code, signal) => {
-            appendEngineLogLine(`[engine] 进程退出 code=${code} signal=${signal || ''}`);
-            engineProc = null;
-            // Unexpected exit can leave a sibling listener on the port (respawn race).
-            if (code !== 0 && code != null) {
-                try {
-                    const { port } = parseHostPort(engineBaseUrl || DEFAULT_ENGINE_URL);
-                    killListenersOnPort(port);
-                } catch { /* ignore */ }
-            }
-        });
-    } catch (err) {
-        return { ok: false, error: `无法启动引擎: ${err.message || err}` };
-    }
-
-    const ready = await waitForHealth(engineBaseUrl, {
-        timeoutMs: 45000,
-        shouldStop,
-    });
-    if (!ready.ok) {
-        stopEngineProcess();
-        return {
-            ok: false,
-            error: ready.cancelled ? '已取消' : (ready.error || '引擎启动后健康检查失败'),
-            cancelled: !!ready.cancelled,
-        };
-    }
-    if (!isApiCompatible(ready.data?.apiVersion)) {
-        stopEngineProcessAndPort();
-        return {
-            ok: false,
-            error: `引擎 API 主版本不兼容（got ${ready.data?.apiVersion}）`,
-            health: ready.data,
-        };
-    }
-    return { ok: true, baseUrl: engineBaseUrl, health: ready.data, spawned: true };
-}
+const {
+    ensureEngineRunning,
+    readEngineEnsurePolicy,
+    isEngineChildAlive,
+    waitForHealth,
+} = createEngineEnsureRunning({
+    getEngineProc: () => engineProc,
+    setEngineProc: (p) => { engineProc = p; },
+    getEngineBaseUrl: () => engineBaseUrl,
+    setEngineBaseUrl: (u) => { engineBaseUrl = u; },
+    getBatchRunning: () => batchRunning,
+    mergeEngineOptions,
+    resolveEngineInstallPath,
+    DEFAULT_ENGINE_URL,
+    parseHostPort,
+    stopEngineProcess,
+    stopEngineProcessAndPort,
+    killListenersOnPort,
+    sleep,
+    getHealth,
+    waitForHealthPoll,
+    isApiCompatible,
+    appendEngineLogLine,
+    resolveEngineEntrypoints,
+    getBundledEnginePath,
+    injectFfmpegPathEnv,
+    resetEngineLogFile,
+    attachEngineProcessLogs,
+});
 
 let engineUiWindowManager = null;
 
@@ -430,6 +301,12 @@ const {
 
 const engineBatchHistory = createEngineBatchHistory({
     buildEngineGlossaryPairs,
+    buildEngineAsrGlossaryPairs,
+    buildEngineAsrHintsFromGlossary,
+    readBatchMergedGlossary: (opts) => {
+        const { readBatchMergedGlossary } = require('./glossary-data');
+        return readBatchMergedGlossary(opts);
+    },
     getAbortController: () => batchMtAbortController,
     setAbortController: (c) => { batchMtAbortController = c; },
     stripPostTaskFields,
@@ -437,6 +314,7 @@ const engineBatchHistory = createEngineBatchHistory({
 });
 const {
     loadEngineGlossaryPairs,
+    loadEngineAsrExtras,
     abortBatchMtAdapter,
     recordEngineBatchHistory,
 } = engineBatchHistory;
@@ -469,1171 +347,119 @@ async function runEngineBatch({ items, options, invokeSender, minimizeToTray = f
     }));
 }
 
-async function runEngineBatchLocked({
-    list,
-    paths,
-    merged,
-    invokeSender,
-    minimizeToTray = false,
-}) {
-    batchCancelled = false;
-    // Editor LLM idle keep-alive can still hold VRAM; free it before ASR.
-    try {
-        require('./local-llm-reclaim').reclaimLocalLlmBeforeEngineJob(appendEngineLogLine);
-    } catch (_) { /* ignore */ }
-    // Restart only when env/PATH/version changed; otherwise reuse a healthy engine.
-    let ensure = await ensureEngineRunning({
-        ...merged,
-        shouldStop: () => batchCancelled,
-    });
-    if (!ensure.ok) {
-        return ensure;
-    }
-
-    const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-    const dualCore = require('../src/js/dual-subtitle-core');
-    const {
-        resolveLocalSubtitlePath,
-        resolveDualSubtitlePaths,
-    } = require('./subtitle-utils');
-    const isLlmMtId = (id) => !!(
-        sakuraCatalog.isLlmInferenceMtModel?.(id)
-        || sakuraCatalog.isSakuraMtModel(id)
-    );
-    // Hard guard: never keep Sakura when the merged file language is known non-Japanese.
-    const fileMergedList = batchMtPlan.buildSanitizedFileMergedList(list, merged, {
+function getEngineBatchLoop() {
+    return createEngineBatchLoop({
+        get batchCancelled() { return batchCancelled; },
+        set batchCancelled(v) { batchCancelled = v; },
+        get itemCancelled() { return itemCancelled; },
+        set itemCancelled(v) { itemCancelled = v; },
+        get batchRunning() { return batchRunning; },
+        set batchRunning(v) { batchRunning = v; },
+        get currentJobId() { return currentJobId; },
+        set currentJobId(v) { currentJobId = v; },
+        get batchMtAbortController() { return batchMtAbortController; },
+        set batchMtAbortController(v) { batchMtAbortController = v; },
+        get itemWorkAbortController() { return itemWorkAbortController; },
+        set itemWorkAbortController(v) { itemWorkAbortController = v; },
+        get engineUiWindowManager() { return engineUiWindowManager; },
+        abortBatchMtAdapter,
+        appendAsrRunToDetail,
+        appendEngineLogLine,
+        attachCheckpointResumeHint,
+        batchMtPlan,
+        batchPostprocessPlan,
+        batchRecovery,
+        buildAudioJobOptions,
+        buildCancelledItemResult,
+        shouldContinueBatchAfterItemCancel,
+        buildEngineJobFlags,
+        buildExternalMtJobFields,
+        buildFailedItemResult,
+        buildSkippedItemResult,
+        buildVadJobOptions,
+        createJob,
+        emitToSubtitleUi,
+        engineBatchHistory,
+        ensureEngineRunning,
+        extractOutputPaths,
+        findEngineBundledFfmpeg,
+        formatDomainFixLogLine,
+        friendlyEngineError,
+        getHealth,
+        getJobCheckpoint,
+        getTranslateProgressSession,
+        interpretWaitJobResult,
+        isQwenAsrModelId,
+        mapDeviceForEngine,
+        mapTaskToEngineTask,
         mergeSenseOverrides,
+        mergeTranslateStyleOverrides,
+        progressFieldsFromWaitEvent,
+        reclaimLocalComputeAfterEngineBatch,
+        recordEngineBatchHistory,
+        releaseGpuMemory,
+        remapBridgeProgress,
+        resetTranslateProgressSession,
+        resolveAsrFailoverCandidates,
+        resolveEngineSubFormats,
+        resolveExternalMtAdapterCall,
+        resolveFileMtPlan,
+        resolveQwenAsrBatchModeForJob,
+        resolveReleaseGpuAfterForBatchItem,
+        runEngineJobWithAsrFailover,
+        sampleJobGpuVramHint,
+        sanitizeBatchEngineSseProgress,
         sanitizeSakuraMtForLanguage,
+        sendProgress,
+        shouldReleaseGpuAfterQwenBatch,
+        shouldReleaseGpuAfterBatch,
+        softenTranslateProgressFields,
+        startEngineMtAdapter,
+        stopEngineProcessAndPort,
+        summarizeAsrRunMeta,
+        summarizeDomainFixChanges,
+        usesExternalMt,
+        waitJob,
+        deferredEnsureTwai,
     });
-    // Prefer per-file (post-sanitize) decisions so a global Sakura form cannot force
-    // Sakura onto sensed non-Japanese items.
-    const {
-        batchWantsSmart,
-        batchWantsSakura,
-        sakuraModelId,
-    } = batchMtPlan.resolveBatchMtPlan({
-        fileMergedList,
-        merged,
-        listLength: list.length,
-        isLlmMtId,
-    });
-
-    // Gate Advanced features before job-start so UI never flashes "running" then fails.
-    if (batchWantsSmart) {
-        try {
-            const { requireSmartTranslate } = require('./advanced-gates');
-            const gate = requireSmartTranslate({
-                faithfulTone: !!merged.smartTranslateFaithfulTone,
-            });
-            if (!gate.ok) {
-                return {
-                    ok: false,
-                    error: gate.error
-                        || '智能翻译需解锁 Pro',
-                };
-            }
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    }
-    if (batchMtPlan.batchNeedsFilmAudioGate(list, merged, mergeSenseOverrides)) {
-        try {
-            const { requireFilmAudioEnhance } = require('./advanced-gates');
-            const gate = requireFilmAudioEnhance();
-            if (!gate.ok) {
-                return {
-                    ok: false,
-                    error: gate.error || '影视音频增强需解锁 Pro',
-                };
-            }
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    }
-    batchRunning = true;
-    batchCancelled = false;
-    currentJobId = '';
-    abortBatchMtAdapter();
-    batchMtAbortController = new AbortController();
-    let lastOutputDir = '';
-    const liveBatch = require('./live-batch-queue');
-    liveBatch.begin(list);
-    const {
-        createMtUiProgressTracker,
-        setMtUiCurrent,
-        noteEngineTranslatePercent,
-        mapAdapterMtProgress,
-    } = require('./engine-mt-ui-progress');
-    const mtUiProgress = createMtUiProgressTracker();
-
-    const jobStartedAt = new Date().toISOString();
-    const jobStartedMs = Date.now();
-
-    // Align with TWAI: notify UI so progress/badge/stop button activate immediately.
-    try {
-        if (minimizeToTray && engineUiWindowManager?.createMainWindow) {
-            engineUiWindowManager.createMainWindow({ startMinimizedToTray: true });
-        }
-        const win = engineUiWindowManager?.getMainWindow?.();
-        if (win?.webContents && !win.webContents.isDestroyed()) {
-            if (win.webContents.isLoading()) {
-                await new Promise((resolve) => {
-                    win.webContents.once('did-finish-load', () => resolve());
-                    setTimeout(resolve, 5000);
-                });
-            }
-        }
-    } catch { /* ignore */ }
-    emitToSubtitleUi('subtitle-task-job-start', {
-        total: paths.length,
-        items: paths,
-        startedAt: jobStartedAt,
-        device: merged.device || 'auto',
-        backend: 'transub',
-    }, invokeSender);
-    appendEngineLogLine(
-        `[engine] 开始批次 · ${paths.length} 个文件 · ASR=${merged.engineAsrModel || 'sensevoice-small'} · 档位=${merged.engineProfile || 'balanced'}`,
-        invokeSender,
-    );
-
-    const results = [];
-    let generated = 0;
-    let failed = 0;
-    let skipped = 0;
-    const usedExternalMt = usesExternalMt({
-        smartTranslate: batchWantsSmart,
-        sakuraMt: batchWantsSakura,
-    });
-    let batchFailedOrCancelled = false;
-    /** @type {{ ok: boolean, stop?: function, mtExternal?: function, mode?: string, url?: string } | null} */
-    let mtAdapter = null;
-    try {
-        if (usedExternalMt) {
-            const launch = batchMtPlan.resolveBatchMtAdapterLaunch({
-                batchWantsSmart,
-                sakuraModelId,
-                merged,
-                list,
-            });
-            mtAdapter = await startEngineMtAdapter({
-                ...launch,
-                signal: batchMtAbortController.signal,
-                onProgress: (info) => {
-                    if (batchCancelled) return;
-                    const detail = info?.message || info?.detail || info?.phase || '翻译中';
-                    appendEngineLogLine(
-                        `[engine-translate] ${detail}`,
-                        invokeSender,
-                    );
-                    // Adapter ticks never reach engine SSE until the HTTP batch returns —
-                    // push them to the UI so translate % / status keep moving.
-                    if (!mtUiProgress.file) {
-                        const cur = liveBatch.getCurrent?.() || '';
-                        if (cur) {
-                            setMtUiCurrent(mtUiProgress, {
-                                file: cur,
-                                index1: liveBatch.getCurrentIndex1?.() || 1,
-                                total: list.length,
-                            });
-                        }
-                    }
-                    const mapped = mapAdapterMtProgress(info, mtUiProgress);
-                    if (mapped) {
-                        sendProgress(invokeSender, mapped);
-                    }
-                },
-            });
-            if (!mtAdapter?.ok) {
-                const errMsg = mtAdapter?.error || '外部 MT 适配器启动失败';
-                batchFailedOrCancelled = true;
-                const finished = {
-                    ok: false,
-                    cancelled: false,
-                    generated: 0,
-                    skipped: 0,
-                    failed: list.length,
-                    error: errMsg,
-                    results: [],
-                };
-                recordEngineBatchHistory({
-                    list,
-                    merged,
-                    finished,
-                    startedAt: jobStartedAt,
-                    startedMs: jobStartedMs,
-                    extraErrors: [errMsg],
-                });
-                emitToSubtitleUi('subtitle-task-job-finished', finished, invokeSender);
-                return { ok: false, error: errMsg };
-            }
-            const mtModeZh = mtAdapter.mode === 'smart'
-                ? '智能翻译'
-                : (mtAdapter.mode === 'sakura' ? 'Sakura' : String(mtAdapter.mode || '外部'));
-            appendEngineLogLine(
-                `[engine] 外部翻译适配器 · ${mtModeZh} · ${mtAdapter.url}`,
-                invokeSender,
-            );
-            // Preview LLM source from settings only (do not resolve/start managed server before ASR).
-            if (mtAdapter.mode === 'smart') {
-                try {
-                    const { readAdvancedDoc } = require('./advanced-license-data');
-                    const {
-                        formatAdvancedLlmEngineLogLine,
-                        llmHostHint,
-                    } = require('./advanced-llm-log');
-                    const entitlement = require('../src/js/advanced-entitlement-core');
-                    const managedCatalog = require('../src/js/advanced-managed-llm-catalog-core');
-                    const advDoc = readAdvancedDoc().doc;
-                    const src = entitlement.normalizeLlmSource(advDoc?.llmSource);
-                    let preview = { ok: true, source: src, model: '', baseUrl: '' };
-                    if (src === 'byok') {
-                        const byokCfg = entitlement.normalizeByok(advDoc?.byok);
-                        preview = {
-                            ok: true,
-                            source: 'byok',
-                            model: byokCfg.model || '',
-                            baseUrl: byokCfg.baseUrl || '',
-                        };
-                    } else {
-                        const choice = managedCatalog.resolveSmartTranslateModelChoice(
-                            advDoc?.managedLlm,
-                        );
-                        preview = {
-                            ok: true,
-                            source: 'managed',
-                            modelId: choice.modelId || '',
-                            model: choice.modelId || '',
-                            baseUrl: '',
-                        };
-                    }
-                    const line = formatAdvancedLlmEngineLogLine(preview, { feature: '智能翻译' });
-                    // Include host hint even when empty so line stays stable; skip empty model noise.
-                    if (preview.model || preview.modelId || llmHostHint(preview.baseUrl)) {
-                        appendEngineLogLine(line, invokeSender);
-                    }
-                } catch (_) { /* optional */ }
-            }
-        }
-
-        for (let i = 0; i < list.length; i += 1) {
-            if (batchCancelled) break;
-            const item = list[i] || {};
-            const mediaPath = path.resolve(String(item.fullPath || item.path || ''));
-            const index1 = i + 1;
-
-            if (liveBatch.consumeSkip(mediaPath)) {
-                skipped += 1;
-                results.push(buildCancelledItemResult(mediaPath, { removedFromQueue: true }));
-                sendProgress(invokeSender, {
-                    stage: 'cancelled',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: '已从队列移除',
-                    error: 'cancelled',
-                    percent: 0,
-                });
-                continue;
-            }
-
-            sendProgress(invokeSender, {
-                stage: 'starting',
-                index1,
-                total: list.length,
-                file: mediaPath,
-                detail: '准备引擎任务…',
-                percent: 0,
-            });
-
-            liveBatch.setCurrent(mediaPath);
-            setMtUiCurrent(mtUiProgress, {
-                file: mediaPath,
-                index1,
-                total: list.length,
-            });
-            try {
-            if (!fs.existsSync(mediaPath)) {
-                failed += 1;
-                results.push({ ok: false, path: mediaPath, error: '文件不存在' });
-                sendProgress(invokeSender, {
-                    stage: 'error',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: '文件不存在',
-                    error: '文件不存在',
-                });
-                continue;
-            }
-
-            const outDir = merged.outputMode === 'custom' && merged.outputDir
-                ? merged.outputDir
-                : path.dirname(mediaPath);
-            lastOutputDir = outDir;
-
-            const fileMergedRaw = mergeSenseOverrides(merged, item.optionOverrides || {});
-            const sakuraSanitize = sanitizeSakuraMtForLanguage(fileMergedRaw, fileMergedRaw.language);
-            const fileMerged = sakuraSanitize.options;
-            if (sakuraSanitize.changed && sakuraSanitize.note) {
-                appendEngineLogLine(
-                    `[engine] #${index1}/${list.length} ${sakuraSanitize.note}`,
-                    invokeSender,
-                );
-            }
-            if (!fileMerged.overwrite) {
-                const isDual = fileMerged.task === 'dual';
-                if (isDual) {
-                    const sourceSuffix = dualCore.resolveDualSourceSuffix(
-                        fileMerged.language,
-                        fileMerged.dualTargetSuffix,
-                    );
-                    const targetSuffix = dualCore.normalizeDualTargetSuffix(
-                        fileMerged.dualTargetSuffix,
-                    );
-                    const { subFormats } = resolveEngineSubFormats(fileMerged);
-                    const pair = resolveDualSubtitlePaths(mediaPath, outDir, {
-                        sourceSuffix,
-                        targetSuffix,
-                        subFormats,
-                    });
-                    if (pair.complete) {
-                        skipped += 1;
-                        const skipPath = pair.targetPath || pair.sourcePath || '';
-                        results.push(buildSkippedItemResult(mediaPath, {
-                            subtitlePath: skipPath,
-                            sourceSubtitlePath: pair.sourcePath || '',
-                            targetSubtitlePath: pair.targetPath || '',
-                        }));
-                        sendProgress(invokeSender, {
-                            stage: 'skipped',
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            percent: 100,
-                            detail: '已有双语字幕',
-                            subtitlePath: skipPath,
-                            sourceSubtitlePath: pair.sourcePath || '',
-                            targetSubtitlePath: pair.targetPath || '',
-                        });
-                        continue;
-                    }
-                } else {
-                    const existing = resolveLocalSubtitlePath(mediaPath, outDir);
-                    if (existing) {
-                        skipped += 1;
-                        results.push(buildSkippedItemResult(mediaPath, {
-                            subtitlePath: existing,
-                        }));
-                        sendProgress(invokeSender, {
-                            stage: 'skipped',
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            percent: 100,
-                            detail: '已有字幕',
-                            subtitlePath: existing,
-                        });
-                        continue;
-                    }
-                }
-            }
-
-            const {
-                useSakuraMt,
-                useSmartTranslate,
-                useExternalMt,
-                engineTask,
-                jobMtModel,
-            } = resolveFileMtPlan(fileMerged, {
-                isLlmMtId,
-                usesExternalMt,
-                mapTaskToEngineTask,
-            });
-
-            // Never silently fall through to Opus when Sakura/smart was requested but
-            // the external adapter was not started (would look like "missing opus-mt-*").
-            if (useExternalMt && !mtAdapter?.ok) {
-                const errMsg = mtAdapter?.error
-                    || (useSakuraMt
-                        ? `感知/表单指定了 ${fileMerged.engineMtModel || 'Sakura'}，但外部翻译适配器未启动`
-                        : '智能翻译适配器未启动');
-                failed += 1;
-                results.push(buildFailedItemResult(mediaPath, errMsg));
-                sendProgress(invokeSender, {
-                    stage: 'failed',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    error: errMsg,
-                    detail: errMsg,
-                });
-                continue;
-            }
-
-            if (useSakuraMt) {
-                appendEngineLogLine(
-                    `[engine] #${index1}/${list.length} 翻译后端 · Sakura（${fileMerged.engineMtModel}）`,
-                    invokeSender,
-                );
-            } else if (useSmartTranslate) {
-                let smartBackend = '智能翻译';
-                try {
-                    const { readAdvancedDoc } = require('./advanced-license-data');
-                    const { llmSourceLabel } = require('./advanced-llm-log');
-                    const entitlement = require('../src/js/advanced-entitlement-core');
-                    const src = entitlement.normalizeLlmSource(readAdvancedDoc().doc?.llmSource);
-                    smartBackend = `智能翻译（${llmSourceLabel(src)}）`;
-                } catch (_) { /* keep default */ }
-                appendEngineLogLine(
-                    `[engine] #${index1}/${list.length} 翻译后端 · ${smartBackend}`,
-                    invokeSender,
-                );
-            }
-
-            // Film flags were gated before job-start; only apply when requested.
-            const filmEntitled = !!(fileMerged.filmAudioEnhance || fileMerged.filmVadPreset);
-
-            const { subFormats, dualAss } = resolveEngineSubFormats(fileMerged);
-            const jobFlags = buildEngineJobFlags(fileMerged, {
-                sakuraOrSmart: useExternalMt,
-            });
-            const glossaryPairs = loadEngineGlossaryPairs({
-                ...fileMerged,
-                mtGlossaryMode: jobFlags.mtGlossaryMode,
-            });
-            const externalMtFields = useExternalMt && mtAdapter?.ok
-                ? (typeof mtAdapter.mtExternal === 'function'
-                    ? {
-                        mtBackend: 'external',
-                        mtExternal: mtAdapter.mtExternal(
-                            useSmartTranslate
-                                ? { batchSize: 40, timeoutSec: 1800 }
-                                : { batchSize: 8, timeoutSec: 600 },
-                        ),
-                    }
-                    : buildExternalMtJobFields({
-                        url: mtAdapter.url,
-                        token: mtAdapter.token,
-                        batchSize: useSmartTranslate ? 40 : 8,
-                        timeoutSec: useSmartTranslate ? 1800 : 600,
-                    }))
-                : null;
-
-            const jobBody = {
-                task: engineTask,
-                mediaPath,
-                outputDir: outDir,
-                language: fileMerged.language || 'auto',
-                asrModel: fileMerged.engineAsrModel || 'sensevoice-small',
-                mtModel: jobMtModel,
-                subFormats,
-                dualAss,
-                dualLineOrder: (() => {
-                    const raw = fileMerged.dualLineOrder;
-                    if (raw == null || String(raw).trim() === '') return 'target-first';
-                    try {
-                        const dualCore = require('../src/js/dual-subtitle-core');
-                        return dualCore.normalizeDualLineOrder(raw);
-                    } catch {
-                        const order = String(raw).trim().toLowerCase();
-                        if (order === 'source-first' || order === 'source') return 'source-first';
-                        return 'target-first';
-                    }
-                })(),
-                device: mapDeviceForEngine(fileMerged.device),
-                beamSize: Math.max(1, Math.min(20, Number(fileMerged.beamSize) || 5)),
-                vad: buildVadJobOptions(fileMerged),
-                audio: buildAudioJobOptions(fileMerged, {
-                    entitled: (!!fileMerged.filmAudioEnhance || !!fileMerged.filmVadPreset) && filmEntitled !== false,
-                }),
-                perfProfile: (() => {
-                    const v = String(fileMerged.perfProfile || 'quality').trim().toLowerCase();
-                    return v === 'speed' ? 'speed' : 'quality';
-                })(),
-                releaseGpuAfter: jobFlags.releaseGpuAfter,
-                includeWords: jobFlags.includeWords,
-                karaokeVtt: jobFlags.karaokeVtt,
-                glossary: glossaryPairs,
-                contentProfile: fileMerged.contentProfile || fileMerged.senseProfile || undefined,
-                senseProfile: fileMerged.senseProfile || fileMerged.contentProfile || undefined,
-                ...(fileMerged.timingAlign != null
-                    ? { timingAlign: fileMerged.timingAlign }
-                    : {}),
-                ...(fileMerged.timingAlignModel != null
-                    && String(fileMerged.timingAlignModel).trim() !== ''
-                    ? { timingAlignModel: String(fileMerged.timingAlignModel).trim() }
-                    : {}),
-                // LLM MT: skip built-in JA name lexicon protect (__GLOSS*__),
-                // which harms Sakura/smart quality vs the subtitle editor path.
-                ...(useExternalMt ? { builtinNames: false } : {}),
-                ...(externalMtFields || {}),
-                ffmpegPath: (() => {
-                    try {
-                        const { resolveFfmpegForExecution, findBundledFfmpegPath } = require('./ffmpeg-bridge');
-                        const resolved = resolveFfmpegForExecution(fileMerged.ffmpegPath);
-                        let exe = resolved?.ok ? String(resolved.path || '').trim() : '';
-                        if (!exe || exe === 'ffmpeg') {
-                            exe = String(findBundledFfmpegPath?.() || '').trim();
-                        }
-                        if (!exe || exe === 'ffmpeg') {
-                            exe = String(findEngineBundledFfmpeg(fileMerged.engineInstallPath) || '').trim();
-                        }
-                        return exe && exe !== 'ffmpeg' && fs.existsSync(exe) ? exe : '';
-                    } catch {
-                        return '';
-                    }
-                })(),
-                sync: false,
-            };
-
-            const primaryAsr = String(fileMerged.engineAsrModel || 'sensevoice-small').trim()
-                || 'sensevoice-small';
-            const asrCandidates = resolveAsrFailoverCandidates(
-                primaryAsr,
-                fileMerged.engineInstallPath,
-            );
-
-            sendProgress(invokeSender, {
-                stage: 'model',
-                index1,
-                total: list.length,
-                file: mediaPath,
-                detail: `创建引擎任务（${primaryAsr}）…`,
-                percent: 2,
-            });
-
-            const buildJobBody = (asrModel) => ({
-                ...jobBody,
-                asrModel,
-            });
-
-            const { runEngineJobWithSemanticRepair } = require('./engine-asr-semantic-handoff');
-
-            const runOutcome = await runEngineJobWithSemanticRepair({
-                jobBody,
-                engineTask,
-                fileMerged,
-                options: fileMerged,
-                repairMeta: {
-                    glossary: glossaryPairs,
-                    primaryAsr,
-                    mediaPath,
-                    onLog: (line) => {
-                        appendEngineLogLine(`[engine] ${line}`, invokeSender);
-                    },
-                },
-                runSingleJob: (body, progressMeta = {}) => runEngineJobWithAsrFailover({
-                    baseUrl: ensure.baseUrl,
-                    buildJobBody: (asrModel) => ({
-                        ...body,
-                        asrModel,
-                    }),
-                    primaryAsr,
-                    candidates: asrCandidates,
-                    createJob,
-                    waitJob,
-                    shouldStop: () => batchCancelled,
-                    pingHealth: async (url) => {
-                        const health = await getHealth(url || ensure.baseUrl, { timeoutMs: 2000 });
-                        return {
-                            ok: !!(health?.ok && health.data?.ok),
-                            code: health?.code || '',
-                            baseUrl: ensure.baseUrl,
-                        };
-                    },
-                    restartEngine: async () => {
-                        appendEngineLogLine(
-                            '[engine] 引擎连接失败，正在重启后重试本条…',
-                            invokeSender,
-                        );
-                        sendProgress(invokeSender, {
-                            stage: 'starting',
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            detail: '引擎连接失败，正在重启后重试本条…',
-                            percent: 2,
-                        });
-                        const again = await ensureEngineRunning({
-                            ...merged,
-                            forceRestart: true,
-                            shouldStop: () => batchCancelled,
-                        });
-                        if (again?.ok) ensure = again;
-                        return again;
-                    },
-                    onCandidate: ({ asrModel, index: candIdx }) => {
-                        if (batchCancelled) return;
-                        if (candIdx > 0) {
-                            appendEngineLogLine(
-                                `[engine] ASR 回退：${primaryAsr} → ${asrModel}`,
-                                invokeSender,
-                            );
-                        }
-                        sendProgress(invokeSender, {
-                            stage: 'transcribe',
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            detail: candIdx === 0
-                                ? `引擎转写中（${asrModel}）…`
-                                : `${primaryAsr} 无结果，改用 ${asrModel}…`,
-                            percent: 8,
-                        });
-                    },
-                    onJobCreated: (jobId) => {
-                        currentJobId = String(jobId || '');
-                    },
-                    onEvent: (ev) => {
-                        if (batchCancelled) return;
-                        const fields = progressFieldsFromWaitEvent(ev);
-                        const jid = ev?.data?.id || currentJobId;
-                        if (jid) currentJobId = String(jid);
-                        if (String(fields.stage || '').toLowerCase() === 'translate'
-                            || String(fields.stage || '').toLowerCase() === 'mt') {
-                            noteEngineTranslatePercent(mtUiProgress, fields.percent);
-                        }
-                        sendProgress(invokeSender, {
-                            ...fields,
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            jobId: currentJobId,
-                            itemDualPhase: progressMeta.itemDualPhase || fields.itemDualPhase,
-                        });
-                    },
-                }),
-                onProgress: (info) => {
-                    const mapped = remapBridgeProgress(engineTask, info);
-                    sendProgress(invokeSender, {
-                        ...mapped,
-                        index1,
-                        total: list.length,
-                        file: mediaPath,
-                        itemDualPhase: mapped.itemDualPhase,
-                    });
-                },
-                onLog: (line) => {
-                    appendEngineLogLine(`[engine] ${line}`, invokeSender);
-                },
-            });
-            // Keep last job id for cancel / checkpoint probe
-            if (runOutcome.jobId) currentJobId = String(runOutcome.jobId);
-            if (runOutcome.ok && runOutcome.asrModel && runOutcome.asrAttempts > 1) {
-                appendEngineLogLine(
-                    `[engine] ASR 回退成功：第 ${runOutcome.asrAttempts} 次候选 ${runOutcome.asrModel}`,
-                    invokeSender,
-                );
-            }
-            const waited = runOutcome.ok
-                ? {
-                    ok: true,
-                    data: runOutcome.waited?.data || { result: runOutcome.result, id: runOutcome.jobId },
-                    jobId: runOutcome.jobId,
-                    asrModel: runOutcome.asrModel,
-                }
-                : {
-                    ok: false,
-                    error: runOutcome.error,
-                    code: runOutcome.code,
-                    cancelled: runOutcome.cancelled,
-                    data: runOutcome.waited?.data,
-                    jobId: runOutcome.jobId,
-                    result: runOutcome.result,
-                };
-            const failedJobId = currentJobId;
-            currentJobId = '';
-
-            const waitInterp = interpretWaitJobResult(waited, batchCancelled);
-            if (waitInterp.kind === 'cancelled') {
-                const hint = await attachCheckpointResumeHint(
-                    ensure.baseUrl,
-                    failedJobId || waitInterp.jobId,
-                    getJobCheckpoint,
-                );
-                const recovery = batchRecovery.buildBatchFailureGuidance({
-                    message: '已取消',
-                    code: 'cancelled',
-                    resumable: hint.resumable,
-                    resumeFromJobId: hint.resumeFromJobId,
-                });
-                results.push(buildCancelledItemResult(mediaPath, {
-                    ...hint,
-                    recovery,
-                }));
-                sendProgress(invokeSender, {
-                    stage: 'cancelled',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: hint.resumable
-                        ? `已取消（可从断点继续：${hint.resumeFromJobId}）`
-                        : '已取消',
-                    error: 'cancelled',
-                    ...hint,
-                    recovery,
-                });
-                break;
-            }
-
-            if (waitInterp.kind === 'failed') {
-                const err = friendlyEngineError(waitInterp.error || '任务失败');
-                const hint = await attachCheckpointResumeHint(
-                    ensure.baseUrl,
-                    failedJobId || waitInterp.jobId,
-                    getJobCheckpoint,
-                );
-                const recovery = batchRecovery.buildBatchFailureGuidance({
-                    message: err,
-                    code: waitInterp.code || hint.checkpointStage || '',
-                    resumable: hint.resumable,
-                    resumeFromJobId: hint.resumeFromJobId,
-                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
-                    asrAttempts: runOutcome.asrAttempts,
-                    primaryAsr,
-                    asrModel: runOutcome.asrModel,
-                });
-                failed += 1;
-                results.push(buildFailedItemResult(mediaPath, err, {
-                    code: waitInterp.code || '',
-                    ...hint,
-                    recovery,
-                    asrAttempts: runOutcome.asrAttempts,
-                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
-                    asrModel: runOutcome.asrModel || '',
-                    primaryAsr,
-                }));
-                sendProgress(invokeSender, {
-                    stage: 'error',
-                    index1,
-                    total: list.length,
-                    file: mediaPath,
-                    detail: recovery.shortTip ? `${err} · ${recovery.shortTip}` : err,
-                    error: err,
-                    errorCode: waitInterp.code || '',
-                    ...hint,
-                    recovery,
-                    asrAttempts: runOutcome.asrAttempts,
-                    asrCandidates: runOutcome.asrCandidates || asrCandidates,
-                    asrModel: runOutcome.asrModel || '',
-                    primaryAsr,
-                });
-                continue;
-            }
-
-            if (batchCancelled) {
-                results.push(buildCancelledItemResult(mediaPath));
-                break;
-            }
-
-            const outPaths = extractOutputPaths(waitInterp.result || waited.data?.result);
-            const jobResult = waitInterp.result || waited.data?.result || null;
-
-            // translate_mt deletes `.src.partial` and omits role=source from outputs.
-            // Materialize JA into transcript-keep BEFORE post-batch so paired noise
-            // can run (otherwise ZH-only removeEmpty orphans JA dialogue).
-            let keptSourcePath = '';
-            try {
-                const { keepTranscriptFromJobResult } = require('./transcript-keep');
-                const kept = keepTranscriptFromJobResult({
-                    task: merged.task,
-                    sourceSubtitlePath: outPaths.sourceSubtitlePath,
-                    subtitlePath: outPaths.subtitlePath,
-                    sourceCues: jobResult?.cues?.source,
-                    mediaPath,
-                    options: merged,
-                });
-                if (kept?.ok && kept.kept?.length) {
-                    keptSourcePath = String(kept.kept[0] || '').trim();
-                    if (keptSourcePath) {
-                        outPaths.sourceSubtitlePath = outPaths.sourceSubtitlePath || keptSourcePath;
-                    }
-                    appendEngineLogLine(
-                        `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
-                        invokeSender,
-                    );
-                } else if (kept && kept.ok === false && kept.error) {
-                    appendEngineLogLine(
-                        `[engine] 保存转录字幕失败: ${kept.error}`,
-                        invokeSender,
-                    );
-                }
-            } catch (err) {
-                appendEngineLogLine(
-                    `[engine] 保存转录字幕跳过: ${err.message || err}`,
-                    invokeSender,
-                );
-            }
-
-            // Free-path postprocess (same knobs as UI post-batch): strip Whisper YouTube-style hallucinations etc.
-            const { applyPostBatchPipeline } = require('./post-batch-pipeline');
-            applyPostBatchPipeline([
-                outPaths.sourceSubtitlePath,
-                keptSourcePath,
-                outPaths.targetSubtitlePath,
-                outPaths.bilingualSubtitlePath,
-                outPaths.subtitlePath,
-            ], {
-                ...merged,
-                sourceCues: jobResult?.cues?.source,
-            }, {
-                onProgress: (info) => {
-                    const mapped = remapBridgeProgress(engineTask, {
-                        stage: 'cleanup',
-                        percent: Number(info?.percent) || 50,
-                        detail: info?.detail || '后处理字幕…',
-                    });
-                    sendProgress(invokeSender, {
-                        ...mapped,
-                        index1,
-                        total: list.length,
-                        file: mediaPath,
-                    });
-                },
-                onLog: (line) => {
-                    appendEngineLogLine(`[engine] ${line}`, invokeSender);
-                },
-            });
-
-            // File-level MT sanitize (Opus + any adapter miss): strip trailing cast-name
-            // hallucinations / Gloss / loops on ZH against JA source or result.cues.source.
-            const translateLike = batchPostprocessPlan.isTranslateLikeTask(fileMerged.task, engineTask);
-            if (translateLike && merged.mtSanitize !== false) {
-                try {
-                    const { sanitizeMtSubtitlePair } = require('./extensions-bridge');
-                    const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(outPaths, {
-                        resolve: path.resolve,
-                        existsSync: (p) => fs.existsSync(p),
-                    });
-                    for (const zhPath of uniqueZh) {
-                        const mapped = remapBridgeProgress(engineTask, {
-                            stage: 'translate',
-                            percent: 85,
-                            detail: '后处理：译后清洗…',
-                        });
-                        sendProgress(invokeSender, {
-                            ...mapped,
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                        });
-                        const sm = sanitizeMtSubtitlePair(zhPath, outPaths.sourceSubtitlePath, {
-                            sourceCues: jobResult?.cues?.source,
-                            contentProfile: fileMerged.contentProfile || fileMerged.senseProfile,
-                            senseProfile: fileMerged.senseProfile || fileMerged.contentProfile,
-                            sakuraNsfwPrompt: fileMerged.sakuraNsfwPrompt,
-                            nsfwPrompt: fileMerged.nsfwPrompt,
-                            smartTranslateFaithfulTone: fileMerged.smartTranslateFaithfulTone
-                                || fileMerged.faithfulTone,
-                            faithfulTone: fileMerged.faithfulTone
-                                || fileMerged.smartTranslateFaithfulTone,
-                            applyNsfwLexicon: fileMerged.applyNsfwLexicon,
-                            backupMode: 'off',
-                        });
-                        if (sm?.ok && sm.changed) {
-                            appendEngineLogLine(
-                                `[engine] ${sm.summary || '译后清洗'} ${path.basename(zhPath)}`,
-                                invokeSender,
-                            );
-                            if (sm.jaAsrDomainChanged > 0 || sm.sourceDomainCleaned > 0) {
-                                const trace = summarizeDomainFixChanges([{
-                                    from: 'ja-asr-domain',
-                                    to: 'applied',
-                                    count: (sm.jaAsrDomainChanged || 0) + (sm.sourceDomainCleaned || 0),
-                                }], 'desktop_sanitize');
-                                const line = formatDomainFixLogLine(trace);
-                                if (line) appendEngineLogLine(line, invokeSender);
-                            }
-                        }
-                    }
-                } catch (err) {
-                    appendEngineLogLine(
-                        `[engine] 译后清洗跳过：${err.message || err}`,
-                        invokeSender,
-                    );
-                }
-            }
-
-            // Optional compact delivery: drop pure discourse / onomatopoeia pairs from ZH+JA.
-            const {
-                dropDiscourse,
-                dropOnomatopoeia,
-                shouldCompact,
-            } = batchPostprocessPlan.resolveInterjectionDropFlags(merged);
-            if (translateLike && shouldCompact) {
-                try {
-                    const { compactPureInterjectionSubtitlePair } = require('./extensions-bridge');
-                    const uniqueZh = batchPostprocessPlan.collectUniqueZhSubtitlePaths(outPaths, {
-                        resolve: path.resolve,
-                        existsSync: (p) => fs.existsSync(p),
-                    });
-                    for (const zhPath of uniqueZh) {
-                        const mapped = remapBridgeProgress(engineTask, {
-                            stage: 'translate',
-                            percent: 95,
-                            detail: '后处理：清除语气/拟声…',
-                        });
-                        sendProgress(invokeSender, {
-                            ...mapped,
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                        });
-                        const cm = compactPureInterjectionSubtitlePair(
-                            zhPath,
-                            outPaths.sourceSubtitlePath,
-                            {
-                                sourceCues: jobResult?.cues?.source,
-                                backupMode: 'off',
-                                dropDiscourse,
-                                dropOnomatopoeia,
-                            },
-                        );
-                        if (cm?.ok && cm.dropped) {
-                            appendEngineLogLine(
-                                `[engine] ${cm.summary || '清除语气/拟声'} ${path.basename(zhPath)}`,
-                                invokeSender,
-                            );
-                        }
-                    }
-                } catch (err) {
-                    appendEngineLogLine(
-                        `[engine] 清除语气/拟声跳过：${err.message || err}`,
-                        invokeSender,
-                    );
-                }
-            }
-
-            // Transcript already saved before post-batch when possible. Only materialize
-            // here if that step was skipped (keepTranscript off / no cues).
-            if (!keptSourcePath) {
-                try {
-                    const { keepTranscriptFromJobResult } = require('./transcript-keep');
-                    const kept = keepTranscriptFromJobResult({
-                        task: merged.task,
-                        sourceSubtitlePath: outPaths.sourceSubtitlePath,
-                        subtitlePath: outPaths.subtitlePath,
-                        sourceCues: jobResult?.cues?.source,
-                        mediaPath,
-                        options: merged,
-                    });
-                    if (kept?.ok && kept.kept?.length) {
-                        keptSourcePath = String(kept.kept[0] || '').trim();
-                        appendEngineLogLine(
-                            `[engine] 已保存转录字幕 ${kept.kept.length} 个 → ${kept.dir || ''}`,
-                            invokeSender,
-                        );
-                    } else if (kept && kept.ok === false && kept.error) {
-                        appendEngineLogLine(
-                            `[engine] 保存转录字幕失败: ${kept.error}`,
-                            invokeSender,
-                        );
-                    }
-                } catch (err) {
-                    appendEngineLogLine(
-                        `[engine] 保存转录字幕跳过: ${err.message || err}`,
-                        invokeSender,
-                    );
-                }
-            }
-
-            // 「合并双语」：写出与影片同名的可编辑 SRT（与 TWAI 一致）；可选再删原/译单轨。
-            // 不再依赖 *.dual.ass 已存在——仅勾选合并、未勾选删原轨时也应合并。
-            let doneDetail = outPaths.bilingualSubtitlePath ? '完成（含双语 ASS）' : '完成';
-            if (fileMerged.mergeBilingualSubtitles && engineTask === 'dual') {
-                try {
-                    const { finalizeEngineDualMerge } = require('./subtitle-fs-helpers');
-                    const finalized = finalizeEngineDualMerge(outPaths, {
-                        mergeBilingualSubtitles: true,
-                        deleteSourcesAfterMergeBilingual: !!fileMerged.deleteSourcesAfterMergeBilingual,
-                        dualPrimaryTrack: fileMerged.dualPrimaryTrack || 'target',
-                        dualLineOrder: fileMerged.dualLineOrder || 'target-first',
-                    });
-                    Object.assign(outPaths, finalized.outPaths);
-                    doneDetail = finalized.detail || doneDetail;
-                    if (finalized.error) {
-                        appendEngineLogLine(
-                            `[engine] 双语合并跳过：${finalized.error.message || finalized.error}`,
-                            invokeSender,
-                        );
-                    } else if (finalized.mergedPath) {
-                        appendEngineLogLine(
-                            `[engine] 已合并双语 → ${path.basename(finalized.mergedPath)}`,
-                            invokeSender,
-                        );
-                        // Ensure player-facing bilingual inherits viewing punct / in-cue clear.
-                        applyPostBatchPipeline([finalized.mergedPath], merged, {
-                            onLog: (line) => {
-                                appendEngineLogLine(`[engine] ${line}`, invokeSender);
-                            },
-                        });
-                    }
-                } catch (err) {
-                    appendEngineLogLine(
-                        `[engine] 双语合并跳过：${err.message || err}`,
-                        invokeSender,
-                    );
-                }
-            }
-
-            // Seed ASR confidence after paths are final (post-merge).
-            try {
-                const { runBatchSuccessHandoff } = require('./engine-batch-success-handoff');
-                const handoff = await runBatchSuccessHandoff(jobResult, outPaths, {
-                    ...merged,
-                    mediaPath,
-                    primaryAsr: runOutcome.asrModel || waited.asrModel || primaryAsr,
-                    engineAsrModel: runOutcome.asrModel || primaryAsr,
-                    onProgress: (info) => {
-                        sendProgress(invokeSender, {
-                            stage: 'transcribe',
-                            index1,
-                            total: list.length,
-                            file: mediaPath,
-                            detail: info?.detail || 'ASR 低置信二意见…',
-                        });
-                    },
-                });
-                for (const line of (handoff.logs || [])) {
-                    appendEngineLogLine(`[engine] ${line}`, invokeSender);
-                }
-            } catch (err) {
-                appendEngineLogLine(
-                    `[engine] 完成后交接跳过: ${err.message || err}`,
-                    invokeSender,
-                );
-            }
-
-            // Library 原文轨需要每次任务的转录：旁路被合并删除后改指向 keep 归档。
-            const liveSource = String(outPaths.sourceSubtitlePath || '').trim();
-            if ((!liveSource || !fs.existsSync(liveSource)) && keptSourcePath && fs.existsSync(keptSourcePath)) {
-                outPaths.sourceSubtitlePath = keptSourcePath;
-            }
-
-            generated += 1;
-            const asrRun = summarizeAsrRunMeta({
-                asrModel: runOutcome.asrModel || waited.asrModel || primaryAsr,
-                primaryAsr,
-                asrAttempts: runOutcome.asrAttempts,
-            });
-            doneDetail = appendAsrRunToDetail(doneDetail, asrRun);
-            results.push({
-                ok: true,
-                path: mediaPath,
-                result: jobResult,
-                asrModel: asrRun.asrModel,
-                primaryAsr: asrRun.primaryAsr,
-                asrAttempts: asrRun.asrAttempts,
-                asrFailedOver: asrRun.failedOver,
-                ...outPaths,
-            });
-            sendProgress(invokeSender, {
-                stage: 'done',
-                index1,
-                total: list.length,
-                file: mediaPath,
-                percent: 100,
-                detail: doneDetail,
-                asrModel: asrRun.asrModel,
-                primaryAsr: asrRun.primaryAsr,
-                asrAttempts: asrRun.asrAttempts,
-                asrFailedOver: asrRun.failedOver,
-                ...outPaths,
-            });
-            } finally {
-                liveBatch.clearCurrent();
-                try {
-                    require('./temp-cleanup').cleanupAfterJob();
-                } catch { /* ignore */ }
-            }
-        }
-
-        const cancelled = batchCancelled;
-        const finished = {
-            ok: !cancelled && failed === 0,
-            cancelled,
-            generated,
-            skipped,
-            failed: cancelled ? failed + (list.length - results.length) : failed,
-            results,
-        };
-        batchFailedOrCancelled = !finished.ok || !!finished.cancelled;
-        recordEngineBatchHistory({
-            list,
-            merged,
-            finished,
-            startedAt: jobStartedAt,
-            startedMs: jobStartedMs,
-        });
-        emitToSubtitleUi('subtitle-task-job-finished', finished, invokeSender);
-        if (!cancelled) {
-            try {
-                deferredEnsureTwai();
-                const {
-                    setSessionPostTaskOptions,
-                    deferBatchFinalize,
-                } = require('./transwithai-bridge');
-                if (typeof setSessionPostTaskOptions !== 'function'
-                    || typeof deferBatchFinalize !== 'function') {
-                    throw new Error('deferBatchFinalize is not available');
-                }
-                if (lastOutputDir) {
-                    setSessionPostTaskOptions({ lastOutputDir });
-                }
-                // Tray notify / sound / shutdown wait until UI finishes post-batch (incl. QC fix).
-                deferBatchFinalize(merged, finished, engineUiWindowManager);
-            } catch (err) {
-                console.warn('[engine] defer batch finalize failed:', err?.message || err);
-            }
-        } else {
-            try {
-                const { clearDeferredBatchFinalize } = require('./transwithai-bridge');
-                clearDeferredBatchFinalize?.();
-            } catch { /* ignore */ }
-        }
-        return finished;
-    } catch (err) {
-        batchFailedOrCancelled = true;
-        const finished = {
-            ok: false,
-            cancelled: false,
-            generated,
-            skipped,
-            failed: Math.max(failed, 1),
-            error: err.message || String(err),
-            results,
-        };
-        recordEngineBatchHistory({
-            list,
-            merged,
-            finished,
-            startedAt: jobStartedAt,
-            startedMs: jobStartedMs,
-            extraErrors: [finished.error],
-        });
-        emitToSubtitleUi('subtitle-task-job-finished', finished, invokeSender);
-        return finished;
-    } finally {
-        try {
-            mtAdapter?.stop?.();
-        } catch { /* ignore */ }
-        abortBatchMtAdapter();
-        try {
-            require('./temp-cleanup').cleanupAfterJob();
-        } catch { /* ignore */ }
-        try {
-            reclaimLocalComputeAfterEngineBatch({
-                usedExternalMt,
-                failedOrCancelled: batchFailedOrCancelled || batchCancelled,
-            });
-        } catch { /* ignore */ }
-        batchRunning = false;
-        currentJobId = '';
-        try {
-            require('./live-batch-queue').end();
-        } catch { /* ignore */ }
-    }
 }
+
+async function runEngineBatchLocked(args) {
+    return getEngineBatchLoop().runEngineBatchLocked(args);
+}
+
+function getEngineRangeTranscribe() {
+    return createEngineRangeTranscribe({
+        get batchCancelled() { return batchCancelled; },
+        set batchCancelled(v) { batchCancelled = v; },
+        get itemCancelled() { return itemCancelled; },
+        set itemCancelled(v) { itemCancelled = v; },
+        get batchRunning() { return batchRunning; },
+        set batchRunning(v) { batchRunning = v; },
+        get currentJobId() { return currentJobId; },
+        set currentJobId(v) { currentJobId = v; },
+        appendEngineLogLine,
+        buildAudioJobOptions,
+        buildVadJobOptions,
+        createJob,
+        ensureEngineRunning,
+        friendlyEngineError,
+        mapDeviceForEngine,
+        mapTaskToEngineTask,
+        mergeEngineOptions,
+        rangeAsrPolicy,
+        releaseGpuMemory,
+        resolveQwenAsrBatchModeForJob,
+        resolveRangeAsrFailoverCandidates,
+        sampleJobGpuVramHint,
+        waitJob,
+    });
+}
+
+async function transcribeRangeWithEngine(payload = {}, deps = {}) {
+    return getEngineRangeTranscribe().transcribeRangeWithEngine(payload, deps);
+}
+
 
 function setupEngineBridge(api, {
     getAppRoot,
@@ -1655,6 +481,42 @@ function setupEngineBridge(api, {
         return merged;
     }
 
+    let engineDownloadJob = null;
+    function getEngineDownloadJob() {
+        if (!engineDownloadJob) {
+            engineDownloadJob = createEngineDownloadJob({
+                getBatchRunning: () => batchRunning,
+                getDownloadBusy: () => downloadBusy,
+                setDownloadBusy: (v) => { downloadBusy = v; },
+                getDownloadAbort: () => downloadAbort,
+                setDownloadAbort: (v) => { downloadAbort = v; },
+                getEngineProc: () => engineProc,
+                normalizeEngineDownloadKind,
+                broadcastEngineDownloadProgress,
+                readMergedOptions,
+                stopEngineProcessAndPort,
+                stopEngineProcess,
+                sleep,
+                ensureEngineRunning,
+                resolveEngineInstallPath,
+                resolveEngineRuntimePython,
+                DEFAULT_ENGINE_URL,
+                modelIdsNeedWhisperExtras,
+                modelIdsNeedSensevoiceExtras,
+                modelIdsNeedQwenExtras,
+                ensureAsrWhisperOffline,
+                ensureAsrSensevoiceOffline,
+                ensureAsrQwen3Offline,
+                ensureAudioSeparateRuntimeStream,
+                getAudioSeparateRuntime,
+                ensureGpuRuntimeStream,
+                getGpuRuntime,
+                downloadModelsStream,
+            });
+        }
+        return engineDownloadJob;
+    }
+
     /** Capture UI post-task (shutdown/quit/sleep/…) before options are stripped for the engine. */
     function syncEngineSessionPostTask(payloadOptions = {}) {
         try {
@@ -1668,20 +530,8 @@ function setupEngineBridge(api, {
         }
     }
 
-    register('transub-engine-bundled-path', async () => {
-        try {
-            const bundled = getBundledEnginePath();
-            const present = isValidEngineRoot(bundled);
-            return {
-                ok: true,
-                path: bundled,
-                present,
-                resolved: present ? bundled : getBundledEnginePathIfPresent(),
-            };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
+    // transub-engine-bundled-path is registered as cold IPC in main.js
+    // so startup path fill does not load engine-bridge.
 
     register('transub-engine-validate', async (_event, payload = {}) => {
         try {
@@ -1727,13 +577,84 @@ function setupEngineBridge(api, {
             }
             return {
                 ok: true,
-                models: [
+                models: omitRetiredEngineModels([
                     ...(Array.isArray(res.data?.models) ? res.data.models : []),
                     ...sakuraModels,
-                ],
+                ]),
                 profiles: res.data?.profiles || {},
                 raw: res.data,
             };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-delete-models', async (_event, payload = {}) => {
+        try {
+            if (batchRunning) {
+                return { ok: false, error: '字幕任务进行中，请先停止任务再删除模型' };
+            }
+            if (downloadBusy) {
+                return { ok: false, error: '已有下载任务正在进行，请稍后再删除' };
+            }
+            const engineDelete = require('./engine-delete-model');
+            const modelIds = engineDelete.uniqueIds(
+                Array.isArray(payload.modelIds) ? payload.modelIds : [],
+            );
+            if (!modelIds.length) {
+                return { ok: false, error: '未指定要删除的模型' };
+            }
+
+            const options = await readMergedOptions(payload);
+            const rowsById = {};
+            try {
+                const ensureList = await ensureEngineRunning(options);
+                if (ensureList.ok) {
+                    const listRes = await listModels(ensureList.baseUrl, { timeoutMs: 15000 });
+                    if (listRes.ok && Array.isArray(listRes.data?.models)) {
+                        for (const m of listRes.data.models) {
+                            const id = String(m?.id || '').trim();
+                            if (id) rowsById[id] = m;
+                        }
+                    }
+                }
+            } catch (_) { /* list optional */ }
+
+            try {
+                stopEngineProcessAndPort();
+            } catch {
+                try { stopEngineProcess(); } catch { /* ignore */ }
+            }
+            await sleep(800);
+
+            const deleteViaEngine = async (engineIds) => {
+                const ensure = await ensureEngineRunning(options);
+                if (!ensure.ok) return { ok: false, error: ensure.error || 'engine unavailable' };
+                const res = await deleteModels(ensure.baseUrl, { modelIds: engineIds }, {
+                    timeoutMs: 120000,
+                });
+                if (!res.ok) {
+                    return {
+                        ok: false,
+                        error: res.data?.message || res.data?.error || `删除失败 (HTTP ${res.status})`,
+                        failed: engineIds.map((id) => ({
+                            id,
+                            error: res.data?.message || res.data?.error || 'delete failed',
+                        })),
+                    };
+                }
+                return {
+                    ok: true,
+                    deleted: res.data?.deleted || [],
+                    skipped: res.data?.skipped || [],
+                    failed: res.data?.failed || [],
+                };
+            };
+
+            return await engineDelete.deleteModelsBatch(modelIds, options, {
+                rowsById,
+                deleteViaEngine,
+            });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1872,7 +793,8 @@ function setupEngineBridge(api, {
                     raw: res.data,
                 };
             }
-            return { ok: true, ...(res.data || {}), status: res.status };
+            // Keep probe `status` (ready/partial/…); HTTP code goes to httpStatus.
+            return { ok: true, ...(res.data || {}), httpStatus: res.status };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -1921,6 +843,71 @@ function setupEngineBridge(api, {
                 await ensureEngineRunning({ ...options, forceRestart: true });
             }
             return { ok: true, ...(res.data || {}), status: res.status };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-engine-pick-cuda-root', async (event) => {
+        try {
+            const { dialog, BrowserWindow } = require('electron');
+            const cudaScan = require('./cuda-runtime-scan');
+            const { getWritableRoot } = require('./app-paths');
+            const win = BrowserWindow.fromWebContents(event.sender);
+            const picked = await dialog.showOpenDialog(win || undefined, {
+                title: '选择含 CUDA 运行库的目录',
+                message: '请选择含 cudart64_*.dll / cublas64_*.dll 的目录，或含 nvidia\\cuda_runtime\\bin 的 site-packages',
+                properties: ['openDirectory'],
+            });
+            if (picked.canceled || !picked.filePaths?.length) {
+                return { ok: false, cancelled: true };
+            }
+            const dir = path.resolve(String(picked.filePaths[0] || '').trim());
+            if (!dir || !fs.existsSync(dir)) {
+                return { ok: false, error: '目录无效' };
+            }
+            // Accept flat companion dir, nvidia tree, or site-packages parent.
+            const candidates = [
+                dir,
+                path.join(dir, 'bin'),
+                path.join(dir, 'nvidia'),
+                path.basename(dir).toLowerCase() === 'nvidia' ? path.dirname(dir) : '',
+                path.join(dir, 'Lib', 'site-packages'),
+                path.join(dir, 'lib', 'site-packages'),
+                path.join(dir, 'site-packages'),
+            ].filter(Boolean);
+            let savedRoot = dir;
+            let scanHit = false;
+            for (const major of [12, 13]) {
+                for (const root of candidates) {
+                    const scan = cudaScan.scanReusableCudaRuntimes({
+                        major,
+                        extraRoots: [root],
+                        includePath: false,
+                        env: { PATH: '' },
+                    });
+                    if (scan.ok && scan.best) {
+                        savedRoot = root;
+                        scanHit = true;
+                        break;
+                    }
+                }
+                if (scanHit) break;
+            }
+            const writable = getWritableRoot();
+            const saved = cudaScan.addPersistedCudaExtraRoot(writable, savedRoot);
+            if (!saved.ok) {
+                return { ok: false, error: saved.error || '保存扫描目录失败' };
+            }
+            return {
+                ok: true,
+                dir: savedRoot,
+                verified: scanHit,
+                roots: saved.roots,
+                message: scanHit
+                    ? `已加入 CUDA 扫描目录：${savedRoot}`
+                    : `已记录目录 ${savedRoot}（当前未检出齐全 companion DLL，仍会参与下次扫描）`,
+            };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -2047,625 +1034,7 @@ function setupEngineBridge(api, {
     });
 
     register('transub-engine-run-download', async (_event, payload = {}) => {
-        if (batchRunning) {
-            return { ok: false, error: '字幕任务进行中，请先停止任务再下载模型 / 组件' };
-        }
-        if (downloadBusy) {
-            return { ok: false, error: '已有下载任务正在进行' };
-        }
-        downloadBusy = true;
-        downloadAbort = new AbortController();
-        const signal = downloadAbort.signal;
-        const kind = normalizeEngineDownloadKind(payload.kind);
-        const emit = (info) => {
-            broadcastEngineDownloadProgress({ ...(info || {}), kind });
-        };
-        try {
-            const options = await readMergedOptions(payload);
-            const hfEndpoint = payload.hfEndpoint != null
-                ? String(payload.hfEndpoint || '').trim().replace(/\/+$/, '')
-                : String(options.engineHfEndpoint || '').trim().replace(/\/+$/, '');
-            const hfToken = payload.hfToken != null
-                ? String(payload.hfToken || '').trim()
-                : String(options.engineHfToken || '').trim();
-            const optionsWithHf = {
-                ...options,
-                engineHfEndpoint: hfEndpoint,
-                engineHfToken: hfToken,
-            };
-
-            if (batchRunning) {
-                return { ok: false, error: '字幕任务进行中，请先停止任务再下载模型 / 组件' };
-            }
-            // Always reclaim engine + listen port before pip extras — orphaned
-            // runtime\\python.exe holding onnxruntime/av DLLs causes WinError 5.
-            try {
-                stopEngineProcessAndPort();
-            } catch {
-                try { stopEngineProcess(); } catch { /* ignore */ }
-            }
-            await sleep(1200);
-
-            // ASR extras must install while the engine is stopped: a running
-            // server already imports native wheels and Windows then denies
-            // overwrite (WinError 5 / 拒绝访问).
-            const earlyModelIds = Array.isArray(payload.modelIds)
-                ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
-                : [];
-            const needWhisperExtras = !!payload.force || modelIdsNeedWhisperExtras(earlyModelIds);
-            const needSensevoiceExtras = !!payload.force || modelIdsNeedSensevoiceExtras(earlyModelIds);
-            const needQwenExtras = !!payload.force || modelIdsNeedQwenExtras(earlyModelIds);
-            const installPath = resolveEngineInstallPath(optionsWithHf.engineInstallPath);
-            const pythonPath = resolveEngineRuntimePython(installPath);
-
-            const emitOfflineExtrasProgress = (ev, label, pctBase, retry = false) => {
-                const pct = Number(ev.percent);
-                const downloadedBytes = Number(
-                    ev.downloadedBytes ?? ev.received ?? ev.downloaded,
-                );
-                const totalBytes = Number(ev.totalBytes ?? ev.totalSize);
-                const bytesPerSecond = Number(ev.bytesPerSecond ?? ev.speed);
-                const mappedPct = Number.isFinite(pct)
-                    ? Math.min(
-                        pctBase + (retry ? 14 : 12),
-                        pctBase + (retry ? 2 : 0) + Math.round(pct * 0.12),
-                    )
-                    : pctBase + (retry ? 4 : 2);
-                emit({
-                    phase: 'progress',
-                    message: ev.detail || ev.message || `正在${retry ? '重试' : ''}安装 ${label}…`,
-                    pct: mappedPct,
-                    downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                        ? downloadedBytes
-                        : undefined,
-                    totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
-                    bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
-                        ? bytesPerSecond
-                        : undefined,
-                    suggestManual: !!ev.suggestManual
-                        || ev.stage === 'torch_cuda'
-                        || /改装 cuda|cuda pytorch|直链下载 cuda/i.test(String(ev.detail || '')),
-                    raw: ev,
-                });
-            };
-
-            const runOfflineExtras = async ({ need, ensureFn, label, pctBase }) => {
-                if (!need || !pythonPath) return { ok: true, skipped: true };
-                emit({
-                    phase: 'progress',
-                    message: `正在补齐 ${label}（引擎已停止，避免文件占用）…`,
-                    pct: pctBase,
-                });
-                let pre = await ensureFn({
-                    pythonPath,
-                    cwd: installPath,
-                    force: false,
-                    signal,
-                    onProgress: (ev) => emitOfflineExtrasProgress(ev, label, pctBase, false),
-                });
-                if (
-                    !pre.ok
-                    && pre.code === 'EXTRAS_LOCKED_IN_PROCESS'
-                    && !signal?.aborted
-                ) {
-                    // Do NOT --force-reinstall the full Whisper stack: onnxruntime-gpu
-                    // from 「下载 GPU 支持」is often already mapped and WinError 5 again.
-                    // Stop harder, wait, then install only still-missing wheels.
-                    emit({
-                        phase: 'progress',
-                        message: `${label}文件被占用，正在彻底停止引擎后重试（仅补缺失项）…`,
-                        pct: pctBase + 2,
-                    });
-                    try {
-                        stopEngineProcessAndPort();
-                    } catch { /* ignore */ }
-                    await sleep(1500);
-                    pre = await ensureFn({
-                        pythonPath,
-                        cwd: installPath,
-                        force: false,
-                        signal,
-                        onProgress: (ev) => emitOfflineExtrasProgress(ev, label, pctBase, true),
-                    });
-                }
-                if (
-                    !pre.ok
-                    && (pre.code === 'TORCH_CUDA_INSTALL_FAILED' || pre.code === 'TORCH_CUDA_REQUIRED')
-                ) {
-                    pre.suggestManual = true;
-                    pre.manualKind = 'torch-cuda';
-                    if (!pre.error && pre.message) pre.error = pre.message;
-                }
-                return pre;
-            };
-
-            if (kind === 'models' && (needWhisperExtras || needSensevoiceExtras || needQwenExtras)) {
-                if (needWhisperExtras) {
-                    const pre = await runOfflineExtras({
-                        need: true,
-                        ensureFn: ensureAsrWhisperOffline,
-                        label: 'Whisper 运行库',
-                        pctBase: 3,
-                    });
-                    if (pre.cancelled || signal.aborted) {
-                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                        return { ok: false, cancelled: true, error: 'cancelled' };
-                    }
-                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
-                        const err = pre.error || pre.message || 'Whisper 运行库安装失败';
-                        // Do not block SenseVoice repair when LID/Whisper extras fail first.
-                        if (needSensevoiceExtras) {
-                            emit({
-                                phase: 'progress',
-                                message: `Whisper 运行库暂未装好：${err}；继续补齐 SenseVoice…`,
-                                pct: 8,
-                            });
-                        } else {
-                            emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                            return { ok: false, error: err, code: pre.code || '', logTail: pre.logTail };
-                        }
-                    } else if (pre.code === 'SMART_APP_CONTROL') {
-                        emit({
-                            phase: 'progress',
-                            message: pre.message || pre.error || 'Whisper 运行库受系统策略拦截，将继续尝试其它项…',
-                            pct: 8,
-                        });
-                    }
-                }
-                if (needSensevoiceExtras) {
-                    const pre = await runOfflineExtras({
-                        need: true,
-                        ensureFn: ensureAsrSensevoiceOffline,
-                        label: 'SenseVoice 运行库',
-                        pctBase: needWhisperExtras ? 10 : 3,
-                    });
-                    if (pre.cancelled || signal.aborted) {
-                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                        return { ok: false, cancelled: true, error: 'cancelled' };
-                    }
-                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
-                        const err = pre.error || pre.message || 'SenseVoice 运行库安装失败';
-                        emit({
-                            phase: 'error',
-                            ok: false,
-                            message: err,
-                            pct: 0,
-                            suggestManual: !!pre.suggestManual,
-                        });
-                        return {
-                            ok: false,
-                            error: err,
-                            code: pre.code || '',
-                            logTail: pre.logTail,
-                            suggestManual: !!pre.suggestManual,
-                            manualKind: pre.manualKind || '',
-                        };
-                    }
-                    if (pre.code === 'SMART_APP_CONTROL') {
-                        emit({
-                            phase: 'progress',
-                            message: pre.message || pre.error || 'SenseVoice 运行库受系统策略拦截，将继续尝试其它项…',
-                            pct: 14,
-                        });
-                    }
-                }
-                if (needQwenExtras) {
-                    const qwenPctBase = (needWhisperExtras ? 10 : 3)
-                        + (needSensevoiceExtras ? 8 : 0);
-                    const pre = await runOfflineExtras({
-                        need: true,
-                        ensureFn: ensureAsrQwen3Offline,
-                        label: 'Qwen3-ASR 运行库',
-                        pctBase: qwenPctBase,
-                    });
-                    if (pre.cancelled || signal.aborted) {
-                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                        return { ok: false, cancelled: true, error: 'cancelled' };
-                    }
-                    if (!pre.ok && pre.code !== 'SMART_APP_CONTROL' && !pre.skipped) {
-                        const err = pre.error || pre.message || 'Qwen3-ASR 运行库安装失败';
-                        emit({
-                            phase: 'error',
-                            ok: false,
-                            message: err,
-                            pct: 0,
-                            suggestManual: !!pre.suggestManual,
-                        });
-                        return {
-                            ok: false,
-                            error: err,
-                            code: pre.code || '',
-                            logTail: pre.logTail,
-                            suggestManual: !!pre.suggestManual,
-                            manualKind: pre.manualKind || 'torch-cuda',
-                        };
-                    }
-                    if (pre.code === 'SMART_APP_CONTROL') {
-                        emit({
-                            phase: 'progress',
-                            message: pre.message || pre.error || 'Qwen3-ASR 运行库受系统策略拦截，将继续尝试其它项…',
-                            pct: qwenPctBase + 4,
-                        });
-                    }
-                }
-            }
-
-            emit({ phase: 'progress', message: '正在启动引擎…', pct: 2 });
-            let ensure = await ensureEngineRunning(optionsWithHf);
-            const sakuraCatalogEarly = require('../src/js/sakura-mt-catalog-core');
-            const earlyIds = Array.isArray(payload.modelIds)
-                ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
-                : [];
-            const earlySakuraOnly = earlyIds.length > 0
-                && earlyIds.every((id) => sakuraCatalogEarly.isSakuraMtModel(id));
-            if (!ensure.ok) {
-                if (kind === 'models' && earlySakuraOnly) {
-                    emit({
-                        phase: 'progress',
-                        message: '引擎未就绪，仅下载 Sakura GGUF…',
-                        pct: 10,
-                    });
-                    // Skip to sakura-only path below via empty engine + selected sakura ids
-                    ensure = { ok: true, baseUrl: optionsWithHf.engineUrl || DEFAULT_ENGINE_URL };
-                } else {
-                    emit({ phase: 'error', ok: false, message: ensure.error || '引擎未就绪', pct: 0 });
-                    return ensure;
-                }
-            }
-            let baseUrl = ensure.baseUrl;
-
-            if (kind === 'demucs') {
-                emit({ phase: 'progress', message: '正在安装 Demucs + CUDA PyTorch（若有 GPU）…', pct: 8 });
-                const res = await ensureAudioSeparateRuntimeStream(baseUrl, {
-                    force: !!payload.force,
-                }, {
-                    timeoutMs: 3600000,
-                    signal,
-                    onEvent: (ev) => {
-                        const pct = Number(ev.percent);
-                        emit({
-                            phase: ev.type === 'done' ? 'done' : (ev.type === 'error' ? 'error' : 'progress'),
-                            ok: ev.type === 'error' ? false : undefined,
-                            message: ev.detail || ev.message || ev.hint || ev.stage || '处理中…',
-                            pct: Number.isFinite(pct) ? pct : undefined,
-                            raw: ev,
-                        });
-                    },
-                });
-                if (res.cancelled || signal.aborted) {
-                    emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                    return { ok: false, cancelled: true, error: 'cancelled' };
-                }
-                if (!res.ok) {
-                    const err = res.error || res.data?.message || 'Demucs 安装失败';
-                    emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                    return { ok: false, error: err, raw: res.data };
-                }
-                emit({ phase: 'progress', message: '正在重启引擎…', pct: 92 });
-                if (engineProc) {
-                    stopEngineProcess();
-                    await sleep(800);
-                }
-                const ensure2 = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
-                if (!ensure2.ok) {
-                    const msg = (res.data?.message || 'Demucs 已安装') + '（引擎重启失败，请手动检测引擎）';
-                    emit({ phase: 'done', ok: true, message: msg, pct: 100 });
-                    return { ok: true, restarted: false, message: msg, ...(res.data || {}) };
-                }
-                const statusRes = await getAudioSeparateRuntime(ensure2.baseUrl, { timeoutMs: 20000 });
-                const message = statusRes.data?.hint || res.data?.message || 'Demucs 已就绪';
-                emit({ phase: 'done', ok: true, message, pct: 100 });
-                return {
-                    ok: true,
-                    restarted: true,
-                    probe: statusRes.data || res.data?.probe,
-                    message,
-                    ...(res.data || {}),
-                };
-            }
-
-            if (kind === 'gpu') {
-                emit({ phase: 'progress', message: '检测 GPU 并安装 CUDA 12 运行库…', pct: 8 });
-                const res = await ensureGpuRuntimeStream(baseUrl, {
-                    force: !!payload.force,
-                }, {
-                    timeoutMs: 1800000,
-                    signal,
-                    onEvent: (ev) => {
-                        const pct = Number(ev.percent);
-                        const downloadedBytes = Number(
-                            ev.downloadedBytes ?? ev.received ?? ev.downloaded,
-                        );
-                        const totalBytes = Number(ev.totalBytes ?? ev.totalSize);
-                        const bytesPerSecond = Number(ev.bytesPerSecond ?? ev.speed);
-                        emit({
-                            phase: ev.type === 'done' ? 'done' : (ev.type === 'error' ? 'error' : 'progress'),
-                            ok: ev.type === 'error' ? false : undefined,
-                            message: ev.detail || ev.message || ev.hint || ev.stage || '处理中…',
-                            pct: Number.isFinite(pct) ? pct : undefined,
-                            downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                                ? downloadedBytes
-                                : undefined,
-                            totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
-                            bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
-                                ? bytesPerSecond
-                                : undefined,
-                            suggestManual: !!ev.suggestManual,
-                            raw: ev,
-                        });
-                    },
-                });
-                if (res.cancelled || signal.aborted) {
-                    emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                    return { ok: false, cancelled: true, error: 'cancelled' };
-                }
-                if (!res.ok) {
-                    const err = res.error || res.data?.message || 'GPU 支持安装失败';
-                    emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                    return { ok: false, error: err, raw: res.data };
-                }
-                emit({ phase: 'progress', message: '正在重启引擎以加载运行库…', pct: 92 });
-                if (engineProc) {
-                    stopEngineProcess();
-                    await sleep(800);
-                }
-                const ensure2 = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
-                if (!ensure2.ok) {
-                    const msg = (res.data?.message || 'GPU 支持已安装') + '（引擎重启失败，请手动检测引擎）';
-                    emit({ phase: 'done', ok: true, message: msg, pct: 100 });
-                    return { ok: true, restarted: false, message: msg, ...(res.data || {}) };
-                }
-                const statusRes = await getGpuRuntime(ensure2.baseUrl, { timeoutMs: 20000 });
-                const message = statusRes.data?.hint || res.data?.message || 'GPU 支持已就绪';
-                emit({ phase: 'done', ok: true, message, pct: 100 });
-                return {
-                    ok: true,
-                    restarted: true,
-                    probe: statusRes.data || res.data?.probe,
-                    message,
-                    ...(res.data || {}),
-                };
-            }
-
-            // models — optionally install GPU runtime first when missing
-            try {
-                const gpuStatus = await getGpuRuntime(baseUrl, { timeoutMs: 15000 });
-                const st = gpuStatus.data?.status;
-                if (gpuStatus.ok && (st === 'need_install' || st === 'partial')) {
-                    if (payload.skipGpuPrestep) {
-                        emit({
-                            phase: 'progress',
-                            message: '已跳过自动安装 GPU 支持（可稍后单独修复）',
-                            pct: 36,
-                        });
-                    } else {
-                        emit({
-                            phase: 'progress',
-                            message: gpuStatus.data?.hint || '检测到 GPU，先安装 CUDA 运行库…',
-                            pct: 4,
-                        });
-                        const gpuRes = await ensureGpuRuntimeStream(baseUrl, { force: false }, {
-                            timeoutMs: 1800000,
-                            signal,
-                            onEvent: (ev) => {
-                                const pct = Number(ev.percent);
-                                const mapped = Number.isFinite(pct) ? Math.min(35, Math.round(pct * 0.35)) : undefined;
-                                const downloadedBytes = Number(
-                                    ev.downloadedBytes ?? ev.received ?? ev.downloaded,
-                                );
-                                const totalBytes = Number(ev.totalBytes ?? ev.totalSize);
-                                const bytesPerSecond = Number(ev.bytesPerSecond ?? ev.speed);
-                                emit({
-                                    phase: 'progress',
-                                    message: `GPU：${ev.detail || ev.message || ev.stage || '安装中…'}`,
-                                    pct: mapped,
-                                    downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                                        ? downloadedBytes
-                                        : undefined,
-                                    totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
-                                    bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
-                                        ? bytesPerSecond
-                                        : undefined,
-                                    suggestManual: !!ev.suggestManual,
-                                    raw: ev,
-                                });
-                            },
-                        });
-                        if (gpuRes.cancelled || signal.aborted) {
-                            emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                            return { ok: false, cancelled: true, error: 'cancelled' };
-                        }
-                        if (!gpuRes.ok) {
-                            emit({
-                                phase: 'progress',
-                                message: `GPU 预装未完成（${gpuRes.error || gpuRes.data?.message || '继续下载模型'}），先继续模型/运行库…`,
-                                pct: 36,
-                            });
-                        } else {
-                            if (engineProc) {
-                                stopEngineProcess();
-                                await sleep(600);
-                            }
-                            const ensureAfterGpu = await ensureEngineRunning({ ...optionsWithHf, forceRestart: true });
-                            if (!ensureAfterGpu.ok) {
-                                // Do not abort models/runtime download — one-click fix can continue
-                                // and a later round / ensure-gpu step can recover.
-                                emit({
-                                    phase: 'progress',
-                                    message: 'GPU 安装后引擎重启失败，仍继续下载模型/运行库…',
-                                    pct: 36,
-                                });
-                            } else {
-                                ensure = ensureAfterGpu;
-                                baseUrl = ensureAfterGpu.baseUrl || baseUrl;
-                                emit({ phase: 'progress', message: 'GPU 支持已处理，开始下载模型…', pct: 38 });
-                            }
-                        }
-                    }
-                }
-            } catch { /* ignore optional GPU pre-step */ }
-
-            // models — only selected IDs (do not merge profile when explicit list is sent)
-            const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-            const allSelected = Array.isArray(payload.modelIds)
-                ? payload.modelIds.map((id) => String(id || '').trim()).filter(Boolean)
-                : [];
-            const sakuraIds = allSelected.filter((id) => sakuraCatalog.isSakuraMtModel(id));
-            const engineIds = allSelected.filter((id) => !sakuraCatalog.isSakuraMtModel(id));
-            const useExplicitSelection = allSelected.length > 0;
-            const profile = useExplicitSelection
-                ? undefined
-                : (payload.profile || options.engineProfile || 'balanced');
-
-            if (!useExplicitSelection && !profile) {
-                emit({ phase: 'error', ok: false, message: '未选择要下载的模型', pct: 0 });
-                return { ok: false, error: '未选择要下载的模型' };
-            }
-
-            const doneIds = [];
-            if (engineIds.length || profile) {
-                emit({
-                    phase: 'progress',
-                    message: useExplicitSelection
-                        ? `开始下载引擎模型（${engineIds.join(', ')}）…`
-                        : `开始下载模型（档位 ${profile}）…`,
-                    pct: 40,
-                });
-                const res = await downloadModelsStream(baseUrl, {
-                    profile: profile || undefined,
-                    modelIds: engineIds.length ? engineIds : undefined,
-                    hfEndpoint,
-                    hfToken: hfToken || undefined,
-                    force: !!payload.force,
-                }, {
-                    timeoutMs: 1800000,
-                    signal,
-                    onEvent: (ev) => {
-                        const stage = String(ev.stage || '').toLowerCase();
-                        let pct = Number(ev.percent);
-                        const downloadedBytes = Number(
-                            ev.downloadedBytes ?? ev.received ?? ev.downloaded,
-                        );
-                        // Do not fall back to ev.total — engine SSE uses `total` for model count.
-                        const totalBytes = Number(ev.totalBytes ?? ev.totalSize);
-                        const bytesPerSecond = Number(ev.bytesPerSecond ?? ev.speed);
-                        // Pip extras often omit percent; synthesize from byte counters.
-                        if (!Number.isFinite(pct)
-                            && Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                            && Number.isFinite(totalBytes) && totalBytes > 0) {
-                            pct = Math.max(0, Math.min(99, Math.round((downloadedBytes / totalBytes) * 100)));
-                        }
-                        let mapped;
-                        if (Number.isFinite(pct)) {
-                            if (stage === 'pip') {
-                                // Reserve 40–58% for dependency wheels (torch etc.).
-                                mapped = Math.min(58, 40 + Math.round(pct * 0.18));
-                            } else {
-                                mapped = Math.min(85, 58 + Math.round(pct * 0.27));
-                            }
-                        }
-                        const detail = ev.detail || ev.message || '';
-                        const modelId = ev.modelId ? ` [${ev.modelId}]` : '';
-                        emit({
-                            phase: ev.type === 'done' ? 'progress' : (ev.type === 'error' ? 'error' : 'progress'),
-                            ok: ev.type === 'error' ? false : undefined,
-                            message: `${detail}${modelId}`.trim() || '下载中…',
-                            pct: mapped,
-                            modelId: modelId || ev.modelId || undefined,
-                            index: Number.isFinite(Number(ev.index)) ? Number(ev.index) : undefined,
-                            downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                                ? downloadedBytes
-                                : undefined,
-                            totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
-                            bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
-                                ? bytesPerSecond
-                                : undefined,
-                            suggestManual: !!ev.suggestManual,
-                            raw: ev,
-                        });
-                    },
-                });
-                if (res.cancelled || signal.aborted) {
-                    emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                    return { ok: false, cancelled: true, error: 'cancelled' };
-                }
-                if (!res.ok) {
-                    const rawMsg = res.error || res.data?.message || res.data?.error || '模型下载失败';
-                    const hint = /connecttimeout|10060|timed out|internet connection|connection reset|10054/i.test(String(rawMsg))
-                        && !hfEndpoint
-                        ? '（可在设置中填写 Hugging Face 镜像 https://hf-mirror.com 后重试）'
-                        : /gated|authorized list|门禁/i.test(String(rawMsg)) && !hfToken
-                            ? '（请在设置 → 网络填写 Hugging Face Token，并在官网同意模型条款后重试）'
-                            : '';
-                    const err = `${rawMsg}${hint}`;
-                    emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                    return { ok: false, error: err, raw: res.data };
-                }
-                const results = Array.isArray(res.data?.results) ? res.data.results : [];
-                doneIds.push(...results.filter((r) => r?.ok).map((r) => r.id).filter(Boolean));
-            }
-
-            if (sakuraIds.length) {
-                const sakuraMt = require('./sakura-mt');
-                for (let i = 0; i < sakuraIds.length; i += 1) {
-                    if (signal.aborted) {
-                        emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                        return { ok: false, cancelled: true, error: 'cancelled' };
-                    }
-                    const sid = sakuraIds[i];
-                    const basePct = 85 + Math.round((i / Math.max(1, sakuraIds.length)) * 14);
-                    emit({
-                        phase: 'progress',
-                        message: `下载 Sakura（${sid}）${i + 1}/${sakuraIds.length}…`,
-                        pct: basePct,
-                    });
-                    const pull = await sakuraMt.pullSakuraModel({
-                        modelId: sid,
-                        force: !!payload.force,
-                        signal,
-                        onProgress: (p) => {
-                            const pct = Number(p?.pct ?? p?.percent);
-                            const downloadedBytes = Number(
-                                p?.downloadedBytes ?? p?.received ?? p?.downloaded,
-                            );
-                            const totalBytes = Number(p?.totalBytes ?? p?.total);
-                            const bytesPerSecond = Number(p?.bytesPerSecond ?? p?.speed);
-                            emit({
-                                phase: p?.phase === 'done' ? 'progress' : (p?.phase || 'progress'),
-                                message: p?.message || `Sakura ${sid}`,
-                                pct: Number.isFinite(pct)
-                                    ? Math.min(99, basePct + Math.round(pct * 0.14 / sakuraIds.length))
-                                    : undefined,
-                                downloadedBytes: Number.isFinite(downloadedBytes) && downloadedBytes >= 0
-                                    ? downloadedBytes
-                                    : undefined,
-                                totalBytes: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
-                                bytesPerSecond: Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
-                                    ? bytesPerSecond
-                                    : undefined,
-                            });
-                        },
-                    });
-                    if (!pull?.ok) {
-                        const err = pull?.error || `Sakura ${sid} 下载失败`;
-                        emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                        return { ok: false, error: err };
-                    }
-                    doneIds.push(sid);
-                }
-            }
-
-            const message = `模型下载完成${doneIds.length ? `：${doneIds.join(', ')}` : ''}`;
-            emit({ phase: 'done', ok: true, message, pct: 100 });
-            return { ok: true, message, results: doneIds.map((id) => ({ id, ok: true })) };
-        } catch (err) {
-            const msg = err.message || String(err);
-            emit({ phase: 'error', ok: false, message: msg, pct: 0 });
-            return { ok: false, error: msg };
-        } finally {
-            downloadBusy = false;
-            downloadAbort = null;
-        }
+        return getEngineDownloadJob().runEngineDownload(payload, _event);
     });
 
     register('transub-engine-generate-subtitles', async (event, payload = {}) => {
@@ -2686,7 +1055,9 @@ function setupEngineBridge(api, {
 
     register('transub-engine-cancel', async () => {
         batchCancelled = true;
+        itemCancelled = false;
         abortBatchMtAdapter();
+        try { itemWorkAbortController?.abort(); } catch { /* ignore */ }
         if (opusTextAbortController) {
             try {
                 opusTextAbortController.abort();
@@ -2699,6 +1070,13 @@ function setupEngineBridge(api, {
                 await cancelJob(engineBaseUrl, jobId);
             } catch { /* ignore */ }
         }
+        // Post-task blank / ellipsis / Hy-MT may hold llama outside the engine job.
+        try {
+            await require('./engine-cancel-llm').interruptLocalMtLlm({
+                scope: 'batch',
+                engineBaseUrl,
+            });
+        } catch { /* ignore */ }
         // SenseVoice model.generate() / long MT ignore cooperative cancel.
         // Kill the managed engine process so waitJob unblocks immediately.
         if (engineProc) {
@@ -2710,6 +1088,47 @@ function setupEngineBridge(api, {
             appendEngineLogLine('[engine] 已请求取消');
         }
         return { ok: true, cancelled: true };
+    });
+
+    register('transub-engine-cancel-current', async () => {
+        if (!batchRunning) {
+            return { ok: false, cancelled: false, error: '没有进行中的字幕批次', code: 'no_batch' };
+        }
+        // Keep batchCancelled false so the loop continues after this file.
+        itemCancelled = true;
+        try { itemWorkAbortController?.abort(); } catch { /* ignore */ }
+        // Do not abortBatchMtAdapter — remaining items still need the external MT server.
+        if (opusTextAbortController) {
+            try {
+                opusTextAbortController.abort();
+            } catch { /* ignore */ }
+            opusTextAbortController = null;
+        }
+        const jobId = currentJobId;
+        if (jobId && engineBaseUrl) {
+            try {
+                await cancelJob(engineBaseUrl, jobId);
+            } catch { /* ignore */ }
+        }
+        // Kill the engine only while an ASR/MT job is in flight. Post-task QC/LLM
+        // must not be restarted by the closed loop after a row stop.
+        if (jobId && engineProc) {
+            try {
+                stopEngineProcess();
+                appendEngineLogLine('[engine] 停止本条：已停止引擎进程（其余任务继续）');
+            } catch { /* ignore */ }
+        } else {
+            appendEngineLogLine('[engine] 已请求停止当前条目（其余任务继续）');
+        }
+        // Always reclaim local MT LLM: blank/ellipsis may run with or without a job id,
+        // and leftover llama can block the next queue item until cold restart anyway.
+        try {
+            await require('./engine-cancel-llm').interruptLocalMtLlm({
+                scope: 'item',
+                engineBaseUrl,
+            });
+        } catch { /* ignore */ }
+        return { ok: true, cancelled: true, scope: 'current' };
     });
 
     register('transub-engine-job-checkpoint', async (_event, payload = {}) => {
@@ -2826,14 +1245,16 @@ function setupEngineBridge(api, {
                         resumeOverrides = built.overrides || {};
                         const mtModeZh = useSmartTranslate
                             ? '智能翻译'
-                            : (useSakuraMt ? 'Sakura' : '外部');
+                            : (useSakuraMt
+                                ? (sakuraCatalog.translateModeLabel?.('llm') || '推理翻译')
+                                : '外部');
                         appendEngineLogLine(
-                            `[engine] 断点恢复 · 外部翻译适配器 · ${mtModeZh} · ${mtAdapter.url}`,
+                            `[engine] 从原文继续 · 外部翻译适配器 · ${mtModeZh} · ${mtAdapter.url}`,
                             invokeSender,
                         );
                     }
 
-                    appendEngineLogLine(`[engine] 从断点恢复 ${fromJobId}…`, invokeSender);
+                    appendEngineLogLine(`[engine] 从原文继续翻译 ${fromJobId}…`, invokeSender);
                     const outcome = await resumeEngineJobAndWait({
                         baseUrl: ensure.baseUrl,
                         fromJobId,
@@ -2843,7 +1264,17 @@ function setupEngineBridge(api, {
                         shouldStop: () => batchCancelled,
                         onEvent: (ev) => {
                             if (batchCancelled) return;
-                            const fields = progressFieldsFromWaitEvent(ev);
+                            const rawFields = progressFieldsFromWaitEvent(ev);
+                            if (!rawFields) {
+                                currentJobId = String(ev?.data?.id || currentJobId || '');
+                                return;
+                            }
+                            let fields = sanitizeBatchEngineSseProgress(rawFields);
+                            const resumePath = payload.mediaPath || '';
+                            fields = softenTranslateProgressFields(
+                                fields,
+                                getTranslateProgressSession(resumePath),
+                            );
                             currentJobId = String(ev?.data?.id || currentJobId || '');
                             if (String(fields.stage || '').toLowerCase() === 'translate'
                                 || String(fields.stage || '').toLowerCase() === 'mt') {
@@ -2851,9 +1282,9 @@ function setupEngineBridge(api, {
                             }
                             sendProgress(invokeSender, {
                                 ...fields,
-                                file: payload.mediaPath || '',
+                                file: resumePath,
                                 jobId: currentJobId,
-                                detail: fields.detail || `断点恢复中（自 ${fromJobId}）…`,
+                                detail: fields.detail || `从原文继续翻译（自 ${fromJobId}）…`,
                             });
                         },
                     });
@@ -2862,7 +1293,7 @@ function setupEngineBridge(api, {
                         return {
                             ok: false,
                             cancelled: !!outcome.cancelled,
-                            error: friendlyEngineError(outcome.error || '断点恢复失败'),
+                            error: friendlyEngineError(outcome.error || '从原文继续翻译失败'),
                             code: outcome.code,
                             resumedFrom: fromJobId,
                         };
@@ -2870,7 +1301,7 @@ function setupEngineBridge(api, {
                     const result = outcome.result || outcome.waited?.data?.result || null;
                     const outPaths = extractOutputPaths(result);
                     appendEngineLogLine(
-                        `[engine] 断点恢复完成 → ${path.basename(outPaths.subtitlePath || outPaths.targetSubtitlePath || '')}`,
+                        `[engine] 从原文继续翻译完成 → ${path.basename(outPaths.subtitlePath || outPaths.targetSubtitlePath || '')}`,
                         invokeSender,
                     );
                     return {
@@ -2922,6 +1353,24 @@ function setupEngineBridge(api, {
                 logLines: payload.logLines,
                 engineLogPath,
                 d01Version: payload.d01Version,
+                secondOpinion: payload.secondOpinion || null,
+                badPool: (() => {
+                    if (payload.badPool) return payload.badPool;
+                    try {
+                        const { summarizeBadPoolJsonl } = require('./asr-bad-pool-draft');
+                        const sum = summarizeBadPoolJsonl({ sampleLimit: 8 });
+                        return {
+                            dir: sum.dir,
+                            total: sum.total,
+                            open: sum.open,
+                            byKind: sum.byKind,
+                            files: sum.files,
+                            samples: sum.samples,
+                        };
+                    } catch {
+                        return null;
+                    }
+                })(),
                 extra: {
                     note: 'Local diagnostics only — not uploaded.',
                     concurrency: {
@@ -2977,6 +1426,28 @@ function setupEngineBridge(api, {
         }
     });
 
+    /** Open Thunder (迅雷) for http(s) wheel URLs via thunder:// tasks (all URLs, paced). */
+    register('transub-engine-open-thunder-urls', async (_event, payload = {}) => {
+        try {
+            const { shell } = require('electron');
+            const { openThunderUrls } = require('./download-tool-launch');
+            return await openThunderUrls(shell, payload.urls);
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    /** Open a download manager (thunder / idm / motrix) for the full URL list. */
+    register('transub-engine-open-download-tool', async (_event, payload = {}) => {
+        try {
+            const { shell } = require('electron');
+            const { openDownloadTool } = require('./download-tool-launch');
+            return await openDownloadTool(payload.tool || payload.id, payload.urls, { shell });
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
     register('transub-engine-open-download-folder', async (_event, payload = {}) => {
         try {
             const { shell } = require('electron');
@@ -3019,176 +1490,21 @@ function setupEngineBridge(api, {
         }
     });
 
-    register('transub-engine-pick-whl', async (event, payload = {}) => {
-        try {
-            const { BrowserWindow, dialog } = require('electron');
-            const win = BrowserWindow.fromWebContents(event.sender);
-            if (win && !win.isDestroyed()) {
-                if (win.isMinimized()) win.restore();
-                win.show();
-                win.focus();
-            }
-            const result = await dialog.showOpenDialog(win || undefined, {
-                title: String(payload.title || '选择已下载的 .whl 文件（可多选）'),
-                properties: ['openFile', 'multiSelections'],
-                filters: [
-                    { name: 'Python Wheel (*.whl)', extensions: ['whl'] },
-                    { name: '所有文件', extensions: ['*'] },
-                ],
-                defaultPath: String(payload.defaultPath || '').trim() || undefined,
-            });
-            if (result.canceled || !result.filePaths?.length) {
-                return { ok: true, canceled: true, paths: [] };
-            }
-            const checked = validateWhlFiles(result.filePaths);
-            if (!checked.ok) return checked;
-            return { ok: true, canceled: false, paths: checked.paths };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-engine-install-local-wheels', async (_event, payload = {}) => {
-        if (batchRunning) {
-            return { ok: false, error: '字幕任务进行中，请先停止任务再安装组件' };
-        }
-        if (downloadBusy) {
-            return { ok: false, error: '已有下载/安装任务正在进行' };
-        }
-        const kind = normalizeEngineDownloadKind(payload.kind || 'gpu');
-        const checked = validateWhlFiles(payload.paths || payload.wheelPaths || []);
-        if (!checked.ok) return checked;
-
-        downloadBusy = true;
-        downloadAbort = new AbortController();
-        const signal = downloadAbort.signal;
-        const emit = (info) => {
-            broadcastEngineDownloadProgress({ ...(info || {}), kind, source: 'local-whl' });
-        };
-
-        try {
-            const options = await readMergedOptions(payload);
-            const installPath = resolveEngineInstallPath(options.engineInstallPath);
-            const pythonPath = resolveEngineRuntimePython(installPath);
-            if (!pythonPath) {
-                const err = '找不到引擎 Python（请确认引擎目录含 runtime\\python.exe）';
-                emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                return { ok: false, error: err };
-            }
-
-            if (engineProc) {
-                emit({ phase: 'progress', message: '正在停止引擎以便安装…', pct: 2 });
-                stopEngineProcess();
-                await sleep(600);
-            }
-
-            // onnxruntime (CPU) and onnxruntime-gpu are mutually exclusive.
-            const hasOrtGpuWhl = checked.paths.some((p) => /onnxruntime[_-]gpu/i.test(path.basename(p)));
-            if (hasOrtGpuWhl) {
-                emit({
-                    phase: 'progress',
-                    message: '正在卸载 CPU 版 onnxruntime（与 GPU 版互斥）…',
-                    pct: 5,
-                });
-                try {
-                    await new Promise((resolve) => {
-                        const child = spawn(
-                            pythonPath,
-                            ['-m', 'pip', 'uninstall', '-y', 'onnxruntime'],
-                            { windowsHide: true, stdio: 'ignore' },
-                        );
-                        const t = setTimeout(() => {
-                            try { child.kill(); } catch (_) { /* ignore */ }
-                            resolve();
-                        }, 60_000);
-                        child.on('close', () => {
-                            clearTimeout(t);
-                            resolve();
-                        });
-                        child.on('error', () => {
-                            clearTimeout(t);
-                            resolve();
-                        });
-                    });
-                } catch (_) { /* ignore */ }
-            }
-
-            emit({
-                phase: 'progress',
-                message: `正在本地安装 ${checked.paths.length} 个 wheel…`,
-                pct: 8,
-            });
-
-            const res = await installLocalWheels({
-                pythonPath,
-                wheelPaths: checked.paths,
-                signal,
-                onProgress: (ev) => {
-                    const pct = Number(ev.percent);
-                    emit({
-                        phase: ev.type === 'done' ? 'progress' : (ev.type === 'error' ? 'error' : 'progress'),
-                        message: ev.detail || ev.message || '安装中…',
-                        pct: Number.isFinite(pct) ? Math.min(88, pct) : undefined,
-                        raw: ev,
-                    });
-                },
-            });
-
-            if (res.cancelled || signal.aborted) {
-                emit({ phase: 'cancelled', ok: false, message: '已取消', pct: 0 });
-                return { ok: false, cancelled: true, error: 'cancelled' };
-            }
-            if (!res.ok) {
-                const err = res.error || '本地安装失败';
-                emit({ phase: 'error', ok: false, message: err, pct: 0 });
-                return { ok: false, error: err, logTail: res.logTail };
-            }
-
-            emit({ phase: 'progress', message: '正在重启引擎…', pct: 92 });
-            const ensure2 = await ensureEngineRunning({ ...options, forceRestart: true });
-            if (!ensure2.ok) {
-                const msg = '本地 wheel 已安装（引擎重启失败，请手动检测引擎）';
-                emit({ phase: 'done', ok: true, message: msg, pct: 100 });
-                return {
-                    ok: true,
-                    restarted: false,
-                    message: msg,
-                    installed: res.installed,
-                    kind,
-                };
-            }
-
-            let message = `本地安装完成（${(res.installed || []).join(', ')}）`;
-            let probe = null;
-            try {
-                if (kind === 'demucs') {
-                    const statusRes = await getAudioSeparateRuntime(ensure2.baseUrl, { timeoutMs: 20000 });
-                    probe = statusRes.data || null;
-                    message = statusRes.data?.hint || message;
-                } else if (kind === 'gpu') {
-                    const statusRes = await getGpuRuntime(ensure2.baseUrl, { timeoutMs: 20000 });
-                    probe = statusRes.data || null;
-                    message = statusRes.data?.hint || message;
-                }
-            } catch (_) { /* ignore probe errors */ }
-
-            emit({ phase: 'done', ok: true, message, pct: 100 });
-            return {
-                ok: true,
-                restarted: true,
-                message,
-                installed: res.installed,
-                kind,
-                probe,
-            };
-        } catch (err) {
-            const msg = err.message || String(err);
-            emit({ phase: 'error', ok: false, message: msg, pct: 0 });
-            return { ok: false, error: msg };
-        } finally {
-            downloadBusy = false;
-            downloadAbort = null;
-        }
+    registerLocalWhlIpc(register, {
+        isBatchRunning: () => batchRunning,
+        isDownloadBusy: () => downloadBusy,
+        setDownloadBusy: (v) => { downloadBusy = !!v; },
+        getDownloadAbort: () => downloadAbort,
+        setDownloadAbort: (ac) => { downloadAbort = ac; },
+        readMergedOptions,
+        resolveEngineInstallPath,
+        resolveEngineRuntimePython,
+        getEngineProc: () => engineProc,
+        stopEngineProcess,
+        sleep,
+        ensureEngineRunning,
+        getAudioSeparateRuntime,
+        getGpuRuntime,
     });
 
     register('transub-engine-get-log-path', async () => ({
@@ -3297,514 +1613,21 @@ function deferredEnsureTwai() {
 }
 
 /**
- * Text-only Opus MT for editor / cue arrays (no media ASR).
+ * Text-only Opus MT for editor / cue arrays — removed; callers should use LLM/smart.
  * @param {{ cues: Array, language?: string, mtModel?: string, glossary?: object, fileName?: string }} payload
  * @param {{ onProgress?: Function, options?: object }} [deps]
  */
 async function translateCuesWithEngineOpus(payload = {}, deps = {}) {
-    const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
-    const saved = (() => {
-        try {
-            return loadSettings(() => {
-                try {
-                    const { getAppRoot } = require('./app-paths');
-                    return getAppRoot();
-                } catch {
-                    return process.cwd();
-                }
-            }).options || {};
-        } catch {
-            return {};
-        }
-    })();
-    const options = mergeEngineOptions({
-        ...stripPostTaskFields(saved),
-        ...stripPostTaskFields(deps.options || payload.options || {}),
-        ...(payload.options && typeof payload.options === 'object' ? payload.options : {}),
-    });
-    options.engineInstallPath = resolveEngineInstallPath(options.engineInstallPath);
-    const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-    const normalized = rangeAsrPolicy.normalizeOpusTextCues(payload.cues);
-    if (!normalized.length) {
-        return { ok: false, error: '没有可翻译的字幕', code: 'empty_cues' };
-    }
-
-    const mtModel = rangeAsrPolicy.resolveNativeOpusMtModel(options, payload, {
-        isSakuraMtModel: (id) => sakuraCatalog.isSakuraMtModel(id),
-        isLlmInferenceMtModel: (id) => !!sakuraCatalog.isLlmInferenceMtModel?.(id),
-    });
-
-    const language = String(payload.language || options.language || 'ja').trim() || 'ja';
-    if (opusTextAbortController) {
-        try {
-            opusTextAbortController.abort();
-        } catch { /* ignore */ }
-    }
-    opusTextAbortController = new AbortController();
-    const signal = opusTextAbortController.signal;
-    const computeLock = require('./compute-task-lock');
-    try {
-        return await computeLock.runWithComputeLock({
-            kind: 'engine_opus_text',
-            owner: '字幕编辑器',
-            source: 'translateCuesWithEngineOpus',
-        }, async () => {
-            onProgress?.({
-                phase: 'start',
-                message: '正在启动引擎机器翻译…',
-                pct: 2,
-                cueTotal: normalized.length,
-            });
-            const ensure = await ensureEngineRunning(options);
-            if (!ensure.ok) return ensure;
-            if (signal.aborted) {
-                return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-            }
-
-            const CHUNK = 64;
-            const outByIndex = new Map();
-            const sourceForSanitize = normalized.map((c) => ({
-                index: c.index,
-                text: c.text,
-            }));
-            for (let offset = 0; offset < normalized.length; offset += CHUNK) {
-                if (signal.aborted) {
-                    return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-                }
-                const chunk = normalized.slice(offset, offset + CHUNK);
-                onProgress?.({
-                    phase: 'chunk',
-                    chunk: Math.floor(offset / CHUNK) + 1,
-                    total: Math.ceil(normalized.length / CHUNK),
-                    message: `机器翻译 ${offset + 1}–${offset + chunk.length}/${normalized.length}`,
-                    pct: Math.round((offset / Math.max(1, normalized.length)) * 90) + 5,
-                    cueTotal: normalized.length,
-                });
-                let res;
-                try {
-                    res = await translateCuesMt(ensure.baseUrl, {
-                        cues: chunk.map((c) => ({
-                            id: c.id,
-                            text: c.text,
-                            start: c.start,
-                            end: c.end,
-                        })),
-                        language,
-                        targetLanguage: 'zh',
-                        mtModel: mtModel || null,
-                        device: options.device || 'auto',
-                    }, { signal });
-                } catch (err) {
-                    if (signal.aborted || err?.name === 'AbortError') {
-                        return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-                    }
-                    throw err;
-                }
-                if (signal.aborted) {
-                    return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-                }
-                if (!res.ok) {
-                    if (res.cancelled || res.code === 'cancelled') {
-                        return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-                    }
-                    if (res.code === 'timeout') {
-                        return {
-                            ok: false,
-                            code: 'timeout',
-                            error: res.error || '请求超时',
-                            status: res.status,
-                        };
-                    }
-                    return {
-                        ok: false,
-                        error: friendlyEngineError(
-                            res.error || res.data?.message || res.data?.error
-                            || `机器翻译失败 (HTTP ${res.status || 0})`,
-                        ),
-                        code: res.code || res.data?.code,
-                        status: res.status,
-                    };
-                }
-                for (const u of res.data?.cues || []) {
-                    const idx = Number(u?.id);
-                    if (!Number.isInteger(idx)) continue;
-                    outByIndex.set(idx, String(u?.text ?? ''));
-                }
-            }
-
-            const outRaw = normalized.map((c) => ({
-                index: c.index,
-                text: outByIndex.has(c.index) ? outByIndex.get(c.index) : '',
-            }));
-            let cleaned = { cues: outRaw, changed: 0, flags: {} };
-            try {
-                const mtSanitize = require('../src/js/mt-sanitize-core');
-                cleaned = mtSanitize.sanitizeMtCues(outRaw, sourceForSanitize, {
-                    glossary: payload.glossary || null,
-                    unifyNames: true,
-                });
-            } catch (_) { /* ignore */ }
-
-            onProgress?.({
-                phase: 'done',
-                message: `机器翻译完成，共 ${cleaned.cues.length} 条`,
-                pct: 100,
-                cueTotal: cleaned.cues.length,
-            });
-            return {
-                ok: true,
-                cues: cleaned.cues,
-                summary: `机器翻译完成，共 ${cleaned.cues.length} 条`
-                    + (cleaned.changed ? `（清理 ${cleaned.changed}）` : ''),
-                via: 'engine-opus',
-                stats: {
-                    cues: cleaned.cues.length,
-                    sanitized: cleaned.changed,
-                    mtModel: mtModel || 'auto',
-                },
-            };
-        });
-    } finally {
-        if (opusTextAbortController && opusTextAbortController.signal === signal) {
-            opusTextAbortController = null;
-        }
-    }
-}
-
-async function transcribeRangeWithEngine(payload = {}, deps = {}) {
-    const os = require('os');
-    const mediaPath = path.resolve(String(payload.mediaPath || payload.videoPath || ''));
-    const rangeWin = rangeAsrPolicy.clampRangeWindow({
-        startMs: payload.startMs,
-        endMs: payload.endMs,
-        padMs: payload.padMs,
-    });
-    const startMs = rangeWin.startMs;
-    const endMs = rangeWin.endMs;
-    const padMs = rangeWin.padMs;
-    const onProgress = typeof deps.onProgress === 'function' ? deps.onProgress : null;
-    const options = mergeEngineOptions(deps.options || payload.options || {});
-    const allowDuringBatch = !!(
-        payload.allowDuringBatch
-        || deps.allowDuringBatch
-        || payload._skipComputeLock
-        || deps._skipComputeLock
-        || payload._batchMode
-    );
-
-    if (!mediaPath || !fs.existsSync(mediaPath)) {
-        return { ok: false, error: '媒体文件不存在' };
-    }
-    if (endMs - startMs < 200) {
-        return { ok: false, error: '字幕时间范围过短，无法重转写' };
-    }
-    if (batchRunning && !allowDuringBatch) {
-        return { ok: false, error: '已有字幕任务正在运行，请稍后再试', code: 'compute_busy' };
-    }
-
-    const computeLock = require('./compute-task-lock');
-    const lockPayload = {
-        _skipComputeLock: allowDuringBatch || payload._skipComputeLock || deps._skipComputeLock,
-        _batchMode: payload._batchMode || deps._batchMode,
+    return {
+        ok: false,
+        error: '机器翻译（Opus）已移除，请改用推理翻译或智能翻译',
+        code: 'opus_removed',
     };
-
-    return computeLock.runWithComputeLockUnlessNested({
-        kind: 'engine_range',
-        owner: allowDuringBatch ? '引擎低置信二意见' : '字幕编辑器',
-        source: 'transcribeRangeWithEngine',
-    }, lockPayload, async () => {
-        try {
-            require('./local-llm-reclaim').reclaimLocalLlmBeforeEngineJob(appendEngineLogLine);
-        } catch (_) { /* ignore */ }
-        const ensure = await ensureEngineRunning(options);
-        if (!ensure.ok) return ensure;
-
-        const clipStartMs = rangeWin.clipStartMs;
-        const clipEndMs = rangeWin.clipEndMs;
-        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-engine-re-'));
-        const clipPath = path.join(tempRoot, 'clip.wav');
-        const outputDir = path.join(tempRoot, 'out');
-        fs.mkdirSync(outputDir, { recursive: true });
-
-        try {
-            batchCancelled = false;
-            onProgress?.({ stage: 'extract', detail: '截取音频片段' });
-            const { extractMediaRange } = require('./ffmpeg-bridge');
-            const clip = await extractMediaRange(mediaPath, clipStartMs, clipEndMs, clipPath, {
-                ffmpegPath: options.ffmpegPath || payload.ffmpegPath,
-            });
-            if (!clip.ok) {
-                return {
-                    ok: false,
-                    cancelled: !!clip.cancelled || batchCancelled,
-                    error: friendlyEngineError(clip.error || '截取音频失败'),
-                };
-            }
-            if (batchCancelled) {
-                return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-            }
-
-            const task = mapTaskToEngineTask(
-                payload.options?.task === 'translate' ? 'translate' : 'transcribe',
-                { smartTranslate: false },
-            );
-            // Never pass Sakura/smart ids as native Engine Opus mtModel.
-            const sakuraCatalog = require('../src/js/sakura-mt-catalog-core');
-            const mtModel = rangeAsrPolicy.resolveRangeAsrMtModel(options, {
-                isSakuraMtModel: (id) => sakuraCatalog.isSakuraMtModel(id),
-                isLlmInferenceMtModel: (id) => !!sakuraCatalog.isLlmInferenceMtModel?.(id),
-            });
-
-            const primaryAsr = String(
-                payload.asrModel || options.engineAsrModel || 'sensevoice-small',
-            ).trim() || 'sensevoice-small';
-            // SenseVoice 对短窗/AV 常空：有必要时再换已安装的兄弟 ASR 试一次
-            // Callers (e.g. second opinion) may pass an explicit short list to avoid tiny/turbo churn.
-            const asrCandidates = (() => {
-                const forced = payload.asrCandidates || deps.asrCandidates;
-                if (Array.isArray(forced) && forced.length) {
-                    return [...new Set(forced.map((id) => String(id || '').trim()).filter(Boolean))];
-                }
-                return resolveAsrFailoverCandidates(
-                    primaryAsr,
-                    options.engineInstallPath,
-                );
-            })();
-            const isRetryableAsrFail = rangeAsrPolicy.isRetryableAsrFail;
-
-            const runAsrOnce = async (asrModel) => {
-                onProgress?.({
-                    stage: 'transcribe',
-                    detail: asrModel === primaryAsr
-                        ? '引擎推理中'
-                        : `${primaryAsr} 无结果，改用 ${asrModel}…`,
-                });
-                const created = await createJob(ensure.baseUrl, {
-                    task,
-                    mediaPath: clipPath,
-                    outputDir,
-                    language: options.language || 'auto',
-                    asrModel,
-                    mtModel,
-                    subFormats: ['srt'],
-                    device: mapDeviceForEngine(options.device),
-                    beamSize: Math.max(1, Math.min(20, Number(options.beamSize) || 5)),
-                    vad: buildVadJobOptions(options),
-                    // Short editor clips: keep VAD/denoise, skip Demucs (too heavy for range retranscribe)
-                    audio: buildAudioJobOptions({
-                        audioLightDenoise: options.audioLightDenoise,
-                        filmAudioEnhance: false,
-                        filmVadPreset: false,
-                    }, { entitled: false }),
-                    contentProfile: options.contentProfile || options.senseProfile || undefined,
-                    senseProfile: options.senseProfile || options.contentProfile || undefined,
-                    ...(options.timingAlign != null
-                        ? { timingAlign: options.timingAlign }
-                        : {}),
-                    ...(options.timingAlignModel != null
-                        && String(options.timingAlignModel).trim() !== ''
-                        ? { timingAlignModel: String(options.timingAlignModel).trim() }
-                        : {}),
-                    castNames: options.castNames || options.cast_names || undefined,
-                    releaseGpuAfter: true,
-                    sync: false,
-                }, { timeoutMs: 600000 });
-                if (!created.ok || !created.data?.id) {
-                    return {
-                        ok: false,
-                        cancelled: !!created.cancelled,
-                        error: friendlyEngineError(
-                            created.error || created.data?.message || created.data?.error || '创建引擎任务失败',
-                        ),
-                        code: created.code,
-                    };
-                }
-                // Track job so Esc → transub-engine-cancel can cancelJob(currentJobId).
-                currentJobId = created.data.id;
-                const waited = await waitJob(ensure.baseUrl, created.data.id, {
-                    shouldStop: () => batchCancelled,
-                });
-                currentJobId = '';
-                if (!waited.ok) {
-                    const errMsg = waited.error || waited.data?.error?.message || '引擎任务失败';
-                    const errCode = waited.data?.error?.code
-                        || ((waited.cancelled || batchCancelled) ? 'cancelled' : undefined);
-                    return {
-                        ok: false,
-                        cancelled: !!waited.cancelled || batchCancelled,
-                        error: friendlyEngineError(errMsg),
-                        code: errCode,
-                    };
-                }
-                const outputs = waited.data?.result?.outputs || [];
-                const outPath = outputs[0]?.path || '';
-                if (!outPath || !fs.existsSync(outPath)) {
-                    return { ok: false, error: '重转写未生成字幕文件', code: 'ASR_EMPTY' };
-                }
-                const raw = fs.readFileSync(outPath, 'utf8');
-                const { parseSubtitle } = require('./subtitle-format');
-                const parsed = parseSubtitle(raw, 'srt');
-                let cues = rangeAsrPolicy.remapClipCuesToTimeline(parsed.cues || [], clipStartMs);
-                if (!cues.length) {
-                    return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
-                }
-                // Same source-prep as batch sanitizeMtSubtitlePair: name-loop + JA domain.
-                let cleanupMeta = null;
-                try {
-                    const { cleanupAsrCues } = require('./asr-cue-cleanup');
-                    const cleaned = cleanupAsrCues(cues, {
-                        nameLoop: options.asrNameLoopClean !== false,
-                        jaAsrDomainFix: options.jaAsrDomainFix !== false,
-                    });
-                    cues = cleaned.cues;
-                    cleanupMeta = cleaned;
-                    if (cleaned.changed) {
-                        try {
-                            const { formatDomainFixLogLine, summarizeDomainFixChanges } = require('./asr-domain-fix-trace');
-                            if (cleaned.domainChanged) {
-                                const trace = summarizeDomainFixChanges([{
-                                    from: 'ja-asr-domain',
-                                    to: 'applied',
-                                    count: cleaned.domainChanged,
-                                }], 'range_asr');
-                                const line = formatDomainFixLogLine(trace);
-                                if (line) appendEngineLogLine(line, deps.invokeSender || null);
-                            }
-                            appendEngineLogLine(`[engine] 局部重转写 ${cleaned.summary}`, deps.invokeSender || null);
-                        } catch { /* log optional */ }
-                    }
-                } catch (err) {
-                    appendEngineLogLine(
-                        `[engine] 局部重转写 ASR 清理跳过：${err.message || err}`,
-                        deps.invokeSender || null,
-                    );
-                }
-                if (!cues.length) {
-                    return { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
-                }
-                // Prefer engine result cue scores when SRT parse has none.
-                try {
-                    const { pickEngineCuesForConfidence, cueHasAsrScoreMeta } = require('./asr-confidence-seed');
-                    const scored = pickEngineCuesForConfidence(waited.data?.result || {});
-                    if (scored.length && cues.some((c) => !cueHasAsrScoreMeta(c))) {
-                        const byText = new Map();
-                        for (const s of scored) {
-                            const key = String(s?.text || '').trim();
-                            if (key && cueHasAsrScoreMeta(s) && !byText.has(key)) byText.set(key, s);
-                        }
-                        if (byText.size) {
-                            cues = cues.map((c) => {
-                                if (cueHasAsrScoreMeta(c)) return c;
-                                const hit = byText.get(String(c?.text || '').trim());
-                                if (!hit) return c;
-                                return {
-                                    ...c,
-                                    avgLogprob: hit.avgLogprob ?? hit.avg_logprob,
-                                    noSpeechProb: hit.noSpeechProb ?? hit.no_speech_prob,
-                                    confidence: hit.confidence,
-                                    score: hit.score,
-                                    probability: hit.probability ?? hit.prob,
-                                    meta: hit.meta && typeof hit.meta === 'object' ? hit.meta : c.meta,
-                                };
-                            });
-                        }
-                    }
-                } catch { /* optional score enrich */ }
-                const subtitlePath = String(
-                    payload.subtitlePath || payload.sourceSubtitlePath || options.subtitlePath || '',
-                ).trim();
-                let confidenceSeed = null;
-                if (subtitlePath) {
-                    try {
-                        const { mergeRangeAsrConfidenceMeta } = require('./asr-confidence-seed');
-                        confidenceSeed = mergeRangeAsrConfidenceMeta(subtitlePath, cues, {
-                            startMs,
-                            endMs,
-                        });
-                        if (confidenceSeed?.ok && confidenceSeed.entryCount) {
-                            appendEngineLogLine(
-                                `[engine] 局部重转写已合并 ASR 置信度 ${confidenceSeed.entryCount} 条${confidenceSeed.heuristic ? '（启发式）' : ''} → ${path.basename(subtitlePath)}`,
-                                deps.invokeSender || null,
-                            );
-                        }
-                    } catch (err) {
-                        appendEngineLogLine(
-                            `[engine] 局部重转写置信度合并跳过：${err.message || err}`,
-                            deps.invokeSender || null,
-                        );
-                    }
-                }
-                onProgress?.({ stage: 'done', detail: '重转写完成' });
-                return {
-                    ok: true,
-                    cues,
-                    clipStartMs,
-                    clipEndMs,
-                    padMs,
-                    sourceStartMs: startMs,
-                    sourceEndMs: endMs,
-                    result: waited.data?.result,
-                    task,
-                    asrModel,
-                    confidenceSeed,
-                    asrCleanup: cleanupMeta
-                        ? {
-                            nameLoopsChanged: cleanupMeta.nameLoopsChanged,
-                            domainChanged: cleanupMeta.domainChanged,
-                            summary: cleanupMeta.summary,
-                        }
-                        : null,
-                };
-            };
-
-            let lastFail = null;
-            for (let i = 0; i < asrCandidates.length; i += 1) {
-                const asrModel = asrCandidates[i];
-                if (batchCancelled) {
-                    return { ok: false, cancelled: true, code: 'cancelled', error: '已取消' };
-                }
-                // Avoid reusing stale SRT from a previous empty attempt
-                try {
-                    for (const name of fs.readdirSync(outputDir)) {
-                        fs.rmSync(path.join(outputDir, name), { force: true });
-                    }
-                } catch { /* ignore */ }
-                const outcome = await runAsrOnce(asrModel);
-                if (outcome.ok) return outcome;
-                lastFail = outcome;
-                if (outcome.cancelled) return outcome;
-                // Empty SenseVoice / missing Whisper → try next ASR candidate
-                if (!isRetryableAsrFail(outcome)) return outcome;
-                if (i < asrCandidates.length - 1) {
-                    try {
-                        console.warn(
-                            `[engine] 局部重转写 ${asrModel} 未成功（${outcome.error || 'unknown'}），尝试 ${asrCandidates[i + 1]}`,
-                        );
-                    } catch { /* ignore */ }
-                }
-            }
-            return lastFail || { ok: false, error: '重转写结果为空', code: 'ASR_EMPTY' };
-        } catch (err) {
-            return {
-                ok: false,
-                cancelled: err?.name === 'AbortError' || err?.code === 'cancelled' || batchCancelled,
-                error: friendlyEngineError(err?.message || String(err)),
-                code: (err?.name === 'AbortError' || batchCancelled) ? 'cancelled' : err?.code,
-            };
-        } finally {
-            currentJobId = '';
-            try {
-                fs.rmSync(tempRoot, { recursive: true, force: true });
-            } catch { /* ignore */ }
-            try {
-                require('./temp-cleanup').cleanupAfterJob();
-            } catch { /* ignore */ }
-        }
-    });
 }
 
 function stopEngineJobs() {
     batchCancelled = true;
+    itemCancelled = false;
     abortBatchMtAdapter();
     const jobId = currentJobId;
     if (jobId && engineBaseUrl) {
@@ -3818,9 +1641,33 @@ function stopEngineJobs() {
 
 function setupComputeTaskStatusIpc(register) {
     if (typeof register !== 'function') return;
-    register('transub-compute-task-status', async () => {
+    register('transub-compute-task-status', async (_event, opts = {}) => {
         const computeLock = require('./compute-task-lock');
-        return { ok: true, ...computeLock.getStatus() };
+        const explicitUrl = String(opts?.engineUrl || '').trim().replace(/\/+$/, '');
+        if (explicitUrl) {
+            computeLock.setEngineLockBaseUrl(explicitUrl);
+        } else if (engineProc && engineBaseUrl) {
+            // Only pin the live child URL — avoid probing DEFAULT when engine never started.
+            computeLock.setEngineLockBaseUrl(engineBaseUrl);
+        }
+        let llamaServer = null;
+        try {
+            const st = require('./advanced-llama-server').getServerState?.();
+            if (st) {
+                llamaServer = {
+                    modelId: st.modelId || '',
+                    nGpuLayers: st.nGpuLayers,
+                    parallelSlots: st.parallelSlots,
+                    backend: Number(st.nGpuLayers) > 0 ? 'cuda' : 'cpu',
+                };
+            }
+        } catch { /* ignore */ }
+        return {
+            ok: true,
+            ...computeLock.getStatus(),
+            batchRunning: !!batchRunning,
+            llamaServer,
+        };
     });
     register('transub-compute-task-force-release', async () => {
         const computeLock = require('./compute-task-lock');

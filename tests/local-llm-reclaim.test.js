@@ -26,17 +26,22 @@ describe('local-llm-reclaim', () => {
         lockStatus = { busy: false };
         clearCaches();
         Module._load = function patched(request, parent, isMain) {
+            if (request === './compute-task-lock' || request.endsWith('/compute-task-lock')) {
+                return {
+                    getStatus: () => ({ ...lockStatus }),
+                    getLocalStatus: () => ({ ...lockStatus }),
+                };
+            }
             if (request === './advanced-llama-server' || request.endsWith('/advanced-llama-server')) {
                 return {
                     stopLlamaServer: () => {
                         llamaStops += 1;
                         return { ok: true, stopped: true };
                     },
-                };
-            }
-            if (request === './compute-task-lock' || request.endsWith('/compute-task-lock')) {
-                return {
-                    getStatus: () => ({ ...lockStatus }),
+                    stopLlamaServerAsync: async () => {
+                        llamaStops += 1;
+                        return { ok: true, stopped: true };
+                    },
                 };
             }
             if (request === './advanced-bridge' || request.endsWith('/advanced-bridge')) {
@@ -91,11 +96,18 @@ describe('local-llm-reclaim', () => {
         assert.strictEqual(cancelAdvanced, 0);
     });
 
-    it('reclaimLocalLlmBeforeEngineJob stops llama and logs', () => {
+    it('reclaimLocalLlmBeforeEngineJob stops llama and logs', async () => {
         const logs = [];
         const { reclaimLocalLlmBeforeEngineJob } = require('../electron/local-llm-reclaim');
-        reclaimLocalLlmBeforeEngineJob((line) => logs.push(line));
+        await reclaimLocalLlmBeforeEngineJob((line) => logs.push(line));
         assert.ok(llamaStops >= 1);
         assert.ok(logs.some((l) => /腾出显存/.test(l)));
+    });
+
+    it('reclaimLocalLlmWhenEditorsGoneAsync stops idle llama without sync path', async () => {
+        const { reclaimLocalLlmWhenEditorsGoneAsync } = require('../electron/local-llm-reclaim');
+        const res = await reclaimLocalLlmWhenEditorsGoneAsync();
+        assert.strictEqual(res.action, 'idle');
+        assert.ok(llamaStops >= 1);
     });
 });

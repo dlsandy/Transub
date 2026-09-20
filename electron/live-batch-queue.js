@@ -74,6 +74,40 @@ function hasPath(mediaPath) {
 }
 
 /**
+ * Snapshot for renderer rehydrate after tray blank-reload (or other renderer restart).
+ * @returns {{
+ *   active: boolean,
+ *   paths: string[],
+ *   current: string,
+ *   currentIndex1: number,
+ *   total: number,
+ *   skipped: string[],
+ * }}
+ */
+function getSnapshot() {
+    if (!session) {
+        return {
+            active: false,
+            paths: [],
+            current: '',
+            currentIndex1: 0,
+            total: 0,
+            skipped: [],
+        };
+    }
+    const paths = session.list.map((item) => itemPath(item)).filter(Boolean);
+    const skippedPaths = paths.filter((p) => session.skipped.has(normKey(p)));
+    return {
+        active: true,
+        paths,
+        current: getCurrent(),
+        currentIndex1: getCurrentIndex1(),
+        total: paths.length,
+        skipped: skippedPaths,
+    };
+}
+
+/**
  * @param {object[]} items
  * @returns {{ ok: boolean, appended: string[], total: number, error?: string, code?: string }}
  */
@@ -179,6 +213,7 @@ module.exports = {
     getCurrent,
     getCurrentIndex1,
     clearCurrent,
+    getSnapshot,
     append,
     skip,
     consumeSkip,

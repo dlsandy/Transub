@@ -75,5 +75,20 @@ describe('retranscribe-range-plan', () => {
         });
         assert.strictEqual(spliced.replacedCount, 1);
         assert.strictEqual(list[0].text, 'new');
+
+        const credit = require('../src/js/subtitle-software-credit-core');
+        const creditList = [
+            { startMs: 0, endMs: 2000, text: credit.buildSoftwareCreditText({ lang: 'ja' }) },
+            { startMs: 5000, endMs: 7000, text: 'dialogue' },
+        ];
+        const skipCredit = plan.spliceCuesForRetranscribe(creditList, 0, 2000, [
+            { startMs: 0, endMs: 2000, text: 'asr garbage' },
+        ], {
+            mode: 'cue',
+            selectedIndex: 0,
+        });
+        assert.strictEqual(skipCredit.skippedCredit, true);
+        assert.strictEqual(skipCredit.replacedCount, 0);
+        assert.ok(credit.isSoftwareCreditText(creditList[0].text));
     });
 });

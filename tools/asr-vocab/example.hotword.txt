@@ -1,0 +1,4 @@
+# 示例：asr-hotword 格式（第一列=正确写法，| 后为误听别名）
+転売 | 天売 | てんばい
+SenseVoice-small | sense voice small
+Qwen3-ASR | 千问ASR | 千问3ASR

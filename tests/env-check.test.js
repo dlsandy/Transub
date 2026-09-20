@@ -173,9 +173,21 @@ describe('env-check', () => {
                 ctranslate2CudaReason: 'ctranslate2_not_installed',
             },
         ]);
-        assert.equal(ct2Missing.ensureGpu, false);
+        assert.equal(ct2Missing.ensureGpu, true);
         assert.ok(ct2Missing.modelIds.includes('whisper-tiny'));
         assert.ok(ct2Missing.steps.some((s) => s.id === 'whisperRuntime'));
+        assert.ok(ct2Missing.steps.some((s) => s.id === 'gpuRuntime'));
+
+        const softCudaHint = planEnvFixes([
+            {
+                id: 'gpuRuntime',
+                status: 'warn',
+                detail: '本机已有可复用 CUDA（cublas）；点「下载 GPU 支持」或「扫描复用本机 CUDA」即可跳过大包下载',
+                recommendReuse: true,
+            },
+        ]);
+        assert.equal(softCudaHint.ensureGpu, true);
+        assert.ok(softCudaHint.steps.some((s) => s.id === 'gpuRuntime'));
 
         const torchMismatch = planEnvFixes([
             {
@@ -188,7 +200,73 @@ describe('env-check', () => {
             },
         ]);
         assert.equal(torchMismatch.ensureTorchCuda, true);
+        assert.equal(torchMismatch.ensureGpu, true);
         assert.ok(torchMismatch.steps.some((s) => s.id === 'audioSeparate'));
+    });
+
+    it('planEnvFixes installs ROCm PyTorch for AMD when torch startup fails', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'gpu',
+                status: 'ok',
+                vendor: 'amd',
+                detail: 'AMD Radeon RX 9070',
+            },
+            {
+                id: 'torchEngineStartup',
+                status: 'fail',
+                code: 'TORCH_MISSING',
+                detail: '未安装 ROCm 版 PyTorch。系统 pip 无效。',
+            },
+        ]);
+        assert.equal(plan.ensureTorchRocm, true);
+        assert.equal(plan.ensureTorchCuda, false);
+        assert.equal(plan.fixable, true);
+        assert.ok(plan.steps.some((s) => s.id === 'torchRocm'));
+    });
+
+    it('planEnvFixes prefers ROCm when torch startup marks needsTorchRocm', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'gpu',
+                status: 'ok',
+                vendor: 'amd',
+            },
+            {
+                id: 'torchEngineStartup',
+                status: 'fail',
+                code: 'NEED_TORCH_ROCM',
+                needsTorchRocm: true,
+                needsTorchCuda: false,
+                detail: '引擎运行时里的 PyTorch 不是 ROCm 版',
+            },
+        ]);
+        assert.equal(plan.ensureTorchRocm, true);
+        assert.equal(plan.ensureTorchCuda, false);
+    });
+
+    it('planEnvFixes prefers ROCm on AMD when torch is TORCH_MISSING', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'gpu',
+                status: 'ok',
+                vendor: 'amd',
+            },
+            {
+                id: 'torchEngineStartup',
+                status: 'fail',
+                code: 'TORCH_MISSING',
+                needsTorchCuda: true,
+                needsTorchRocm: false,
+                detail: '未安装 PyTorch',
+            },
+        ]);
+        assert.equal(plan.ensureTorchRocm, true);
+        assert.equal(plan.ensureTorchCuda, false);
+        assert.ok(plan.steps.some((s) => s.id === 'torchRocm'));
     });
 
     it('runEnvCheck marks torch mismatch blocking for Qwen ASR', async function () {
@@ -288,10 +366,10 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'warn',
-                detail: '已安装 b10077，可更新至 b10621 · win-cuda12-x64',
+                detail: '已安装 b10077，可更新至 b10666 · win-cuda12-x64',
                 outdated: true,
                 installedTag: 'b10077',
-                catalogTag: 'b10621',
+                catalogTag: 'b10666',
             },
         ]);
         assert.equal(outdated.ensureLlamaRuntime, true);
@@ -304,7 +382,7 @@ describe('env-check', () => {
                 status: 'warn',
                 detail: '偏好「CUDA」，当前为「Vulkan」，请重新安装运行时',
                 mismatch: true,
-                catalogTag: 'b10621',
+                catalogTag: 'b10666',
                 recommendRuntimeId: 'win-cuda13-x64',
             },
         ]);
@@ -319,7 +397,7 @@ describe('env-check', () => {
                 recommendInstall: true,
                 recommendRuntimeId: 'win-cuda13-x64',
                 preferredPackageId: 'win-cuda13-x64',
-                catalogTag: 'b10621',
+                catalogTag: 'b10666',
             },
         ]);
         assert.equal(recommendInstall.ensureLlamaRuntime, true);
@@ -330,10 +408,22 @@ describe('env-check', () => {
             {
                 id: 'llamaServerRuntime',
                 status: 'ok',
-                detail: '未安装（使用软件内模型 / 智能翻译时按需安装 · llama.cpp b10621）',
+                detail: 'b10666 已就绪 · win-cuda13-x64',
+                installedTag: 'b10666',
             },
         ]);
         assert.equal(unused.ensureLlamaRuntime, false);
+
+        const missing = planEnvFixes([
+            {
+                id: 'llamaServerRuntime',
+                status: 'warn',
+                detail: '未安装 · 建议安装 Windows x64 · CUDA 13（llama.cpp b10666）',
+                recommendInstall: true,
+                catalogTag: 'b10666',
+            },
+        ]);
+        assert.equal(missing.ensureLlamaRuntime, true);
     });
 
     it('checkLlamaServerRuntime reports probed install tag', () => {
@@ -343,6 +433,116 @@ describe('env-check', () => {
         assert.ok(['ok', 'warn', 'fail'].includes(item.status));
         assert.equal(typeof item.detail, 'string');
         assert.equal(item.blocking, false);
+    });
+
+    it('checkGpu marks AMD discrete GPU as ok for llama-server', async () => {
+        const gpuPath = require.resolve('../electron/gpu-detect');
+        const envPath = require.resolve('../electron/env-check');
+        const prefer = require('../electron/advanced-runtime-prefer');
+        const realGpu = require('../electron/gpu-detect');
+        const cachedGpu = require.cache[gpuPath];
+        require.cache[gpuPath] = {
+            id: gpuPath,
+            filename: gpuPath,
+            loaded: true,
+            exports: {
+                ...realGpu,
+                detectGpuEnvironment: async () => ({
+                    vendor: 'amd',
+                    detected: true,
+                    gpuName: 'Radeon RX 7800 XT',
+                    rocmSuffix: 'gfx110x_all',
+                }),
+            },
+        };
+        delete require.cache[envPath];
+        prefer._resetForTests();
+        try {
+            const envCheck = require('../electron/env-check');
+            const { gpu, driver, info } = await envCheck.checkGpu();
+            assert.equal(info.vendor, 'amd');
+            assert.equal(gpu.status, 'ok');
+            assert.equal(gpu.vendor, 'amd');
+            assert.match(String(gpu.detail), /ROCm|引擎/);
+            assert.equal(driver.status, 'ok');
+            assert.match(String(driver.detail), /AMD/);
+
+            const runtime = await envCheck.checkGpuRuntime(info, '');
+            assert.equal(runtime.id, 'gpuRuntime');
+            assert.equal(runtime.vendor, 'amd');
+            // Without ROCm torch in the engine runtime, status must warn (not pretend ready).
+            assert.equal(runtime.hasRocm, true);
+            assert.equal(runtime.torchRocm, false);
+            assert.equal(runtime.status, 'warn');
+            assert.equal(runtime.engineDevice, 'cpu');
+            assert.match(String(runtime.detail), /ROCm PyTorch/);
+            assert.doesNotMatch(String(runtime.detail), /^CPU 模式/);
+        } finally {
+            if (cachedGpu) require.cache[gpuPath] = cachedGpu;
+            else delete require.cache[gpuPath];
+            delete require.cache[envPath];
+            prefer._resetForTests();
+            require('../electron/env-check');
+        }
+    });
+
+    it('checkGpuRuntime CPU path keeps CUDA-free message without AMD vendor', async () => {
+        const { checkGpuRuntime } = require('../electron/env-check');
+        const item = await checkGpuRuntime({ vendor: 'unknown', detected: false }, '');
+        assert.equal(item.status, 'ok');
+        assert.match(String(item.detail), /CPU 模式/);
+    });
+
+    it('planEnvFixes notes tokenizers downgrade for Qwen runtime mismatch', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'qwenRuntime',
+                status: 'fail',
+                detail: 'tokenizers 0.23.1 与 transformers 不兼容（需要 tokenizers==0.22.2）',
+                tokenizersMismatch: true,
+                blocking: true,
+            },
+        ], { engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame' });
+        assert.ok(plan.modelIds.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        assert.ok(plan.forceIds.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        const step = plan.steps.find((s) => s.id === 'qwenRuntime');
+        assert.ok(step);
+        assert.match(step.label, /tokenizers 降级至 0\.22\.2/);
+    });
+
+    it('planEnvFixes notes numpy repair for Qwen runtime metadata break', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'qwenRuntime',
+                status: 'fail',
+                detail: 'numpy 元数据损坏或版本超出 Numba 上限（需要 <2.5）',
+                numpyBroken: true,
+                blocking: true,
+            },
+        ], { engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame' });
+        assert.ok(plan.modelIds.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        assert.ok(plan.forceIds.includes('qwen3-asr-1.7b-ja-anime-galgame'));
+        const step = plan.steps.find((s) => s.id === 'qwenRuntime');
+        assert.ok(step);
+        assert.match(step.label, /numpy 兼容修复/);
+    });
+
+    it('planEnvFixes ensures CUDA PyTorch when torch engine startup probe fails', () => {
+        const { planEnvFixes } = require('../electron/env-check');
+        const plan = planEnvFixes([
+            {
+                id: 'torchEngineStartup',
+                status: 'fail',
+                detail: 'Torch CUDA 库加载失败（WinError 1114 · cublas）',
+                needsTorchCuda: true,
+                code: 'TORCH_CUDA_LOAD',
+            },
+        ], { engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame' });
+        assert.equal(plan.ensureTorchCuda, true);
+        assert.ok(plan.steps.some((s) => s.id === 'audioSeparate'));
+        assert.ok(plan.steps.some((s) => s.id === 'torchEngineStartup'));
     });
 
     it('normalizeEnvCheckScope accepts base/runtime/full', () => {
@@ -356,10 +556,12 @@ describe('env-check', () => {
         assert.equal(normalizeEnvCheckScope(''), 'full');
         assert.equal(normalizeEnvCheckScope('other'), 'full');
         assert.ok(ENV_CHECK_BASE_IDS.includes('engine'));
+        assert.ok(ENV_CHECK_BASE_IDS.includes('torchEngineStartup'));
         assert.ok(!ENV_CHECK_BASE_IDS.includes('whisperRuntime'));
         assert.ok(ENV_CHECK_RUNTIME_IDS.includes('whisperRuntime'));
         assert.ok(ENV_CHECK_RUNTIME_IDS.includes('sensevoiceRuntime'));
         assert.ok(ENV_CHECK_RUNTIME_IDS.includes('qwenRuntime'));
+        assert.ok(ENV_CHECK_RUNTIME_IDS.includes('torchEngineStartup'));
         assert.ok(!ENV_CHECK_RUNTIME_IDS.includes('ffmpeg'));
     });
 });

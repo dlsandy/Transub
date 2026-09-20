@@ -1,0 +1,35 @@
+{
+  "id": "ja-dialog-perf",
+  "version": 1,
+  "group": "ja",
+  "name": "软对白 · 智能 · 性能",
+  "description": "软对白：Whisper JA 1.5B 听写+ 智能翻译（对话模型按行）硬件档：性能 · <8GB 显存。需 Pro。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "whisper-ja-1.5b",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "whisper-ja-1.5b",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "speed",
+    "activePresetId": "ja-av-soft-translate",
+    "vadEnabled": true
+  }
+}

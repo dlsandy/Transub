@@ -119,6 +119,38 @@
     }
 
     /**
+     * Reject glossary hits that only appear inside a longer same-script JA word
+     * (セックス must not match セックスレス; セックスしたい is OK).
+     * @param {string} hay
+     * @param {string} needle
+     */
+    function isWholeGlossaryTokenMatch(hay, needle) {
+        const h = String(hay || '');
+        const s = String(needle || '');
+        if (!h || !s) return false;
+        const isKata = (ch) => /[\u30A0-\u30FFー]/.test(ch);
+        const isKanji = (ch) => /[\u3400-\u9FFF\uF900-\uFAFF]/.test(ch);
+        const isLatin = (ch) => /[a-zA-Z0-9]/.test(ch);
+        const edgeContinues = (ch) => {
+            if (!ch) return false;
+            if (isKata(s[0]) || isKata(s[s.length - 1])) return isKata(ch);
+            if ([...s].some(isKanji)) return isKanji(ch);
+            if ([...s].some(isLatin)) return isLatin(ch);
+            return /[\u3040-\u309F]/.test(ch);
+        };
+        let from = 0;
+        while (from <= h.length - s.length) {
+            const idx = h.indexOf(s, from);
+            if (idx < 0) return false;
+            const before = idx > 0 ? h[idx - 1] : '';
+            const after = idx + s.length < h.length ? h[idx + s.length] : '';
+            if (!edgeContinues(before) && !edgeContinues(after)) return true;
+            from = idx + 1;
+        }
+        return false;
+    }
+
+    /**
      * @param {string} sourceText
      * @param {{ limit?: number, kinds?: string[] }} [options]
      * @returns {{ term: string, translation: string, info?: string, kind?: string }[]}
@@ -139,15 +171,23 @@
             if (kindFilter && entry.kind && !kindFilter.has(entry.kind)) continue;
             const forms = entry.ja || [];
             let hit = null;
+            const looseToken = entry.kind === 'sfx' || entry.kind === 'moan';
             for (const form of forms) {
                 const f = String(form || '').trim();
                 if (!f) continue;
-                if (raw.includes(f) || rawLower.includes(f.toLowerCase())) {
+                if (
+                    (raw.includes(f) || rawLower.includes(f.toLowerCase()))
+                    && (looseToken || isWholeGlossaryTokenMatch(raw, f))
+                ) {
                     hit = f;
                     break;
                 }
                 const nf = normalizeJaKey(f);
-                if (nf.length >= 2 && normSrc.includes(nf)) {
+                if (
+                    nf.length >= 2
+                    && normSrc.includes(nf)
+                    && (looseToken || isWholeGlossaryTokenMatch(normSrc, nf))
+                ) {
                     hit = f;
                     break;
                 }

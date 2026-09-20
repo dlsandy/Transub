@@ -1,0 +1,39 @@
+{
+  "id": "ko-smart-perf",
+  "version": 2,
+  "group": "ko",
+  "name": "韩剧 · 混合 · 性能",
+  "description": "韩剧：SenseVoice 听写+ 混合翻译（LN-Korean 7B 句级翻译，Qwen3 4B 剧情贴合润色）硬件档：性能 · <8GB 显存。需 Pro。",
+  "language": "ko",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "low",
+    "preferCuda": true,
+    "minVramGb": 4,
+    "minSystemRamGb": 12,
+    "label": "性能 · <8GB 显存"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad",
+    "sakura-ln-korean-7b",
+    "qwen3-4b"
+  ],
+  "options": {
+    "language": "ko",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda_low_vram",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "smart",
+    "engineLlmMtModel": "sakura-ln-korean-7b",
+    "engineProfile": "speed",
+    "activePresetId": "ko-sensevoice",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "smartTranslateModelId": "qwen3-4b"
+  }
+}

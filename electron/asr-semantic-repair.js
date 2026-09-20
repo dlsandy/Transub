@@ -19,6 +19,20 @@ function missingReconstructCoreError() {
     };
 }
 
+function emitRepairLoadProgress(onProgress, info) {
+    if (typeof onProgress !== 'function') return;
+    const message = String(info?.message || info?.detail || '').trim();
+    if (!message) return;
+    try {
+        onProgress({
+            stage: 'asr_semantic_repair',
+            detail: message,
+            percent: Number.isFinite(Number(info?.percent)) ? Number(info.percent) : 50,
+            itemDualPhase: 'source',
+        });
+    } catch (_) { /* ignore */ }
+}
+
 function releaseManagedLlmAfterJob(llm, input = {}) {
     if (llm?.source !== 'managed') return;
     if (input._batchMode || input._engineExternalMt) return;
@@ -39,7 +53,12 @@ async function resolveRepairLlm(doc, input = {}) {
     if (dryRun) {
         return { ok: true, dryRun: true, source: 'mock' };
     }
-    const llm = await resolveAdvancedLlmConfig(doc, { requireReconstructCapable: true });
+    const llm = await resolveAdvancedLlmConfig(doc, {
+        requireReconstructCapable: true,
+        afterAsr: input.afterAsr === true,
+        signal: input.signal,
+        onProgress: (info) => emitRepairLoadProgress(input.onProgress, info),
+    });
     if (!llm.ok) return llm;
     logAdvancedLlmToEngine(llm, { feature: '转录语义校正' });
     return llm;
@@ -59,18 +78,10 @@ async function runAsrSemanticRepairOnCues(engineOrMsCues, input = {}) {
         return { ok: true, skipped: true, reason: 'mode_off' };
     }
 
-    const hasMs = Array.isArray(engineOrMsCues)
-        && engineOrMsCues.length
-        && (engineOrMsCues[0].startMs != null || engineOrMsCues[0].index != null);
-    let cues = hasMs
-        ? engineOrMsCues.map((c, i) => ({
-            index: Number.isInteger(Number(c.index)) ? Number(c.index) : i,
-            startMs: Number(c.startMs) || 0,
-            endMs: Number(c.endMs) || 0,
-            text: String(c.text || ''),
-            meta: c.meta,
-        }))
-        : core.engineCuesToRepairMs(engineOrMsCues);
+    // Always go through engineCuesToRepairMs — it accepts both second-based engine cues
+    // and already-ms cues. Do not treat `index` as proof of ms timing (that zeroed
+    // MFYD-185 / any ASR row shaped like `{index, start, end, text}`).
+    let cues = core.engineCuesToRepairMs(engineOrMsCues);
     if (!cues.length) {
         return { ok: true, skipped: true, reason: 'no_cues' };
     }
@@ -143,6 +154,10 @@ async function runAsrSemanticRepairOnCues(engineOrMsCues, input = {}) {
             const parseFailureSnippets = [];
             for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
                 const chunk = chunks[chunkIdx];
+                emitRepairLoadProgress(input.onProgress, {
+                    message: `转录语义校正 ${chunkIdx + 1}/${chunks.length}…`,
+                    percent: 50,
+                });
                 if (input.signal?.aborted) {
                     return { ok: false, error: '已取消', code: 'aborted' };
                 }
@@ -301,6 +316,7 @@ async function runAsrSemanticRepairWithLock(source, input = {}) {
 }
 
 module.exports = {
+    emitRepairLoadProgress,
     runAsrSemanticRepairOnCues,
     runAsrSemanticRepairWithLock,
 };

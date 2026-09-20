@@ -259,9 +259,6 @@ const content = `
                                     <input type="number" id="transcriptKeepDaysInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" min="0" max="3650" step="1" value="90">
                                 </label>
                             </div>
-                            <button type="button" id="openLibraryBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">
-                                <i class="fa fa-archive w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开字幕库
-                            </button>
                         </fieldset>
                         <fieldset class="rounded-lg border border-gray-100 bg-gray-50/50 p-3 space-y-2">
                             <legend class="text-xs font-semibold text-gray-500 px-1">清理策略</legend>

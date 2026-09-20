@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $TransubExe) {
-    $TransubExe = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\win-unpacked\Transub.exe"
+    $TransubExe = Join-Path (Split-Path $PSScriptRoot -Parent) "dist\win-unpacked\transub.exe"
 }
 
 $videoProgId = "Transub.SubtitleTask"

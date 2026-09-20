@@ -275,7 +275,7 @@ if (Test-Path -LiteralPath $packUnpacked) {
             "`"$packUnpacked`"", "`"$distUnpacked`"", '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/nc', '/ns', '/np'
         ) -Wait -PassThru -NoNewWindow
         # robocopy exit codes 0-7 are success
-        if ($rc.ExitCode -le 7 -and (Test-Path (Join-Path $distUnpacked 'Transub.exe'))) {
+        if ($rc.ExitCode -le 7 -and (Test-Path (Join-Path $distUnpacked 'transub.exe'))) {
             Unblock-Tree $distUnpacked
             Write-Host '  copied win-unpacked\ (unsigned, unblocked)' -ForegroundColor Green
         } else {
@@ -293,13 +293,13 @@ if ($copied -eq 0 -and $Target -ne 'dir') {
 }
 
 $manifestUnpacked = Join-Path $distDir 'win-unpacked'
-if (-not (Test-Path (Join-Path $manifestUnpacked 'Transub.exe'))) {
+if (-not (Test-Path (Join-Path $manifestUnpacked 'transub.exe'))) {
     $manifestUnpacked = Join-Path $packDir 'win-unpacked'
 }
-if ($Target -ne 'dir' -and (Test-Path (Join-Path $manifestUnpacked 'Transub.exe'))) {
+if ($Target -ne 'dir' -and (Test-Path (Join-Path $manifestUnpacked 'transub.exe'))) {
     Write-Step 'Generate block update manifest + block zips'
     $prevArg = ''
-    if ($env:PREV_UNPACKED -and (Test-Path (Join-Path $env:PREV_UNPACKED 'Transub.exe'))) {
+    if ($env:PREV_UNPACKED -and (Test-Path (Join-Path $env:PREV_UNPACKED 'transub.exe'))) {
         $prevArg = " --prev-unpacked=`"$($env:PREV_UNPACKED)`""
         Write-Host "  Using PREV_UNPACKED=$($env:PREV_UNPACKED)" -ForegroundColor DarkGray
     } elseif ($env:PREV_MANIFEST -and (Test-Path $env:PREV_MANIFEST)) {
@@ -330,11 +330,11 @@ if ($websiteBundle) {
     Write-Host "  website-update\$($websiteBundle.Name)  ← upload to official site" -ForegroundColor Cyan
 }
 
-$unpackedExe = Join-Path $distUnpacked 'Transub.exe'
+$unpackedExe = Join-Path $distUnpacked 'transub.exe'
 if (Test-Path $unpackedExe) {
-    Write-Host '  win-unpacked\Transub.exe' -ForegroundColor Green
-} elseif (Test-Path (Join-Path $packUnpacked 'Transub.exe')) {
-    Write-Host "  staging win-unpacked\Transub.exe" -ForegroundColor Green
+    Write-Host '  win-unpacked\transub.exe' -ForegroundColor Green
+} elseif (Test-Path (Join-Path $packUnpacked 'transub.exe')) {
+    Write-Host "  staging win-unpacked\transub.exe" -ForegroundColor Green
 }
 
 Write-Host ''

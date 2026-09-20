@@ -510,7 +510,8 @@ async function uploadSubtitleToSubtitleCat(payload = {}, app = electronApp) {
         }
 
         try {
-            clipboard.writeText(tempPath);
+            // Electron 44+: clipboard write APIs are async (W3C Clipboard API alignment).
+            await clipboard.writeText(tempPath);
         } catch (_) { /* ignore */ }
         try {
             await shell.openExternal(assertSafeExternalUrl(UPLOAD_PAGE_URL));
@@ -533,7 +534,7 @@ async function uploadSubtitleToSubtitleCat(payload = {}, app = electronApp) {
         };
     } catch (err) {
         try {
-            clipboard.writeText(tempPath);
+            await clipboard.writeText(tempPath);
         } catch (_) { /* ignore */ }
         try {
             await shell.openExternal(assertSafeExternalUrl(UPLOAD_PAGE_URL));

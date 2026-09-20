@@ -29,17 +29,28 @@
                 const maxSegRaw = maxSegText === '' ? NaN : Number(maxSegText);
                 return Number.isFinite(maxSegRaw)
                     ? Math.max(5000, Math.min(60000, Math.round(maxSegRaw)))
-                    : 30000;
+                    : 5000;
             });
         const numOr = norm.numOrFinite || ((v, fb) => {
             const n = Number(v);
             return Number.isFinite(n) ? n : fb;
         });
+        const normalizeMode = norm.normalizeTranslateMode
+            || ((raw) => {
+                const m = String(raw || '').trim().toLowerCase();
+                if (m === 'smart' || m === 'hybrid' || m === 'advanced' || m === 'mixed') return 'smart';
+                if (m === 'dialog' || m === 'smart_dialog' || m === 'llm_line' || m === 'chat') return 'dialog';
+                return 'llm';
+            });
+        const isProMode = norm.isProTranslateMode
+            || ((raw) => {
+                const m = normalizeMode(raw);
+                return m === 'smart' || m === 'dialog';
+            });
         const resolveMt = norm.resolveEngineMtModelForPersist
-            || ((mode, opus, llm) => {
-                if (mode === 'smart') return '';
-                if (mode === 'llm' || mode === 'sakura') return llm || '';
-                return opus || '';
+            || ((mode, _opus, llm) => {
+                if (isProMode(mode)) return '';
+                return llm || '';
             });
         const viewingLegacyFn = norm.viewingCleanModesToLegacyFlags
             || ((punct, interj, onomato) => ({
@@ -49,8 +60,8 @@
 
         const task = String(fields.task || 'transcribe');
         const translateTask = task === 'translate' || task === 'dual';
-        const translateMode = String(fields.translateMode || 'llm');
-        const opusMt = String(fields.engineOpusMtModel || '');
+        const translateMode = normalizeMode(fields.translateMode || 'llm');
+        const opusMt = '';
         const llmMt = String(fields.engineLlmMtModel || '');
         const viewingPunct = String(fields.postBatchViewingPunctMode || 'clear');
         const viewingInterj = String(fields.postBatchInterjectionMode || 'clear');
@@ -64,7 +75,7 @@
             engineUrl: String(fields.engineUrl || 'http://127.0.0.1:8765').trim() || 'http://127.0.0.1:8765',
             engineHfEndpoint: fields.engineHfEndpoint != null
                 ? String(fields.engineHfEndpoint).trim()
-                : 'https://hf-mirror.com',
+                : '',
             engineHfToken: fields.engineHfToken != null
                 ? String(fields.engineHfToken).trim()
                 : '',
@@ -72,13 +83,60 @@
             proxyUrl: String(fields.proxyUrl || '').trim(),
             proxyBypass: String(fields.proxyBypass || '').trim()
                 || 'localhost,127.0.0.1,::1,<local>',
+            transubStationEnabled: !!fields.transubStationEnabled,
+            transubStationUrl: (() => {
+                let s = String(fields.transubStationUrl || '').trim().slice(0, 512);
+                if (!s) return 'http://127.0.0.1:8787';
+                if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `http://${s}`;
+                try {
+                    const u = new URL(s);
+                    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                        return 'http://127.0.0.1:8787';
+                    }
+                    let path = (u.pathname || '/').replace(/\/+$/, '') || '';
+                    if (/\/v1$/i.test(path)) path = path.replace(/\/v1$/i, '');
+                    if (/\/api$/i.test(path)) path = path.replace(/\/api$/i, '');
+                    return (`${u.protocol}//${u.host}${path || ''}`).replace(/\/+$/, '')
+                        || 'http://127.0.0.1:8787';
+                } catch {
+                    return 'http://127.0.0.1:8787';
+                }
+            })(),
+            transubStationModel: String(fields.transubStationModel || '').trim().slice(0, 256),
+            githubMirrorUrls: (() => {
+                const text = fields.githubMirrorsText != null
+                    ? String(fields.githubMirrorsText)
+                    : (Array.isArray(fields.githubMirrorUrls)
+                        ? fields.githubMirrorUrls.join('\n')
+                        : String(fields.githubMirrorUrls || ''));
+                const out = [];
+                const seen = new Set();
+                for (const line of text.split(/\r?\n/)) {
+                    let s = String(line || '').trim().slice(0, 512);
+                    if (!s) continue;
+                    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`;
+                    try {
+                        const u = new URL(s);
+                        if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+                        s = `${u.protocol}//${u.host}${u.pathname || '/'}`;
+                        if (!s.endsWith('/')) s += '/';
+                    } catch {
+                        continue;
+                    }
+                    if (seen.has(s)) continue;
+                    seen.add(s);
+                    out.push(s);
+                    if (out.length >= 24) break;
+                }
+                return out;
+            })(),
             engineProfile: String(fields.engineProfile || 'balanced'),
-            engineAsrModel: String(fields.engineAsrModel || 'sensevoice-small'),
+            engineAsrModel: String(fields.engineAsrModel || 'qwen3-asr-1.7b-ja-anime-galgame'),
             engineOpusMtModel: opusMt,
             engineLlmMtModel: llmMt,
             engineMtModel: resolveMt(translateMode, opusMt, llmMt),
             translateMode,
-            engineVadModel: String(fields.engineVadModel || 'fsmn-vad'),
+            engineVadModel: String(fields.engineVadModel || 'silero-vad'),
             engineAutoStart: fields.engineAutoStart !== false,
             installPath: String(fields.installPath || '').trim(),
             device: String(fields.device || 'cuda'),
@@ -86,19 +144,56 @@
             overwrite: !!fields.overwrite,
             // Pref; runtime still applies merge only for dual tasks.
             mergeBilingualSubtitles: !!fields.mergeBilingualSubtitles,
-            dualLineOrder: String(fields.dualLineOrder || 'ja-zh'),
-            smartTranslate: translateTask && !!fields.smartTranslate,
+            dualLineOrder: String(fields.dualLineOrder || 'target-first'),
+            // Sidecar write prefs (at least one of target/source kept on).
+            outputWriteTarget: (() => {
+                const writeTarget = fields.outputWriteTarget !== false;
+                const writeSource = fields.outputWriteSource !== false;
+                return writeTarget || !writeSource;
+            })(),
+            outputWriteSource: fields.outputWriteSource !== false,
+            targetSubtitleNaming: norm.normalizeTargetSubtitleNaming
+                ? norm.normalizeTargetSubtitleNaming(fields.targetSubtitleNaming)
+                : (String(fields.targetSubtitleNaming || '').trim().toLowerCase() === 'media'
+                    ? 'media'
+                    : 'lang'),
+            insertSoftwareCredit: fields.insertSoftwareCredit !== false,
+            smartTranslate: translateTask && isProMode(translateMode),
             smartTranslateFaithfulTone: translateTask && !!fields.smartTranslateFaithfulTone,
-            smartTranslateHybridMt: fields.smartTranslateHybridMt !== false,
-            smartTranslatePlotPolish: fields.smartTranslatePlotPolish !== false,
-            smartTranslateFaithfulVerify: fields.smartTranslateFaithfulVerify !== false,
-            smartTranslateAddressConsistency: fields.smartTranslateAddressConsistency !== false,
+            ...(norm.normalizeTranslateStyleOptions
+                ? norm.normalizeTranslateStyleOptions({
+                    translateStyleEnabled: fields.translateStyleEnabled,
+                    translateStylePreset: fields.translateStylePreset,
+                    translateStyleCustomNote: fields.translateStyleCustomNote,
+                }, { entitled })
+                : {
+                    translateStyleEnabled: false,
+                    translateStylePreset: 'natural_spoken',
+                    translateStyleCustomNote: '',
+                }),
+            smartTranslateHybridMt: translateMode === 'smart',
+            smartTranslatePlotPolish: isProMode(translateMode) && fields.smartTranslatePlotPolish !== false,
+            smartTranslateFaithfulVerify: isProMode(translateMode)
+                && fields.smartTranslateFaithfulVerify !== false,
+            smartTranslateAddressConsistency: isProMode(translateMode)
+                && fields.smartTranslateAddressConsistency !== false,
             smartTranslatePolishSampleLimit: norm.clampPolishSampleLimit
                 ? norm.clampPolishSampleLimit(fields.smartTranslatePolishSampleLimitRaw)
                 : 36,
             asrSecondOpinion: norm.normalizeAsrSecondOpinion
                 ? norm.normalizeAsrSecondOpinion(fields.asrSecondOpinion)
+                : 'off',
+            qualityPipelineMode: norm.normalizeQualityPipelineMode
+                ? norm.normalizeQualityPipelineMode(fields.qualityPipelineMode)
                 : 'auto',
+            postQcLoopMaxPasses: norm.clampPostQcLoopMaxPasses
+                ? norm.clampPostQcLoopMaxPasses(fields.postQcLoopMaxPassesRaw ?? fields.postQcLoopMaxPasses)
+                : (() => {
+                    const n = Number(fields.postQcLoopMaxPassesRaw ?? fields.postQcLoopMaxPasses);
+                    if (!Number.isFinite(n)) return 1;
+                    return Math.max(0, Math.min(2, Math.round(n)));
+                })(),
+            asrBadPoolDrafts: !!fields.asrBadPoolDrafts,
             asrSemanticRepair: entitled && norm.normalizeAsrSemanticRepair
                 ? norm.normalizeAsrSemanticRepair(fields.asrSemanticRepair)
                 : 'off',
@@ -135,36 +230,103 @@
             qcSmartMaxRetranscribeRanges: norm.clampQcSmartMaxRetranscribeRanges
                 ? norm.clampQcSmartMaxRetranscribeRanges(fields.qcSmartMaxRetranscribeRangesRaw)
                 : 8,
-            libraryOpenAfterBatch: !!fields.libraryOpenAfterBatch,
             deleteSourcesAfterMergeBilingual: !!fields.mergeBilingualSubtitles
                 && !!fields.deleteSourcesAfterMergeBilingual,
             subFormats: String(fields.subFormats || 'srt'),
             includeWords: false,
             karaokeVtt: false,
-            releaseGpuAfter: fields.releaseGpuAfter === true ? true
-                : (fields.releaseGpuAfter === false ? false : null),
+            releaseGpuAfter: fields.releaseGpuAfter === false ? false : true,
+            autoCpuOnGpuBusy: !!fields.autoCpuOnGpuBusy,
             modelPath: String(fields.modelPath || ''),
             transcribeModelPath: String(fields.transcribeModelPath || ''),
             translateModelPath: String(fields.translateModelPath || ''),
-            chineseSubtitleVariant: String(fields.chineseSubtitleVariant || 'simplified'),
-            glossaryPromptEnabled: false,
-            glossaryMtEnabled: fields.glossaryMtEnabled !== false,
+            chineseSubtitleVariant: (() => {
+                const form = norm.normalizeSubtitleTargetFormValue
+                    ? norm.normalizeSubtitleTargetFormValue(fields.subtitleTargetForm
+                        || fields.chineseSubtitleVariant
+                        || 'simplified')
+                    : String(fields.chineseSubtitleVariant || 'simplified');
+                if (form === 'en' || form === 'ja' || form === 'ko') {
+                    return 'simplified';
+                }
+                return String(form || 'simplified');
+            })(),
+            subtitleTargetLang: (() => {
+                if (norm.normalizeSubtitleTargetLang) {
+                    return norm.normalizeSubtitleTargetLang(
+                        fields.subtitleTargetLang || fields.subtitleTargetForm || fields.chineseSubtitleVariant,
+                        fields.chineseSubtitleVariant || 'simplified',
+                    );
+                }
+                return 'zh-Hans';
+            })(),
+            // Keep bilingual file suffix aligned with 成片目标语 (not a separate UI control).
+            dualTargetSuffix: (() => {
+                let lang = 'zh-Hans';
+                if (norm.normalizeSubtitleTargetLang) {
+                    lang = norm.normalizeSubtitleTargetLang(
+                        fields.subtitleTargetLang || fields.subtitleTargetForm || fields.chineseSubtitleVariant,
+                        fields.chineseSubtitleVariant || 'simplified',
+                    );
+                }
+                try {
+                    const fill = (typeof module !== 'undefined' && module.exports)
+                        ? require('./mt-short-fill-core')
+                        : (typeof globalThis !== 'undefined' ? globalThis.TransubMtShortFill : null);
+                    if (fill?.dualTargetSuffixFromLang) {
+                        return fill.dualTargetSuffixFromLang({ subtitleTargetLang: lang });
+                    }
+                } catch { /* optional */ }
+                if (/^en/i.test(lang)) return 'en';
+                if (/^ko/i.test(lang)) return 'ko';
+                if (/^ja/i.test(lang)) return 'ja';
+                return 'zh-cn';
+            })(),
+            lastMtByTarget: (() => {
+                try {
+                    const route = (typeof module !== 'undefined' && module.exports)
+                        ? require('./mt-target-route-core')
+                        : (typeof globalThis !== 'undefined' ? globalThis.TransubMtTargetRoute : null);
+                    if (route?.normalizeLastMtByTarget) {
+                        return route.normalizeLastMtByTarget(fields.lastMtByTarget);
+                    }
+                } catch { /* optional */ }
+                const raw = fields.lastMtByTarget && typeof fields.lastMtByTarget === 'object'
+                    ? fields.lastMtByTarget
+                    : {};
+                return {
+                    zh: String(raw.zh || '').trim(),
+                    en: String(raw.en || '').trim(),
+                    ja: String(raw.ja || '').trim(),
+                    ko: String(raw.ko || '').trim(),
+                };
+            })(),
+            glossaryPromptEnabled: !!fields.glossaryPromptEnabled,
+            glossaryMtEnabled: !!fields.glossaryMtEnabled,
             logLevel: String(fields.logLevel || 'DEBUG'),
             maxBatchSize: Number(fields.maxBatchSize) || 8,
-            language: String(fields.language || 'auto'),
-            beamSize: Number(fields.beamSize) || 5,
+            language: String(fields.language || 'ja'),
+            beamSize: Number(fields.beamSize) || 1,
             vadEnabled: fields.vadEnabled !== false,
             vadSensitive: !!fields.vadSensitive,
-            vadThreshold: numOr(fields.vadThreshold, 0.5),
-            vadMinSpeechDurationMs: numOr(fields.vadMinSpeechDurationMs, 300),
-            vadMinSilenceDurationMs: numOr(fields.vadMinSilenceDurationMs, 100),
-            vadSpeechPadMs: numOr(fields.vadSpeechPadMs, 200),
+            vadThreshold: numOr(fields.vadThreshold, 0.45),
+            vadMinSpeechDurationMs: numOr(fields.vadMinSpeechDurationMs, 180),
+            vadMinSilenceDurationMs: numOr(fields.vadMinSilenceDurationMs, 500),
+            vadSpeechPadMs: numOr(fields.vadSpeechPadMs, 80),
             vadMaxSingleSegmentMs,
             vadAggressive: !!fields.vadAggressive && !fields.vadSensitive,
             audioLightDenoise: !!fields.audioLightDenoise,
             perfProfile: (() => {
                 const v = String(fields.perfProfile || 'quality').trim().toLowerCase();
                 return v === 'speed' ? 'speed' : 'quality';
+            })(),
+            qwenAsrBatchMode: (() => {
+                if (norm.normalizeQwenAsrBatchMode) {
+                    return norm.normalizeQwenAsrBatchMode(fields.qwenAsrBatchMode);
+                }
+                const v = String(fields.qwenAsrBatchMode || 'auto').trim().toLowerCase();
+                if (v === 'conservative' || v === 'aggressive') return v;
+                return 'auto';
             })(),
             ...(fields.twaiLegacy && typeof fields.twaiLegacy === 'object' ? fields.twaiLegacy : {}),
             targetChunkDurationS: Math.round(vadMaxSingleSegmentMs / 1000),
@@ -177,15 +339,13 @@
                 : (['off', 'beside', 'appBackup'].includes(fields.subtitleBakMode)
                     ? fields.subtitleBakMode
                     : 'off'),
-            keepTranscript: fields.keepTranscript !== false,
+            keepTranscript: true,
             transcriptKeepDir: String(fields.transcriptKeepDir || '').trim(),
-            transcriptKeepLimit: norm.clampTranscriptKeepLimit
-                ? norm.clampTranscriptKeepLimit(fields.transcriptKeepLimitRaw)
-                : 200,
-            transcriptKeepDays: norm.clampTranscriptKeepDays
-                ? norm.clampTranscriptKeepDays(fields.transcriptKeepDaysRaw)
-                : 90,
-            trayProgressEnabled: fields.trayProgressEnabled !== false,
+            // Always retain all kept transcripts (no count / age prune).
+            transcriptKeepLimit: 0,
+            transcriptKeepDays: 0,
+            shelfOpenAfterBatch: !!fields.shelfOpenAfterBatch,
+            trayProgressEnabled: !!fields.trayProgressEnabled,
             showTaskResourceUsage: fields.showTaskResourceUsage !== false,
             minimizeToTrayEnabled: fields.minimizeToTrayEnabled !== false,
             minimizeToTrayOnStart: !!fields.minimizeToTrayOnStart,
@@ -194,19 +354,30 @@
             startupWindow: norm.normalizeStartupWindow
                 ? norm.normalizeStartupWindow(fields.startupWindow)
                 : (fields.startupWindow === 'editor' ? 'editor' : 'generator'),
+            subtitleEditorBackend: (() => {
+                const raw = String(fields.subtitleEditorBackend ?? 'auto').trim().toLowerCase();
+                if (raw === 'external' || raw === 'native' || raw === 'csharp') return 'external';
+                if (raw === 'electron' || raw === 'builtin' || raw === 'internal') return 'electron';
+                return 'auto';
+            })(),
+            subtitleEditorPath: String(fields.subtitleEditorPath || '').trim(),
             uiLocale: norm.normalizeUiLocale
                 ? norm.normalizeUiLocale(fields.uiLocale)
-                : (String(fields.uiLocale || '').trim() === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans'),
+                : (['zh-Hans', 'zh-Hant-TW', 'en', 'ja', 'ko'].includes(String(fields.uiLocale || '').trim())
+                    ? String(fields.uiLocale).trim()
+                    : 'zh-Hans'),
             autoUpdateCheckInterval: norm.normalizeAutoUpdateCheckInterval
                 ? norm.normalizeAutoUpdateCheckInterval(fields.autoUpdateCheckInterval)
-                : 'weekly',
-            autoSense: !!fields.autoSense,
+                : 'off',
             activePresetId: String(fields.activePresetId || '').trim(),
+            activeComboPlanId: String(fields.activeComboPlanId || '').trim(),
             mtUseForm: !!fields.mtUseForm,
             settingsUiMode: String(fields.settingsUiMode || 'standard'),
-            autoDeepSense: !!fields.autoDeepSense,
+            externalImportAction: norm.normalizeExternalImportAction
+                ? norm.normalizeExternalImportAction(fields.externalImportAction)
+                : 'list_when_idle',
             postBatchQc: fields.postBatchQc !== false,
-            postBatchQcFixMode: String(fields.postBatchQcFixMode || 'smart'),
+            postBatchQcFixMode: String(fields.postBatchQcFixMode || 'fix'),
             qcSilenceSplitChars: norm.clampQcSilenceSplitChars
                 ? norm.clampQcSilenceSplitChars(fields.qcSilenceSplitCharsRaw ?? fields.qcSilenceSplitChars)
                 : (() => {
@@ -228,12 +399,51 @@
             outputDir: String(fields.outputDir || ''),
             audioSuffixes: String(fields.audioSuffixes || ''),
             ffmpegPath: String(fields.ffmpegPath || ''),
+            ...(norm.normalizeBurnSettingsOptions
+                ? norm.normalizeBurnSettingsOptions({
+                    burnContainer: fields.burnContainer,
+                    burnEncoderId: fields.burnEncoderId,
+                    burnAudioMode: fields.burnAudioMode,
+                    burnCrf: fields.burnCrf,
+                    burnResolutionId: fields.burnResolutionId,
+                    burnFpsId: fields.burnFpsId,
+                    burnEncodeSpeedId: fields.burnEncodeSpeedId,
+                    burnOutputSuffix: fields.burnOutputSuffix,
+                    burnOutputDir: fields.burnOutputDir,
+                })
+                : {
+                    burnContainer: String(fields.burnContainer || 'mp4').toLowerCase() === 'mkv' ? 'mkv' : 'mp4',
+                    burnEncoderId: String(fields.burnEncoderId || 'libx264').trim() || 'libx264',
+                    burnAudioMode: String(fields.burnAudioMode || 'copy').toLowerCase() === 'aac' ? 'aac' : 'copy',
+                    burnCrf: (() => {
+                        const n = Math.round(Number(fields.burnCrf));
+                        return Number.isFinite(n) ? Math.min(28, Math.max(14, n)) : 18;
+                    })(),
+                    burnResolutionId: String(fields.burnResolutionId || 'source'),
+                    burnFpsId: String(fields.burnFpsId || 'source'),
+                    burnEncodeSpeedId: String(fields.burnEncodeSpeedId || 'medium'),
+                    burnOutputSuffix: String(fields.burnOutputSuffix || 'burned').trim() || 'burned',
+                    burnOutputDir: String(fields.burnOutputDir || '').trim(),
+                }),
             autoScanFolders: norm.normalizeAutoScanFolders
                 ? norm.normalizeAutoScanFolders(fields.autoScanFolders)
                 : (Array.isArray(fields.autoScanFolders)
                     ? fields.autoScanFolders.map((p) => String(p || '').trim()).filter(Boolean)
                     : []),
             autoScanRecursive: fields.autoScanRecursive !== false,
+            wizardContentTypes: norm.normalizeWizardContentTypes
+                ? norm.normalizeWizardContentTypes(fields.wizardContentTypes || fields.wizardPresetIds)
+                : (Array.isArray(fields.wizardPresetIds) ? fields.wizardPresetIds.slice()
+                    : (Array.isArray(fields.wizardContentTypes) ? fields.wizardContentTypes.slice() : [])),
+            wizardPresetIds: norm.normalizeWizardPresetIds
+                ? norm.normalizeWizardPresetIds(fields.wizardPresetIds || fields.wizardContentTypes)
+                : (Array.isArray(fields.wizardPresetIds) ? fields.wizardPresetIds.slice()
+                    : (Array.isArray(fields.wizardContentTypes) ? fields.wizardContentTypes.slice() : [])),
+            wizardTargetLangs: norm.normalizeWizardTargetLangs
+                ? norm.normalizeWizardTargetLangs(fields.wizardTargetLangs)
+                : (Array.isArray(fields.wizardTargetLangs) && fields.wizardTargetLangs.length
+                    ? fields.wizardTargetLangs.slice()
+                    : ['zh-Hans']),
         };
         const mutex = resolveAudioMutexApi();
         if (typeof mutex?.normalizeAudioOptionBundle === 'function') {

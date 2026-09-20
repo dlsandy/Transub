@@ -7,8 +7,10 @@
         _ = T.TransubSubtitleTextPresets,
         Xr = T.TransubSubtitleWorkflows,
         Ne = T.TransubSubtitleFluency,
-        Gn = T.TransubSubtitleChinese;
+        Gn = T.TransubSubtitleChinese,
+        mergeCore = T.TransubSubtitleMerge;
     if (!D) throw new Error("subtitle-split-core.js must load before subtitle-editor.js");
+    if (!mergeCore) throw new Error("subtitle-merge-core.js must load before subtitle-editor.js");
     if (!oe) throw new Error("subtitle-qc-core.js must load before subtitle-editor.js");
     if (!z) throw new Error("subtitle-meta-core.js must load before subtitle-editor.js");
     if (!se) throw new Error("subtitle-glossary-core.js must load before subtitle-editor.js");
@@ -30,6 +32,8 @@
     if (!j?.installJassubPreview) throw new Error("subtitle-editor/jassub-preview.js must load before subtitle-editor.js");
     if (!j?.installAssPosDrag) throw new Error("subtitle-editor/ass-pos-drag.js must load before subtitle-editor.js");
     if (!j?.installSubtitleCatUploadUi) throw new Error("subtitle-editor/subtitlecat-upload-ui.js must load before subtitle-editor.js");
+    if (!j?.installGlossaryImportUi) throw new Error("subtitle-editor/glossary-import-ui.js must load before subtitle-editor.js");
+    if (!j?.playheadScrub?.installPlayheadScrub) throw new Error("subtitle-editor/playhead-scrub.js must load before subtitle-editor.js");
     if (!T.TransubAssStyles) throw new Error("ass-styles-core.js must load before subtitle-editor.js");
     if (!T.TransubAssOverride) throw new Error("ass-override-core.js must load before subtitle-editor.js");
     const {
@@ -58,8 +62,8 @@
         videoCodec: "",
         videoWidth: 0,
         videoHeight: 0,
-        library: null,
-        librarySaveIntent: "current",
+
+        playerHandoff: null,
         format: "srt",
         header: [],
         cues: [],
@@ -76,8 +80,7 @@
         pairHeader: [],
         pairDirty: !1,
         pairReadOnly: !1,
-        libraryCompareVersionId: "",
-        libraryCompareLabel: "",
+
         dualRole: null,
         dualDisplayMode: "both",
         dualLineOrder: "source-first",
@@ -106,6 +109,7 @@
         computeBusy: !1,
         computeBusyLabel: "",
         translateEngine: "",
+        targetLangOptions: null,
         jobAbortRequested: !1,
         selectedIndices: new Set,
         selectionAnchor: -1,
@@ -139,6 +143,7 @@
         breakWords: null,
         listFilter: "all",
         qcIssueIndexSet: new Set,
+        fillerMatchIndexSet: new Set,
         qcTypeFilter: null,
         autoFocus: !1,
         waveformEnabled: !0,
@@ -152,6 +157,7 @@
         timeline: {
             dragging: null,
             panning: null,
+            scrubbing: !1,
             durationMs: 0,
             viewStartMs: 0,
             viewEndMs: 0,
@@ -163,7 +169,11 @@
     let e = {},
         H = null,
         Bl = null,
+        Brt = null,
+        Bdel = null,
+        Bfill = null,
         Bt = null,
+        Tg = null,
         As = null,
         Ov = null,
         Jp = null,
@@ -276,7 +286,7 @@
     }
 
     function rn() {
-        t.pairPath = "", t.pairCues = [], t.pairFormat = "srt", t.pairHeader = [], t.pairDirty = !1, t.pairReadOnly = !1, t.libraryCompareVersionId = "", t.libraryCompareLabel = "", t.dualRole = null, as(), kt(), syncLibraryBar()
+        t.pairPath = "", t.pairCues = [], t.pairFormat = "srt", t.pairHeader = [], t.pairDirty = !1, t.pairReadOnly = !1, t.dualRole = null, as(), kt()
     }
 
     function sn(n) {
@@ -334,10 +344,7 @@
                 targetPath: g,
                 sourcePath: n
             } : (
-                // Drop any prior library compare markers — filesystem pair is writable.
                 t.pairReadOnly = !1,
-                t.libraryCompareVersionId = "",
-                t.libraryCompareLabel = "",
                 t.pairPath = g,
                 t.pairCues = Array.isArray(v.cues) ? v.cues : [],
                 as(),
@@ -350,7 +357,6 @@
                 e.dualDisplaySelect && (e.dualDisplaySelect.value = t.dualDisplayMode),
                 e.dualLineOrderSelect && (e.dualLineOrderSelect.value = t.dualLineOrder),
                 kt(),
-                syncLibraryBar(),
                 {
                     swapToTarget: !1,
                     pairPath: g,
@@ -527,149 +533,6 @@
         return Ue && (r.ffmpegPath = Ue), r
     }
 
-    function applyLibrarySession(n) {
-        const lib = n?.library && typeof n.library === "object" ? n.library : n;
-        const versionId = String(lib?.versionId || n?.versionId || "").trim();
-        const mediaId = String(lib?.mediaId || n?.mediaId || "").trim();
-        if (!versionId && !mediaId) {
-            t.library = null;
-            syncLibraryBar();
-            return
-        }
-        const mediaLinked = lib?.mediaLinked != null
-            ? !!lib.mediaLinked
-            : (n?.mediaLinked != null ? !!n.mediaLinked : !!(t.videoPath || lib?.mediaId));
-        const mediaExists = lib?.mediaExists != null
-            ? !!lib.mediaExists
-            : (n?.mediaExists != null ? !!n.mediaExists : !!t.videoPath);
-        t.library = {
-            mediaId,
-            trackId: String(lib?.trackId || n?.trackId || "").trim(),
-            versionId,
-            role: String(lib?.role || n?.role || "").trim(),
-            roleLabel: String(lib?.roleLabel || n?.roleLabel || "").trim(),
-            recipeSummary: String(lib?.recipeSummary || n?.recipeSummary || "").trim(),
-            contentRef: String(lib?.contentRef || n?.contentRef || "").trim(),
-            exportPath: String(lib?.exportPath || n?.exportPath || "").trim(),
-            isActive: !!(lib?.isActive ?? n?.isActive),
-            mediaTitle: String(lib?.mediaTitle || n?.mediaTitle || "").trim(),
-            openedFromBlob: !!(lib?.openedFromBlob ?? n?.openedFromBlob),
-            mediaLinked,
-            mediaExists,
-            abPairAvailable: !!(lib?.abPairAvailable ?? n?.abPairAvailable),
-            abVersionIdA: String(lib?.abVersionIdA || n?.abVersionIdA || "").trim(),
-            abVersionIdB: String(lib?.abVersionIdB || n?.abVersionIdB || "").trim()
-        };
-        syncLibraryBar()
-    }
-
-    function syncLibraryBar() {
-        const bar = e.libraryBar;
-        if (!bar) return;
-        const lib = t.library;
-        if (!lib?.versionId && !lib?.mediaId) {
-            bar.classList.add("hidden");
-            return
-        }
-        bar.classList.remove("hidden");
-        const title = lib.mediaTitle || (t.videoPath ? G(t.videoPath) : "未命名作品");
-        if (e.libraryTitle) {
-            e.libraryTitle.textContent = title;
-            e.libraryTitle.title = title
-        }
-        if (e.libraryRole) e.libraryRole.textContent = lib.roleLabel || lib.role || "字幕";
-        if (e.libraryActive) e.libraryActive.classList.toggle("hidden", !lib.isActive);
-        if (e.libraryRecipe) {
-            const recipe = lib.recipeSummary || "—";
-            e.libraryRecipe.textContent = recipe;
-            e.libraryRecipe.title = recipe
-        }
-        const linkedInLib = lib.mediaLinked != null ? !!lib.mediaLinked : !1;
-        const mediaBad = !t.videoPath;
-        if (e.libraryMediaStatus) {
-            e.libraryMediaStatus.classList.toggle("hidden", !mediaBad);
-            if (mediaBad) {
-                e.libraryMediaStatus.textContent = linkedInLib ? "影缺失" : "未关联媒体";
-                e.libraryMediaStatus.className = "editor-chip editor-chip-warn shrink-0"
-            }
-        }
-        if (e.libraryFixMediaBtn) {
-            e.libraryFixMediaBtn.classList.toggle("hidden", !mediaBad);
-            e.libraryFixMediaBtn.title = linkedInLib ? "重新选择媒体文件" : "选择并关联媒体"
-        }
-        if (e.librarySaveIntent) {
-            const intent = t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab"
-                ? t.librarySaveIntent
-                : "current";
-            e.librarySaveIntent.value = intent
-        }
-        const hasTrack = !!(lib?.trackId || lib?.versionId);
-        if (e.libraryAbDiffBtn) e.libraryAbDiffBtn.disabled = !hasTrack;
-        if (e.libraryRerunBtn) e.libraryRerunBtn.disabled = !lib?.versionId;
-        if (e.libraryLoadCompareBtn) {
-            const compareOn = !!(t.libraryCompareVersionId && U());
-            e.libraryLoadCompareBtn.disabled = !hasTrack;
-            e.libraryLoadCompareBtn.classList.toggle("is-active", compareOn);
-            e.libraryLoadCompareBtn.title = compareOn
-                ? `卸下${t.libraryCompareLabel || "对照"}副轨`
-                : (lib.abPairAvailable ? "挂载对照 A/B 为只读副轨" : "挂载对照副轨（需先在库中标 A/B）");
-            const icon = e.libraryLoadCompareBtn.querySelector("i");
-            if (icon) icon.className = compareOn ? "fa fa-unlink" : "fa fa-columns"
-        }
-    }
-
-    async function refreshEditorVideoFromPath(nextPath, { force = false } = {}) {
-        const want = String(nextPath || "").trim();
-        const cur = String(t.videoPath || "").trim();
-        const norm = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
-        if (!want) {
-            if (cur || force) await Is("");
-            return
-        }
-        if (!force && cur && norm(cur) === norm(want)) return;
-        await Is(want)
-    }
-
-    async function applyLibraryMediaUpdate(payload) {
-        const mid = String(payload?.mediaId || "").trim();
-        if (!mid || !t.library?.mediaId || mid !== t.library.mediaId) return;
-        t.library = {
-            ...t.library,
-            mediaLinked: payload.cleared ? !1 : (payload.mediaLinked != null ? !!payload.mediaLinked : !!payload.videoPath),
-            mediaExists: payload.cleared ? !1 : (payload.mediaExists != null ? !!payload.mediaExists : !!payload.videoPath),
-            mediaTitle: String(payload.mediaTitle || t.library.mediaTitle || "").trim() || t.library.mediaTitle
-        };
-        syncLibraryBar();
-        if (payload.cleared) {
-            await refreshEditorVideoFromPath("", { force: !0 });
-            d("库中已清除媒体关联", "warn");
-            return
-        }
-        const next = String(payload.videoPath || "").trim();
-        if (next) {
-            const before = String(t.videoPath || "").trim();
-            await refreshEditorVideoFromPath(next, { force: !t.videoPath });
-            syncLibraryBar();
-            if (before !== String(t.videoPath || "").trim()) d("已同步库中媒体关联", "ok")
-        }
-    }
-
-    function loadLibrarySaveIntent() {
-        try {
-            const v = localStorage.getItem("transub.editor.librarySaveIntent");
-            if (v === "draft" || v === "current" || v === "ab") t.librarySaveIntent = v
-        } catch {}
-    }
-
-    function persistLibrarySaveIntent() {
-        try {
-            const v = t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab"
-                ? t.librarySaveIntent
-                : "current";
-            localStorage.setItem("transub.editor.librarySaveIntent", v)
-        } catch {}
-    }
-
     let _editorInitGen = 0;
     function ds(n) {
         if (n) {
@@ -678,7 +541,7 @@
                     st = n;
                     return
                 }
-                t.library = null, syncLibraryBar(), cn();
+                cn();
                 return
             }
             if (n.subPath) {
@@ -686,26 +549,19 @@
                     st = n;
                     return
                 }
+                try {
+                    const handoffUi = j.playerHandoffUi;
+                    handoffUi?.applyPlayerHandoffFromInit?.(t, n, {
+                        notify: (msg, kind) => d(msg, kind || "ok")
+                    })
+                } catch {}
                 const r = String(n.action || "").trim();
                 const i = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
-                const nextVid = String(n.library?.versionId || n.versionId || "").trim();
-                const curVid = String(t.library?.versionId || "").trim();
-                const versionChanged = !!(nextVid && curVid && nextVid !== curVid);
-                const hasLibraryPayload = !!(n.library && (n.library.versionId || n.library.mediaId || n.versionId || n.mediaId));
-                const s = t.ready && t.path && i(t.path) === i(n.subPath) && t.cues.length > 0;
-                if (s && !versionChanged) {
-                    if (hasLibraryPayload) applyLibrarySession(n);
-                    else {
-                        t.library = null;
-                        syncLibraryBar()
-                    }
+                const samePath = t.ready && t.path && i(t.path) === i(n.subPath) && t.cues.length > 0;
+                if (samePath) {
                     void (async () => {
                         const nextVideo = String(n.videoPath || "").trim();
                         if (nextVideo) await refreshEditorVideoFromPath(nextVideo, { force: !t.videoPath });
-                        else if (n.library && (n.library.mediaLinked === !1 || n.library.mediaExists === !1)) {
-                            await refreshEditorVideoFromPath("", { force: !0 })
-                        }
-                        syncLibraryBar()
                     })();
                     if (r === "film-context-reconstruct") {
                         Ve({
@@ -718,21 +574,9 @@
                 Un();
                 const gen = ++_editorInitGen;
                 void (async () => {
-                    if (versionChanged && t.dirty) {
-                        const ok = await ie("当前字幕未保存，切换到库中另一版本将丢失修改，继续？");
-                        if (!ok || gen !== _editorInitGen) return
-                    }
-                    const opened = await fn(n.subPath, n.videoPath || "", {
-                        skipDirtyConfirm: versionChanged,
-                        dirtyMessage: versionChanged
-                            ? "当前字幕未保存，切换库版本将丢失修改，继续？"
-                            : "",
-                        clearLibrary: !hasLibraryPayload
-                    });
+                    const opened = await fn(n.subPath, n.videoPath || "");
                     if (gen !== _editorInitGen) return;
                     if (opened === !1) return;
-                    if (hasLibraryPayload) applyLibrarySession(n);
-                    else if (!t.library) syncLibraryBar();
                     if (r === "film-context-reconstruct" && t.cues.length && i(t.path) === i(n.subPath)) {
                         Ve({
                             mode: "film",
@@ -744,9 +588,7 @@
         }
     }
     p?.onSubtitleEditorInit?.(ds);
-    p?.onTransubLibraryMediaUpdated?.((payload) => {
-        void applyLibraryMediaUpdate(payload)
-    });
+
 
     function d(n, r) {
         e.statusLine && (e.statusLine.textContent = n || "", e.statusLine.className = `status-msg${r==="err"?" err":r==="ok"?" ok":r==="warn"?" warn":""}`)
@@ -796,7 +638,7 @@
                     <span class="editor-welcome-history-path">${b(r.path)}</span>
                     ${a?`<span class="editor-welcome-history-meta">${b(a)}</span>`:""}
                 </button>
-                <button type="button" class="editor-welcome-history-lib" data-open-library data-media-path="${b(mediaPath)}" title="在字幕库中查看">库</button>
+
             </div>`
         }).join("")
     }
@@ -854,7 +696,7 @@
             d("\u8BF7\u62D6\u653E SRT / VTT / LRC / ASS \u5B57\u5E55\u6587\u4EF6", "err");
             return
         }
-        await fn(i, "", { clearLibrary: !0 })
+        await fn(i, "")
     }
 
     function La() {
@@ -862,30 +704,14 @@
             rr()
         }), e.welcomeOpenGeneratorBtn?.addEventListener("click", () => {
             Ai()
-        }), e.welcomeOpenLibraryBtn?.addEventListener("click", () => {
-            openSubtitleLibraryFromEditor()
         }), e.welcomeClearBtn?.addEventListener("click", () => {
             Ea()
         }), e.welcomeHistoryList?.addEventListener("click", s => {
-            const libBtn = s.target.closest?.("[data-open-library]");
-            if (libBtn) {
-                s.preventDefault();
-                const mediaPath = libBtn.getAttribute("data-media-path") || "";
-                void (async () => {
-                    try {
-                        const res = await p?.transubOpenSubtitleLibrary?.({ mediaPath });
-                        res?.ok === !1 && d(res?.error || "无法打开字幕库", "err")
-                    } catch (err) {
-                        d(err?.message || "无法打开字幕库", "err")
-                    }
-                })();
-                return
-            }
             const a = s.target.closest?.("[data-path]");
             if (!a) return;
             const o = a.getAttribute("data-path") || "",
                 l = a.getAttribute("data-video") || "";
-            o && fn(o, l, { clearLibrary: !0 })
+            o && fn(o, l)
         });
         const n = e.welcomeIconWrap || e.welcomeIcon || e.welcome;
         if (!n) return;
@@ -905,7 +731,7 @@
     }
 
     function fs() {
-        document.title = t.path ? `${t.dirty?"* ":""}Transub Editor \u2014 ${G(t.path)}` : "Transub Editor"
+        document.title = t.path ? `${t.dirty?"* ":""}Transub Editor（内置·即将停用） \u2014 ${G(t.path)}` : "Transub Editor（内置·即将停用）"
     }
 
     function P(n) {
@@ -982,7 +808,7 @@
     function at() {
         const n = t.selectedIndex;
         if (!(n >= 0 && n < t.cues.length)) {
-            e.prevCueBtn && (e.prevCueBtn.disabled = !0), e.nextCueBtn && (e.nextCueBtn.disabled = !0), e.deleteCueBtn && (e.deleteCueBtn.disabled = !0), e.splitCueBtn && (e.splitCueBtn.disabled = !0), e.smartSplitCueBtn && (e.smartSplitCueBtn.disabled = !0), e.silenceSplitCueBtn && (e.silenceSplitCueBtn.disabled = !0), e.compressRepCueBtn && (e.compressRepCueBtn.disabled = !0), e.splitLinesBtn && (e.splitLinesBtn.disabled = !0), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !0), e.charDurBtn && (e.charDurBtn.disabled = !0), e.smartDurBtn && (e.smartDurBtn.disabled = !0), e.audioSnapBtn && (e.audioSnapBtn.disabled = !0), Qe();
+            e.prevCueBtn && (e.prevCueBtn.disabled = !0), e.nextCueBtn && (e.nextCueBtn.disabled = !0), e.deleteCueBtn && (e.deleteCueBtn.disabled = !0), e.splitCueBtn && (e.splitCueBtn.disabled = !0), e.smartSplitCueBtn && (e.smartSplitCueBtn.disabled = !0), e.silenceSplitCueBtn && (e.silenceSplitCueBtn.disabled = !0), e.compressRepCueBtn && (e.compressRepCueBtn.disabled = !0), e.splitLinesBtn && (e.splitLinesBtn.disabled = !0), e.mergeLinesBtn && (e.mergeLinesBtn.disabled = !0), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !0), e.charDurBtn && (e.charDurBtn.disabled = !0), e.smartDurBtn && (e.smartDurBtn.disabled = !0), e.audioSnapBtn && (e.audioSnapBtn.disabled = !0), Qe();
             return
         }
         const i = gs() || t.cues[n],
@@ -996,7 +822,7 @@
             const m = !!a && a.length >= 3 && (/(.)\1{2,}/.test(a) || /(.{2,6})\1{1,}/.test(a)) && !!Ne.compressRepetitionInText(a)?.changed;
             e.compressRepCueBtn.disabled = !m
         }
-        e.splitLinesBtn && (e.splitLinesBtn.disabled = !l), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !c), e.charDurBtn && (e.charDurBtn.disabled = !qe(s)), e.smartDurBtn && (e.smartDurBtn.disabled = t.silenceSplitBusy || !Dt(i) || !t.videoPath || !p?.ffmpegDetectSilence), e.audioSnapBtn && (e.audioSnapBtn.disabled = t.silenceSplitBusy || t.retranscribeBusy || !Tt(i) || !t.videoPath || !p?.ffmpegDetectSilence), Qe()
+        e.splitLinesBtn && (e.splitLinesBtn.disabled = !l), e.mergeLinesBtn && (e.mergeLinesBtn.disabled = !l), e.splitSpacesBtn && (e.splitSpacesBtn.disabled = !c), e.charDurBtn && (e.charDurBtn.disabled = !qe(s)), e.smartDurBtn && (e.smartDurBtn.disabled = t.silenceSplitBusy || !Dt(i) || !t.videoPath || !p?.ffmpegDetectSilence), e.audioSnapBtn && (e.audioSnapBtn.disabled = t.silenceSplitBusy || t.retranscribeBusy || !Tt(i) || !t.videoPath || !p?.ffmpegDetectSilence), Qe()
     }
 
     function R(n = {}) {
@@ -1013,9 +839,7 @@
             if (U()) {
                 const o = an(a);
                 e.detailPairText.textContent = o || "\uFF08\u65E0\u65F6\u95F4\u91CD\u53E0\u7684\u5BF9\u7167\uFF09", e.detailPairWrap.classList.remove("hidden");
-                e.detailPairLabel && (e.detailPairLabel.textContent = t.libraryCompareLabel
-                    ? `${t.libraryCompareLabel}（只读）`
-                    : (t.pairReadOnly ? "对照轨（只读）" : "对照轨"))
+                e.detailPairLabel && (e.detailPairLabel.textContent = t.pairReadOnly ? "对照轨（只读）" : "对照轨")
             } else e.detailPairText.textContent = "", e.detailPairWrap.classList.add("hidden");
         s || at(), wt(), t.detailRenderedDurSec = V(a) / 1e3, t.detailSyncing = !1, As?.syncDetailStyleSelect?.(), Ov?.syncOverrideControls?.(), Pd?.syncHandle?.()
     }
@@ -1405,29 +1229,41 @@
         }
         We(n, n[n.length - 1]), H?.refreshContextActionBar?.(), d(`\u5DF2\u9009\u4E2D ${n.length} \u6761`, "ok")
     }
+    function canMergeSelectedNow() {
+        return mergeCore.canMergeSelectedIndexes(J(), t.cues.length)
+    }
     async function Xn() {
         const n = J();
-        if (n.length < 2) {
-            d("\u8BF7\u81F3\u5C11\u9009\u4E2D\u4E24\u6761\u76F8\u90BB\u5B57\u5E55\u4EE5\u5408\u5E76", "err");
+        if (!mergeCore.canMergeSelectedIndexes(n, t.cues.length)) {
+            d(n.length < 2
+                ? "\u8BF7\u81F3\u5C11\u9009\u4E2D\u4E24\u6761\u76F8\u90BB\u5B57\u5E55\u4EE5\u5408\u5E76"
+                : "\u53EA\u80FD\u5408\u5E76\u8FDE\u7EED\u76F8\u90BB\u7684\u9009\u4E2D\u6761\u76EE", "err");
             return
         }
-        for (let l = 1; l < n.length; l += 1)
-            if (n[l] !== n[l - 1] + 1) {
-                d("\u53EA\u80FD\u5408\u5E76\u8FDE\u7EED\u76F8\u90BB\u7684\u9009\u4E2D\u6761\u76EE", "err");
-                return
-            } if (!await ie(`\u5408\u5E76\u9009\u4E2D\u7684 ${n.length} \u6761\u5B57\u5E55\uFF1F`)) return;
-        x(), $();
-        const r = n[0],
-            i = n[n.length - 1],
-            s = t.cues[r].startMs,
-            a = I(t.cues[i]),
-            o = n.map(l => String(t.cues[l].text || "").trim()).filter(Boolean).join(`
-`);
-        t.cues.splice(r, i - r + 1, {
-            startMs: s,
-            endMs: a,
-            text: o
-        }), We([r], r), P(!0), C(), d(`\u5DF2\u5408\u5E76\u4E3A\u7B2C ${r+1} \u6761`, "ok")
+        if (!await ie(`\u5408\u5E76\u9009\u4E2D\u7684 ${n.length} \u6761\u5B57\u5E55\uFF1F`)) return;
+        if (!mergeCore.canMergeSelectedIndexes(n, t.cues.length)) {
+            d("\u9009\u533A\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u5408\u5E76", "err");
+            return
+        }
+        $();
+        const i = t.cues.length,
+            s = Array.isArray(t.pairCues) && t.pairCues.length === i;
+        // Avoid syncDetailToCue writing stale detail into post-merge indexes.
+        t.detailSyncing = !0, t.selectedIndex = -1, t.selectedIndices = new Set;
+        const a = mergeCore.applyMergeSelectedCues(t.cues, n, {
+            cueEndMs: I
+        });
+        if (a.error) {
+            t.detailSyncing = !1, d(a.error, "err");
+            return
+        }
+        if (s) {
+            const o = mergeCore.applyMergeSelectedCues(t.pairCues, n, {
+                cueEndMs: I
+            });
+            o.error || (t.pairDirty = !0, t._pairOverlapIndex = null)
+        }
+        t.detailSyncing = !1, We([a.mergedIndex], a.mergedIndex), P(!0), C(), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), H?.refreshContextActionBar?.(), d(`\u5DF2\u5408\u5E76\u4E3A\u7B2C ${a.mergedIndex+1} \u6761\uFF08\u79FB\u9664 ${a.removedCount} \u6761\uFF09`, "ok")
     }
 
     function Ra() {
@@ -1713,6 +1549,18 @@ ${t.dualLineOrder||""}`;
             r?.ok && (t.videoCodec = r.codec || "", t.videoWidth = r.width || 0, t.videoHeight = r.height || 0)
         } catch {}
     }
+    /** Reload associated video when init reuses an already-open subtitle path. */
+    async function refreshEditorVideoFromPath(videoPath, opts = {}) {
+        const next = String(videoPath || "").trim();
+        if (!next) return;
+        const force = !!(opts && opts.force);
+        const norm = (s) => String(s || "").replace(/\\/g, "/").toLowerCase();
+        if (!force && t.videoPath && norm(t.videoPath) === norm(next)) return;
+        await Is(next);
+        try {
+            await Ps(t.videoPath, t.path);
+        } catch {}
+    }
     async function Is(n) {
         if (!e.video) return;
         if (e.video.pause(), e.video.removeAttribute("src"), e.video.load(), t.videoPath = n || "", t.waveform.peaks = null, t.waveform.cacheKey = "", t.waveform.videoPath = "", !n) {
@@ -1785,7 +1633,7 @@ ${t.dualLineOrder||""}`;
             });
             if (!o?.ok) return d(o?.error || "\u52A0\u8F7D\u5B57\u5E55\u5931\u8D25", "err"), !1;
             const l = await Ba(o.path);
-            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), Pd?.syncHandle?.(), qr(), Ml(), jr({
+            x(), t.path = o.path, t.videoPath = r || "", t.format = l?.format || o.format, t.header = Array.isArray(l?.header) ? l.header : o.header || [], t.cues = Array.isArray(l?.cues) ? l.cues : o.cues || [], t.selectedIndex = t.cues.length ? 0 : -1, t.selectedIndices = t.selectedIndex >= 0 ? new Set([t.selectedIndex]) : new Set, t.selectionAnchor = t.selectedIndex, t.playbackIndex = -1, t.previewTextTrack = null, t.overlayText = "", t.overlaySourceText = "", t.overlayVisible = !1, t.detailRenderedDurSec = null, t.lastPlayheadLabel = "", t.sidecarMeta = null, t.cueMeta = [], t.fillerMatchIndexSet = new Set, rn(), P(!!l), xl(), xa(), fs(), e.formatBadge && (e.formatBadge.textContent = String(t.format || o.format).toUpperCase()), e.cueCount && (e.cueCount.textContent = `${t.cues.length} \u6761`), syncAssStyleColumn(), Ov?.syncToolbarVisibility?.(), Pd?.syncHandle?.(), qr(), Ml(), jr({
                 detail: `\u5DF2\u8BFB\u53D6 ${t.cues.length} \u6761\uFF0C\u6B63\u5728\u51C6\u5907\u7F16\u8F91\u533A\u2026`,
                 statusMessage: `\u6B63\u5728\u6E32\u67D3 ${t.cues.length} \u6761\u5B57\u5E55\u2026`
             }), await Ta(o.path), H?.loadMarkersFromSidecar?.(), Jo(), await Br(o.path), await _r(), C(), jr({
@@ -1818,10 +1666,6 @@ ${t.dualLineOrder||""}`;
     }
     async function fn(n, r, opts = {}) {
         if (!opts.skipDirtyConfirm && t.ready && t.dirty && !await ie(opts.dirtyMessage || "\u5F53\u524D\u5B57\u5E55\u672A\u4FDD\u5B58\uFF0C\u6253\u5F00\u65B0\u6587\u4EF6\u5C06\u4E22\u5931\u4FEE\u6539\uFF0C\u7EE7\u7EED\uFF1F")) return !1;
-        if (opts.clearLibrary) {
-            t.library = null;
-            syncLibraryBar()
-        }
         Un();
         let i = String(r || "").trim();
         try {
@@ -1857,7 +1701,7 @@ ${t.dualLineOrder||""}`;
             return
         }
         if (n.canceled || !n.path) return;
-        t.library = null, syncLibraryBar(), await fn(n.path, n.videoPath || "")
+        await fn(n.path, n.videoPath || "")
     }
     async function Ls() {
         const n = await p?.transubSelectEditorVideo?.({
@@ -1870,25 +1714,6 @@ ${t.dualLineOrder||""}`;
         }
         if (n.canceled || !n.path) return;
         await Is(n.path), await Ps(n.path, t.path);
-        if (t.library?.mediaId) {
-            try {
-                const linked = await p?.transubLibrarySetMediaPath?.({
-                    mediaId: t.library.mediaId,
-                    mediaPath: n.path
-                });
-                if (linked?.ok) {
-                    t.library = {
-                        ...t.library,
-                        mediaLinked: !0,
-                        mediaExists: !0,
-                        mediaTitle: linked.media?.title || t.library.mediaTitle
-                    };
-                    syncLibraryBar()
-                } else if (linked?.error) {
-                    d(linked.error, "warn")
-                }
-            } catch { /* ignore */ }
-        }
         e.splitModal && !e.splitModal.classList.contains("hidden") && $e(), e.silenceSplitModal && !e.silenceSplitModal.classList.contains("hidden") && Je(), d(`\u5DF2\u5173\u8054\u5A92\u4F53\uFF1A${G(n.path)}`, "ok")
     }
     async function Pt(opts = {}) {
@@ -1904,11 +1729,6 @@ ${t.dualLineOrder||""}`;
         }
         const prevPath = String(t.path || "").trim();
         const retarget = destPath !== prevPath || destFormat !== String(t.format || "srt");
-        const lib = t.library;
-        const intent = lib
-            ? (t.librarySaveIntent === "draft" || t.librarySaveIntent === "ab" ? t.librarySaveIntent : "current")
-            : "current";
-        const asCurrent = !lib || intent === "current";
         const writePayload = {
             path: destPath,
             format: destFormat,
@@ -1916,18 +1736,6 @@ ${t.dualLineOrder||""}`;
             header: t.header,
             videoPath: t.videoPath || ""
         };
-        if (lib?.versionId || lib?.mediaId) {
-            writePayload.libraryParentVersionId = lib.versionId || "";
-            writePayload.librarySetActive = asCurrent;
-            writePayload.librarySource = "edit";
-            if (intent === "ab") {
-                writePayload.libraryTags = ["对照B"];
-                writePayload.libraryNote = "对照B";
-                writePayload.librarySetActive = !1
-            } else if (intent === "draft") {
-                writePayload.libraryNote = writePayload.libraryNote || "草稿"
-            }
-        }
         const n = await p?.transubWriteSubtitle?.(writePayload);
         if (!n?.ok) {
             d(n?.error || "\u4FDD\u5B58\u5931\u8D25", "err");
@@ -1951,28 +1759,11 @@ ${t.dualLineOrder||""}`;
             await Ca(t.path, t.videoPath || "");
             await Ps(t.videoPath, t.path)
         }
-        if (n.libraryIngest?.versionId) {
-            t.library = {
-                ...(t.library || {}),
-                versionId: n.libraryIngest.versionId,
-                mediaId: n.libraryIngest.mediaId || lib?.mediaId || "",
-                trackId: n.libraryIngest.trackId || lib?.trackId || "",
-                isActive: n.libraryIngest.setActive != null
-                    ? !!n.libraryIngest.setActive
-                    : !!lib?.isActive
-            };
-            syncLibraryBar()
-        }
-        P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma();
+                P(!1), t.savedSnapshot = Jr(t.cues), He(), await dn(), await Ma();
         if (retarget) fs();
         let okMsg = n.backupPath ? "\u5DF2\u4FDD\u5B58\uFF08\u5E76\u5199\u5165 .bak\uFF09" : "\u5DF2\u4FDD\u5B58";
         if (retarget) okMsg = `已另存为：${G(t.path)}`;
-        else if (lib && n.libraryIngest) {
-            okMsg = intent === "ab"
-                ? "已保存为对照 B（未抢当前）"
-                : (asCurrent ? "已保存并设为库当前版" : "已保存为库草稿（未抢当前）")
-        }
-        d(okMsg, "ok"), e.saveStatus && (e.saveStatus.textContent = retarget ? "已另存为" : "\u5DF2\u4FDD\u5B58", setTimeout(() => {
+                d(okMsg, "ok"), e.saveStatus && (e.saveStatus.textContent = retarget ? "已另存为" : "\u5DF2\u4FDD\u5B58", setTimeout(() => {
             e.saveStatus && (e.saveStatus.textContent = "")
         }, 2e3))
     }
@@ -2051,6 +1842,23 @@ ${t.dualLineOrder||""}`;
             return
         }
         mr(i, a.cues, r)
+    }
+
+    function Ul() {
+        if (t.selectedIndex < 0) return;
+        x();
+        const n = t.selectedIndex,
+            r = t.cues[n],
+            i = cueSplitPlan ? cueSplitPlan.planMergeCueLines(r, {
+                splitApi: D
+            }) : {
+                error: "分割核心未加载"
+            };
+        if (i.error) {
+            d(i.error, "err");
+            return
+        }
+        $(), r.text = i.text, P(!0), Ze(), d(`\u5DF2\u5C06\u7B2C ${n+1} \u6761\u5408\u5E76\u4E3A\u5355\u884C`, "ok")
     }
 
     function Ds() {
@@ -2351,7 +2159,7 @@ ${t.dualLineOrder||""}`;
             f = n && Tt(t.cues[t.selectedIndex]) && !!t.videoPath && !!p?.ffmpegDetectSilence && !t.silenceSplitBusy && !t.retranscribeBusy;
         e.cueContextMenu.querySelectorAll("[data-ctx-action]").forEach(g => {
             const h = g.dataset.ctxAction;
-            h === "split-modal" || h === "split-smart" || h === "split-silence" || h === "split-lines" || h === "split-spaces" ? h === "split-lines" ? g.disabled = !s : h === "split-spaces" ? g.disabled = !a : h === "split-silence" ? g.disabled = !o : g.disabled = !i : h === "split-silence-all" ? g.disabled = t.silenceSplitBusy || !t.videoPath || !p?.ffmpegDetectSilence || !t.cues.some(v => $t(v)) : h === "align-start" ? g.disabled = !l : h === "align-end" ? g.disabled = !c : h === "char-dur" ? g.disabled = !u : h === "smart-dur" ? g.disabled = !m : h === "audio-snap" ? g.disabled = !f : h === "audio-snap-batch" ? g.disabled = !t.videoPath || !p?.ffmpegDetectSilence || t.silenceSplitBusy || t.retranscribeBusy || !t.cues.length : h === "retranscribe" ? (g.disabled = !n || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange, g.textContent = "\u91CD\u8F6C\u5199\u672C\u6761\u2026") : h === "sakura-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !(p?.transubSakuraTranslate || p?.transubAdvancedSmartTranslate) : h === "smart-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !p?.transubAdvancedSmartTranslate : h === "retranslate" || h === "retranscribe-dual" ? g.disabled = !n || !U() || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "retranscribe-dur" ? g.disabled = t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "confirm-meta" || h === "delete" ? g.disabled = !n : h === "insert" && (g.disabled = !1)
+            h === "split-modal" || h === "split-smart" || h === "split-silence" || h === "split-lines" || h === "merge-lines" || h === "split-spaces" ? h === "split-lines" || h === "merge-lines" ? g.disabled = !s : h === "split-spaces" ? g.disabled = !a : h === "split-silence" ? g.disabled = !o : g.disabled = !i : h === "merge-selected" ? g.disabled = !canMergeSelectedNow() : h === "split-silence-all" ? g.disabled = t.silenceSplitBusy || !t.videoPath || !p?.ffmpegDetectSilence || !t.cues.some(v => $t(v)) : h === "align-start" ? g.disabled = !l : h === "align-end" ? g.disabled = !c : h === "char-dur" ? g.disabled = !u : h === "smart-dur" ? g.disabled = !m : h === "audio-snap" ? g.disabled = !f : h === "audio-snap-batch" ? g.disabled = !t.videoPath || !p?.ffmpegDetectSilence || t.silenceSplitBusy || t.retranscribeBusy || !t.cues.length : h === "retranscribe" ? (g.disabled = !n || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange, g.textContent = "\u91CD\u8F6C\u5199\u672C\u6761\u2026") : h === "sakura-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !(p?.transubSakuraTranslate || p?.transubAdvancedSmartTranslate) : h === "smart-translate" ? g.disabled = !n || t.reconstructBusy || t.computeBusy || !p?.transubAdvancedSmartTranslate : h === "retranslate" || h === "retranscribe-dual" ? g.disabled = !n || !U() || t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "retranscribe-dur" ? g.disabled = t.retranscribeBusy || t.silenceSplitBusy || t.computeBusy || !t.videoPath || !p?.transubTranscribeRange : h === "confirm-meta" || h === "delete" ? g.disabled = !n : h === "insert" && (g.disabled = !1)
         })
     }
 
@@ -2403,6 +2211,12 @@ ${t.dualLineOrder||""}`;
                 break;
             case "split-lines":
                 lt("lines");
+                break;
+            case "merge-lines":
+                Ul();
+                break;
+            case "merge-selected":
+                Xn();
                 break;
             case "split-spaces":
                 lt("spaces");
@@ -2601,6 +2415,7 @@ ${t.dualLineOrder||""}`;
     function to({
         requireVideo: n = !0
     } = {}) {
+        if (!retranscribeRangePlan) return d("重转写核心未加载，请重启字幕编辑器", "err"), !1;
         if (t.retranscribeBusy || t.silenceSplitBusy) return d("\u5DF2\u6709\u5206\u6790\u4EFB\u52A1\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019", "err"), !1;
         if (t.computeBusy) return d(t.computeBusyLabel ? `\u5DF2\u6709${t.computeBusyLabel}\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u540E\u518D\u8BD5` : "\u5176\u5B83\u7A97\u53E3\u6709\u5F15\u64CE\u6216 LLM \u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "err"), !1;
         if (n) {
@@ -5662,6 +5477,10 @@ ${t.dualLineOrder||""}`;
     }
 
     function ki() {
+        if (Tg && !Tg.isZhTarget?.()) {
+            d("\u5F53\u524D\u6210\u7247\u76EE\u6807\u8BED\u4E0D\u662F\u4E2D\u6587\uFF0C\u65E0\u9700\u7B80\u7E41\u8F6C\u6362", "warn");
+            return;
+        }
         e.chineseConvertModal && (x(), Q(e.chineseConvertModal, e.chineseConvertConfirm), Dn())
     }
 
@@ -5910,6 +5729,7 @@ ${t.dualLineOrder||""}`;
             }, (i, s) => s);
         if (t.listFilter === "low") return r.filter(i => !!t.cueMeta[i]?.low);
         if (t.listFilter === "qc") return r.filter(i => t.qcIssueIndexSet.has(i));
+        if (t.listFilter === "filler") return r.filter(i => t.fillerMatchIndexSet?.has(i));
         if (t.listFilter === "find") return !t.find.active || !t.find.matches.length ? [] : [...new Set(t.find.matches.map(i => i.cueIdx))].sort((i, s) => i - s);
         if (t.listFilter === "review-unseen" || t.listFilter === "review-edited" || t.listFilter === "review-approved") {
             const i = t.listFilter.replace("review-", ""),
@@ -5937,7 +5757,7 @@ ${t.dualLineOrder||""}`;
         t.listFilter = next, document.querySelectorAll("[data-list-filter]").forEach(i => {
             const s = i.getAttribute("data-list-filter") === t.listFilter;
             i.classList.toggle("active", s), i.getAttribute("role") === "menuitemradio" && i.setAttribute("aria-checked", s ? "true" : "false")
-        }), Li(), r && ia?.(t.listFilter), C({
+        }), e.fillerFilterBtn?.classList.toggle("hidden", !(t.fillerMatchIndexSet?.size > 0) && t.listFilter !== "filler"), Li(), r && ia?.(t.listFilter), C({
             listOnly: !0,
             reuseMeta: !0
         }), H?.refreshContextActionBar?.()
@@ -6016,183 +5836,6 @@ ${t.dualLineOrder||""}`;
         }
     }
 
-    async function openSubtitleLibraryFromEditor() {
-        try {
-            const mediaPath = String(t.videoPath || "").trim();
-            const mediaId = String(t.library?.mediaId || "").trim();
-            const versionId = String(t.library?.versionId || "").trim();
-            const n = await p?.transubOpenSubtitleLibrary?.({
-                mediaPath,
-                ...(mediaId ? { mediaId } : {}),
-                ...(versionId ? { versionId } : {})
-            });
-            n?.ok === !1 && d(n?.error || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u5E93", "err")
-        } catch (n) {
-            d(n?.message || "\u65E0\u6CD5\u6253\u5F00\u5B57\u5E55\u5E93", "err")
-        }
-    }
-
-    async function ensureLibraryAbPairIds() {
-        const lib = t.library;
-        if (!lib) return null;
-        if (lib.abVersionIdA && lib.abVersionIdB) return lib;
-        const mediaId = String(lib.mediaId || "").trim();
-        if (!mediaId) return lib;
-        const detail = await p?.transubLibraryGetMedia?.({ mediaId });
-        const tracks = Array.isArray(detail?.tracks) ? detail.tracks : [];
-        const hit = tracks.find((tr) => tr.id === lib.trackId && tr.abPairAvailable)
-            || tracks.find((tr) => tr.abPairAvailable)
-            || tracks.find((tr) => tr.id === lib.trackId);
-        if (!hit) return lib;
-        t.library = {
-            ...lib,
-            trackId: hit.id || lib.trackId,
-            abPairAvailable: !!hit.abPairAvailable,
-            abVersionIdA: String(hit.abVersionIdA || "").trim(),
-            abVersionIdB: String(hit.abVersionIdB || "").trim()
-        };
-        syncLibraryBar();
-        return t.library
-    }
-
-    async function editorLibraryLoadCompareRef() {
-        if (!t.library?.versionId && !t.library?.mediaId) {
-            d("当前不是从字幕库打开的版本", "warn");
-            return
-        }
-        if (t.libraryCompareVersionId && U()) {
-            if (t.pairDirty && !await ie("副轨有未保存修改，卸下后将丢弃，继续？")) return;
-            rn(), C(), R(), d("已卸下对照副轨", "ok");
-            return
-        }
-        const lib = await ensureLibraryAbPairIds();
-        const idA = String(lib?.abVersionIdA || "").trim();
-        const idB = String(lib?.abVersionIdB || "").trim();
-        if (!idA || !idB) {
-            d("尚未标记对照 A/B，可在字幕库中标注后再挂载", "warn");
-            return
-        }
-        const cur = String(lib.versionId || "").trim();
-        let loadId = idA;
-        let label = "对照A";
-        if (cur && cur === idA) {
-            loadId = idB;
-            label = "对照B"
-        } else if (cur && cur === idB) {
-            loadId = idA;
-            label = "对照A"
-        }
-        if (loadId === cur) {
-            d("当前已是该对照版本", "warn");
-            return
-        }
-        if (t.pairDirty && !await ie("挂载对照将替换当前副轨，未保存的副轨修改将丢失，继续？")) return;
-        const opened = await p?.transubLibraryOpenVersion?.({ versionId: loadId });
-        if (!opened?.ok || !opened.path) {
-            d(opened?.error || "无法打开对照版本文件", "err");
-            return
-        }
-        try {
-            const doc = await p?.transubReadSubtitle?.({ path: opened.path });
-            if (!doc?.ok || !Array.isArray(doc.cues) || !doc.cues.length) {
-                d("对照版本内容为空或读取失败", "err");
-                return
-            }
-            t.pairPath = opened.path;
-            t.pairCues = doc.cues;
-            t.pairFormat = doc.format || t.format || "srt";
-            t.pairHeader = Array.isArray(doc.header) ? doc.header : [];
-            t.pairDirty = !1;
-            t.pairReadOnly = !0;
-            t.libraryCompareVersionId = loadId;
-            t.libraryCompareLabel = label;
-            t.dualRole = t.dualRole === "source" ? "source" : "target";
-            t.dualDisplayMode = zn();
-            t.dualLineOrder = nn();
-            if (e.dualDisplaySelect) e.dualDisplaySelect.value = t.dualDisplayMode;
-            if (e.dualLineOrderSelect) e.dualLineOrderSelect.value = t.dualLineOrder;
-            as(), kt(), C(), R(), syncLibraryBar();
-            d(`已挂载${label}为只读副轨`, "ok")
-        } catch (err) {
-            d(err?.message || "挂载对照失败", "err")
-        }
-    }
-
-    async function editorLibraryAbDiff() {
-        const trackId = String(t.library?.trackId || "").trim();
-        const mediaId = String(t.library?.mediaId || "").trim();
-        if (!trackId && !mediaId) {
-            d("当前不是从字幕库打开的版本", "warn");
-            return
-        }
-        let res = null;
-        if (trackId) {
-            res = await p?.transubLibraryDiff?.({ abPair: true, trackId })
-        }
-        if (!res?.ok && mediaId) {
-            const detail = await p?.transubLibraryGetMedia?.({ mediaId });
-            const tracks = Array.isArray(detail?.tracks) ? detail.tracks : [];
-            const hit = tracks.find((tr) => tr.abPairAvailable)
-                || tracks.find((tr) => tr.id === trackId);
-            if (hit?.id) res = await p?.transubLibraryDiff?.({ abPair: true, trackId: hit.id })
-        }
-        if (!res?.ok) {
-            d(res?.error || "尚未标记对照 A/B，可在字幕库中标注后再对比", "warn");
-            return
-        }
-        const body = e.libraryDiffBody;
-        const meta = e.libraryDiffMeta;
-        if (meta) {
-            const ab = res.abPair ? "对照A → 对照B · " : "";
-            const aSum = res.versionA?.recipeSummary || "—";
-            const bSum = res.versionB?.recipeSummary || "—";
-            const s = res.stats || {};
-            meta.textContent = `${ab}${aSum} → ${bSum} · 相同 ${s.equal || 0} · +${s.added || 0} · -${s.deleted || 0}`
-        }
-        if (body) {
-            const ops = Array.isArray(res.ops) ? res.ops : [];
-            body.innerHTML = ops.length
-                ? ops.slice(0, 500).map((op) => {
-                    const text = b(String(op.text ?? ""));
-                    if (op.op === "add") return `<div class="lib-diff-add">+ ${text}</div>`;
-                    if (op.op === "del") return `<div class="lib-diff-del">- ${text}</div>`;
-                    if (op.op === "skip") return `<div class="lib-diff-skip">${text}</div>`;
-                    return `<div class="lib-diff-eq">  ${text}</div>`
-                }).join("")
-                : '<div class="lib-diff-skip">（无差异）</div>'
-        }
-        e.libraryDiffModal?.classList.remove("hidden")
-    }
-
-    async function editorLibraryRerun() {
-        const versionId = String(t.library?.versionId || "").trim();
-        if (!versionId) {
-            d("当前不是从字幕库打开的版本", "warn");
-            return
-        }
-        if (t.dirty && !await ie("再跑将转到主窗口；未保存的修改仍留在本编辑器。继续？")) return;
-        const prepared = await p?.transubLibraryPrepareRerun?.({ versionId });
-        if (!prepared?.ok) {
-            d(prepared?.error || "准备再跑失败（可能需要 Pro）", "err");
-            return
-        }
-        const started = await p?.transubLibraryStartRetranslate?.({
-            mediaPath: prepared.mediaPath,
-            sourcePath: prepared.sourcePath,
-            keptPath: prepared.keptPath,
-            destPath: prepared.destPath,
-            hints: prepared.hints,
-            recipe: prepared.recipe || null,
-            recipeSummary: prepared.hints?.recipeSummary || t.library?.recipeSummary || "",
-            sourceVersionId: prepared.sourceVersionId,
-            seedVersionId: prepared.seedVersionId
-        });
-        if (!started?.ok) {
-            d(started?.error || "无法转到主窗口重新翻译", "err");
-            return
-        }
-        d("已转到主窗口，请确认重新翻译", "ok")
-    }
 
     function Al() {}
 
@@ -6429,7 +6072,8 @@ ${t.dualLineOrder||""}`;
                 });
                 return
             }
-            Rn(), tt(n), t.waveformEnabled && Ge()
+            // Playhead CSS only — full waveform canvas redraw is reserved for view/seek/resize.
+            Rn(), tt(n)
         }))
     }
 
@@ -6517,8 +6161,8 @@ ${t.dualLineOrder||""}`;
         try {
             const o = await p.ffmpegExtractWaveform(ln({
                 path: i,
-                peaksPerSec: 40,
-                maxPeaks: 24e3
+                peaksPerSec: 20,
+                maxPeaks: 12e3
             }));
             if (a !== t.waveformLoadGen || t.videoPath !== i) {
                 ue(!1);
@@ -6647,6 +6291,26 @@ ${t.dualLineOrder||""}`;
         return u && (u.textContent = c.slice(0, 24)), !0
     }
 
+    let playheadScrub = null;
+    playheadScrub = j.playheadScrub.installPlayheadScrub({
+        state: t,
+        els: e,
+        pxToMs(n, r) {
+            const i = r || e.timelineTrack;
+            if (!i) return 0;
+            const s = i.getBoundingClientRect();
+            return Math.max(0, qn(n - s.left, i))
+        },
+        updatePlayheadUi(n, r = {}) {
+            tt(n, r), e.playheadTime && (t.lastPlayheadLabel = Z(n, t.format), e.playheadTime.textContent = t.lastPlayheadLabel)
+        },
+        syncPlayback(n = !0) {
+            Ce(!!n)
+        },
+        closeContextMenu: ct,
+        cueEndMs: I
+    });
+
     function ol() {
         const n = e.timelineTrack;
         if (!n || n.dataset.bound === "1") return;
@@ -6696,9 +6360,8 @@ ${t.dualLineOrder||""}`;
                 return
             }
             if (!c) {
-                if (!e.video || !t.videoPath || o.button !== 0) return;
-                const B = Math.max(0, qn(f));
-                e.video.currentTime = B / 1e3, Ce(!0);
+                if (o.button !== 0) return;
+                playheadScrub?.beginScrub(o, n);
                 return
             }
             if (o.button !== 0) return;
@@ -6780,7 +6443,7 @@ ${t.dualLineOrder||""}`;
                         L = B?.mode || v;
                     t.timeline.dragging = null, window.removeEventListener("mousemove", N), window.removeEventListener("mouseup", W), it && (cancelAnimationFrame(it), it = 0);
                     const w = t.cues[M];
-                    if (w && e.video && t.videoPath) {
+                    if (w && e.video && t.videoPath && playheadScrub?.shouldSeekVideoAfterCueDrag(B, w)) {
                         const A = L === "end" ? I(w) - 1 : w.startMs;
                         e.video.currentTime = Math.max(0, A) / 1e3
                     }
@@ -6805,10 +6468,7 @@ ${t.dualLineOrder||""}`;
                 return
             }
             if (o.button !== 0 || !e.video || !t.videoPath) return;
-            const l = s.getBoundingClientRect(),
-                c = o.clientX - l.left,
-                u = Math.max(0, qn(c, s));
-            e.video.currentTime = u / 1e3, Ce(!0)
+            playheadScrub?.beginScrub(o, s)
         }), s.addEventListener("contextmenu", o => {
             if (!t.waveformEnabled) return;
             const l = s.getBoundingClientRect(),
@@ -6862,7 +6522,7 @@ ${t.dualLineOrder||""}`;
             t.ready && (t._timelineResizeTimer && clearTimeout(t._timelineResizeTimer), t._timelineResizeTimer = setTimeout(() => {
                 t._timelineResizeTimer = null, _i() || Be()
             }, 100))
-        })
+        }), playheadScrub?.bindUi?.()
     }
 
     function ji() {
@@ -7026,6 +6686,12 @@ ${t.dualLineOrder||""}`;
         openQcModal: Fr,
         restoreInitialSnapshot: Zr,
         mergeSelectedCues: Xn,
+        mergeCueLines: Ul,
+        planMergeCueLines: (cue) => cueSplitPlan ? cueSplitPlan.planMergeCueLines(cue, {
+            splitApi: D
+        }) : {
+            error: "分割核心未加载"
+        },
         confirmBatchSilenceSplit: si,
         confirmBatchSilenceDurAdjust: Xs,
         confirmBatchAudioSnapAdjust: Ys,
@@ -7073,6 +6739,51 @@ ${t.dualLineOrder||""}`;
             refreshCueMeta: He,
             renderCueList: C,
             metaCore: z,
+        });
+    }
+    if (typeof j.installBatchRetranslateUi === "function") {
+        Brt = j.installBatchRetranslateUi({
+            state: t,
+            els: e,
+            electron: p,
+            setStatus: d,
+            showEditorModal: Q,
+            hideEditorModal: K,
+            getSelectedCueIndexes: J,
+            runTextTranslateOnce: (...args) => St.runTextTranslateOnce(...args),
+        });
+    }
+    if (typeof j.installBatchDeleteUi === "function") {
+        Bdel = j.installBatchDeleteUi({
+            state: t,
+            els: e,
+            setStatus: d,
+            showEditorModal: Q,
+            hideEditorModal: K,
+            getSelectedCueIndexes: J,
+            syncDetailToCue: x,
+            recordUndoBeforeChange: $,
+            setDirty: P,
+            renderCueList: C,
+            setSelection: We,
+            editorConfirm: ie,
+        });
+    }
+    if (typeof j.installFillerCheckUi === "function") {
+        Bfill = j.installFillerCheckUi({
+            state: t,
+            els: e,
+            setStatus: d,
+            showEditorModal: Q,
+            hideEditorModal: K,
+            syncDetailToCue: x,
+            recordUndoBeforeChange: $,
+            setDirty: P,
+            renderCueList: C,
+            setSelection: We,
+            setListFilter: (n) => Re(n),
+            editorConfirm: ie,
+            getPreferredLang: () => T.TransubSubtitleTargetLang?.resolveSubtitleTargetLang?.(t.targetLangOptions || {}) || "zh",
         });
     }
     H = j.installKeptAndMarkers({
@@ -7134,6 +6845,11 @@ ${t.dualLineOrder||""}`;
         setStatus: d,
         showEditorModal: Q,
         hideEditorModal: K
+    })), typeof j.installTargetLangUi == "function" && (Tg = j.installTargetLangUi({
+        state: t,
+        els: e,
+        electron: p,
+        setStatus: d
     })), As = j.installAssStylesUi({
         state: t,
         els: e,
@@ -7215,6 +6931,27 @@ ${t.dualLineOrder||""}`;
         setStatus: d,
         basename: G
     });
+    let glossaryImportUi = null;
+
+    function bindGlossaryImportUiOnce() {
+        if (glossaryImportUi) return glossaryImportUi;
+        glossaryImportUi = j.installGlossaryImportUi({
+            state: t,
+            els: e,
+            electron: p,
+            setStatus: d,
+            glossaryCore: se,
+            importCore: T.TransubSubtitleGlossaryImport,
+            refreshGlossaryUi: () => {
+                Mr();
+                et();
+                Fe();
+            },
+            saveGlossary: kr,
+            getGlossaryScope: ko,
+        });
+        return glossaryImportUi;
+    }
     async function runEditorBilingualReview() {
         const n = T.TransubBilingualReview;
         if (!n?.reviewBilingualPair) {
@@ -7642,9 +7379,9 @@ ${t.dualLineOrder||""}`;
         }
         const r = !!n.smartTranslateFaithfulTone,
             i = T.TransubSakuraMtCatalog,
-            s = typeof i?.resolveTranslateModeFromOptions == "function" ? i.resolveTranslateModeFromOptions(n) : n.smartTranslate ? "smart" : i?.isLlmInferenceMtModel?.(String(n.engineMtModel || "").trim()) || i?.isSakuraMtModel?.(String(n.engineMtModel || "").trim()) || /^sakura-/i.test(String(n.engineMtModel || "").trim()) ? "llm" : "engine",
-            a = typeof i?.normalizeTranslateMode == "function" ? i.normalizeTranslateMode(s) : s === "sakura" ? "llm" : s,
-            o = typeof i?.translateModeLabel == "function" ? i.translateModeLabel(a) : a === "smart" ? "\u667A\u80FD\u7FFB\u8BD1" : a === "llm" ? "\u63A8\u7406\u7FFB\u8BD1" : "\u673A\u5668\u7FFB\u8BD1";
+            s = typeof i?.resolveTranslateModeFromOptions == "function" ? i.resolveTranslateModeFromOptions(n) : n.smartTranslate ? "smart" : "llm",
+            a = typeof i?.normalizeTranslateMode == "function" ? i.normalizeTranslateMode(s) : s === "sakura" || s === "engine" || s === "opus" ? "llm" : s,
+            o = typeof i?.translateModeLabel == "function" ? i.translateModeLabel(a) : a === "smart" ? "\u667A\u80FD\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1";
         if (a === "smart") return {
             engine: "smart",
             mode: "smart",
@@ -7652,22 +7389,12 @@ ${t.dualLineOrder||""}`;
             faithfulTone: r,
             textMt: !0
         };
-        if (a === "llm") {
-            const c = String(n.engineMtModel || n.engineLlmMtModel || "").trim();
-            return {
-                engine: "llm",
-                mode: "llm",
-                label: c ? `${o}\uFF08${c}\uFF09` : o,
-                faithfulTone: r,
-                textMt: !0
-            }
-        }
-        const l = String(n.engineMtModel || n.engineOpusMtModel || "").trim();
+        const c = String(n.engineMtModel || n.engineLlmMtModel || "").trim();
         return {
-            engine: "opus",
-            mode: "engine",
-            label: l ? `${o}\uFF08${l}\uFF09` : `${o}\uFF08Opus\uFF09`,
-            faithfulTone: !1,
+            engine: "llm",
+            mode: "llm",
+            label: c ? `${o}\uFF08${c}\uFF09` : o,
+            faithfulTone: r,
             textMt: !0
         }
     }
@@ -7682,7 +7409,9 @@ ${t.dualLineOrder||""}`;
             ok: !1,
             error: "\u65E0\u53EF\u7FFB\u8BD1\u6587\u672C"
         };
-        let s = r.engine === "smart" || r.engine === "llm" || r.engine === "sakura" || r.engine === "opus" ? r.engine === "sakura" ? "llm" : r.engine : null,
+        let s = r.engine === "smart" || r.engine === "llm" || r.engine === "sakura"
+            ? (r.engine === "sakura" ? "llm" : r.engine)
+            : (r.engine === "opus" || r.engine === "engine" ? "llm" : null),
             a = r.faithfulTone;
         if (!s || a == null) {
             const m = await jn();
@@ -7693,30 +7422,7 @@ ${t.dualLineOrder||""}`;
             };
             s = s || m.engine, a == null && (a = m.faithfulTone)
         }
-        if (s === "opus") {
-            const m = p?.transubEngineTranslateCues;
-            if (!m) return {
-                ok: !1,
-                error: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u673A\u5668\u7FFB\u8BD1"
-            };
-            const f = await m({
-                cues: i,
-                glossary: xe(),
-                fileName: t.path || t.videoPath || ""
-            });
-            return f?.ok ? {
-                ok: !0,
-                cues: Array.isArray(f.cues) ? f.cues : [],
-                engine: "opus",
-                label: "\u673A\u5668\u7FFB\u8BD1",
-                summary: f.summary || f.message || ""
-            } : {
-                ok: !1,
-                error: friendlyJobAbortMessage(f?.error || "\u673A\u5668\u7FFB\u8BD1\u5931\u8D25"),
-                code: f?.code,
-                cancelled: isJobAbortResult(f)
-            }
-        }
+        if (s === "opus" || s === "engine") s = "llm";
         const o = s === "smart",
             l = o ? p?.transubAdvancedSmartTranslate : p?.transubSakuraTranslate;
         if (!l) return {
@@ -7733,7 +7439,10 @@ ${t.dualLineOrder||""}`;
             c.smartTranslateFaithfulTone = !!a;
             c.faithfulTone = !!a;
             try {
-                const opts = (await p?.transWithAiGetOptions?.({}))?.options || {};
+                const optsRaw = (await p?.transWithAiGetOptions?.({}))?.options || {};
+                const opts = (j.playerHandoffUi?.mergeOptionsWithPlayerHandoff
+                    ? j.playerHandoffUi.mergeOptionsWithPlayerHandoff(optsRaw, t)
+                    : optsRaw) || {};
                 c.smartTranslateHybridMt = opts.smartTranslateHybridMt !== false;
                 c.smartTranslatePlotPolish = opts.smartTranslatePlotPolish !== false;
                 c.smartTranslateFaithfulVerify = opts.smartTranslateFaithfulVerify !== false;
@@ -7743,16 +7452,36 @@ ${t.dualLineOrder||""}`;
                     c.engineLlmMtModel = llmMt;
                     c.hybridMtModelId = llmMt;
                 }
-                const lang = String(opts.language || "").trim();
-                if (lang) c.language = lang;
-                const variant = String(opts.chineseSubtitleVariant || "").trim();
-                if (variant) c.chineseSubtitleVariant = variant;
+                const attach = j.targetLangHelpers?.attachTranslateTargetFields;
+                if (typeof attach === "function") attach(c, opts);
+                else {
+                    const lang = String(opts.language || "").trim();
+                    if (lang) c.language = lang;
+                    const variant = String(opts.chineseSubtitleVariant || "").trim();
+                    if (variant) c.chineseSubtitleVariant = variant;
+                }
+                const profile = String(opts.contentProfile || opts.senseProfile || "").trim();
+                if (profile) {
+                    c.contentProfile = profile;
+                    c.senseProfile = profile;
+                }
             } catch (_) {
                 c.smartTranslateHybridMt = true;
                 c.smartTranslatePlotPolish = true;
                 c.smartTranslateFaithfulVerify = true;
                 c.smartTranslateAddressConsistency = true;
             }
+        } else {
+            try {
+                const optsRaw = (await p?.transWithAiGetOptions?.({}))?.options || {};
+                const opts = (j.playerHandoffUi?.mergeOptionsWithPlayerHandoff
+                    ? j.playerHandoffUi.mergeOptionsWithPlayerHandoff(optsRaw, t)
+                    : optsRaw) || {};
+                const attach = j.targetLangHelpers?.attachTranslateTargetFields;
+                if (typeof attach === "function") attach(c, opts);
+                c.smartTranslateFaithfulTone = !!a;
+                c.faithfulTone = !!a;
+            } catch (_) { /* ignore */ }
         }
         const u = await l(c);
         return u?.ok ? {
@@ -7813,10 +7542,11 @@ ${t.dualLineOrder||""}`;
             } catch {
                 l = !1
             }
-            o = a === "smart" || a === "advanced" ? "\u667A\u80FD\u7FFB\u8BD1" : a === "opus" ? "\u673A\u5668\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1"
+            o = a === "smart" || a === "advanced" ? "\u667A\u80FD\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1"
         }
+        if (a === "opus" || a === "engine") a = "llm";
         const c = a === "smart" || a === "advanced",
-            u = a === "opus";
+            u = !1;
         if (!t.cues.length) {
             d("\u6CA1\u6709\u5B57\u5E55\u53EF\u7FFB\u8BD1");
             return
@@ -7833,11 +7563,7 @@ ${t.dualLineOrder||""}`;
             d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u667A\u80FD\u7FFB\u8BD1", "err");
             return
         }
-        if (u && !p?.transubEngineTranslateCues) {
-            d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u673A\u5668\u7FFB\u8BD1", "err");
-            return
-        }
-        if (!c && !u && !p?.transubSakuraTranslate) {
+        if (!c && !p?.transubSakuraTranslate) {
             d("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u63A8\u7406\u7FFB\u8BD1", "err");
             return
         }
@@ -7863,13 +7589,19 @@ ${t.dualLineOrder||""}`;
             d("\u5F53\u524D\u7B5B\u9009\u65E0\u5B57\u5E55", "err");
             return
         }
-        o || (o = c ? "\u667A\u80FD\u7FFB\u8BD1" : u ? "\u673A\u5668\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1");
+        o || (o = c ? "\u667A\u80FD\u7FFB\u8BD1" : "\u63A8\u7406\u7FFB\u8BD1");
+        const targetLabel = Tg?.getCurrentLabel?.()
+            || j.targetLangHelpers?.labelFromOptions?.(t.targetLangOptions || {})
+            || T.TransubSubtitleTargetLang?.subtitleTargetLangLabel?.(
+                T.TransubSubtitleTargetLang?.resolveSubtitleTargetLang?.(t.targetLangOptions || {}),
+            )
+            || "\u6210\u7247\u76EE\u6807\u8BED";
         const g = m === "selected" ? f === 1 ? "\u672C\u6761" : `\u9009\u4E2D\u7684 ${f} \u6761` : m === "bookmarks" ? `\u4E66\u7B7E\u8986\u76D6\u7684 ${f} \u6761` : m === "filtered" ? `\u5F53\u524D\u7B5B\u9009\u7684 ${f} \u6761` : `\u5168\u90E8 ${f} \u6761`;
-        if (!await ie(`\u5BF9${g}\u505A\u7FFB\u8BD1\uFF1F\uFF08\u8BBE\u7F6E\uFF1A${o}\uFF09`)) return;
+        if (!await ie(`\u5BF9${g}\u505A\u7FFB\u8BD1\uFF1F\uFF08${o} \u2192 ${targetLabel}\uFF09`)) return;
         e.toolsMenu?.classList.add("hidden");
         const v = await St.runTextTranslateOnce({
             scope: m,
-            engine: c ? "smart" : u ? "opus" : "llm",
+            engine: c ? "smart" : "llm",
             faithfulTone: l
         });
         d(v?.summary || `\u7FFB\u8BD1\u7ED3\u675F\uFF08${o}\uFF09`, v?.status === "failed" ? "err" : v?.status === "cancelled" ? "warn" : "ok")
@@ -7898,9 +7630,6 @@ ${t.dualLineOrder||""}`;
                 break;
             case "open-generator":
                 Ai();
-                break;
-            case "open-library":
-                openSubtitleLibraryFromEditor();
                 break;
             case "open-settings":
                 $i();
@@ -8030,6 +7759,15 @@ ${t.dualLineOrder||""}`;
             case "retranscribe-low-conf":
                 Bl?.openLowConfRetranscribe?.();
                 break;
+            case "batch-retranslate":
+                Brt?.openModal?.();
+                break;
+            case "batch-delete":
+                Bdel?.openModal?.();
+                break;
+            case "filler-check":
+                Bfill?.openModal?.();
+                break;
             case "workflows":
                 St.openWorkflowModal?.();
                 break;
@@ -8121,28 +7859,6 @@ ${t.dualLineOrder||""}`;
             $i()
         }), e.openGeneratorBtn?.addEventListener("click", () => {
             Ai()
-        }), e.librarySaveIntent?.addEventListener("change", () => {
-            const v = e.librarySaveIntent.value;
-            t.librarySaveIntent = v === "draft" || v === "ab" ? v : "current";
-            persistLibrarySaveIntent()
-        }), e.libraryLoadCompareBtn?.addEventListener("click", () => {
-            void editorLibraryLoadCompareRef()
-        }), e.libraryAbDiffBtn?.addEventListener("click", () => {
-            void editorLibraryAbDiff()
-        }), e.libraryRerunBtn?.addEventListener("click", () => {
-            void editorLibraryRerun()
-        }), e.libraryFixMediaBtn?.addEventListener("click", () => {
-            void Ls()
-        }), e.libraryFocusBtn?.addEventListener("click", () => {
-            openSubtitleLibraryFromEditor()
-        }), e.libraryDiffCloseBtn?.addEventListener("click", () => {
-            e.libraryDiffModal?.classList.add("hidden")
-        }), e.libraryDiffModal?.addEventListener("click", (ev) => {
-            if (ev.target === e.libraryDiffModal || ev.target?.id === "editorLibraryDiffBackdrop") {
-                e.libraryDiffModal?.classList.add("hidden")
-            }
-        }), e.openLibraryBtn?.addEventListener("click", () => {
-            openSubtitleLibraryFromEditor()
         }), e.autoFocusBtn?.addEventListener("click", () => {
             Ji(), ee()
         }), e.waveformToggle?.addEventListener("click", () => {
@@ -8374,7 +8090,7 @@ ${t.dualLineOrder||""}`;
             s.addEventListener("click", closeViewingPunctModal)
         }), e.viewingPunctModal?.querySelectorAll('input[type="radio"]').forEach(s => {
             s.addEventListener("change", refreshViewingPunctPreview)
-        }), e.qcBtn?.addEventListener("click", Fr), e.retranscribeDurBtn?.addEventListener("click", ur), Bl?.wireUi?.(), e.smartSplitBtn?.addEventListener("click", hr), e.silenceSplitBtn?.addEventListener("click", () => vr()), e.smartSplitCueBtn?.addEventListener("click", () => {
+        }), e.qcBtn?.addEventListener("click", Fr), e.retranscribeDurBtn?.addEventListener("click", ur), Bl?.wireUi?.(), Brt?.wireUi?.(), Bdel?.wireUi?.(), Bfill?.wireUi?.(), e.smartSplitBtn?.addEventListener("click", hr), e.silenceSplitBtn?.addEventListener("click", () => vr()), e.smartSplitCueBtn?.addEventListener("click", () => {
             const s = Ke();
             lt("smart", {
                 smartMaxChars: s.smartMaxChars,
@@ -8382,7 +8098,7 @@ ${t.dualLineOrder||""}`;
                 useCps: s.useCps,
                 fixOverlap: s.fixOverlap
             })
-        }), e.silenceSplitCueBtn?.addEventListener("click", () => ir()), e.compressRepCueBtn?.addEventListener("click", () => Zo()), e.splitLinesBtn?.addEventListener("click", () => lt("lines")), e.splitSpacesBtn?.addEventListener("click", () => lt("spaces")), e.charDurBtn?.addEventListener("click", () => Ds()), e.smartDurBtn?.addEventListener("click", () => Fs()), e.audioSnapBtn?.addEventListener("click", () => {
+        }), e.silenceSplitCueBtn?.addEventListener("click", () => ir()), e.compressRepCueBtn?.addEventListener("click", () => Zo()), e.splitLinesBtn?.addEventListener("click", () => lt("lines")), e.mergeLinesBtn?.addEventListener("click", () => Ul()), e.splitSpacesBtn?.addEventListener("click", () => lt("spaces")), e.charDurBtn?.addEventListener("click", () => Ds()), e.smartDurBtn?.addEventListener("click", () => Fs()), e.audioSnapBtn?.addEventListener("click", () => {
             snapSelectedCueToAudio()
         }), e.silenceSplitConfirm?.addEventListener("click", si), e.silenceProgressCancel?.addEventListener("click", () => {
             if (t.workflowBusy) {
@@ -8589,6 +8305,18 @@ ${t.dualLineOrder||""}`;
                     s.preventDefault(), Tn();
                     return
                 }
+                if (e.batchRetranslateModal && !e.batchRetranslateModal.classList.contains("hidden")) {
+                    s.preventDefault(), Brt?.closeModal?.();
+                    return
+                }
+                if (e.batchDeleteModal && !e.batchDeleteModal.classList.contains("hidden")) {
+                    s.preventDefault(), Bdel?.closeModal?.();
+                    return
+                }
+                if (e.fillerCheckModal && !e.fillerCheckModal.classList.contains("hidden")) {
+                    s.preventDefault(), Bfill?.closeModal?.();
+                    return
+                }
                 if (e.compressRepModal && !e.compressRepModal.classList.contains("hidden")) {
                     s.preventDefault(), $n();
                     return
@@ -8672,7 +8400,7 @@ ${t.dualLineOrder||""}`;
                 }
             }
             if (s.key === "Delete" && !s.ctrlKey && !s.metaKey && !s.altKey) {
-                if (s.target.matches("input, textarea") || [e.splitModal, e.findReplaceModal, e.glossaryModal, e.assStylesModal, e.breakWordsModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.retranscribeDurModal, e.shortcutsModal].some(o => o && !o.classList.contains("hidden")) || t.selectedIndex < 0 && !J().length) return;
+                if (s.target.matches("input, textarea") || [e.splitModal, e.findReplaceModal, e.glossaryModal, e.assStylesModal, e.breakWordsModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.batchRetranslateModal, e.batchDeleteModal, e.fillerCheckModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.retranscribeDurModal, e.shortcutsModal].some(o => o && !o.classList.contains("hidden")) || t.selectedIndex < 0 && !J().length) return;
                 s.preventDefault(), pn();
                 return
             }
@@ -8687,6 +8415,13 @@ ${t.dualLineOrder||""}`;
                 if (Ct(s.target)) return;
                 if (Xe()) {
                     s.preventDefault(), Xn();
+                    return
+                }
+            }
+            if ((s.ctrlKey || s.metaKey) && s.shiftKey && !s.altKey && String(s.key).toLowerCase() === "j") {
+                if (Ct(s.target)) return;
+                if (Xe()) {
+                    s.preventDefault(), Ul();
                     return
                 }
             }
@@ -8711,7 +8446,7 @@ ${t.dualLineOrder||""}`;
                     return
                 }
             }
-            if (Xe() && s.key === "Enter" && !s.ctrlKey && !s.metaKey && !s.altKey && !s.shiftKey) {
+            if ((Xe() || un()) && s.key === "Enter" && !s.ctrlKey && !s.metaKey && !s.altKey && !s.shiftKey) {
                 s.preventDefault(), Lt();
                 return
             }
@@ -8739,7 +8474,7 @@ ${t.dualLineOrder||""}`;
             const s = performance.now();
             s - (t.lastPlaybackSyncAt || 0) >= 50 && (t.lastPlaybackSyncAt = s, Ce(!1));
             const a = Math.round((e.video.currentTime || 0) * 1e3);
-            H?.tickAbLoop?.(a), tt(a, {
+            t.timeline.scrubbing || H?.tickAbLoop?.(a), tt(a, {
                 follow: !0
             })
         }), p?.onSubtitleEditorMenuAction?.(Pl)
@@ -8777,22 +8512,6 @@ ${t.dualLineOrder||""}`;
             dirtyBadge: document.getElementById("editorDirtyBadge"),
             saveStatus: document.getElementById("editorSaveStatus"),
             saveBtn: document.getElementById("editorSaveBtn"),
-            libraryBar: document.getElementById("editorLibraryBar"),
-            libraryTitle: document.getElementById("editorLibraryTitle"),
-            libraryRole: document.getElementById("editorLibraryRole"),
-            libraryActive: document.getElementById("editorLibraryActive"),
-            libraryRecipe: document.getElementById("editorLibraryRecipe"),
-            librarySaveIntent: document.getElementById("editorLibrarySaveIntent"),
-            libraryLoadCompareBtn: document.getElementById("editorLibraryLoadCompareBtn"),
-            libraryAbDiffBtn: document.getElementById("editorLibraryAbDiffBtn"),
-            libraryRerunBtn: document.getElementById("editorLibraryRerunBtn"),
-            libraryFixMediaBtn: document.getElementById("editorLibraryFixMediaBtn"),
-            libraryFocusBtn: document.getElementById("editorLibraryFocusBtn"),
-            libraryMediaStatus: document.getElementById("editorLibraryMediaStatus"),
-            libraryDiffModal: document.getElementById("editorLibraryDiffModal"),
-            libraryDiffMeta: document.getElementById("editorLibraryDiffMeta"),
-            libraryDiffBody: document.getElementById("editorLibraryDiffBody"),
-            libraryDiffCloseBtn: document.getElementById("editorLibraryDiffClose"),
             exportDualBtn: document.getElementById("editorExportDualBtn"),
             exportDualMenuBtn: document.getElementById("editorExportDualMenuBtn"),
             addCueBtn: document.getElementById("editorAddCueBtn"),
@@ -8808,7 +8527,6 @@ ${t.dualLineOrder||""}`;
             modeTools: document.getElementById("editorModeTools"),
             themeToggle: document.getElementById("editorThemeToggle"),
             openGeneratorBtn: document.getElementById("editorOpenGeneratorBtn"),
-            openLibraryBtn: document.getElementById("editorOpenLibraryBtn"),
             settingsBtn: document.getElementById("editorSettingsBtn"),
             splitter: document.getElementById("editorSplitter"),
             cuesPanel: document.getElementById("editorCuesPanel"),
@@ -8932,6 +8650,8 @@ ${t.dualLineOrder||""}`;
             assPreviewBadge: document.getElementById("editorAssPreviewBadge"),
             semanticReviewBtn: document.getElementById("editorSemanticReviewBtn"),
             sakuraTranslateBtn: document.getElementById("editorSakuraTranslateBtn"),
+            targetLangWrap: document.getElementById("editorTargetLangWrap"),
+            targetLangSelect: document.getElementById("editorTargetLangSelect"),
             smartTranslateBtn: document.getElementById("editorSmartTranslateBtn"),
             filmHintModal: document.getElementById("editorFilmHintModal"),
             filmHintTitleInput: document.getElementById("editorFilmHintTitleInput"),
@@ -9029,6 +8749,20 @@ ${t.dualLineOrder||""}`;
             glossarySaveEntryBtn: document.getElementById("editorGlossarySaveEntryBtn"),
             glossaryDeleteEntryBtn: document.getElementById("editorGlossaryDeleteEntryBtn"),
             glossaryImportBtn: document.getElementById("editorGlossaryImportBtn"),
+            glossaryAnilistBtn: document.getElementById("editorGlossaryAnilistBtn"),
+            glossaryBadPoolBtn: document.getElementById("editorGlossaryBadPoolBtn"),
+            glossaryAnilistHelpSteps: document.getElementById("editorGlossaryAnilistHelpSteps"),
+            glossaryAnilistHelpNote: document.getElementById("editorGlossaryAnilistHelpNote"),
+            anilistImportModal: document.getElementById("editorAnilistImportModal"),
+            anilistImportTitle: document.getElementById("editorAnilistImportTitle"),
+            anilistImportIntro: document.getElementById("editorAnilistImportIntro"),
+            anilistImportSteps: document.getElementById("editorAnilistImportSteps"),
+            anilistImportInputLabel: document.getElementById("editorAnilistImportInputLabel"),
+            anilistImportInput: document.getElementById("editorAnilistImportInput"),
+            anilistOpenSiteBtn: document.getElementById("editorAnilistOpenSiteBtn"),
+            anilistImportNote: document.getElementById("editorAnilistImportNote"),
+            anilistImportConfirm: document.getElementById("editorAnilistImportConfirm"),
+            anilistImportCancel: document.getElementById("editorAnilistImportCancel"),
             glossaryExportBtn: document.getElementById("editorGlossaryExportBtn"),
             glossaryScanBtn: document.getElementById("editorGlossaryScanBtn"),
             breakWordsBtn: document.getElementById("editorBreakWordsBtn"),
@@ -9121,6 +8855,7 @@ ${t.dualLineOrder||""}`;
             silenceSplitCueBtn: document.getElementById("editorSilenceSplitCueBtn"),
             compressRepCueBtn: document.getElementById("editorCompressRepCueBtn"),
             splitLinesBtn: document.getElementById("editorSplitLinesBtn"),
+            mergeLinesBtn: document.getElementById("editorMergeLinesBtn"),
             splitSpacesBtn: document.getElementById("editorSplitSpacesBtn"),
             charDurBtn: document.getElementById("editorCharDurBtn"),
             smartDurBtn: document.getElementById("editorSmartDurBtn"),
@@ -9170,6 +8905,23 @@ ${t.dualLineOrder||""}`;
             noiseRemoveSymbolOnly: document.getElementById("editorNoiseRemoveSymbolOnly"),
             noiseRemoveDuplicates: document.getElementById("editorNoiseRemoveDuplicates"),
             noiseRemoveHallucinations: document.getElementById("editorNoiseRemoveHallucinations"),
+            fillerCheckBtn: document.getElementById("editorFillerCheckBtn"),
+            fillerFilterBtn: document.getElementById("editorFillerFilterBtn"),
+            fillerCheckModal: document.getElementById("editorFillerCheckModal"),
+            fillerCheckPreview: document.getElementById("editorFillerCheckPreview"),
+            fillerCheckMatchList: document.getElementById("editorFillerCheckMatchList"),
+            fillerCheckScanBtn: document.getElementById("editorFillerCheckScanBtn"),
+            fillerCheckSelectAllBtn: document.getElementById("editorFillerCheckSelectAllBtn"),
+            fillerCheckSelectNoneBtn: document.getElementById("editorFillerCheckSelectNoneBtn"),
+            fillerCheckSelectBtn: document.getElementById("editorFillerCheckSelectBtn"),
+            fillerCheckDeleteCheckedBtn: document.getElementById("editorFillerCheckDeleteCheckedBtn"),
+            fillerCheckDeleteAllBtn: document.getElementById("editorFillerCheckDeleteAllBtn"),
+            fillerCheckCancel: document.getElementById("editorFillerCheckCancel"),
+            fillerCheckDiscourse: document.getElementById("editorFillerCheckDiscourse"),
+            fillerCheckOnomatopoeia: document.getElementById("editorFillerCheckOnomatopoeia"),
+            fillerCheckIncludeInline: document.getElementById("editorFillerCheckIncludeInline"),
+            fillerCheckLangAuto: document.getElementById("editorFillerCheckLangAuto"),
+            fillerCheckLangTarget: document.getElementById("editorFillerCheckLangTarget"),
             chineseConvertBtn: document.getElementById("editorChineseConvertBtn"),
             chineseConvertModal: document.getElementById("editorChineseConvertModal"),
             chineseConvertPreview: document.getElementById("editorChineseConvertPreview"),
@@ -9183,6 +8935,29 @@ ${t.dualLineOrder||""}`;
             chineseScopeAll: document.getElementById("editorChineseScopeAll"),
             chineseScopeSelected: document.getElementById("editorChineseScopeSelected"),
             chineseProtectGlossary: document.getElementById("editorChineseProtectGlossary"),
+            batchRetranslateBtn: document.getElementById("editorBatchRetranslateBtn"),
+            batchRetranslateModal: document.getElementById("editorBatchRetranslateModal"),
+            batchRetranslatePattern: document.getElementById("editorBatchRetranslatePattern"),
+            batchRetranslatePreview: document.getElementById("editorBatchRetranslatePreview"),
+            batchRetranslateConfirm: document.getElementById("editorBatchRetranslateConfirm"),
+            batchRetranslateCancel: document.getElementById("editorBatchRetranslateCancel"),
+            batchRetranslateMatchEquals: document.getElementById("editorBatchRetranslateMatchEquals"),
+            batchRetranslateMatchContains: document.getElementById("editorBatchRetranslateMatchContains"),
+            batchRetranslateScopeAll: document.getElementById("editorBatchRetranslateScopeAll"),
+            batchRetranslateScopeSelected: document.getElementById("editorBatchRetranslateScopeSelected"),
+            batchRetranslateEngineLlm: document.getElementById("editorBatchRetranslateEngineLlm"),
+            batchRetranslateEngineSmart: document.getElementById("editorBatchRetranslateEngineSmart"),
+            batchDeleteBtn: document.getElementById("editorBatchDeleteBtn"),
+            batchDeleteMenuBtn: document.getElementById("editorBatchDeleteMenuBtn"),
+            batchDeleteModal: document.getElementById("editorBatchDeleteModal"),
+            batchDeletePattern: document.getElementById("editorBatchDeletePattern"),
+            batchDeletePreview: document.getElementById("editorBatchDeletePreview"),
+            batchDeleteConfirm: document.getElementById("editorBatchDeleteConfirm"),
+            batchDeleteCancel: document.getElementById("editorBatchDeleteCancel"),
+            batchDeleteMatchEquals: document.getElementById("editorBatchDeleteMatchEquals"),
+            batchDeleteMatchContains: document.getElementById("editorBatchDeleteMatchContains"),
+            batchDeleteScopeAll: document.getElementById("editorBatchDeleteScopeAll"),
+            batchDeleteScopeSelected: document.getElementById("editorBatchDeleteScopeSelected"),
             compressRepBtn: document.getElementById("editorCompressRepBtn"),
             compressRepModal: document.getElementById("editorCompressRepModal"),
             compressRepPreview: document.getElementById("editorCompressRepPreview"),
@@ -9258,7 +9033,6 @@ ${t.dualLineOrder||""}`;
             welcomeIcon: document.getElementById("editorWelcomeIcon"),
             welcomeOpenBtn: document.getElementById("editorWelcomeOpenBtn"),
             welcomeOpenGeneratorBtn: document.getElementById("editorWelcomeOpenGeneratorBtn"),
-            welcomeOpenLibraryBtn: document.getElementById("editorWelcomeOpenLibraryBtn"),
             welcomeHistoryList: document.getElementById("editorWelcomeHistoryList"),
             welcomeClearBtn: document.getElementById("editorWelcomeClearBtn"),
             bootProgressTitle: document.getElementById("editorBootProgressTitle"),
@@ -9287,14 +9061,55 @@ ${t.dualLineOrder||""}`;
             'qcSummaryUi',
         ];
         const missing = need.filter((k) => !parts[k]);
-        if (missing.length) {
-            console.warn('[Transub editor] missing TransubEditorParts:', missing.join(', '));
-        }
+        if (!missing.length) return;
+        const msg = '[Transub editor] missing TransubEditorParts: ' + missing.join(', ');
+        console.error(msg);
+        try {
+            // Fail-closed UX: surface once so gated actions are not silent no-ops.
+            if (typeof document !== 'undefined' && document.body && !document.body.dataset.editorPartsMissingWarned) {
+                document.body.dataset.editorPartsMissingWarned = '1';
+                const tip = document.createElement('div');
+                tip.setAttribute('role', 'alert');
+                tip.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:100000;padding:10px 14px;border-radius:10px;background:#7f1d1d;color:#fff;font:600 13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.35)';
+                tip.textContent = '字幕编辑器核心模块未加载（' + missing.join('、') + '），相关功能已停用，请重启编辑器。';
+                document.body.appendChild(tip);
+                setTimeout(() => { try { tip.remove(); } catch {} }, 12000);
+            }
+        } catch { /* ignore */ }
     })();
 
     function da() {
+        void (async () => {
+            try {
+                const api = (typeof globalThis !== 'undefined' && globalThis.TransubEditorUiFragments)
+                    || (typeof window !== 'undefined' && window.TransubEditorUiFragments)
+                    || null;
+                if (api?.ensureEditorModalDom) {
+                    await api.ensureEditorModalDom();
+                } else {
+                    const loader = (typeof globalThis !== 'undefined' && globalThis.TransubUiFragmentLoad)
+                        || (typeof window !== 'undefined' && window.TransubUiFragmentLoad)
+                        || null;
+                    if (loader?.ensureEditorModalDom) {
+                        await loader.ensureEditorModalDom();
+                    } else if (loader?.ensureUiFragment) {
+                        await Promise.all([
+                            loader.ensureUiFragment('editor-modals-drawers'),
+                            loader.ensureUiFragment('editor-modals-tools'),
+                            loader.ensureUiFragment('editor-modals-pro'),
+                        ]);
+                    }
+                }
+            } catch (err) {
+                console.warn('[editor] modal fragments failed:', err?.message || err);
+            }
+            daAfterFragments();
+        })();
+    }
+
+    function daAfterFragments() {
         if (!(!p?.isDesktop || !document.getElementById("editorCueBody")))
-            if (loadLibrarySaveIntent(), syncLibraryBar(), Dl(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), Pd?.bindUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
+            if (Dl(), bindGlossaryImportUiOnce(), H?.bindUi?.(), Bt?.bindUi?.(), Bt?.refreshWorkspaceUi?.(), Tg?.bindUi?.(), As?.bindUi?.(), Ov?.bindUi?.(), Pd?.bindUi?.(), Bl?.wireUi?.(), Brt?.wireUi?.(), Bdel?.wireUi?.(), Bfill?.wireUi?.(), dl(), [e.splitModal, e.findReplaceModal, e.batchDurModal, e.smartSplitModal, e.silenceSplitModal, e.smartAdjustModal, e.removeNoiseModal, e.chineseConvertModal, e.batchRetranslateModal, e.batchDeleteModal, e.fillerCheckModal, e.compressRepModal, e.viewingPunctModal, e.qcModal, e.glossaryModal, e.anilistImportModal, e.assStylesModal, e.textPresetsModal, e.workflowModal, e.breakWordsModal, e.retranscribeDurModal, e.shortcutsModal].forEach(n => {
                     n?.classList.contains("hidden") && n.setAttribute("inert", "")
                 }), Ll(), vt(), wo(), Pr(), St.loadWorkflows(), ka(), void loadSystemFontsForAss(), p?.onTransubComputeTaskChanged?.(n => {
                     t.computeBusy = !!n?.busy, t.computeBusyLabel = n?.busy ? String(n.label || n.kind || "").trim() : "", t.computeBusySince = n?.busy ? Number(n.since) || Date.now() : 0, ar(), Qe()
@@ -9303,7 +9118,20 @@ ${t.dualLineOrder||""}`;
                         const n = await p?.transubComputeTaskStatus?.();
                         n?.busy && (t.computeBusy = !0, t.computeBusyLabel = String(n.label || n.kind || "").trim(), t.computeBusySince = Number(n.since) || Date.now(), ar(), Qe())
                     } catch {}
-                })(), p?.onSubtitleEditorRefocus?.(() => ht()), window.addEventListener("focus", () => {
+                })(), p?.onSubtitleEditorRefocus?.(() => ht()), p?.onEditorWriteback?.((n) => {
+                    try {
+                        const sub = String(n?.subPath || "").trim();
+                        if (!sub || !t.path) return;
+                        const a = String(t.path).replace(/\\/g, "/").toLowerCase();
+                        const b = sub.replace(/\\/g, "/").toLowerCase();
+                        if (a !== b) return;
+                        jr({
+                            title: "外部编辑器已写回",
+                            detail: "同一字幕已在外部 Editor 保存，可重新打开以同步。",
+                            statusMessage: "外部编辑器已保存当前字幕"
+                        })
+                    } catch {}
+                }), window.addEventListener("focus", () => {
                     const n = document.activeElement;
                     (!n || n === document.body || !!n.closest?.(".editor-modal.hidden")) && ht()
                 }), Vn = !0, st) {

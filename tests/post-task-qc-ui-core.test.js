@@ -22,9 +22,15 @@ describe('post-task-qc-ui-core', () => {
         ui.clearItemQcFixed(item, { clearScan: true });
         assert.strictEqual(item.qcFixedMode, '');
         assert.strictEqual(item.qcIssueCount, undefined);
+
+        const running = { status: 'running', stage: 'qc_fix', detail: 'QC修复中…', progress: 50 };
+        ui.markItemQcFixed(running, 'fix', { written: false, summary: '已修复' });
+        assert.strictEqual(running.status, 'done');
+        assert.strictEqual(running.progress, 100);
+        assert.strictEqual(running.stage, '');
     });
 
-    it('buildQcBannerViewModel matrix', () => {
+    it('buildQcBannerViewModel stays hidden (post-task banner retired)', () => {
         assert.strictEqual(ui.buildQcBannerViewModel({ issueCount: 0 }).visible, false);
         assert.strictEqual(ui.buildQcBannerViewModel({ issueCount: 2, dismissed: true }).visible, false);
         const idle = ui.buildQcBannerViewModel({
@@ -32,9 +38,9 @@ describe('post-task-qc-ui-core', () => {
             advancedEntitled: true,
             smartFixAvailable: true,
         });
-        assert.strictEqual(idle.visible, true);
-        assert.strictEqual(idle.smartVisible, true);
-        assert.ok(idle.text.includes('3 条'));
+        assert.strictEqual(idle.visible, false);
+        assert.strictEqual(idle.smartVisible, false);
+        assert.strictEqual(idle.text, '');
         const fixing = ui.buildQcBannerViewModel({
             issueCount: 3,
             fixing: true,
@@ -42,19 +48,14 @@ describe('post-task-qc-ui-core', () => {
             advancedEntitled: true,
             smartFixAvailable: true,
         });
-        assert.ok(fixing.text.includes('智能'));
-        assert.strictEqual(fixing.smartLabel, '智能修复中…');
-        const mtTrain = ui.buildQcBannerViewModel({
+        assert.strictEqual(fixing.visible, false);
+        assert.strictEqual(fixing.smartLabel, '智能修复 (Pro)');
+        const residual = ui.buildQcBannerViewModel({
             issueCount: 2,
-            mtTrainCanOpen: true,
-            mtTrainSuggested: true,
+            advancedEntitled: true,
+            smartFixAvailable: true,
         });
-        assert.strictEqual(mtTrain.mtTrainVisible, true);
-        assert.strictEqual(mtTrain.mtTrainLabel, '打开学习向导');
-        assert.ok(mtTrain.text.includes('学习向导'));
-        assert.strictEqual(ui.buildQcBannerViewModel({
-            issueCount: 2,
-            mtTrainCanOpen: false,
-        }).mtTrainVisible, false);
+        assert.strictEqual(residual.visible, false);
+        assert.strictEqual(residual.text, '');
     });
 });

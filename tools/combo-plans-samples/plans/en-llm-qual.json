@@ -1,0 +1,39 @@
+{
+  "id": "en-llm-qual",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 推理 · 质量",
+  "description": "欧美剧：Whisper turbo 听写+ TranslateGemma E4B 本地推理翻译硬件档：质量 · >12GB 显存。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "llm",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "whisper-large-v3-turbo",
+    "silero-vad",
+    "translategemma-4-sub-e4b"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "whisper-large-v3-turbo",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "llm",
+    "engineLlmMtModel": "translategemma-4-sub-e4b",
+    "engineProfile": "quality",
+    "activePresetId": "film-vad-only",
+    "vadEnabled": true,
+    "filmVadPreset": true,
+    "audioLightDenoise": false,
+    "beamSize": 5
+  }
+}

@@ -22,8 +22,10 @@ const {
     findNearestSafeBreakIndex,
     isUnpunctuatedConnectedText,
     isEnglishLikeText,
+    isBreakWordMatchAt,
     buildTextsFromTimeBoundaries,
     splitTextAtIndex,
+    findConnectorBreak,
 } = require('../src/js/subtitle-split-core');
 
 function testSplitRejectsOrphanToneParticleTail() {
@@ -200,6 +202,60 @@ function testSplitTextSmartOnBreakWords() {
         breakWords: [],
     });
     assert.ok(emptyBreak.length >= 1);
+
+    // All standalone Latin/Hangul break-words: whole-token only (not just "so").
+    assert.strictEqual(findConnectorBreak('sorry', 20), -1, 'so inside sorry');
+    assert.ok(!isValidTextBreakIndex('sorry', 2), 'sorry must not split after so');
+    const soWhole = splitTextSmart('I am so sorry about everything that happened today', {
+        maxChars: 12,
+        maxLineChars: 12,
+    });
+    assert.ok(
+        soWhole.every((p) => !/so\s+rry/i.test(p) && !/^rry\b/i.test(String(p || '').trim())),
+        `must not cut sorry into so rry: ${JSON.stringify(soWhole)}`,
+    );
+    assert.ok(soWhole.some((p) => /sorry/i.test(p)), JSON.stringify(soWhole));
+    assert.strictEqual(getBreakWordBreakIndices('sorry').length, 0);
+
+    for (const [bw, host] of [
+        ['so', 'sorry'],
+        ['so', 'somehow'],
+        ['but', 'butter'],
+        ['but', 'button'],
+        ['then', 'thenext'],
+        ['then', 'thenardier'],
+        ['because', 'becauseway'],
+        ['however', 'howeverish'],
+        ['although', 'althoughx'],
+        ['therefore', 'thereforex'],
+    ]) {
+        const idx = host.toLowerCase().indexOf(bw);
+        assert.ok(idx >= 0, `${bw} in ${host}`);
+        assert.strictEqual(
+            isBreakWordMatchAt(host.toLowerCase(), idx, bw),
+            false,
+            `${bw} must not match inside ${host}`,
+        );
+        assert.strictEqual(
+            findConnectorBreak(host, 80, [bw, ...DEFAULT_BREAK_WORDS]),
+            -1,
+            `connector must not cut ${host} via ${bw}`,
+        );
+    }
+
+    for (const bw of DEFAULT_BREAK_WORDS.filter((w) => /^[A-Za-z]/.test(w))) {
+        const line = `wait ${bw} go now please friends`;
+        const hits = getBreakWordBreakIndices(line, [bw]);
+        assert.ok(hits.length >= 1, `whole-word "${bw}" should break: ${line} → ${hits}`);
+    }
+
+    assert.strictEqual(
+        findConnectorBreak('안녕하세요', 40, ['안']),
+        -1,
+        'Hangul 안 must not cut 안녕하세요',
+    );
+    assert.ok(isBreakWordMatchAt('안 돼', 0, '안'));
+    assert.ok(!isBreakWordMatchAt('안녕하세요', 0, '안'));
 }
 
 function testSplitTextSmartShortText() {
@@ -235,6 +291,23 @@ function testSplitTextByCharCount() {
     const parts = splitTextByCharCount('abc def ghi jkl mno pqr stu vwx yz', 10);
     assert.ok(parts.length >= 2);
     assert.ok(parts.join('').replace(/\s/g, '').includes('abcdef'));
+
+    const en = splitTextByCharCount('Sorry I am so sorry about that', 4);
+    assert.ok(en.every((p) => !/^(?:rry|orry)\b/i.test(p)), `no mid-word scraps: ${JSON.stringify(en)}`);
+    assert.ok(en.some((p) => /Sorry/i.test(p)));
+    const morning = splitTextByCharCount("Don't worry about tomorrow morning", 6);
+    assert.ok(
+        morning.every((p) => !/^(?:g|ing|ning)$/i.test(p)),
+        `must not shred morning: ${JSON.stringify(morning)}`,
+    );
+    assert.ok(morning.some((p) => /morning/i.test(p)), JSON.stringify(morning));
+
+    const nParts = splitTextIntoNParts('I am so sorry about that day', 3);
+    assert.ok(Array.isArray(nParts) && nParts.length === 3, JSON.stringify(nParts));
+    assert.ok(
+        nParts.every((p) => !/so\s+rry/i.test(p) && !/^rry\b/i.test(p)),
+        `n-parts must not mid-cut sorry: ${JSON.stringify(nParts)}`,
+    );
 }
 
 function testTextCharCountIgnoresSpaces() {

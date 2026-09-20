@@ -3,10 +3,10 @@ const http = require('http');
 const {
     parseEngineMtRequest,
     buildEngineMtResponse,
+    mergePrefillWithTranslated,
     resolvePromptGlossary,
     startEngineMtAdapter,
     PATH_TRANSLATE,
-    DEFAULT_BATCH_SIZE,
     DEFAULT_SMART_BATCH_SIZE,
     DEFAULT_TIMEOUT_SEC,
     DEFAULT_SMART_TIMEOUT_SEC,
@@ -107,7 +107,7 @@ describe('engine-mt-adapter', () => {
 
     it('builds response by cue id', () => {
         const res = buildEngineMtResponse(
-            [{ id: 2, index: 2, text: 'a' }, { id: 3, index: 3, text: 'b' }],
+            [{ id: 2, index: 2, text: 'こんにちは' }, { id: 3, index: 3, text: 'ありがとう' }],
             [{ index: 2, text: '你好' }, { index: 3, text: '谢谢' }],
         );
         assert.deepStrictEqual(res.cues, [
@@ -125,6 +125,61 @@ describe('engine-mt-adapter', () => {
         // Missing cue may be recovered via short-JA fallback lexicon, but never echoes source JA.
         assert.ok(!String(res.cues[1].text || '').includes('ありがとう'));
         assert.ok(!/[\u3040-\u30ff]/.test(String(res.cues[1].text || '')));
+    });
+
+    it('mergePrefillWithTranslated preserves credit when LLM returns dense 0-based rows', () => {
+        const creditText = '字幕由 Transub Pro 生成 [ www.transub.cc ]';
+        const source = [
+            { index: 0, startMs: 0, endMs: 2000, text: '字幕は Transub Pro で生成されました [ www.transub.cc ]' },
+            { index: 1, startMs: 100000, endMs: 102000, text: 'ただいまー' },
+            { index: 2, startMs: 103000, endMs: 105000, text: 'あ かなめくん' },
+        ];
+        const prefilled = [{ index: 0, text: creditText }];
+        const translated = [
+            { index: 0, text: '我回来了。' },
+            { index: 1, text: '啊，奏君。' },
+        ];
+        const merged = mergePrefillWithTranslated(source, prefilled, translated);
+        assert.strictEqual(merged.length, 3);
+        assert.ok(/Transub/.test(merged[0].text), merged[0].text);
+        assert.ok(/回来了/.test(merged[1].text), merged[1].text);
+        assert.ok(/奏君/.test(merged[2].text), merged[2].text);
+    });
+
+    it('mergePrefillWithTranslated keeps deterministic prefills and index-aligned LLM rows', () => {
+        const source = [
+            { index: 0, text: '字幕は Transub' },
+            { index: 1, text: 'ん' },
+            { index: 2, text: 'こんにちは' },
+        ];
+        const prefilled = [
+            { index: 0, text: '字幕由 Transub 生成' },
+            { index: 1, text: '嗯' },
+        ];
+        const translated = [{ index: 2, text: '你好' }];
+        const merged = mergePrefillWithTranslated(source, prefilled, translated);
+        assert.deepStrictEqual(merged.map((c) => c.text), [
+            '字幕由 Transub 生成',
+            '嗯',
+            '你好',
+        ]);
+    });
+
+    it('mergePrefillWithTranslated does not shift when naive index merge would collide', () => {
+        const source = [
+            { index: 0, startMs: 0, text: 'credit' },
+            { index: 1, startMs: 1000, text: 'A' },
+            { index: 2, startMs: 2000, text: 'B' },
+        ];
+        const prefilled = [{ index: 0, text: '水印' }];
+        const translated = [
+            { index: 0, text: '错槽对话A' },
+            { index: 1, text: '错槽对话B' },
+        ];
+        const merged = mergePrefillWithTranslated(source, prefilled, translated);
+        assert.strictEqual(merged[0].text, '水印');
+        assert.strictEqual(merged[1].text, '错槽对话A');
+        assert.strictEqual(merged[2].text, '错槽对话B');
     });
 
     it('sanitizes pathological / Gloss-polluted MT responses', () => {
@@ -218,7 +273,7 @@ describe('engine-mt-adapter', () => {
         }
     });
 
-    it('defaults batchSize 40 for smart and 8 for sakura', async () => {
+    it('defaults batchSize 40 for smart and model-sized for sakura', async () => {
         const smart = await startEngineMtAdapter({
             mode: 'smart',
             options: { dryRun: true },
@@ -236,13 +291,13 @@ describe('engine-mt-adapter', () => {
 
         const sakura = await startEngineMtAdapter({
             mode: 'sakura',
+            modelId: 'sakura-1.5b',
             options: { dryRun: true },
         });
         assert.ok(sakura.ok, sakura.error);
         try {
             const mt = sakura.mtExternal();
-            assert.strictEqual(mt.batchSize, DEFAULT_BATCH_SIZE);
-            assert.strictEqual(DEFAULT_BATCH_SIZE, 8);
+            assert.strictEqual(mt.batchSize, 32);
             assert.strictEqual(mt.timeoutSec, DEFAULT_TIMEOUT_SEC);
         } finally {
             sakura.stop();

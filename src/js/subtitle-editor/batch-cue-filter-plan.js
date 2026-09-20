@@ -172,6 +172,176 @@
         };
     }
 
+    function normalizeRetranslateMatchText(text) {
+        return String(text || '')
+            .replace(/\{[^}]*\}/g, '')
+            .replace(/\r\n/g, '\n')
+            .trim();
+    }
+
+    /** User pattern like `...` / `…` — treat blank MT placeholders as matches. */
+    function isEllipsisOnlyPattern(pattern) {
+        const t = normalizeRetranslateMatchText(pattern);
+        if (!t) return false;
+        if (t === '…' || t === '...' || t === '⋯' || t === '……') return true;
+        return /^(?:\.{2,}|…+|⋯+|．{2,}|。{2,})$/.test(t)
+            || (/^[….\s⋯．。]+$/.test(t) && /[….⋯．。]/.test(t));
+    }
+
+    function isBlankOrEllipsisCueText(text) {
+        const t = normalizeRetranslateMatchText(text);
+        if (!t) return true;
+        if (t === '…' || t === '...' || t === '⋯' || t === '……') return true;
+        return /^[….\s⋯．。]+$/.test(t);
+    }
+
+    /**
+     * @param {object} cue
+     * @param {number} cueIndex
+     * @param {{ pattern?: string, matchMode?: 'equals'|'contains', scopeIndexes?: number[]|null }} condition
+     */
+    function cueMatchesRetranslateTextCondition(cue, cueIndex, condition = {}) {
+        const scope = condition.scopeIndexes;
+        if (Array.isArray(scope) && scope.length && !scope.includes(cueIndex)) return false;
+        const pattern = normalizeRetranslateMatchText(condition.pattern);
+        if (!pattern) return false;
+        const text = normalizeRetranslateMatchText(cue?.text);
+        const mode = condition.matchMode === 'contains' ? 'contains' : 'equals';
+        if (mode === 'contains') return text.includes(pattern);
+        if (text === pattern) return true;
+        if (isEllipsisOnlyPattern(pattern) && isBlankOrEllipsisCueText(text)) return true;
+        return false;
+    }
+
+    function collectRetranslateTextMatches(cues, condition, deps = {}) {
+        return collectMatchingCueIndexes(cues, condition, cueMatchesRetranslateTextCondition, deps);
+    }
+
+    function previewBatchRetranslatePlan({
+        matchedIndexes = [],
+        pattern = '',
+        engine = 'llm',
+        scope = 'all',
+    } = {}) {
+        const pat = normalizeRetranslateMatchText(pattern);
+        if (!pat) {
+            return {
+                matched: 0,
+                summary: '请输入补译条件（例如 … 或 ...）',
+                isErr: true,
+            };
+        }
+        const matched = Array.isArray(matchedIndexes) ? matchedIndexes : [];
+        if (!matched.length) {
+            return {
+                matched: 0,
+                summary: scope === 'selected'
+                    ? '选中范围内没有符合条件的字幕'
+                    : '没有符合条件的字幕',
+                isErr: true,
+            };
+        }
+        const engineLabel = engine === 'smart' || engine === 'advanced' ? '智能翻译' : '推理翻译';
+        return {
+            matched: matched.length,
+            summary: `将用${engineLabel}重译 ${matched.length} 条（条件：仅匹配「${pat}」${isEllipsisOnlyPattern(pat) ? '及同类空白/省略占位' : ''}）`,
+            isErr: false,
+        };
+    }
+
+    function previewBatchDeletePlan({
+        matchedIndexes = [],
+        pattern = '',
+        scope = 'all',
+        totalCues = 0,
+    } = {}) {
+        const pat = normalizeRetranslateMatchText(pattern);
+        if (!pat) {
+            return {
+                matched: 0,
+                summary: '请输入删除条件（例如 … 或 ...）',
+                isErr: true,
+            };
+        }
+        const matched = Array.isArray(matchedIndexes) ? matchedIndexes : [];
+        if (!matched.length) {
+            return {
+                matched: 0,
+                summary: scope === 'selected'
+                    ? '选中范围内没有符合条件的字幕'
+                    : '没有符合条件的字幕',
+                isErr: true,
+            };
+        }
+        const total = Math.max(0, Math.floor(Number(totalCues) || 0));
+        const remaining = Math.max(0, total - matched.length);
+        const condHint = isEllipsisOnlyPattern(pat) ? '及同类空白/省略占位' : '';
+        return {
+            matched: matched.length,
+            remaining,
+            summary: `将删除 ${matched.length} 条（条件：匹配「${pat}」${condHint}）→ 剩余 ${remaining} 条`,
+            isErr: false,
+        };
+    }
+
+    /**
+     * @param {object[]} cues
+     * @param {number[]} indexes
+     * @returns {{ cues: object[], removedIndexes: number[], removed: number, kept: number }}
+     */
+    function applyDeleteCueIndexes(cues, indexes) {
+        const list = Array.isArray(cues) ? cues : [];
+        const remove = new Set(
+            (Array.isArray(indexes) ? indexes : [])
+                .filter((n) => Number.isInteger(n) && n >= 0 && n < list.length),
+        );
+        if (!remove.size) {
+            return {
+                cues: list.slice(),
+                removedIndexes: [],
+                removed: 0,
+                kept: list.length,
+            };
+        }
+        const kept = [];
+        const removedIndexes = [];
+        list.forEach((cue, index) => {
+            if (remove.has(index)) removedIndexes.push(index);
+            else kept.push(cue);
+        });
+        return {
+            cues: kept,
+            removedIndexes,
+            removed: removedIndexes.length,
+            kept: kept.length,
+        };
+    }
+
+    /** Remap current selectedIndex after deleting indexes (same rules as editor delete). */
+    function nextSelectedIndexAfterDelete(selectedIndex, removedIndexes, remainingLength) {
+        const remove = new Set(
+            (Array.isArray(removedIndexes) ? removedIndexes : [])
+                .filter((n) => Number.isInteger(n) && n >= 0),
+        );
+        const rem = Math.max(0, Math.floor(Number(remainingLength) || 0));
+        if (!rem) return -1;
+        const sel = Number.isInteger(selectedIndex) ? selectedIndex : -1;
+        if (sel < 0) return 0;
+        if (!remove.has(sel)) {
+            let mapped = 0;
+            for (let i = 0; i < sel; i += 1) {
+                if (!remove.has(i)) mapped += 1;
+            }
+            return Math.min(mapped, rem - 1);
+        }
+        const firstRemoved = Math.min(...remove);
+        let mapped = 0;
+        for (let i = 0; i < firstRemoved; i += 1) {
+            if (!remove.has(i)) mapped += 1;
+        }
+        return Math.min(mapped, rem - 1);
+    }
+
     const api = {
         cueMatchesSmartSplitCondition,
         collectSmartSplitMatches,
@@ -180,6 +350,15 @@
         collectSilenceSplitMatches,
         previewSilenceSplitPlan,
         previewSmartAdjustSummary,
+        normalizeRetranslateMatchText,
+        isEllipsisOnlyPattern,
+        isBlankOrEllipsisCueText,
+        cueMatchesRetranslateTextCondition,
+        collectRetranslateTextMatches,
+        previewBatchRetranslatePlan,
+        previewBatchDeletePlan,
+        applyDeleteCueIndexes,
+        nextSelectedIndexAfterDelete,
     };
 
     global.TransubEditorParts = global.TransubEditorParts || {};

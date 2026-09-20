@@ -21,15 +21,49 @@ describe('smart-translate-hybrid-core', () => {
         assert.strictEqual(core.isJapaneseSource('', [{ text: 'おはよう' }]), true);
     });
 
+    it('skips Hy-MT2 in auto pick; prefers GalTransl/Sakura', () => {
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            installedIds: ['hy-mt2-1.8b', 'sakura-galtransl-7b', 'sakura-7b'],
+        }), 'sakura-galtransl-7b');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            installedIds: ['hy-mt2-7b', 'sakura-galtransl-7b', 'sakura-7b'],
+        }), 'sakura-galtransl-7b');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            installedIds: ['hy-mt2-7b', 'hy-mt2-1.8b'],
+        }), '');
+    });
+
+    it('uses Hy-MT2 only when preferredId is set (manual pick)', () => {
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'hy-mt2-7b',
+            installedIds: ['hy-mt2-7b', 'sakura-galtransl-7b', 'sakura-7b'],
+        }), 'hy-mt2-7b');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'hy-mt2-1.8b',
+            installedIds: ['hy-mt2-1.8b', 'sakura-galtransl-7b'],
+        }), 'hy-mt2-1.8b');
+        assert.strictEqual(core.shouldUseHybridChunkMt({
+            enabled: true, language: 'ja', cues: [{ text: 'ありがとう' }], modelId: 'hy-mt2-7b',
+        }).ok, true);
+    });
+
     it('picks preferred installed translate-only model, else GalTransl/Sakura order', () => {
         assert.strictEqual(core.pickHybridMtModelId({
             preferredId: 'sakura-1.5b',
             installedIds: ['sakura-galtransl-7b', 'sakura-1.5b'],
         }), 'sakura-1.5b');
+        // Explicit general LLM must NOT be silently remapped to GalTransl.
         assert.strictEqual(core.pickHybridMtModelId({
             preferredId: 'qwen25-7b',
             installedIds: ['sakura-1.5b', 'sakura-galtransl-7b'],
-        }), 'sakura-galtransl-7b');
+        }), '');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: 'spark-x25-4b',
+            installedIds: ['sakura-galtransl-7b-q6k', 'sakura-1.5b'],
+        }), '');
         assert.strictEqual(core.pickHybridMtModelId({
             preferredId: '',
             installedIds: ['sakura-1.5b', 'sakura-7b'],
@@ -38,6 +72,11 @@ describe('smart-translate-hybrid-core', () => {
             preferredId: 'sakura-7b',
             installedIds: ['qwen25-7b'],
         }), '');
+        assert.strictEqual(core.pickHybridMtModelId({
+            preferredId: '',
+            installedIds: ['sakura-1.5b', 'translategemma-4b'],
+            subtitleTargetLang: 'en',
+        }), 'translategemma-4b');
     });
 
     it('gates hybrid on option, JA source, and translate-only model', () => {
@@ -53,6 +92,13 @@ describe('smart-translate-hybrid-core', () => {
         }).reason, 'no_model');
         assert.strictEqual(core.shouldUseHybridChunkMt({
             enabled: true, language: 'en', cues: [{ text: 'Hello' }], modelId: 'sakura-7b',
+        }).reason, 'model_target');
+        assert.strictEqual(core.shouldUseHybridChunkMt({
+            enabled: true,
+            language: 'auto',
+            cues: [{ text: 'Hello' }],
+            modelId: 'sakura-7b',
+            subtitleTargetLang: 'zh-Hans',
         }).reason, 'not_ja');
         assert.strictEqual(core.shouldUseHybridChunkMt({
             enabled: true, language: 'ja', cues: ja, modelId: 'qwen25-7b',
@@ -150,5 +196,39 @@ describe('smart-translate-hybrid-core', () => {
             cues: [{ text: 'Hello' }],
             modelId: 'sakura-7b',
         }), false);
+    });
+
+    it('applies smart-translate lite flags for translate-only smart picks', () => {
+        const out = core.applySmartTranslateLiteOptions({
+            smartTranslateModelId: 'translategemma-4-sub-e4b',
+            smartTranslateHybridMt: false,
+            smartTranslatePlotPolish: true,
+            plotPolish: true,
+        });
+        assert.strictEqual(out._smartTranslateLite, true);
+        assert.strictEqual(out.skipFilmBrief, true);
+        assert.strictEqual(out.smartTranslatePlotPolish, false);
+        assert.strictEqual(out.plotPolish, false);
+        assert.strictEqual(out.smartTranslateHybridMt, true);
+        assert.strictEqual(out._hybridChunkOnly, true);
+        assert.strictEqual(out.hybridMtModelId, 'translategemma-4-sub-e4b');
+        assert.strictEqual(out.engineLlmMtModel, 'translategemma-4-sub-e4b');
+
+        const chat = core.applySmartTranslateLiteOptions({
+            smartTranslateModelId: 'qwen25-7b',
+            smartTranslatePlotPolish: true,
+        });
+        assert.strictEqual(chat._smartTranslateLite, undefined);
+        assert.strictEqual(chat.smartTranslatePlotPolish, true);
+
+        assert.ok(core.isTranslateOnlyLike('hunyuan-mt-chimera-7b-abliterated'));
+        assert.ok(core.isTranslateOnlyLike('translategemma-4-sub-e4b'));
+        assert.strictEqual(core.shouldUseHybridChunkMt({
+            enabled: true,
+            language: 'en',
+            cues: [{ text: 'Hello' }],
+            modelId: 'translategemma-4-sub-e4b',
+            subtitleTargetLang: 'zh-Hans',
+        }).ok, true);
     });
 });

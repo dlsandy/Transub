@@ -156,6 +156,113 @@ print(json.dumps({
         assert.strictEqual(payload.fooGone, true);
     });
 
+    it('clear_partial_torch_modules keeps torch._C and marks poison after package strip', () => {
+        const out = runPy(`
+import json
+import sys
+import types
+from transub_engine.device import (
+    clear_partial_torch_modules,
+    format_torch_cuda_load_failure,
+    is_torch_c_extension_loaded,
+    is_torch_reimport_poisoned,
+    mark_torch_import_ok,
+)
+
+torch = types.ModuleType("torch")
+torch._C = types.ModuleType("torch._C")
+sys.modules["torch"] = torch
+sys.modules["torch._C"] = torch._C
+mark_torch_import_ok()
+assert is_torch_c_extension_loaded()
+
+# Simulate a bad purge that only deletes the package entry.
+del sys.modules["torch"]
+assert is_torch_reimport_poisoned()
+clear_partial_torch_modules()
+assert "torch._C" in sys.modules
+msg = format_torch_cuda_load_failure("function '_has_torch_function' already has a docstring")
+print(json.dumps({
+    "poisoned": is_torch_reimport_poisoned(),
+    "cKept": "torch._C" in sys.modules,
+    "msgHasPoison": "损坏" in msg,
+    "msgNot1114Wrap": "WinError 1114" not in msg or "损坏" in msg,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.poisoned, true);
+        assert.strictEqual(payload.cKept, true);
+        assert.strictEqual(payload.msgHasPoison, true);
+    });
+
+    it('clear_partial_torch_modules does not strip when only torch._C remains', () => {
+        const out = runPy(`
+import json
+import sys
+import types
+from transub_engine.device import clear_partial_torch_modules, is_torch_c_extension_loaded
+
+sys.modules["torch._C"] = types.ModuleType("torch._C")
+assert is_torch_c_extension_loaded()
+clear_partial_torch_modules()
+print(json.dumps({"cKept": "torch._C" in sys.modules}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.cKept, true);
+    });
+
+    it('format_torch_cuda_load_failure prefers WinError 1114 over sticky poison', () => {
+        const out = runPy(`
+import json
+import sys
+import types
+from transub_engine.device import (
+    format_torch_cuda_load_failure,
+    mark_torch_import_failed_after_native,
+)
+
+sys.modules["torch._C"] = types.ModuleType("torch._C")
+mark_torch_import_failed_after_native()
+msg1114 = (
+    '[WinError 1114] Error loading '
+    r'"F:\\\\x\\\\torch\\\\lib\\\\cublas64_12.dll" or one of its dependencies.'
+)
+msg = format_torch_cuda_load_failure(msg1114)
+poison = format_torch_cuda_load_failure(
+    "function '_has_torch_function' already has a docstring"
+)
+print(json.dumps({
+    "has1114": "WinError 1114" in msg or "cublas" in msg.lower(),
+    "notDocstringWrap": "already has a docstring" not in msg,
+    "poisonDoc": "损坏" in poison,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.has1114, true);
+        assert.strictEqual(payload.notDocstringWrap, true);
+        assert.strictEqual(payload.poisonDoc, true);
+    });
+
+    it('probe_torch_engine_startup returns structured ready/code fields', () => {
+        const out = runPy(`
+import json
+from transub_engine.runtime_gpu import probe_torch_engine_startup
+out = probe_torch_engine_startup(soft_ct2=False)
+assert "ready" in out and "code" in out and "ok" in out
+print(json.dumps({
+    "ready": bool(out.get("ready")),
+    "ok": bool(out.get("ok")),
+    "hasCode": isinstance(out.get("code"), str),
+    "hasMessage": bool(str(out.get("message") or "")),
+}))
+`, 120000);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.hasCode, true);
+        assert.strictEqual(payload.hasMessage, true);
+        assert.strictEqual(typeof payload.ready, 'boolean');
+        assert.strictEqual(typeof payload.ok, 'boolean');
+    });
+
     it.skipIf(winOnly)('inject_nvidia_lib_path prefers nvidia cublas over torch\\\\lib', () => {
         const out = runPy(`
 import json

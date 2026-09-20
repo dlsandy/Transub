@@ -1,11 +1,10 @@
 /**
  * UI i18n core (Node + browser). Catalogs are injected by the host.
- * Locale IDs: zh-Hans (default) | zh-Hant-TW
+ * Locale IDs: registry in shared/i18n/locales.json (mirrored below).
  *
  * Coverage model:
- * - t(key): curated catalog keys
- * - tx(hansText): locale display for hardcoded Simplified Chinese chrome
- *   (catalog phrase override → OpenCC twp when Hant → passthrough when Hans)
+ * - t(key): curated catalog keys with fallback chain (locale → en → zh-Hans)
+ * - tx(hansText): Hans→Hant OpenCC + phrase overrides (hans-opencc strategy only)
  * - applyDom + applyDomDeep: data-i18n* then convert remaining chrome text
  */
 (function (global, factory) {
@@ -17,9 +16,39 @@
         global.TransubI18nCore = api;
     }
 }(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function i18nCoreFactory() {
-    const UI_LOCALES = Object.freeze(['zh-Hans', 'zh-Hant-TW']);
-    const DEFAULT_UI_LOCALE = 'zh-Hans';
+    /** Keep in sync with shared/i18n/locales.json (sync-i18n-catalogs validates). */
+    const UI_LOCALE_REGISTRY = Object.freeze({
+        default: 'zh-Hans',
+        fallbackChain: Object.freeze(['en', 'zh-Hans']),
+        locales: Object.freeze([
+            Object.freeze({
+                id: 'zh-Hans', bcp47: 'zh-CN', nativeName: '简体中文',
+                enabled: true, strategy: 'source',
+            }),
+            Object.freeze({
+                id: 'zh-Hant-TW', bcp47: 'zh-TW', nativeName: '繁體中文',
+                enabled: true, strategy: 'hans-opencc',
+            }),
+            Object.freeze({
+                id: 'en', bcp47: 'en', nativeName: 'English',
+                enabled: true, strategy: 'catalog',
+            }),
+            Object.freeze({
+                id: 'ja', bcp47: 'ja', nativeName: '日本語',
+                enabled: true, strategy: 'catalog',
+            }),
+            Object.freeze({
+                id: 'ko', bcp47: 'ko', nativeName: '한국어',
+                enabled: true, strategy: 'catalog',
+            }),
+        ]),
+    });
+
+    const DEFAULT_UI_LOCALE = UI_LOCALE_REGISTRY.default;
     const FALLBACK_UI_LOCALE = 'zh-Hans';
+    const UI_LOCALES = Object.freeze(
+        UI_LOCALE_REGISTRY.locales.map((e) => e.id),
+    );
 
     const ALIASES = Object.freeze({
         zh: 'zh-Hans',
@@ -34,12 +63,24 @@
         hans: 'zh-Hans',
         hant: 'zh-Hant-TW',
         tw: 'zh-Hant-TW',
+        en: 'en',
+        'en-us': 'en',
+        'en-gb': 'en',
+        'en-au': 'en',
+        english: 'en',
+        ja: 'ja',
+        'ja-jp': 'ja',
+        jp: 'ja',
+        japanese: 'ja',
+        ko: 'ko',
+        'ko-kr': 'ko',
+        kr: 'ko',
+        korean: 'ko',
     });
 
-    const HTML_LANG = Object.freeze({
-        'zh-Hans': 'zh-CN',
-        'zh-Hant-TW': 'zh-TW',
-    });
+    const localeById = new Map(
+        UI_LOCALE_REGISTRY.locales.map((e) => [e.id, e]),
+    );
 
     const CJK_RE = /[\u3400-\u9FFF\uF900-\uFAFF]/;
     const SKIP_TAGS = new Set([
@@ -60,26 +101,57 @@
         '.task-log',
         '.mono-log',
         '[data-path]',
-        '.library-player-time',
     ].join(',');
 
     const ATTRS_TO_LOCALIZE = ['title', 'placeholder', 'aria-label', 'aria-description'];
 
+    function getLocaleEntry(locale) {
+        return localeById.get(normalizeUiLocale(locale)) || localeById.get(DEFAULT_UI_LOCALE);
+    }
+
+    function listUiLocales({ enabledOnly = true } = {}) {
+        return UI_LOCALE_REGISTRY.locales.filter((e) => (enabledOnly ? e.enabled : true));
+    }
+
+    function localeStrategy(locale) {
+        const entry = getLocaleEntry(locale);
+        return entry?.strategy || 'catalog';
+    }
+
     function normalizeUiLocale(raw) {
         const s = String(raw || '').trim();
         if (!s) return DEFAULT_UI_LOCALE;
-        if (UI_LOCALES.includes(s)) return s;
+        if (localeById.has(s)) return s;
         const mapped = ALIASES[s.toLowerCase()];
-        return mapped || DEFAULT_UI_LOCALE;
+        if (mapped && localeById.has(mapped)) return mapped;
+        const lower = s.toLowerCase();
+        const primary = lower.split(/[-_]/)[0];
+        const byPrimary = ALIASES[primary];
+        if (byPrimary && localeById.has(byPrimary)) return byPrimary;
+        return DEFAULT_UI_LOCALE;
     }
 
     function isHantLocale(locale) {
-        return normalizeUiLocale(locale) === 'zh-Hant-TW';
+        return localeStrategy(locale) === 'hans-opencc';
     }
 
     function htmlLangForLocale(locale) {
+        const entry = getLocaleEntry(locale);
+        return entry?.bcp47 || 'zh-CN';
+    }
+
+    function resolveFallbackChain(locale, opts = {}) {
         const id = normalizeUiLocale(locale);
-        return HTML_LANG[id] || HTML_LANG[DEFAULT_UI_LOCALE];
+        const chain = [id];
+        const configured = Array.isArray(opts.fallbackChain)
+            ? opts.fallbackChain
+            : UI_LOCALE_REGISTRY.fallbackChain;
+        configured.forEach((fb) => {
+            const n = normalizeUiLocale(fb);
+            if (!chain.includes(n)) chain.push(n);
+        });
+        if (!chain.includes(FALLBACK_UI_LOCALE)) chain.push(FALLBACK_UI_LOCALE);
+        return chain;
     }
 
     function hasCjk(text) {
@@ -104,6 +176,32 @@
     }
 
     /**
+     * Format a Hans template that uses {var} placeholders.
+     * Looks up phrase.<template> in catalog locales; falls back to interpolating the Hans template.
+     */
+    function tf(template, vars, opts = {}) {
+        const src = template == null ? '' : String(template);
+        if (!src) return '';
+        const catalogs = opts.catalogs || {};
+        const chain = resolveFallbackChain(opts.locale, {
+            fallbackChain: opts.fallbackChain
+                || (opts.fallbackLocale
+                    ? [opts.fallbackLocale, FALLBACK_UI_LOCALE]
+                    : undefined),
+        });
+        const phraseKey = `phrase.${src}`;
+        let raw;
+        for (let i = 0; i < chain.length; i += 1) {
+            const loc = chain[i];
+            // Allow zh-Hans identity phrase if present; otherwise keep walking.
+            raw = lookup(catalogs, loc, phraseKey);
+            if (raw !== undefined) break;
+        }
+        if (raw === undefined) raw = src;
+        return interpolate(raw, vars);
+    }
+
+    /**
      * @param {string} key
      * @param {object} [opts]
      */
@@ -111,28 +209,37 @@
         const k = String(key || '');
         if (!k) return '';
         const catalogs = opts.catalogs || {};
-        const locale = normalizeUiLocale(opts.locale);
-        const fallback = normalizeUiLocale(opts.fallbackLocale || FALLBACK_UI_LOCALE);
-        let raw = lookup(catalogs, locale, k);
-        if (raw === undefined && locale !== fallback) {
-            raw = lookup(catalogs, fallback, k);
+        const chain = resolveFallbackChain(opts.locale, {
+            fallbackChain: opts.fallbackChain
+                || (opts.fallbackLocale
+                    ? [opts.fallbackLocale, FALLBACK_UI_LOCALE]
+                    : undefined),
+        });
+        let raw;
+        for (let i = 0; i < chain.length; i += 1) {
+            raw = lookup(catalogs, chain[i], k);
+            if (raw !== undefined) break;
         }
         if (raw === undefined) return k;
         return interpolate(raw, opts.vars);
     }
 
-    function applyPhraseMap(text, catalogs, locale) {
+    function applyPhraseMap(text, catalogs, locale, cache) {
         const pack = catalogs && catalogs[locale];
         if (!pack || typeof pack !== 'object') return text;
-        const entries = [];
-        Object.keys(pack).forEach((k) => {
-            if (!k.startsWith('phrase.')) return;
-            const from = k.slice('phrase.'.length);
-            if (!from) return;
-            entries.push([from, String(pack[k])]);
-        });
+        let entries = cache && cache.get(locale);
+        if (!entries) {
+            entries = [];
+            Object.keys(pack).forEach((k) => {
+                if (!k.startsWith('phrase.')) return;
+                const from = k.slice('phrase.'.length);
+                if (!from) return;
+                entries.push([from, String(pack[k])]);
+            });
+            entries.sort((a, b) => b[0].length - a[0].length);
+            if (cache) cache.set(locale, entries);
+        }
         if (!entries.length) return text;
-        entries.sort((a, b) => b[0].length - a[0].length);
         let out = String(text || '');
         entries.forEach(([from, to]) => {
             if (out.includes(from)) out = out.split(from).join(to);
@@ -142,30 +249,64 @@
 
     /**
      * Display hardcoded Hans chrome in the active locale.
-     * Phrase overrides: catalog keys `phrase.<hansSubstring>` (applied before OpenCC).
+     * - source: passthrough
+     * - hans-opencc: phrase exact → phrase map → OpenCC
+     * - catalog (en/ja/ko/…): phrase exact → phrase map → passthrough (Hans until translated)
+     * Phrase keys: `phrase.<hansText>` (exact or substring via map).
      */
     function tx(text, opts = {}) {
         const src = text == null ? '' : String(text);
         if (!src || !hasCjk(src)) return src;
         const locale = normalizeUiLocale(opts.locale);
-        if (!isHantLocale(locale)) return src;
+        const strategy = localeStrategy(locale);
+        if (strategy === 'source') return src;
 
         const catalogs = opts.catalogs || {};
+        const phraseCache = opts.phraseCache || null;
+        const chain = resolveFallbackChain(locale, {
+            fallbackChain: opts.fallbackChain
+                || (opts.fallbackLocale
+                    ? [opts.fallbackLocale, FALLBACK_UI_LOCALE]
+                    : undefined),
+        });
+
         const phraseKey = `phrase.${src}`;
-        const overridden = lookup(catalogs, locale, phraseKey);
-        if (overridden !== undefined) {
-            return interpolate(overridden, opts.vars);
+        for (let i = 0; i < chain.length; i += 1) {
+            const loc = chain[i];
+            if (localeStrategy(loc) === 'source') continue;
+            const overridden = lookup(catalogs, loc, phraseKey);
+            if (overridden !== undefined) {
+                return interpolate(overridden, opts.vars);
+            }
         }
 
-        const staged = applyPhraseMap(src, catalogs, locale);
-        const convert = typeof opts.convertHansToHant === 'function'
-            ? opts.convertHansToHant
-            : null;
-        if (convert) {
-            try {
-                return convert(staged);
-            } catch {
-                return staged;
+        // Substring phrase maps are for Hant term overrides only.
+        // Catalog locales (en/ja/ko) must not partial-replace (avoids mixed-language chrome).
+        if (strategy === 'catalog') {
+            return src;
+        }
+
+        let staged = src;
+        for (let i = 0; i < chain.length; i += 1) {
+            const loc = chain[i];
+            if (localeStrategy(loc) !== 'hans-opencc') continue;
+            const next = applyPhraseMap(staged, catalogs, loc, phraseCache);
+            if (next !== staged) {
+                staged = next;
+                break;
+            }
+        }
+
+        if (strategy === 'hans-opencc') {
+            const convert = typeof opts.convertHansToHant === 'function'
+                ? opts.convertHansToHant
+                : null;
+            if (convert) {
+                try {
+                    return convert(staged);
+                } catch {
+                    return staged;
+                }
             }
         }
         return staged;
@@ -244,9 +385,13 @@
                     return NodeFilter.FILTER_REJECT;
                 }
                 const raw = node.nodeValue;
-                if (raw == null || !String(raw).trim() || !hasCjk(raw)) {
+                if (raw == null || !String(raw).trim()) {
                     return NodeFilter.FILTER_REJECT;
                 }
+                // Already captured Hans original: keep re-translating even after the
+                // live text lost CJK (e.g. zh-Hans → en → ja / back to Hans).
+                if (textOrig.has(node)) return NodeFilter.FILTER_ACCEPT;
+                if (!hasCjk(raw)) return NodeFilter.FILTER_REJECT;
                 return NodeFilter.FILTER_ACCEPT;
             },
         });
@@ -296,10 +441,15 @@
         return count;
     }
 
+    function optionLabelKey(localeId) {
+        return `settings.uiLocale.locale.${localeId}`;
+    }
+
     function createI18n({
         catalogs = {},
         locale = DEFAULT_UI_LOCALE,
         fallbackLocale = FALLBACK_UI_LOCALE,
+        fallbackChain = null,
         convertHansToHant = null,
     } = {}) {
         let current = normalizeUiLocale(locale);
@@ -308,12 +458,18 @@
             textOrig: new WeakMap(),
             attrOrig: new WeakMap(),
         };
+        const phraseCache = new Map();
+        const chainOpt = Array.isArray(fallbackChain) && fallbackChain.length
+            ? fallbackChain
+            : (fallbackLocale
+                ? [fallbackLocale, ...UI_LOCALE_REGISTRY.fallbackChain]
+                : UI_LOCALE_REGISTRY.fallbackChain);
 
         function translate(key, vars) {
             return t(key, {
                 catalogs: packs,
                 locale: current,
-                fallbackLocale,
+                fallbackChain: chainOpt,
                 vars,
             });
         }
@@ -322,8 +478,18 @@
             return tx(text, {
                 catalogs: packs,
                 locale: current,
+                fallbackChain: chainOpt,
                 vars,
                 convertHansToHant,
+                phraseCache,
+            });
+        }
+
+        function translateFormat(template, vars) {
+            return tf(template, vars, {
+                catalogs: packs,
+                locale: current,
+                fallbackChain: chainOpt,
             });
         }
 
@@ -346,6 +512,7 @@
 
         return {
             t: translate,
+            tf: translateFormat,
             tx: translateText,
             setLocale,
             getLocale: () => current,
@@ -356,16 +523,23 @@
     }
 
     return {
+        UI_LOCALE_REGISTRY,
         UI_LOCALES,
         DEFAULT_UI_LOCALE,
         FALLBACK_UI_LOCALE,
         CJK_RE,
         normalizeUiLocale,
         isHantLocale,
+        localeStrategy,
+        listUiLocales,
+        getLocaleEntry,
         htmlLangForLocale,
+        resolveFallbackChain,
+        optionLabelKey,
         hasCjk,
         interpolate,
         t,
+        tf,
         tx,
         applyDom,
         applyDomDeep,

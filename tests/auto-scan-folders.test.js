@@ -21,10 +21,45 @@ describe('auto-scan folders', () => {
             skippedHasSub: 1,
             skippedDup: 1,
             skippedMissingFolder: 0,
+            clearedInvalid: 2,
         });
         assert.match(msg, /加入 3/);
         assert.match(msg, /已有字幕跳过 1/);
         assert.match(msg, /列表已有跳过 1/);
+        assert.match(msg, /清除失效 2/);
+    });
+
+    it('runAutoAddMissingSubtitles clears invalid files before scan', async () => {
+        let cleared = 0;
+        const logs = [];
+        await autoScan.runAutoAddMissingSubtitles({
+            getFoldersDraft: () => ['D:/Media'],
+            getSavedOptionsSnapshot: () => ({ autoScanRecursive: true }),
+            resolveOutputDirFromForm: () => '',
+            clearInvalidFiles: async () => {
+                cleared += 1;
+                return { removed: 2 };
+            },
+            electron: {
+                async transWithAiAutoScanFolders() {
+                    return {
+                        ok: true,
+                        files: [],
+                        scanned: 0,
+                        skippedHasSub: 0,
+                        skippedMissingFolder: 0,
+                        folderCount: 1,
+                        folderErrors: [],
+                    };
+                },
+            },
+            getItemCount: () => 0,
+            addFiles: async () => {},
+            setLoading: () => {},
+            appendLog: (m) => logs.push(m),
+        });
+        assert.strictEqual(cleared, 1);
+        assert.ok(logs.some((m) => /清除失效 2/.test(m)));
     });
 
     it('scans only media without sidecar subtitles', () => {

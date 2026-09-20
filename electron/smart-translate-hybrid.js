@@ -23,10 +23,17 @@ function listInstalledTranslateOnlyIds() {
     return ids;
 }
 
-function resolveHybridChunkModelId(preferredId) {
+function resolveHybridChunkModelId(preferredId, targetOpts = {}) {
     return core.pickHybridMtModelId({
         preferredId: asString(preferredId, 128).trim(),
         installedIds: listInstalledTranslateOnlyIds(),
+        subtitleTargetLang: targetOpts.subtitleTargetLang,
+        targetLang: targetOpts.targetLang,
+        chineseSubtitleVariant: targetOpts.chineseSubtitleVariant,
+        language: targetOpts.language,
+        contentProfile: targetOpts.contentProfile,
+        senseProfile: targetOpts.senseProfile,
+        strongAv: targetOpts.strongAv,
     });
 }
 
@@ -55,12 +62,35 @@ function modelLabel(modelId) {
  */
 function decideHybridChunkMt(input = {}) {
     const preferredId = asString(input.preferredId, 128).trim();
-    const modelId = resolveHybridChunkModelId(preferredId);
+    // Explicit general LLM (星火 / Qwen / …) in the sentence slot: skip specialist
+    // hybrid and let the dialogue model translate line-by-line — never remap to GalTransl.
+    if (preferredId && !core.isTranslateOnlyLike(preferredId)) {
+        return {
+            ok: false,
+            reason: 'not_translate_only',
+            modelId: '',
+            name: '',
+            preferredId,
+        };
+    }
+    const modelId = resolveHybridChunkModelId(preferredId, {
+        targetLang: input.targetLang,
+        subtitleTargetLang: input.subtitleTargetLang,
+        chineseSubtitleVariant: input.chineseSubtitleVariant,
+        language: input.language,
+        contentProfile: input.contentProfile,
+        senseProfile: input.senseProfile,
+        strongAv: input.strongAv,
+    });
     const gate = core.shouldUseHybridChunkMt({
         enabled: input.enabled,
         language: input.language,
         cues: input.cues,
         modelId,
+        targetLang: input.targetLang,
+        subtitleTargetLang: input.subtitleTargetLang,
+        chineseSubtitleVariant: input.chineseSubtitleVariant,
+        targetLanguage: input.targetLanguage,
     });
     return {
         ...gate,
@@ -86,6 +116,10 @@ function canRunHybridChunkOnly(input = {}) {
         language: p.language || p.sourceLanguage,
         cues: p.cues,
         preferredId: p.hybridMtModelId || p.engineLlmMtModel,
+        targetLang: p.targetLang,
+        subtitleTargetLang: p.subtitleTargetLang,
+        chineseSubtitleVariant: p.chineseSubtitleVariant,
+        targetLanguage: p.targetLanguage,
     });
 }
 
@@ -127,10 +161,12 @@ function pickInstalledSmartTranslateModelId(requestedId) {
     if (typeof managedCatalog.pickInstalledSmartTranslateModelId !== 'function') {
         return asString(requestedId, 128).trim();
     }
+    // Chat path only — never keep Sakura/Gal/Hy-MT/TG/Hunyuan as dialog LLM.
     return managedCatalog.pickInstalledSmartTranslateModelId({
         requestedId: asString(requestedId, 128).trim(),
         installedIds: listInstalledChatModelIds(),
-    }) || asString(requestedId, 128).trim();
+        forChat: true,
+    }) || '';
 }
 
 function shouldSkipLlmFilmBrief(input = {}) {
@@ -139,6 +175,10 @@ function shouldSkipLlmFilmBrief(input = {}) {
         language: input.language || input.sourceLanguage,
         cues: input.cues,
         preferredId: input.hybridMtModelId || input.engineLlmMtModel || input.preferredId,
+        targetLang: input.targetLang,
+        subtitleTargetLang: input.subtitleTargetLang,
+        chineseSubtitleVariant: input.chineseSubtitleVariant,
+        targetLanguage: input.targetLanguage,
     });
     return !!core.shouldSkipLlmFilmBrief({
         enabled: input.enabled,
@@ -179,7 +219,12 @@ async function releaseChatLlmForHybridChunk(payload = {}) {
         hybridMtModelId: modelId,
     });
     try {
-        require('./advanced-llama-server').stopLlamaServer();
+        const llama = require('./advanced-llama-server');
+        if (typeof llama.stopLlamaServerAsync === 'function') {
+            await llama.stopLlamaServerAsync();
+        } else {
+            llama.stopLlamaServer();
+        }
     } catch (_) { /* ignore */ }
     const rawDelay = Number(p.vramReleaseMs);
     const wait = Number.isFinite(rawDelay)
@@ -213,7 +258,14 @@ async function runHybridChunkTranslate(payload = {}) {
         installedIds: listInstalledTranslateOnlyIds(),
         enabled: p.hybridShortCueRouting,
         engineExternalMt: !!p._engineExternalMt,
-        allowModelSwap: !p._engineExternalMt,
+        allowModelSwap: (() => {
+            if (p._engineExternalMt) return false;
+            try {
+                const { isByokSentenceMtPreferred } = require('./sakura-mt-endpoint-resolve');
+                if (isByokSentenceMtPreferred(null, p)) return false;
+            } catch { /* ignore */ }
+            return true;
+        })(),
         minRouted: 8,
     });
 
@@ -227,6 +279,8 @@ async function runHybridChunkTranslate(payload = {}) {
         senseProfile: p.senseProfile,
         faithfulTone: p.faithfulTone,
         smartTranslateFaithfulTone: p.smartTranslateFaithfulTone,
+        translateStylePreset: p.translateStylePreset,
+        translateStyleCustomNote: p.translateStyleCustomNote,
         applyNsfwLexicon: p.applyNsfwLexicon,
         presetId: p.presetId,
         timeoutMs: p.timeoutMs,
@@ -235,6 +289,20 @@ async function runHybridChunkTranslate(payload = {}) {
         fileName: p.fileName,
         sourcePath: p.sourcePath,
         path: p.path,
+        chineseSubtitleVariant: p.chineseSubtitleVariant,
+        subtitleTargetLang: p.subtitleTargetLang || p.targetLang,
+        targetLang: p.targetLang || p.subtitleTargetLang,
+        targetLanguage: p.targetLanguage,
+        language: p.language || p.sourceLanguage,
+        // Blank-retry must stay single-cue and must not re-run sakura whole-track
+        // 对位审计 (same storm as engine-blank-mt-retry prefer-Sakura path).
+        windowLines: (p._blankRetry || p._skipAlignAudit)
+            ? 1
+            : Math.max(1, Math.min(8, Number(p.windowLines) || 1)),
+        skipFakeGreeting: p.skipFakeGreeting,
+        _blankRetry: !!p._blankRetry,
+        _skipAlignAudit: !!p._skipAlignAudit || !!p._blankRetry,
+        hyMtMinimalPrompt: !!p.hyMtMinimalPrompt,
         _batchMode: true,
         _skipComputeLock: true,
         _engineExternalMt: !!p._engineExternalMt,
@@ -279,7 +347,12 @@ async function runHybridChunkTranslate(payload = {}) {
             llmCuesToRun = partition.llmCues;
             // Free small-model VRAM before loading GalTransl / main MT.
             try {
-                require('./advanced-llama-server').stopLlamaServer();
+                const llama = require('./advanced-llama-server');
+                if (typeof llama.stopLlamaServerAsync === 'function') {
+                    await llama.stopLlamaServerAsync();
+                } else {
+                    llama.stopLlamaServer();
+                }
             } catch (_) { /* ignore */ }
             if (!p.signal?.aborted) {
                 await new Promise((resolve) => setTimeout(resolve, 800));

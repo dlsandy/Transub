@@ -88,12 +88,12 @@ function mergeTransWithAiOptions(input = {}) {
         mergeMaxGapMs: 500,
         mergeMaxDurationMs: 15000,
         maxBatchSize: 8,
-        beamSize: 5,
-        language: 'auto',
-        vadThreshold: 0.5,
-        vadMinSpeechDurationMs: 300,
-        vadMinSilenceDurationMs: 100,
-        vadSpeechPadMs: 200,
+        beamSize: 1,
+        language: 'ja',
+        vadThreshold: 0.45,
+        vadMinSpeechDurationMs: 180,
+        vadMinSilenceDurationMs: 500,
+        vadSpeechPadMs: 80,
         maxInitialTimestamp: 30,
         repetitionPenalty: 1.1,
         noSpeechThreshold: 0.6,
@@ -101,21 +101,35 @@ function mergeTransWithAiOptions(input = {}) {
         compressionRatioThreshold: 2.4,
         hallucinationSilenceThreshold: null,
         glossaryPromptEnabled: false,
-        glossaryMtEnabled: true,
+        glossaryMtEnabled: false,
         chineseSubtitleVariant: 'simplified',
-        dualTargetSuffix: 'zh',
+        /** 成片目标语 (zh-Hans|zh-Hant|…|en|ja|ko); independent of uiLocale */
+        subtitleTargetLang: 'zh-Hans',
+        /** Remember last manual/auto MT id per 成片语 bucket (zh|en|ja|ko) */
+        lastMtByTarget: { zh: '', en: '', ja: '', ko: '' },
+        dualTargetSuffix: 'zh-cn',
         dualPrimaryTrack: 'target',
         dualDisplayMode: 'both',
         // Match settings UI default: 译文在上，原文在下
         dualLineOrder: 'target-first',
         // Pref; runtime jobs still apply merge only when task === dual.
-        mergeBilingualSubtitles: true,
+        mergeBilingualSubtitles: false,
         deleteSourcesAfterMergeBilingual: false,
+        /** Write translation/target sidecar next to media (or output dir). */
+        outputWriteTarget: true,
+        /** Write source/ASR sidecar (e.g. Movie.src.srt / Movie.ja.srt). */
+        outputWriteSource: true,
+        /** lang = Movie.zh-cn.srt; media = Movie.srt (same basename as video). */
+        targetSubtitleNaming: 'lang',
+        /** Free default on; Pro UI clears on unlock / first Pro default. */
+        insertSoftwareCredit: true,
         includeWords: false,
         karaokeVtt: false,
         releaseGpuAfter: true,
-        // Pre-wizard / missing-key default: 推理翻译
-        translateMode: 'llm',
+        /** Local LLM: on GPU OOM/busy, auto degrade to CPU. Default off → wait/retry GPU. */
+        autoCpuOnGpuBusy: false,
+        // Pre-wizard / missing-key default: 智能翻译 (Pro)
+        translateMode: 'smart',
         postBatchCpsSplit: true,
         postBatchRemoveNoise: true,
         postBatchCompressRepetition: true,
@@ -127,15 +141,21 @@ function mergeTransWithAiOptions(input = {}) {
         postBatchSimplifyViewingPunctuation: true,
         postBatchCompactPureInterjections: true,
         postBatchContextReconstruct: false,
-        smartTranslate: false,
+        smartTranslate: true,
         smartTranslateFaithfulTone: true,
+        translateStyleEnabled: false,
+        translateStylePreset: 'natural_spoken',
+        translateStyleCustomNote: '',
         smartTranslateHybridMt: true,
         smartTranslatePlotPolish: true,
         smartTranslateFaithfulVerify: true,
         smartTranslateAddressConsistency: true,
         smartTranslatePolishSampleLimit: 36,
-        /** auto: av_soft / JA specialist only; on/off force */
-        asrSecondOpinion: 'auto',
+        /** auto: follow perfProfile; on/off force */
+        asrSecondOpinion: 'off',
+        qualityPipelineMode: 'auto',
+        postQcLoopMaxPasses: 1,
+        asrBadPoolDrafts: false,
         /** Pro: off | auto (suspicious cues) | thorough (all dialogue cues); all media types */
         asrSemanticRepair: 'auto',
         /** Film Brief sampling: auto = adaptive (~56 cues); full = all cues */
@@ -155,16 +175,18 @@ function mergeTransWithAiOptions(input = {}) {
         autoSuggestSpeakers: false,
         speakerCount: 2,
         perfProfile: 'quality',
-        vadMaxSingleSegmentMs: 30000,
+        qwenAsrBatchMode: 'auto',
+        vadMaxSingleSegmentMs: 5000,
         smartSplitWithVad: true,
-        targetChunkDurationS: 30,
+        targetChunkDurationS: 5,
         retranscribeWarmLight: false,
         subtitleBakMode: 'off',
         keepTranscript: true,
         transcriptKeepDir: '',
-        transcriptKeepLimit: 200,
-        transcriptKeepDays: 90,
-        trayProgressEnabled: true,
+        transcriptKeepLimit: 0,
+        transcriptKeepDays: 0,
+        shelfOpenAfterBatch: false,
+        trayProgressEnabled: false,
         showTaskResourceUsage: true,
         minimizeToTrayEnabled: true,
         minimizeToTrayOnStart: false,
@@ -173,16 +195,22 @@ function mergeTransWithAiOptions(input = {}) {
         lastOpenDir: '',
         autoScanFolders: [],
         autoScanRecursive: true,
+        /** Setup-wizard multi-select preferences */
+        wizardContentTypes: [],
+        wizardPresetIds: [],
+        wizardTargetLangs: ['zh-Hans'],
         startupWindow: 'generator',
+        subtitleEditorBackend: 'auto',
+        subtitleEditorPath: '',
         uiLocale: 'zh-Hans',
-        autoUpdateCheckInterval: 'weekly',
+        autoUpdateCheckInterval: 'off',
         lastAutoUpdateCheckAt: '',
-        autoSense: true,
-        activePresetId: '',
-        mtUseForm: false,
-        autoDeepSense: false,
+        activePresetId: 'ja-av-qwen3-galgame-ten',
+        activeComboPlanId: '',
+        mtUseForm: true,
+        externalImportAction: 'list_when_idle',
         postBatchQc: true,
-        postBatchQcFixMode: 'smart',
+        postBatchQcFixMode: 'fix',
         /** QC 修复：字数超过此值则尝试静音分割（0=关闭）。默认 15。 */
         qcSilenceSplitChars: 15,
         qcSmartLlmSplit: true,
@@ -190,21 +218,64 @@ function mergeTransWithAiOptions(input = {}) {
         qcSmartSemanticReview: true,
         qcSmartIntensity: 'light',
         qcSmartMaxRetranscribeRanges: 8,
-        libraryOpenAfterBatch: false,
         postBatchTextPresetGroupId: '',
         outputDir: '',
         outputMode: 'same',
         audioSuffixes: AUDIO_SUFFIXES,
         ffmpegPath: '',
+        burnContainer: 'mp4',
+        burnEncoderId: 'libx264',
+        burnAudioMode: 'copy',
+        burnCrf: 18,
+        burnResolutionId: 'source',
+        burnFpsId: 'source',
+        burnEncodeSpeedId: 'medium',
+        burnOutputSuffix: 'burned',
+        burnOutputDir: '',
         settingsUiMode: 'standard',
         proxyEnabled: false,
         proxyUrl: '',
         proxyBypass: 'localhost,127.0.0.1,::1,<local>',
+        transubStationEnabled: false,
+        transubStationUrl: 'http://127.0.0.1:8787',
+        transubStationModel: '',
+        githubMirrorUrls: (() => {
+            try {
+                return require('./github-mirrors').DEFAULT_GITHUB_MIRROR_PREFIXES.slice();
+            } catch {
+                return ['https://g.blfrp.cn/', 'https://gh-proxy.com/', 'https://gh.nxnow.top/', 'https://ghproxy.net/'];
+            }
+        })(),
         ...withEngine,
     };
     try {
         const { normalizeProxyOptions } = require('./proxy-settings');
         Object.assign(merged, normalizeProxyOptions(merged));
+    } catch { /* ignore */ }
+    try {
+        const { normalizeStationOptions } = require('./transub-station-client');
+        Object.assign(merged, normalizeStationOptions(merged));
+    } catch { /* ignore */ }
+    try {
+        const {
+            normalizeGithubMirrorPrefixes,
+            migrateLegacyGithubMirrorDefaults,
+        } = require('./github-mirrors');
+        if (Object.prototype.hasOwnProperty.call(input, 'githubMirrorUrls')) {
+            merged.githubMirrorUrls = migrateLegacyGithubMirrorDefaults(
+                normalizeGithubMirrorPrefixes(
+                    Array.isArray(input.githubMirrorUrls)
+                        ? input.githubMirrorUrls
+                        : String(input.githubMirrorUrls || '').split(/\r?\n/),
+                ),
+            );
+        } else if (!Array.isArray(merged.githubMirrorUrls)) {
+            merged.githubMirrorUrls = normalizeGithubMirrorPrefixes(merged.githubMirrorUrls);
+        } else {
+            merged.githubMirrorUrls = migrateLegacyGithubMirrorDefaults(
+                normalizeGithubMirrorPrefixes(merged.githubMirrorUrls),
+            );
+        }
     } catch { /* ignore */ }
     // Migrate legacy TWAI chunk duration → Engine max single segment when new key absent.
     if ((input.vadMaxSingleSegmentMs == null || input.vadMaxSingleSegmentMs === '')
@@ -219,17 +290,10 @@ function mergeTransWithAiOptions(input = {}) {
             merged.vadMaxSingleSegmentMs = Math.max(5000, Math.min(60000, Math.round(n)));
         }
     }
-    // Migrate legacy「开始前自动匹配」→「自动感知」
-    if (Object.prototype.hasOwnProperty.call(input, 'autoContentProfile')
-        && !Object.prototype.hasOwnProperty.call(input, 'autoSense')) {
-        merged.autoSense = input.autoContentProfile !== false;
-    } else if (Object.prototype.hasOwnProperty.call(input, 'autoSense')) {
-        merged.autoSense = input.autoSense !== false;
-    }
-    {
-        const pid = String(merged.activePresetId || '').trim();
-        merged.activePresetId = merged.autoSense ? '' : pid;
-    }
+    merged.activePresetId = String(merged.activePresetId || '').trim();
+    merged.activeComboPlanId = String(merged.activeComboPlanId || '').trim();
+    delete merged.autoSense;
+    delete merged.autoDeepSense;
     merged.audioLightDenoise = !!merged.audioLightDenoise;
     merged.autoSuggestSpeakers = !!merged.autoSuggestSpeakers;
     {
@@ -239,6 +303,15 @@ function mergeTransWithAiOptions(input = {}) {
     {
         const v = String(merged.perfProfile || 'quality').trim().toLowerCase();
         merged.perfProfile = v === 'speed' ? 'speed' : 'quality';
+    }
+    {
+        try {
+            const { normalizeQwenAsrBatchMode } = require('../src/js/qwen-asr-batch-core');
+            merged.qwenAsrBatchMode = normalizeQwenAsrBatchMode(merged.qwenAsrBatchMode);
+        } catch {
+            const v = String(merged.qwenAsrBatchMode || 'auto').trim().toLowerCase();
+            merged.qwenAsrBatchMode = (v === 'conservative' || v === 'aggressive') ? v : 'auto';
+        }
     }
     delete merged.autoContentProfile;
 
@@ -284,13 +357,68 @@ function mergeTransWithAiOptions(input = {}) {
         ? 'editor'
         : 'generator';
 
-    // Normalize UI locale (interface language; independent of chineseSubtitleVariant)
+    {
+        const backend = String(merged.subtitleEditorBackend ?? 'auto').trim().toLowerCase();
+        if (backend === 'external' || backend === 'native' || backend === 'csharp') {
+            merged.subtitleEditorBackend = 'external';
+        } else if (backend === 'electron' || backend === 'builtin' || backend === 'internal') {
+            merged.subtitleEditorBackend = 'electron';
+        } else {
+            merged.subtitleEditorBackend = 'auto';
+        }
+        merged.subtitleEditorPath = String(merged.subtitleEditorPath || '').trim();
+    }
+
+    // Normalize UI locale (interface language; independent of chineseSubtitleVariant / subtitleTargetLang)
     try {
         const { normalizeUiLocale } = require('../src/js/i18n-core');
         merged.uiLocale = normalizeUiLocale(merged.uiLocale);
     } catch {
         const raw = String(merged.uiLocale || '').trim();
-        merged.uiLocale = raw === 'zh-Hant-TW' ? 'zh-Hant-TW' : 'zh-Hans';
+        const known = ['zh-Hans', 'zh-Hant-TW', 'en', 'ja', 'ko'];
+        merged.uiLocale = known.includes(raw) ? raw : 'zh-Hans';
+    }
+
+    // 成片目标语 (independent of uiLocale); backfill from chineseSubtitleVariant when missing
+    try {
+        const tgt = require('../src/js/subtitle-target-lang-core');
+        const inputHadTarget = Object.prototype.hasOwnProperty.call(input, 'subtitleTargetLang')
+            || Object.prototype.hasOwnProperty.call(input, 'targetLang')
+            || Object.prototype.hasOwnProperty.call(input, 'targetLanguage');
+        if (!inputHadTarget) {
+            // Defaults seed zh-Hans; prefer legacy chineseSubtitleVariant when caller only set that
+            const fromVariant = tgt.targetLangFromFormValue(merged.chineseSubtitleVariant);
+            if (fromVariant) merged.subtitleTargetLang = fromVariant;
+        }
+        merged.subtitleTargetLang = tgt.normalizePersistedSubtitleTargetLang(
+            merged.subtitleTargetLang,
+            merged.chineseSubtitleVariant || 'simplified',
+        );
+        if (tgt.isZhSubtitleTarget(merged.subtitleTargetLang)) {
+            // Only rewrite variant when target is zh*; keep OpenCC key from target when possible
+            const fromTarget = tgt.chineseSubtitleVariantFromTargetLang(merged.subtitleTargetLang);
+            if (inputHadTarget || !merged.chineseSubtitleVariant) {
+                merged.chineseSubtitleVariant = fromTarget;
+            } else if (
+                tgt.targetLangFromFormValue(merged.chineseSubtitleVariant)
+                !== merged.subtitleTargetLang
+                && !['traditional', 'traditional-tw', 'traditional-hk', 'simplified']
+                    .includes(String(merged.chineseSubtitleVariant || ''))
+            ) {
+                merged.chineseSubtitleVariant = fromTarget;
+            }
+        }
+    } catch {
+        const raw = String(merged.subtitleTargetLang || '').trim();
+        const known = ['zh-Hans', 'zh-Hant', 'zh-Hant-TW', 'zh-Hant-HK', 'en', 'ja', 'ko'];
+        if (!known.includes(raw)) {
+            const v = String(merged.chineseSubtitleVariant || 'simplified').toLowerCase();
+            if (v === 'traditional-hk') merged.subtitleTargetLang = 'zh-Hant-HK';
+            else if (v === 'traditional-tw') merged.subtitleTargetLang = 'zh-Hant-TW';
+            else if (v === 'traditional') merged.subtitleTargetLang = 'zh-Hant';
+            else if (v === 'en' || v === 'ja' || v === 'ko') merged.subtitleTargetLang = v;
+            else merged.subtitleTargetLang = 'zh-Hans';
+        }
     }
 
     // Normalize auto update check frequency
@@ -301,9 +429,10 @@ function mergeTransWithAiOptions(input = {}) {
         const raw = String(merged.autoUpdateCheckInterval || '').trim().toLowerCase();
         merged.autoUpdateCheckInterval = ['off', 'daily', 'weekly', 'monthly'].includes(raw)
             ? raw
-            : 'weekly';
+            : 'off';
     }
     merged.lastAutoUpdateCheckAt = String(merged.lastAutoUpdateCheckAt || '').trim();
+    merged.shelfOpenAfterBatch = !!merged.shelfOpenAfterBatch;
     merged.rememberLastOpenDir = merged.rememberLastOpenDir !== false;
     merged.lastOpenDir = String(merged.lastOpenDir || '').trim();
     {
@@ -323,20 +452,145 @@ function mergeTransWithAiOptions(input = {}) {
         merged.autoScanFolders = out;
     }
     merged.autoScanRecursive = merged.autoScanRecursive !== false;
+    try {
+        const {
+            normalizeWizardContentTypes,
+            normalizeWizardPresetIds,
+            normalizeWizardTargetLangs,
+        } = require('../src/js/settings-options-normalize-core');
+        merged.wizardContentTypes = normalizeWizardContentTypes(
+            merged.wizardContentTypes || merged.wizardPresetIds,
+        );
+        merged.wizardPresetIds = normalizeWizardPresetIds(
+            merged.wizardPresetIds || merged.wizardContentTypes,
+        );
+        merged.wizardTargetLangs = normalizeWizardTargetLangs(merged.wizardTargetLangs);
+    } catch {
+        merged.wizardContentTypes = Array.isArray(merged.wizardContentTypes)
+            ? merged.wizardContentTypes.slice()
+            : (Array.isArray(merged.wizardPresetIds) ? merged.wizardPresetIds.slice() : []);
+        merged.wizardPresetIds = Array.isArray(merged.wizardPresetIds)
+            ? merged.wizardPresetIds.slice()
+            : merged.wizardContentTypes.slice();
+        merged.wizardTargetLangs = Array.isArray(merged.wizardTargetLangs)
+            && merged.wizardTargetLangs.length
+            ? merged.wizardTargetLangs.slice()
+            : ['zh-Hans'];
+    }
 
-    merged.smartTranslateHybridMt = merged.smartTranslateHybridMt !== false;
-    merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;
-    merged.smartTranslateFaithfulVerify = merged.smartTranslateFaithfulVerify !== false;
-    merged.smartTranslateAddressConsistency = merged.smartTranslateAddressConsistency !== false;
+    try {
+        const { normalizeExternalImportAction } = require('../src/js/external-import-action-core');
+        merged.externalImportAction = normalizeExternalImportAction(merged.externalImportAction);
+    } catch {
+        merged.externalImportAction = 'list_when_idle';
+    }
+
+    // Pro 混合翻译 keeps sentence MT; 智能翻译 (dialog) forces hybrid off but keeps polish/verify.
+    // 外部翻译 (external) is free BYOK sentence MT — never Pro smart flags.
+    try {
+        const {
+            normalizeTranslateMode,
+            isExternalTranslateMode,
+        } = require('../src/js/settings-options-normalize-core');
+        let mode = normalizeTranslateMode(merged.translateMode);
+        try {
+            const byokPolicy = require('../src/js/translate-mode-byok-policy-core');
+            const migHint = merged._legacyByokMigrate;
+            if (migHint && typeof migHint === 'object') {
+                const mig = byokPolicy.migrateTranslateModeFromLegacyByok({
+                    translateMode: mode,
+                    llmSource: migHint.llmSource,
+                    byokReady: !!migHint.byokReady,
+                });
+                if (mig.migrated) {
+                    mode = mig.translateMode;
+                    merged._translateModeMigratedFromByok = true;
+                }
+            }
+        } catch { /* optional */ }
+        merged.translateMode = mode;
+        merged.smartTranslateHybridMt = mode === 'smart';
+        if (mode === 'dialog' || mode === 'smart') {
+            merged.smartTranslate = true;
+            merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;
+            merged.smartTranslateFaithfulVerify = merged.smartTranslateFaithfulVerify !== false;
+            merged.smartTranslateAddressConsistency = merged.smartTranslateAddressConsistency !== false;
+        } else {
+            merged.smartTranslateHybridMt = false;
+            if (isExternalTranslateMode(mode)) {
+                merged.smartTranslate = false;
+                merged.smartTranslatePlotPolish = false;
+                merged.smartTranslateFaithfulVerify = false;
+                merged.smartTranslateAddressConsistency = false;
+            }
+        }
+    } catch {
+        const rawMode = String(merged.translateMode || '').trim().toLowerCase();
+        merged.smartTranslateHybridMt = rawMode === 'smart' || rawMode === 'hybrid';
+        if (rawMode === 'dialog' || rawMode === 'smart' || rawMode === 'hybrid') {
+            merged.smartTranslate = true;
+            merged.smartTranslatePlotPolish = merged.smartTranslatePlotPolish !== false;
+            merged.smartTranslateFaithfulVerify = merged.smartTranslateFaithfulVerify !== false;
+            merged.smartTranslateAddressConsistency = merged.smartTranslateAddressConsistency !== false;
+        } else if (rawMode === 'external' || rawMode === 'byok') {
+            merged.translateMode = 'external';
+            merged.smartTranslate = false;
+            merged.smartTranslateHybridMt = false;
+        }
+    }
+    try {
+        const mtRoute = require('../src/js/mt-target-route-core');
+        merged.lastMtByTarget = mtRoute.normalizeLastMtByTarget(merged.lastMtByTarget);
+        if (!mtRoute.allowSmartHybridForTarget(merged)) {
+            // Do not persist a sticky "hybrid on" illusion for intl targets at merge time —
+            // keep user preference for zh, but runtime/UI will force off for intl.
+        }
+    } catch {
+        const raw = merged.lastMtByTarget && typeof merged.lastMtByTarget === 'object'
+            ? merged.lastMtByTarget
+            : {};
+        merged.lastMtByTarget = {
+            zh: String(raw.zh || '').trim(),
+            en: String(raw.en || '').trim(),
+            ja: String(raw.ja || '').trim(),
+            ko: String(raw.ko || '').trim(),
+        };
+    }
+    try {
+        const { normalizeTranslateStyleOptions } = require('../src/js/translate-style-core');
+        Object.assign(merged, normalizeTranslateStyleOptions(merged));
+    } catch {
+        merged.translateStyleEnabled = false;
+        merged.translateStylePreset = 'natural_spoken';
+        merged.translateStyleCustomNote = '';
+    }
     {
         const raw = merged.asrSecondOpinion;
         if (raw === false || raw === 0) merged.asrSecondOpinion = 'off';
         else if (raw === true || raw === 1) merged.asrSecondOpinion = 'on';
         else {
-            const s = String(raw == null ? 'auto' : raw).trim().toLowerCase();
+            const s = String(raw == null ? 'off' : raw).trim().toLowerCase();
             if (s === 'false' || s === '0' || s === 'off' || s === 'no') merged.asrSecondOpinion = 'off';
             else if (s === 'true' || s === '1' || s === 'on' || s === 'always') merged.asrSecondOpinion = 'on';
-            else merged.asrSecondOpinion = 'auto';
+            else if (s === 'auto') merged.asrSecondOpinion = 'auto';
+            else merged.asrSecondOpinion = 'off';
+        }
+    }
+    {
+        try {
+            const policy = require('../src/js/quality-pipeline-policy-core');
+            merged.qualityPipelineMode = policy.normalizeQualityPipelineMode(merged.qualityPipelineMode);
+            merged.postQcLoopMaxPasses = policy.clampPostQcLoopMaxPasses(merged.postQcLoopMaxPasses);
+        } catch {
+            const v = String(merged.qualityPipelineMode == null ? 'auto' : merged.qualityPipelineMode)
+                .trim().toLowerCase();
+            if (v === 'on' || v === 'true' || v === '1') merged.qualityPipelineMode = 'on';
+            else if (v === 'off' || v === 'false' || v === '0') merged.qualityPipelineMode = 'off';
+            else merged.qualityPipelineMode = 'auto';
+            const n = Number(merged.postQcLoopMaxPasses);
+            merged.postQcLoopMaxPasses = Number.isFinite(n)
+                ? Math.max(0, Math.min(2, Math.round(n)))
+                : 1;
         }
     }
     {
@@ -394,8 +648,15 @@ function mergeTransWithAiOptions(input = {}) {
             ? Math.max(1, Math.min(24, Math.round(n)))
             : 8;
     }
-    merged.libraryOpenAfterBatch = !!merged.libraryOpenAfterBatch;
     merged.postBatchTextPresetGroupId = String(merged.postBatchTextPresetGroupId || '').trim();
+    {
+        const hasKey = Object.prototype.hasOwnProperty.call(input, 'insertSoftwareCredit');
+        merged.insertSoftwareCredit = hasKey
+            ? !!input.insertSoftwareCredit
+            : true;
+        // Ephemeral UI hint — not persisted (stripped by normalize whitelist).
+        merged.insertSoftwareCreditIsDefault = !hasKey;
+    }
 
     return {
         ...merged,

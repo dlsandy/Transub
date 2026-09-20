@@ -7,6 +7,7 @@
 
 const path = require('path');
 const { getBundledEnginePathIfPresent } = require('./app-paths');
+const { canonicalizeEngineAsrModelId } = require('./engine-asr-aliases');
 
 const DEFAULT_ENGINE_BACKEND = 'transub';
 const DEFAULT_ENGINE_URL = 'http://127.0.0.1:8765';
@@ -15,8 +16,8 @@ const DEFAULT_ENGINE_URL = 'http://127.0.0.1:8765';
  * Do not persist a machine-specific absolute default.
  */
 const DEFAULT_ENGINE_INSTALL_PATH = '';
-/** Domestic HF mirror — official hub often times out in CN networks. */
-const DEFAULT_ENGINE_HF_ENDPOINT = 'https://hf-mirror.com';
+/** Empty = Hugging Face Hub; set hf-mirror.com when CN networks need a mirror. */
+const DEFAULT_ENGINE_HF_ENDPOINT = '';
 const EXPECTED_API_MAJOR = 1;
 
 /**
@@ -59,11 +60,11 @@ function mergeEngineOptions(input = {}) {
         engineHfEndpoint: DEFAULT_ENGINE_HF_ENDPOINT,
         engineHfToken: '',
         engineProfile: 'balanced',
-        engineAsrModel: 'sensevoice-small',
+        engineAsrModel: 'qwen3-asr-1.7b-ja-anime-galgame',
         engineMtModel: '',
         engineOpusMtModel: '',
-        engineLlmMtModel: 'sakura-1.5b',
-        engineVadModel: 'fsmn-vad',
+        engineLlmMtModel: '',
+        engineVadModel: 'silero-vad',
         engineAutoStart: true,
         ...input,
     };
@@ -83,29 +84,44 @@ function mergeEngineOptions(input = {}) {
             : (merged.engineHfToken || ''),
     ).trim();
     merged.engineProfile = String(merged.engineProfile || 'balanced').trim() || 'balanced';
-    merged.engineAsrModel = String(merged.engineAsrModel || 'sensevoice-small').trim();
+    merged.engineAsrModel = canonicalizeEngineAsrModelId(
+        merged.engineAsrModel,
+        'qwen3-asr-1.7b-ja-anime-galgame',
+    );
     merged.engineMtModel = String(merged.engineMtModel || '').trim();
-    merged.engineOpusMtModel = String(
-        merged.engineOpusMtModel != null ? merged.engineOpusMtModel : '',
-    ).trim();
-    // Empty LLM id =「智能选择」; only default when the field was omitted.
+    // Opus-MT removed — keep field empty for backward-compat persistence only
+    merged.engineOpusMtModel = '';
+    // Empty LLM id =「智能选择」; omitted field stays empty (smart pick).
     if (Object.prototype.hasOwnProperty.call(input, 'engineLlmMtModel')) {
         merged.engineLlmMtModel = String(input.engineLlmMtModel || '').trim();
     } else {
-        merged.engineLlmMtModel = String(merged.engineLlmMtModel || 'sakura-1.5b').trim() || 'sakura-1.5b';
+        merged.engineLlmMtModel = String(merged.engineLlmMtModel || '').trim();
     }
-    // Migrate legacy single MT field into the matching slot when split fields are absent
+    if (/^transub-ja/i.test(merged.engineLlmMtModel)) {
+        merged.engineLlmMtModel = 'sakura-1.5b';
+    }
+    if (/^transub-ja/i.test(merged.engineMtModel)) {
+        merged.engineMtModel = '';
+        if (!merged.engineLlmMtModel) merged.engineLlmMtModel = 'sakura-1.5b';
+    }
+    // Migrate legacy single MT field into LLM slot when it looks like Sakura/LLM (never Opus)
     if (merged.engineMtModel) {
         const id = merged.engineMtModel;
-        const looksSakura = /^sakura-/i.test(id);
-        if (looksSakura && (input.engineLlmMtModel === undefined || input.engineLlmMtModel === null)) {
-            merged.engineLlmMtModel = id;
-        }
-        if (!looksSakura && (input.engineOpusMtModel === undefined || input.engineOpusMtModel === null)) {
-            merged.engineOpusMtModel = id;
+        const looksOpus = /^opus[-_]?mt/i.test(id) || id.includes('opus-mt-');
+        if (looksOpus) {
+            merged.engineMtModel = '';
+        } else {
+            const looksSakura = /^sakura-/i.test(id);
+            if (looksSakura && (input.engineLlmMtModel === undefined || input.engineLlmMtModel === null)) {
+                merged.engineLlmMtModel = id;
+            }
+            if (!looksSakura && (input.engineLlmMtModel === undefined || input.engineLlmMtModel === null)
+                && !merged.engineLlmMtModel) {
+                merged.engineLlmMtModel = id;
+            }
         }
     }
-    merged.engineVadModel = normalizeVadModelId(merged.engineVadModel, 'fsmn-vad');
+    merged.engineVadModel = normalizeVadModelId(merged.engineVadModel, 'silero-vad');
     merged.engineAutoStart = merged.engineAutoStart !== false;
     return merged;
 }

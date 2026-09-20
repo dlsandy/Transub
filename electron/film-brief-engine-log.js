@@ -60,7 +60,7 @@ function formatSampleHint(meta = {}) {
 function formatFilmBriefEngineLogLines(brief, meta = {}) {
     const opts = asPlainObject(meta);
     if (opts.skipped) {
-        const reason = asString(opts.skipReason, 120).trim() || '混合翻译';
+        const reason = asString(opts.skipReason, 120).trim() || '智能翻译';
         return [`影片简要已跳过（${reason}）`];
     }
 

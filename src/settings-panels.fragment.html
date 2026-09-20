@@ -1,0 +1,1676 @@
+    <div id="paramsModal" class="hidden fixed inset-0 z-[100] items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-labelledby="paramsModalTitle">
+            <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-6xl max-h-[min(92vh,56rem)] flex flex-col overflow-hidden relative">
+                <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
+                    <div class="flex items-center gap-2 min-w-0 shrink-0">
+                        <h2 id="paramsModalTitle" class="text-base font-semibold text-gray-900">设置</h2>
+                        <span id="settingsDirtyBadge" class="hidden text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium">未保存</span>
+                    </div>
+                    <div class="flex items-center gap-2 min-w-0 flex-1 justify-end">
+                        <button type="button" id="openSetupWizardFromParamsBtn" class="px-2 py-1.5 border border-violet-200 text-violet-700 hover:bg-violet-50 rounded-lg text-xs sm:text-sm shrink-0" title="向导式检测硬件并自动配置">
+                            <i class="fa fa-magic mr-1 text-violet-400"></i>向导
+                        </button>
+                        <button type="button" id="openEnvCheckBtn" class="px-2 py-1.5 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs sm:text-sm shrink-0" title="检测安装路径、FFmpeg、VC++、GPU、引擎，以及与真实转写同序的 PyTorch 启动探测">
+                            <i class="fa fa-stethoscope mr-1 text-slate-400"></i>系统检查
+                        </button>
+                        <button type="button" id="closeParamsBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 shrink-0" aria-label="关闭">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex flex-1 min-h-0 settings-body">
+                    <aside class="settings-sidebar shrink-0 border-r border-gray-100 bg-gray-50/80 flex flex-col" aria-label="设置导航">
+                        <div class="p-2.5 border-b border-gray-100">
+                            <label class="block">
+                                <span class="sr-only">搜索设置</span>
+                                <input type="search" id="settingsSearchInput" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm bg-white" placeholder="搜索设置…" autocomplete="off">
+                            </label>
+                            <p id="settingsSearchEmpty" class="hidden mt-2 text-xs text-gray-500 px-0.5">无匹配项</p>
+                        </div>
+                        <nav class="flex-1 min-h-0 overflow-y-auto py-1.5 px-1.5 space-y-0.5" role="tablist" aria-label="设置分区" id="settingsNav">
+                        <div class="settings-nav-group" data-settings-nav-group="common">
+                            <div class="settings-nav-group-label" aria-hidden="true">常用</div>
+                            <button type="button" class="params-tab-btn active" data-tab="runtime" data-settings-tier="common" role="tab" aria-selected="true" title="界面、托盘与通知">常规</button>
+                            <button type="button" class="params-tab-btn" data-tab="params" data-settings-tier="common" role="tab" aria-selected="false" title="语音识别模块、VAD 与识别细参">识别参数</button>
+                            <button type="button" class="params-tab-btn" data-tab="process" data-settings-tier="common" role="tab" aria-selected="false" title="降噪、批量后处理与硬件性能">任务处理</button>
+                            <button type="button" class="params-tab-btn" data-tab="output" data-settings-tier="common" role="tab" aria-selected="false" title="格式、位置与合并">字幕输出</button>
+                            <button type="button" class="params-tab-btn" data-tab="auto-scan" data-settings-tier="common" role="tab" aria-selected="false" title="自定义目录，自动添加无字幕媒体">扫描目录</button>
+                            <button type="button" class="params-tab-btn" data-tab="install" data-settings-tier="common" role="tab" aria-selected="false" title="引擎安装、检测与 llama-server 运行时">运行环境</button>
+                            <button type="button" class="params-tab-btn" data-tab="editor" data-settings-tier="common" role="tab" aria-selected="false" title="编辑器外观与习惯">字幕编辑器</button>
+                            <button type="button" class="params-tab-btn" data-tab="burn" data-settings-tier="common" role="tab" aria-selected="false" title="硬字幕烧录成片参数：容器、编码、质量与输出路径">字幕烧录</button>
+                            <button type="button" class="params-tab-btn" data-tab="external-translate" data-settings-tier="common" role="tab" aria-selected="false" title="Transub Station 与外接 API（BYOK）">外部翻译</button>
+                            <button type="button" class="params-tab-btn" data-tab="network" data-settings-tier="common" role="tab" aria-selected="false" title="代理服务器与联网镜像">网络与代理</button>
+                            <button type="button" class="params-tab-btn" data-tab="more" data-settings-tier="common" role="tab" aria-selected="false" title="备份、更新与关于">更多</button>
+                        </div>
+                        <div class="settings-nav-group" data-settings-nav-group="pro">
+                            <div class="settings-nav-group-label" aria-hidden="true">Pro</div>
+                            <button type="button" class="params-tab-btn" data-tab="pro" data-settings-tier="pro" role="tab" aria-selected="false" title="大版本内买断许可与激活"><span class="settings-adv-mark" aria-hidden="true">◆</span>Pro许可</button>
+                            <button type="button" class="params-tab-btn" data-tab="pro-smart-translate" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="智能翻译管线选项（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能翻译</button>
+                            <button type="button" class="params-tab-btn" data-tab="pro-film-audio" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="影视音频增强与影视 VAD（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>影视音频增强</button>
+                            <button type="button" class="params-tab-btn" data-tab="pro-qc-smart" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="转录语义校正与 QC 智能修复（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能修复</button>
+                            <button type="button" class="params-tab-btn" data-tab="pro-reconstruct" data-settings-tier="pro" data-pro-gated="1" role="tab" aria-selected="false" title="语境重构与影片理解（需解锁 Pro）"><span class="settings-adv-mark" aria-hidden="true">◆</span>语境和理解重构</button>
+                        </div>
+                        </nav>
+                    </aside>
+                    <div class="flex-1 min-h-0 overflow-y-auto p-4 settings-content" id="settingsContent">
+
+                    <div class="params-tab-panel active" data-tab-panel="runtime" data-settings-search="常规 界面 启动 编辑器 密度 缩放 4K 向导 CPU GPU 内存 资源 占用 主题 深色 浅色 目录 打开 记住 语言 繁体 简体 介面 語言 任务栏 通知 托盘 最小化 提示音 完成">
+                        <!-- Form sync only: task/language/translate mode live on main window; keep ids for apply/save -->
+                        <div class="hidden" aria-hidden="true" id="runtimeFormSyncHidden">
+                            <select id="taskSelect">
+                                <option value="translate" selected>翻译</option>
+                                <option value="transcribe">原语言</option>
+                                <option value="dual">双语</option>
+                            </select>
+                            <select id="languageSelect">
+                                <option value="auto">自动检测</option>
+                                <option value="ja" selected>日语 (ja)</option>
+                                <option value="zh">中文 (zh)</option>
+                                <option value="en">英语 (en)</option>
+                                <option value="ko">韩语 (ko)</option>
+                                <option value="yue">粤语 (yue)</option>
+                            </select>
+                            <fieldset id="translateModeFieldset">
+                                <legend class="settings-section-title">翻译方式</legend>
+                                <div class="flex flex-wrap gap-2">
+                                <label class="translate-mode-choice" id="translateModeSakuraWrap">
+                                    <input type="radio" name="translateMode" id="translateModeSakura" value="llm">
+                                    <span class="font-medium">推理翻译</span>
+                                </label>
+                                <label class="translate-mode-choice" id="translateModeExternalWrap">
+                                    <input type="radio" name="translateMode" id="translateModeExternal" value="external">
+                                    <span class="font-medium">外部翻译</span>
+                                </label>
+                                <label class="translate-mode-choice" id="translateModeDialogWrap">
+                                    <input type="radio" name="translateMode" id="translateModeDialog" value="dialog">
+                                    <span class="font-medium">◆ 智能翻译</span>
+                                </label>
+                                <label class="translate-mode-choice" id="translateModeSmartWrap">
+                                    <input type="radio" name="translateMode" id="translateModeSmart" value="smart" checked>
+                                    <span class="font-medium">◆ 混合翻译</span>
+                                </label>
+                                </div>
+                                <input type="checkbox" id="smartTranslateCheck" tabindex="-1" checked>
+                                <p id="translateModeHint" class="text-xs text-gray-500 mt-1"></p>
+                                <div id="externalByokInlineHint" class="hidden text-xs text-gray-600 mt-1 leading-relaxed">
+                                    外部翻译可走 Transub Station 或外接 API（BYOK）。
+                                    <button type="button" id="translateModeGotoExternalByokBtn" class="settings-guide-link">打开外部翻译设置</button>
+                                </div>
+                                <button type="button" id="runtimeGotoProSmartTranslateBtn"></button>
+                                <button type="button" id="runtimeGotoProLlmBtn"></button>
+                            </fieldset>
+                            <div id="advancedFeaturesFieldset">
+                                <p id="advancedFeaturesLockHint" class="hidden">
+                                    <button type="button" id="advancedFeaturesGotoProBtn"></button>
+                                </p>
+                                <button type="button" id="runtimeGotoProFilmAudioBtn"></button>
+                                <button type="button" id="runtimeGotoProQcBtn"></button>
+                                <div id="smartTranslateWrap"></div>
+                            </div>
+                        </div>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title" data-i18n="settings.startupAppearance.title">启动与界面</legend>
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    <span data-i18n="settings.uiLocale.label">界面语言</span>
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip" data-i18n="settings.uiLocale.tip">软件界面语言，与字幕简繁无关。切换后即时生效；极少数动态文案可能仍回退简体。</span></span>
+                                </span>
+                                <select id="uiLocaleSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-i18n-skip>
+                                    <!-- options filled by TransubI18n.fillUiLocaleSelect from locale registry -->
+                                    <option value="zh-Hans">简体中文</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    默认启动界面
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">下次启动打开的界面。改后需重启；命令行指定字幕时仍优先。</span></span>
+                                </span>
+                                <select id="startupWindowSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="generator">Transub 字幕生成器</option>
+                                    <option value="editor">Transub Editor 字幕编辑器</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    界面主题
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">主窗口与编辑器的浅色/深色外观，与标题栏主题按钮同步。</span></span>
+                                </span>
+                                <select id="appThemeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="light">浅色</option>
+                                    <option value="dark">深色</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    界面缩放
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">「自动」在高分低缩放下适度放大界面；也可手动固定 100%–150%。</span></span>
+                                </span>
+                                <select id="settingsUiZoomSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="auto">自动</option>
+                                    <option value="1">100%</option>
+                                    <option value="1.1">110%</option>
+                                    <option value="1.25">125%</option>
+                                    <option value="1.5">150%</option>
+                                </select>
+                            </label>
+                            </div>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="settingsDensityCompactCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    紧凑列表
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">缩小任务列表行高，一屏显示更多。与「更多」菜单同步。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="showTaskResourceUsageCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    显示资源占用
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">任务进行中在进度条下显示 CPU/内存；有 NVIDIA 时另显示 GPU。约每 5 秒刷新。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="rememberLastOpenDirCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    记住上次打开文件所在目录
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">文件对话框记住上次目录；取消则用系统默认位置。</span></span>
+                                </span>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">任务栏与通知</legend>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="minimizeToTrayCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">最小化到托盘<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">最小化时收起到托盘，而不是任务栏。</span></span></span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="trayNotifyCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">系统托盘通知<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">任务进度与完成时通过系统托盘气泡提醒。</span></span></span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="trayProgressCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">显示托盘进度<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">任务进行中更新托盘图标旁的进度信息。</span></span></span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="minimizeToTrayOnStartCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">任务开始时最小化到托盘<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">开始批量任务后自动收起到托盘。</span></span></span>
+                            </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="install" data-settings-search="运行环境 环境 引擎 Engine 安装 GPU llama-server Vulkan CUDA PyTorch 运行时 检测">
+                        <div id="settingsEnvOverview" class="settings-env-overview" role="group" aria-label="运行环境总览">
+                            <button type="button" class="settings-env-chip" id="settingsEnvChipEngine" data-env-target="settingsEnvSectionEngine" data-state="busy" title="跳到 Transub引擎">
+                                <span class="settings-env-chip-kicker">① Transub引擎</span>
+                                <span class="settings-env-chip-state" id="settingsEnvChipEngineState">待检测</span>
+                            </button>
+                            <button type="button" class="settings-env-chip" id="settingsEnvChipGpu" data-env-target="settingsEnvSectionGpu" data-state="busy" title="跳到显卡运行库">
+                                <span class="settings-env-chip-kicker">② 显卡运行库</span>
+                                <span class="settings-env-chip-state" id="settingsEnvChipGpuState">待检测</span>
+                            </button>
+                            <button type="button" class="settings-env-chip" id="settingsEnvChipLlama" data-env-target="settingsEnvSectionLlama" data-state="busy" title="跳到 LLAMA-Servers">
+                                <span class="settings-env-chip-kicker">③ LLAMA-Servers</span>
+                                <span class="settings-env-chip-state" id="settingsEnvChipLlamaState">待检测</span>
+                            </button>
+                        </div>
+
+                        <fieldset id="settingsEnvSectionEngine" class="settings-section settings-section-env settings-section-env-engine">
+                            <legend class="settings-section-title">Transub引擎</legend>
+                            <div id="engineSettingsBlock" class="space-y-3">
+                                <div class="settings-env-actions">
+                                    <button type="button" id="engineTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">检测引擎</button>
+                                    <label class="inline-flex items-center gap-1.5 text-sm text-gray-600">
+                                        <input type="checkbox" id="engineAutoStartCheck" class="rounded" checked>
+                                        自动启动引擎
+                                    </label>
+                                    <button type="button" id="engineOpenLogBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">打开引擎日志</button>
+                                </div>
+                                <p id="engineStatus" class="text-xs text-gray-500 min-h-[1.25rem]"></p>
+                                <details class="mt-1 rounded-lg border border-emerald-100 bg-white/50 px-3 py-2">
+                                    <summary class="cursor-pointer text-xs text-gray-600 select-none">高级：目录与地址（一般勿改）</summary>
+                                    <div class="space-y-3 mt-2 pt-2 border-t border-emerald-50">
+                                        <label class="block text-sm">
+                                            <span class="settings-label text-gray-700 font-medium">引擎目录<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">已内置引擎，一般无需修改；自定义时指向引擎所在文件夹。</span></span></span>
+                                            <div class="flex gap-2 mt-1">
+                                                <input type="text" id="engineInstallPathInput" class="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm font-mono" placeholder="默认：内置 transub-engine" maxlength="4096">
+                                                <button type="button" id="engineInstallBrowseBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">浏览</button>
+                                                <button type="button" id="engineInstallUseBundledBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0" title="恢复为软件内置引擎目录">内置</button>
+                                            </div>
+                                        </label>
+                                        <label class="block text-sm">
+                                            <span class="settings-label text-gray-700 font-medium">服务地址 / 端口<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">检测后一般会自动填入，通常无需手改。</span></span></span>
+                                            <input type="text" id="engineUrlInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="http://127.0.0.1:8765" maxlength="4096">
+                                        </label>
+                                    </div>
+                                </details>
+                            </div>
+                        </fieldset>
+
+                        <fieldset id="settingsEnvSectionGpu" class="settings-section settings-section-env settings-section-env-gpu">
+                            <legend class="settings-section-title">显卡运行库</legend>
+                            <div class="settings-env-steps">
+                                <strong>推荐顺序（防装错）</strong>
+                                <ol>
+                                    <li>先「检测引擎」通过</li>
+                                    <li>NVIDIA：再「下载 GPU 支持」（cuBLAS / onnxruntime-gpu，<strong>不含</strong> PyTorch）</li>
+                                    <li>NVIDIA：若提示 PyTorch 不兼容（如 RTX 50 系），再「补齐 CUDA PyTorch」</li>
+                                    <li>AMD：直接「补齐 ROCm PyTorch」（装进引擎 runtime；系统 pip 无效）。Whisper 仍走 CPU</li>
+                                </ol>
+                            </div>
+                            <div class="settings-env-actions">
+                                <button type="button" id="engineEnsureGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm text-sky-700 hover:bg-sky-50" data-requires-engine="1" data-base-title="安装 Engine 用 cuBLAS / onnxruntime-gpu（不含 PyTorch）" disabled title="请先在「① Transub引擎」检测通过后再安装 GPU 组件">下载 GPU 支持</button>
+                                <button type="button" id="engineEnsureTorchCudaBtn" class="px-3 py-1.5 border rounded-lg text-sm text-amber-700 hover:bg-amber-50" data-requires-engine="1" data-base-title="Qwen3-ASR / Demucs 用的 PyTorch；RTX 50 系需 cu128 或 cu130" disabled title="请先在「① Transub引擎」检测通过后再安装 GPU 组件">补齐 CUDA PyTorch</button>
+                                <button type="button" id="engineScanCudaBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" data-requires-engine="1" data-base-title="白名单探测本机 Toolkit / CUDA_PATH / 邻近 Transub·Python nvidia 包，校验后复制到引擎" disabled title="请先在「① Transub引擎」检测通过后再安装 GPU 组件">扫描复用本机 CUDA（Engine）</button>
+                                <button type="button" id="enginePickCudaRootBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" data-requires-engine="1" data-base-title="手动指定含 cudart/cublas 或 nvidia 包的目录，加入下次扫描" disabled title="请先在「① Transub引擎」检测通过后再安装 GPU 组件">选择 CUDA 目录（Engine）</button>
+                                <button type="button" id="engineManualGpuBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" data-requires-engine="1" data-base-title="网络不佳时，浏览器下载 .whl 后本地安装" disabled title="请先在「① Transub引擎」检测通过后再安装 GPU 组件">手动安装 GPU（Engine）</button>
+                            </div>
+                            <p id="engineGpuStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
+                        </fieldset>
+
+                        <fieldset id="settingsEnvSectionLlama" class="settings-section settings-section-env settings-section-env-llama">
+                            <legend class="settings-section-title">llama-server 运行时</legend>
+                            <p id="advancedManagedRuntimeStatus" class="text-xs text-gray-600 leading-relaxed mt-2">检测本地运行时…</p>
+                            <label id="advancedManagedRuntimeBackendWrap" class="block text-sm mt-2 hidden">
+                                <span class="settings-label font-medium text-gray-700">
+                                    llama-server 后端
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按本机显卡自动推荐（NVIDIA→CUDA、AMD→ROCm、其它→Vulkan）。切换时会确认并自动安装；失败可用「手动下载运行时」。</span></span>
+                                </span>
+                                <select id="advancedManagedRuntimeBackendSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="win-cuda13-x64">CUDA 13（驱动 ≥580）</option>
+                                    <option value="win-cuda12-x64">CUDA 12（驱动低于 580）</option>
+                                    <option value="win-rocm-x64">ROCm（AMD）</option>
+                                    <option value="win-vulkan-x64">Vulkan</option>
+                                </select>
+                                <span class="block text-xs text-gray-500 mt-1">切换时会确认并自动安装；失败可用「手动下载」。</span>
+                            </label>
+                            <div class="settings-env-actions mt-3">
+                                <button type="button" id="advancedManagedInstallRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">安装 / 更新运行时</button>
+                                <button type="button" id="advancedManagedRuntimeRefreshBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">刷新状态</button>
+                                <button type="button" id="advancedManagedStopServerBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">停止本地服务</button>
+                                <button type="button" id="advancedManagedManualRuntimeBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="浏览器下载 zip 后选择文件安装">手动下载运行时</button>
+                                <button type="button" id="advancedManagedScanCudaBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="仅服务 llama-server：白名单探测本机 cudart/cublas，校验后可复用到本运行时">扫描本机 CUDA（llama-server）</button>
+                                <button type="button" id="advancedManagedPickCudaRootBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="仅服务 llama-server：手动指定含 cudart/cublas 的目录">选择 CUDA 目录（llama-server）</button>
+                                <button type="button" id="advancedManagedPerfTestBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="启动本地服务并测生成速度（tok/s）">性能测试</button>
+                            </div>
+                            <p id="advancedLlamaServerActionStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
+                            <div id="advancedLlamaServerProgressWrap" class="hidden mt-2 space-y-1">
+                                <div class="h-2 rounded-full bg-violet-100 overflow-hidden">
+                                    <div id="advancedLlamaServerProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
+                                </div>
+                                <p id="advancedLlamaServerProgressText" class="text-xs text-violet-700"></p>
+                            </div>
+                        </fieldset>
+
+                        <div id="modelsHybridReadyBanner" class="hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 leading-relaxed mb-3" role="status">
+                            <p id="modelsHybridReadyBannerText" class="m-0"></p>
+                            <button type="button" id="modelsHybridReadyBannerBtn" class="settings-guide-link mt-1">打开模型管理</button>
+                        </div>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="process" data-settings-search="任务处理 字幕处理 译文风格 启用 禁用 风格预设 忠实语气 口语 旁白 新闻 网感 学术 自定义 外部传入 命令行 资源 GPU 显存 内存 空闲 繁忙 CPU 回退 降噪 QC CPS 拆句 杂音 叠词 语气词 拟声词 精简 标点 观影 清除 轻度 素材 修复QC 一键修复 静音分割 字数 低置信 二意见 ASR 字幕预设 预设组 质量管线 分流 门闸 闭环 红窗 硬件 性能 设备 档位 重转写 加速">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">传入与处理</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        外部传入媒体时
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">仅作用于命令行或再次启动传入的文件，不影响界面内手动添加。</span></span>
+                                    </span>
+                                    <select id="externalImportActionSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="list_only">仅加入任务列表</option>
+                                        <option value="list_and_start">加入并立即开始</option>
+                                        <option value="list_when_idle" selected>加入后，资源空闲时自动开始</option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-1 leading-relaxed">「资源空闲」指 GPU 利用率、显存与内存占用均处于低水平（约每 15 秒检测；无 NVIDIA 显卡时仅看内存）。</p>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="audioLightDenoiseCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        轻度降噪
+                                        <span class="settings-tip tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">进 ASR 前轻度降噪，稍慢，适合有底噪的素材。去 BGM 请用「Pro → 影视音频增强」。</span></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">
+                                译文风格
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">影响推理/智能翻译的默认文风；与「忠实语气」独立。任务可单条覆盖。</span></span>
+                            </legend>
+                            <div class="settings-fields-grid">
+                                <label class="settings-row text-sm settings-span-2" id="translateStyleEnabledWrap">
+                                    <input type="checkbox" id="translateStyleEnabledCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        启用译文风格
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">关闭则用模型默认文风；开启后按下方预设约束。</span></span>
+                                    </span>
+                                </label>
+                                <label class="block text-sm" id="translateStylePresetWrap">
+                                    <span class="settings-label font-medium text-gray-700">风格预设</span>
+                                    <select id="translateStylePresetSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="译文风格">
+                                        <option value="natural_spoken">自然口语（默认）</option>
+                                        <option value="film_dialogue">影视对白</option>
+                                        <option value="anime_ln">动画/轻小说</option>
+                                        <option value="restrained">克制写实</option>
+                                        <option value="news_narration">新闻/旁白</option>
+                                        <option value="business">商务礼貌</option>
+                                        <option value="classical">文言/古风</option>
+                                        <option value="literal">忠实直译</option>
+                                        <option value="web_slang">网感口语</option>
+                                        <option value="academic">学术/术语</option>
+                                        <option value="custom" id="translateStyleCustomOption">自定义（高级）◆ Pro</option>
+                                    </select>
+                                </label>
+                                <label class="settings-row text-sm" id="smartTranslateFaithfulWrap">
+                                    <input type="checkbox" id="smartTranslateFaithfulCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">
+                                        忠实语气（原始语意 不净化）
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">保留粗口与原貌，禁止净化；模型拒答时会自动重试。</span></span>
+                                    </span>
+                                </label>
+                                <label class="block text-sm hidden settings-span-2" id="translateStyleCustomWrap" data-pro-setting="1">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        <span class="settings-adv-mark" aria-hidden="true">◆</span>自定义风格备注
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">Pro。用自然语言描述期望文风；请勿过长。</span></span>
+                                    </span>
+                                    <textarea id="translateStyleCustomNoteInput" maxlength="200" rows="2" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm resize-y" placeholder="例如：口语自然、克制、略带戏谑…"></textarea>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">
+                                批量完成后
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">批量生成结束时自动执行，不打开编辑器。</span></span>
+                            </legend>
+                            <div class="settings-checks-grid">
+                                <div>
+                                    <label class="settings-row text-sm">
+                                        <input type="checkbox" id="postBatchQcCheck" class="rounded" checked>
+                                        <span class="settings-label font-medium text-gray-700">
+                                            完成后 QC 检测
+                                            <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。扫描重叠、读速等问题，并在任务列表标出。</span></span>
+                                        </span>
+                                    </label>
+                                    <label class="block text-sm mt-2">
+                                        <span class="settings-label text-gray-700 font-medium">超长句静音分割字数<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">字数超过此值则按静音分割。需关联视频；默认 15，填 0 关闭。</span></span></span>
+                                        <input type="number" id="qcSilenceSplitCharsInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0" max="500" step="1" value="15">
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="settings-row text-sm">
+                                        <input type="checkbox" id="postBatchCpsSplitCheck" class="rounded" checked>
+                                        <span class="settings-label font-medium text-gray-700">
+                                            完成后自动按 CPS 拆句
+                                            <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。仅拆过长且读速过快的句子；短促快语保留原时间轴。拆不准时可关闭。</span></span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="postBatchRemoveNoiseCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">
+                                        完成后清理杂音 / 幻觉短句
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。删除空句、语气碎片、音效标签、常见幻觉短句，以及无法补译的喘息/SFX「…」槽；双语时成对删除以保持对齐。关闭后仍会尽量补译可恢复的「…」，但不会删条。</span></span>
+                                    </span>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="postBatchCompressRepCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">
+                                        完成后压缩叠词
+                                        <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认开启。连续重复 ≥3 次压成两次叠写，降低读速。</span></span>
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="settings-fields-grid mt-3">
+                                <label class="block text-sm settings-span-2" data-pro-setting>
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        <span class="settings-adv-mark" aria-hidden="true">◆</span>完成后添加字幕预设
+                                        <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">批量完成后向译文字幕插入所选预设组（片名/演员等）。在编辑器「预设组」中管理。</span></span>
+                                    </span>
+                                    <select id="postBatchTextPresetGroupSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="完成后添加字幕预设">
+                                        <option value="">无</option>
+                                    </select>
+                                </label>
+                                <p class="text-xs text-gray-500 leading-relaxed settings-span-2">
+                                    完成后自动 QC 修复与转录语义校正在
+                                    <button type="button" id="processGotoProQcBtn" class="settings-guide-link">Pro → 智能修复</button>。
+                                </p>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        质量管线
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">自动：质量偏好开启、速度偏好关闭。可强制始终开/关。不替代完成后 QC。</span></span>
+                                    </span>
+                                    <select id="qualityPipelineModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="质量管线" data-settings-search="质量管线 分流 门闸 闭环 风险 红窗">
+                                        <option value="auto" selected>自动（跟随转写偏好）</option>
+                                        <option value="on">始终开启</option>
+                                        <option value="off">关闭</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        QC 闭环轮数
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">标红句局部重转/重译的最大轮数。默认 1，最多 2；0 关闭。</span></span>
+                                    </span>
+                                    <input type="number" id="postQcLoopMaxPassesInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0" max="2" step="1" value="1" aria-label="QC 闭环轮数" data-settings-search="闭环 轮数 重译 重转">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        ASR 二意见
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">听写后对低置信等可疑段局部重转并择优。转写偏好为「速度」时自动档会跳过；「始终开启」仍执行。</span></span>
+                                    </span>
+                                    <select id="asrSecondOpinionSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="ASR 二意见">
+                                        <option value="auto">自动</option>
+                                        <option value="on">始终开启</option>
+                                        <option value="off" selected>关闭</option>
+                                    </select>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="asrBadPoolDraftsCheck" class="rounded" aria-label="ASR 坏句草稿">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        ASR 坏句草稿
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">把二意见采纳段记到本机坏句池，便于后续写纠错规则。不上传。</span></span>
+                                    </span>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        完成后观影精简标点
+                                        <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">关闭 / 轻度去标点 / 清除（默认，仅保留问号）。在拆句与叠词压缩之后执行。</span></span>
+                                    </span>
+                                    <select id="postBatchViewingPunctModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="观影精简标点">
+                                        <option value="off">关闭</option>
+                                        <option value="light">轻度</option>
+                                        <option value="clear" selected>清除</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        完成后清理语气词
+                                        <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">关闭 / 轻度压缩 / 清除纯语气条（默认）。有衔接作用的应答会保留。需原文+译文轨。</span></span>
+                                    </span>
+                                    <select id="postBatchInterjectionModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="清理语气词">
+                                        <option value="off">关闭</option>
+                                        <option value="light">轻度</option>
+                                        <option value="clear" selected>清除</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        完成后清理拟声词
+                                        <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">关闭 / 轻度压缩 / 清除纯拟声与喘息条（默认）。含对白的保留。需原文+译文轨。</span></span>
+                                    </span>
+                                    <select id="postBatchOnomatopoeiaModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="清理拟声词">
+                                        <option value="off">关闭</option>
+                                        <option value="light">轻度</option>
+                                        <option value="clear" selected>清除</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">硬件与性能</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">推理设备<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">优先 GPU（NVIDIA→CUDA，AMD→ROCm PyTorch）；无 GPU 或显存不足时选 CPU。Whisper 在 AMD 上仍走 CPU。「自动」由引擎决定。</span></span></span>
+                                    <select id="deviceSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                        <option value="cuda">GPU（CUDA / ROCm）</option>
+                                        <option value="auto">自动（引擎自行选择）</option>
+                                        <option value="cpu">CPU</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">性能档位<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">引擎速度/质量权衡，用于模型推荐。与场景预设无关。</span></span></span>
+                                    <select id="engineProfileSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                        <option value="speed">速度</option>
+                                        <option value="balanced" selected>均衡</option>
+                                        <option value="quality">质量</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">转写偏好<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">速度更快、质量更准；与上方「性能档位」独立。选「速度」时自动档的二意见与语义校正会跳过。</span></span></span>
+                                    <select id="perfProfileSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                        <option value="quality" selected>质量（默认）</option>
+                                        <option value="speed">速度</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">Qwen3 批大小<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">仅 Qwen3-ASR 人声帧路径。自动按显存调批；OOM 会自动拆批。</span></span></span>
+                                    <select id="qwenAsrBatchModeSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                        <option value="auto" selected>自动（推荐）</option>
+                                        <option value="conservative">保守</option>
+                                        <option value="aggressive">激进</option>
+                                    </select>
+                                    <p id="qwenAsrBatchHint" class="mt-1 text-[11px] text-gray-500 hidden" role="status"></p>
+                                </label>
+                            </div>
+                            <div id="asrRecommendChip" class="hidden mt-2 rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2 text-xs text-violet-900" role="status">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span id="asrRecommendChipLabel" class="font-medium"></span>
+                                    <button type="button" id="asrRecommendApplyBtn" class="px-2 py-0.5 rounded border border-violet-300 bg-white text-violet-800 hover:bg-violet-100">应用推荐</button>
+                                    <button type="button" id="asrRecommendDismissBtn" class="px-2 py-0.5 rounded text-violet-600 hover:underline">忽略</button>
+                                </div>
+                                <p id="asrRecommendChipDetail" class="mt-1 text-[11px] text-violet-700/90"></p>
+                            </div>
+                            <div class="settings-checks-grid mt-2">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="releaseGpuAfterCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">任务结束后释放显存<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">勾选后每条任务结束都卸载模型。未勾选也会在条目间与整批结束后自动释放显存。</span></span></span>
+                                </label>
+                                <label class="settings-row text-sm" data-settings-search="GPU 繁忙 自动 CPU 显存 OOM 回退 等待">
+                                    <input type="checkbox" id="autoCpuOnGpuBusyCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">显存不足时改用 CPU<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">开启后本地 LLM 显存不足时自动改用 CPU；关闭则坚持 GPU，多次失败后报错。</span></span></span>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="retranscribeWarmLightCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">重转写加速（暖启动 / 轻量参数）<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">短区间重转更快，可能略降精度。</span></span></span>
+                                </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="output" data-settings-search="字幕输出 输出 格式 SRT VTT ASS LRC 目录 术语 合并 覆盖 Transub 软件信息 致谢 片头 片尾 译文 原文 命名 同名 语种 后缀 转录 保留 subtitles">
+                        
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">格式与保存位置</legend>
+                            <div>
+                                <span class="settings-label text-sm font-medium text-gray-700">
+                                    字幕格式
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">可多选；常用勾选 SRT 即可。</span></span>
+                                </span>
+                                <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm mt-1.5">
+                                    <label class="flex items-center gap-2"><input type="checkbox" id="subFormatSrt" class="rounded" checked><span>SRT</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" id="subFormatVtt" class="rounded"><span>VTT</span></label>
+                                    <label class="flex items-center gap-2" id="subFormatAssWrap"><input type="checkbox" id="subFormatAss" class="rounded"><span>ASS</span></label>
+                                    <label class="flex items-center gap-2" id="subFormatLrcWrap" title="仅旧后端 TransWithAI 支持"><input type="checkbox" id="subFormatLrc" class="rounded"><span>LRC <span class="text-[10px] text-gray-400">(TWAI)</span></span></label>
+                                </div>
+                            </div>
+                            
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="text-gray-700 font-medium">输出位置</span>
+                                <select id="outputModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="same">与视频同目录（默认）</option>
+                                    <option value="custom">统一到指定文件夹</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm" id="chineseSubtitleVariantWrap" data-settings-search="成片目标语言 字幕 简繁 英语 日语 韩语 subtitleTargetLang">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    成片目标语言
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">成片字幕语言，与界面语言无关。中文选项会做简繁转换。</span></span>
+                                </span>
+                                <select id="chineseSubtitleVariantSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="simplified">简体中文（默认）</option>
+                                    <option value="traditional">繁体中文（台湾，含常用词）</option>
+                                    <option value="traditional-tw">繁体中文（台湾字形）</option>
+                                    <option value="traditional-hk">繁体中文（香港）</option>
+                                    <option value="en">English</option>
+                                    <option value="ja">日本語</option>
+                                    <option value="ko">한국어</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm settings-span-2" id="outputDirWrap">
+                                <span class="text-gray-700 font-medium">统一输出目录</span>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="text" id="outputDirInput" class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" placeholder="留空则与视频同目录" maxlength="4096">
+                                    <button type="button" id="outputDirBrowseBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">浏览</button>
+                                </div>
+                            </label>
+                            <label class="block text-sm settings-span-2">
+                                <span class="settings-label text-gray-700 font-medium">转录保留位置<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">额外保留转录/原文缓存，便于二次翻译。默认：软件目录/subtitles。</span></span></span>
+                                <input type="text" id="transcriptKeepDirInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" placeholder="软件目录/subtitles（默认）" maxlength="4096">
+                            </label>
+                            </div>
+                            
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">字幕类型与命名</legend>
+                            <div>
+                                <span class="settings-label text-sm font-medium text-gray-700">
+                                    字幕类型
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">勾选要写出的轨：译文=成片，原文=听写。至少保留一项。</span></span>
+                                </span>
+                                <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm mt-1.5">
+                                    <label class="flex items-center gap-2"><input type="checkbox" id="outputWriteTargetCheck" class="rounded" checked><span>译文</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" id="outputWriteSourceCheck" class="rounded" checked><span>原文</span></label>
+                                </div>
+                            </div>
+                            <label class="block text-sm mt-3" id="targetSubtitleNamingWrap">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    译文字幕文件名
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">仅影响译文轨。与影片同名便于播放器自动挂载；合并双语时合并文件始终同名。</span></span>
+                                </span>
+                                <select id="targetSubtitleNamingSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="lang" selected>音视频文件名 + 语种（如 Movie.zh-cn.srt）</option>
+                                    <option value="media">与音视频同名（如 Movie.srt）</option>
+                                </select>
+                            </label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">翻译与术语</legend>
+                            <label class="settings-row text-sm" id="glossaryPromptWrap">
+                                <input type="checkbox" id="glossaryPromptCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    术语表写入 ASR 提示
+                                    <span class="settings-tip tip-up tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">把术语表专名写入转写提示与热词；坏句池作转写后替换。anime-whisper 会忽略提示。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm" id="glossaryMtWrap" data-settings-search="术语表 翻译 MT glossary">
+                                <input type="checkbox" id="glossaryMtCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    术语表写入翻译提示
+                                    <span class="settings-tip tip-up tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">翻译时把术语表专名写入提示，强制译名一致。默认关闭。</span></span>
+                                </span>
+                            </label>
+                        </fieldset>
+                    
+                        
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">合并与覆盖</legend>
+                            <div class="settings-fields-grid">
+                            <div class="block text-sm" id="mergeBilingualWrap">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="mergeBilingualCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">合并双语<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" id="mergeBilingualHint" role="tooltip">双语任务合并为一份文件，默认与影片同名。</span></span></span>
+                                </label>
+                            </div>
+                            <label class="block text-sm" id="mergeBilingualOrderWrap">
+                                <span class="settings-label text-gray-700 font-medium">合并方式<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认译文在上、原文在下。</span></span></span>
+                                <select id="mergeBilingualOrderSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="translation-first" selected>译文在上，原文在下</option>
+                                    <option value="source-first">原文在上，译文在下</option>
+                                </select>
+                            </label>
+                            <div class="block text-sm opacity-50" id="deleteSourcesAfterMergeWrap">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="deleteSourcesAfterMergeCheck" class="rounded" disabled>
+                                    <span class="settings-label font-medium text-gray-700">合并后删除单语<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">合并后删除单独的原文/译文文件。需先勾选合并。</span></span></span>
+                                </label>
+                            </div>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="overwriteCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">覆盖已有字幕文件<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">已有同名字幕时直接覆盖。</span></span></span>
+                            </label>
+                            <label class="settings-row text-sm settings-span-2">
+                                <input type="checkbox" id="insertSoftwareCreditCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">插入 Transub 软件信息<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">片头/片尾各插 2 秒软件信息。免费默认开，解锁 Pro 后自动关。</span></span></span>
+                            </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="auto-scan" data-settings-search="扫描目录 自动扫描 自动添加 无字幕 监视 文件夹 子目录 递归">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">扫描目录</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed">
+                                「添加 → 自动添加」时，扫描以下目录中<strong>尚无外挂字幕</strong>的音视频。
+                            </p>
+                            <div id="autoScanFoldersList" class="mt-3 space-y-2" aria-live="polite"></div>
+                            <div class="flex flex-wrap items-center gap-2 mt-3">
+                                <button type="button" id="autoScanAddFolderBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">
+                                    <i class="fa fa-folder-open w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>添加目录
+                                </button>
+                            </div>
+                            <div class="settings-checks-grid mt-3">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="autoScanRecursiveCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">同时扫描子目录<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">勾选则递归子目录；取消只扫顶层。</span></span></span>
+                                </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="params" data-settings-search="识别参数 参数 细参 集束 VAD 阈值 灵敏 激进切分 预设 语音识别模块 ASR 模型 选用">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">语音识别模块</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed">仅列出已下载模型。已选场景预设时以任务窗口为准。</p>
+                            <div class="settings-fields-grid mt-2">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">ASR 语音识别模型<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">把人声转成文字。下拉仅显示已下载项。</span></span></span>
+                                    <select id="engineAsrModelSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono">
+                                        <option value="">（检测引擎后显示已下载模型）</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">VAD 语音活动检测模型<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">判断人声/静音以切段。下拉仅显示已下载项。</span></span></span>
+                                    <select id="engineVadModelSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono">
+                                        <option value="">（检测引擎后显示已下载模型）</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <p class="text-xs text-gray-500 leading-relaxed mb-3">
+                            仅在<strong>未选场景预设</strong>时作为全局默认；已选预设以 Dock 为准。
+                        </p>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">
+                                语音活动检测（VAD）
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">控制人声切段。未选场景预设时本页生效；已选预设时可能被覆盖。</span></span>
+                            </legend>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="vadEnabledCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    启用 VAD
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按语音边界切段后再识别。关后整段送入，可能更慢；轻声丢失时可试关。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="vadSensitiveCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    灵敏检出
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">仅 Whisper 可用（日语软声推荐）。与「更激进切分」互斥；请勿叠轻度降噪 / Demucs。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="vadAggressiveCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    更激进切分
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">更严格切段，片段更干净，可能漏掉极轻低语。</span></span>
+                                </span>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section settings-section-accent">
+                            <legend class="settings-section-title">高级 · 全量细参</legend>
+                            <p class="text-xs text-gray-500">未选用场景预设时以下细参作为全局默认；也可随自定义预设一并导入导出。</p>
+                            <div id="vadExpertSettingsWrap" class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">集束宽度<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">Whisper 集束大小；越大越准越慢，默认 1。</span></span></span>
+                                    <input type="number" id="beamSizeInput" min="1" max="20" step="1" value="1" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">检测阈值<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">推荐 0.3–0.7，默认 0.45。</span></span></span>
+                                    <input type="number" id="vadThresholdInput" min="0.1" max="0.9" step="0.05" value="0.45" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最小语音时长（毫秒）<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">短于此的语音段会被忽略。</span></span></span>
+                                    <input type="number" id="vadMinSpeechDurationInput" min="0" max="5000" step="50" value="180" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最小静音时长（毫秒）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">短于此的静音不切段，避免拆碎。</span></span></span>
+                                    <input type="number" id="vadMinSilenceDurationInput" min="0" max="5000" step="50" value="500" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">语音前后填充（毫秒）<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在语音段前后多留一点，防止吞字。</span></span></span>
+                                    <input type="number" id="vadSpeechPadInput" min="0" max="2000" step="50" value="80" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最大单段时长（毫秒）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">单段上限 5–60 秒；默认 5000（毫秒）。</span></span></span>
+                                    <input type="number" id="vadMaxSingleSegmentInput" min="5000" max="60000" step="1000" value="5000" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">幻觉静音阈值（秒）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">Whisper：跳过过长静音以减轻幻觉。留空或 0 关闭。</span></span></span>
+                                    <input type="number" id="hallucinationSilenceInput" min="0" max="30" step="0.5" value="" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm" placeholder="留空 = 关闭">
+                                </label>
+                            </div>
+                            <label class="block text-sm" id="audioSuffixesWrap">
+                                <span class="settings-label text-gray-700 font-medium">可识别的音视频后缀<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">媒体后缀列表，一般无需修改。</span></span></span>
+                                <input type="text" id="audioSuffixesInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="mp3,wav,mp4,mkv,...">
+                            </label>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="editor" data-settings-search="字幕编辑器 波形 CPS 断句 分割 重转写 备份 外观 布局 外部 Editor">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">编辑器程序</legend>
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">打开方式<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">自动优先外部编辑器，找不到则用内置。部分 Pro 动作仍强制内置窗。</span></span></span>
+                                <select id="subtitleEditorBackendSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="字幕编辑器 外部 Editor 独立 自动 即将停用 deprecated">
+                                    <option value="auto">自动（有外部则用外部）</option>
+                                    <option value="electron">内置 Electron（即将停用）</option>
+                                    <option value="external">外部 Transub Editor</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm settings-span-2">
+                                <span class="settings-label text-gray-700 font-medium">外部程序路径（可选）<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">留空自动探测；也可手动指定 Transub.Editor.exe。</span></span></span>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="text" id="subtitleEditorPathInput" class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" placeholder="自动探测 Transub.Editor.exe" data-settings-search="Transub.Editor.exe 路径">
+                                    <button type="button" id="subtitleEditorPathBrowseBtn" class="toolbar-text-btn shrink-0">浏览…</button>
+                                    <button type="button" id="subtitleEditorPathProbeBtn" class="toolbar-text-btn shrink-0">探测</button>
+                                </div>
+                                <p id="subtitleEditorPathHint" class="text-xs text-gray-500 mt-1" style="line-height:1.45">保存后，打开字幕编辑器 / transub://edit 将按此设置路由。</p>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">外观与布局</legend>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorAutoFocusCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">自动焦点<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">播放时字幕选中跟随进度。</span></span></span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorWaveformCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">波形时间轴<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在编辑器底部显示音频波形。</span></span></span>
+                            </label>
+                            </div>
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">时间轴默认缩放<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">打开编辑器时的默认缩放（1–1000）。</span></span></span>
+                                <input type="number" id="editorTimelineZoomInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="1" max="1000" step="1" value="10">
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">列表面板默认宽度（%）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">经典布局左侧占比（约 28–62）。编辑器内可用「布局」切换或拖拽组合。</span></span></span>
+                                <input type="number" id="editorCuesWidthInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="28" max="62" step="1" value="42">
+                            </label>
+                            </div>
+                            <p class="text-xs text-gray-500" style="line-height:1.45">面板排布在字幕编辑器窗口内调整（顶栏「布局」或菜单「视图」），会自动记住。</p>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorDetailToolsOpenCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">默认展开「时间轴 · 分割」<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">右侧详情折叠区打开时的默认状态。</span></span></span>
+                            </label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">双语预览</legend>
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">显示模式<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">双语时预览显示双语、仅译文或仅原文。</span></span></span>
+                                <select id="editorDualDisplaySelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="both">双语</option>
+                                    <option value="target">仅译文</option>
+                                    <option value="source">仅原文</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">上下顺序<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">双语预览中原文/译文上下排列。</span></span></span>
+                                <select id="editorDualLineOrderSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="source-first">原文在上</option>
+                                    <option value="target-first">译文在上</option>
+                                </select>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">读速与断句</legend>
+                            <div class="settings-fields-grid">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">目标 CPS<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">编辑器内调时长与分割的参考读速；与批量 CPS 拆句独立。</span></span></span>
+                                <input type="number" id="editorTargetCpsInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0.1" max="100" step="0.1" value="3">
+                            </label>
+                            <label class="block text-sm settings-span-2">
+                                <span class="settings-label text-gray-700 font-medium">断句词表<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">优先在这些词后断句。每行一个；留空用默认。</span></span></span>
+                                <textarea id="editorBreakWordsInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono min-h-[5rem]" placeholder="每行一个断句词"></textarea>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">分割默认</legend>
+                            <div class="settings-fields-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorSplitRememberCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">记住上次分割方式<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">下次打开分割时默认上次模式。</span></span></span>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">默认模式</span>
+                                <select id="editorSplitModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="smart">智能</option>
+                                    <option value="lines">按行</option>
+                                    <option value="spaces">空格</option>
+                                    <option value="chars">按字符数</option>
+                                    <option value="count">均分</option>
+                                    <option value="cursor">光标</option>
+                                    <option value="playhead">播放头</option>
+                                    <option value="silence">静音</option>
+                                </select>
+                            </label>
+                            </div>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">智能 · 每段最多字数</span>
+                                    <input type="number" id="editorSplitSmartMaxCharsInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="4" max="120" value="20">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">智能 · 单行字数</span>
+                                    <input type="number" id="editorSplitSmartLineCharsInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="4" max="80" value="18">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">静音阈值 (dB)</span>
+                                    <input type="number" id="editorSplitSilenceDbInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="-60" max="-10" step="1" value="-35">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最短静音（秒）</span>
+                                    <input type="number" id="editorSplitSilenceDurInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0.1" max="3" step="0.05" value="0.25">
+                                </label>
+                            </div>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorSplitUseCpsCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">按目标 CPS 分配时间</span>
+                            </label>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorSplitFixOverlapCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">分割后修复重叠</span>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">重转写默认</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">默认时长（秒）</span>
+                                    <input type="number" id="editorRetranscribeDurInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="1" max="120" value="10">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">前后填充 (ms)</span>
+                                    <input type="number" id="editorRetranscribePadInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0" max="2000" step="10" value="350">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">起始点</span>
+                                    <select id="editorRetranscribeStartSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="selected">当前条目</option>
+                                        <option value="playhead">播放头</option>
+                                    </select>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="editorRetranscribeSnapCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">重转写后按音频贴边<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">完成后按静音边界微调时间轴。</span></span></span>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">编辑器 · 保存备份</legend>
+                            <label class="block text-sm">
+                                <span class="settings-label font-medium text-gray-700">
+                                    .bak 备份文件
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">保存时是否生成 .bak。可选写到字幕目录或软件数据目录。</span></span>
+                                </span>
+                                <select id="subtitleBakModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="off" selected>不生成备份文件</option>
+                                    <option value="beside">字幕文件所在目录</option>
+                                    <option value="appBackup">软件数据目录下的 backup 文件夹</option>
+                                </select>
+                            </label>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="burn" data-settings-search="字幕烧录 硬字幕 软字幕 容器 MP4 MKV 编码 x264 NVENC QSV AMF 音频 AAC 质量 CRF 分辨率 帧率 速度 后缀 目录 成片 ffmpeg hardsub softsub">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">成片封装</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-2">烧录用编码与输出路径；样式仍在烧录页芯片中选择。</p>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">容器<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">MP4 兼容性更好；ASS 软字幕请用 MKV。</span></span></span>
+                                    <select id="settingsBurnContainerSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="容器 MP4 MKV">
+                                        <option value="mp4">MP4</option>
+                                        <option value="mkv">MKV</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">视频编码<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">硬字幕烧录时重编码画面。硬件编码需 Pro。</span></span></span>
+                                    <select id="settingsBurnEncoderSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="编码 x264 NVENC QSV AMF"></select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">音频<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认复制原音轨；不兼容时可重编码为 AAC。</span></span></span>
+                                    <select id="settingsBurnAudioModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="音频 AAC 复制">
+                                        <option value="copy">复制音轨</option>
+                                        <option value="aac">AAC 192k</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">画质与几何（硬字幕）</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">质量 CRF / CQ<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">14–28，越小越清晰、体积越大。默认 18。</span></span></span>
+                                    <input type="number" id="settingsBurnCrf" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="14" max="28" step="1" value="18" data-settings-search="质量 CRF CQ">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">分辨率<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">仅缩小不放大。软字幕时忽略。</span></span></span>
+                                    <select id="settingsBurnResolutionSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="分辨率 1080 720 480">
+                                        <option value="source">跟随片源</option>
+                                        <option value="1080p">1080p</option>
+                                        <option value="720p">720p</option>
+                                        <option value="480p">480p</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">帧率<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">默认跟随片源。强制转换可能影响观感。</span></span></span>
+                                    <select id="settingsBurnFpsSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="帧率 fps">
+                                        <option value="source">跟随片源</option>
+                                        <option value="23.976">23.976</option>
+                                        <option value="24">24</option>
+                                        <option value="25">25</option>
+                                        <option value="30">30</option>
+                                        <option value="60">60</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">编码速度<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">越慢通常体积更小。</span></span></span>
+                                    <select id="settingsBurnEncodeSpeedSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" data-settings-search="速度 slow fast">
+                                        <option value="slow">慢 · 更小</option>
+                                        <option value="medium" selected>均衡</option>
+                                        <option value="fast">快 · 更大</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">输出命名与目录</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">文件名后缀<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">如 burned → film.burned.mp4。</span></span></span>
+                                    <input type="text" id="settingsBurnOutputSuffix" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" value="burned" maxlength="40" spellcheck="false" data-settings-search="后缀 burned softsub">
+                                </label>
+                                <label class="block text-sm settings-span-2">
+                                    <span class="settings-label text-gray-700 font-medium">批量输出目录<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">留空则写在源视频同目录。</span></span></span>
+                                    <div class="flex gap-2 mt-1">
+                                        <input type="text" id="settingsBurnOutputDirInput" class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" placeholder="留空 = 与视频同目录" data-settings-search="输出目录">
+                                        <button type="button" id="settingsBurnOutputDirBrowseBtn" class="toolbar-text-btn shrink-0">浏览…</button>
+                                        <button type="button" id="settingsBurnOutputDirClearBtn" class="toolbar-text-btn shrink-0">清除</button>
+                                    </div>
+                                </label>
+                            </div>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="pro" data-settings-search="Pro 许可 买断 体验 试用 9.9 大版本 激活 爱发电 密钥 闭源 模块">
+                        <div id="advancedProUnlockPitch" class="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-xs text-violet-900 leading-relaxed flex items-start gap-2">
+                            <span class="settings-adv-mark mt-0.5" aria-hidden="true">◆</span>
+                            <span>
+                                Transub Pro 支持<strong>大版本内买断</strong>，解锁更多功能和能力
+                                <span class="settings-tip ml-1 align-middle"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">智能翻译、BYOK、重构与影视音频增强等需 Pro。许可不含云端 API 额度。</span></span>
+                            </span>
+                        </div>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>许可状态</legend>
+                            <p id="advancedLicenseStatus" class="text-sm text-gray-700 min-h-[1.25rem]">加载中…</p>
+                            <p id="advancedLicenseMeta" class="text-xs text-gray-500 leading-relaxed"></p>
+                            <div id="advancedPurchaseActivateBlock" class="space-y-3">
+                                <p id="advancedBuyProHint" class="text-xs text-gray-600 leading-relaxed">填写订单号领取并激活；也可粘贴许可密钥（<code class="text-[0.7rem]">TSUB1.…</code>）</p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="advancedBuyProBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">在爱发电购买 Pro</button>
+                                </div>
+                                <label class="block text-sm">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        爱发电订单号
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在爱发电订单详情复制订单号，校验后签发并激活。</span></span>
+                                    </span>
+                                    <input type="text" id="advancedAfdianOrderInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" placeholder="订单号 out_trade_no" autocomplete="off" spellcheck="false">
+                                </label>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="advancedRedeemAfdianBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">领取并激活</button>
+                                </div>
+                                <label class="block text-sm">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        许可密钥
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">限 1 台设备；换机冷却 30 天；每 30 天需联网复核。</span></span>
+                                    </span>
+                                    <input type="text" id="advancedLicenseKeyInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm font-mono" placeholder="TSUB1.…" autocomplete="off" spellcheck="false">
+                                </label>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="advancedActivateBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">激活</button>
+                                    <button type="button" id="advancedTransferBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60" title="每 30 天最多成功换机 1 次">换机到本机</button>
+                                </div>
+                            </div>
+                            <div id="advancedLicenseManageBlock" class="flex flex-wrap gap-2">
+                                <button type="button" id="advancedRevalidateBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">联网复核</button>
+                                <button type="button" id="advancedDeactivateBtn" class="px-3 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm hover:bg-red-50">清除许可</button>
+                            </div>
+                            <p id="advancedLicenseActionStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>闭源模块</legend>
+                            <p id="advancedModuleStatus" class="text-xs text-gray-600 leading-relaxed">检测中…</p>
+                            <button type="button" id="advancedReloadModuleBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">重新检测模块</button>
+                        </fieldset>
+                        <fieldset class="settings-section" data-settings-search="语言优化包 领域数据 TDP 更新">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>语言优化包</legend>
+                            <p class="text-xs text-gray-600 leading-relaxed mb-2">更新包含过滤、清理、翻译优化规则等内容，及时更新有助于字幕输出质量</p>
+                            <p id="tdpStatusLine" class="text-sm text-gray-700 min-h-[1.25rem]">检测中…</p>
+                            <p id="tdpMetaLine" class="text-xs text-gray-500 leading-relaxed mb-2"></p>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" id="tdpCheckBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">检查更新</button>
+                                <button type="button" id="tdpUpdateBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">立即更新</button>
+                                <button type="button" id="tdpCancelBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60 hidden">取消</button>
+                            </div>
+                            <div id="tdpProgressWrap" class="hidden mt-2">
+                                <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                    <div id="tdpProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
+                                </div>
+                                <p id="tdpProgressText" class="text-xs text-gray-500 mt-1"></p>
+                            </div>
+                            <p id="tdpActionStatus" class="text-xs text-gray-500 min-h-[1rem] mt-1"></p>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="pro-reconstruct" data-settings-search="Pro 语境 重构 影片理解 影片简要 Film Brief 审阅 缓存 窗口 重叠 强度 抽样 全文 软件内大模型 LLM 推理模型 GGUF">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">
+                                <span class="settings-adv-mark" aria-hidden="true">◆</span>软件内大模型
+                            </legend>
+                            <!-- Keep radios in DOM for advanced-settings.js; BYOK source hidden, managed forced -->
+                            <div class="hidden" role="radiogroup" aria-label="大模型来源">
+                                <label class="inline-flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="advancedLlmSource" id="advancedLlmSourceByok" value="byok" class="rounded-full">
+                                    <span class="font-medium text-gray-700">外接模型（BYOK）</span>
+                                </label>
+                                <label class="inline-flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="advancedLlmSource" id="advancedLlmSourceManaged" value="managed" class="rounded-full" checked>
+                                    <span class="font-medium text-gray-700">软件内选模型</span>
+                                </label>
+                            </div>
+                            <div id="advancedManagedPanel" class="space-y-3">
+                                <div class="settings-fields-grid">
+                                    <label class="block text-sm">
+                                        <span class="settings-label font-medium text-gray-700">
+                                            推理模型
+                                            <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">语境重构、语义审阅、ASR 修复等。请选通用对话模型，勿选翻译专用。</span></span>
+                                        </span>
+                                        <select id="advancedInferenceModelSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                            <option value="">（尚未选用）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <p id="advancedManagedCatalogStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                                <div class="hidden" id="advancedManagedProgressWrap">
+                                    <div class="h-1.5 rounded bg-violet-100 overflow-hidden">
+                                        <div id="advancedManagedProgressBar" class="h-full bg-violet-500 transition-all" style="width:0%"></div>
+                                    </div>
+                                    <p id="advancedManagedProgressText" class="text-xs text-gray-500 mt-1"></p>
+                                    <button type="button" id="advancedManagedCancelPullBtn" class="mt-1 px-2 py-1 border rounded text-xs text-red-600 hover:bg-red-50">取消下载</button>
+                                </div>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>语境重构默认</legend>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">分块条数<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">每次送入模型的条数。更大更省请求；默认 30。</span></span></span>
+                                    <input type="number" id="reconstructWindowCuesInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="5" max="80" step="1" value="30">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">块间重叠<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">分块重叠条数，减轻跨块断裂。默认 2。</span></span></span>
+                                    <input type="number" id="reconstructOverlapCuesInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0" max="12" step="1" value="2">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">默认强度<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">轻更保守；强则场景更碎、改写更积极。</span></span></span>
+                                    <select id="reconstructIntensitySelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="light">轻</option>
+                                        <option value="balanced" selected>均衡</option>
+                                        <option value="strong">强</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">影片简要取样<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">自适应按片长抽样（更省）；全文更准但更慢、更吃显存。</span></span></span>
+                                    <select id="reconstructBriefSampleModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="auto" selected>自适应抽样（默认）</option>
+                                        <option value="full">全文理解</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="settings-checks-grid mt-2">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="reconstructPreserveTimingCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">保留时间轴<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">只改文本，不改时间轴。</span></span></span>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="reconstructSkipConsistencyCheck" class="rounded">
+                                    <span class="settings-label font-medium text-gray-700">跳过一致性校对<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">重构末段校对专名/称呼。跳过可加快，但用词可能不齐。</span></span></span>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">重构审阅</legend>
+                            <label class="settings-row text-sm">
+                                <input type="checkbox" id="editorReconOnlyChangedCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">默认仅显示有变更<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">打开对照时默认只列出改写过的条目。</span></span></span>
+                            </label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">影片理解缓存</legend>
+                            <button type="button" id="editorClearFilmHintsBtn" class="px-3 py-2 border rounded-lg text-sm hover:bg-white bg-white/60">清除全部影片提示缓存</button>
+                            <p id="editorSettingsStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="pro-smart-translate" data-settings-search="Pro 智能翻译 智能翻译 句级 推理 剧情贴合 润色 hybrid polish Sakura GalTransl 抽样 忠实复核 称呼 一致性 二意见 模型搭配 翻译模型 润色模型">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>模型搭配</legend>
+                            <!-- Form sync only: persisted engineLlmMtModel; visible pick is hybridSentenceMtModelSelect. -->
+                            <div class="hidden" aria-hidden="true">
+                                <label id="engineLlmMtModelWrap">
+                                    <span id="engineLlmMtModelHint"></span>
+                                    <select id="engineLlmMtModelSelect">
+                                        <option value="">自动匹配（按语言 / Pro / 硬件）</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm" id="hybridSentenceMtModelWrap">
+                                    <span class="settings-label text-gray-700 font-medium">
+                                        翻译模型
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" id="hybridSentenceMtModelHint" role="tooltip">日→中句级翻译模型；可留空自动选用。未下载请到「模型管理」。</span></span>
+                                    </span>
+                                    <select id="hybridSentenceMtModelSelect" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono">
+                                        <option value="">自动匹配（按语言 / Pro / 硬件）</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm" id="hybridPolishModelWrap">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        润色模型
+                                        <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">请选通用对话模型，勿选翻译专用模型。未选用时润色会跳过，不会改用「语境重构」的推理模型。</span></span>
+                                    </span>
+                                    <select id="advancedSmartTranslateModelSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="">（尚未选用）</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能翻译管线</legend>
+                            <!-- Preference always on for Pro 智能翻译; runtime auto-skips when JA→ZH unavailable. Hidden for form sync. -->
+                            <input type="checkbox" id="smartTranslateHybridCheck" class="sr-only" tabindex="-1" aria-hidden="true" checked>
+                            <p class="text-xs text-gray-600 leading-relaxed mb-2" id="smartTranslateHybridWrap">
+                                <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" id="smartTranslateHybridHint" role="tooltip">翻译与润色模型请在本页「模型搭配」中选择。</span></span>
+                            </p>
+                            <label class="settings-row text-sm" id="smartTranslatePolishWrap">
+                                <input type="checkbox" id="smartTranslatePolishCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    剧情贴合润色（推荐）
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">用对话模型补欠译、统一人名、纠错译并去机器腔。需已配置润色模型。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm" id="smartTranslateVerifyWrap">
+                                <input type="checkbox" id="smartTranslateVerifyCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    润色后忠实复核（推荐）
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">对润色结果再审一轮：明显跑题则回退；失败不阻断。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm" id="smartTranslateAddressWrap">
+                                <input type="checkbox" id="smartTranslateAddressCheck" class="rounded" checked>
+                                <span class="settings-label font-medium text-gray-700">
+                                    称呼一致性（推荐）
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">润色后统一人名/敬称。默认开启。</span></span>
+                                </span>
+                            </label>
+                            <label class="block text-sm mt-3" id="smartTranslatePolishLimitWrap">
+                                <span class="settings-label text-gray-700 font-medium">润色抽样上限<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">译后抽样润色条数。越大越贴合但更慢；默认 36。</span></span></span>
+                                <input type="number" id="smartTranslatePolishLimitInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="4" max="36" step="1" value="36">
+                            </label>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="pro-film-audio" data-settings-search="Pro 影视音频 增强 Demucs 人声分离 影视 VAD BGM 配乐 阈值 静音 幻觉">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>启用方式</legend>
+                            <div class="settings-checks-grid">
+                            <label class="settings-row text-sm" id="filmAudioEnhanceWrap">
+                                <input type="checkbox" id="filmAudioEnhanceCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    <span class="settings-adv-mark" aria-hidden="true">◆</span>影视音频增强
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">进 ASR 前用 Demucs 去 BGM，并套用影视 VAD。请先下载 Demucs。</span></span>
+                                </span>
+                            </label>
+                            <label class="settings-row text-sm" id="filmVadPresetWrap">
+                                <input type="checkbox" id="filmVadPresetCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">
+                                    <span class="settings-adv-mark" aria-hidden="true">◆</span>仅影视 VAD 预设（不分离人声）
+                                    <span class="settings-tip tip-end tip-up"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">只套用影视 VAD，不做 Demucs。与「影视音频增强」互斥。</span></span>
+                                </span>
+                            </label>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">影视 VAD 覆盖</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-2">开启上方影视选项时生效；留空用内置默认。</p>
+                            <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">阈值<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">越高越不易把 BGM 当人声。默认 0.55；日语软声请用灵敏检出。</span></span></span>
+                                    <input type="number" id="filmVadThresholdInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0.05" max="0.95" step="0.01" placeholder="0.55" value="">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最短人声 (ms)<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">短于此的人声段会被丢掉。默认约 350。</span></span></span>
+                                    <input type="number" id="filmVadMinSpeechInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="50" max="2000" step="10" placeholder="350" value="">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">最小静音 (ms)<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">静音达此时长才切段。默认约 280。</span></span></span>
+                                    <input type="number" id="filmVadMinSilenceInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="50" max="2000" step="10" placeholder="280" value="">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">幻觉静音跳过 (秒)<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">抑制配乐段幻听。默认 2 秒；填 0 关闭。</span></span></span>
+                                    <input type="number" id="filmHallucinationSilenceInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="0" max="30" step="0.1" placeholder="2" value="">
+                                </label>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-3">
+                                Demucs 下载：
+                                <button type="button" id="proFilmAudioGotoModelsBtn" class="settings-guide-link">模型管理</button>
+                                · 轻度降噪：
+                                <button type="button" id="proFilmAudioGotoProcessBtn" class="settings-guide-link">任务处理</button>
+                            </p>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="pro-qc-smart" data-settings-search="Pro 智能修复 转录语义校正 QC 一键修复 断句 重转写 润色 语义审阅 怪句 通顺度 强度 低置信 二意见 ASR">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>转录语义校正</legend>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    转录语义校正
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">Pro。翻译前用大模型修正明显听写误听。自动仅可疑句；加强为全片（更慢）。「速度」偏好下自动档会跳过。</span></span>
+                                </span>
+                                <select id="asrSemanticRepairSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="转录语义校正">
+                                    <option value="auto" selected>自动（可疑句）</option>
+                                    <option value="thorough">加强（全片）</option>
+                                    <option value="off">关闭</option>
+                                </select>
+                            </label>
+                            <p class="text-xs text-gray-500 mt-3 leading-relaxed">
+                                ASR 二意见在
+                                <button type="button" id="proQcGotoProcessAsrBtn" class="settings-guide-link">任务处理</button>。
+                            </p>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>批量完成后</legend>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    完成后自动修复 QC
+                                    <span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">一键修复走规则；智能修复为 Pro（默认）。「速度」偏好下智能修复会改为一键修复。</span></span>
+                                </span>
+                                <select id="postBatchQcFixModeSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" aria-label="完成后自动修复 QC">
+                                    <option value="none">关闭</option>
+                                    <option value="fix" selected>一键修复 QC</option>
+                                    <option value="smart">智能修复 QC (Pro)</option>
+                                </select>
+                            </label>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title"><span class="settings-adv-mark" aria-hidden="true">◆</span>智能修复步骤</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-2">主窗口与批量智能修复共用；编辑器内仍可按次勾选。</p>
+                            <div class="settings-checks-grid">
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="qcSmartLlmSplitCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">大模型断句<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">规则拆不开时用对话模型断句。</span></span></span>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="qcSmartRetranscribeCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">局部重转写<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">对高读速/粘连区与低置信窗局部重转（需关联视频）。</span></span></span>
+                                </label>
+                                <label class="settings-row text-sm">
+                                    <input type="checkbox" id="qcSmartSemanticReviewCheck" class="rounded" checked>
+                                    <span class="settings-label font-medium text-gray-700">双语语义审阅<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">有原文对照时，审阅怪句并给出可采纳译文。</span></span></span>
+                                </label>
+                            </div>
+                            <div class="settings-fields-grid mt-3">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">LLM 强度<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">影响润色与断句进取程度；画像预设可能再微调。</span></span></span>
+                                    <select id="qcSmartIntensitySelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="light" selected>轻</option>
+                                        <option value="medium">中</option>
+                                        <option value="strong">强</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">重转写窗口上限<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">单次最多处理的连续文本窗数。默认 8。</span></span></span>
+                                    <input type="number" id="qcSmartMaxRetranscribeInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" min="1" max="24" step="1" value="8">
+                                </label>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-3">
+                                <button type="button" id="proQcGotoProcessBtn" class="settings-guide-link">任务处理（规则后处理）</button>
+                                ·
+                                <button type="button" id="proQcGotoLlmBtn" class="settings-guide-link">语境和理解重构</button>
+                            </p>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="external-translate" data-settings-search="外部翻译 Transub Station BYOK 外接 API Key Base URL Ollama OpenAI 兼容 本地推理 Station 8787">
+                        <div class="rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs text-sky-950 leading-relaxed mb-3">
+                            翻译方式选「外部翻译」时使用本页配置。优先启用 <strong>Transub Station</strong>（统一控制面 + OpenAI 兼容推理）；也可直接填写外接 API（BYOK）。密钥仅保存在本机。
+                        </div>
+                        <fieldset class="settings-section" data-settings-search="Transub Station 地址 就绪 模型 8787">
+                            <legend class="settings-section-title">Transub Station</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-3">
+                                Transub Station内测中。
+                            </p>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-800 mb-3">
+                                <input type="checkbox" id="transubStationEnabledCheck" class="rounded">
+                                <span class="font-medium">启用 Transub Station</span>
+                            </label>
+                            <input type="hidden" id="transubStationModelInput" value="" autocomplete="off">
+                            <div id="transubStationFields" class="space-y-3">
+                                <div class="settings-fields-grid">
+                                    <label class="block text-sm settings-span-2">
+                                        <span class="settings-label text-gray-700 font-medium">
+                                            Station 地址
+                                            <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">控制面根地址，不要带 /v1。例：http://127.0.0.1:8787 或 http://192.168.x.x:8787。粘贴带 /v1 时会自动去掉。</span></span>
+                                        </span>
+                                        <input type="url" id="transubStationUrlInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="http://127.0.0.1:8787" maxlength="512" autocomplete="off" spellcheck="false">
+                                    </label>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button type="button" id="transubStationTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">探测就绪</button>
+                                    <p id="transubStationStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                                </div>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section" id="externalByokSection" data-settings-search="外部翻译 BYOK 外接 API Key Base URL Ollama">
+                            <legend class="settings-section-title">外接 API（BYOK）</legend>
+                            <p class="text-xs text-gray-600 mb-2">OpenAI 兼容接口 · 更改立即生效 · 未启用 Station 时由「外部翻译」直接使用</p>
+                            <div id="advancedByokPanel" class="space-y-3 mt-1">
+                                <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label font-medium text-gray-700">
+                                        提供商
+                                        <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">密钥仅保存在本机，不会上传。</span></span>
+                                    </span>
+                                    <select id="advancedByokProviderSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                        <option value="openai">OpenAI 兼容</option>
+                                        <option value="azure">Azure OpenAI</option>
+                                        <option value="custom">自定义</option>
+                                    </select>
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="font-medium text-gray-700">模型名</span>
+                                    <input type="text" id="advancedByokModelInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" placeholder="qwen2.5:7b" autocomplete="off">
+                                </label>
+                                <label class="block text-sm settings-span-2">
+                                    <span class="font-medium text-gray-700">API Base URL（可选）</span>
+                                    <input type="url" id="advancedByokBaseUrlInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" placeholder="Ollama: http://127.0.0.1:11434/v1" autocomplete="off">
+                                </label>
+                                <label class="block text-sm settings-span-2">
+                                    <span class="font-medium text-gray-700">API Key</span>
+                                    <input type="password" id="advancedByokApiKeyInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" placeholder="Ollama 可填 ollama" autocomplete="off">
+                                    <span id="advancedByokKeyHint" class="block text-xs text-gray-500 mt-1"></span>
+                                </label>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="advancedSaveByokBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">保存 BYOK</button>
+                                    <button type="button" id="advancedTestByokBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">测试连接</button>
+                                    <button type="button" id="advancedClearByokKeyBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white bg-white/60">清除 API Key</button>
+                                </div>
+                            </div>
+                            <p id="advancedByokActionStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="network" data-settings-search="网络 代理 proxy HTTP HTTPS SOCKS 翻墙 科学上网 联网 镜像 HuggingFace Hugging Face hf-mirror GitHub ghproxy blfrp nxnow 测速 网络与代理 GitHub镜像 镜像源">
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">代理服务器</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-3">模型下载、更新与外接 API 经此代理；本机引擎始终直连。仅支持 HTTP/HTTPS 代理。</p>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-800 mb-3">
+                                <input type="checkbox" id="proxyEnabledCheck" class="rounded">
+                                <span class="font-medium">启用代理服务器</span>
+                            </label>
+                            <div id="proxySettingsFields" class="space-y-3">
+                                <div class="settings-fields-grid">
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">代理地址<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">例如 http://127.0.0.1:7890，可带用户名密码。</span></span></span>
+                                    <input type="text" id="proxyUrlInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="http://127.0.0.1:7890" maxlength="512" autocomplete="off" spellcheck="false">
+                                </label>
+                                <label class="block text-sm">
+                                    <span class="settings-label text-gray-700 font-medium">不走代理（可选）<span class="settings-tip tip-end"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">逗号分隔主机名；本机地址已默认排除。</span></span></span>
+                                    <input type="text" id="proxyBypassInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="localhost,127.0.0.1,::1,&lt;local&gt;" maxlength="2048" autocomplete="off" spellcheck="false">
+                                </label>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button type="button" id="proxyTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">测试连接</button>
+                                    <p id="proxyTestStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                                </div>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">GitHub 镜像</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-3">下载 GitHub 资源时使用。每行一个镜像前缀；清空则走官方。可与代理同时用。</p>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">镜像列表<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">每行一个镜像前缀。测速会同时对比官方。</span></span></span>
+                                <textarea id="githubMirrorsInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono min-h-[6.5rem] leading-relaxed" rows="4" spellcheck="false" placeholder="https://g.blfrp.cn/&#10;https://gh-proxy.com/&#10;https://gh.nxnow.top/&#10;https://ghproxy.net/"></textarea>
+                            </label>
+                            <div class="flex flex-wrap items-center gap-2 mt-2">
+                                <button type="button" id="githubMirrorsPresetBtn" class="px-3 py-1.5 border rounded-lg text-sm">填入默认</button>
+                                <button type="button" id="githubMirrorsClearBtn" class="px-3 py-1.5 border rounded-lg text-sm">清空</button>
+                                <button type="button" id="githubMirrorsTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">测速</button>
+                                <p id="networkGithubMirrorStatus" class="text-xs text-gray-500 min-h-[1rem] whitespace-pre-wrap basis-full"></p>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">Hugging Face 镜像</legend>
+                            <p class="text-xs text-gray-500 leading-relaxed mb-3">下载超时请用国内镜像；可留空或点「官方」。门禁模型需 Token，建议走官方端点。</p>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">镜像地址<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">模型下载地址。默认国内镜像；留空直连官方。</span></span></span>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="text" id="engineHfEndpointInput" class="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://hf-mirror.com" maxlength="4096" value="">
+                                    <button type="button" id="engineHfMirrorPresetBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">国内镜像</button>
+                                    <button type="button" id="engineHfOfficialPresetBtn" class="px-3 py-2 border rounded-lg text-sm shrink-0">官方</button>
+                                </div>
+                            </label>
+                            <label class="block text-sm mt-3">
+                                <span class="settings-label text-gray-700 font-medium">Hugging Face Token（门禁模型）<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">在 Hugging Face 创建 Read Token，仅本机保存，用于下载门禁模型。</span></span></span>
+                                <input type="password" id="engineHfTokenInput" class="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-mono" placeholder="hf_…" maxlength="256" autocomplete="off" spellcheck="false">
+                            </label>
+                            <div class="flex flex-wrap items-center gap-2 mt-2">
+                                <button type="button" id="engineHfTestBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm">测试连接</button>
+                                <p id="networkHfStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">说明</legend>
+                            <ul class="text-xs text-gray-500 leading-relaxed list-disc pl-4 space-y-1">
+                                <li>保存后代理立即生效；引擎已在运行时请到「运行环境」重新检测。</li>
+                            </ul>
+                        </fieldset>
+                    </div>
+
+                    <div class="params-tab-panel" data-tab-panel="more" data-settings-search="更多 导出 导入 日志 更新 自动更新 检查更新 关于 官网 网站 Github GitCode 赞助 重置 字幕库 shelf 打开 批次">
+                        <fieldset class="settings-section" data-settings-search="字幕库 shelf 打开 批次">
+                            <legend class="settings-section-title">字幕库</legend>
+                            <div class="settings-fields-grid">
+                                <button type="button" id="openShelfBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    打开字幕库
+                                </button>
+                                <button type="button" id="revealShelfRootBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    打开库目录
+                                </button>
+                            </div>
+                            <label class="settings-row text-sm mt-3">
+                                <input type="checkbox" id="shelfOpenAfterBatchCheck" class="rounded">
+                                <span class="settings-label font-medium text-gray-700">批次完成后打开字幕库<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">成功后自动打开字幕库，并聚焦本批首个。</span></span></span>
+                            </label>
+                            <p id="shelfSettingsStatus" class="text-xs text-gray-500 min-h-[1rem] mt-2"></p>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">
+                                配置备份
+                                <span class="settings-tip ml-1"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">导出已保存设置，或从备份载入（载入后仍需保存）。</span></span>
+                            </legend>
+                            <div class="settings-fields-grid">
+                                <button type="button" id="exportConfigBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-upload w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>导出配置
+                                </button>
+                                <button type="button" id="importConfigBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-download w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>导入配置
+                                </button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">更新与日志</legend>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button type="button" id="checkUpdateBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-refresh w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开更新中心
+                                </button>
+                            </div>
+                            <div class="settings-fields-grid mt-2">
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">
+                                    自动检查更新
+                                    <span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" role="tooltip">按所选频率检查更新并提示；不会自动安装。改后点「保存设置」生效。</span></span>
+                                </span>
+                                <select id="autoUpdateCheckIntervalSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="off" selected>不检查</option>
+                                    <option value="daily">每天检查一次</option>
+                                    <option value="weekly">每周检查一次</option>
+                                    <option value="monthly">每月检查一次</option>
+                                </select>
+                            </label>
+                            <label class="block text-sm">
+                                <span class="settings-label text-gray-700 font-medium">日志级别<span class="settings-tip"><button type="button" class="settings-tip-btn" title="">?</button><span class="settings-tip-bubble" id="logLevelHint" role="tooltip"></span></span></span>
+                                <select id="logLevelSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                                    <option value="DEBUG">DEBUG — 最详细（推荐）</option>
+                                    <option value="INFO">INFO — 仅关键步骤</option>
+                                    <option value="WARNING">WARNING — 仅警告</option>
+                                    <option value="ERROR">ERROR — 仅错误</option>
+                                </select>
+                            </label>
+                            </div>
+                            <p id="moreStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">关于与链接</legend>
+                            <div class="settings-fields-grid">
+                                <button type="button" id="openWebsiteBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 settings-span-2">
+                                    <i class="fa fa-globe w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>官方网站
+                                </button>
+                                <button type="button" id="openGithubReleasesBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-github w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>Github
+                                </button>
+                                <button type="button" id="openGitcodeReleasesBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60">
+                                    <i class="fa fa-cloud-download w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>GitCode
+                                </button>
+                                <button type="button" id="openAboutFromSettingsBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 settings-span-2">
+                                    <i class="fa fa-info-circle w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>打开关于窗口
+                                </button>
+                                <button type="button" id="openAfdianFromSettingsBtn" class="px-3 py-2 border rounded-lg text-sm text-left hover:bg-white bg-white/60 settings-span-2">
+                                    <i class="fa fa-heart w-4 text-center text-gray-400 mr-1" aria-hidden="true"></i>赞助解锁Pro
+                                </button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="settings-section">
+                            <legend class="settings-section-title">危险操作</legend>
+                            <button type="button" id="resetSettingsBtn" class="px-3 py-2 border border-red-200 text-red-600 rounded-lg text-sm hover:bg-red-50">
+                                重置为默认设置
+                            </button>
+                            <p id="resetSettingsStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+                        </fieldset>
+                    </div>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50/80 shrink-0">
+                    <span id="saveParamsStatus" class="text-xs text-gray-500">修改后请点「保存设置」写入磁盘</span>
+                    <div class="flex items-center gap-2">
+                        <button type="button" id="cancelParamsBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-white" title="有未保存更改时还原并关闭">取消</button>
+                        <button type="button" id="saveParamsBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">
+                            <i class="fa fa-save mr-1"></i>保存设置
+                        </button>
+                        <button type="button" id="saveAndCloseParamsBtn" class="px-3 py-1.5 border border-violet-200 text-violet-800 hover:bg-violet-50 rounded-lg text-sm">
+                            保存并关闭
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="engineModelsLibraryModal" class="engine-models-library-modal hidden" role="dialog" aria-modal="true" aria-labelledby="engineModelsLibraryTitle">
+                <div class="engine-models-library-dialog">
+                    <div class="engine-models-library-head">
+                        <div class="min-w-0">
+                            <h3 id="engineModelsLibraryTitle" class="engine-models-library-title">模型库</h3>
+                            <p class="engine-models-library-sub">下载后可在「识别参数 → 语音识别模块」中指定；已下载模型可点「删除」释放空间，网络不佳时可「手动下载」。</p>
+                        </div>
+                        <button type="button" id="closeEngineModelsLibraryBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 shrink-0" aria-label="关闭模型库">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                    <div id="engineModelsLibraryModalHost" class="engine-models-library-modal-host"></div>
+                </div>
+            </div>
+        </div>

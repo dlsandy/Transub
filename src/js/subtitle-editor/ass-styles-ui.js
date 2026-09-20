@@ -2,6 +2,16 @@
  * ASS 样式面板（Pro）— 右侧 drawer
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     function installAssStylesUi(ctx) {
         if (!ctx?.state || !ctx?.els) {
             throw new Error('installAssStylesUi(ctx): ctx.state, ctx.els required');
@@ -314,8 +324,11 @@
             renderCueList?.();
             renderDetailPane?.();
             if (typeof ctx.onAssStylesChanged === 'function') ctx.onAssStylesChanged();
-            const pathNote = result.pathChanged ? ` · 保存路径改为 ${basename(result.path)}` : '';
-            setStatus(`已转为 ASS 编辑（${result.metaFilled} 条补全 Style）${pathNote}`, 'ok');
+            const pathNote = result.pathChanged ? uiTf(' · 保存路径改为 {name}', { name: basename(result.path) }) : '';
+            setStatus(uiTf('已转为 ASS 编辑（{count} 条补全 Style）{pathNote}', {
+                count: result.metaFilled,
+                pathNote,
+            }), 'ok');
             return result;
         }
 
@@ -392,7 +405,7 @@
             loadDraft(editingName);
             setDirty(true);
             refresh();
-            setStatus(`已应用我的预设「${pack.name}」`, 'ok');
+            setStatus(uiTf('已应用我的预设「{name}」', { name: pack.name }), 'ok');
         }
 
         function applyPreset(presetId) {
@@ -419,7 +432,7 @@
             setDirty(true);
             if (result.dualTemplate) activeTab = 'dual';
             refresh();
-            setStatus(`已应用预设「${result.label}」`, 'ok');
+            setStatus(uiTf('已应用预设「{label}」', { label: result.label }), 'ok');
         }
 
         async function saveCurrentAsPack() {
@@ -455,7 +468,7 @@
                 return;
             }
             fillPresetSelect();
-            setStatus(`已保存预设「${saved.pack.name}」`, 'ok');
+            setStatus(uiTf('已保存预设「{name}」', { name: saved.pack.name }), 'ok');
         }
 
         async function deleteSelectedUserPack() {
@@ -552,7 +565,7 @@
             renderCueList?.();
             renderDetailPane?.();
             refresh();
-            if (!silent) setStatus(`已保存样式 ${next.name}`, 'ok');
+            if (!silent) setStatus(uiTf('已保存样式 {name}', { name: next.name }), 'ok');
             return next;
         }
 
@@ -566,7 +579,7 @@
             draft = core.cloneStyle(created);
             setDirty(true);
             refresh();
-            setStatus(`已新建样式 ${name}`, 'ok');
+            setStatus(uiTf('已新建样式 {name}', { name }), 'ok');
         }
 
         async function removeStyle() {
@@ -607,7 +620,7 @@
             renderCueList?.();
             renderDetailPane?.();
             refresh();
-            setStatus(`已删除样式 ${name}`, 'ok');
+            setStatus(uiTf('已删除样式 {name}', { name }), 'ok');
         }
 
         function applyToSelection() {
@@ -627,7 +640,7 @@
             renderCueList?.();
             renderDetailPane?.();
             refresh();
-            setStatus(`已将 ${applied.changed} 条套用为 ${saved.name}`, 'ok');
+            setStatus(uiTf('已将 {count} 条套用为 {name}', { count: applied.changed, name: saved.name }), 'ok');
         }
 
         async function confirmAssExport(summary, title) {
@@ -647,7 +660,10 @@
             state.header = core.writeStylesToHeader(ensureHeader(), ensured.styles, { title: titleFromPath() });
             setDirty(true);
             refresh();
-            setStatus(`已写入双语样式 ${ensured.sourceStyle} / ${ensured.targetStyle}`, 'ok');
+            setStatus(uiTf('已写入双语样式 {source} / {target}', {
+                source: ensured.sourceStyle,
+                target: ensured.targetStyle,
+            }), 'ok');
             return ensured;
         }
 
@@ -792,7 +808,7 @@
                 setStatus(res?.error || 'ASS 导出失败', 'err');
                 return;
             }
-            setStatus(`已导出 ASS：${basename(res.path)}`, 'ok');
+            setStatus(uiTf('已导出 ASS：{name}', { name: basename(res.path) }), 'ok');
         }
 
         async function exportDualAss() {
@@ -843,7 +859,7 @@
                 setStatus(res?.error || '双语 ASS 导出失败', 'err');
                 return;
             }
-            setStatus(`已导出双语 ASS：${basename(res.path)}`, 'ok');
+            setStatus(uiTf('已导出双语 ASS：{name}', { name: basename(res.path) }), 'ok');
         }
 
         function listStyleNames() {
@@ -965,7 +981,7 @@
             persistMarkersDoc(result.doc);
             selectedSpeakerId = '';
             refresh();
-            setStatus(`已删除说话人 ${sp.name}`, 'ok');
+            setStatus(uiTf('已删除说话人 {name}', { name: sp.name }), 'ok');
         }
 
         function updateSpeakerStyleMap(speakerId, styleName) {
@@ -995,7 +1011,7 @@
             state.showAssStyleColumn = true;
             setDirty(true);
             refresh();
-            setStatus(`已生成 ${speakers.length} 个说话人样式并写入映射`, 'ok');
+            setStatus(uiTf('已生成 {count} 个说话人样式并写入映射', { count: speakers.length }), 'ok');
         }
 
         function applySpeakerMapToCues() {

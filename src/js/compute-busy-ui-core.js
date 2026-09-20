@@ -2,14 +2,38 @@
  * Compute-busy strip / elapsed / windowed-ASR tip helpers (pure).
  */
 (function (global, factory) {
-    const api = factory();
+    const api = factory(global);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubComputeBusyUi = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function computeBusyUiFactory() {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function computeBusyUiFactory(global) {
+    function uiTf(template, vars) {
+        try {
+            if (typeof global !== 'undefined' && typeof global.TransubUiTf === 'function') {
+                return global.TransubUiTf(template, vars);
+            }
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tf === 'function') {
+                return global.TransubI18n.tf(template, vars);
+            }
+        } catch { /* ignore */ }
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        try {
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tx === 'function') {
+                return global.TransubI18n.tx(text);
+            }
+        } catch { /* ignore */ }
+        return String(text || '');
+    }
+
     const WINDOWED_ASR_RE = /anime-whisper|kotoba-whisper/i;
 
     function formatComputeElapsed(sinceMs, nowMs = Date.now()) {
@@ -36,9 +60,9 @@
         const label = String(input.label || input.kind || '计算任务').trim() || '计算任务';
         const owner = String(input.owner || '').trim();
         const elapsed = formatComputeElapsed(input.since, input.now);
-        const bits = [`正在运行：${label}`];
+        const bits = [uiTf('正在运行：{label}', { label: uiTx(label) })];
         if (owner) bits.push(owner);
-        if (elapsed) bits.push(`已用 ${elapsed}`);
+        if (elapsed) bits.push(uiTf('已用 {elapsed}', { elapsed }));
         const text = bits.join(' · ');
         return {
             visible: true,
@@ -73,7 +97,7 @@
         return {
             current,
             total,
-            label: `分窗 ${current}/${total}`,
+            label: uiTf('分窗 {current}/{total}', { current, total }),
         };
     }
 

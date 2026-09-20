@@ -26,8 +26,6 @@
     const FEATURE_QC_SMART_FIX = 'qcSmartFix';
     /** 转录语义校正：ASR 后 MT 前 LLM 修 JA 听写（非重转写） */
     const FEATURE_ASR_SEMANTIC_REPAIR = 'asrSemanticRepair';
-    /** 字幕库 Pro：多配方 A/B、高保留、diff、发布包、语料导出等 */
-    const FEATURE_SUBTITLE_LIBRARY_PRO = 'subtitleLibraryPro';
     const FEATURE_ALL = '*';
 
     /** 同时绑定设备上限 */
@@ -38,6 +36,20 @@
     const REVALIDATE_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 
     const DAY_MS = 24 * 60 * 60 * 1000;
+
+    function formatUiMessage(template, vars) {
+        try {
+            const i18n = (typeof globalThis !== 'undefined' && globalThis.TransubI18n)
+                || (typeof window !== 'undefined' && window.TransubI18n)
+                || null;
+            if (i18n && typeof i18n.tf === 'function') return i18n.tf(template, vars);
+        } catch { /* ignore */ }
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
 
     function asIso(value) {
         if (!value) return null;
@@ -351,7 +363,9 @@
             ok: false,
             retryAt: new Date(last + TRANSFER_COOLDOWN_MS).toISOString(),
             retryInMs,
-            message: `换机冷却中，约 ${Math.ceil(retryInMs / DAY_MS)} 天后可再换机`,
+            message: formatUiMessage('换机冷却中，约 {days} 天后可再换机', {
+                days: Math.ceil(retryInMs / DAY_MS),
+            }),
         };
     }
 
@@ -410,7 +424,7 @@
                 entitled: false,
                 featureOk: false,
                 reason: 'feature_missing',
-                message: `当前许可未包含功能：${featureId}`,
+                message: formatUiMessage('当前许可未包含功能：{featureId}', { featureId }),
                 feature: featureId,
             };
         }
@@ -429,14 +443,21 @@
             : 7;
         const source = normalizeLlmSource(doc?.llmSource);
         const managed = normalizeManagedLlm(doc?.managedLlm);
-        const modelId = typeof managedCatalog.resolveSmartTranslateModelId === 'function'
+        const smartId = typeof managedCatalog.resolveSmartTranslateModelId === 'function'
             ? managedCatalog.resolveSmartTranslateModelId(managed)
-            : String(managed.smartTranslateModelId || managed.activeModelId || '').trim();
+            : String(managed.smartTranslateModelId || '').trim();
+        // Free-tier light-model whitelist: allow either 润色 or 推理 Instruct (entitlement only;
+        // hybrid/smart runtime never uses activeModelId as polish fallback).
+        const activeId = String(managed.activeModelId || '').trim();
+        const activeOk = !!(activeId
+            && !(typeof managedCatalog.isTranslateOnlyModel === 'function'
+                && managedCatalog.isTranslateOnlyModel(activeId)));
+        const modelId = smartId || (activeOk ? activeId : '');
         if (source !== 'managed') {
             return {
                 ok: false,
                 reason: 'byok_requires_advanced',
-                message: `外接 API / BYOK 需解锁 Pro。未开通时可先下载软件内轻量模型（≤${maxB}B）备用`,
+                message: formatUiMessage('外接 API 请改用翻译方式「外部翻译」。未开通 Pro 时可先下载软件内轻量模型（≤{maxB}B）备用', { maxB }),
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -445,7 +466,7 @@
             return {
                 ok: false,
                 reason: 'model_missing',
-                message: `请先在「智能翻译模型」中选用软件内轻量模型（≤${maxB}B，如 Qwen2.5 7B）`,
+                message: formatUiMessage('请先在「智能翻译」中选用软件内轻量模型（≤{maxB}B，如 Qwen2.5 7B）', { maxB }),
                 maxParamBillion: maxB,
                 modelId: '',
             };
@@ -456,7 +477,7 @@
             return {
                 ok: false,
                 reason: 'model_not_free',
-                message: `当前模型不在轻量白名单（需 ≤${maxB}B）。更大规格需解锁 Pro`,
+                message: formatUiMessage('当前模型不在轻量白名单（需 ≤{maxB}B）。更大规格需解锁 Pro', { maxB }),
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -469,7 +490,7 @@
             return {
                 ok: false,
                 reason: 'model_not_installed',
-                message: `请先下载软件内模型「${modelId}」`,
+                message: formatUiMessage('请先下载软件内模型「{modelId}」', { modelId }),
                 maxParamBillion: maxB,
                 modelId,
             };
@@ -477,7 +498,7 @@
         return {
             ok: true,
             reason: 'ok',
-            message: `已选用轻量模型（≤${maxB}B）；智能翻译仍需解锁 Pro`,
+            message: formatUiMessage('已选用轻量模型（≤{maxB}B）；智能翻译仍需解锁 Pro', { maxB }),
             maxParamBillion: maxB,
             modelId,
         };
@@ -608,7 +629,6 @@
         FEATURE_ASS_STYLE_EXPORT,
         FEATURE_QC_SMART_FIX,
         FEATURE_ASR_SEMANTIC_REPAIR,
-        FEATURE_SUBTITLE_LIBRARY_PRO,
         FEATURE_ALL,
         MAX_DEVICES,
         TRANSFER_COOLDOWN_MS,

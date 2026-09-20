@@ -14,14 +14,55 @@ describe('dual-subtitle-core', () => {
         assert.strictEqual(dual.resolveDualSourceSuffix('auto'), 'source');
         assert.strictEqual(dual.resolveDualSourceSuffix('zh'), 'source');
         assert.strictEqual(dual.resolveDualSourceSuffix('zh', 'zh'), 'source');
+        assert.strictEqual(dual.resolveDualSourceSuffix('zh', 'zh-cn'), 'source');
+        assert.strictEqual(dual.normalizeDualTargetSuffix('zh'), 'zh-cn');
+        assert.strictEqual(dual.normalizeDualTargetSuffix('zh-cn'), 'zh-cn');
+        assert.strictEqual(dual.normalizeDualTargetSuffix('zh-tw'), 'zh-tw');
+        assert.strictEqual(dual.normalizeTargetSubtitleNaming('media'), 'media');
+        assert.strictEqual(dual.normalizeTargetSubtitleNaming('lang'), 'lang');
+        assert.strictEqual(dual.resolveTargetFileSuffix({ targetSubtitleNaming: 'media' }), '');
+        assert.strictEqual(
+            dual.resolveTargetFileSuffix({ targetSubtitleNaming: 'lang', dualTargetSuffix: 'en' }),
+            'en',
+        );
+        const mediaPair = dual.buildDualPathPair('/out', 'Movie', {
+            sourceSuffix: 'ja',
+            targetSuffix: '',
+            format: 'srt',
+        });
+        assert.strictEqual(mediaPair.targetPath, '/out/Movie.srt');
+        assert.strictEqual(mediaPair.sourcePath, '/out/Movie.ja.srt');
+    });
+
+    it('summarizes bilingual chip / recipe labels', () => {
+        assert.strictEqual(dual.summarizeBilingualChip({ task: 'translate' }), '仅双语');
+        assert.strictEqual(dual.summarizeBilingualChip({ task: 'dual', merge: false }), '不合并');
+        assert.strictEqual(
+            dual.summarizeBilingualChip({ task: 'dual', merge: true, lineOrder: 'target-first' }),
+            '合并·译上',
+        );
+        assert.strictEqual(
+            dual.summarizeBilingualChip({
+                task: 'dual',
+                merge: true,
+                lineOrder: 'source-first',
+                deleteSources: true,
+            }),
+            '合并·原上·删单语',
+        );
+        assert.strictEqual(dual.summarizeBilingualRecipe({ task: 'dual', merge: false }), '');
+        assert.strictEqual(
+            dual.summarizeBilingualRecipe({ task: 'dual', merge: true, lineOrder: 'translation-first' }),
+            '双语合并·译上',
+        );
     });
 
     it('infers dual role and pair suffix', () => {
-        const src = dual.inferDualRole('demo.ja', 'demo', { sourceSuffix: 'ja', targetSuffix: 'zh' });
+        const src = dual.inferDualRole('demo.ja', 'demo', { sourceSuffix: 'ja', targetSuffix: 'zh-cn' });
         assert.strictEqual(src.role, 'source');
-        assert.strictEqual(src.pairSuffix, 'zh');
+        assert.strictEqual(src.pairSuffix, 'zh-cn');
 
-        const tgt = dual.inferDualRole('demo.zh', 'demo', { sourceSuffix: 'ja', targetSuffix: 'zh' });
+        const tgt = dual.inferDualRole('demo.zh-cn', 'demo', { sourceSuffix: 'ja', targetSuffix: 'zh-cn' });
         assert.strictEqual(tgt.role, 'target');
         assert.strictEqual(tgt.pairSuffix, 'ja');
 
@@ -53,7 +94,7 @@ describe('dual-subtitle-core', () => {
             { text: 'はじめまして、よろしくお願いします。' },
         ]);
         assert.strictEqual(roleJa.role, 'source');
-        assert.strictEqual(roleJa.pairSuffix, 'zh');
+        assert.strictEqual(roleJa.pairSuffix, 'zh-cn');
 
         const roleZh = dual.inferDualRoleFromCues([
             { text: '初次见面，请多关照。' },
@@ -160,6 +201,7 @@ describe('dual-subtitle-core', () => {
         assert.strictEqual(merged[0].text, 'Hello\n你好');
         assert.strictEqual(merged[1].text, 'World\n世界');
         assert.strictEqual(dual.suggestMergedExportName('D:/x/demo.zh.srt'), 'demo.srt');
+        assert.strictEqual(dual.suggestMergedExportName('D:/x/demo.zh-cn.srt'), 'demo.srt');
         assert.strictEqual(
             dual.suggestMergedExportName('D:/x/demo.zh.srt', { asVideoName: false }),
             'demo.bilingual.srt',
@@ -199,11 +241,11 @@ describe('normalize dual task options', () => {
     it('accepts dual task and dual display defaults', () => {
         const opts = normalizeTransWithAiRuntimeOptions({ task: 'dual', language: 'ja' });
         assert.strictEqual(opts.task, 'dual');
-        assert.strictEqual(opts.dualTargetSuffix, 'zh');
+        assert.strictEqual(opts.dualTargetSuffix, 'zh-cn');
         assert.strictEqual(opts.dualPrimaryTrack, 'target');
         assert.strictEqual(opts.dualDisplayMode, 'both');
         assert.strictEqual(opts.dualLineOrder, 'target-first');
-        assert.strictEqual(opts.mergeBilingualSubtitles, true);
+        assert.strictEqual(opts.mergeBilingualSubtitles, false);
         assert.strictEqual(opts.deleteSourcesAfterMergeBilingual, false);
     });
 

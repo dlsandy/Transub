@@ -7,6 +7,8 @@ const {
     hostMatchesBypass,
     applyProxyToEnv,
     resolveHfProbeUrl,
+    chooseBestHfCandidate,
+    DEFAULT_HF_MIRROR_ENDPOINT,
 } = require('../electron/proxy-settings');
 
 describe('proxy-settings', () => {
@@ -71,5 +73,36 @@ describe('proxy-settings', () => {
         assert.strictEqual(resolveHfProbeUrl('https://hf-mirror.com/').url, 'https://hf-mirror.com');
         assert.strictEqual(resolveHfProbeUrl('hf-mirror.com').url, 'https://hf-mirror.com');
         assert.strictEqual(resolveHfProbeUrl('not a url').ok, false);
+    });
+
+    it('chooseBestHfCandidate prefers reachable then lower latency', () => {
+        const pick = chooseBestHfCandidate([
+            { id: 'official', hfEndpoint: '', label: '官方 Hub', ok: true, latencyMs: 400 },
+            { id: 'mirror', hfEndpoint: DEFAULT_HF_MIRROR_ENDPOINT, label: '国内镜像', ok: true, latencyMs: 80 },
+        ]);
+        assert.strictEqual(pick.ok, true);
+        assert.strictEqual(pick.hfEndpoint, DEFAULT_HF_MIRROR_ENDPOINT);
+        assert.strictEqual(pick.id, 'mirror');
+        assert.strictEqual(pick.latencyMs, 80);
+    });
+
+    it('chooseBestHfCandidate prefers only reachable when other is faster but down', () => {
+        const pick = chooseBestHfCandidate([
+            { id: 'official', hfEndpoint: '', label: '官方 Hub', ok: true, latencyMs: 900 },
+            { id: 'mirror', hfEndpoint: DEFAULT_HF_MIRROR_ENDPOINT, label: '国内镜像', ok: false, latencyMs: 10 },
+        ]);
+        assert.strictEqual(pick.ok, true);
+        assert.strictEqual(pick.hfEndpoint, '');
+        assert.strictEqual(pick.id, 'official');
+    });
+
+    it('chooseBestHfCandidate falls back to mirror when all fail', () => {
+        const pick = chooseBestHfCandidate([
+            { id: 'official', hfEndpoint: '', ok: false },
+            { id: 'mirror', hfEndpoint: DEFAULT_HF_MIRROR_ENDPOINT, ok: false },
+        ]);
+        assert.strictEqual(pick.ok, false);
+        assert.strictEqual(pick.fallback, true);
+        assert.strictEqual(pick.hfEndpoint, DEFAULT_HF_MIRROR_ENDPOINT);
     });
 });

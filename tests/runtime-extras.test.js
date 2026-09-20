@@ -23,7 +23,7 @@ function runExtras(script) {
 }
 
 describe('runtime_extras (engine)', () => {
-    it('maps whisper / sensevoice / mt model ids to pip extras', function () {
+    it('maps whisper / sensevoice model ids to pip extras', function () {
         if (process.platform !== 'win32') {
             this.skip();
         }
@@ -33,15 +33,20 @@ from transub_engine.runtime_extras import extras_for_model_ids
 print(json.dumps(extras_for_model_ids([
     'whisper-large-v3-turbo',
     'sensevoice-small',
-    'opus-mt-ja-zh',
     'whisperseg-asmr',
 ])))
 `);
         const keys = JSON.parse(out);
         assert.ok(keys.includes('asr-whisper'));
         assert.ok(keys.includes('asr-sensevoice'));
-        assert.ok(keys.includes('mt'));
         assert.ok(keys.includes('vad-whisperseg'));
+        // Opus-MT retired — opus-mt-* no longer maps to a pip "mt" extra
+        const opusKeys = JSON.parse(runExtras(`
+import json
+from transub_engine.runtime_extras import extras_for_model_ids
+print(json.dumps(extras_for_model_ids(['opus-mt-ja-zh'])))
+`));
+        assert.ok(!opusKeys.includes('mt'));
     });
 
     it('Whisper extras explicitly include ctranslate2 and onnxruntime (no-deps wheel installs)', function () {
@@ -163,8 +168,8 @@ print(json.dumps({
         assert.strictEqual(payload.skipPygments, true);
         assert.strictEqual(payload.skipTyper, true);
         assert.ok(
-            payload.pkgs.some((p) => /^tokenizers/.test(p) && /<=0\.23\.1/.test(p)),
-            `expected tokenizers<=0.23.1 in ${payload.pkgs}`,
+            payload.pkgs.some((p) => /^tokenizers==0\.22\.2/.test(p)),
+            `expected tokenizers==0.22.2 in ${payload.pkgs}`,
         );
         assert.ok(
             payload.pkgs.some((p) => /^huggingface-hub/.test(p) && /<1\.0/.test(p)),
@@ -216,6 +221,201 @@ print(json.dumps({
         if (payload.importable && payload.hasGpu) {
             assert.strictEqual(payload.cpuPinOk, true);
         }
+    });
+
+    it('requirement_satisfied tolerates None/blank metadata versions (tokenizers pin)', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine.runtime_extras import (
+    TOKENIZERS_PIN,
+    _requirement_satisfied,
+    _tokenizers_pin_violation,
+)
+results = {}
+with patch("transub_engine.runtime_extras.pkg_version", return_value=None):
+    results["noneOk"] = _requirement_satisfied(TOKENIZERS_PIN)
+    results["noneViolation"] = bool(_tokenizers_pin_violation())
+with patch("transub_engine.runtime_extras.pkg_version", return_value=""):
+    results["blankOk"] = _requirement_satisfied(TOKENIZERS_PIN)
+with patch("transub_engine.runtime_extras.pkg_version", return_value="0.22.2"):
+    results["pinOk"] = _requirement_satisfied(TOKENIZERS_PIN)
+with patch("transub_engine.runtime_extras.pkg_version", return_value="0.23.1"):
+    results["driftOk"] = _requirement_satisfied(TOKENIZERS_PIN)
+print(json.dumps(results))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.noneOk, false);
+        assert.strictEqual(payload.noneViolation, true);
+        assert.strictEqual(payload.blankOk, false);
+        assert.strictEqual(payload.pinOk, true);
+        assert.strictEqual(payload.driftOk, false);
+    });
+
+    it('local wheel install retries with --ignore-installed on uninstall-no-record-file', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json, tempfile
+from pathlib import Path
+from unittest.mock import patch
+from transub_engine import pip_mirror_util as pm
+
+whl = Path(tempfile.gettempdir()) / "numpy-2.4.6-cp312-cp312-win_amd64.whl"
+whl.write_bytes(b"fake")
+calls = []
+
+class FakeProc:
+    def __init__(self, cmd):
+        self.cmd = list(cmd)
+        self.stdout = self
+        self._lines = []
+        self._i = 0
+        if "--force-reinstall" in self.cmd:
+            self._lines = [
+                "Processing " + str(whl),
+                "ERROR: uninstall-no-record-file",
+            ]
+            self._code = 1
+        else:
+            self._lines = ["Successfully installed numpy-2.4.6"]
+            self._code = 0
+        calls.append({"ignore": "--ignore-installed" in self.cmd, "force": "--force-reinstall" in self.cmd})
+    def readline(self):
+        if self._i >= len(self._lines):
+            return ""
+        line = self._lines[self._i] + "\\n"
+        self._i += 1
+        return line
+    def wait(self, timeout=None):
+        return self._code
+    def kill(self):
+        pass
+
+def fake_popen(cmd, **kwargs):
+    return FakeProc(cmd)
+
+with patch.object(pm.subprocess if hasattr(pm, "subprocess") else __import__("subprocess"), "Popen", side_effect=fake_popen):
+    # patch where used: inside install_local_wheel_files it imports subprocess locally
+    pass
+
+import subprocess as sp
+with patch.object(sp, "Popen", side_effect=fake_popen), \\
+     patch.object(pm, "_dist_info_has_record", return_value=True):
+    result = pm.install_local_wheel_files([str(whl)], detail_prefix="测试")
+try:
+    whl.unlink(missing_ok=True)
+except Exception:
+    pass
+print(json.dumps({
+    "ok": bool(result.get("ok")),
+    "repaired": bool(result.get("repairedNoRecord")),
+    "calls": calls,
+    "name": pm._wheel_distribution_name(str(whl)),
+    "detect": pm._pip_log_is_uninstall_no_record("ERROR: uninstall-no-record-file"),
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.name, 'numpy');
+        assert.strictEqual(payload.detect, true);
+        assert.strictEqual(payload.ok, true);
+        assert.strictEqual(payload.repaired, true);
+        assert.strictEqual(payload.calls.length, 2);
+        assert.strictEqual(payload.calls[0].force, true);
+        assert.strictEqual(payload.calls[1].ignore, true);
+    });
+
+    it('ensure_asr_qwen3 is metadata-first (does not import-probe before install)', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from importlib.metadata import PackageNotFoundError
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+
+order = []
+def track_runtime(*a, **k):
+    order.append("runtime_probe")
+    return {"ok": True, "ready": True, "status": "ready", "missing": [], "errors": [], "versions": {}}
+def track_np(**kwargs):
+    order.append("numpy_fix")
+    return {"ok": True, "skipped": True, "version": "2.4.6"}
+def track_unsat(pkgs):
+    order.append("unsat")
+    return [re.TOKENIZERS_PIN]
+def track_install(pkgs, **kwargs):
+    order.append("install")
+    return {"ok": True, "installed": list(pkgs), "skipped": False}
+def track_loaded():
+    order.append("loaded_check")
+    return False
+
+with patch.object(re, "probe_asr_qwen3_runtime", side_effect=track_runtime), \\
+     patch.object(re, "ensure_numpy_numba_compatible", side_effect=track_np), \\
+     patch.object(re, "_unsatisfied_packages", side_effect=track_unsat), \\
+     patch.object(re, "_qwen3_native_modules_loaded", side_effect=track_loaded), \\
+     patch.object(re, "_install_packages", side_effect=track_install), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value="tok bad"), \\
+     patch.object(re, "pkg_version", side_effect=PackageNotFoundError("qwen-asr")):
+    result = re.ensure_asr_qwen3()
+print(json.dumps({"ok": bool(result.get("ok")), "order": order}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ok, true);
+        assert.deepStrictEqual(
+            payload.order.slice(0, 4),
+            ['loaded_check', 'numpy_fix', 'unsat', 'install'],
+        );
+        const runtimeIdx = payload.order.indexOf('runtime_probe');
+        const installIdx = payload.order.indexOf('install');
+        assert.ok(installIdx >= 0);
+        assert.ok(runtimeIdx > installIdx, `order=${JSON.stringify(payload.order)}`);
+    });
+
+    it('probe_asr_qwen3 treats blank numpy metadata as missing', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from unittest.mock import patch
+from transub_engine import runtime_extras as re
+import transub_engine.device as device
+
+def ver(name):
+    if name == "numpy":
+        return None
+    mapping = {
+        "transformers": "5.13.0",
+        "torch": "2.11.0",
+        "tokenizers": "0.22.2",
+        "numba": "0.60.0",
+        "huggingface-hub": "1.5.0",
+    }
+    return mapping.get(name, "1.0.0")
+
+with patch.object(re, "_pkg_version_str", side_effect=ver), \\
+     patch.object(re, "_tokenizers_pin_mismatch", return_value=""), \\
+     patch.object(re, "_requirement_satisfied", return_value=True), \\
+     patch.object(device, "detect_device", return_value={"hasCuda": False}), \\
+     patch.object(device, "torch_cuda_libs_present", return_value=False):
+    probe = re.probe_asr_qwen3()
+print(json.dumps({
+    "ready": bool(probe.get("ready")),
+    "missing": probe.get("missing") or [],
+    "hint": probe.get("hint") or "",
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.ready, false);
+        assert.ok(payload.missing.includes('numpy'));
+        assert.ok(/numpy/i.test(payload.hint));
     });
 
     it('probe_asr_whisper returns a structured readiness payload', function () {
@@ -278,6 +478,29 @@ print(json.dumps({
         );
     });
 
+    it('order_pip_mirrors pins preferred host first without probe', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.pip_mirror_util import order_pip_mirrors, resolve_pip_mirror_order
+ordered = order_pip_mirrors(None, prefer="tsinghua")
+mirrors, probe_rows, used = resolve_pip_mirror_order(prefer="aliyun")
+print(json.dumps({
+    "first": ordered[0][1],
+    "aliyunFirst": mirrors[0][1],
+    "usedPrefer": used,
+    "probeEmpty": len(probe_rows) == 0,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.first, 'pypi.tuna.tsinghua.edu.cn');
+        assert.strictEqual(payload.aliyunFirst, 'mirrors.aliyun.com');
+        assert.strictEqual(payload.usedPrefer, true);
+        assert.strictEqual(payload.probeEmpty, true);
+    });
+
     it('order_pip_mirrors prefers higher throughput over lower latency', function () {
         if (process.platform !== 'win32') {
             this.skip();
@@ -332,19 +555,40 @@ print(json.dumps(order_pip_mirrors(rows, mirrors=[
         }
         const out = runExtras(`
 import json
-from transub_engine.pip_mirror_util import packages_base_url, is_mirror_http_deny
+from transub_engine.pip_mirror_util import PIP_MIRRORS, packages_base_url, is_mirror_http_deny
 print(json.dumps({
+    "hosts": [h for _, h in PIP_MIRRORS],
     "aliyun": packages_base_url("https://mirrors.aliyun.com/pypi/simple"),
     "huawei": packages_base_url("https://mirrors.huaweicloud.com/repository/pypi/simple"),
     "tuna": packages_base_url("https://pypi.tuna.tsinghua.edu.cn/simple"),
+    "ustc": packages_base_url("https://pypi.mirrors.ustc.edu.cn/simple"),
+    "tencent": packages_base_url("https://mirrors.cloud.tencent.com/pypi/simple"),
+    "huawei_repo": packages_base_url("https://repo.huaweicloud.com/repository/pypi/simple"),
+    "netease": packages_base_url("https://mirrors.163.com/pypi/simple"),
     "pypi": packages_base_url("https://pypi.org/simple"),
     "stall": is_mirror_http_deny("STALL: 下载停滞超过 90 秒"),
 }))
 `);
         const payload = JSON.parse(out);
+        for (const host of [
+            'mirrors.aliyun.com',
+            'pypi.tuna.tsinghua.edu.cn',
+            'pypi.mirrors.ustc.edu.cn',
+            'mirrors.cloud.tencent.com',
+            'mirrors.huaweicloud.com',
+            'repo.huaweicloud.com',
+            'mirrors.163.com',
+            'pypi.org',
+        ]) {
+            assert.ok(payload.hosts.includes(host), `missing pip mirror host ${host}`);
+        }
         assert.strictEqual(payload.aliyun, 'https://mirrors.aliyun.com/pypi/packages');
         assert.strictEqual(payload.huawei, 'https://mirrors.huaweicloud.com/repository/pypi/packages');
         assert.strictEqual(payload.tuna, 'https://pypi.tuna.tsinghua.edu.cn/packages');
+        assert.strictEqual(payload.ustc, 'https://pypi.mirrors.ustc.edu.cn/packages');
+        assert.strictEqual(payload.tencent, 'https://mirrors.cloud.tencent.com/pypi/packages');
+        assert.strictEqual(payload.huawei_repo, 'https://repo.huaweicloud.com/repository/pypi/packages');
+        assert.strictEqual(payload.netease, 'https://mirrors.163.com/pypi/packages');
         assert.strictEqual(payload.pypi, 'https://files.pythonhosted.org/packages');
         assert.strictEqual(payload.stall, true);
     });
@@ -374,6 +618,32 @@ print(json.dumps({
         assert.strictEqual(payload.progress, true);
         assert.strictEqual(payload.noise, false);
         assert.strictEqual(payload.empty, false);
+    });
+
+    it('plan_parallel_ranges splits large objects and keeps small ones whole', function () {
+        if (process.platform !== 'win32') {
+            this.skip();
+        }
+        const out = runExtras(`
+import json
+from transub_engine.pip_mirror_util import plan_parallel_ranges, DOWNLOAD_PARALLEL_MIN_BYTES
+small = plan_parallel_ranges(1024 * 1024)
+big = plan_parallel_ranges(DOWNLOAD_PARALLEL_MIN_BYTES * 4, connections=8)
+print(json.dumps({
+    "smallN": len(small),
+    "small": small,
+    "bigN": len(big),
+    "first": big[0],
+    "last": big[-1],
+    "cover": big[-1][1] + 1,
+    "total": DOWNLOAD_PARALLEL_MIN_BYTES * 4,
+}))
+`);
+        const payload = JSON.parse(out);
+        assert.strictEqual(payload.smallN, 1);
+        assert.ok(payload.bigN >= 2);
+        assert.strictEqual(payload.first[0], 0);
+        assert.strictEqual(payload.cover, payload.total);
     });
 
     it('transfer_should_abort catches stall, too-slow, and max wall time', function () {

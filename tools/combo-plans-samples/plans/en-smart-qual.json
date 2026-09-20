@@ -1,0 +1,41 @@
+{
+  "id": "en-smart-qual",
+  "version": 2,
+  "group": "western",
+  "name": "欧美剧 · 混合 · 质量",
+  "description": "欧美剧：Whisper turbo 听写+ 混合翻译（TranslateGemma E4B 句级翻译，Qwen3 14B 剧情贴合润色）硬件档：质量 · >12GB 显存。需 Pro。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "whisper-large-v3-turbo",
+    "silero-vad",
+    "translategemma-4-sub-e4b",
+    "qwen3-14b"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "whisper-large-v3-turbo",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "translateMode": "smart",
+    "engineLlmMtModel": "translategemma-4-sub-e4b",
+    "engineProfile": "quality",
+    "activePresetId": "film-vad-only",
+    "vadEnabled": true,
+    "filmVadPreset": true,
+    "audioLightDenoise": false,
+    "beamSize": 5,
+    "smartTranslateModelId": "qwen3-14b"
+  }
+}

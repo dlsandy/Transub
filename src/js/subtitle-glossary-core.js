@@ -62,6 +62,7 @@
             caseSensitive: !!raw.caseSensitive,
             enabled: raw.enabled !== false,
             note: String(raw.note || '').trim(),
+            asrReplace: raw.asrReplace === true || raw.asrMisheard === true,
         };
     }
 
@@ -355,7 +356,18 @@
      * Soft-AV JA vocabulary for Whisper (keep didactic text out — model echoes it).
      * Mens-esthe hotwords help massage titles; school/sibling titles (IPZZ-745)
      * should use a lighter general prompt via options.hint / mediaPath / title.
+     * Keep compact — sync with transub_engine.cue_cleanup.ja_av_domain_whisper_bias.
      */
+    const JA_AV_MENS_ESTHE_HOTWORDS = [
+        'メンズエステ', 'メンエス', 'オイル', '指圧', '半パンツ', 'リンパ',
+        'ふくらはぎ', 'ほぐして', 'うつ伏せ', '仰向け', 'ゲスト',
+        '施術', 'マッサージ', '肩', '背中', '追加', 'コース', '店長', '着替え',
+    ].join(' ');
+    const JA_AV_GENERAL_HOTWORDS = [
+        'お兄ちゃん', '気持ちいい', 'だめ', 'エッチ', 'あぁん',
+        'やめて', '恥ずかしい', '好き', 'キス', 'もっと',
+    ].join(' ');
+
     function buildJaAvAsrPromptHints(options = {}) {
         const hint = [
             options.hint,
@@ -369,18 +381,63 @@
         if (nonEsthe && !esthe) {
             return {
                 initial_prompt: '日本語の自然な会話。',
-                hotwords: 'お兄ちゃん 気持ちいい だめ エッチ あぁん',
-                termCount: 5,
+                hotwords: JA_AV_GENERAL_HOTWORDS,
+                termCount: JA_AV_GENERAL_HOTWORDS.split(/\s+/).filter(Boolean).length,
                 domain: 'soft_av_general',
             };
         }
         return {
-            // Keep short — long term lists get echoed as cues (JUR-809 / HMN-878).
             initial_prompt: 'メンズエステの店内会話。',
-            hotwords: 'メンズエステ メンエス オイル 指圧 半パンツ リンパ ふくらはぎ ほぐして うつ伏せ 仰向け ゲスト',
-            termCount: 11,
+            hotwords: JA_AV_MENS_ESTHE_HOTWORDS,
+            termCount: JA_AV_MENS_ESTHE_HOTWORDS.split(/\s+/).filter(Boolean).length,
             domain: 'mens_esthe',
         };
+    }
+
+    /** Parse `blacklist: a | b` from glossary entry note (asr-hotword import). */
+    function parseAsrBlacklistNote(note) {
+        const raw = String(note || '').trim();
+        const m = /^blacklist:\s*(.+)$/i.exec(raw);
+        if (!m) return [];
+        return m[1].split('|').map((s) => s.trim()).filter(Boolean);
+    }
+
+    function entryAsrReplaceEnabled(entry) {
+        if (!entry || entry.enabled === false) return false;
+        if (entry.asrReplace === true || entry.asrMisheard === true) return true;
+        const note = String(entry.note || '').toLowerCase();
+        if (note.includes('asr-hotword') || note.includes('bad-pool') || note.includes('misheard')) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Build engine asrGlossary rows: alias/misheard → canonical.
+     * Only entries marked for replace (hotword / bad-pool); AniList names stay prompt-only.
+     */
+    function buildAsrGlossaryEntries(glossary, options = {}) {
+        const doc = normalizeGlossary(glossary);
+        const out = [];
+        const seen = new Set();
+        for (const entry of doc.entries) {
+            if (!entryAsrReplaceEnabled(entry)) continue;
+            const correct = String(entry.canonical || '').trim();
+            if (!correct) continue;
+            const blacklist = parseAsrBlacklistNote(entry.note);
+            for (const alias of entry.aliases || []) {
+                const wrong = String(alias || '').trim();
+                if (!wrong || wrong === correct) continue;
+                const key = `${wrong.toLowerCase()}\0${correct}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                const row = { wrong, correct, stage: 'asr' };
+                if (blacklist.length) row.blacklist = blacklist;
+                out.push(row);
+            }
+        }
+        out.sort((a, b) => b.wrong.length - a.wrong.length || a.wrong.localeCompare(b.wrong, 'ja'));
+        return out;
     }
 
     return {
@@ -403,6 +460,9 @@
         collectProtectTerms,
         buildAsrPromptHints,
         buildJaAvAsrPromptHints,
+        parseAsrBlacklistNote,
+        entryAsrReplaceEnabled,
+        buildAsrGlossaryEntries,
         makeEntryId,
     };
 }));

@@ -134,10 +134,9 @@
         dame: /だめ|ダメ|駄目|いや/,
     });
 
-    /**
-     * JA anchor → expected ZH cover (for sufficiency / under detection).
-     * @type {ReadonlyArray<{ id: string, ja: RegExp, zh: RegExp }>}
-     */
+    const IKU_SKIP_JA_BASE = reFromB64('44OQ44Kk44KvfOOCpOODg+ODj+ODs3zjgqTjg4Pjg4Hjg43jg7x844GE44Gj44Gh44KD44GL44KPfOOBhOOBo+OBoeOCg+ael3zjgYTjgaPjgaHjgoPjgYQkfOOBhOOBoeOBjeOCjOOBhHzjgYTjgaPjgaHjgoPjgpPjgYTjgaPjgaHjgoN844GE44Gj44Gh44KD44KT44GE44Gh44KDfOOBhOOBo+OBoeOCg+OCk3zjgqTjgq3jgaHjgoPjgpN844K044Kt44Ol44Kk44KkfOOCuOODo+ODnuOCpOOCr3zjgrDjg7zjgrjjg6Pjg7PjgrHjg7N844GC44Gh44KF44KC55ay44KMfOOCpOOCpOOCpOOCreODiOOCouODq3zjgYTjgaPjgaHjgoPlpKfkuot844GE44Gj44Gh44KD44KT44GT44GqfOOBhOOBo+OBoeOCg+OCk+ODreODvOOCt+ODp+ODs3zjgq/jgqTjg4Pjg4R844Kk44OD44Go5byVfOOCueOCpOODg+ODgXzkuK3ooYzjgY185Lul5aSW44GE44Gj44Gh44KDfOOBk+OCk+OBquOCguOCk+OBp+OBhOOBo+OBoeOCg+OBhnzjgYTjgaPjgaHjgoPjgYbjgoR844Op44Kk44KvfExJS0V844K544Oq44O8fOODnuOCpOOCr3zjgYTjgaPjgaHjgoPjgYTjgb7jgZfjgod844GE44Gj44Gh44KD44GE44G+44GX44KH44GGfOS8neOBiOOBpuOBhOOBo+OBoeOCg3zli5XjgYTjgabjgYTjgaPjgaHjgoN85o6l5a6iLnswLDEwfeOBhOOBo+OBoeOCg3zjgYTjgaPjgaHjgoPjgarjgZXjgZ3jgYZ844Kv44Kk44OD44K/44O8fOODhOOCpOODg+OCv+ODvHxUd2l0dGVyfOebruOBjOOBhOOBo+OBoeOCg+OBhnznm67jgYzjgYTjgaPjgaHjgoN844Oi44K244Kk44Kv44Gn6KaL44KMfOimi+OCjOOBn+OCieimi+OCjHzpu5njgaPjgabjgYTjgaPjgaHjgoN844Kk44OD44OB44Gq5aWzfOOCteOCpOOCr+ODq3zjg6zjg7Pjgr/jgrXjgqTjgq/jg6t844Oq44K144Kk44Kv44OrfOODkOOCpOOCr+ODrOODs+ODiHzjgrfjg6PjgqTjgq9844GE44Gj44Gh44KD44GE44Gh44KDfOOBhOOBo+OBoeOCg+OBiuOBhnznnJ/jgaPnmb3jgavjgarjgaN844Kk44Kt44GPfOOCpOOCreeLgnzjgYvjgaPjgZPjgYTjgaPjgaHjgoN844GL44Gj44GT44GE44GELnswLDJ944Gj44Gh44KDfOOCs+ODg+OCr+OBq3zjg4rjgqTjgq1844Kv44Kk44OD44KvfOOCueOCr+OCpOODg+OCr3zjgq/jgqTjg4Pjgq/jg57jg4PjgrXjg7zjgrh844Kv44Kk44OD44Kv44Oe44K544K/fOOCr+OCpOODg+OCr+ODkOOCuXzjg57jg4PjgrXjg7zjgrh844Oi44OL44K/44O8fOOCreODo+ODs+ODmuODvOODsw==');
+    const IKU_DISCOURSE_SKIP_JA = /言っちゃ|っていっちゃう|言っちゃう|言っちゃった|イクには早|まだイクには|入れちゃう|入れちゃうぞ|また入れ|キスイッた|キスいった|キスした|キスって/;
+
     const ANCHOR_COVER = Object.freeze([
         { id: 'nipple', ja: reFromB64('5Lmz6aaWfOOBoeOBj+OBsw=='), zh: reFromB64('5Lmz5aS0fOWltuWktHzkubPpppY=') },
         {
@@ -157,7 +156,7 @@
             id: 'irete',
             ja: reFromB64('5YWl44KMfOaMv+WFpXzmjL/jgow='),
             zh: /插|进|入|深|塞|放/,
-            skipJa: reFromB64('44K344Oj44Ov44O8fOmiqOWRgnzjgYrpoqjlkYJ86Kaq44GrfOaWh+WMlnzlhaXjgoznial85YWl44KM44KL44Gq44KIfOWPl+OBkeWFpeOCjHzjg5DjgqTjg4jlhaXjgox844K744OD44OI44KS5YWl44KMfOWFpeOCjOOBvuOBmXzkurrjga7lhaXjgozjgot85YWl44KM44Gm44GP44KM44Gq44GE44Gu44GtfOWrgeWFpeOCjHzlq4HlhaV85omL44Gr5YWl44KMfOODkOOCpOOCr3zjgqTjg6Tjg5vjg7N86Z+z5YWl44KMfOOBiOOBguWFpeOCjHzjgqjjgqLlhaXjgox85omL5YWl44KMfOWKoOeCueawtHzmsLTlhaXjgox85Yqb5YWl44KM44KLfOWKm+OCkuWFpeOCjHzlipvlhaXjgox85beu44GX5YWl44KMfOaMv+WFpeW/heimgeOBquOBi+OBo+OBn3zlhaXjgozjgbLjgoPjgpN86YCj57Wh5YWl44KMfOaWreOCinzohbDlhaXjgox844GK6YWS5YWl44KMfOmFkuWFpeOCjHzjg6njgqTjg7N86YOo6aGe5YWl44KMfOWkp+WtpnzkuInmtYF86Kqw44Gn44KC5YWl44KM44KLfOeUs+OBl+WFpeOCjHzkuovmoYh844OR44K644Or44Gu5YWl44KMfOODkeOCuuODq+OBp+OBgnzniLbjgaHjgoPjgpPjgahccyrlhaXjgozjgZ/jgol844K544Kk44OD44OB5YWl44KMfOOCu+ODq+ODonzjgrPjg7zjg5Ljg7zlhaXjgox844ON44KufOODi+ODs+OCuOODs3zjg5vjgqbjg6zjg7Pjgr3jgqZ85Lq65Y+CfOWFpeOCjOOBn+S8muekvnzkvJrnpL4uezAsOH3lhaXjgox844KC5YWl44KM44Gk44GkfOe0ueS7i+OBp+WFpeOCjHzkuIDnt5LjgavlhaXjgox85LiA57eS44GrLirlhaXjgow='),
+            skipJa: new RegExp(`${reFromB64('44K344Oj44Ov44O8fOmiqOWRgnzjgYrpoqjlkYJ86Kaq44GrfOaWh+WMlnzlhaXjgoznial85YWl44KM44KL44Gq44KIfOWPl+OBkeWFpeOCjHzjg5DjgqTjg4jlhaXjgox844K744OD44OI44KS5YWl44KMfOWFpeOCjOOBvuOBmXzkurrjga7lhaXjgozjgot85YWl44KM44Gm44GP44KM44Gq44GE44Gu44GtfOWrgeWFpeOCjHzlq4HlhaV85omL44Gr5YWl44KMfOODkOOCpOOCr3zjgqTjg6Tjg5vjg7N86Z+z5YWl44KMfOOBiOOBguWFpeOCjHzjgqjjgqLlhaXjgox85omL5YWl44KMfOWKoOeCueawtHzmsLTlhaXjgox85Yqb5YWl44KM44KLfOWKm+OCkuWFpeOCjHzlipvlhaXjgox85beu44GX5YWl44KMfOaMv+WFpeW/heimgeOBquOBi+OBo+OBn3zlhaXjgozjgbLjgoPjgpN86YCj57Wh5YWl44KMfOaWreOCinzohbDlhaXjgox844GK6YWS5YWl44KMfOmFkuWFpeOCjHzjg6njgqTjg7N86YOo6aGe5YWl44KMfOWkp+WtpnzkuInmtYF86Kqw44Gn44KC5YWl44KM44KLfOeUs+OBl+WFpeOCjHzkuovmoYh844OR44K644Or44Gu5YWl44KMfOODkeOCuuODq+OBp+OBgnzniLbjgaHjgoPjgpPjgahccyrlhaXjgozjgZ/jgol844K544Kk44OD44OB5YWl44KMfOOCu+ODq+ODonzjgrPjg7zjg5Ljg7zlhaXjgox844ON44KufOODi+ODs+OCuOODs3zjg5vjgqbjg6zjg7Pjgr3jgqZ85Lq65Y+CfOWFpeOCjOOBn+S8muekvnzkvJrnpL4uezAsOH3lhaXjgox844KC5YWl44KM44Gk44GkfOe0ueS7i+OBp+WFpeOCjHzkuIDnt5LjgavlhaXjgox85LiA57eS44GrLirlhaXjgow=').source}|ハンバーグ|ナツメグ|入れた方が|レシピ|料理|警察|シェア|事故|事件|情報|手のひらで口|掌で口|お茶入れ|入れてきます|入れてくる|入れて来|スープ入れ|調味料入れ`),
         },
         { id: 'lick', ja: reFromB64('6IiQfOODleOCp+ODqQ=='), zh: reFromB64('6IiUfOWQq3zlj6PkuqR85Y+j54KufOWQuQ==') },
         {
@@ -173,7 +172,7 @@
                 id: 'iku',
             ja: reFromB64('KD88IVvjg5Djg7Tjg6FdKeOCpFvjgq/jg4PjgaNdfOOBhOOBo+OBoeOCg3zjgqTjgq0='),
             zh: reFromB64('5bCE5LqGfOWOu+S6hnzopoHlsIR86KaB5Y67fOmrmOa9rnzlh7rmnaV86KaB5p2lfOW/jeS4jeS9j3zlj6/ku6XkuoblkJd85oiR5Y67fOWGjeWOu3zkuI3og73ljrt85bCE5b6XfOWwhOi/h3zopoHms4R85Y675ZCnfOS4jeaDs+WOu3zlsITkuIDmrKF85bCE5LiA'),
-            skipJa: reFromB64('44OQ44Kk44KvfOOCpOODg+ODj+ODs3zjgqTjg4Pjg4Hjg43jg7x844GE44Gj44Gh44KD44GL44KPfOOBhOOBo+OBoeOCg+ael3zjgYTjgaPjgaHjgoPjgYQkfOOBhOOBoeOBjeOCjOOBhHzjgYTjgaPjgaHjgoPjgpPjgYTjgaPjgaHjgoN844GE44Gj44Gh44KD44KT44GE44Gh44KDfOOBhOOBo+OBoeOCg+OCk3zjgqTjgq3jgaHjgoPjgpN844K044Kt44Ol44Kk44KkfOOCuOODo+ODnuOCpOOCr3zjgrDjg7zjgrjjg6Pjg7PjgrHjg7N844GC44Gh44KF44KC55ay44KMfOOCpOOCpOOCpOOCreODiOOCouODq3zjgYTjgaPjgaHjgoPlpKfkuot844GE44Gj44Gh44KD44KT44GT44GqfOOBhOOBo+OBoeOCg+OCk+ODreODvOOCt+ODp+ODs3zjgq/jgqTjg4Pjg4R844Kk44OD44Go5byVfOOCueOCpOODg+ODgXzkuK3ooYzjgY185Lul5aSW44GE44Gj44Gh44KDfOOBk+OCk+OBquOCguOCk+OBp+OBhOOBo+OBoeOCg+OBhnzjgYTjgaPjgaHjgoPjgYbjgoR844Op44Kk44KvfExJS0V844K544Oq44O8fOODnuOCpOOCr3zjgYTjgaPjgaHjgoPjgYTjgb7jgZfjgod844GE44Gj44Gh44KD44GE44G+44GX44KH44GGfOS8neOBiOOBpuOBhOOBo+OBoeOCg3zli5XjgYTjgabjgYTjgaPjgaHjgoN85o6l5a6iLnswLDEwfeOBhOOBo+OBoeOCg3zjgYTjgaPjgaHjgoPjgarjgZXjgZ3jgYZ844Kv44Kk44OD44K/44O8fOODhOOCpOODg+OCv+ODvHxUd2l0dGVyfOebruOBjOOBhOOBo+OBoeOCg+OBhnznm67jgYzjgYTjgaPjgaHjgoN844Oi44K244Kk44Kv44Gn6KaL44KMfOimi+OCjOOBn+OCieimi+OCjHzpu5njgaPjgabjgYTjgaPjgaHjgoN844Kk44OD44OB44Gq5aWzfOOCteOCpOOCr+ODq3zjg6zjg7Pjgr/jgrXjgqTjgq/jg6t844Oq44K144Kk44Kv44OrfOODkOOCpOOCr+ODrOODs+ODiHzjgrfjg6PjgqTjgq9844GE44Gj44Gh44KD44GE44Gh44KDfOOBhOOBo+OBoeOCg+OBiuOBhnznnJ/jgaPnmb3jgavjgarjgaN844Kk44Kt44GPfOOCpOOCreeLgnzjgYvjgaPjgZPjgYTjgaPjgaHjgoN844GL44Gj44GT44GE44GELnswLDJ944Gj44Gh44KDfOOCs+ODg+OCr+OBq3zjg4rjgqTjgq1844Kv44Kk44OD44KvfOOCueOCr+OCpOODg+OCr3zjgq/jgqTjg4Pjgq/jg57jg4PjgrXjg7zjgrh844Kv44Kk44OD44Kv44Oe44K544K/fOOCr+OCpOODg+OCr+ODkOOCuXzjg57jg4PjgrXjg7zjgrh844Oi44OL44K/44O8fOOCreODo+ODs+ODmuODvOODsw=='),
+            skipJa: new RegExp(`${IKU_SKIP_JA_BASE.source}|${IKU_DISCOURSE_SKIP_JA.source}`),
         },
         { id: 'touch', ja: /触って/, zh: /摸|触|碰/, skipJa: reFromB64('6Kem44Gj44Gm44GT44GTfOinpuOBo+OBpi4q5oKq44GEfOOCteODoOOCruODp+OCpnzmlr3ooZN844Oe44OD44K144O844K4') },
         { id: 'rame', ja: /らめ[ぇえ]|らめらめ|やめね|やめて/, zh: /不行|不要|别|别停|碍事/, skipJa: reFromB64('44K544Kr44O844OIfOOBo+OBt+OBq+OCg3zpgqrprZTjgaHjgoXjgYZ844Oe44K444Gn44K544Kr44O844OI') },
@@ -239,16 +238,83 @@
         return false;
     }
 
+    /**
+     * Structural Whisper debris (not title-specific): kana-only heads grafted onto
+     * polite tails, or long low-particle kana mash.
+     * Do NOT treat soft-AV breath ellipsis (はぁ…だから…) as unusable — that false-skips
+     * blank LLM and leaves shippable「…」(MFYD-186).
+     */
+    function looksLikeUnusableAsrJa(src = '') {
+        const s = String(src || '').trim();
+        if (!s) return false;
+        const len = textLen(s);
+        if (len < 10) return false;
+        if (isAdultJaAnchor(s)) return false;
+        // Soft-AV erect / sensation stems — never Whisper mash (WAWA 硬くなってきちゃ…)
+        if (/硬くなって|硬くなっ|きちゃい[まも]/.test(s)) return false;
+
+        const hira = (s.match(/[\u3040-\u309f]/g) || []).length;
+        const kata = (s.match(/[\u30a0-\u30ff]/g) || []).length;
+        const kanji = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+        const kana = hira + kata;
+        // Soft-AV dialogue is often long hiragana with です/ます — never treat as mash
+        // when clear discourse / verb stems are present (EYAN-221 / DLDSS-533 false delete).
+        const discourseOk = /(?:なに|何|ちょっと|ダメ|だめ|わか|教え|やって|やる|あげ|見て|やめ|ください|して|ないで|てくれ|ですか|だよ|ですよ|ますよ|でしょう|でしょ|なりたい|うまく|したい|ありがとう|ございま|すみません|失礼|もちろん|正解|おはよう|お疲れ|どうぞ)/.test(s);
+        if (discourseOk) return false;
+
+        if (len >= 12 && kanji <= 1 && kana >= len * 0.8) {
+            // Grafted grammar: opaque kana head + です/ます/聞いてきました tail
+            const tailRe = /(?:と)?(?:聞いてきた|聞いてきました)|(?:です|ます|ました|ましたか|お願いします)[。．…]*$/u;
+            if (tailRe.test(s) && len >= 14) {
+                const head = s.replace(tailRe, '');
+                const headLen = textLen(head);
+                const headPart = (head.match(/[はがをにの]/g) || []).length;
+                // Head must look like opaque mash (almost no particles), not dialogue with …
+                const headEllip = (head.match(/…+|\.{2,}/g) || []).length;
+                if (
+                    headLen >= 10
+                    && headPart <= 2
+                    && headEllip === 0
+                    && /[ぁ-ん]{8,}/.test(head)
+                    && !/(?:から|けど|して|ない|やる|やって|あげ|見て|やめ|教え|わか|なに|何|ちょっと|ダメ|だめ|硬く|なって|きちゃ)/.test(head)
+                ) {
+                    return true;
+                }
+            }
+            // Long / mid kana with almost no discourse particles / copula (no ellipsis cuts).
+            // Catches Whisper phonetic junk like ふせんばとみんたんげーん.
+            const ellip = (s.match(/…+|\.{2,}/g) || []).length;
+            const particles = (s.match(/[はがをにでのもへと]/g) || []).length;
+            if (
+                ellip === 0
+                && particles <= 1
+                && len >= 12
+                && kanji === 0
+                && kana >= len * 0.85
+                && !/(?:です|ます|ました|ください|でしょう|でしょ|ません|ですね|だよ|ですか)/.test(s)
+                && /[ぁ-んー]{10,}/.test(s)
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isAsrGarbageJa(src = '') {
         const s = String(src || '');
         if (!s) return false;
         if (ASR_GARBAGE_JA.test(s)) return true;
+        // Long katakana loans / names with nakaguro are recoverable (not Whisper mash)
+        if (/[・･]/.test(s) && /^[\u30a0-\u30ff・･ー\s　]+$/.test(s.trim())) {
+            return false;
+        }
         // Heavy katakana mash with almost no content kanji / known adult lemma
         const kata = (s.match(/[\u30a0-\u30ff]/g) || []).length;
         const kanji = (s.match(/[\u4e00-\u9fff]/g) || []).length;
         if (kata >= 10 && kanji === 0 && !isAdultJaAnchor(s) && /[ァ-ヺ]{4,}/.test(s)) {
             return true;
         }
+        if (looksLikeUnusableAsrJa(s)) return true;
         return false;
     }
 
@@ -266,16 +332,30 @@
     }
 
     /**
+     * ASR / subtitle censor circles → readable kana for anchor matching.
+     */
+    function normalizeAsrCensorJa(src = '') {
+        return String(src || '')
+            .replace(/おま[○◯〇]/g, 'おまん')
+            .replace(/マ[○◯〇]/g, 'マン')
+            .replace(/ち[○◯〇]ぽ/g, 'ちんぽ')
+            .replace(/チ[○◯〇]ポ/g, 'チンポ')
+            .replace(/おち[○◯〇]/g, 'おちん');
+    }
+
+    /**
      * @returns {{ present: string[], covered: string[], missing: string[], rate: number }}
      */
     function zhCoverJaAnchors(src = '', zh = '') {
-        const s = String(src || '');
+        const s = normalizeAsrCensorJa(src);
         const z = String(zh || '');
         const present = [];
         const covered = [];
         const missing = [];
         for (const row of ANCHOR_COVER) {
             if (!row.ja.test(s)) continue;
+            // Insurance / unpaid discourse + hand-out — not sexual 出して
+            if (row.id === 'dashite' && /手が出して|手を出して|保険|出してない|出してません/.test(s)) continue;
             // skipJa wins unless clearly sexual ejaculation / insertion (not べろいっぱい出 / ご飯出してくれ)
             if (row.skipJa && row.skipJa.test(s)) {
                 // Do not unskip 「sounyuu not needed」apology via bare sounyuu lemma
@@ -283,8 +363,18 @@
                 if (!sexualUnskip) continue;
             }
             present.push(row.id);
-            if (row.zh.test(z)) covered.push(row.id);
-            else missing.push(row.id);
+            if (row.zh.test(z)) {
+                // Bare「舔」is lexical cover only — complex lick JA still under-translated
+                if (
+                    row.id === 'lick'
+                    && /^(?:啊*|嗯*)?舔[…。．.!！?\s]*$/u.test(z.trim())
+                    && /舐められたら|舐めてください|舐めて下さい|口も舐め|あんなところ舐め|そんなとこまで舐め/.test(s)
+                ) {
+                    missing.push(row.id);
+                } else {
+                    covered.push(row.id);
+                }
+            } else missing.push(row.id);
         }
         return {
             present,
@@ -305,6 +395,15 @@
         const cover = zhCoverJaAnchors(s, z);
         if (cover.present.length === 0) {
             return textLen(z) >= 2 || !isAdultJaAnchor(s);
+        }
+        // Bare「舔」covers lick lemma but under-translates 舐められたら / 舐めてください / 口も…
+        if (
+            cover.present.includes('lick')
+            && cover.missing.length === 0
+            && /^(?:啊*|嗯*)?舔[…。．.!！?\s]*$/u.test(z.trim())
+            && /舐められたら|舐めてください|舐めて下さい|口も舐め|あんなところ舐め|そんなとこまで舐め/.test(s)
+        ) {
+            return false;
         }
         if (cover.missing.length === 0) return true;
         if (cover.rate >= 0.67 && textLen(z) >= 4) return true;
@@ -333,8 +432,112 @@
         let male = 0;
         const rameResist = /らめらめ|ラメラメ|らめ[ぇえにェ]|ラメェ/.test(s);
         if (reFromB64('5bCE57K+fOWHuuOBl+OBpnzlh7rjgZXjgox844K244O844Oh44OzfOeyvua2sg==').test(s)) male += 3;
-        // Bare イクイク stack is male-leaning, but らめ/だめ resist overrides (baby だめ + climax)
-        if (reFromB64('44Kk44KvKD8644Kk44KvKSt844Kk44Kv44Kk44Kv').test(s) && !rameResist && !/(?:だめ|ダメ)/.test(s)) male += 2;
+        // Bare イクイク stack is male-leaning, but らめ/だめ/むり resist overrides (baby だめ + climax)
+        if (
+            reFromB64('44Kk44KvKD8644Kk44KvKSt844Kk44Kv44Kk44Kv').test(s)
+            && !rameResist
+            && !/(?:だめ|ダメ|むり|無理|ムリ|やば|あやば|あー)/.test(s)
+        ) male += 2;
+        // Female resist + climax (cross-title だめ/むり + イク/イキ) — not 痛イク male ejac
+        if (
+            (
+                /(?:だめ|ダメ|むり|無理|ムリ).{0,16}(?:イク|イキ|イッ)/.test(s)
+                || /(?:イク|イキ|イッ).{0,16}(?:だめ|ダメ|むり|無理|ムリ)/.test(s)
+            )
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !(/(?:イク|イキ|イッ)/.test(s) && /痛/.test(s))
+        ) {
+            female += 2;
+        }
+        // イキそう + yabai / careful (no male ejac JA)
+        if (
+            /イキそう|イッちゃいそう|イっちゃいそう/.test(s)
+            && /(?:気をつけ|やば|あやば)/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !/(?:おっきい|デカ|でか).{0,10}(?:おちん|ちん|チン)/.test(s)
+        ) {
+            female += 2;
+        }
+        // Female イキそうな self-report / partner イキそう? (no bare イキそう — blank recover male default)
+        if (
+            /イキそう(?:な|なの)|いきそう(?:な|なの)/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !/(?:おっきい|デカ|でか).{0,10}(?:おちん|ちん|チン)/.test(s)
+        ) {
+            female += 2;
+        }
+        if (
+            /イキそう\s*[?？]/.test(s)
+            && /(?:さん|くん|ちゃん|君)/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
+        // 気持ちいいっちゃ / itchau + feel-good — female self-climax
+        if (
+            /気持ちいいっちゃ/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
+        if (
+            /(?:いっちゃう|イっちゃう|イッちゃう)/.test(s)
+            && /気持ちいい/.test(s)
+            && !/痛/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
+        // イッちゃう また イッちゃう — female self-report (exclude やばい / あはは male stacks)
+        if (
+            /(?:いっちゃう|イっちゃう|イッちゃう).{0,8}また.{0,8}(?:いっちゃう|イっちゃう|イッちゃう)/.test(s)
+            && !/やば|あはは|アハハ|あっ[、,].{0,8}あん/.test(s)
+            && !/痛/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !/(?:おっきい|デカ|でか).{0,10}(?:おちん|ちん|チン)/.test(s)
+        ) {
+            female += 2;
+        }
+        // Moan + bare いっちゃう (ぐすっ/あうぅ) — female self-report; blank recover must not default male 射
+        // Keep anchors narrow: あんっ/ひゃ/腰 are too common on male イク stacks.
+        if (
+            /(?:いっちゃう|イっちゃう|イッちゃう)/.test(s)
+            && /ぐすっ|あうぅ/.test(s)
+            && !/痛/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !/(?:おっきい|デカ|でか).{0,10}(?:おちん|ちん|チン)/.test(s)
+        ) {
+            female += 2;
+        }
+        // Bare いっちゃ(う) ASR scrap — female self-report (not male 射 default)
+        if (
+            /^(?:[あぁうぅんはぁ\s　]+)?(?:いっちゃ(?:う)?|イッちゃ(?:う)?|イっちゃ(?:う)?)[っッ]?[。．.!！?？…\s]*$/u.test(s.trim())
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+            && !/(?:おっきい|デカ|でか).{0,10}(?:おちん|ちん|チン)/.test(s)
+        ) {
+            female += 2;
+        }
+        // itchau + これ / ? — female self-report (not bare ahaha イッちゃう stacks)
+        if (
+            (
+                /(?:いっちゃう|イっちゃう|イッちゃう)\s*これ/.test(s)
+                || /(?:いっちゃう|イっちゃう|イッちゃう)\s*[?？]/.test(s)
+            )
+            && !/やば/.test(s)
+            && !/痛/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
+        // イクイク + female resist tone (overrides bare male lean above) — not 痛イク male ejac
+        if (
+            /イクイク/.test(s)
+            && /(?:だめ|ダメ|むり|無理|ムリ|やば|あやば)/.test(s)
+            && !/痛/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
         if (reFromB64('KD8644GKKT/jgb7jgpPjgZMuezAsMTJ9KD8644Kk44ODfOOBhOOBo+OBoeOCg3zjgqTjgaN844Kk44KtKQ==').test(s)) female += 4;
         if (reFromB64('KD8644Kk44ODfOOBhOOBo+OBoeOCg3zjgqTjgaMpLnswLDEyfSg/OuOBiik/44G+44KT44GT').test(s)) female += 4;
         if (reFromB64('44G+44KT44GT44GE44Gj').test(s)) female += 4;
@@ -357,6 +560,14 @@
             female += 2;
         }
         if (/やめね|やめてね|やめないで|やめろ/.test(s) && reFromB64('44Kk44OD44Gh44KD44GGfOOBhOOBo+OBoeOCg+OBhnzjgqTjgaPjgaHjgoPjgYY=').test(s)) female += 2;
+        // Bare やめ + イッちゃう (not only イッちゃいそう) → female resist; forbid male ejac JA
+        if (
+            /やめ/.test(s)
+            && /イッちゃう|いっちゃう|イっちゃう|イッちゃ|イっちゃ/.test(s)
+            && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)
+        ) {
+            female += 2;
+        }
         if (/やめ/.test(s) && reFromB64('44Kk44OD44Gh44KD44GE44Gd44GGfOOCpOOBo+OBoeOCg+OBhOOBneOBhnzjgYTjgaPjgaHjgoPjgYTjgZ3jgYY=').test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
         // climax + dame command/reason — resist after climax cue
         if (reFromB64('KD8644Kk44OD44Gh44KDfOOBhOOBo+OBoeOCgykuezAsMTJ9KD8644Gg44KBfOODgOODoSk=').test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
@@ -365,6 +576,10 @@
         if (/わた[し]|あたし/.test(s) && reFromB64('44Kk44ODfOOBhOOBjXzjgqTjgq1844GE44Gj44Gh44KD').test(s)) female += 1;
         if (/やめ/.test(s) && reFromB64('44Kk44OD44Gh44KD44GE44G+44GX44GffOOCpOODg+OBn+OCiA==').test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
         if (reFromB64('44GK5bC7LnswLDE2feOCpOOCr+OBk+OBqOOBquOCiuOBn+OBj+OBquOBhA==').test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
+        // manko + climax without male ejac JA → prefer_go
+        if (/まんこ|おまんこ/.test(s) && /イっちゃ|イッちゃ|いっちゃ/.test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
+        // female orgasm stack on partner rod (イキまく) — not male shoot
+        if (/イキまく|イキまくり/.test(s) && /(?:ちん|おちん|チン)/.test(s) && !reFromB64('5Ye644GX44GmfOWwhOeyvg==').test(s)) female += 2;
         if (female >= 2 && female > male) return CLIMAX_POLARITY.prefer_go;
         if (male >= 2 && male > female) return CLIMAX_POLARITY.prefer_shoot;
         if (female > 0 && male === 0) return CLIMAX_POLARITY.prefer_go;
@@ -595,6 +810,7 @@
         jaHasRodCue,
         isAdultJaAnchor,
         isJustifiedLatinLeak,
+        looksLikeUnusableAsrJa,
         isAsrGarbageJa,
         extractJaFeatures,
         zhCoverJaAnchors,

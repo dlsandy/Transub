@@ -2,6 +2,11 @@
  * Build Engine job extras: subFormats, glossary, dualAss, releaseGpuAfter, words/karaoke.
  */
 
+const {
+    buildAsrGlossaryEntries,
+    buildAsrPromptHints,
+} = require('../src/js/subtitle-glossary-core');
+
 const ENGINE_SUB_FORMATS = new Set(['srt', 'vtt', 'ass', 'ass-dual']);
 
 /**
@@ -91,6 +96,24 @@ function buildEngineGlossaryPairs(glossary) {
 }
 
 /**
+ * Misheard alias → canonical for engine post-ASR apply (hotword / bad-pool entries only).
+ * @param {object|null} glossary
+ * @returns {{ wrong: string, correct: string, stage: 'asr', blacklist?: string[] }[]}
+ */
+function buildEngineAsrGlossaryPairs(glossary) {
+    return buildAsrGlossaryEntries(glossary);
+}
+
+/**
+ * initial_prompt / hotwords from enabled glossary terms (decode bias).
+ * @param {object|null} glossary
+ * @param {object} [options]
+ */
+function buildEngineAsrHintsFromGlossary(glossary, options = {}) {
+    return buildAsrPromptHints(glossary, options);
+}
+
+/**
  * Opus MT uses Engine protect → restore → enforce with `__GLOSS*__` placeholders.
  * Chat LLM backends (Sakura / smart) should receive clean Japanese + a prompt
  * glossary, matching the subtitle editor — placeholders degrade LLM quality.
@@ -117,6 +140,7 @@ function buildEngineJobFlags(merged = {}, ctx = {}) {
         releaseGpuAfter,
         includeWords,
         karaokeVtt,
+        wordTimestamps: includeWords,
         mtGlossaryMode: resolveEngineMtGlossaryMode({ sakuraOrSmart }),
     };
 }
@@ -149,12 +173,32 @@ function buildExternalMtJobFields(cfg = {}) {
     };
 }
 
+/**
+ * Engine HTTP extras for Sakura / smart adapter (batch sized by model).
+ * @param {{ useSmartTranslate?: boolean, modelId?: string, engineMtModel?: string }} [input]
+ * @returns {{ batchSize: number, timeoutSec: number }}
+ */
+function resolveExternalMtAdapterCall(input = {}) {
+    const catalog = require('../src/js/sakura-mt-catalog-core');
+    const smart = !!input.useSmartTranslate;
+    return {
+        batchSize: catalog.resolveLlmMtEngineBatchSize({
+            smartTranslate: smart,
+            modelId: input.modelId || input.engineMtModel,
+        }),
+        timeoutSec: smart ? 1800 : 600,
+    };
+}
+
 module.exports = {
     ENGINE_SUB_FORMATS,
     normalizeEngineSubFormatsList,
     resolveEngineSubFormats,
     buildEngineGlossaryPairs,
+    buildEngineAsrGlossaryPairs,
+    buildEngineAsrHintsFromGlossary,
     resolveEngineMtGlossaryMode,
     buildEngineJobFlags,
     buildExternalMtJobFields,
+    resolveExternalMtAdapterCall,
 };

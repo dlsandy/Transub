@@ -21,20 +21,23 @@
      *   showEditor: boolean,
      *   showRetranslate: boolean,
      *   showReconstruct: boolean,
+     *   showTranslateStyle: boolean,
      *   showProActions: boolean,
      * }}
+     * showRetranslate / showReconstruct / showProActions are always false
+     * (toolbar buttons removed; use row context menu).
      */
     function computeSelectionToolbarVisibility(input = {}) {
         const selectedCount = Math.max(0, Number(input.selectedCount) || 0);
-        const singleHasSubtitle = !!input.singleHasSubtitle;
-        const showRetranslate = selectedCount >= 1;
-        const showReconstruct = selectedCount === 1 && singleHasSubtitle;
+        const showTranslateStyle = selectedCount >= 1;
         return {
             // Editor / library stay in the command bar even with an empty list.
             showEditor: true,
-            showRetranslate,
-            showReconstruct,
-            showProActions: showRetranslate || showReconstruct,
+            // Toolbar 理解重构 / 重新翻译 removed — use row context menu instead.
+            showRetranslate: false,
+            showReconstruct: false,
+            showTranslateStyle,
+            showProActions: false,
         };
     }
 

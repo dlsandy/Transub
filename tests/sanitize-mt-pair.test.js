@@ -59,4 +59,31 @@ describe('sanitizeMtSubtitlePair', () => {
         assert.ok(res.changed >= 1);
         assert.ok(!fs.readFileSync(zhPath, 'utf8').includes('佳奈'));
     });
+
+    it('English target does not refill blanks with Chinese short cues', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transub-mt-san-en-'));
+        const enPath = path.join(dir, 'clip.en.srt');
+        const jaPath = path.join(dir, 'clip.src.srt');
+        writeSrt(jaPath, [
+            { index: 1, text: '嬉しいうん' },
+            { index: 2, text: 'だめ' },
+            { index: 3, text: 'おはよう' },
+        ]);
+        writeSrt(enPath, [
+            { index: 1, text: '…' },
+            { index: 2, text: '不行' },
+            { index: 3, text: 'Hello' },
+        ]);
+        const res = sanitizeMtSubtitlePair(enPath, jaPath, {
+            backupMode: 'off',
+            subtitleTargetLang: 'en',
+            targetLang: 'en',
+            contentProfile: 'av_soft',
+        });
+        assert.strictEqual(res.ok, true);
+        const out = fs.readFileSync(enPath, 'utf8');
+        assert.ok(!out.includes('好开心'), out);
+        assert.ok(!out.includes('不行'), out);
+        assert.ok(out.includes('Hello'));
+    });
 });

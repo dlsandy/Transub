@@ -1,0 +1,567 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-19T11:30:00+08:00",
+  "plans": [
+    {
+      "id": "ja-llm-perf",
+      "file": "plans/ja-llm-perf.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 推理 · 性能",
+      "summary": "日语→简中 · Whisper JA 1.5B + Sakura 1.5B · 性能",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-llm-bal",
+      "file": "plans/ja-llm-bal.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 推理 · 均衡",
+      "summary": "日语→简中 · Anime Whisper + GalTransl 7B · 均衡",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-llm-qual",
+      "file": "plans/ja-llm-qual.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 推理 · 质量",
+      "summary": "日语→简中 · Qwen3 Galgame + GalTransl 14B · 质量",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-dialog-perf",
+      "file": "plans/ja-dialog-perf.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 智能 · 性能",
+      "summary": "日语→简中 · Whisper JA 1.5B + 对话模型按行 · 性能",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-dialog-bal",
+      "file": "plans/ja-dialog-bal.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 智能 · 均衡",
+      "summary": "日语→简中 · Anime Whisper + 对话模型按行 · 均衡",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-dialog-qual",
+      "file": "plans/ja-dialog-qual.json",
+      "version": 1,
+      "group": "ja",
+      "name": "软对白 · 智能 · 质量",
+      "summary": "日语→简中 · Qwen3 Galgame + 对话模型按行 · 质量",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-smart-perf",
+      "file": "plans/ja-smart-perf.json",
+      "version": 2,
+      "group": "ja",
+      "name": "软对白 · 混合 · 性能",
+      "summary": "日语→简中 · Whisper JA 1.5B + Sakura 1.5B 翻译 + Qwen3 4B 润色 · 性能",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-smart-bal",
+      "file": "plans/ja-smart-bal.json",
+      "version": 2,
+      "group": "ja",
+      "name": "软对白 · 混合 · 均衡",
+      "summary": "日语→简中 · Anime Whisper + GalTransl 7B 翻译 + Qwen3 8B 润色 · 均衡",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-smart-qual",
+      "file": "plans/ja-smart-qual.json",
+      "version": 2,
+      "group": "ja",
+      "name": "软对白 · 混合 · 质量",
+      "summary": "日语→简中 · Qwen3 Galgame + GalTransl 14B 翻译 + Qwen3 14B 润色 · 质量",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-llm-perf",
+      "file": "plans/en-llm-perf.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 推理 · 性能",
+      "summary": "英语→简中 · SenseVoice + TranslateGemma 4B · 性能",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-llm-bal",
+      "file": "plans/en-llm-bal.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 推理 · 均衡",
+      "summary": "英语→简中 · SenseVoice + TranslateGemma 4B · 均衡",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-llm-qual",
+      "file": "plans/en-llm-qual.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 推理 · 质量",
+      "summary": "英语→简中 · Whisper turbo + TranslateGemma E4B · 质量",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-dialog-perf",
+      "file": "plans/en-dialog-perf.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 智能 · 性能",
+      "summary": "英语→简中 · SenseVoice + 对话模型按行 · 性能",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-dialog-bal",
+      "file": "plans/en-dialog-bal.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 智能 · 均衡",
+      "summary": "英语→简中 · SenseVoice + 对话模型按行 · 均衡",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-dialog-qual",
+      "file": "plans/en-dialog-qual.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 智能 · 质量",
+      "summary": "英语→简中 · Whisper turbo + 对话模型按行 · 质量",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-smart-perf",
+      "file": "plans/en-smart-perf.json",
+      "version": 2,
+      "group": "western",
+      "name": "欧美剧 · 混合 · 性能",
+      "summary": "英语→简中 · SenseVoice + TranslateGemma 4B 翻译 + Qwen3 4B 润色 · 性能",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-smart-bal",
+      "file": "plans/en-smart-bal.json",
+      "version": 2,
+      "group": "western",
+      "name": "欧美剧 · 混合 · 均衡",
+      "summary": "英语→简中 · SenseVoice + TranslateGemma 4B 翻译 + Qwen3 8B 润色 · 均衡",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-smart-qual",
+      "file": "plans/en-smart-qual.json",
+      "version": 2,
+      "group": "western",
+      "name": "欧美剧 · 混合 · 质量",
+      "summary": "英语→简中 · Whisper turbo + TranslateGemma E4B 翻译 + Qwen3 14B 润色 · 质量",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-llm-perf",
+      "file": "plans/ko-llm-perf.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 推理 · 性能",
+      "summary": "韩语→简中 · SenseVoice + LN-Korean 7B · 性能",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-llm-bal",
+      "file": "plans/ko-llm-bal.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 推理 · 均衡",
+      "summary": "韩语→简中 · SenseVoice + LN-Korean 7B · 均衡",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-llm-qual",
+      "file": "plans/ko-llm-qual.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 推理 · 质量",
+      "summary": "韩语→简中 · Whisper turbo + LN-Korean 14B · 质量",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "llm",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-dialog-perf",
+      "file": "plans/ko-dialog-perf.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 智能 · 性能",
+      "summary": "韩语→简中 · SenseVoice + 对话模型按行 · 性能",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-dialog-bal",
+      "file": "plans/ko-dialog-bal.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 智能 · 均衡",
+      "summary": "韩语→简中 · SenseVoice + 对话模型按行 · 均衡",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-dialog-qual",
+      "file": "plans/ko-dialog-qual.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 智能 · 质量",
+      "summary": "韩语→简中 · Whisper turbo + 对话模型按行 · 质量",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "dialog",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-smart-perf",
+      "file": "plans/ko-smart-perf.json",
+      "version": 2,
+      "group": "ko",
+      "name": "韩剧 · 混合 · 性能",
+      "summary": "韩语→简中 · SenseVoice + LN-Korean 7B 翻译 + Qwen3 4B 润色 · 性能",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-smart-bal",
+      "file": "plans/ko-smart-bal.json",
+      "version": 2,
+      "group": "ko",
+      "name": "韩剧 · 混合 · 均衡",
+      "summary": "韩语→简中 · SenseVoice + LN-Korean 7B 翻译 + Qwen3 8B 润色 · 均衡",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-smart-qual",
+      "file": "plans/ko-smart-qual.json",
+      "version": 2,
+      "group": "ko",
+      "name": "韩剧 · 混合 · 质量",
+      "summary": "韩语→简中 · Whisper turbo + LN-Korean 14B 翻译 + Qwen3 14B 润色 · 质量",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "quality",
+        "minVramGb": 12,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "en-external-cpu",
+      "file": "plans/en-external-cpu.json",
+      "version": 1,
+      "group": "western",
+      "name": "欧美剧 · 外部 · CPU",
+      "summary": "英语→简中 · SenseVoice CPU + 外部翻译",
+      "language": "en",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "external",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "cpu",
+        "minVramGb": 0,
+        "preferCuda": false
+      }
+    },
+    {
+      "id": "ja-external-hant",
+      "file": "plans/ja-external-hant.json",
+      "version": 1,
+      "group": "ja",
+      "name": "日语动漫 · 外部 · 繁中",
+      "summary": "日语→繁中 · Anime Whisper + 外部翻译",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hant",
+      "translateMode": "external",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ko-external-hant",
+      "file": "plans/ko-external-hant.json",
+      "version": 1,
+      "group": "ko",
+      "name": "韩剧 · 外部 · 繁中",
+      "summary": "韩语→繁中 · SenseVoice + 外部翻译",
+      "language": "ko",
+      "subtitleTargetLang": "zh-Hant",
+      "translateMode": "external",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "zh-external-bal",
+      "file": "plans/zh-external-bal.json",
+      "version": 1,
+      "group": "zh",
+      "name": "华语片 · 外部 · 均衡",
+      "summary": "中文→简中 · SenseVoice + 外部润色",
+      "language": "zh",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "external",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 8,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "talk-external-perf",
+      "file": "plans/talk-external-perf.json",
+      "version": 1,
+      "group": "talk",
+      "name": "访谈对白 · 外部 · 性能",
+      "summary": "日语→简中 · SenseVoice 对白 + 外部 API",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "external",
+      "requiresPro": false,
+      "hardware": {
+        "tier": "low",
+        "minVramGb": 4,
+        "preferCuda": true
+      }
+    },
+    {
+      "id": "ja-smart-10-12",
+      "file": "plans/ja-smart-10-12.json",
+      "version": 1,
+      "group": "ja",
+      "name": "日语软对白 · 混合 · 10–12GB",
+      "summary": "日语→简中 · Qwen3 Galgame + GalTransl 7B + Huihui Qwen3 8B 润色 · 10–12GB",
+      "language": "ja",
+      "subtitleTargetLang": "zh-Hans",
+      "translateMode": "smart",
+      "requiresPro": true,
+      "hardware": {
+        "tier": "balanced",
+        "minVramGb": 10,
+        "preferCuda": true
+      }
+    }
+  ]
+}

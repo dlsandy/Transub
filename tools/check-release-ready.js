@@ -9,6 +9,13 @@ const { execSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const { PROPRIETARY_ALGORITHM_SOURCES: PROPRIETARY_SOURCES } = require('./proprietary-paths');
+const hasGit = fs.existsSync(path.join(root, '.git'));
+let gitignoreText = '';
+try {
+    gitignoreText = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+} catch {
+    gitignoreText = '';
+}
 
 const MUST_GITIGNORE = [
     '.advanced-license-private.b64',
@@ -39,7 +46,18 @@ function exists(rel) {
     return fs.existsSync(path.join(root, rel));
 }
 
+function gitignoreCovers(rel, text) {
+    const lines = String(text || '')
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#'));
+    const bare = rel.replace(/\/$/, '');
+    const candidates = new Set([rel, bare, `${bare}/`, `/${bare}`, `/${bare}/`]);
+    return lines.some((line) => candidates.has(line) || line === bare || line === `${bare}/`);
+}
+
 function isIgnored(rel) {
+    if (!hasGit) return gitignoreCovers(rel, gitignoreText);
     try {
         execSync(`git check-ignore -q -- "${rel.replace(/"/g, '')}"`, {
             cwd: root,
@@ -54,8 +72,8 @@ function isIgnored(rel) {
 console.log(`Transub release check · v${pkg.version}\n`);
 
 console.log('Version / license');
-if (pkg.version === '3.1.5') ok(`package.json version ${pkg.version}`);
-else warn(`package.json version is ${pkg.version} (expected 3.1.5 for this cut)`);
+if (pkg.version === '3.2.1') ok(`package.json version ${pkg.version}`);
+else warn(`package.json version is ${pkg.version} (expected 3.2.1 for this cut)`);
 if (exists('LICENSE-PRO')) ok('LICENSE-PRO present');
 else fail('LICENSE-PRO missing');
 if (exists('NOTICE')) ok('NOTICE present');
@@ -69,7 +87,7 @@ for (const rel of MUST_GITIGNORE) {
         ok(`${rel} absent (fine)`);
         continue;
     }
-    if (isIgnored(rel)) ok(`${rel} gitignored`);
+    if (isIgnored(rel)) ok(hasGit ? `${rel} gitignored` : `${rel} listed in .gitignore`);
     else fail(`${rel} exists and is NOT gitignored`);
 }
 

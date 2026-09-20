@@ -50,6 +50,26 @@ describe('advanced-runtime-prefer', () => {
         }), false);
     });
 
+    it('prefers ROCm when AMD GPU is detected', () => {
+        assert.strictEqual(prefer.shouldPreferRocm({
+            vendor: 'amd',
+            detected: true,
+            gpuName: 'Radeon RX 7900 XTX',
+        }), true);
+        assert.strictEqual(prefer.shouldPreferRocm({
+            vendor: 'nvidia',
+            detected: true,
+        }), false);
+        const hints = prefer.applyGpuInfo({
+            vendor: 'amd',
+            detected: true,
+            gpuName: 'Radeon RX 7800 XT',
+        });
+        assert.strictEqual(hints.preferRocm, true);
+        assert.strictEqual(hints.preferCuda, false);
+        assert.strictEqual(hints.gpuName, 'Radeon RX 7800 XT');
+    });
+
     it('applyGpuInfo caches preferCuda and cudaVersion', () => {
         const hints = prefer.applyGpuInfo({
             vendor: 'nvidia',

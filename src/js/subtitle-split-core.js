@@ -19,6 +19,8 @@
         '而且', '但是', '因为', '所以', '然后', '不过', '然而', '并且', '同时', '另外',
         '因此', '于是', '可是', '虽然', '如果', '那么', '或者', '以及',
         'but', 'and then', 'however', 'therefore', 'because', 'so', 'then', 'although',
+        // Extra English connectors — whole-token match only (see isBreakWordMatchAt).
+        'and', 'or', 'if', 'when', 'while', 'though', 'yet',
     ];
     /** @deprecated use DEFAULT_BREAK_WORDS */
     const CONNECTOR_WORDS = DEFAULT_BREAK_WORDS;
@@ -68,6 +70,69 @@
         return out;
     }
 
+    /**
+     * Latin / Hangul / user-added alphabetic break-words must match as whole tokens
+     * ("so" ≠ prefix of "sorry"; "but" ≠ "butter"; Hangul 안 ≠ 안녕하세요 prefix).
+     * CJK connectors stay substring matches (no spaces between characters).
+     */
+    function isSpacedScriptBreakWord(word) {
+        const w = String(word || '').trim();
+        if (!w) return false;
+        // Latin (incl. accented) — single or multi-word phrases like "and then"
+        if (/^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ'’\-]*(?:\s+[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ'’\-]*)*$/u.test(w)) {
+            return true;
+        }
+        // Hangul tokens / short phrases
+        if (/^[\uac00-\ud7af]+(?:\s+[\uac00-\ud7af]+)*$/u.test(w)) return true;
+        return false;
+    }
+
+    function hasAlphaTokenBoundaryBefore(text, index) {
+        if (index <= 0) return true;
+        return !/[A-Za-zÀ-ɏ\uac00-\ud7af]/u.test(text[index - 1] || '');
+    }
+
+    function hasAlphaTokenBoundaryAfter(text, index) {
+        if (index >= text.length) return true;
+        return !/[A-Za-zÀ-ɏ\uac00-\ud7af'’\-]/u.test(text[index] || '');
+    }
+
+    /** True when needle at idx is a valid break-word hit (whole-token for alphabetic scripts). */
+    function isBreakWordMatchAt(textLower, idx, needle) {
+        if (idx < 0 || !needle) return false;
+        if (!isSpacedScriptBreakWord(needle)) return true;
+        return hasAlphaTokenBoundaryBefore(textLower, idx)
+            && hasAlphaTokenBoundaryAfter(textLower, idx + needle.length);
+    }
+
+    /** Prefer splitting Latin/Hangul on spaces/boundaries — never mid-token when possible. */
+    function findAlphabeticWordSafeBreak(text, preferAt, minPos = 1) {
+        const raw = String(text || '');
+        const at = Math.min(raw.length, Math.max(0, Math.round(Number(preferAt) || 0)));
+        const min = Math.max(1, Math.floor(Number(minPos) || 1));
+        if (at <= 0 || at >= raw.length) return -1;
+        const left = raw[at - 1] || '';
+        const right = raw[at] || '';
+        const midAlpha = (
+            (/[A-Za-zÀ-ɏ]/u.test(left) && /[A-Za-zÀ-ɏ'’\-]/u.test(right))
+            || (/[\uac00-\ud7af]/u.test(left) && /[\uac00-\ud7af]/u.test(right))
+        );
+        if (!midAlpha) return at;
+        for (let i = at; i >= min; i -= 1) {
+            if (/\s/.test(raw[i - 1] || '')) return i;
+        }
+        const forwardLimit = Math.min(raw.length, Math.max(at + 1, Math.ceil(at * 1.5) + 8));
+        for (let i = at; i < forwardLimit; i += 1) {
+            if (/\s/.test(raw[i] || '')) return i + 1;
+        }
+        return -1;
+    }
+
+    /** @deprecated use findAlphabeticWordSafeBreak */
+    function findLatinWordSafeBreak(text, preferAt, minPos = 1) {
+        return findAlphabeticWordSafeBreak(text, preferAt, minPos);
+    }
+
     function resolveBreakWords(opts = {}) {
         if (opts && Object.prototype.hasOwnProperty.call(opts, 'breakWords')) {
             return normalizeBreakWords(opts.breakWords);
@@ -92,14 +157,16 @@
     }
 
     /**
-     * Latin-heavy subtitle line with word spaces — smart/silence split must not
-     * treat spaces as breakpoints (only punctuation / break words).
+     * Spaced alphabetic subtitle (English / Korean) — smart/silence split must not
+     * treat every space as a hard breakpoint (only punctuation / whole break words).
      */
     function isEnglishLikeText(text) {
         const raw = String(text || '').trim();
         if (!raw || !/\s/.test(raw)) return false;
-        const latin = (raw.match(/[A-Za-z]/g) || []).length;
+        const latin = (raw.match(/[A-Za-zÀ-ɏ]/g) || []).length;
+        const hangul = (raw.match(/[\uac00-\ud7af]/g) || []).length;
         const cjk = (raw.match(/[\u4e00-\u9fff]/g) || []).length;
+        if (hangul >= 2 && hangul > cjk) return true;
         return latin >= 4 && latin > cjk;
     }
 
@@ -143,6 +210,10 @@
             while (from < lower.length) {
                 const idx = lower.indexOf(needle, from);
                 if (idx < 0) break;
+                if (!isBreakWordMatchAt(lower, idx, needle)) {
+                    from = idx + 1;
+                    continue;
+                }
                 let breakAt = idx + needle.length;
                 while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
                 if (breakAt === at) return true;
@@ -239,6 +310,21 @@
         return String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     }
 
+    /**
+     * Collapse multiple non-empty lines into one line (inverse of splitTextByLines).
+     * Latin-heavy text joins with a space; CJK / JA text joins without a separator.
+     * @returns {string|null} merged text, or null when fewer than 2 lines
+     */
+    function mergeTextLines(text) {
+        const lines = String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        if (lines.length < 2) return null;
+        const combined = lines.join('');
+        const latin = (combined.match(/[A-Za-z]/g) || []).length;
+        const cjk = (combined.match(/[\u4e00-\u9fff\u3040-\u30ff]/g) || []).length;
+        const sep = latin >= 4 && latin >= cjk ? ' ' : '';
+        return lines.join(sep).replace(/\s+/g, ' ').trim();
+    }
+
     function splitTextBySpaces(text) {
         return String(text || '').trim().split(/\s+/).filter(Boolean);
     }
@@ -272,6 +358,10 @@
             while (from < lower.length) {
                 const idx = lower.indexOf(needle, from);
                 if (idx < 0) break;
+                if (!isBreakWordMatchAt(lower, idx, needle)) {
+                    from = idx + 1;
+                    continue;
+                }
                 const breakAt = idx + needle.length;
                 if (breakAt > 0 && breakAt <= maxIndex && breakAt < raw.length && breakAt > best) {
                     best = breakAt;
@@ -288,10 +378,30 @@
         if (isConnectedText(remaining)) return remaining ? [remaining] : [];
         const parts = [];
         while (remaining.length > max) {
+            // Don't mid-cut a trailing connected alphabetic token (morning → mornin|g).
+            if (isConnectedText(remaining) && /[A-Za-zÀ-ɏ\uac00-\ud7af]/u.test(remaining)) {
+                parts.push(remaining);
+                remaining = '';
+                break;
+            }
             let breakAt = max;
             const slice = remaining.slice(0, max);
             const punctBreak = findBestBreakInSlice(slice, Math.floor(max * 0.4));
             if (punctBreak > 0) breakAt = punctBreak;
+            // Never cut inside a Latin/Hangul token when a safer space break exists.
+            const alphaSafe = findAlphabeticWordSafeBreak(remaining, breakAt, Math.floor(max * 0.35));
+            if (alphaSafe > 0) {
+                breakAt = alphaSafe;
+            } else if (
+                breakAt < remaining.length
+                && /[A-Za-zÀ-ɏ\uac00-\ud7af]/u.test(remaining[breakAt - 1] || '')
+                && /[A-Za-zÀ-ɏ\uac00-\ud7af'’\-]/u.test(remaining[breakAt] || '')
+            ) {
+                // No safe break — keep the whole remaining token rather than shred letters.
+                parts.push(remaining);
+                remaining = '';
+                break;
+            }
             const chunk = remaining.slice(0, breakAt).trim();
             if (!chunk) break;
             parts.push(chunk);
@@ -301,6 +411,43 @@
         return parts;
     }
 
+    function splitTextIntoNParts(text, n) {
+        const count = Math.max(2, Math.floor(Number(n) || 2));
+        const raw = String(text || '').trim();
+        if (!raw) return [];
+        if (isConnectedText(raw)) return null;
+
+        // Spaced alphabetic (EN/KO): split on whitespace near ideal cuts — never mid-token.
+        if (isEnglishLikeText(raw) || (/[A-Za-zÀ-ɏ\uac00-\ud7af]/u.test(raw) && /\s/.test(raw))) {
+            const words = raw.split(/\s+/).filter(Boolean);
+            if (words.length < count) return null;
+            const parts = [];
+            const base = Math.floor(words.length / count);
+            let extra = words.length % count;
+            let idx = 0;
+            for (let i = 0; i < count; i += 1) {
+                const size = base + (extra > 0 ? 1 : 0);
+                if (extra > 0) extra -= 1;
+                parts.push(words.slice(idx, idx + size).join(' '));
+                idx += size;
+            }
+            return parts.filter(Boolean);
+        }
+
+        const chars = [...raw];
+        if (chars.length < count) return null;
+        const parts = [];
+        const base = Math.floor(chars.length / count);
+        let extra = chars.length % count;
+        let idx = 0;
+        for (let i = 0; i < count; i += 1) {
+            const size = base + (extra > 0 ? 1 : 0);
+            if (extra > 0) extra -= 1;
+            parts.push(chars.slice(idx, idx + size).join('').trim());
+            idx += size;
+        }
+        return parts.filter(Boolean);
+    }
     function splitTextSmart(text, opts = {}) {
         const maxChars = Math.max(4, Math.floor(Number(opts.maxChars) || 20));
         const maxLineChars = Math.max(4, Math.floor(Number(opts.maxLineChars) || maxChars));
@@ -392,30 +539,12 @@
         return parts.filter(Boolean);
     }
 
-    function splitTextIntoNParts(text, n) {
-        const count = Math.max(2, Math.floor(Number(n) || 2));
-        const raw = String(text || '').trim();
-        if (!raw) return [];
-        if (isConnectedText(raw)) return null;
-        const chars = [...raw];
-        if (chars.length < count) return null;
-        const parts = [];
-        const base = Math.floor(chars.length / count);
-        let extra = chars.length % count;
-        let idx = 0;
-        for (let i = 0; i < count; i += 1) {
-            const size = base + (extra > 0 ? 1 : 0);
-            if (extra > 0) extra -= 1;
-            parts.push(chars.slice(idx, idx + size).join('').trim());
-            idx += size;
-        }
-        return parts.filter(Boolean);
-    }
-
-    function splitTextAtIndex(text, index) {
+    function splitTextAtIndex(text, index, options = {}) {
         const raw = String(text || '');
         const at = Math.round(Number(index) || 0);
-        if (isConnectedText(raw) && !isValidTextBreakIndex(raw, at, 2, DEFAULT_BREAK_WORDS)) return null;
+        if (!options.force
+            && isConnectedText(raw)
+            && !isValidTextBreakIndex(raw, at, 2, DEFAULT_BREAK_WORDS)) return null;
         const before = raw.slice(0, at).trim();
         const after = raw.slice(at).trim();
         if (!before || !after) return null;
@@ -451,6 +580,10 @@
             while (from < lower.length) {
                 const idx = lower.indexOf(needle, from);
                 if (idx < 0) break;
+                if (!isBreakWordMatchAt(lower, idx, needle)) {
+                    from = idx + 1;
+                    continue;
+                }
                 let breakAt = idx + needle.length;
                 while (breakAt < raw.length && /\s/.test(raw[breakAt])) breakAt += 1;
                 if (breakAt > 0 && breakAt < raw.length && passesBasicBreakChecks(raw, breakAt)) {
@@ -1514,6 +1647,9 @@
                 minPartChars: 2,
             });
             texts = splitTextAtBreakIndices(raw, cutBreaks, breakOpts.breakWords);
+            if (!texts || texts.length < 2) {
+                texts = buildTextsFromTimeBoundaries(raw, start, end, sorted, snapRadius, breakOpts);
+            }
             if (!texts || texts.length < 2) return null;
             if (sorted.length !== texts.length - 1) {
                 const redistributed = redistributeBoundariesForTexts(start, end, texts);
@@ -1629,12 +1765,17 @@
         hasSubtitlePunctuation,
         isUnpunctuatedConnectedText,
         isEnglishLikeText,
+        isSpacedScriptBreakWord,
+        isBreakWordMatchAt,
+        findAlphabeticWordSafeBreak,
+        findLatinWordSafeBreak,
         allowsWhitespaceBreak,
         findNearestSafeBreakIndex,
         normalizeBreakWords,
         resolveBreakWords,
         findConnectorBreak,
         splitTextByLines,
+        mergeTextLines,
         splitTextBySpaces,
         splitTextByCharCount,
         splitTextSmart,

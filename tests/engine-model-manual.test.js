@@ -66,6 +66,18 @@ describe('engine Hub model manual install helpers', () => {
         assert.ok(!ids.some((id) => String(id).startsWith('sakura')));
     });
 
+    it('hub fallback catalog has no retired non-hf Qwen3 JA', () => {
+        const { ENGINE_MODEL_HUB_FALLBACK } = require('../electron/engine-download-info');
+        assert.ok(!ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b-ja']);
+        assert.ok(ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b']);
+        assert.ok(String(ENGINE_MODEL_HUB_FALLBACK['qwen3-asr-1.7b'].hubId).endsWith('-hf'));
+        const { canonicalizeEngineAsrModelId } = require('../electron/engine-asr-aliases');
+        assert.strictEqual(canonicalizeEngineAsrModelId('qwen3-asr-1.7b-ja'), 'qwen3-asr-1.7b');
+        const ids = resolveDownloadModelIds({ modelIds: ['qwen3-asr-1.7b-ja'] });
+        assert.ok(ids.includes('qwen3-asr-1.7b'));
+        assert.ok(!ids.includes('qwen3-asr-1.7b-ja'));
+    });
+
     it('resolveOrtGpuManualPackage honors requirement pin', () => {
         const c12 = resolveOrtGpuManualPackage({ ortGpuRequirement: 'onnxruntime-gpu>=1.21,<1.27' });
         assert.strictEqual(c12.target, 'cuda12');

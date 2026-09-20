@@ -18,6 +18,7 @@ const EXPECTED_RULE_FILES = [
     '.cursor/rules/no-monolith-growth.mdc',
     '.cursor/rules/mt-sanitize-training.mdc',
     '.cursor/rules/pro-closed-source-boundary.mdc',
+    '.cursor/rules/settings-persistence.mdc',
 ];
 
 const STALE_RULE_FILES = [
@@ -35,6 +36,23 @@ const MONOLITH_SHELL_FILES = [
     'electron/transwithai-bridge.js',
 ];
 
+/** Soft physical-line ceilings — keep in sync with no-monolith-growth.mdc / AGENTS.md / architecture.md */
+const MONOLITH_SOFT_MAX_LINES = {
+    'src/js/app.js': 5400,
+    'src/js/subtitle-editor.js': 9200,
+    'electron/engine-bridge.js': 1850,
+    'electron/extensions-bridge.js': 1400,
+    'electron/advanced-bridge.js': 900,
+    'electron/transwithai-bridge.js': 1950,
+};
+
+function countPhysicalLines(rel) {
+    const text = read(rel);
+    if (text == null) return null;
+    if (text.length === 0) return 0;
+    // Match Measure-Object -Line / typical editor line counts (split on \n).
+    return text.split(/\n/).length;
+}
 function warn(msg) {
     console.log(` WARN ${msg}`);
 }
@@ -111,6 +129,8 @@ if (!arch) {
     else fail('architecture.md missing no-monolith-growth.mdc');
     if (arch.includes('pro-closed-source-boundary.mdc')) ok('architecture.md references pro-closed-source-boundary.mdc');
     else fail('architecture.md missing pro-closed-source-boundary.mdc');
+    if (arch.includes('settings-persistence.mdc')) ok('architecture.md references settings-persistence.mdc');
+    else fail('architecture.md missing settings-persistence.mdc');
     for (const stale of STALE_RULE_FILES) {
         if (arch.includes(path.basename(stale))) fail(`architecture.md still references stale ${stale}`);
     }
@@ -144,8 +164,51 @@ if (!monoRule) {
         ok('AGENTS.md monolith list matches no-monolith-growth.mdc');
     }
     ok('no-monolith-growth.mdc lists all expected monolith shells');
+    if (!monoRule.includes('Soft LOC ceilings')) fail('no-monolith-growth.mdc missing Soft LOC ceilings section');
+    else ok('no-monolith-growth.mdc documents Soft LOC ceilings');
+    if (!monoRule.includes('5400')) fail('no-monolith-growth.mdc missing app.js soft max 5400');
+    if (!monoRule.includes('create*')) fail('no-monolith-growth.mdc missing create*(deps) pattern');
+    if (!monoRule.includes('warnMissingRendererCores')) {
+        fail('no-monolith-growth.mdc missing warnMissingRendererCores registration note');
+    } else {
+        ok('no-monolith-growth.mdc documents core registration checklist');
+    }
 }
 
+// 5b) Soft LOC ceilings on monolith shells
+for (const f of MONOLITH_SHELL_FILES) {
+    const max = MONOLITH_SOFT_MAX_LINES[f];
+    const lines = countPhysicalLines(f);
+    if (lines == null) {
+        fail(`monolith shell missing: ${f}`);
+        continue;
+    }
+    if (typeof max !== 'number') {
+        fail(`MONOLITH_SOFT_MAX_LINES missing entry for ${f}`);
+        continue;
+    }
+    if (lines > max) {
+        fail(
+            `monolith soft LOC ceiling: ${f} has ${lines} lines > max ${max} `
+            + '(extract to *-core.js / electron helper before growing further; '
+            + 'see .cursor/rules/no-monolith-growth.mdc)',
+        );
+    } else {
+        ok(`monolith soft LOC ok: ${f} ${lines}/${max}`);
+    }
+}
+
+// 5c) Docs / AGENTS mention soft ceilings
+if (agents && agents.includes('5400') && agents.includes('软行数上限')) {
+    ok('AGENTS.md documents monolith soft LOC ceilings');
+} else if (agents) {
+    fail('AGENTS.md missing soft LOC ceiling summary (5400 / 软行数上限)');
+}
+if (arch && arch.includes('5400') && arch.includes('软行数上限')) {
+    ok('architecture.md documents monolith soft LOC ceilings');
+} else if (arch) {
+    fail('architecture.md missing soft LOC ceiling summary (5400 / 软行数上限)');
+}
 // 6) pro-closed-source-boundary ↔ proprietary-paths NEVER_GIT_TRACK (Pro subset)
 const { NEVER_GIT_TRACK, PROPRIETARY_ALGORITHM_SOURCES } = require('./proprietary-paths');
 const proRule = read('.cursor/rules/pro-closed-source-boundary.mdc');
@@ -166,7 +229,7 @@ if (!proRule) {
 }
 
 // 7) AGENTS.md local-only paths ⊆ NEVER_GIT_TRACK
-const localPaths = ['docs/', '.cursor/', 'tmp/', 'AGENTS.md'];
+const localPaths = ['docs/', '.cursor/', 'tmp/', 'AGENTS.md', 'shared/'];
 if (agents) {
     for (const p of localPaths) {
         if (!agents.includes(p.replace(/\/$/, '')) && !agents.includes(p)) {
@@ -175,11 +238,37 @@ if (agents) {
     }
     ok('AGENTS.md documents local-only paths');
 }
-for (const p of ['docs/', '.cursor/', 'tmp/']) {
+for (const p of ['docs/', '.cursor/', 'tmp/', 'shared/']) {
     if (!NEVER_GIT_TRACK.includes(p)) fail(`NEVER_GIT_TRACK missing ${p}`);
 }
 if (!NEVER_GIT_TRACK.includes('AGENTS.md')) fail('NEVER_GIT_TRACK missing AGENTS.md');
 else ok('NEVER_GIT_TRACK includes AGENTS.md');
+
+// 8) Settings round-trip: assembleSavedOptionsFromFields keys ⊆ normalizeTransWithAiRuntimeOptions
+try {
+    const settingsNormCore = require('../src/js/settings-options-normalize-core');
+    const { assembleSavedOptionsFromFields } = require('../src/js/settings-saved-options-core');
+    const { normalizeTransWithAiRuntimeOptions } = require('../electron/transwithai-bridge');
+    const form = assembleSavedOptionsFromFields({
+        task: 'translate',
+        translateMode: 'llm',
+        advancedEntitled: true,
+    }, settingsNormCore);
+    const normalized = normalizeTransWithAiRuntimeOptions(form);
+    const missing = Object.keys(form).filter(
+        (key) => !Object.prototype.hasOwnProperty.call(normalized, key),
+    );
+    if (missing.length) {
+        fail(
+            `settings persistence: normalizeTransWithAiRuntimeOptions drops keys: ${missing.join(', ')} `
+            + '(see .cursor/rules/settings-persistence.mdc)',
+        );
+    } else {
+        ok('settings round-trip: all assembleSavedOptionsFromFields keys survive normalize');
+    }
+} catch (err) {
+    fail(`settings persistence check failed: ${err.message || err}`);
+}
 
 console.log('\n---');
 if (issues.length) {

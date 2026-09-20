@@ -19,6 +19,7 @@ _internal/bin/*.dll
 
 # Cached wheels for first-install CPU/CUDA edition builds (tools/build-win-editions.js)
 transub-engine/wheels-edition/
+transub-engine/wheels/
 
 # Engine local caches / heavy weights (standalone runtime/ is vendored)
 transub-engine/.venv/
@@ -109,11 +110,9 @@ tests/smart-translate-verify-core.test.js
 keys.txt
 *.license-keys.txt
 
-# TDP CDN staging (commit only tdp-bundled.tpack)
-shared/tdp/packs/
-shared/tdp/tdp-*.tpack
-!shared/tdp/tdp-bundled.tpack
-shared/tdp/manifest.json
+# Bundled data packs (i18n / TDP / glossaries / ASR·MT tables) — binaries only,
+# never public source (see tools/proprietary-paths.js SHARED_DATA_NEVER_PUBLISH)
+shared/
 
 # Dev/runtime TDP overlay under project writable root (active/*.df1, current.tpack, …)
 /tdp/
@@ -150,7 +149,10 @@ transub-engine/docs/
 .cursor/
 AGENTS.md
 tmp/
+tmp-*/
+tmp-test-*.srt
 tools/tmp-*
 tools/_tmp-*
+*.bak-*
 tests/fixtures/mt-train-drafts/
 node_modules/.vite/

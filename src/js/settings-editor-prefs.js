@@ -20,7 +20,6 @@
         reconOnlyChanged: 'transub-editor-recon-review-only-changed',
         filmHints: 'transub-editor-film-hints',
         reconstructPrefs: 'transub-editor-reconstruct-prefs',
-        librarySkipSetActive: 'transub.library.skipSetActiveConfirm',
     };
 
     function defaultReconstructPrefs() {
@@ -209,8 +208,6 @@
         const skipCons = document.getElementById('reconstructSkipConsistencyCheck');
         if (skipCons) skipCons.checked = !!recon.skipConsistency;
 
-        const skipActive = document.getElementById('librarySkipSetActiveConfirmCheck');
-        if (skipActive) skipActive.checked = lsGet(KEYS.librarySkipSetActive, '') === '1';
     }
 
     function saveFromForm() {
@@ -298,8 +295,6 @@
         });
         lsSet(KEYS.reconstructPrefs, JSON.stringify(recon));
 
-        const skipActive = document.getElementById('librarySkipSetActiveConfirmCheck');
-        if (skipActive) lsSet(KEYS.librarySkipSetActive, skipActive.checked ? '1' : '0');
     }
 
     function getReconstructPrefs() {

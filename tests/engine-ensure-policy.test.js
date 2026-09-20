@@ -12,7 +12,7 @@ describe('engine-ensure-policy', () => {
         assert.strictEqual(isEngineComputeKind(''), false);
     });
 
-    it('blocks kill/restart while batchRunning even if health would fail', () => {
+    it('blocks kill while batchRunning when forceRestart is false', () => {
         const d = decideEngineEnsureAction({
             batchRunning: true,
             childAlive: true,
@@ -24,15 +24,15 @@ describe('engine-ensure-policy', () => {
         assert.strictEqual(d.reason, 'compute_busy');
     });
 
-    it('blocks forceRestart during engine_range lock', () => {
+    it('allows explicit forceRestart during engine_range (torch poison / reload)', () => {
         const d = decideEngineEnsureAction({
             forceRestart: true,
             computeBusyKind: 'engine_range',
             childAlive: true,
         });
-        assert.strictEqual(d.allowKill, false);
-        assert.strictEqual(d.allowForceRestart, false);
-        assert.strictEqual(d.reason, 'compute_busy_restart');
+        assert.strictEqual(d.allowKill, true);
+        assert.strictEqual(d.allowForceRestart, true);
+        assert.strictEqual(d.reason, 'explicit_force_restart');
     });
 
     it('allows kill when idle', () => {

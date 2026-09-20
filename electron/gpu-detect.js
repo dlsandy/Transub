@@ -122,16 +122,40 @@ async function listWindowsVideoControllers() {
 
 async function detectAmdGpu() {
     try {
-        const lines = await listWindowsVideoControllers();
-        const amdRaw = lines.find((l) => /radeon|amd/i.test(l));
-        if (!amdRaw) return { vendor: 'amd', detected: false };
-        const rocmSuffix = resolveAmdRocmSuffix(amdRaw);
-        return withRecommendation({
-            vendor: 'amd',
-            detected: true,
-            gpuName: cleanAmdGpuName(amdRaw),
-            rocmSuffix,
-        });
+        if (process.platform === 'win32') {
+            const lines = await listWindowsVideoControllers();
+            const amdRaw = lines.find((l) => /radeon|amd/i.test(l) && !/microsoft\s*basic/i.test(l));
+            if (!amdRaw) return { vendor: 'amd', detected: false };
+            const rocmSuffix = resolveAmdRocmSuffix(amdRaw);
+            return withRecommendation({
+                vendor: 'amd',
+                detected: true,
+                gpuName: cleanAmdGpuName(amdRaw),
+                rocmSuffix,
+            });
+        }
+        if (process.platform === 'linux') {
+            try {
+                const { stdout } = await execFileAsync('lspci', ['-nn'], {
+                    windowsHide: true,
+                    timeout: 8000,
+                });
+                const line = String(stdout || '')
+                    .split(/\r?\n/)
+                    .find((l) => /VGA|3D|Display/i.test(l) && /AMD|ATI|Radeon/i.test(l));
+                if (!line) return { vendor: 'amd', detected: false };
+                const name = cleanAmdGpuName(line.replace(/^[^:]+:\s*/, ''));
+                return withRecommendation({
+                    vendor: 'amd',
+                    detected: true,
+                    gpuName: name || 'AMD 显卡',
+                    rocmSuffix: resolveAmdRocmSuffix(name || line),
+                });
+            } catch {
+                return { vendor: 'amd', detected: false };
+            }
+        }
+        return { vendor: 'amd', detected: false };
     } catch {
         return { vendor: 'amd', detected: false };
     }

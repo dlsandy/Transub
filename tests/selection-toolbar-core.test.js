@@ -6,7 +6,7 @@ const {
 } = require('../src/js/selection-toolbar-core.js');
 
 describe('selection-toolbar-core', () => {
-    it('keeps editor visible on empty list; hides selection-only actions', () => {
+    it('keeps editor visible; hides removed toolbar retranslate/reconstruct', () => {
         const v = computeSelectionToolbarVisibility({
             itemCount: 0,
             selectedCount: 0,
@@ -16,6 +16,7 @@ describe('selection-toolbar-core', () => {
             showEditor: true,
             showRetranslate: false,
             showReconstruct: false,
+            showTranslateStyle: false,
             showProActions: false,
         });
     });
@@ -29,34 +30,39 @@ describe('selection-toolbar-core', () => {
         assert.strictEqual(v.showEditor, true);
         assert.strictEqual(v.showRetranslate, false);
         assert.strictEqual(v.showReconstruct, false);
+        assert.strictEqual(v.showTranslateStyle, false);
         assert.strictEqual(v.showProActions, false);
     });
 
-    it('shows retranslate for any selection; reconstruct only for one with subtitle', () => {
+    it('never shows toolbar retranslate/reconstruct (context menu only)', () => {
         const multi = computeSelectionToolbarVisibility({
             itemCount: 2,
             selectedCount: 2,
             singleHasSubtitle: true,
         });
-        assert.strictEqual(multi.showRetranslate, true);
+        assert.strictEqual(multi.showRetranslate, false);
         assert.strictEqual(multi.showReconstruct, false);
-        assert.strictEqual(multi.showProActions, true);
-
-        const oneNoSub = computeSelectionToolbarVisibility({
-            itemCount: 1,
-            selectedCount: 1,
-            singleHasSubtitle: false,
-        });
-        assert.strictEqual(oneNoSub.showRetranslate, true);
-        assert.strictEqual(oneNoSub.showReconstruct, false);
+        assert.strictEqual(multi.showTranslateStyle, true);
+        assert.strictEqual(multi.showProActions, false);
 
         const oneWithSub = computeSelectionToolbarVisibility({
             itemCount: 1,
             selectedCount: 1,
             singleHasSubtitle: true,
         });
-        assert.strictEqual(oneWithSub.showRetranslate, true);
-        assert.strictEqual(oneWithSub.showReconstruct, true);
-        assert.strictEqual(oneWithSub.showProActions, true);
+        assert.strictEqual(oneWithSub.showRetranslate, false);
+        assert.strictEqual(oneWithSub.showReconstruct, false);
+        assert.strictEqual(oneWithSub.showTranslateStyle, true);
+        assert.strictEqual(oneWithSub.showProActions, false);
+    });
+
+    it('shows translate style for any non-empty selection', () => {
+        const v = computeSelectionToolbarVisibility({
+            itemCount: 5,
+            selectedCount: 3,
+            singleHasSubtitle: false,
+        });
+        assert.strictEqual(v.showTranslateStyle, true);
+        assert.strictEqual(v.showProActions, false);
     });
 });

@@ -3,14 +3,38 @@
  * 语义级 LLM 审阅可作为 Pro 扩展入口（payload 预留）
  */
 (function (global, factory) {
-    const api = factory();
+    const api = factory(global);
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
     }
     if (global) {
         global.TransubBilingualReview = api;
     }
-}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function bilingualReviewCoreFactory() {
+}(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this, function bilingualReviewCoreFactory(global) {
+    function uiTf(template, vars) {
+        try {
+            if (typeof global !== 'undefined' && typeof global.TransubUiTf === 'function') {
+                return global.TransubUiTf(template, vars);
+            }
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tf === 'function') {
+                return global.TransubI18n.tf(template, vars);
+            }
+        } catch { /* ignore */ }
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+    function uiTx(text) {
+        try {
+            if (typeof global !== 'undefined' && global.TransubI18n && typeof global.TransubI18n.tx === 'function') {
+                return global.TransubI18n.tx(text);
+            }
+        } catch { /* ignore */ }
+        return String(text || '');
+    }
+
     function cueEndMs(cue) {
         if (!cue) return 0;
         if (cue.endMs != null && Number.isFinite(Number(cue.endMs))) return Number(cue.endMs);
@@ -143,7 +167,7 @@
                         severity: 'warn',
                         primaryIndex: i,
                         sourceIndex: hit.index,
-                        message: `术语「${canon}」出现在原文但译文未使用`,
+                        message: uiTf('术语「{canon}」出现在原文但译文未使用', { canon }),
                         term: canon,
                     });
                 }
@@ -176,8 +200,8 @@
                 byType,
             },
             summary: issues.length
-                ? `双语审阅：${issues.length} 处需留意`
-                : '双语审阅：未发现规则性问题',
+                ? uiTf('双语审阅：{count} 处需留意', { count: issues.length })
+                : uiTx('双语审阅：未发现规则性问题'),
             /**
              * Pro 扩展：把同一 payload 交给 LLM 做语义漏译/错译检测
              */

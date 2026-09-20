@@ -1,0 +1,41 @@
+{
+  "id": "ja-smart-10-12",
+  "version": 1,
+  "group": "ja",
+  "name": "日语软对白 · 混合 · 10–12GB",
+  "description": "10–12GB 显存日译中：Qwen3-ASR Galgame 软对白听写 + GalTransl 7B 句级翻译 + Huihui Qwen3 8B Abliterated 润色。需 Pro。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "smart",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 10,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 10–12GB 显存"
+  },
+  "models": [
+    "qwen3-asr-1.7b-ja-anime-galgame",
+    "silero-vad",
+    "sakura-galtransl-7b-q6k",
+    "qwen3-8b-abliterated"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "qwen3-asr-1.7b-ja-anime-galgame",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "av_soft",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "ten",
+    "beamSize": 1,
+    "translateMode": "smart",
+    "engineLlmMtModel": "sakura-galtransl-7b-q6k",
+    "smartTranslateModelId": "qwen3-8b-abliterated",
+    "engineProfile": "balanced",
+    "activePresetId": "ja-av-qwen3-galgame-ten"
+  }
+}

@@ -16,12 +16,21 @@ describe('extracted cores (first-pass monolith split)', () => {
     it('infer-stage-progress-core maps stages', () => {
         assert.strictEqual(infer.stageRank('transcribe'), 4);
         assert.ok(infer.stageRank('translate') > infer.stageRank('transcribe'));
-        assert.ok(infer.stageRank('cleanup') > infer.stageRank('transcribe'));
+        assert.ok(infer.stageRank('cleanup') > infer.stageRank('translate'));
+        assert.ok(infer.stageRank('qc_loop') > infer.stageRank('translate'));
+        assert.ok(infer.stageRank('semantic_repair') < infer.stageRank('translate'));
+        assert.strictEqual(infer.mapStageProgress('source_cleanup', 88), 65);
+        assert.ok(infer.mapStageProgress('cleanup', 50) >= 95);
         assert.strictEqual(infer.isPreTranscribeStage('vad'), true);
         assert.strictEqual(infer.isPreTranscribeStage('cleanup'), false);
-        assert.strictEqual(infer.mapStageProgress('transcribe', 100, 600, 600), 68);
-        assert.strictEqual(infer.mapStageProgress('translate', 50), 82);
-        assert.strictEqual(infer.mapStageProgress('save'), 99);
+        assert.strictEqual(infer.mapStageProgress('transcribe', 100, 600, 600), 65);
+        assert.ok(infer.mapStageProgress('translate', 50) >= 70);
+        assert.ok(infer.mapStageProgress('save', 50) >= 97);
+        assert.ok(infer.capTranslateProgressByWork(95, '翻译 0/200', 65) <= 70);
+        assert.ok(infer.capTranslateProgressByWork(95, '翻译 40/200', 65) < 95);
+        assert.strictEqual(infer.parseTranslateWorkNumerator('Sakura 翻译 2/5'), null);
+        assert.strictEqual(infer.parseTranslateWorkNumerator('推理翻译 2/5'), null);
+        assert.deepStrictEqual(infer.parseTranslateWorkNumerator('翻译 40/200'), { done: 40, total: 200 });
         assert.strictEqual(infer.bumpProgress(10, 40), 40);
         assert.ok(infer.scrubProgressDetail('转写中 · 00:10').includes('00:10') || infer.scrubProgressDetail('转写中 · 00:10') === '00:10');
     });

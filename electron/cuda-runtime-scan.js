@@ -478,6 +478,299 @@ function engineNvidiaExtraRoots(engineRoot) {
     });
 }
 
+const EXTRA_ROOTS_FILE = 'cuda-scan-extra-roots.json';
+
+/**
+ * Read CUDA_PATH* from Windows User/Machine env when the process env is empty
+ * (common for GUI apps launched without a refreshed shell).
+ * @returns {string[]}
+ */
+function readWindowsRegistryCudaRoots() {
+    if (process.platform !== 'win32') return [];
+    /** @type {string[]} */
+    const roots = [];
+    try {
+        const { spawnSync } = require('child_process');
+        const keys = [
+            'HKCU\\Environment',
+            'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+        ];
+        const names = ['CUDA_PATH', 'CUDA_PATH_V12_9', 'CUDA_PATH_V12_8', 'CUDA_PATH_V12_6',
+            'CUDA_PATH_V12_4', 'CUDA_PATH_V12_1', 'CUDA_PATH_V12_0',
+            'CUDA_PATH_V13_0', 'CUDA_PATH_V13_1', 'CUDA_PATH_V13_2', 'CUDA_PATH_V13_3'];
+        for (const hive of keys) {
+            for (const name of names) {
+                const res = spawnSync(
+                    'reg',
+                    ['query', hive, '/v', name],
+                    { encoding: 'utf8', windowsHide: true, timeout: 4000 },
+                );
+                const out = String(res.stdout || '');
+                const m = out.match(new RegExp(`${name}\\s+REG_\\w+\\s+(.+)$`, 'im'));
+                const val = String(m?.[1] || '').trim();
+                if (val && fs.existsSync(val)) roots.push(val);
+            }
+        }
+    } catch (_) { /* ignore */ }
+    return roots;
+}
+
+/**
+ * Common Python / Conda site-packages that may hold pip nvidia-* wheels.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string[]}
+ */
+function discoverCommonPythonNvidiaRoots(env = process.env) {
+    if (process.platform !== 'win32') return [];
+    const localApp = String(env.LOCALAPPDATA || '').trim();
+    const userProfile = String(env.USERPROFILE || '').trim();
+    const programFiles = String(env.ProgramFiles || 'C:\\Program Files').trim();
+    /** @type {string[]} */
+    const candidates = [];
+
+    const pushIfSite = (site) => {
+        const sp = path.resolve(String(site || ''));
+        if (!sp) return;
+        try {
+            if (fs.existsSync(path.join(sp, 'nvidia')) && fs.statSync(sp).isDirectory()) {
+                candidates.push(sp);
+            }
+        } catch (_) { /* ignore */ }
+    };
+
+    const scanPythonInstallRoot = (root) => {
+        if (!root || !fs.existsSync(root)) return;
+        let children = [];
+        try {
+            children = fs.readdirSync(root, { withFileTypes: true });
+        } catch (_) {
+            return;
+        }
+        for (const ent of children) {
+            if (!ent.isDirectory()) continue;
+            pushIfSite(path.join(root, ent.name, 'Lib', 'site-packages'));
+        }
+    };
+
+    if (localApp) scanPythonInstallRoot(path.join(localApp, 'Programs', 'Python'));
+    if (programFiles) scanPythonInstallRoot(path.join(programFiles, 'Python'));
+    for (const name of ['anaconda3', 'miniconda3', 'mambaforge', 'miniforge3']) {
+        if (userProfile) {
+            pushIfSite(path.join(userProfile, name, 'Lib', 'site-packages'));
+            pushIfSite(path.join(userProfile, 'AppData', 'Local', name, 'Lib', 'site-packages'));
+        }
+        if (localApp) pushIfSite(path.join(localApp, name, 'Lib', 'site-packages'));
+    }
+    return candidates;
+}
+
+/**
+ * Walk ancestors looking for Transub-style CUDA layouts (dev tree next to dist/,
+ * sibling advanced-llm runtime, etc.).
+ * @param {string[]} startDirs
+ * @param {number} [maxDepth=5]
+ * @returns {string[]}
+ */
+function discoverNearbyTransubCudaRoots(startDirs, maxDepth = 5) {
+    /** @type {string[]} */
+    const found = [];
+    const seen = new Set();
+    const depth = Math.max(1, Math.min(8, Number(maxDepth) || 5));
+
+    const consider = (dir) => {
+        const root = path.resolve(String(dir || ''));
+        if (!root || seen.has(pathKey(root))) return;
+        seen.add(pathKey(root));
+        // Flat llama companion dir
+        try {
+            const marker = path.join(root, 'advanced-llm', 'runtime', 'cudart64_12.dll');
+            const marker13 = path.join(root, 'advanced-llm', 'runtime', 'cudart64_13.dll');
+            if (fs.existsSync(marker) || fs.existsSync(marker13)) {
+                found.push(path.join(root, 'advanced-llm', 'runtime'));
+            }
+        } catch (_) { /* ignore */ }
+        // Engine pip nvidia wheels
+        for (const eng of [
+            path.join(root, 'transub-engine'),
+            path.join(root, 'resources', 'transub-engine'),
+        ]) {
+            found.push(...engineNvidiaExtraRoots(eng));
+        }
+        // Already standing inside an engine or advanced-llm runtime
+        const base = path.basename(root).toLowerCase();
+        if (base === 'runtime' && path.basename(path.dirname(root)).toLowerCase() === 'advanced-llm') {
+            found.push(root);
+        }
+        if (base === 'transub-engine' || fs.existsSync(path.join(root, 'ENGINE_ROOT'))) {
+            found.push(...engineNvidiaExtraRoots(root));
+        }
+    };
+
+    for (const start of startDirs || []) {
+        let cur = path.resolve(String(start || '').trim() || '');
+        if (!cur) continue;
+        for (let i = 0; i <= depth; i += 1) {
+            consider(cur);
+            const parent = path.dirname(cur);
+            if (!parent || parent === cur) break;
+            cur = parent;
+        }
+    }
+    return found;
+}
+
+/**
+ * @param {string} writableRoot
+ * @returns {string[]}
+ */
+function loadPersistedCudaExtraRoots(writableRoot) {
+    const root = path.resolve(String(writableRoot || '').trim() || '');
+    if (!root) return [];
+    const file = path.join(root, EXTRA_ROOTS_FILE);
+    try {
+        if (!fs.existsSync(file)) return [];
+        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const list = Array.isArray(raw?.roots) ? raw.roots : (Array.isArray(raw) ? raw : []);
+        return list.map((p) => path.resolve(String(p || '').trim())).filter((p) => {
+            try {
+                return p && fs.existsSync(p);
+            } catch (_) {
+                return false;
+            }
+        });
+    } catch (_) {
+        return [];
+    }
+}
+
+/**
+ * @param {string} writableRoot
+ * @param {string[]} roots
+ * @returns {{ ok: boolean, roots: string[], error?: string }}
+ */
+function savePersistedCudaExtraRoots(writableRoot, roots) {
+    const root = path.resolve(String(writableRoot || '').trim() || '');
+    if (!root) return { ok: false, roots: [], error: 'writable_missing' };
+    const cleaned = [];
+    const seen = new Set();
+    for (const raw of roots || []) {
+        const p = path.resolve(String(raw || '').trim());
+        if (!p) continue;
+        const key = pathKey(p);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+            if (!fs.existsSync(p)) continue;
+        } catch (_) {
+            continue;
+        }
+        cleaned.push(p);
+    }
+    try {
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(
+            path.join(root, EXTRA_ROOTS_FILE),
+            `${JSON.stringify({ roots: cleaned }, null, 2)}\n`,
+            'utf8',
+        );
+        return { ok: true, roots: cleaned };
+    } catch (err) {
+        return { ok: false, roots: cleaned, error: err?.message || String(err) };
+    }
+}
+
+/**
+ * Append one directory to the persisted CUDA scan list.
+ * @param {string} writableRoot
+ * @param {string} dir
+ */
+function addPersistedCudaExtraRoot(writableRoot, dir) {
+    const next = [
+        ...loadPersistedCudaExtraRoots(writableRoot),
+        path.resolve(String(dir || '').trim()),
+    ];
+    return savePersistedCudaExtraRoots(writableRoot, next);
+}
+
+/**
+ * Aggregate default extraRoots for companion / engine CUDA reuse scans.
+ * Does not full-disk walk — only env, registry, common Python, nearby Transub trees,
+ * and user-persisted folders.
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.startDirs] install / writable / cwd hints
+ * @param {string} [opts.writableRoot]
+ * @param {string[]} [opts.engineRoots]
+ * @param {string[]} [opts.extraRoots] caller extras (merged first)
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {string[]}
+ */
+function discoverCudaExtraRoots(opts = {}) {
+    const env = opts.env || process.env;
+    /** @type {string[]} */
+    const out = [];
+    const seen = new Set();
+    const push = (raw) => {
+        const p = path.resolve(String(raw || '').trim());
+        if (!p) return;
+        const key = pathKey(p);
+        if (seen.has(key)) return;
+        try {
+            if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) return;
+        } catch (_) {
+            return;
+        }
+        seen.add(key);
+        out.push(p);
+    };
+
+    for (const r of opts.extraRoots || []) push(r);
+
+    const envExtra = String(env.TRANSUB_CUDA_EXTRA_ROOTS || '').trim();
+    if (envExtra) {
+        for (const part of envExtra.split(path.delimiter)) push(part);
+    }
+
+    for (const eng of opts.engineRoots || []) {
+        for (const r of engineNvidiaExtraRoots(eng)) push(r);
+    }
+
+    const writable = String(opts.writableRoot || '').trim();
+    if (writable) {
+        push(path.join(writable, 'advanced-llm', 'runtime'));
+        for (const r of engineNvidiaExtraRoots(path.join(writable, 'transub-engine'))) push(r);
+        for (const r of loadPersistedCudaExtraRoots(writable)) push(r);
+    }
+
+    const startDirs = [...(opts.startDirs || [])];
+    if (writable) startDirs.push(writable);
+    for (const eng of opts.engineRoots || []) startDirs.push(eng);
+    try {
+        startDirs.push(process.cwd());
+    } catch (_) { /* ignore */ }
+
+    for (const r of discoverNearbyTransubCudaRoots(startDirs)) push(r);
+    for (const r of discoverCommonPythonNvidiaRoots(env)) push(r);
+
+    // Registry CUDA toolkit roots → their parent is the toolkit; listWhitelistPools
+    // also reads CUDA_PATH, but we pass bin/parent as flat/extra for incomplete envs.
+    for (const toolkitRoot of readWindowsRegistryCudaRoots()) {
+        push(toolkitRoot);
+        push(path.join(toolkitRoot, 'bin'));
+    }
+
+    return out;
+}
+
+/**
+ * Join discovered roots for injecting into engine process env.
+ * @param {object} [opts]
+ * @returns {string}
+ */
+function formatCudaExtraRootsEnv(opts = {}) {
+    return discoverCudaExtraRoots(opts).join(path.delimiter);
+}
+
 module.exports = {
     MIN_DLL_BYTES,
     requiredDllNames,
@@ -490,6 +783,15 @@ module.exports = {
     copyReusableCudaRuntime,
     tryReuseSystemCudaCompanion,
     engineNvidiaExtraRoots,
+    discoverCudaExtraRoots,
+    discoverNearbyTransubCudaRoots,
+    discoverCommonPythonNvidiaRoots,
+    readWindowsRegistryCudaRoots,
+    loadPersistedCudaExtraRoots,
+    savePersistedCudaExtraRoots,
+    addPersistedCudaExtraRoot,
+    formatCudaExtraRootsEnv,
+    EXTRA_ROOTS_FILE,
     // test helper
     _isTorchLibPath: isTorchLibPath,
 };

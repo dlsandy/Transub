@@ -116,7 +116,14 @@ function applyUiZoomToWindow(win) {
         const bounds = win.getBounds();
         const display = screen.getDisplayMatching(bounds);
         const factor = resolveZoomFactor(loadUiZoomPref(), display);
-        win.webContents.setZoomFactor(factor);
+        const wc = win.webContents;
+        // Electron 44+: isolate zoom so setZoomFactor does not bleed across windows/sites.
+        if (typeof wc.setZoomMode === 'function') {
+            try {
+                wc.setZoomMode('isolated');
+            } catch (_) { /* older / unavailable */ }
+        }
+        wc.setZoomFactor(factor);
     } catch (err) {
         console.warn('[ui-zoom] 应用缩放失败:', err.message);
     }

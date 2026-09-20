@@ -225,8 +225,95 @@ function supportsThinkingControls(baseUrl, model) {
     if (/127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]|::1|:11434|\bollama\b/.test(u)) {
         return true;
     }
-    if (/qwen3/.test(m)) return true;
+    if (/qwen3|ornith/.test(m)) return true;
     return false;
+}
+
+/**
+ * Fill sampling knobs from managed catalog chatDefaults.
+ * Default: only fill missing fields (explicit caller wins).
+ * With `applyCatalogSampling: true`, catalog knobs override for temperature /
+ * topP / topK / repeatPenalty / frequencyPenalty / disableThinking when the catalog defines them.
+ * `samplingRole: 'polish'` uses `polishTemperature` when present.
+ * @param {object} opts
+ * @returns {object}
+ */
+function mergeCatalogChatDefaults(opts = {}) {
+    let defaults = null;
+    try {
+        const catalog = require('../src/js/advanced-managed-llm-catalog-core');
+        const probe = opts.modelId || opts.model || '';
+        defaults = catalog.resolveChatDefaults(probe);
+    } catch (_) {
+        defaults = null;
+    }
+    if (!defaults) return opts;
+    const out = { ...opts };
+    const apply = opts.applyCatalogSampling === true;
+    const role = String(opts.samplingRole || '').trim().toLowerCase();
+    const catalogTemp = (role === 'polish' && defaults.polishTemperature != null)
+        ? defaults.polishTemperature
+        : defaults.temperature;
+
+    if (apply) {
+        if (catalogTemp != null) out.temperature = catalogTemp;
+        if (defaults.topP != null) {
+            out.topP = defaults.topP;
+            delete out.top_p;
+        }
+        if (defaults.topK != null) {
+            out.topK = defaults.topK;
+            delete out.top_k;
+        }
+        if (defaults.repeatPenalty != null) {
+            out.repeatPenalty = defaults.repeatPenalty;
+            delete out.repetition_penalty;
+            delete out.repetitionPenalty;
+            delete out.repeat_penalty;
+        }
+        if (defaults.frequencyPenalty != null) {
+            out.frequencyPenalty = defaults.frequencyPenalty;
+            delete out.frequency_penalty;
+        }
+        if (defaults.disableThinking === true) out.disableThinking = true;
+        return out;
+    }
+
+    if (out.temperature == null && catalogTemp != null) {
+        out.temperature = catalogTemp;
+    }
+    if (out.top_p == null && out.topP == null && defaults.topP != null) {
+        out.topP = defaults.topP;
+    }
+    if (out.top_k == null && out.topK == null && defaults.topK != null) {
+        out.topK = defaults.topK;
+    }
+    if (
+        out.repetition_penalty == null
+        && out.repetitionPenalty == null
+        && out.repeat_penalty == null
+        && out.repeatPenalty == null
+        && defaults.repeatPenalty != null
+    ) {
+        out.repeatPenalty = defaults.repeatPenalty;
+    }
+    if (
+        out.frequency_penalty == null
+        && out.frequencyPenalty == null
+        && defaults.frequencyPenalty != null
+    ) {
+        out.frequencyPenalty = defaults.frequencyPenalty;
+    }
+    if (
+        out.disableThinking == null
+        && out.disable_thinking == null
+        && out.enableThinking == null
+        && out.enable_thinking == null
+        && defaults.disableThinking === true
+    ) {
+        out.disableThinking = true;
+    }
+    return out;
 }
 
 /**
@@ -294,7 +381,7 @@ function extractChatMessageContent(message, options = {}) {
  * @param {AbortSignal} [options.signal]
  */
 async function chatCompletions(options = {}) {
-    const opts = asPlainObject(options);
+    const opts = mergeCatalogChatDefaults(asPlainObject(options));
     const apiKey = asString(opts.apiKey, 8192).trim();
     if (!apiKey) {
         return { ok: false, error: '缺少 API Key', code: 'byok_missing' };
@@ -351,6 +438,25 @@ async function chatCompletions(options = {}) {
                 model,
                 temperature,
                 messages,
+                ...(Number.isFinite(Number(opts.top_p ?? opts.topP))
+                    ? {
+                        top_p: asNumber(
+                            opts.top_p ?? opts.topP,
+                            { min: 0, max: 1, fallback: 0.6 },
+                        ),
+                    }
+                    : {}),
+                ...(Number.isFinite(Number(opts.top_k ?? opts.topK))
+                    ? {
+                        top_k: Math.max(
+                            0,
+                            Math.min(200, Math.round(Number(opts.top_k ?? opts.topK))),
+                        ),
+                    }
+                    : {}),
+                ...(Array.isArray(opts.stop) && opts.stop.length
+                    ? { stop: opts.stop.filter((s) => String(s || '').trim()) }
+                    : {}),
                 ...(Number.isFinite(Number(opts.max_tokens)) || Number.isFinite(Number(opts.maxTokens))
                     ? {
                         max_tokens: Math.max(
@@ -360,10 +466,18 @@ async function chatCompletions(options = {}) {
                     }
                     : {}),
                 // llama.cpp + OpenAI-compat anti-loop knobs (subtitle MT runaway repeats)
-                ...(Number.isFinite(Number(opts.repetition_penalty ?? opts.repetitionPenalty))
+                ...(Number.isFinite(Number(
+                    opts.repetition_penalty
+                    ?? opts.repetitionPenalty
+                    ?? opts.repeat_penalty
+                    ?? opts.repeatPenalty,
+                ))
                     ? {
                         repetition_penalty: asNumber(
-                            opts.repetition_penalty ?? opts.repetitionPenalty,
+                            opts.repetition_penalty
+                            ?? opts.repetitionPenalty
+                            ?? opts.repeat_penalty
+                            ?? opts.repeatPenalty,
                             { min: 1, max: 2, fallback: 1.15 },
                         ),
                     }
@@ -467,6 +581,7 @@ module.exports = {
     isMockMode,
     supportsThinkingControls,
     extractChatMessageContent,
+    mergeCatalogChatDefaults,
     chatCompletions,
     testConnection,
 };

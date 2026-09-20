@@ -38,7 +38,7 @@ function openAboutWindow(app, { parent: _parent } = {}) {
         minHeight: 380,
         resizable: true,
         maximizable: false,
-        title: '关于 Transub',
+        title: '关于 Transub 字幕工厂',
         icon: getWindowIconOption(),
         autoHideMenuBar: true,
         backgroundColor,

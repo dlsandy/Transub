@@ -18,6 +18,16 @@ describe('asr-semantic-repair-core', () => {
             contentProfile: 'film',
             language: 'en',
         }), true);
+        assert.strictEqual(core.shouldRunAsrSemanticRepair({
+            asrSemanticRepair: 'auto',
+            contentProfile: 'film',
+            perfProfile: 'speed',
+        }), false);
+        assert.strictEqual(core.shouldRunAsrSemanticRepair({
+            asrSemanticRepair: 'thorough',
+            perfProfile: 'speed',
+        }), true);
+        assert.strictEqual(core.isSpeedPerfProfile({ perfProfile: 'speed' }), true);
     });
 
     it('infers repair language from cues', () => {
@@ -194,6 +204,41 @@ describe('asr-semantic-repair-core', () => {
         const back = core.repairMsToEngineCues(ms);
         assert.strictEqual(back[0].start, 1.5);
         assert.strictEqual(back[0].end, 2.5);
+    });
+
+    it('keeps second-based timing when cues also carry index (MFYD-185 regression)', () => {
+        const engine = [
+            { index: 0, start: 31.856, end: 35.264, text: 'コンビニ' },
+            { index: 1, start: 36.832, end: 39.648, text: 'お客さん' },
+        ];
+        const ms = core.engineCuesToRepairMs(engine);
+        assert.strictEqual(ms[0].startMs, 31856);
+        assert.strictEqual(ms[0].endMs, 35264);
+        assert.strictEqual(ms[1].startMs, 36832);
+        assert.strictEqual(ms[1].endMs, 39648);
+        const back = core.repairMsToEngineCues(ms);
+        assert.ok(Math.abs(back[0].start - 31.856) < 1e-6);
+        assert.ok(Math.abs(back[0].end - 35.264) < 1e-6);
+    });
+
+    it('heals zeroed startMs when second-based start/end are still present', () => {
+        const engine = [
+            { index: 0, startMs: 0, endMs: 0, start: 31.856, end: 35.264, text: 'コンビニ' },
+        ];
+        const ms = core.engineCuesToRepairMs(engine);
+        assert.strictEqual(ms[0].startMs, 31856);
+        assert.strictEqual(ms[0].endMs, 35264);
+    });
+
+    it('preserves genuine t=0 ms cues without inventing from missing seconds', () => {
+        const engine = [
+            { index: 0, startMs: 0, endMs: 2000, text: 'credit' },
+            { index: 1, startMs: 31856, endMs: 35264, text: 'dialogue' },
+        ];
+        const ms = core.engineCuesToRepairMs(engine);
+        assert.strictEqual(ms[0].startMs, 0);
+        assert.strictEqual(ms[0].endMs, 2000);
+        assert.strictEqual(ms[1].startMs, 31856);
     });
 
     it('buildRepairUserPrompt includes media basename hint', () => {

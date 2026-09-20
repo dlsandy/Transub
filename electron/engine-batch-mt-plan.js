@@ -16,7 +16,10 @@ function buildSanitizedFileMergedList(list, merged, deps) {
         || ((opts) => ({ options: opts }));
     return (Array.isArray(list) ? list : []).map((it) => {
         const fo = merge(merged, it?.optionOverrides || {});
-        return sanitize(fo, fo.language).options;
+        return sanitize(fo, fo.language, {
+            installedModels: deps.installedModels,
+            subtitleTargetLang: fo.subtitleTargetLang || merged.subtitleTargetLang,
+        }).options;
     });
 }
 
@@ -35,7 +38,17 @@ function resolveBatchMtPlan({
     isLlmMtId = () => false,
 } = {}) {
     const translateLikeBatch = merged.task === 'translate' || merged.task === 'dual';
-    const batchWantsSmart = translateLikeBatch && (
+    let batchWantsExternal = false;
+    try {
+        const { isExternalTranslateMode } = require('../src/js/settings-options-normalize-core');
+        batchWantsExternal = translateLikeBatch && !!isExternalTranslateMode(merged.translateMode);
+    } catch {
+        const m = String(merged.translateMode || '').trim().toLowerCase();
+        batchWantsExternal = translateLikeBatch && (
+            m === 'external' || m === 'byok' || m === 'external_mt' || m === 'openai'
+        );
+    }
+    const batchWantsSmart = translateLikeBatch && !batchWantsExternal && (
         !!merged.smartTranslate
         || fileMergedList.some((fo) => !!fo.smartTranslate)
     );
@@ -45,7 +58,8 @@ function resolveBatchMtPlan({
         && translateLikeBatch
     ));
     const batchWantsSakura = translateLikeBatch && !batchWantsSmart && (
-        !!sakuraFile
+        batchWantsExternal
+        || !!sakuraFile
         || (
             listLength === 0
             && isLlmMtId(merged.engineMtModel)
@@ -59,6 +73,7 @@ function resolveBatchMtPlan({
         translateLikeBatch,
         batchWantsSmart,
         batchWantsSakura,
+        batchWantsExternal,
         sakuraModelId,
         sakuraFile: sakuraFile || null,
     };
@@ -101,16 +116,39 @@ function resolveBatchMtAdapterLaunch({
         modelId: batchWantsSmart
             ? merged.engineMtModel
             : (sakuraModelId || merged.engineMtModel),
-        options: {
-            ...merged,
-            sakuraNsfwPrompt,
-            ...(batchWantsSmart
-                ? {
-                    windowCues: merged.windowCues ?? 8,
-                    overlapCues: merged.overlapCues ?? 2,
+        options: (() => {
+            let opts = {
+                ...merged,
+                sakuraNsfwPrompt,
+            };
+            try {
+                const { resolveMtTargetFields } = require('./sanitize-target-opts');
+                const fields = resolveMtTargetFields(opts);
+                opts = {
+                    ...opts,
+                    subtitleTargetLang: fields.subtitleTargetLang,
+                    targetLang: fields.targetLang,
+                    targetLanguage: fields.targetLanguage,
+                    chineseSubtitleVariant: fields.chineseSubtitleVariant,
+                    // Sakura/Gal sentence MT is JA→ZH only; en/ja/ko still use TG/Chimera hybrid.
+                    // Only strip hybrid when the target cannot use any sentence-MT family.
+                    ...(fields.disableHybridMt ? {
+                        smartTranslateHybridMt: false,
+                    } : {}),
+                };
+                if (batchWantsSmart) {
+                    opts.windowCues = merged.windowCues
+                        ?? (fields.isZhTarget ? 8 : 8);
+                    opts.overlapCues = merged.overlapCues ?? 2;
                 }
-                : {}),
-        },
+            } catch {
+                if (batchWantsSmart) {
+                    opts.windowCues = merged.windowCues ?? 8;
+                    opts.overlapCues = merged.overlapCues ?? 2;
+                }
+            }
+            return opts;
+        })(),
     };
 }
 

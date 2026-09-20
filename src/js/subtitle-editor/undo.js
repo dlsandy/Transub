@@ -2,6 +2,16 @@
  * 字幕编辑器 — 撤销 / 重做栈（相对 initial 基线的补丁，降低长片内存）
  */
 (function (global) {
+    function uiTf(template, vars) {
+        const api = global.TransubI18n;
+        if (api?.tf) return api.tf(template, vars);
+        return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => (
+            vars && Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+                ? String(vars[name])
+                : `{${name}}`
+        ));
+    }
+
     const UNDO_MAX = 50;
     const DETAIL_UNDO_GAP_MS = 600;
 
@@ -212,7 +222,7 @@
             setDirty(!cuesEqual(state.cues, state.savedSnapshot));
             renderCueList();
             closeFindReplaceModal();
-            setStatus(`已恢复到初始字幕（${state.cues.length} 条）`, 'ok');
+            setStatus(uiTf('已恢复到初始字幕（{count} 条）', { count: state.cues.length }), 'ok');
         }
 
         ctx.createEditorSnapshot = createEditorSnapshot;

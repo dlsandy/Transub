@@ -19,10 +19,22 @@
         fi: 'opus-mt-fi-zh',
         sv: 'opus-mt-sv-zh',
     });
+    /** source|apiTarget → opus id (intl pairs beyond *→zh). */
+    const DEFAULT_OPUS_MT_BY_PAIR = Object.freeze({
+        'ja|zh': 'opus-mt-ja-zh',
+        'en|zh': 'opus-mt-en-zh',
+        'ko|zh': 'opus-mt-ko-zh',
+        'de|zh': 'opus-mt-de-zh',
+        'es|zh': 'opus-mt-es-zh',
+        'fi|zh': 'opus-mt-fi-zh',
+        'sv|zh': 'opus-mt-sv-zh',
+        'ja|en': 'opus-mt-ja-en',
+    });
     const COMMON_OPUS_IDS = Object.freeze([
         'opus-mt-ja-zh',
         'opus-mt-en-zh',
         'opus-mt-ko-zh',
+        'opus-mt-ja-en',
     ]);
 
     function defaultNormalizeLang(lang) {
@@ -34,7 +46,28 @@
         if (!id) return false;
         if (deps.isSakuraMtModelId?.(id)) return true;
         if (deps.isLlmInferenceMtModel?.(id)) return true;
-        return /^(qwen|llama|mistral|gemma|chatglm|yi-|deepseek|phi)/i.test(id);
+        return /^(qwen|llama|mistral|gemma|translategemma|chatglm|glm|yi-|deepseek|phi)/i.test(id);
+    }
+
+    function engineApiTargetFromSubtitle(raw) {
+        const s = String(raw || '').trim();
+        if (!s || /^zh/i.test(s) || /hans|hant|simplified|traditional/i.test(s)) return 'zh';
+        if (/^en/i.test(s)) return 'en';
+        if (/^ko/i.test(s)) return 'ko';
+        if (/^ja/i.test(s)) return 'ja';
+        return 'zh';
+    }
+
+    function pickOpusIdForSourceTarget(srcLang, subtitleTargetLang, langMap, pairMap) {
+        const src = String(srcLang || '').trim().toLowerCase().split(/[-_]/)[0];
+        if (!src) return '';
+        const tgt = engineApiTargetFromSubtitle(subtitleTargetLang);
+        const pairs = pairMap || DEFAULT_OPUS_MT_BY_PAIR;
+        const pairKey = `${src}|${tgt}`;
+        if (pairs[pairKey]) return pairs[pairKey];
+        if (tgt !== 'zh') return '';
+        const map = langMap || DEFAULT_OPUS_MT_BY_LANG;
+        return map[src] || '';
     }
 
     /**
@@ -43,61 +76,21 @@
      *   translateMode: string,
      *   explicitOpusMtId?: string,
      *   formLang?: string,
+     *   subtitleTargetLang?: string,
      *   selectedItems?: object[],
      *   opusMtByLang?: object,
+     *   opusMtByPair?: object,
      *   normalizeSenseLang?: (lang: string) => string,
      *   isSakuraMtModelId?: (id: string) => boolean,
      *   isLlmInferenceMtModel?: (id: string) => boolean,
      * }} ctx
      */
-    function resolveExpectedOpusMtModelIds(ctx = {}) {
-        const task = String(ctx.task || '');
-        if (task !== 'translate' && task !== 'dual') return [];
-        const mode = String(ctx.translateMode || '');
-        if (mode === 'smart' || mode === 'llm' || mode === 'sakura') return [];
-
-        const isSakura = ctx.isSakuraMtModelId || (() => false);
-        try {
-            const selected = Array.isArray(ctx.selectedItems) ? ctx.selectedItems : [];
-            const anySakura = selected.some((item) => {
-                if (!item?.sense?.adopted) return false;
-                const mt = String(item.sense.overrides?.engineMtModel || '');
-                return /^sakura-/i.test(mt) || isSakura(mt);
-            });
-            if (anySakura) return [];
-        } catch { /* ignore */ }
-
-        const explicit = String(ctx.explicitOpusMtId || '').trim();
-        if (explicit) {
-            if (/^sakura-/i.test(explicit) || isSakura(explicit)) return [];
-            return [explicit];
-        }
-
-        const map = ctx.opusMtByLang || DEFAULT_OPUS_MT_BY_LANG;
-        const normalize = typeof ctx.normalizeSenseLang === 'function'
-            ? ctx.normalizeSenseLang
-            : defaultNormalizeLang;
-        const ids = new Set();
-        const formLang = normalize(ctx.formLang || '');
-        if (formLang && map[formLang]) ids.add(map[formLang]);
-        try {
-            const selected = Array.isArray(ctx.selectedItems) ? ctx.selectedItems : [];
-            for (const item of selected) {
-                const ov = item?.sense?.adopted ? (item.sense.overrides || {}) : {};
-                const mt = String(ov.engineMtModel || '');
-                if (/^sakura-/i.test(mt) || isSakura(mt)) continue;
-                if (mt && !mt.startsWith('opus-mt-') && isLikelyLlmMtId(mt, ctx)) {
-                    continue;
-                }
-                if (mt.startsWith('opus-mt-')) {
-                    ids.add(mt);
-                    continue;
-                }
-                const lang = normalize(ov.language || item?.sense?.classification?.language || formLang);
-                if (lang && map[lang]) ids.add(map[lang]);
-            }
-        } catch { /* ignore */ }
-        return [...ids];
+    /**
+     * Opus-MT removed — never expect Helsinki opus-mt-* downloads.
+     * Kept for API compatibility; always returns [].
+     */
+    function resolveExpectedOpusMtModelIds(_ctx = {}) {
+        return [];
     }
 
     function anyCommonOpusMtInstalled(models, commonIds = COMMON_OPUS_IDS) {
@@ -115,8 +108,9 @@
         const models = Array.isArray(ctx.cachedEngineModels) ? ctx.cachedEngineModels : [];
         if (!models.length) return '';
         const missing = [];
+        const skipAsr = !!ctx.skipAsrModels;
         const asrId = String(ctx.asrModelId || '');
-        if (asrId) {
+        if (!skipAsr && asrId) {
             const asr = models.find((m) => m.id === asrId);
             if (asr && !asr.installed) {
                 missing.push(asr.incomplete ? `${asrId}（不完整）` : asrId);
@@ -132,19 +126,8 @@
                     missing.push(mtId);
                 }
             }
-        } else {
-            const task = String(ctx.task || '');
-            const mode = String(ctx.translateMode || '');
-            const explicit = String(ctx.explicitOpusMtId || '');
-            const isSakura = ctx.isSakuraMtModelId || (() => false);
-            const needsOpus = (task === 'translate' || task === 'dual')
-                && mode !== 'smart' && mode !== 'llm' && mode !== 'sakura'
-                && !isSakura(explicit);
-            if (needsOpus && !anyCommonOpusMtInstalled(models)) {
-                missing.push('Opus-MT（日/英/韩→中至少其一）');
-            }
         }
-        const asrNeedsFsmn = !asrId || !String(asrId).includes('whisper');
+        const asrNeedsFsmn = !skipAsr && (!asrId || !String(asrId).includes('whisper'));
         if (asrNeedsFsmn) {
             const vad = models.find((m) => m.id === 'fsmn-vad');
             if (vad && !vad.installed) {
@@ -160,13 +143,20 @@
         'engineVadModel',
     ]);
 
+    /** Runtime-bundled; never prompt a Hub download when applying a preset. */
+    const BUNDLED_ALWAYS_READY_MODEL_IDS = Object.freeze(['silero-vad']);
+
+    function isBundledAlwaysReadyModelId(id) {
+        return BUNDLED_ALWAYS_READY_MODEL_IDS.includes(String(id || '').trim());
+    }
+
     function collectRequiredModelIdsFromOptions(options = {}, keys = PRESET_REQUIRED_MODEL_KEYS) {
         const out = [];
         const seen = new Set();
         const keyList = Array.isArray(keys) && keys.length ? keys : PRESET_REQUIRED_MODEL_KEYS;
         for (const key of keyList) {
             const id = String(options?.[key] || '').trim();
-            if (!id || seen.has(id)) continue;
+            if (!id || seen.has(id) || isBundledAlwaysReadyModelId(id)) continue;
             seen.add(id);
             out.push(id);
         }
@@ -184,7 +174,7 @@
         const seen = new Set();
         for (const raw of (Array.isArray(modelIds) ? modelIds : [])) {
             const id = String(raw || '').trim();
-            if (!id || seen.has(id)) continue;
+            if (!id || seen.has(id) || isBundledAlwaysReadyModelId(id)) continue;
             seen.add(id);
             const row = list.find((m) => String(m?.id || '') === id);
             if (!row) {
@@ -231,8 +221,10 @@
 
     return {
         DEFAULT_OPUS_MT_BY_LANG,
+        DEFAULT_OPUS_MT_BY_PAIR,
         COMMON_OPUS_IDS,
         PRESET_REQUIRED_MODEL_KEYS,
+        BUNDLED_ALWAYS_READY_MODEL_IDS,
         resolveExpectedOpusMtModelIds,
         anyCommonOpusMtInstalled,
         warnIfSelectedEngineModelsMissing,
@@ -240,5 +232,7 @@
         findMissingCatalogModels,
         formatMissingModelsLabel,
         buildMissingModelsConfirmCopy,
+        pickOpusIdForSourceTarget,
+        engineApiTargetFromSubtitle,
     };
 }));

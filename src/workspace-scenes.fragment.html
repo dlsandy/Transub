@@ -1,0 +1,90 @@
+<section id="workspaceScenes" class="factory-shelf-panel factory-scenes-panel" aria-label="场景预设">
+            <div class="shelf-filter-chrome">
+                <div id="scenesFilterTabs" class="factory-task-tabs shelf-filter-tabs" role="tablist" aria-label="场景分组">
+                    <button type="button" role="tab" class="factory-task-tab is-active" id="scenesTabAll" data-scenes-filter="all" aria-selected="true">
+                        全部<span class="factory-task-tab-count" id="scenesTabAllCount">0</span>
+                    </button>
+                    <div class="shelf-tabs-tools">
+                        <span id="scenesStatusLine" class="factory-task-summary shelf-status">0 项场景预设</span>
+                        <input type="search" id="scenesSearch" class="shelf-search" placeholder="搜索场景或预设…" autocomplete="off">
+                        <button type="button" id="scenesRefreshBtn" class="toolbar-icon-btn shelf-refresh-btn" title="刷新" aria-label="刷新">
+                            <i class="fa fa-refresh" aria-hidden="true"></i><span class="sr-only">刷新</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="shelf-secondary-row">
+                <div id="scenesSecondaryFilters" class="shelf-secondary-filters" role="group" aria-label="预设来源">
+                    <button type="button" class="shelf-secondary-chip is-on" data-scenes-secondary="builtin" aria-pressed="true">
+                        内置<span class="shelf-secondary-chip-count" id="scenesSecBuiltinCount">0</span>
+                    </button>
+                    <button type="button" class="shelf-secondary-chip" data-scenes-secondary="custom" aria-pressed="false">
+                        自定义<span class="shelf-secondary-chip-count" id="scenesSecCustomCount">0</span>
+                    </button>
+                </div>
+                    <div class="scenes-manage-tools" role="group" aria-label="自定义预设">
+                        <button type="button" id="savePresetBtn" class="shelf-btn scenes-manage-btn" title="将当前识别参数保存为自定义预设（Pro）">新建<span class="settings-adv-mark ml-0.5" aria-hidden="true">◆</span></button>
+                        <button type="button" id="copyPresetBtn" class="shelf-btn scenes-manage-btn" title="从选中预设复制为自定义（Pro）">复制<span class="settings-adv-mark ml-0.5" aria-hidden="true">◆</span></button>
+                        <button type="button" id="importPresetBtn" class="shelf-btn scenes-manage-btn" title="导入预设文件（Pro）">导入<span class="settings-adv-mark ml-0.5" aria-hidden="true">◆</span></button>
+                        <button type="button" id="exportPresetBtn" class="shelf-btn scenes-manage-btn" title="导出选中预设">导出</button>
+                        <button type="button" id="deletePresetBtn" class="shelf-btn shelf-btn-danger scenes-manage-btn" title="删除自定义预设（Pro）">删除</button>
+                    </div>
+                </div>
+            </div>
+            <div id="scenesBody" class="shelf-body">
+                <div id="scenesListPane" class="shelf-list-pane">
+                    <div id="scenesEmptyState" class="factory-empty-state shelf-empty-state hidden">
+                        <div class="factory-empty-icon" aria-hidden="true"><i class="fa fa-film"></i></div>
+                        <div>
+                            <p class="text-sm font-medium">暂无场景预设</p>
+                            <p class="text-xs mt-1 factory-empty-hint">内置场景会在启动时加载；也可保存当前参数为自定义预设。</p>
+                        </div>
+                        <div class="flex flex-wrap items-center justify-center gap-2">
+                            <button type="button" id="scenesEmptySaveBtn" class="factory-empty-primary">
+                                <i class="fa fa-plus mr-1"></i>新建自定义预设 ◆
+                            </button>
+                        </div>
+                    </div>
+                    <div id="scenesCardList" class="shelf-card-list" aria-label="场景卡片"></div>
+                </div>
+                <div id="scenesDetailSplitter" class="shelf-detail-splitter" role="separator" aria-orientation="vertical" aria-label="调节详情宽度" tabindex="0"></div>
+                <section id="scenesDetail" class="shelf-detail" aria-label="场景详情" data-empty="true">
+                    <div id="scenesDetailBody" class="scenes-detail-body"></div>
+                    <p id="paramsPresetStatus" class="scenes-preset-status text-xs text-gray-500 min-h-[1rem]" aria-live="polite"></p>
+                </section>
+            </div>
+            <label class="sr-only" for="presetSelect">参数预设</label>
+            <select id="presetSelect" class="sr-only" aria-label="选择参数预设" tabindex="-1">
+                <option value="">选择预设…</option>
+            </select>
+        </section>
+
+<div id="presetNameModal" class="hidden fixed inset-0 z-[120] items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-labelledby="presetNameModalTitle">
+        <div class="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-sm p-4 space-y-3">
+            <h3 id="presetNameModalTitle" class="text-sm font-semibold text-gray-900">存为自定义预设</h3>
+            <p id="presetNameHint" class="text-xs text-gray-500 leading-relaxed">自定义场景预设为 Pro；可从现有预设复制。</p>
+            <label class="block text-sm">
+                <span class="text-gray-700 font-medium">预设名称</span>
+                <input type="text" id="presetNameInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" maxlength="64" placeholder="例如：日语·抑幻听" autocomplete="off">
+            </label>
+            <label class="block text-sm">
+                <span class="text-gray-700 font-medium">分组</span>
+                <select id="presetGroupSelect" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm">
+                    <option value="ja">日剧/动漫</option>
+                    <option value="ko">韩剧</option>
+                    <option value="western">欧美剧</option>
+                    <option value="zh">华语片</option>
+                    <option value="talk" selected>对白</option>
+                    <option value="other">其他</option>
+                </select>
+            </label>
+            <label class="block text-sm">
+                <span class="text-gray-700 font-medium">说明（可选）</span>
+                <textarea id="presetDescInput" class="w-full border rounded-lg px-3 py-2 mt-1 text-sm" rows="2" maxlength="240" placeholder="简述适用场景"></textarea>
+            </label>
+            <p id="presetNameStatus" class="text-xs text-gray-500 min-h-[1rem]"></p>
+            <div class="flex justify-end gap-2">
+                <button type="button" id="presetNameCancelBtn" class="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">取消</button>
+                <button type="button" id="presetNameConfirmBtn" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">保存</button>
+            </div>
+        </div>
+    </div>

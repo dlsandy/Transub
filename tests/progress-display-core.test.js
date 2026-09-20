@@ -14,6 +14,34 @@ describe('progress-display-core', () => {
             '双语 · 生成译文',
         );
         assert.strictEqual(
+            prog.stageLabel('translate', { itemDualPhase: 'translate' }),
+            '字幕翻译中',
+        );
+        assert.strictEqual(
+            prog.stageLabel('cleanup', { itemDualPhase: 'translate' }),
+            '译文校正',
+        );
+        assert.strictEqual(
+            prog.stageLabel('qc_fix', { itemDualPhase: 'translate' }),
+            '译文校正 · QC修复',
+        );
+        assert.strictEqual(
+            prog.stageLabel('postprocess', { itemDualPhase: 'translate' }),
+            '字幕后期处理',
+        );
+        assert.strictEqual(
+            prog.stageLabel('semantic_repair', { itemDualPhase: 'transcribe' }),
+            '原文校正',
+        );
+        assert.strictEqual(
+            prog.stageLabel('model', { itemDualPhase: 'translate' }),
+            '加载识别模型',
+        );
+        assert.strictEqual(
+            prog.stageLabel('save', { itemDualPhase: 'translate' }),
+            '保存译文字幕',
+        );
+        assert.strictEqual(
             prog.stageLabel('transcribe', { task: 'translate' }),
             '翻译中',
         );
@@ -36,6 +64,22 @@ describe('progress-display-core', () => {
         assert.strictEqual(
             prog.effectiveItemProgress('done', 100, { running: false }),
             100,
+        );
+    });
+
+    it('resolveIdleProgressLabel', () => {
+        assert.strictEqual(prog.resolveIdleProgressLabel([]), prog.IDLE_PROGRESS_LABEL_WAIT_NEW);
+        assert.strictEqual(
+            prog.resolveIdleProgressLabel([{ status: 'done' }]),
+            prog.IDLE_PROGRESS_LABEL_WAIT_NEW,
+        );
+        assert.strictEqual(
+            prog.resolveIdleProgressLabel([{ status: 'pending' }]),
+            prog.IDLE_PROGRESS_LABEL_WAIT_RUN,
+        );
+        assert.strictEqual(
+            prog.resolveIdleProgressLabel([{ status: 'ready' }]),
+            prog.IDLE_PROGRESS_LABEL_WAIT_RUN,
         );
     });
 

@@ -18,13 +18,13 @@ describe('start-readiness-core', () => {
             }),
             '请勾选要处理的条目',
         );
-        assert.ok(ready.computeStartBlockReason({
-            autoSenseEnabled: true,
-            items: [{ selected: true, status: 'ready', sense: { status: 'sensing' } }],
-        }).includes('感知'));
         assert.strictEqual(ready.computeStartBlockReason({
             items: [{ selected: true, status: 'ready' }],
         }), '');
+        assert.ok(ready.computeStartBlockReason({
+            batchStartInFlight: true,
+            items: [{ selected: true, status: 'ready' }],
+        }).includes('进行中'));
     });
 
     it('buildReadinessStripViewModel tones', () => {
@@ -33,7 +33,7 @@ describe('start-readiness-core', () => {
             task: 'translate',
             taskLabel: '翻译',
             mode: 'smart',
-            modeLabel: 'Pro译',
+            modeLabel: '智能',
             asrLabel: 'sensevoice-small',
             engineOk: true,
             advancedEntitled: false,
@@ -41,6 +41,23 @@ describe('start-readiness-core', () => {
         assert.strictEqual(warn.tone, 'warn');
         assert.strictEqual(warn.action.action, 'pro');
         assert.ok(warn.text.includes('需解锁 Pro'));
+
+        const degraded = ready.buildReadinessStripViewModel({
+            backend: 'transub',
+            task: 'translate',
+            taskLabel: '翻译',
+            mode: 'smart',
+            modeLabel: '智能',
+            asrLabel: 'sensevoice-small',
+            engineOk: true,
+            advancedEntitled: true,
+            smartStripPart: '智能译降级 · 缺专训',
+            smartTone: 'warn',
+            smartAction: { label: '去下载专训模型', action: 'models' },
+        });
+        assert.strictEqual(degraded.tone, 'warn');
+        assert.ok(degraded.text.includes('智能译降级'));
+        assert.strictEqual(degraded.action.action, 'models');
 
         const ok = ready.buildReadinessStripViewModel({
             backend: 'transub',
@@ -69,6 +86,24 @@ describe('start-readiness-core', () => {
         assert.ok(!String(recIgnored.text || '').includes('推荐'));
     });
 
+    it('buildReadinessStripViewModel shows BYOK for 推理翻译', () => {
+        const byok = ready.buildReadinessStripViewModel({
+            backend: 'transub',
+            task: 'translate',
+            taskLabel: '翻译',
+            mode: 'llm',
+            modeLabel: '推理翻译',
+            asrLabel: 'sensevoice-small',
+            engineOk: true,
+            sentenceMtByok: true,
+            sentenceMtByokLabel: '推理 BYOK · Sakura-Galtransl-14B-v3.8',
+            llmPreferId: 'sakura-1.5b',
+        });
+        assert.strictEqual(byok.tone, 'ok');
+        assert.ok(byok.text.includes('推理 BYOK · Sakura-Galtransl-14B-v3.8'));
+        assert.ok(!byok.text.includes('推理 智能→'));
+    });
+
     it('shouldForceReleaseStaleComputeLock only when idle', () => {
         assert.strictEqual(ready.shouldForceReleaseStaleComputeLock({
             computeBusy: true,
@@ -83,15 +118,33 @@ describe('start-readiness-core', () => {
         }), false);
     });
 
-    it('buildParamsModeChipViewModel shows manual ASR when no preset', () => {
-        const sense = ready.buildParamsModeChipViewModel({
-            autoEnabled: true,
-            autoSenseUi: { chipLabel: '闲置', tone: 'idle' },
-        });
-        assert.strictEqual(sense.label, '智能感知');
+    it('shouldClearStuckSubtitleTaskFlags when main is idle', () => {
+        assert.strictEqual(ready.shouldClearStuckSubtitleTaskFlags({
+            running: true,
+            computeBusy: false,
+            batchRunning: false,
+        }), true);
+        assert.strictEqual(ready.shouldClearStuckSubtitleTaskFlags({
+            retranslateBusy: true,
+            computeBusy: false,
+            batchRunning: false,
+        }), true);
+        assert.strictEqual(ready.shouldClearStuckSubtitleTaskFlags({
+            running: true,
+            batchRunning: true,
+        }), false);
+        assert.strictEqual(ready.shouldClearStuckSubtitleTaskFlags({
+            running: true,
+            computeBusy: true,
+        }), false);
+        assert.strictEqual(ready.shouldClearStuckSubtitleTaskFlags({
+            running: false,
+            retranslateBusy: false,
+        }), false);
+    });
 
+    it('buildParamsModeChipViewModel shows manual ASR when no preset', () => {
         const preset = ready.buildParamsModeChipViewModel({
-            autoEnabled: false,
             presetId: 'film',
             presetName: '影视对白',
         });

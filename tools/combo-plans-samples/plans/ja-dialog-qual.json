@@ -1,0 +1,37 @@
+{
+  "id": "ja-dialog-qual",
+  "version": 1,
+  "group": "ja",
+  "name": "软对白 · 智能 · 质量",
+  "description": "软对白：Qwen3 Galgame 听写+ 智能翻译（对话模型按行）硬件档：质量 · >12GB 显存。需 Pro。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "quality",
+    "preferCuda": true,
+    "minVramGb": 12,
+    "minSystemRamGb": 32,
+    "label": "质量 · >12GB 显存"
+  },
+  "models": [
+    "qwen3-asr-1.7b-ja-anime-galgame",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "qwen3-asr-1.7b-ja-anime-galgame",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "quality",
+    "activePresetId": "ja-av-qwen3-galgame-ten",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "ten"
+  }
+}

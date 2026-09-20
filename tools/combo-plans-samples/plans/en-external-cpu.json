@@ -1,0 +1,36 @@
+{
+  "id": "en-external-cpu",
+  "version": 1,
+  "group": "western",
+  "name": "欧美剧 · 外部 · CPU",
+  "description": "无独显：SenseVoice CPU 听写，译文走 Station / 外接 API。",
+  "language": "en",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "external",
+  "requiresPro": false,
+  "hardware": {
+    "tier": "cpu",
+    "preferCuda": false,
+    "minVramGb": 0,
+    "minSystemRamGb": 8,
+    "label": "CPU · 无独显要求"
+  },
+  "models": [
+    "sensevoice-small",
+    "silero-vad"
+  ],
+  "options": {
+    "language": "en",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cpu",
+    "engineAsrModel": "sensevoice-small",
+    "engineVadModel": "silero-vad",
+    "contentProfile": "film",
+    "vadEnabled": true,
+    "audioLightDenoise": true,
+    "translateMode": "external",
+    "engineLlmMtModel": "",
+    "engineProfile": "speed",
+    "activePresetId": "film-sensevoice"
+  }
+}

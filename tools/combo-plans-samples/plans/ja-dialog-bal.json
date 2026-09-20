@@ -1,0 +1,37 @@
+{
+  "id": "ja-dialog-bal",
+  "version": 1,
+  "group": "ja",
+  "name": "软对白 · 智能 · 均衡",
+  "description": "软对白：Anime Whisper 听写+ 智能翻译（对话模型按行）硬件档：均衡 · 8–12GB 显存。需 Pro。",
+  "language": "ja",
+  "subtitleTargetLang": "zh-Hans",
+  "translateMode": "dialog",
+  "requiresPro": true,
+  "hardware": {
+    "tier": "balanced",
+    "preferCuda": true,
+    "minVramGb": 8,
+    "minSystemRamGb": 16,
+    "label": "均衡 · 8–12GB 显存"
+  },
+  "models": [
+    "anime-whisper",
+    "firered-vad"
+  ],
+  "options": {
+    "language": "ja",
+    "subtitleTargetLang": "zh-Hans",
+    "device": "cuda",
+    "engineAsrModel": "anime-whisper",
+    "engineVadModel": "firered-vad",
+    "contentProfile": "av_soft",
+    "translateMode": "dialog",
+    "engineLlmMtModel": "",
+    "engineProfile": "balanced",
+    "activePresetId": "ja-av-anime-whisper-firered",
+    "vadEnabled": true,
+    "timingAlign": true,
+    "timingAlignModel": "firered"
+  }
+}

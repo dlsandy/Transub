@@ -92,6 +92,44 @@
         return false;
     }
 
+    /**
+     * Plot-polish invent: long thriller/medical/corporate ZH on short spoken JA
+     * with no matching JA lemmas (SAME-250-style contamination).
+     */
+    function looksLikePlotTopicInvent(srcText, zhText) {
+        const src = String(srcText || '').trim();
+        const zh = String(zhText || '').trim();
+        if (!src || !zh) return false;
+        const sl = textCharLen(src);
+        const zl = textCharLen(zh);
+        if (sl < 2 || zl < 10) return false;
+        // Heavy plot lexicon never licensed by short dialogue JA.
+        const inventZh = /制药|药企|实验体|生物武器|监测员|外部资金|融资|神经传递|猎奇杀人|决策费用|停止拍照|可以住宿|尚未获得批准/;
+        const inventJaOk = /(?:薬|製薬|実験|脳|武器|兵器|殺人|資金|神経|モニター|融資|承認|宿泊|撮影|写真)/;
+        if (inventZh.test(zh) && !inventJaOk.test(src) && (sl <= 36 || zl >= sl * 2)) {
+            return true;
+        }
+        // Short spoken JA ballooned into long unrelated narration.
+        if (
+            sl <= 20
+            && zl >= Math.max(18, Math.ceil(sl * 2.8))
+            && !jaHasLexicalResidue(src)
+        ) {
+            return true;
+        }
+        if (
+            sl <= 24
+            && zl >= Math.max(22, Math.ceil(sl * 3))
+            && /^(?:ここ|どこ|私は|すいません|すみません|先輩|おい|ほら|なに|何|うん|はい)/.test(
+                src.replace(/[\s　]+/g, ''),
+            )
+            && !/(?:哪里|哪儿|这里|我是|我呢|我？|抱歉|对不起|前辈|喂|你看|什么|嗯|好的)/.test(zh)
+        ) {
+            return true;
+        }
+        return false;
+    }
+
     function glossaryNameSet(glossaryTerms) {
         const allowed = new Set();
         for (const t of glossaryTerms || []) {
@@ -161,6 +199,10 @@
             bonus += 2;
         }
         if (options.sanitizeResidual || options.residualHot) bonus += 2;
+
+        const band = String(options.band || options.riskBand || '').trim().toLowerCase();
+        if (band === 'yellow') bonus += 3;
+        if (band === 'red') bonus += 1;
 
         const zh = String(zhText || '').trim();
         if (zh) {
@@ -277,6 +319,12 @@
             const src = String(c.text || c.sourceText || '').trim();
             const zh = String(byZh.get(idx) ?? '').trim();
             if (!src || !zh) continue;
+            const bandFromMap = lookupByIndex(options.bandByIndex, idx);
+            const band = String(bandFromMap || c.band || c.riskBand || '').trim().toLowerCase();
+            // Red holds that never got MT this round: skip polish (empty / placeholder).
+            if (band === 'red' && (!zh || zh === '…' || zh === '...' || /^[….\s]+$/.test(zh))) {
+                continue;
+            }
             // Skip pure moan / SFX-like tiny lines (keep filler ZH if JA still has words)
             if (src.length <= 2 && zh.length <= 3 && !jaHasLexicalResidue(src)) continue;
             const qcFromMap = lookupByIndex(options.qcTypesByIndex, idx);
@@ -292,6 +340,7 @@
                 sanitizeBlankRecover: c.sanitizeBlankRecover,
                 sanitizeResidual: c.sanitizeResidual || lookupByIndex(options.residualByIndex, idx),
                 residualHot: c.residualHot,
+                band,
             });
             scored.push({
                 index: idx,
@@ -346,19 +395,28 @@
         targetLanguage,
         faithfulTone,
         tone,
+        translateStylePreset,
+        translateStyleCustomNote,
+        modelId,
+        smartTranslateModelId,
+        model,
     } = {}) {
         const list = Array.isArray(pairs) ? pairs : [];
         const target = targetLanguage || '简体中文';
         const system = [
-            '你是影视字幕剧情贴合润色助手，不是改写编剧。下面已有专训模型的中文译文草稿。',
-            `目标语言：${target}。只改抽样条目，让字幕可看，而不是另起炉灶重译全片。`,
-            '允许：',
+            `你是影视字幕剧情贴合润色助手，不是改写编剧。下面已有专训/句级模型的${target}译文草稿。`,
+            `目标语言：${target}。只改抽样条目里确有问题的地方；译文须贴近原文语义与草稿用词，忠实还原原意，禁止另起一种翻译腔或为顺口改意。`,
+            /中文/.test(target) || /^zh/i.test(target)
+                ? '允许（仅下列）：'
+                : `允许（仅下列）；输出必须保持${target}，禁止改成中文：`,
             '1）欠译补回：草稿把仍有实词的原文压成「嗯/啊」等语气词时，按原文补成可看的对白；',
             '2）称呼统一：同一部里「先輩」只对应一种（学长/学姐/前辈，以简要与片中多数为准）；人名与简要一致；',
             '3）纠错：明显事实错译（职务、动作、专名）按原文改回；',
-            '4）去机器腔、顺口，不改变意图。',
+            '4）极小通顺修补：仅改明显病句/错字，保留草稿句式、语域与口语风格。',
+            '禁止：同义整句换写、为「更好看/更顺口」改文风、把口语改成旁白腔或另一种翻译风格。',
             '禁止：编造原文没有的情节、人物关系或对白；不要为文采加戏；合并/拆分条目；把有内容的条目改空；发明「××小姐」类乱称呼。',
             '禁止：净化、和谐、医学化改写限制级题材或粗口内容（须忠实保留）。',
+            '草稿已通顺且无欠译/错译时，不要输出该 index。',
             '只返回需要修改的条目；无需改动的 index 不要输出。',
             '只输出 JSON：{"cues":[{"index":0,"text":"润色后译文"}, ...]}；若无需修改则返回 {"cues":[]}。',
             '禁止思考过程；直接输出 JSON。',
@@ -366,10 +424,33 @@
         if (faithfulTone) {
             system.push('本片需忠实语气：保留亲密/喘息/拟声与不当语言，勿净化。');
         }
+        try {
+            const huihui = (typeof module !== 'undefined' && module.exports)
+                ? require('./huihui-qwen3-profile-core')
+                : (global && global.TransubHuihuiQwen3Profile);
+            const addon = huihui?.getHuihuiPromptAddon?.(
+                modelId || smartTranslateModelId || model,
+                'polish',
+            );
+            if (addon) system.push(addon);
+        } catch (_) { /* optional */ }
         const userLines = [];
         const names = formatNamesBlock(filmBrief, glossaryTerms);
         if (names) {
             userLines.push(names);
+            userLines.push('');
+        }
+        const styleCore = (typeof module !== 'undefined' && module.exports)
+            ? (() => { try { return require('./translate-style-core'); } catch { return null; } })()
+            : (global && global.TransubTranslateStyle);
+        const styleHint = styleCore?.buildPolishStyleHint
+            ? styleCore.buildPolishStyleHint({
+                translateStylePreset,
+                translateStyleCustomNote,
+            })
+            : '';
+        if (styleHint) {
+            userLines.push(styleHint);
             userLines.push('');
         }
         const toneHint = String(tone || filmBrief?.tone || '').trim();
@@ -391,11 +472,34 @@
     }
 
     /**
+     * Shared CJK/char overlap ratio vs draft (0–1). Low = style rewrite / retranslation.
+     */
+    function draftOverlapRatio(prev, next) {
+        const p = String(prev || '');
+        const n = String(next || '');
+        if (!p || !n) return 0;
+        const prevSet = new Set(Array.from(p));
+        let shared = 0;
+        for (const ch of Array.from(n)) {
+            if (prevSet.has(ch)) shared += 1;
+        }
+        return shared / Math.max(Array.from(n).length, 1);
+    }
+
+    /**
      * Reject polish edits that drift too far from the Sakura draft.
+     * @param {Array<{index:number,text:string}>} updates
+     * @param {Map|object} prevByIndex
+     * @param {{ maxGrow?: number, minKeep?: number, minOverlap?: number, sourceByIndex?: Map|object }} [options]
      */
     function filterPlotPolishUpdates(updates, prevByIndex, options = {}) {
-        const maxGrow = Number(options.maxGrow) || 1.85;
-        const minKeep = Number(options.minKeep) || 0.45;
+        const maxGrow = Number(options.maxGrow) || 1.55;
+        const minKeep = Number(options.minKeep) || 0.5;
+        const minOverlap = Number(options.minOverlap);
+        const overlapFloor = Number.isFinite(minOverlap) ? minOverlap : 0.5;
+        const sourceByIndex = options.sourceByIndex || null;
+        const adultZhRe = /乳头|肉棒|湿漉|湿透|插进|射了|射精|高潮|做爱|性爱|口交|舔弄|内射|最里面|更深入|变硬|爱抚|胸部|再多吸/;
+        const adultJaRe = /乳首|ちん|まん|ペニス|イッ|イキ|イク|いく|挿入|入れ|射精|セックス|せっくす|ぬるぬる|舐めて|咥|犯[しす]|おっぱい|奥まで|硬く|濡れ/;
         return (updates || []).filter((u) => {
             const idx = Number(u?.index);
             const next = String(u?.text ?? '').trim();
@@ -407,24 +511,58 @@
             const prev = String(prevByIndex?.get?.(idx) ?? prevByIndex?.[idx] ?? '').trim();
             if (!prev) return false;
             if (prev === next) return false;
+            const src = sourceByIndex
+                ? String(lookupByIndex(sourceByIndex, idx) ?? '').trim()
+                : '';
+            // Soft-AV contamination: adult ZH pasted onto non-adult JA (JUFE-625 greetings).
+            if (src && adultZhRe.test(next) && !adultJaRe.test(src) && !adultZhRe.test(prev)) {
+                return false;
+            }
+            // Plot invent: long thriller/medical ZH on short spoken JA (SAME-250).
+            if (src && looksLikePlotTopicInvent(src, next)) {
+                return false;
+            }
+            if (src && looksLikeInventedFact(src, next)) {
+                return false;
+            }
+            // Opening/family/meal JA must not receive adult polish invent.
+            if (
+                src
+                && adultZhRe.test(next)
+                && !adultJaRe.test(src)
+                && /(?:ただいま|おかえり|はーい|お久しぶり|こんにちは|お邪魔|いらっしゃい|帰郷|兄に嫁|兄さん|いい嫁|真面目|そうめん|奮発|遠慮せず食え|奏くん来|駅まで|予定より|朝\s*早く|元気してたか)/.test(src)
+            ) {
+                return false;
+            }
+            // Opening/greeting JA must not grow into long unrelated dialogue.
+            if (
+                src
+                && textCharLen(src) <= 20
+                && /^(?:ただいま|おかえり|はーい|はい|お久しぶり|こんにちは|お邪魔|いらっしゃい)/.test(src.trim())
+                && textCharLen(next) >= Math.max(10, textCharLen(src) + 4)
+                && !/回来了|欢迎|你好|好久不见|打扰|嗯|好的|来了/.test(next)
+            ) {
+                return false;
+            }
             const pl = textCharLen(prev);
             const nl = textCharLen(next);
             // Filler-only drafts may grow into real dialogue; cap runaway invention.
             if (isFillerOnlyZh(prev)) {
-                return nl >= 2 && nl <= 40;
+                if (nl < 2 || nl > 40) return false;
+                // Growing filler into long unrelated adult/dialogue without JA support → reject.
+                if (src && nl >= 10 && adultZhRe.test(next) && !adultJaRe.test(src)) return false;
+                if (src && nl >= 12 && draftOverlapRatio(prev, next) < 0.15 && !jaHasLexicalResidue(src)) {
+                    return false;
+                }
+                return true;
             }
             if (pl >= 4) {
                 if (nl > Math.max(12, Math.ceil(pl * maxGrow))) return false;
                 if (nl < Math.max(1, Math.floor(pl * minKeep))) return false;
             }
-            // Too many new CJK chars vs draft → likely rewrite, not polish
+            // Too many new chars vs draft → style rewrite / full retranslation
             if (pl >= 6) {
-                let shared = 0;
-                const prevSet = new Set(Array.from(prev));
-                for (const ch of Array.from(next)) {
-                    if (prevSet.has(ch)) shared += 1;
-                }
-                if (shared / Math.max(nl, 1) < 0.35) return false;
+                if (draftOverlapRatio(prev, next) < overlapFloor) return false;
             }
             return true;
         });
@@ -442,7 +580,9 @@
         scoreCueForPlotPolish,
         selectCuesForPlotPolish,
         buildPlotPolishMessages,
+        draftOverlapRatio,
         filterPlotPolishUpdates,
         formatNamesBlock,
+        looksLikePlotTopicInvent,
     };
 }));

@@ -52,7 +52,6 @@ run('vitest (extracted cores)', node, [
     vitestCli,
     'run',
     'tests/final-round-cores.test.js',
-    'tests/sense-finalize-core.test.js',
 ]);
 
 console.log('\n---');

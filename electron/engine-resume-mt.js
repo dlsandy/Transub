@@ -4,7 +4,7 @@
  */
 
 const { resolveFileMtPlan } = require('./engine-batch-item');
-const { buildExternalMtJobFields, buildEngineJobFlags } = require('./engine-job-options');
+const { buildExternalMtJobFields, buildEngineJobFlags, resolveExternalMtAdapterCall } = require('./engine-job-options');
 
 /**
  * @param {object} merged - readMergedOptions / runtime options
@@ -52,20 +52,19 @@ function buildResumeMtOverrides(input = {}) {
             code: 'mt_adapter_missing',
         };
     }
+    const adapterCall = resolveExternalMtAdapterCall({
+        useSmartTranslate: input.useSmartTranslate,
+        modelId: input.fileMerged?.engineMtModel || input.modelId,
+    });
     const fields = typeof adapter.mtExternal === 'function'
         ? {
             mtBackend: 'external',
-            mtExternal: adapter.mtExternal(
-                input.useSmartTranslate
-                    ? { batchSize: 40, timeoutSec: 1800 }
-                    : { batchSize: 8, timeoutSec: 600 },
-            ),
+            mtExternal: adapter.mtExternal(adapterCall),
         }
         : buildExternalMtJobFields({
             url: adapter.url,
             token: adapter.token,
-            batchSize: input.useSmartTranslate ? 40 : 8,
-            timeoutSec: input.useSmartTranslate ? 1800 : 600,
+            ...adapterCall,
         });
     if (!fields?.mtExternal) {
         return { ok: false, error: '外部翻译适配器缺少 URL', code: 'mt_adapter_url' };

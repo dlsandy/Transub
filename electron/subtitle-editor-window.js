@@ -27,6 +27,40 @@ function linkWindowManager(windowManager) {
     linkedWindowManager = windowManager || null;
 }
 
+function broadcastEditorWriteback(info) {
+    const payload = {
+        subPath: info.subPath,
+        stampPath: info.stampPath,
+        savedAtMs: info.savedAtMs,
+    };
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win || win.isDestroyed()) continue;
+        try {
+            win.webContents.send('transub-editor-writeback', payload);
+        } catch (_) { /* ignore */ }
+    }
+}
+
+function externalEditorLaunchDeps(app, getOptions, electronFallback) {
+    const launch = require('./editor-external-launch');
+    return {
+        getOptions,
+        getAppRoot: () => {
+            try {
+                return require('./app-paths').getAppRoot(app);
+            } catch (_) {
+                return process.cwd();
+            }
+        },
+        electronFallback,
+        onExternalLaunched: (_result, payload) => {
+            const sub = String(payload?.subPath || payload?.path || '').trim();
+            if (!sub) return;
+            launch.watchEditorWriteback(sub, broadcastEditorWriteback);
+        },
+    };
+}
+
 /** Prevent Windows spurious main-window minimize→tray when this editor closes. */
 function armMainMinimizeSuppress(ms) {
     try {
@@ -45,7 +79,7 @@ function anyOtherEditorOpen() {
  * After an editor closes: undo Windows spurious main hide-to-tray, and if the
  * main app window is already running and still on-screen, focus it.
  * Leave an intentional tray hide alone (do not force-show).
- * Prefer an open subtitle library (or any other focused secondary) over yanking
+ * Prefer any other focused secondary over yanking
  * focus back to the main generator window.
  */
 function restoreMainAfterEditorClosed() {
@@ -56,20 +90,6 @@ function restoreMainAfterEditorClosed() {
         if (anyOtherEditorOpen()) return;
         // Soft-park keeps isVisible() true — tray flag is authoritative.
         if (linkedWindowManager?.isMainHiddenToTray?.()) return;
-
-        try {
-            const { getSubtitleLibraryWindow } = require('./subtitle-library-window');
-            const lib = getSubtitleLibraryWindow();
-            if (lib && !lib.isDestroyed()) {
-                try {
-                    if (lib.isVisible() && !lib.isMinimized()) {
-                        lib.show();
-                        lib.focus();
-                        return;
-                    }
-                } catch (_) { /* fall through */ }
-            }
-        } catch (_) { /* ignore */ }
 
         const focused = BrowserWindow.getFocusedWindow();
         const main = linkedWindowManager?.getMainWindow?.();
@@ -85,7 +105,12 @@ function restoreMainAfterEditorClosed() {
         } catch (_) {
             return;
         }
-        linkedWindowManager?.showMainWindow?.();
+        // Main already on-screen: light focus only. Avoid showMainWindow()'s
+        // multi-pass focus + strong forceMainWindowRepaint (felt as a freeze).
+        try {
+            if (!main.isFocused()) main.focus();
+            main.webContents?.focus?.();
+        } catch (_) { /* ignore */ }
     } catch (_) { /* ignore */ }
 }
 
@@ -158,78 +183,25 @@ function maximizeEditorWindow(win) {
     if (!win.isMaximized()) win.maximize();
 }
 
-function pickLibrarySession(opts = {}) {
-    const lib = opts.library && typeof opts.library === 'object' ? opts.library : opts;
-    const mediaId = asString(lib.mediaId || opts.mediaId, 128).trim();
-    const trackId = asString(lib.trackId || opts.trackId, 128).trim();
-    const versionId = asString(lib.versionId || opts.versionId, 128).trim();
-    if (!mediaId && !trackId && !versionId) return null;
-    return {
-        mediaId,
-        trackId,
-        versionId,
-        role: asString(lib.role || opts.role, 32).trim(),
-        roleLabel: asString(lib.roleLabel || opts.roleLabel, 64).trim(),
-        recipeSummary: asString(lib.recipeSummary || opts.recipeSummary, 512).trim(),
-        contentRef: asString(lib.contentRef || opts.contentRef, 1024).trim(),
-        exportPath: asString(lib.exportPath || opts.exportPath, 4096).trim(),
-        isActive: !!(lib.isActive ?? opts.isActive),
-        mediaTitle: asString(lib.mediaTitle || opts.mediaTitle, 256).trim(),
-        openedFromBlob: !!(lib.openedFromBlob ?? opts.openedFromBlob),
-        mediaLinked: lib.mediaLinked != null ? !!lib.mediaLinked : (opts.mediaLinked != null ? !!opts.mediaLinked : undefined),
-        mediaExists: lib.mediaExists != null ? !!lib.mediaExists : (opts.mediaExists != null ? !!opts.mediaExists : undefined),
-        abPairAvailable: !!(lib.abPairAvailable ?? opts.abPairAvailable),
-        abVersionIdA: asString(lib.abVersionIdA || opts.abVersionIdA, 128).trim(),
-        abVersionIdB: asString(lib.abVersionIdB || opts.abVersionIdB, 128).trim(),
-    };
-}
-
-/**
- * Push media association changes to open editor windows (same mediaId).
- * @param {{ mediaId?: string, videoPath?: string, mediaLinked?: boolean, mediaExists?: boolean, mediaTitle?: string, cleared?: boolean }} payload
- */
-function notifyEditorsLibraryMediaUpdated(payload = {}) {
-    const mediaId = asString(payload?.mediaId, 128).trim();
-    if (!mediaId) return 0;
-    let n = 0;
-    for (const win of editorWindows.values()) {
-        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) continue;
-        const winMediaId = asString(win.__transubLibraryMediaId, 128).trim();
-        // Prefer media-scoped delivery; unknown sessions still receive (safe no-op in renderer).
-        if (winMediaId && winMediaId !== mediaId) continue;
-        try {
-            win.webContents.send('transub-library-media-updated', payload || {});
-            n += 1;
-        } catch { /* ignore */ }
-    }
-    return n;
-}
-
-function rememberEditorLibraryMedia(win, library) {
-    if (!win || win.isDestroyed()) return;
-    const mid = asString(library?.mediaId, 128).trim();
-    if (mid) win.__transubLibraryMediaId = mid;
-    else if (library === null) win.__transubLibraryMediaId = '';
-}
-
 function createSubtitleEditorWindow(app, opts = {}) {
-    const { subPath, videoPath, action } = opts;
-    const library = pickLibrarySession(opts);
+    const { subPath, videoPath, action, playerHandoff } = opts;
     const rawSub = String(subPath || '').trim();
     const resolvedSub = rawSub ? path.resolve(rawSub) : '';
     const key = editorWindowKey(resolvedSub);
     const openAction = asString(action, 64).trim();
+    const handoffPayload = playerHandoff && typeof playerHandoff === 'object'
+        ? { playerHandoff }
+        : {};
     const existing = editorWindows.get(key);
     if (existing && !existing.isDestroyed()) {
         existing.focus();
         if (resolvedSub) {
             maximizeEditorWindow(existing);
-            rememberEditorLibraryMedia(existing, library);
             sendEditorInit(existing, {
                 subPath: resolvedSub,
                 videoPath: videoPath || guessVideoPathForSubtitle(resolvedSub) || '',
                 ...(openAction ? { action: openAction } : {}),
-                ...(library ? { library } : {}),
+                ...handoffPayload,
             });
         }
         return existing;
@@ -258,8 +230,8 @@ function createSubtitleEditorWindow(app, opts = {}) {
         minHeight: size.minHeight,
         center: !resolvedSub,
         title: resolvedSub
-            ? `Transub Editor — ${path.basename(resolvedSub)}`
-            : 'Transub Editor',
+            ? `Transub Editor（内置·即将停用） — ${path.basename(resolvedSub)}`
+            : 'Transub Editor（内置·即将停用）',
         icon: getEditorWindowIconOption(),
         autoHideMenuBar: false,
         backgroundColor: EDITOR_BG[preferDark ? 'dark' : 'light'],
@@ -292,7 +264,7 @@ function createSubtitleEditorWindow(app, opts = {}) {
             subPath: resolvedSub,
             videoPath: linkedVideo,
             ...(openAction ? { action: openAction } : {}),
-            ...(library ? { library } : {}),
+            ...handoffPayload,
         }
         : { welcome: true };
     let shown = false;
@@ -309,7 +281,6 @@ function createSubtitleEditorWindow(app, opts = {}) {
     // 大页面首次绘制偏慢时，避免长时间完全无窗口
     setTimeout(reveal, 450);
 
-    rememberEditorLibraryMedia(win, library);
     win.webContents.once('did-finish-load', () => {
         sendEditorInit(win, initPayload);
     });
@@ -390,11 +361,17 @@ function createSubtitleEditorWindow(app, opts = {}) {
         armMainMinimizeSuppress(1600);
         restoreMainAfterEditorClosed();
         // Last editor gone: drop idle llama-server so homepage ASR does not OOM.
-        // Skip when homepage engine/TWAI still holds the compute lock (may need LLM).
+        // Defer off the `closed` stack — sync reclaim used to freeze the main window.
         if (!anyOtherEditorOpen()) {
-            try {
-                require('./local-llm-reclaim').reclaimLocalLlmWhenEditorsGone();
-            } catch (_) { /* ignore */ }
+            setImmediate(() => {
+                try {
+                    const reclaim = require('./local-llm-reclaim');
+                    const run = typeof reclaim.reclaimLocalLlmWhenEditorsGoneAsync === 'function'
+                        ? reclaim.reclaimLocalLlmWhenEditorsGoneAsync()
+                        : Promise.resolve(reclaim.reclaimLocalLlmWhenEditorsGone());
+                    Promise.resolve(run).catch(() => {});
+                } catch (_) { /* ignore */ }
+            });
         }
     });
 
@@ -440,6 +417,48 @@ let pendingOpenParamsTab = null;
 
 function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, windowManager } = {}) {
     linkWindowManager(windowManager);
+
+    function readEditorLaunchOptions() {
+        try {
+            const { loadSettings } = require('./settings-data');
+            const { mergeTransWithAiOptions } = require('./transwithai-options');
+            const raw = loadSettings(() => {
+                try {
+                    const { getAppRoot } = require('./app-paths');
+                    return getAppRoot(app);
+                } catch (_) {
+                    return process.cwd();
+                }
+            }).options || {};
+            return mergeTransWithAiOptions(raw);
+        } catch (_) {
+            return {};
+        }
+    }
+
+    function openViaElectron(payload = {}) {
+        if (payload.pick) {
+            return null; // handled separately
+        }
+        const subPath = asString(payload.subPath || payload.path, 4096).trim();
+        if (!subPath) {
+            if (payload.welcome) {
+                createSubtitleEditorWindow(app, {});
+                return { ok: true, welcome: true, path: '' };
+            }
+            return { ok: false, error: '缺少字幕路径' };
+        }
+        const videoPath = asString(payload.videoPath, 4096).trim();
+        const action = asString(payload.action, 64).trim();
+        createSubtitleEditorWindow(app, {
+            subPath,
+            videoPath,
+            ...(action ? { action } : {}),
+            ...(payload.playerHandoff ? { playerHandoff: payload.playerHandoff } : {}),
+        });
+        return { ok: true, path: path.resolve(subPath) };
+    }
+
     register('transub-open-subtitle-editor', async (event, payload = {}) => {
         try {
             warmBridges?.();
@@ -449,31 +468,79 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
                 const picked = await pickSubtitleFile(parentWin);
                 if (picked.canceled) return { ok: true, canceled: true };
                 if (!picked.path) return picked;
-                createSubtitleEditorWindow(app, {
-                    subPath: picked.path,
-                    videoPath: picked.videoPath,
-                });
-                return { ok: true, path: picked.path };
+                const launch = require('./editor-external-launch');
+                const result = launch.openSubtitleEditorPreferExternal(
+                    {
+                        subPath: picked.path,
+                        videoPath: picked.videoPath,
+                        from: 'transub',
+                    },
+                    externalEditorLaunchDeps(app, readEditorLaunchOptions, (p) => {
+                        createSubtitleEditorWindow(app, {
+                            subPath: p.subPath,
+                            videoPath: p.videoPath,
+                        });
+                        return { path: path.resolve(p.subPath) };
+                    }),
+                );
+                return result;
             }
 
-            const subPath = asString(payload.subPath || payload.path, 4096).trim();
-            if (!subPath) {
-                if (payload.welcome) {
-                    createSubtitleEditorWindow(app, {});
-                    return { ok: true, welcome: true };
-                }
-                return { ok: false, error: '缺少字幕路径' };
-            }
-            const videoPath = asString(payload.videoPath, 4096).trim();
-            const action = asString(payload.action, 64).trim();
-            const library = pickLibrarySession(payload);
-            createSubtitleEditorWindow(app, {
-                subPath,
-                videoPath,
-                ...(action ? { action } : {}),
-                ...(library ? { library } : {}),
+            const launch = require('./editor-external-launch');
+            // Pro action 工作流仍走内置窗（外部 Editor 尚未对齐）。
+            const forceElectron = !!(payload.action || payload.forceElectron);
+            return launch.openSubtitleEditorPreferExternal(
+                { ...payload, forceElectron },
+                externalEditorLaunchDeps(app, readEditorLaunchOptions, openViaElectron),
+            );
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-resolve-external-editor', async () => {
+        try {
+            const opts = readEditorLaunchOptions();
+            const launch = require('./editor-external-launch');
+            const resolved = launch.resolveExternalEditorExe({
+                subtitleEditorPath: opts.subtitleEditorPath,
+                getAppRoot: () => {
+                    try {
+                        return require('./app-paths').getAppRoot(app);
+                    } catch (_) {
+                        return process.cwd();
+                    }
+                },
             });
-            return { ok: true, path: path.resolve(subPath) };
+            return {
+                ok: resolved.ok,
+                backend: launch.normalizeBackend(opts.subtitleEditorBackend),
+                path: resolved.path || '',
+                source: resolved.source || '',
+                error: resolved.error || '',
+                candidates: resolved.candidates || [],
+            };
+        } catch (err) {
+            return { ok: false, error: err.message || String(err) };
+        }
+    });
+
+    register('transub-pick-external-editor', async (event) => {
+        try {
+            const parentWin = BrowserWindow.fromWebContents(event.sender);
+            const { dialog } = require('electron');
+            const result = await dialog.showOpenDialog(parentWin || undefined, {
+                title: '选择 Transub Editor（Transub.Editor.exe / transub-editor.exe）',
+                filters: [
+                    { name: 'Transub Editor', extensions: ['exe'] },
+                    { name: 'All', extensions: ['*'] },
+                ],
+                properties: ['openFile'],
+            });
+            if (result.canceled || !result.filePaths?.[0]) {
+                return { ok: true, canceled: true };
+            }
+            return { ok: true, path: result.filePaths[0] };
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
         }
@@ -572,99 +639,16 @@ function registerSubtitleEditorWindowRoutes(register, app, { warmBridges, window
         }
     });
 
-    register('transub-open-subtitle-library', async (event, payload = {}) => {
+    register('transub-open-subtitle-shelf', async (_event, payload = {}) => {
         try {
             warmBridges?.();
-            const { openSubtitleLibraryWindow } = require('./subtitle-library-window');
-            return openSubtitleLibraryWindow(app, {
+            const { openSubtitleShelfWindow } = require('./subtitle-shelf-window');
+            return openSubtitleShelfWindow(app, {
                 mediaId: payload?.mediaId || '',
                 mediaPath: payload?.mediaPath || '',
-                versionId: payload?.versionId || '',
             });
         } catch (err) {
             return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-library-start-retranslate', async (_event, payload = {}) => {
-        try {
-            warmBridges?.();
-            const { startLibraryRetranslateOnMain } = require('./subtitle-library-window');
-            return startLibraryRetranslateOnMain({ windowManager }, payload || {});
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-library-start-mt-train', async (_event, payload = {}) => {
-        try {
-            warmBridges?.();
-            const { canOpenMtTrain, openMtTrainWindow } = require('./mt-train-window');
-            const access = canOpenMtTrain(app);
-            if (!access.ok) {
-                return {
-                    ok: false,
-                    error: access.error || '无法打开学习向导',
-                    code: access.code,
-                    proRequired: access.code === 'not_entitled',
-                };
-            }
-            const { prepareLibraryMtTrainPair } = require('./subtitle-library');
-            const mediaId = String(payload?.mediaId || '').trim();
-            if (!mediaId) return { ok: false, error: '缺少作品 ID' };
-            const prepared = prepareLibraryMtTrainPair(mediaId, {
-                preferTag: payload?.preferTag || '',
-            });
-            if (!prepared.ok) return prepared;
-            const opened = await openMtTrainWindow(app, {
-                jaPath: prepared.jaPath,
-                zhPath: prepared.zhPath,
-                zhPathA: prepared.zhPathA,
-                zhPathB: prepared.zhPathB,
-                title: prepared.title,
-                source: 'subtitle-library',
-            });
-            if (!opened.ok) return opened;
-            return { ...opened, prepared };
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-open-mt-train', async (_event, payload = {}) => {
-        try {
-            const { canOpenMtTrain, openMtTrainWindow } = require('./mt-train-window');
-            const access = canOpenMtTrain(app);
-            if (!access.ok) {
-                return {
-                    ok: false,
-                    error: access.error || '无法打开学习向导',
-                    code: access.code,
-                    proRequired: access.code === 'not_entitled',
-                };
-            }
-            warmBridges?.();
-            return await openMtTrainWindow(app, payload || null);
-        } catch (err) {
-            return { ok: false, error: err.message || String(err) };
-        }
-    });
-
-    register('transub-mt-train-access', async () => {
-        try {
-            const { canOpenMtTrain } = require('./mt-train-window');
-            const access = canOpenMtTrain(app);
-            return {
-                ok: true,
-                canOpen: !!access.ok,
-                isDev: !!access.isDev,
-                isPro: !!access.isPro,
-                audience: access.audience || null,
-                error: access.ok ? null : (access.error || null),
-                code: access.code || null,
-            };
-        } catch (err) {
-            return { ok: false, canOpen: false, error: err.message || String(err) };
         }
     });
 
@@ -789,7 +773,27 @@ function closeAllSubtitleEditorWindows() {
 }
 
 async function openSubtitleEditorOrPick(app) {
-    return createSubtitleEditorWindow(app, {});
+    const launch = require('./editor-external-launch');
+    const { loadSettings } = require('./settings-data');
+    const { mergeTransWithAiOptions } = require('./transwithai-options');
+    let options = {};
+    try {
+        options = mergeTransWithAiOptions(loadSettings(() => {
+            try {
+                return require('./app-paths').getAppRoot(app);
+            } catch (_) {
+                return process.cwd();
+            }
+        }).options || {});
+    } catch (_) { /* ignore */ }
+
+    return launch.openSubtitleEditorPreferExternal(
+        { welcome: true, from: 'transub' },
+        externalEditorLaunchDeps(app, () => options, () => {
+            createSubtitleEditorWindow(app, {});
+            return { welcome: true };
+        }),
+    );
 }
 
 module.exports = {
@@ -797,5 +801,4 @@ module.exports = {
     registerSubtitleEditorWindowRoutes,
     closeAllSubtitleEditorWindows,
     openSubtitleEditorOrPick,
-    notifyEditorsLibraryMediaUpdated,
 };

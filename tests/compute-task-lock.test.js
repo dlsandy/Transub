@@ -81,4 +81,43 @@ describe('compute-task-lock', () => {
         assert.strictEqual(busyRes.code, 'compute_busy');
         lock.release(held.token);
     });
+
+    it('forceRelease reports released when only a pinned engine URL exists', () => {
+        lock.__resetEngineLockCacheForTests?.();
+        lock.setEngineLockBaseUrl('http://127.0.0.1:9');
+        const res = lock.forceRelease();
+        assert.strictEqual(res.ok, true);
+        assert.strictEqual(res.released, true);
+        lock.__resetEngineLockCacheForTests?.();
+    });
+
+    it('getStatus trusts local holder without remote probe', () => {
+        lock.__resetEngineLockCacheForTests?.();
+        // Pin a dead URL — if getStatus still probed, this would hang or fail oddly.
+        lock.setEngineLockBaseUrl('http://127.0.0.1:9');
+        const a = lock.tryAcquire({ kind: 'engine_batch', owner: '引擎', forceLocal: true });
+        assert.strictEqual(a.ok, true);
+        const t0 = Date.now();
+        const st = lock.getStatus();
+        assert.ok(Date.now() - t0 < 200);
+        assert.strictEqual(st.busy, true);
+        assert.strictEqual(st.kind, 'engine_batch');
+        lock.release(a.token);
+        lock.__resetEngineLockCacheForTests?.();
+    });
+
+    it('getLocalStatus never probes a pinned engine URL', () => {
+        lock.__resetEngineLockCacheForTests?.();
+        lock.setEngineLockBaseUrl('http://127.0.0.1:9');
+        assert.deepStrictEqual(lock.getLocalStatus(), { busy: false });
+        const a = lock.tryAcquire({ kind: 'sakura_translate', owner: 'Sakura', forceLocal: true });
+        assert.strictEqual(a.ok, true);
+        const t0 = Date.now();
+        const st = lock.getLocalStatus();
+        assert.ok(Date.now() - t0 < 50);
+        assert.strictEqual(st.busy, true);
+        assert.strictEqual(st.kind, 'sakura_translate');
+        lock.release(a.token);
+        lock.__resetEngineLockCacheForTests?.();
+    });
 });

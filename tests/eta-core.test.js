@@ -14,7 +14,7 @@ function testRateFromHistory() {
 
 function testEstimateEtaSec() {
     const items = [
-        { path: 'a.mp4', duration: 100, status: 'running' },
+        { path: 'a.mp4', duration: 100, status: 'running', startedAt: Date.now() - 60000 },
         { path: 'b.mp4', duration: 200, status: 'pending' },
     ];
     const etaSec = eta.estimateEtaSec({
@@ -23,10 +23,23 @@ function testEstimateEtaSec() {
         videoCurrentSec: 40,
         videoTotalSec: 100,
         itemStage: 'transcribe',
+        itemProgress: 40,
+        activeStartedAt: Date.now() - 60000,
         rate: 0.5,
     });
-    // remaining media: 60 + 200 = 260 → *0.5 = 130; pending preFloor +15
-    assert.strictEqual(etaSec, 145);
+    // Progress-based: 60s @40% → ~90s remain + pending b (200*0.5+15≈115)
+    assert.ok(etaSec >= 80 && etaSec <= 220, `expected sane transcribe ETA, got ${etaSec}`);
+
+    const translateEta = eta.estimateEtaSec({
+        items: [{ path: 'a.mp4', duration: 3600, status: 'running', startedAt: Date.now() - 120000 }],
+        activePath: 'a.mp4',
+        itemStage: 'translate',
+        itemProgress: 80,
+        activeStartedAt: Date.now() - 120000,
+        rate: 0.35,
+    });
+    // Must not treat full 3600s media as remaining at translate@80%
+    assert.ok(translateEta < 3600, `translate ETA too high: ${translateEta}`);
 }
 
 function testBatchProgressPct() {
